@@ -27,10 +27,13 @@ def upsert_node(node_id, n):
     user = _get(n, "user") or {}
     met = _get(n, "deviceMetrics") or {}
     pos = _get(n, "position") or {}
+    short = _get(user, "shortName")
+    if isinstance(short, str):
+        short = short.rjust(4)
     row = (
         node_id,
         _get(n, "num"),
-        _get(user, "shortName"),
+        short,
         _get(user, "longName"),
         _get(user, "macaddr"),
         _get(user, "hwModel") or _get(n, "hwModel"),

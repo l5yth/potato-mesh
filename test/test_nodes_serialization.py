@@ -52,3 +52,41 @@ def test_upsert_node_handles_position(tmp_path):
         assert row[0] == 52.5
     finally:
         os.chdir(cwd)
+
+
+def test_upsert_node_pads_short_name(tmp_path):
+    data_dir = Path(__file__).resolve().parent.parent / "data"
+    cwd = os.getcwd()
+    os.chdir(data_dir)
+    try:
+        meshtastic = types.ModuleType("meshtastic")
+        serial_module = types.ModuleType("serial_interface")
+        serial_module.SerialInterface = object
+        mesh_module = types.ModuleType("mesh_interface")
+        mesh_module.MeshInterface = object
+        meshtastic.serial_interface = serial_module
+        meshtastic.mesh_interface = mesh_module
+        sys.modules.setdefault("meshtastic", meshtastic)
+        sys.modules.setdefault("meshtastic.serial_interface", serial_module)
+        sys.modules.setdefault("meshtastic.mesh_interface", mesh_module)
+
+        sys.path.insert(0, str(data_dir))
+        import nodes
+        nodes.conn.close()
+        dbfile = Path("nodes.db")
+        if dbfile.exists():
+            dbfile.unlink()
+        nodes.conn = sqlite3.connect(":memory:", check_same_thread=False)
+        nodes.conn.executescript(nodes.schema)
+        nodes.conn.commit()
+
+        n = {"num": 7, "user": {"shortName": "A"}}
+        nodes.upsert_node("node1", n)
+        nodes.conn.commit()
+        row = nodes.conn.execute(
+            "SELECT short_name FROM nodes WHERE node_id=?", ("node1",)
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "   A"
+    finally:
+        os.chdir(cwd)

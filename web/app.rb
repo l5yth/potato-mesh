@@ -42,10 +42,12 @@ def upsert_node(db, node_id, n)
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
   role = user["role"] || "CLIENT"
+  short = user["shortName"]
+  short = short.rjust(4) if short
   row = [
     node_id,
     n["num"],
-    user["shortName"],
+    short,
     user["longName"],
     user["macaddr"],
     user["hwModel"] || n["hwModel"],

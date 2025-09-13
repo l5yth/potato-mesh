@@ -71,7 +71,8 @@ def test_post_nodes_to_web_app(tmp_path):
             "res = req.post('/api/nodes', 'CONTENT_TYPE' => 'application/json', 'HTTP_AUTHORIZATION' => 'Bearer secrettoken', :input => nodes);"\
             "puts res.status;"\
             "db = SQLite3::Database.new(ENV['MESH_DB']);"\
-            "puts db.get_first_value('SELECT COUNT(*) FROM nodes');"
+            "puts db.get_first_value('SELECT COUNT(*) FROM nodes');"\
+            "puts db.get_first_value(\"SELECT short_name FROM nodes WHERE node_id='!b6428bf9'\");"
         )
         out = subprocess.check_output(
             ["bundle", "exec", "ruby", "-e", ruby],
@@ -86,6 +87,7 @@ def test_post_nodes_to_web_app(tmp_path):
     assert lines[0] == "200"
     expected = len(json.load(open(nodes_json)))
     assert int(lines[1]) == expected
+    assert lines[2] == "  WB"
 
 
 def test_null_role_defaults_to_client(tmp_path):
