@@ -12,16 +12,16 @@ def query_nodes(limit)
   db = SQLite3::Database.new(DB_PATH)
   db.results_as_hash = true
   rows = db.execute <<~SQL, [limit]
-    SELECT node_id, short_name, long_name, hw_model, role, snr, battery_level,
-           last_heard, position_time, latitude, longitude, altitude
-    FROM nodes
-    ORDER BY last_heard DESC
-    LIMIT ?
-  SQL
+                      SELECT node_id, short_name, long_name, hw_model, role, snr, battery_level,
+                             last_heard, position_time, latitude, longitude, altitude
+                      FROM nodes
+                      ORDER BY last_heard DESC
+                      LIMIT ?
+                    SQL
   rows.each do |r|
     lh = r["last_heard"]; pt = r["position_time"]
     r["last_seen_iso"] = lh ? Time.at(lh.to_i).utc.iso8601 : nil
-    r["pos_time_iso"]  = pt ? Time.at(pt.to_i).utc.iso8601 : nil
+    r["pos_time_iso"] = pt ? Time.at(pt.to_i).utc.iso8601 : nil
   end
   rows
 ensure
