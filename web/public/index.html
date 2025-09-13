@@ -134,11 +134,12 @@
     legend.addTo(map);
 
     // --- Helpers ---
-    function addChatEntry(n) {
+    function renderShortHtml(short){ return String(short).padStart(4, ' ').replace(/ /g, '&nbsp;'); }
+    function addNewNodeChatEntry(n) {
       const div = document.createElement('div');
       const ts = formatDate(new Date(n.last_heard * 1000));
       div.className = 'chat-entry';
-      div.textContent = `[${ts}] ${n.node_id || ''} ${n.short_name || ''} ${n.long_name || ''}`;
+      div.innerHTML = `[${ts}] ${n.node_id || ''} ${renderShortHtml(n.short_name || '')} <em>New node: ${n.long_name || ''}</em>`;
       chatEl.appendChild(div);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
@@ -256,7 +257,7 @@
         }
         newNodes.sort((a, b) => (a.last_heard ?? 0) - (b.last_heard ?? 0));
         for (const n of newNodes) {
-          addChatEntry(n);
+          addNewNodeChatEntry(n);
         }
         allNodes = nodes;
         applyFilter();
