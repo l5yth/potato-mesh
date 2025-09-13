@@ -68,11 +68,10 @@ def snapshot_nodes_periodically(iface: MeshInterface, every_sec=30):
 
 def main():
     iface = SerialInterface(devPath="/dev/ttyACM0")
-    # optional: also update on any incoming nodeinfo packets via onReceive if you want
     threading.Thread(target=snapshot_nodes_periodically, args=(iface, 30), daemon=True).start()
     print("Nodes ingestor running. Ctrl+C to stop.")
     try:
-        while True: time.sleep(60)
+        while True: time.sleep(300)
     except KeyboardInterrupt:
         pass
 

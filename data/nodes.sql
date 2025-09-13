@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   short_name         TEXT,
   long_name          TEXT,
   macaddr            TEXT,
-  hw_model           TEXT,nodes
+  hw_model           TEXT,
   role               TEXT,
   public_key         TEXT,
   is_unmessagable    BOOLEAN,
