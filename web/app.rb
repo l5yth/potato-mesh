@@ -21,6 +21,7 @@ def query_nodes(limit)
                       LIMIT ?
                     SQL
   rows.each do |r|
+    r["role"] ||= "CLIENT"
     lh = r["last_heard"]; pt = r["position_time"]
     r["last_seen_iso"] = lh ? Time.at(lh.to_i).utc.iso8601 : nil
     r["pos_time_iso"] = pt ? Time.at(pt.to_i).utc.iso8601 : nil
@@ -40,6 +41,7 @@ def upsert_node(db, node_id, n)
   user = n["user"] || {}
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
+  role = user["role"] || "CLIENT"
   row = [
     node_id,
     n["num"],
@@ -47,7 +49,7 @@ def upsert_node(db, node_id, n)
     user["longName"],
     user["macaddr"],
     user["hwModel"] || n["hwModel"],
-    user["role"],
+    role,
     user["publicKey"],
     user["isUnmessagable"],
     n["isFavorite"],
