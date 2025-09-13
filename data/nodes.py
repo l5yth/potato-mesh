@@ -65,7 +65,8 @@ def upsert_node(node_id, n):
         _get(pos, "latitude"),
         _get(pos, "longitude"),
         _get(pos, "altitude"),
-        json.dumps(_jsonable(n), ensure_ascii=False),
+        # @TODO json.dumps(_jsonable(n), ensure_ascii=False),
+        "{'foo'}",
     )
     conn.execute(
         """
@@ -94,8 +95,14 @@ def load_nodes_from_file(path: str | Path):
     conn.commit()
 
 
-def snapshot_nodes_periodically(iface: MeshInterface, every_sec=30):
-    time.sleep(5)  # let the library sync initial node DB
+def main():
+    if SerialInterface is None:
+        raise RuntimeError("meshtastic library not installed")
+    iface = SerialInterface(
+        # or whatever serial interface it is
+        devPath="/dev/ttyACM0"
+    )
+    print("Nodes ingestor running. Ctrl+C to stop.")
     while True:
         try:
             for node_id, n in (getattr(iface, "nodes", {}) or {}).items():
@@ -103,22 +110,7 @@ def snapshot_nodes_periodically(iface: MeshInterface, every_sec=30):
             conn.commit()
         except Exception as e:
             print("node snapshot error:", e)
-        time.sleep(every_sec)
-
-
-def main():
-    if SerialInterface is None:
-        raise RuntimeError("meshtastic library not installed")
-    iface = SerialInterface(devPath="/dev/ttyACM0")
-    threading.Thread(
-        target=snapshot_nodes_periodically, args=(iface, 30), daemon=True
-    ).start()
-    print("Nodes ingestor running. Ctrl+C to stop.")
-    try:
-        while True:
-            time.sleep(300)
-    except KeyboardInterrupt:
-        pass
+        time.sleep(30)
 
 
 if __name__ == "__main__":
