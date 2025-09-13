@@ -11,7 +11,7 @@ set :public_folder, File.join(__dir__, "public")
 def query_nodes(limit)
   db = SQLite3::Database.new(DB_PATH)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limMeshtastic Nodesit]
+  rows = db.execute <<~SQL, [limit]
     SELECT node_id, short_name, long_name, hw_model, role, snr, battery_level,
            last_heard, position_time, latitude, longitude, altitude
     FROM nodes
