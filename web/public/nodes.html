@@ -34,6 +34,7 @@
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
     label { font-size: 14px; color: #333; }
+    input[type="text"] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; }
   </style>
 </head>
 <body>
@@ -45,6 +46,7 @@
     </div>
     <div class="controls">
       <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+      <input type="text" id="filterInput" placeholder="Filter nodes" />
       <button id="refreshBtn" type="button">Refresh now</button>
     </div>
   </div>
@@ -74,6 +76,8 @@
     const statusEl = document.getElementById('status');
     const fitBoundsEl = document.getElementById('fitBounds');
     const refreshBtn = document.getElementById('refreshBtn');
+    const filterInput = document.getElementById('filterInput');
+    let allNodes = [];
 
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
@@ -158,12 +162,24 @@
       }
     }
 
+    function applyFilter() {
+      const q = filterInput.value.trim().toLowerCase();
+      const nodes = !q ? allNodes : allNodes.filter(n => {
+        return [n.node_id, n.short_name, n.long_name]
+          .filter(Boolean)
+          .some(v => v.toLowerCase().includes(q));
+      });
+      renderTable(nodes);
+      renderMap(nodes);
+    }
+
+    filterInput.addEventListener('input', applyFilter);
+
     async function refresh() {
       try {
         statusEl.textContent = 'refreshing…';
-        const nodes = await fetchNodes();
-        renderTable(nodes);
-        renderMap(nodes);
+        allNodes = await fetchNodes();
+        applyFilter();
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
       } catch (e) {
         statusEl.textContent = 'error: ' + e.message;
