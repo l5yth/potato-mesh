@@ -21,7 +21,7 @@
 
   <style>
     :root { --pad: 16px; }
-    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); }
+    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); padding-bottom: 32px; }
     h1  { margin: 0 0 8px }
     .meta { color:#555; margin-bottom:12px }
     .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px }
@@ -42,6 +42,7 @@
     .legend { background: #fff; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; line-height: 18px; }
     .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
     #map .leaflet-tile { filter: opacity(70%); }
+    footer { position: fixed; bottom: 0; left: var(--pad); width: calc(100% - 2 * var(--pad)); background: #fafafa; border-top: 1px solid #ddd; text-align: center; font-size: 12px; padding: 4px 0; }
   </style>
 </head>
 <body>
@@ -80,6 +81,11 @@
     </thead>
     <tbody></tbody>
   </table>
+
+  <footer>
+    Written and hosted by l5y — contact <a href="mailto:com0@l5y.tech">com0@l5y.tech</a> — Matrix:
+    <a href="https://matrix.to/#/#meshtastic-berlin:matrix.org">#meshtastic-berlin:matrix.org</a>
+  </footer>
 
   <script>
     const statusEl = document.getElementById('status');
