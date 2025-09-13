@@ -16,6 +16,7 @@ conn = sqlite3.connect(DB, check_same_thread=False)
 conn.executescript(schema)
 conn.commit()
 
+
 def _get(obj, key, default=None):
     """Return value for key/attribute from dicts or objects."""
     if isinstance(obj, dict):
@@ -66,7 +67,8 @@ def upsert_node(node_id, n):
         _get(pos, "altitude"),
         json.dumps(_jsonable(n), ensure_ascii=False),
     )
-    conn.execute("""
+    conn.execute(
+        """
     INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                       hops_away,snr,last_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
                       position_time,location_source,latitude,longitude,altitude,node_json)
@@ -79,7 +81,9 @@ def upsert_node(node_id, n):
       air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
       location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
       altitude=excluded.altitude, node_json=excluded.node_json
-    """, row)
+    """,
+        row,
+    )
 
 
 def load_nodes_from_file(path: str | Path):
@@ -88,6 +92,7 @@ def load_nodes_from_file(path: str | Path):
     for node_id, node in nodes.items():
         upsert_node(node_id, node)
     conn.commit()
+
 
 def snapshot_nodes_periodically(iface: MeshInterface, every_sec=30):
     time.sleep(5)  # let the library sync initial node DB
@@ -100,16 +105,21 @@ def snapshot_nodes_periodically(iface: MeshInterface, every_sec=30):
             print("node snapshot error:", e)
         time.sleep(every_sec)
 
+
 def main():
     if SerialInterface is None:
         raise RuntimeError("meshtastic library not installed")
     iface = SerialInterface(devPath="/dev/ttyACM0")
-    threading.Thread(target=snapshot_nodes_periodically, args=(iface, 30), daemon=True).start()
+    threading.Thread(
+        target=snapshot_nodes_periodically, args=(iface, 30), daemon=True
+    ).start()
     print("Nodes ingestor running. Ctrl+C to stop.")
     try:
-        while True: time.sleep(300)
+        while True:
+            time.sleep(300)
     except KeyboardInterrupt:
         pass
+
 
 if __name__ == "__main__":
     main()
