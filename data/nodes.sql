@@ -24,8 +24,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   location_source    TEXT,
   latitude           REAL,
   longitude          REAL,
-  altitude           REAL,
-  node_json          TEXT NOT NULL      -- full original node object for debugging
+  altitude           REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);

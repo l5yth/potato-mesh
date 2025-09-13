@@ -1,5 +1,4 @@
 import json, os, sqlite3, time, threading
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 try:  # meshtastic is optional for tests
@@ -22,19 +21,6 @@ def _get(obj, key, default=None):
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
-
-
-def _jsonable(obj):
-    """Recursively convert dataclasses and objects into JSON-serialisable types."""
-    if is_dataclass(obj):
-        return _jsonable(asdict(obj))
-    if isinstance(obj, dict):
-        return {k: _jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_jsonable(v) for v in obj]
-    if hasattr(obj, "__dict__"):
-        return _jsonable(vars(obj))
-    return obj
 
 
 def upsert_node(node_id, n):
@@ -65,14 +51,13 @@ def upsert_node(node_id, n):
         _get(pos, "latitude"),
         _get(pos, "longitude"),
         _get(pos, "altitude"),
-        json.dumps(_jsonable(n), ensure_ascii=False),
     )
     conn.execute(
         """
     INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                       hops_away,snr,last_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                      position_time,location_source,latitude,longitude,altitude,node_json)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                      position_time,location_source,latitude,longitude,altitude)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(node_id) DO UPDATE SET
       num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
       hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
@@ -80,7 +65,7 @@ def upsert_node(node_id, n):
       battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
       air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
       location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
-      altitude=excluded.altitude, node_json=excluded.node_json
+      altitude=excluded.altitude
     """,
         row,
     )
