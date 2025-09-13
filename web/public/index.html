@@ -240,11 +240,16 @@
       try {
         statusEl.textContent = 'refreshing…';
         const nodes = await fetchNodes();
+        const newNodes = [];
         for (const n of nodes) {
           if (n.node_id && !seenNodeIds.has(n.node_id)) {
-            addChatEntry(n);
+            newNodes.push(n);
             seenNodeIds.add(n.node_id);
           }
+        }
+        newNodes.sort((a, b) => (a.last_heard ?? 0) - (b.last_heard ?? 0));
+        for (const n of newNodes) {
+          addChatEntry(n);
         }
         allNodes = nodes;
         applyFilter();
