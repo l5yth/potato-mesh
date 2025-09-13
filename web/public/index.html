@@ -49,7 +49,7 @@
   <h1>Meshtastic Berlin</h1>
   <div class="row meta">
     <div>
-      <span>#MediumFast - auto-refresh every 30 seconds.</span>
+      <span>#MediumFast — auto-refresh every 60 seconds.</span>
       <span id="status" class="pill">loading…</span>
       <button id="refreshBtn" type="button">Refresh now</button>
     </div>
@@ -83,8 +83,9 @@
   </table>
 
   <footer>
-    Written and hosted by l5y — contact <a href="mailto:com0@l5y.tech">com0@l5y.tech</a> — Matrix:
-    <a href="https://matrix.to/#/#meshtastic-berlin:matrix.org">#meshtastic-berlin:matrix.org</a>
+    PotatoMesh GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a> —
+    Meshtastic Berlin Matrix:
+    <a href="https://matrix.to/#/#meshtastic-berlin:matrix.org" target="_blank">#meshtastic-berlin:matrix.org</a>
   </footer>
 
   <script>
@@ -267,7 +268,7 @@
     }
 
     refresh();
-    setInterval(refresh, 30000);
+    setInterval(refresh, 60000);
     refreshBtn.addEventListener('click', refresh);
 
     function updateCount(count) {
