@@ -43,7 +43,8 @@ def test_upsert_node_handles_position(tmp_path):
             longitude: float = 13.4
             altitude: float = 34.0
 
-        n = {"num": 7, "position": Position()}
+        extra = types.MappingProxyType({"foo": "bar"})
+        n = {"num": 7, "position": Position(), "extra": extra}
         nodes.upsert_node("node1", n)
         nodes.conn.commit()
         row = nodes.conn.execute(
@@ -52,5 +53,6 @@ def test_upsert_node_handles_position(tmp_path):
         assert row is not None
         data = json.loads(row[0])
         assert data["position"]["latitude"] == 52.5
+        assert data["extra"]["foo"] == "bar"
     finally:
         os.chdir(cwd)

@@ -1,4 +1,5 @@
 import json, sqlite3, time, threading
+from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from meshtastic.serial_interface import SerialInterface
@@ -22,7 +23,7 @@ def _jsonable(obj):
     """Recursively convert dataclasses and objects into JSON-serialisable types."""
     if is_dataclass(obj):
         return _jsonable(asdict(obj))
-    if isinstance(obj, dict):
+    if isinstance(obj, Mapping):
         return {k: _jsonable(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_jsonable(v) for v in obj]
