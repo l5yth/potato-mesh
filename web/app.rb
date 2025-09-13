@@ -111,7 +111,3 @@ end
 get "/" do
   send_file File.join(settings.public_folder, "index.html")
 end
-
-get "/nodes" do
-  send_file File.join(settings.public_folder, "nodes.html")
-end

@@ -1,22 +1,260 @@
+</html>
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Potato Mesh</title>
+  <title>Meshtastic Berlin</title>
+
+  <!-- Leaflet CSS/JS (CDN) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
   <style>
-    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: 16px; }
-    nav ul { list-style: none; padding: 0; }
-    nav li { margin: 8px 0; }
+    :root { --pad: 16px; }
+    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); }
+    h1  { margin: 0 0 8px }
+    .meta { color:#555; margin-bottom:12px }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px }
+    #map { flex: 1; height: 60vh; border: 1px solid #ddd; border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; margin-top: var(--pad); }
+    th, td { border-bottom: 1px solid #ddd; padding: 6px; text-align: left; }
+    th { position: sticky; top: 0; background: #fafafa; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .row { display: flex; gap: var(--pad); align-items: center; justify-content: space-between; }
+    .map-row { display: flex; gap: var(--pad); align-items: stretch; }
+    #chat { flex: 0 0 20%; max-width: 20%; height: 60vh; border: 1px solid #ddd; border-radius: 8px; overflow-y: auto; padding: 6px; font-size: 12px; }
+    .chat-entry { margin-bottom: 4px; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #f6f6f6; }
+    label { font-size: 14px; color: #333; }
+    input[type="text"] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; }
+    .legend { background: #fff; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; line-height: 18px; }
+    .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
+    #map .leaflet-tile { filter: opacity(70%); }
   </style>
 </head>
 <body>
-  <h1>Potato Mesh</h1>
-  <p>Welcome to the Potato Mesh dashboard.</p>
-  <nav>
-    <ul>
-      <li><a href="/nodes">Nodes map</a></li>
-    </ul>
-  </nav>
+  <h1>Meshtastic Berlin</h1>
+  <div class="row meta">
+    <div>
+      <span>#MediumFast - auto-refresh every 30 seconds.</span>
+      <span id="status" class="pill">loading…</span>
+      <button id="refreshBtn" type="button">Refresh now</button>
+    </div>
+    <div class="controls">
+      <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+      <input type="text" id="filterInput" placeholder="Filter nodes" />
+    </div>
+  </div>
+
+  <div class="map-row">
+    <div id="chat" aria-label="Chat log"></div>
+    <div id="map" role="region" aria-label="Nodes map"></div>
+  </div>
+
+  <table id="nodes">
+    <thead>
+      <tr>
+        <th>Node ID</th>
+        <th>Short</th>
+        <th>Long Name</th>
+        <th>HW Model</th>
+        <th>Role</th>
+        <th>Battery</th>
+        <th>Last Seen</th>
+        <th>Lat</th>
+        <th>Lon</th>
+        <th>Last Position</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const fitBoundsEl = document.getElementById('fitBounds');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const filterInput = document.getElementById('filterInput');
+    const titleEl = document.querySelector('title');
+    const headerEl = document.querySelector('h1');
+    const chatEl = document.getElementById('chat');
+    const baseTitle = document.title;
+    let allNodes = [];
+    const seenNodeIds = new Set();
+
+    const roleColors = {
+      CLIENT: '#A8D5BA',
+      CLIENT_HIDDEN: '#B8DCA9',
+      CLIENT_MUTE: '#D2E3A2',
+      TRACKER: '#E8E6A1',
+      SENSOR: '#F4E3A3',
+      LOST_AND_FOUND: '#F9D4A6',
+      REPEATER: '#F7B7A3',
+      ROUTER_LATE: '#F29AA3',
+      ROUTER: '#E88B94'
+    };
+
+    // --- Map setup ---
+    const map = L.map('map', { worldCopyJump: true });
+    const tiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors &amp; WMF Labs'
+    }).addTo(map);
+    // Default view (Berlin) until first data arrives
+    map.setView([52.5200, 13.4050], 10);
+
+    const markersLayer = L.layerGroup().addTo(map);
+
+    const legend = L.control({ position: 'bottomright' });
+    legend.onAdd = function () {
+      const div = L.DomUtil.create('div', 'legend');
+      for (const [role, color] of Object.entries(roleColors)) {
+        div.innerHTML += `<div><span style="background:${color}"></span>${role}</div>`;
+      }
+      return div;
+    };
+    legend.addTo(map);
+
+    // --- Helpers ---
+    function addChatEntry(n) {
+      const ts = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = 'chat-entry';
+      div.textContent = `[${ts}] ${n.node_id || ''} ${n.short_name || ''} ${n.long_name || ''}`;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+    function fmt(v, d = 5) {
+      if (v == null) return "";
+      const n = Number(v);
+      return Number.isNaN(n) ? "" : n.toFixed(d);
+    }
+
+    function timeAgo(unixSec) {
+      if (!unixSec) return "";
+      const diff = Math.floor(Date.now()/1000 - Number(unixSec));
+      if (diff < 0) return "0s ago";
+      if (diff < 60) return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m ago`;
+      return `${Math.floor(diff/86400)}d ago`;
+    }
+
+    async function fetchNodes() {
+      const r = await fetch('/api/nodes?limit=1000', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
+    function renderTable(nodes) {
+      const tb = document.querySelector('#nodes tbody');
+      tb.innerHTML = '';
+      for (const n of nodes) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="mono">${n.node_id || ""}</td>
+          <td>${n.short_name || ""}</td>
+          <td>${n.long_name || ""}</td>
+          <td>${n.hw_model || ""}</td>
+          <td>${n.role || "CLIENT"}</td>
+          <td>${n.battery_level ?? ""}</td>
+          <td>${timeAgo(n.last_heard)}</td>
+          <td>${fmt(n.latitude)}</td>
+          <td>${fmt(n.longitude)}</td>
+          <td class="mono">${n.pos_time_iso ? `${timeAgo(n.position_time)}` : ""}</td>`;
+        tb.appendChild(tr);
+      }
+    }
+
+    function renderMap(nodes) {
+      markersLayer.clearLayers();
+      const pts = [];
+      for (const n of nodes) {
+        if (n.latitude == null || n.longitude == null) continue;
+        const lat = Number(n.latitude), lon = Number(n.longitude);
+        if (Number.isNaN(lat) || Number.isNaN(lon)) continue;
+
+        const color = roleColors[n.role] || '#3388ff';
+        const marker = L.circleMarker([lat, lon], {
+          radius: 9,
+          color: '#000',
+          weight: 1,
+          fillColor: color,
+          fillOpacity: 0.7,
+          opacity: 0.7
+        });
+        const lines = [
+          `<b>${n.long_name || ''}</b>`,
+          `<b>${n.short_name || ''}</b> <span class="mono">${n.node_id || ''}</span>`,
+          n.hw_model ? `Model: ${n.hw_model}` : null,
+          `Role: ${n.role || 'CLIENT'}`,
+          (n.battery_level != null ? `Battery: ${n.battery_level}` : null),
+          (n.last_heard ? `Last seen: ${timeAgo(n.last_heard)}` : null),
+          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time)}` : null)
+        ].filter(Boolean);
+        marker.bindPopup(lines.join('<br/>'));
+        marker.addTo(markersLayer);
+        pts.push([lat, lon]);
+      }
+      if (pts.length && fitBoundsEl.checked) {
+        const b = L.latLngBounds(pts);
+        map.fitBounds(b.pad(0.2), { animate: false });
+      }
+    }
+
+    function applyFilter() {
+      const q = filterInput.value.trim().toLowerCase();
+      const nodes = !q ? allNodes : allNodes.filter(n => {
+        return [n.node_id, n.short_name, n.long_name]
+          .filter(Boolean)
+          .some(v => v.toLowerCase().includes(q));
+      });
+      renderTable(nodes);
+      renderMap(nodes);
+      updateCount(nodes.length);
+    }
+
+    filterInput.addEventListener('input', applyFilter);
+
+    async function refresh() {
+      try {
+        statusEl.textContent = 'refreshing…';
+        const nodes = await fetchNodes();
+        for (const n of nodes) {
+          if (n.node_id && !seenNodeIds.has(n.node_id)) {
+            addChatEntry(n);
+            seenNodeIds.add(n.node_id);
+          }
+        }
+        allNodes = nodes;
+        applyFilter();
+        statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        statusEl.textContent = 'error: ' + e.message;
+        console.error(e);
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 30000);
+    refreshBtn.addEventListener('click', refresh);
+
+    function updateCount(count) {
+      const text = `${baseTitle} (${count})`;
+      titleEl.textContent = text;
+      headerEl.textContent = text;
+    }
+  </script>
 </body>
 </html>
