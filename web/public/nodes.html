@@ -173,7 +173,7 @@
           <td>${timeAgo(n.last_heard)}</td>
           <td>${fmt(n.latitude)}</td>
           <td>${fmt(n.longitude)}</td>
-          <td class="mono">${n.pos_time_iso || ""}</td>`;
+          <td class="mono">${n.pos_time_iso ? `${n.pos_time_iso} (${timeAgo(n.position_time)})` : ""}</td>`;
         tb.appendChild(tr);
       }
     }
@@ -202,7 +202,7 @@
           (n.snr != null ? `SNR: ${n.snr}` : null),
           (n.battery_level != null ? `Battery: ${n.battery_level}` : null),
           (n.last_heard ? `Last seen: ${timeAgo(n.last_heard)}` : null),
-          (n.pos_time_iso ? `Pos time: ${n.pos_time_iso}` : null)
+          (n.pos_time_iso ? `Pos time: ${n.pos_time_iso} (${timeAgo(n.position_time)})` : null)
         ].filter(Boolean);
         marker.bindPopup(lines.join('<br/>'));
         marker.addTo(markersLayer);
