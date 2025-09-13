@@ -41,3 +41,39 @@ def test_query_nodes_from_web_app(tmp_path):
     assert len(data) == 5
     last_heards = [item["last_heard"] for item in data]
     assert last_heards == sorted(last_heards, reverse=True)
+
+
+def test_post_nodes_to_web_app(tmp_path):
+    db_path = tmp_path / "nodes.db"
+    os.environ["MESH_DB"] = str(db_path)
+    os.environ["API_TOKEN"] = "secrettoken"
+
+    web_dir = Path(__file__).resolve().parents[1] / "web"
+    nodes_json = Path(__file__).with_name("nodes.json")
+    try:
+        subprocess.run(["bundle", "install"], cwd=web_dir, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        env = os.environ.copy()
+        env["MESH_DB"] = str(db_path)
+        env["API_TOKEN"] = "secrettoken"
+        ruby = (
+            "require_relative 'app'; require 'json'; require 'rack/mock'; require 'sqlite3';"\
+            f"nodes = File.read({json.dumps(str(nodes_json))});"\
+            "req = Rack::MockRequest.new(Sinatra::Application);"\
+            "res = req.post('/api/nodes', 'CONTENT_TYPE' => 'application/json', 'HTTP_AUTHORIZATION' => 'Bearer secrettoken', :input => nodes);"\
+            "puts res.status;"\
+            "db = SQLite3::Database.new(ENV['MESH_DB']);"\
+            "puts db.get_first_value('SELECT COUNT(*) FROM nodes');"
+        )
+        out = subprocess.check_output(
+            ["bundle", "exec", "ruby", "-e", ruby],
+            cwd=web_dir,
+            env=env,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError:
+        pytest.skip("ruby dependencies not installed")
+
+    lines = out.decode().strip().splitlines()
+    assert lines[0] == "200"
+    expected = len(json.load(open(nodes_json)))
+    assert int(lines[1]) == expected

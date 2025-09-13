@@ -65,8 +65,7 @@ def upsert_node(node_id, n):
         _get(pos, "latitude"),
         _get(pos, "longitude"),
         _get(pos, "altitude"),
-        # @TODO json.dumps(_jsonable(n), ensure_ascii=False),
-        "{'foo'}",
+        json.dumps(_jsonable(n), ensure_ascii=False),
     )
     conn.execute(
         """
