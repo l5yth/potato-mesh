@@ -1,4 +1,5 @@
 import json, os, sqlite3, time, threading
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 try:  # meshtastic is optional for tests
@@ -15,35 +16,55 @@ conn = sqlite3.connect(DB, check_same_thread=False)
 conn.executescript(schema)
 conn.commit()
 
+def _get(obj, key, default=None):
+    """Return value for key/attribute from dicts or objects."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _jsonable(obj):
+    """Recursively convert dataclasses and objects into JSON-serialisable types."""
+    if is_dataclass(obj):
+        return _jsonable(asdict(obj))
+    if isinstance(obj, dict):
+        return {k: _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if hasattr(obj, "__dict__"):
+        return _jsonable(vars(obj))
+    return obj
+
+
 def upsert_node(node_id, n):
-    user = (n.get("user") or {})
-    met  = (n.get("deviceMetrics") or {})
-    pos  = (n.get("position") or {})
+    user = _get(n, "user") or {}
+    met = _get(n, "deviceMetrics") or {}
+    pos = _get(n, "position") or {}
     row = (
         node_id,
-        n.get("num"),
-        user.get("shortName"),
-        user.get("longName"),
-        user.get("macaddr"),
-        user.get("hwModel") or n.get("hwModel"),
-        user.get("role"),
-        user.get("publicKey"),
-        user.get("isUnmessagable"),
-        n.get("isFavorite"),
-        n.get("hopsAway"),
-        n.get("snr"),
-        n.get("lastHeard"),
-        met.get("batteryLevel"),
-        met.get("voltage"),
-        met.get("channelUtilization"),
-        met.get("airUtilTx"),
-        met.get("uptimeSeconds"),
-        pos.get("time"),
-        pos.get("locationSource"),
-        pos.get("latitude"),
-        pos.get("longitude"),
-        pos.get("altitude"),
-        json.dumps(n, ensure_ascii=False)
+        _get(n, "num"),
+        _get(user, "shortName"),
+        _get(user, "longName"),
+        _get(user, "macaddr"),
+        _get(user, "hwModel") or _get(n, "hwModel"),
+        _get(user, "role"),
+        _get(user, "publicKey"),
+        _get(user, "isUnmessagable"),
+        _get(n, "isFavorite"),
+        _get(n, "hopsAway"),
+        _get(n, "snr"),
+        _get(n, "lastHeard"),
+        _get(met, "batteryLevel"),
+        _get(met, "voltage"),
+        _get(met, "channelUtilization"),
+        _get(met, "airUtilTx"),
+        _get(met, "uptimeSeconds"),
+        _get(pos, "time"),
+        _get(pos, "locationSource"),
+        _get(pos, "latitude"),
+        _get(pos, "longitude"),
+        _get(pos, "altitude"),
+        json.dumps(_jsonable(n), ensure_ascii=False),
     )
     conn.execute("""
     INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,

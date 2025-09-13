@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Berlin MediumFast Meshtastic Nodes Map</title>
+
+  <!-- Leaflet CSS/JS (CDN) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <style>
+    :root { --pad: 16px; }
+    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); }
+    h1  { margin: 0 0 8px }
+    .meta { color:#555; margin-bottom:12px }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px }
+    #map { height: 60vh; border: 1px solid #ddd; border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; margin-top: var(--pad); }
+    th, td { border-bottom: 1px solid #ddd; padding: 6px; text-align: left; }
+    th { position: sticky; top: 0; background: #fafafa; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .row { display: flex; gap: var(--pad); align-items: center; justify-content: space-between; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #f6f6f6; }
+    label { font-size: 14px; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>Berlin MediumFast Meshtastic Nodes Map</h1>
+  <div class="row meta">
+    <div>
+      <span id="status" class="pill">loading…</span>
+      <span>Auto-refresh every 30 s.</span>
+    </div>
+    <div class="controls">
+      <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+      <button id="refreshBtn" type="button">Refresh now</button>
+    </div>
+  </div>
+
+  <div id="map" role="region" aria-label="Nodes map"></div>
+
+  <table id="nodes">
+    <thead>
+      <tr>
+        <th>Node ID</th>
+        <th>Short</th>
+        <th>Long Name</th>
+        <th>HW Model</th>
+        <th>Role</th>
+        <th>SNR</th>
+        <th>Battery</th>
+        <th>Last Seen</th>
+        <th>Lat</th>
+        <th>Lon</th>
+        <th>Pos Time (UTC)</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const fitBoundsEl = document.getElementById('fitBounds');
+    const refreshBtn = document.getElementById('refreshBtn');
+
+    // --- Map setup ---
+    const map = L.map('map', { worldCopyJump: true });
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    // Default view (Berlin) until first data arrives
+    map.setView([52.5200, 13.4050], 10);
+
+    const markersLayer = L.layerGroup().addTo(map);
+
+    // --- Helpers ---
+    function fmt(v, d = 5) {
+      if (v == null) return "";
+      const n = Number(v);
+      return Number.isNaN(n) ? "" : n.toFixed(d);
+    }
+
+    function timeAgo(unixSec) {
+      if (!unixSec) return "";
+      const diff = Math.floor(Date.now()/1000 - Number(unixSec));
+      if (diff < 0) return "0s ago";
+      if (diff < 60) return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m ago`;
+      return `${Math.floor(diff/86400)}d ago`;
+    }
+
+    async function fetchNodes() {
+      const r = await fetch('/api/nodes?limit=1000', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
+    function renderTable(nodes) {
+      const tb = document.querySelector('#nodes tbody');
+      tb.innerHTML = '';
+      for (const n of nodes) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="mono">${n.node_id || ""}</td>
+          <td>${n.short_name || ""}</td>
+          <td>${n.long_name || ""}</td>
+          <td>${n.hw_model || ""}</td>
+          <td>${n.role || ""}</td>
+          <td>${n.snr ?? ""}</td>
+          <td>${n.battery_level ?? ""}</td>
+          <td>${timeAgo(n.last_heard)}</td>
+          <td>${fmt(n.latitude)}</td>
+          <td>${fmt(n.longitude)}</td>
+          <td class="mono">${n.pos_time_iso || ""}</td>`;
+        tb.appendChild(tr);
+      }
+    }
+
+    function renderMap(nodes) {
+      markersLayer.clearLayers();
+      const pts = [];
+      for (const n of nodes) {
+        if (n.latitude == null || n.longitude == null) continue;
+        const lat = Number(n.latitude), lon = Number(n.longitude);
+        if (Number.isNaN(lat) || Number.isNaN(lon)) continue;
+
+        const marker = L.marker([lat, lon]);
+        const lines = [
+          `<b>${n.short_name || ''}</b> <span class="mono">${n.node_id || ''}</span>`,
+          n.hw_model ? `Model: ${n.hw_model}` : null,
+          n.role ? `Role: ${n.role}` : null,
+          (n.snr != null ? `SNR: ${n.snr}` : null),
+          (n.battery_level != null ? `Battery: ${n.battery_level}` : null),
+          (n.last_heard ? `Last seen: ${timeAgo(n.last_heard)}` : null),
+          (n.pos_time_iso ? `Pos time: ${n.pos_time_iso}` : null)
+        ].filter(Boolean);
+        marker.bindPopup(lines.join('<br/>'));
+        marker.addTo(markersLayer);
+        pts.push([lat, lon]);
+      }
+      if (pts.length && fitBoundsEl.checked) {
+        const b = L.latLngBounds(pts);
+        map.fitBounds(b.pad(0.2), { animate: false });
+      }
+    }
+
+    async function refresh() {
+      try {
+        statusEl.textContent = 'refreshing…';
+        const nodes = await fetchNodes();
+        renderTable(nodes);
+        renderMap(nodes);
+        statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        statusEl.textContent = 'error: ' + e.message;
+        console.error(e);
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 30000);
+    refreshBtn.addEventListener('click', refresh);
+  </script>
+</body>
+</html>
