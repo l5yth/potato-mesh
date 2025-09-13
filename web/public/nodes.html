@@ -77,6 +77,9 @@
     const fitBoundsEl = document.getElementById('fitBounds');
     const refreshBtn = document.getElementById('refreshBtn');
     const filterInput = document.getElementById('filterInput');
+    const titleEl = document.querySelector('title');
+    const headerEl = document.querySelector('h1');
+    const baseTitle = document.title;
     let allNodes = [];
 
     // --- Map setup ---
@@ -171,6 +174,7 @@
       });
       renderTable(nodes);
       renderMap(nodes);
+      updateCount(nodes.length);
     }
 
     filterInput.addEventListener('input', applyFilter);
@@ -190,6 +194,12 @@
     refresh();
     setInterval(refresh, 30000);
     refreshBtn.addEventListener('click', refresh);
+
+    function updateCount(count) {
+      const text = `${baseTitle} (${count})`;
+      titleEl.textContent = text;
+      headerEl.textContent = text;
+    }
   </script>
 </body>
 </html>
