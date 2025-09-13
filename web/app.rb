@@ -11,10 +11,12 @@ set :public_folder, File.join(__dir__, "public")
 def query_nodes(limit)
   db = SQLite3::Database.new(DB_PATH)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
+  min_last_heard = Time.now.to_i - 7 * 24 * 60 * 60
+  rows = db.execute <<~SQL, [min_last_heard, limit]
                       SELECT node_id, short_name, long_name, hw_model, role, snr, battery_level,
                              last_heard, position_time, latitude, longitude, altitude
                       FROM nodes
+                      WHERE last_heard >= ?
                       ORDER BY last_heard DESC
                       LIMIT ?
                     SQL

@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import time
+import sqlite3
 
 import pytest
 
@@ -28,7 +30,7 @@ def test_query_nodes_from_web_app(tmp_path):
                 "exec",
                 "ruby",
                 "-e",
-                'require_relative "app"; require "json"; puts query_nodes(5).to_json'
+                'require_relative "app"; require "json"; puts query_nodes(1000).to_json'
             ],
             cwd=web_dir,
             env=env,
@@ -38,9 +40,16 @@ def test_query_nodes_from_web_app(tmp_path):
         pytest.skip("ruby dependencies not installed")
 
     data = json.loads(out)
-    assert len(data) == 5
+    conn = sqlite3.connect(db_path)
+    threshold = int(time.time()) - 7 * 24 * 60 * 60
+    expected = conn.execute("SELECT COUNT(*) FROM nodes WHERE last_heard >= ?", (threshold,)).fetchone()[0]
+    old_count = conn.execute("SELECT COUNT(*) FROM nodes WHERE last_heard < ?", (threshold,)).fetchone()[0]
+    conn.close()
+    assert old_count > 0
+    assert len(data) == expected
     last_heards = [item["last_heard"] for item in data]
     assert last_heards == sorted(last_heards, reverse=True)
+    assert all(lh is None or lh >= threshold for lh in last_heards)
 
 
 def test_post_nodes_to_web_app(tmp_path):
