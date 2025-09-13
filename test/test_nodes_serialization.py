@@ -1,4 +1,3 @@
-import json
 import os
 import sqlite3
 import sys
@@ -47,10 +46,9 @@ def test_upsert_node_handles_position(tmp_path):
         nodes.upsert_node("node1", n)
         nodes.conn.commit()
         row = nodes.conn.execute(
-            "SELECT node_json FROM nodes WHERE node_id=?", ("node1",)
+            "SELECT latitude FROM nodes WHERE node_id=?", ("node1",)
         ).fetchone()
         assert row is not None
-        data = json.loads(row[0])
-        assert data["position"]["latitude"] == 52.5
+        assert row[0] == 52.5
     finally:
         os.chdir(cwd)
