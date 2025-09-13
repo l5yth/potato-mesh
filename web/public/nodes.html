@@ -35,6 +35,8 @@
     button:hover { background: #f6f6f6; }
     label { font-size: 14px; color: #333; }
     input[type="text"] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; }
+    .legend { background: #fff; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; line-height: 18px; }
+    .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -82,16 +84,38 @@
     const baseTitle = document.title;
     let allNodes = [];
 
+    const roleColors = {
+      CLIENT: '#A8D5BA',
+      CLIENT_HIDDEN: '#B8DCA9',
+      CLIENT_MUTE: '#D2E3A2',
+      TRACKER: '#E8E6A1',
+      SENSOR: '#F4E3A3',
+      LOST_AND_FOUND: '#F9D4A6',
+      REPEATER: '#F7B7A3',
+      ROUTER_LATE: '#F29AA3',
+      ROUTER: '#E88B94'
+    };
+
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
+    const tiles = L.tileLayer('https://tiles.wmflabs.org/bw-mapnik/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors &amp; WMF Labs'
     }).addTo(map);
     // Default view (Berlin) until first data arrives
     map.setView([52.5200, 13.4050], 10);
 
     const markersLayer = L.layerGroup().addTo(map);
+
+    const legend = L.control({ position: 'bottomright' });
+    legend.onAdd = function () {
+      const div = L.DomUtil.create('div', 'legend');
+      for (const [role, color] of Object.entries(roleColors)) {
+        div.innerHTML += `<div><span style="background:${color}"></span>${role}</div>`;
+      }
+      return div;
+    };
+    legend.addTo(map);
 
     // --- Helpers ---
     function fmt(v, d = 5) {
@@ -145,7 +169,14 @@
         const lat = Number(n.latitude), lon = Number(n.longitude);
         if (Number.isNaN(lat) || Number.isNaN(lon)) continue;
 
-        const marker = L.marker([lat, lon]);
+        const color = roleColors[n.role] || '#3388ff';
+        const marker = L.circleMarker([lat, lon], {
+          radius: 6,
+          color: '#000',
+          weight: 1,
+          fillColor: color,
+          fillOpacity: 1
+        });
         const lines = [
           `<b>${n.short_name || ''}</b> <span class="mono">${n.node_id || ''}</span>`,
           n.hw_model ? `Model: ${n.hw_model}` : null,
