@@ -38,11 +38,6 @@ def upsert_node(node_id, n):
     pos = _get(n, "position") or {}
     lh = _get(n, "lastHeard")
     pt = _get(pos, "time")
-    now = int(time.time())
-    if lh is not None and lh > now:
-        lh = now
-    if pt is not None and pt > now:
-        pt = now
     if pt is not None and (lh is None or lh < pt):
         lh = pt
     row = (

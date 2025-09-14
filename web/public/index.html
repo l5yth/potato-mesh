@@ -200,9 +200,15 @@
     function timeAgo(unixSec) {
       if (!unixSec) return "";
       const diff = Math.floor(Date.now()/1000 - Number(unixSec));
-      if (diff < 0) return "0s";
+      if (diff < 0) {
+        const future = -diff;
+        if (future < 60) return `in ${future}s`;
+        if (future < 3600) return `in ${Math.floor(future/60)}m ${Math.floor(future%60)}s`;
+        if (future < 86400) return `in ${Math.floor(future/3600)}h ${Math.floor((future%3600)/60)}m`;
+        return `in ${Math.floor(future/86400)}d ${Math.floor((future%86400)/3600)}h`;
+      }
       if (diff < 60) return `${diff}s`;
-      if (diff < 3600) return `${Math.floor(diff/60)}m ${Math.floor((diff%60))}s`;
+      if (diff < 3600) return `${Math.floor(diff/60)}m ${Math.floor(diff%60)}s`;
       if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m`;
       return `${Math.floor(diff/86400)}d ${Math.floor((diff%86400)/3600)}h`;
     }
