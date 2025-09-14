@@ -2,18 +2,17 @@
 import json, os, sqlite3, time, threading, signal
 from pathlib import Path
 
-try:  # meshtastic is optional for tests
-    from meshtastic.serial_interface import SerialInterface
-    from meshtastic.mesh_interface import MeshInterface
-except ModuleNotFoundError:  # pragma: no cover - imported lazily for hardware usage
-    SerialInterface = None  # type: ignore
-    MeshInterface = None  # type: ignore
+from meshtastic.serial_interface import SerialInterface
+from meshtastic.mesh_interface import MeshInterface
+from pubsub import pub
+from google.protobuf.json_format import MessageToDict
+from google.protobuf.message import Message as ProtoMessage
 
 # --- Config (env overrides) ---------------------------------------------------
 DB = os.environ.get("MESH_DB", "mesh.db")
 PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
 SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "30"))
-CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))  # main #MediumFast
+CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 
 # --- DB setup -----------------------------------------------------------------
 nodeSchema = Path(__file__).with_name("nodes.sql").read_text()
@@ -82,42 +81,71 @@ def upsert_node(node_id, n):
             row,
         )
 
-# --- Nodes.json loader (unchanged) -------------------------------------------
-def load_nodes_from_file(path: str | Path):
-    """Populate the database from a nodes.json file."""
-    nodes = json.loads(Path(path).read_text())
-    for node_id, node in nodes.items():
-        upsert_node(node_id, node)
-    with DB_LOCK:
-        conn.commit()
-
-# --- Message logging via the same SerialInterface -----------------------------
+# --- Message logging via PubSub -----------------------------------------------
 def _iso(ts: int | float) -> str:
     import datetime
     return datetime.datetime.utcfromtimestamp(int(ts)).isoformat() + "Z"
 
-def store_packet(packet: dict):
-    """Store a received packet into messages table (filtered by channel)."""
-    dec = packet.get("decoded") or {}
-    ch = dec.get("channel", packet.get("channel"))
+def _first(d: dict, *names, default=None):
+    """Return first present key from names (supports nested 'a.b' lookups)."""
+    for name in names:
+        cur = d
+        parts = name.split(".")
+        ok = True
+        for p in parts:
+            if isinstance(cur, dict) and p in cur:
+                cur = cur[p]
+            else:
+                ok = False
+                break
+        if ok:
+            return cur
+    return default
+
+def _pkt_to_dict(packet) -> dict:
+    """Convert protobuf MeshPacket or already-dict into a JSON-friendly dict."""
+    if isinstance(packet, dict):
+        return packet
+    if isinstance(packet, ProtoMessage):
+        return MessageToDict(packet, preserving_proto_field_name=True, use_integers_for_enums=False)
+    # Last resort: try to read attributes
+    try:
+        return json.loads(json.dumps(packet, default=lambda o: str(o)))
+    except Exception:
+        return {"_unparsed": str(packet)}
+
+def store_packet_dict(p: dict):
+    """
+    Store only TEXT messages (decoded.payload.text) to the DB.
+    Safe against snake/camel case differences.
+    """
+    dec = p.get("decoded") or {}
+    text = _first(dec, "payload.text", "text", default=None)
+    if not text:
+        return  # ignore non-text packets
+
+    # port filter (optional): ensure it's TEXT_MESSAGE_APP if present
+    portnum = _first(dec, "portnum", default=None)
+    # If you want to enforce: if portnum and portnum != "TEXT_MESSAGE_APP": return
+
+    # channel (prefer decoded.channel if present; else top-level)
+    ch = _first(dec, "channel", default=None)
     if ch is None:
-        ch = 0  # default to main if radio didn't annotate
+        ch = _first(p, "channel", default=0)
     try:
         ch = int(ch)
     except Exception:
         ch = 0
 
-    # if ch != CHANNEL_INDEX:
-    #     return  # only log main channel (override via env if needed)
+    # timestamps & ids
+    rx_time = int(_first(p, "rxTime", "rx_time", default=time.time()))
+    from_id = _first(p, "fromId", "from_id", "from", default=None)
+    to_id   = _first(p, "toId", "to_id", "to", default=None)
 
-    rx_time = int(packet.get("rxTime") or time.time())
-    from_id = packet.get("fromId")
-    to_id   = packet.get("toId")
-    portnum = dec.get("portnum")  # can be enum name or numeric
-    text    = dec.get("text")
-    snr     = packet.get("snr")
-    rssi    = packet.get("rssi")
-    hop     = packet.get("hopLimit") or packet.get("hop_limit")
+    # link metrics
+    snr  = _first(p, "snr", "rx_snr", "rxSnr", default=None)
+    rssi = _first(p, "rssi", "rx_rssi", "rxRssi", default=None)
+    hop  = _first(p, "hopLimit", "hop_limit", default=None)
 
     row = (
         rx_time,
@@ -130,7 +158,6 @@ def store_packet(packet: dict):
         float(snr) if snr is not None else None,
         int(rssi) if rssi is not None else None,
         int(hop) if hop is not None else None,
-        # json.dumps(packet, ensure_ascii=False),
     )
     with DB_LOCK:
         conn.execute(
@@ -139,23 +166,25 @@ def store_packet(packet: dict):
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             row,
         )
+        conn.commit()
+
+# PubSub receive handler
+def on_receive(packet, interface):
+    try:
+        p = _pkt_to_dict(packet)
+        store_packet_dict(p)
+    except Exception as e:
+        try:
+            print("[warn] failed to store packet:", e, "| keys:", list(p.keys()) if isinstance(p, dict) else type(p))
+        except Exception:
+            print("[warn] failed to store packet:", e)
 
 # --- Main ---------------------------------------------------------------------
 def main():
-    if SerialInterface is None:
-        raise RuntimeError("meshtastic library not installed")
+    # Subscribe to PubSub topics (reliable in current meshtastic)
+    pub.subscribe(on_receive, "meshtastic.receive")
 
     iface = SerialInterface(devPath=PORT)
-
-    # Packet callback runs in iface reader thread
-    def on_receive(packet, _interface):
-        try:
-            store_packet(packet)
-        except Exception as e:
-            # Keep daemon resilient
-            print(f"[warn] failed to store packet: {e}")
-
-    iface.onReceive = on_receive
 
     stop = threading.Event()
     def handle_sig(*_):
@@ -172,7 +201,7 @@ def main():
             with DB_LOCK:
                 conn.commit()
         except Exception as e:
-            print("node snapshot error:", e)
+            print(f"[warn] failed to update node snapshot: {e}")
         stop.wait(SNAPSHOT_SECS)
 
     try:
