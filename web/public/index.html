@@ -316,7 +316,6 @@
         for (const n of nodes) {
           if (n.node_id && !seenNodeIds.has(n.node_id)) {
             newNodes.push(n);
-            seenNodeIds.add(n.node_id);
           }
         }
         const messages = await fetchMessages();
@@ -324,7 +323,6 @@
         for (const m of messages) {
           if (m.id && !seenMessageIds.has(m.id)) {
             newMessages.push(m);
-            seenMessageIds.add(m.id);
           }
         }
         const entries = [];
@@ -335,8 +333,13 @@
           return a.type === 'node' && b.type === 'msg' ? -1 : a.type === 'msg' && b.type === 'node' ? 1 : 0;
         });
         for (const e of entries) {
-          if (e.type === 'node') addNewNodeChatEntry(e.item);
-          else addNewMessageChatEntry(e.item);
+          if (e.type === 'node') {
+            addNewNodeChatEntry(e.item);
+            if (e.item.node_id) seenNodeIds.add(e.item.node_id);
+          } else {
+            addNewMessageChatEntry(e.item);
+            if (e.item.id) seenMessageIds.add(e.item.id);
+          }
         }
         allNodes = nodes;
         applyFilter();
