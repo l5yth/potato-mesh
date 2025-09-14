@@ -112,6 +112,9 @@
     const REFRESH_MS = 60000;
     refreshInfo.textContent = `#MediumFast — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
 
+    const MAP_CENTER = L.latLng(52.502889, 13.404194);
+    const MAX_NODE_DISTANCE_KM = 137;
+
     const roleColors = Object.freeze({
       CLIENT: '#A8D5BA',
       CLIENT_HIDDEN: '#B8DCA9',
@@ -130,8 +133,8 @@
       maxZoom: 18,
       attribution: '&copy; OpenStreetMap contributors &amp; WMF Labs'
     }).addTo(map);
-    // Default view (Berlin) until first data arrives
-    map.setView([52.5200, 13.4050], 10);
+    // Default view (Berlin center) until first data arrives
+    map.setView(MAP_CENTER, 10);
 
     const markersLayer = L.layerGroup().addTo(map);
 
@@ -256,6 +259,24 @@
       return r.json();
     }
 
+    function computeDistances(nodes) {
+      for (const n of nodes) {
+        const latRaw = n.latitude;
+        const lonRaw = n.longitude;
+        if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') {
+          n.distance_km = null;
+          continue;
+        }
+        const lat = Number(latRaw);
+        const lon = Number(lonRaw);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          n.distance_km = null;
+          continue;
+        }
+        n.distance_km = L.latLng(lat, lon).distanceTo(MAP_CENTER) / 1000;
+      }
+    }
+
     function renderTable(nodes, nowSec) {
       const tb = document.querySelector('#nodes tbody');
       const frag = document.createDocumentFragment();
@@ -290,6 +311,7 @@
         if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
         const lat = Number(latRaw), lon = Number(lonRaw);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        if (n.distance_km != null && n.distance_km > MAX_NODE_DISTANCE_KM) continue;
 
         const color = roleColors[n.role] || '#3388ff';
         const marker = L.circleMarker([lat, lon], {
@@ -340,6 +362,7 @@
       try {
         statusEl.textContent = 'refreshing…';
         const nodes = await fetchNodes();
+        computeDistances(nodes);
         const newNodes = [];
         for (const n of nodes) {
           if (n.node_id && !seenNodeIds.has(n.node_id)) {
