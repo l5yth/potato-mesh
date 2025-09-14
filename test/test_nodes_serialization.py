@@ -51,8 +51,8 @@ def test_upsert_node_handles_position(tmp_path):
         ).fetchone()
         assert row is not None
         assert row[0] == 52.5
-        assert row[1] == 100
-        assert row[2] == 100
+        assert row[1] == 123
+        assert row[2] == 123
 
         n["lastHeard"] = 200
         nodes.upsert_node("node1", n)
@@ -60,6 +60,6 @@ def test_upsert_node_handles_position(tmp_path):
         row2 = nodes.conn.execute(
             "SELECT first_heard, last_heard FROM nodes WHERE node_id=?", ("node1",)
         ).fetchone()
-        assert row2 == (100, 200)
+        assert row2 == (123, 200)
     finally:
         os.chdir(cwd)

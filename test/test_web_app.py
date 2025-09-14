@@ -86,6 +86,12 @@ def test_post_nodes_to_web_app(tmp_path):
     assert lines[0] == "200"
     expected = len(json.load(open(nodes_json)))
     assert int(lines[1]) == expected
+    conn = sqlite3.connect(db_path)
+    bad = conn.execute(
+        "SELECT COUNT(*) FROM nodes WHERE position_time IS NOT NULL AND last_heard < position_time"
+    ).fetchone()[0]
+    conn.close()
+    assert bad == 0
 
 
 def test_null_role_defaults_to_client(tmp_path):

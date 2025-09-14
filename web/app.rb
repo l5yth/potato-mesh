@@ -45,6 +45,8 @@ def upsert_node(db, node_id, n)
   pos = n["position"] || {}
   role = user["role"] || "CLIENT"
   lh = n["lastHeard"]
+  pt = pos["time"]
+  lh = pt if pt && (!lh || lh < pt)
   row = [
     node_id,
     n["num"],
@@ -65,7 +67,7 @@ def upsert_node(db, node_id, n)
     met["channelUtilization"],
     met["airUtilTx"],
     met["uptimeSeconds"],
-    pos["time"],
+    pt,
     pos["locationSource"],
     pos["latitude"],
     pos["longitude"],
