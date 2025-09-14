@@ -42,13 +42,24 @@ def test_upsert_node_handles_position(tmp_path):
             longitude: float = 13.4
             altitude: float = 34.0
 
-        n = {"num": 7, "position": Position()}
+        n = {"num": 7, "position": Position(), "lastHeard": 100}
         nodes.upsert_node("node1", n)
         nodes.conn.commit()
         row = nodes.conn.execute(
-            "SELECT latitude FROM nodes WHERE node_id=?", ("node1",)
+            "SELECT latitude, first_heard, last_heard FROM nodes WHERE node_id=?",
+            ("node1",),
         ).fetchone()
         assert row is not None
         assert row[0] == 52.5
+        assert row[1] == 100
+        assert row[2] == 100
+
+        n["lastHeard"] = 200
+        nodes.upsert_node("node1", n)
+        nodes.conn.commit()
+        row2 = nodes.conn.execute(
+            "SELECT first_heard, last_heard FROM nodes WHERE node_id=?", ("node1",)
+        ).fetchone()
+        assert row2 == (100, 200)
     finally:
         os.chdir(cwd)

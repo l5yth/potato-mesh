@@ -44,6 +44,7 @@ def upsert_node(db, node_id, n)
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
   role = user["role"] || "CLIENT"
+  lh = n["lastHeard"]
   row = [
     node_id,
     n["num"],
@@ -57,7 +58,8 @@ def upsert_node(db, node_id, n)
     n["isFavorite"],
     n["hopsAway"],
     n["snr"],
-    n["lastHeard"],
+    lh,
+    lh,
     met["batteryLevel"],
     met["voltage"],
     met["channelUtilization"],
@@ -71,9 +73,9 @@ def upsert_node(db, node_id, n)
   ]
   db.execute <<~SQL, row
     INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
-                      hops_away,snr,last_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
+                      hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
                       position_time,location_source,latitude,longitude,altitude)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(node_id) DO UPDATE SET
       num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
       hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
