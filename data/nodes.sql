@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   hops_away          INTEGER,
   snr                REAL,
   last_heard         INTEGER,           -- unix seconds
+  first_heard        INTEGER NOT NULL,  -- first time we saw node
   battery_level      REAL,
   voltage            REAL,
   channel_utilization REAL,
