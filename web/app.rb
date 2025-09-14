@@ -10,8 +10,7 @@ WEEK_SECONDS = 7 * 24 * 60 * 60
 set :public_folder, File.join(__dir__, "public")
 
 def query_nodes(limit)
-  db = SQLite3::Database.new(DB_PATH, readonly: true)
-  db.results_as_hash = true
+  db = SQLite3::Database.new(DB_PATH, readonly: true, results_as_hash: true)
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
   rows = db.execute <<~SQL, [min_last_heard, limit]

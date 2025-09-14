@@ -48,7 +48,7 @@
   <h1>Meshtastic Berlin</h1>
   <div class="row meta">
     <div>
-      <span>#MediumFast — auto-refresh every 60 seconds.</span>
+      <span id="refreshInfo"></span>
       <span id="status" class="pill">loading…</span>
       <button id="refreshBtn" type="button">Refresh now</button>
     </div>
@@ -100,10 +100,13 @@
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
     const chatEl = document.getElementById('chat');
+    const refreshInfo = document.getElementById('refreshInfo');
     const baseTitle = document.title;
     let allNodes = [];
     const seenNodeIds = new Set();
     const NODE_LIMIT = 1000;
+    const REFRESH_MS = 60000;
+    refreshInfo.textContent = `#MediumFast — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
 
     const roleColors = Object.freeze({
       CLIENT: '#A8D5BA',
@@ -166,15 +169,17 @@
     }
 
     function fmtCoords(v, d = 5) {
+      if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? n.toFixed(d) : "";
     }
 
     function fmtAlt(v, s) {
-      return v ? `${v}${s}` : "";
+      return (v == null || v === '') ? "" : `${v}${s}`;
     }
 
     function fmtTx(v, d = 3) {
+      if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
     }
@@ -188,9 +193,9 @@
       return `${Math.floor(unixSec/86400)}d ${Math.floor((unixSec%86400)/3600)}h`;
     }
 
-    function timeAgo(unixSec) {
+    function timeAgo(unixSec, nowSec = Date.now()/1000) {
       if (!unixSec) return "";
-      const diff = Math.floor(Date.now()/1000 - Number(unixSec));
+      const diff = Math.floor(nowSec - Number(unixSec));
       if (diff < 0) return "0s";
       if (diff < 60) return `${diff}s`;
       if (diff < 3600) return `${Math.floor(diff/60)}m ${Math.floor((diff%60))}s`;
@@ -204,7 +209,7 @@
       return r.json();
     }
 
-    function renderTable(nodes) {
+    function renderTable(nodes, nowSec) {
       const tb = document.querySelector('#nodes tbody');
       const frag = document.createDocumentFragment();
       for (const n of nodes) {
@@ -213,7 +218,7 @@
           <td class="mono">${n.node_id || ""}</td>
           <td>${n.short_name || ""}</td>
           <td>${n.long_name || ""}</td>
-          <td>${timeAgo(n.last_heard)}</td>
+          <td>${timeAgo(n.last_heard, nowSec)}</td>
           <td>${n.role || "CLIENT"}</td>
           <td>${fmtHw(n.hw_model)}</td>
           <td>${fmtAlt(n.battery_level, "%")}</td>
@@ -224,17 +229,19 @@
           <td>${fmtCoords(n.latitude)}</td>
           <td>${fmtCoords(n.longitude)}</td>
           <td>${fmtAlt(n.altitude, "m")}</td>
-          <td class="mono">${n.pos_time_iso ? `${timeAgo(n.position_time)}` : ""}</td>`;
+          <td class="mono">${n.pos_time_iso ? `${timeAgo(n.position_time, nowSec)}` : ""}</td>`;
         frag.appendChild(tr);
       }
       tb.replaceChildren(frag);
     }
 
-    function renderMap(nodes) {
+    function renderMap(nodes, nowSec) {
       markersLayer.clearLayers();
       const pts = [];
       for (const n of nodes) {
-        const lat = Number(n.latitude), lon = Number(n.longitude);
+        const latRaw = n.latitude, lonRaw = n.longitude;
+        if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
+        const lat = Number(latRaw), lon = Number(lonRaw);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
         const color = roleColors[n.role] || '#3388ff';
@@ -252,8 +259,8 @@
           n.hw_model ? `Model: ${fmtHw(n.hw_model)}` : null,
           `Role: ${n.role || 'CLIENT'}`,
           (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
-          (n.last_heard ? `Last seen: ${timeAgo(n.last_heard)}` : null),
-          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time)}` : null),
+          (n.last_heard ? `Last seen: ${timeAgo(n.last_heard, nowSec)}` : null),
+          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time, nowSec)}` : null),
           (n.uptime_seconds ? `Uptime: ${timeHum(n.uptime_seconds)}` : null),
         ].filter(Boolean);
         marker.bindPopup(lines.join('<br/>'));
@@ -273,8 +280,9 @@
           .filter(Boolean)
           .some(v => v.toLowerCase().includes(q));
       });
-      renderTable(nodes);
-      renderMap(nodes);
+      const nowSec = Date.now()/1000;
+      renderTable(nodes, nowSec);
+      renderMap(nodes, nowSec);
       updateCount(nodes.length);
     }
 
@@ -305,7 +313,7 @@
     }
 
     refresh();
-    setInterval(refresh, 60000);
+    setInterval(refresh, REFRESH_MS);
     refreshBtn.addEventListener('click', refresh);
 
     function updateCount(count) {
