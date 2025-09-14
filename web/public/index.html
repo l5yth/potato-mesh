@@ -104,6 +104,7 @@
     const baseTitle = document.title;
     let allNodes = [];
     const seenNodeIds = new Set();
+    const seenMessageIds = new Set();
     const NODE_LIMIT = 1000;
     const REFRESH_MS = 60000;
     refreshInfo.textContent = `#MediumFast — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
@@ -149,6 +150,18 @@
       const ts = formatDate(new Date(n.first_heard * 1000));
       div.className = 'chat-entry-node';
       div.innerHTML = `[${ts}] ${n.node_id || ''} ${renderShortHtml(n.short_name || '')} <em>New node: ${n.long_name || ''}</em>`;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function addNewMessageChatEntry(m) {
+      const div = document.createElement('div');
+      const ts = formatDate(new Date(m.rx_time * 1000));
+      const from = m.from_id || '';
+      const short = renderShortHtml(m.node?.short_name || '');
+      const text = m.text || '';
+      div.className = 'chat-entry-msg';
+      div.innerHTML = `[${ts}] ${from} ${short} ${text}`;
       chatEl.appendChild(div);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
@@ -205,6 +218,12 @@
 
     async function fetchNodes(limit = NODE_LIMIT) {
       const r = await fetch(`/api/nodes?limit=${limit}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
+    async function fetchMessages(limit = NODE_LIMIT) {
+      const r = await fetch(`/api/messages?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }
@@ -302,6 +321,18 @@
         newNodes.sort((a, b) => (a.first_heard ?? 0) - (b.first_heard ?? 0));
         for (const n of newNodes) {
           addNewNodeChatEntry(n);
+        }
+        const messages = await fetchMessages();
+        const newMessages = [];
+        for (const m of messages) {
+          if (m.id && !seenMessageIds.has(m.id)) {
+            newMessages.push(m);
+            seenMessageIds.add(m.id);
+          }
+        }
+        newMessages.sort((a, b) => (a.rx_time ?? 0) - (b.rx_time ?? 0));
+        for (const m of newMessages) {
+          addNewMessageChatEntry(m);
         }
         allNodes = nodes;
         applyFilter();
