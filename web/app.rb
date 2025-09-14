@@ -43,19 +43,20 @@ def query_messages(limit)
   db = SQLite3::Database.new(DB_PATH)
   db.results_as_hash = true
   rows = db.execute <<~SQL, [limit]
-                      SELECT m.*, n.*
+                      SELECT m.*, n.*, m.snr AS msg_snr
                       FROM messages m
                       LEFT JOIN nodes n ON m.from_id = n.node_id
                       ORDER BY m.rx_time DESC
                       LIMIT ?
                     SQL
-  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text snr rssi hop_limit raw_json]
+  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit raw_json]
   rows.each do |r|
     node = {}
     r.keys.each do |k|
       next if msg_fields.include?(k)
       node[k] = r.delete(k)
     end
+    r["snr"] = r.delete("msg_snr")
     r["node"] = node unless node.empty?
   end
   rows
