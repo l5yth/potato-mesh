@@ -46,7 +46,7 @@ get "/api/nodes" do
 end
 
 def query_messages(limit)
-  db = SQLite3::Database.new(DB_PATH)
+  db = SQLite3::Database.new(DB_PATH, readonly: true)
   db.results_as_hash = true
   rows = db.execute <<~SQL, [limit]
                       SELECT m.*, n.*, m.snr AS msg_snr

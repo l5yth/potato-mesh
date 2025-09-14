@@ -141,9 +141,11 @@ def store_packet_dict(p: dict):
     if not text:
         return  # ignore non-text packets
 
-    # port filter (optional): ensure it's TEXT_MESSAGE_APP if present
-    portnum = _first(dec, "portnum", default=None)
-    # If you want to enforce: if portnum and portnum != "TEXT_MESSAGE_APP": return
+    # port filter: only keep packets from the TEXT_MESSAGE_APP port
+    portnum_raw = _first(dec, "portnum", default=None)
+    portnum = str(portnum_raw).upper() if portnum_raw is not None else None
+    if portnum and portnum not in {"1", "TEXT_MESSAGE_APP"}:
+        return  # ignore non-text-message ports
 
     # channel (prefer decoded.channel if present; else top-level)
     ch = _first(dec, "channel", default=None)
@@ -192,14 +194,13 @@ def store_packet_dict(p: dict):
 
 # PubSub receive handler
 def on_receive(packet, interface):
+    p = None
     try:
         p = _pkt_to_dict(packet)
         store_packet_dict(p)
     except Exception as e:
-        try:
-            print("[warn] failed to store packet:", e, "| keys:", list(p.keys()) if isinstance(p, dict) else type(p))
-        except Exception:
-            print("[warn] failed to store packet:", e)
+        info = list(p.keys()) if isinstance(p, dict) else type(packet)
+        print(f"[warn] failed to store packet: {e} | info: {info}")
 
 # --- Main ---------------------------------------------------------------------
 def main():
