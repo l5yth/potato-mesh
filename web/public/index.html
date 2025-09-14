@@ -33,7 +33,7 @@
     .row { display: flex; gap: var(--pad); align-items: center; justify-content: space-between; }
     .map-row { display: flex; gap: var(--pad); align-items: stretch; }
     #chat { flex: 0 0 33%; max-width: 33%; height: 60vh; border: 1px solid #ddd; border-radius: 8px; overflow-y: auto; padding: 6px; font-size: 12px; }
-    .chat-entry { margin-bottom: 4px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .chat-entry-node { font-family: ui-monospace, Menlo, Consolas, monospace; color: #555 }
     .controls { display: flex; gap: 8px; align-items: center; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
@@ -70,12 +70,17 @@
         <th>Node ID</th>
         <th>Short</th>
         <th>Long Name</th>
-        <th>HW Model</th>
-        <th>Role</th>
-        <th>Battery</th>
         <th>Last Seen</th>
-        <th>Lat</th>
-        <th>Lon</th>
+        <th>Role</th>
+        <th>HW Model</th>
+        <th>Battery</th>
+        <th>Voltage</th>
+        <th>Uptime</th>
+        <th>Channel Util</th>
+        <th>Air Util Tx</th>
+        <th>Latitude</th>
+        <th>Longitude</th>
+        <th>Altitude</th>
         <th>Last Position</th>
       </tr>
     </thead>
@@ -135,15 +140,18 @@
 
     // --- Helpers ---
     function renderShortHtml(short){ return String(short).padStart(4, ' ').replace(/ /g, '&nbsp;'); }
+
     function addNewNodeChatEntry(n) {
       const div = document.createElement('div');
       const ts = formatDate(new Date(n.last_heard * 1000));
-      div.className = 'chat-entry';
+      div.className = 'chat-entry-node';
       div.innerHTML = `[${ts}] ${n.node_id || ''} ${renderShortHtml(n.short_name || '')} <em>New node: ${n.long_name || ''}</em>`;
       chatEl.appendChild(div);
       chatEl.scrollTop = chatEl.scrollHeight;
     }
+
     function pad(n) { return String(n).padStart(2, "0"); }
+
     function formatDate(d) {
       return d.getFullYear() + "-" +
             pad(d.getMonth() + 1) + "-" +
@@ -152,20 +160,45 @@
             pad(d.getMinutes()) + ":" +
             pad(d.getSeconds());
     }
-    function fmt(v, d = 5) {
+
+    function fmtCoords(v, d = 5) {
       if (v == null) return "";
       const n = Number(v);
       return Number.isNaN(n) ? "" : n.toFixed(d);
     }
 
+    function fmtAlt(v, s) {
+      if (v == null) return "";
+      if (v == 0) return "";
+      const n = String(v) + String(s);
+      return n;
+    }
+
+    function fmtTx(v, d = 3) {
+      if (v == null) return "";
+      let n = Number(v);
+      n = Number.isNaN(n) ? "" : n.toFixed(d);
+      n = String(n) + "%";
+      return n;
+    }
+
+    function timeHum(unixSec) {
+      if (!unixSec) return "";
+      if (unixSec < 0) return "0s";
+      if (unixSec < 60) return `${unixSec}s`;
+      if (unixSec < 3600) return `${Math.floor(unixSec/60)}m ${Math.floor((unixSec%60))}s`;
+      if (unixSec < 86400) return `${Math.floor(unixSec/3600)}h ${Math.floor((unixSec%3600)/60)}m`;
+      return `${Math.floor(unixSec/86400)}d ${Math.floor((unixSec%86400)/3600)}h`;
+    }
+
     function timeAgo(unixSec) {
       if (!unixSec) return "";
       const diff = Math.floor(Date.now()/1000 - Number(unixSec));
-      if (diff < 0) return "0s ago";
-      if (diff < 60) return `${diff}s ago`;
-      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
-      if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m ago`;
-      return `${Math.floor(diff/86400)}d ago`;
+      if (diff < 0) return "0s";
+      if (diff < 60) return `${diff}s`;
+      if (diff < 3600) return `${Math.floor(diff/60)}m ${Math.floor((diff%60))}s`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m`;
+      return `${Math.floor(diff/86400)}d ${Math.floor((diff%86400)/3600)}h`;
     }
 
     async function fetchNodes() {
@@ -183,12 +216,17 @@
           <td class="mono">${n.node_id || ""}</td>
           <td>${n.short_name || ""}</td>
           <td>${n.long_name || ""}</td>
-          <td>${n.hw_model || ""}</td>
-          <td>${n.role || "CLIENT"}</td>
-          <td>${n.battery_level ?? ""}</td>
           <td>${timeAgo(n.last_heard)}</td>
-          <td>${fmt(n.latitude)}</td>
-          <td>${fmt(n.longitude)}</td>
+          <td>${n.role || "CLIENT"}</td>
+          <td>${n.hw_model || ""}</td>
+          <td>${fmtAlt(n.battery_level, "%")}</td>
+          <td>${fmtAlt(n.voltage, "V")}</td>
+          <td>${timeHum(n.uptime_seconds)}</td>
+          <td>${fmtTx(n.channel_utilization)}</td>
+          <td>${fmtTx(n.air_util_tx)}</td>
+          <td>${fmtCoords(n.latitude)}</td>
+          <td>${fmtCoords(n.longitude)}</td>
+          <td>${fmtAlt(n.altitude, "m")}</td>
           <td class="mono">${n.pos_time_iso ? `${timeAgo(n.position_time)}` : ""}</td>`;
         tb.appendChild(tr);
       }
