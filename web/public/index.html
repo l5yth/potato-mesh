@@ -34,6 +34,7 @@
     #chat { flex: 0 0 33%; max-width: 33%; height: 60vh; border: 1px solid #ddd; border-radius: 8px; overflow-y: auto; padding: 6px; font-size: 12px; }
     .chat-entry-node { font-family: ui-monospace, Menlo, Consolas, monospace; color: #555 }
     .chat-entry-msg { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .chat-entry-date { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: bold; }
     .short-name { display:inline-block; border-radius:4px; padding:0 2px; }
     .controls { display: flex; gap: 8px; align-items: center; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
@@ -112,6 +113,7 @@
     let allNodes = [];
     const seenNodeIds = new Set();
     const seenMessageIds = new Set();
+    let lastChatDate;
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
     const REFRESH_MS = 60000;
@@ -180,9 +182,25 @@
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
+    function maybeAddDateDivider(ts) {
+      if (!ts) return;
+      const d = new Date(ts * 1000);
+      const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      if (lastChatDate !== key) {
+        lastChatDate = key;
+        const midnight = new Date(d);
+        midnight.setHours(0, 0, 0, 0);
+        const div = document.createElement('div');
+        div.className = 'chat-entry-date';
+        div.textContent = `-- ${formatDate(midnight)} --`;
+        appendChatEntry(div);
+      }
+    }
+
     function addNewNodeChatEntry(n) {
+      maybeAddDateDivider(n.first_heard);
       const div = document.createElement('div');
-      const ts = formatDate(new Date(n.first_heard * 1000));
+      const ts = formatTime(new Date(n.first_heard * 1000));
       div.className = 'chat-entry-node';
       const short = renderShortHtml(n.short_name, n.role);
       const longName = escapeHtml(n.long_name || '');
@@ -191,8 +209,9 @@
     }
 
     function addNewMessageChatEntry(m) {
+      maybeAddDateDivider(m.rx_time);
       const div = document.createElement('div');
-      const ts = formatDate(new Date(m.rx_time * 1000));
+      const ts = formatTime(new Date(m.rx_time * 1000));
       const short = renderShortHtml(m.node?.short_name, m.node?.role);
       const text = escapeHtml(m.text || '');
       div.className = 'chat-entry-msg';
@@ -202,13 +221,16 @@
 
     function pad(n) { return String(n).padStart(2, "0"); }
 
+    function formatTime(d) {
+      return pad(d.getHours()) + ":" +
+            pad(d.getMinutes()) + ":" +
+            pad(d.getSeconds());
+    }
+
     function formatDate(d) {
       return d.getFullYear() + "-" +
             pad(d.getMonth() + 1) + "-" +
-            pad(d.getDate()) + " " +
-            pad(d.getHours()) + ":" +
-            pad(d.getMinutes()) + ":" +
-            pad(d.getSeconds());
+            pad(d.getDate());
     }
 
     function fmtHw(v) {
