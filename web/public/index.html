@@ -254,9 +254,10 @@
           `<b>${n.short_name || ''}</b> <span class="mono">${n.node_id || ''}</span>`,
           n.hw_model ? `Model: ${n.hw_model}` : null,
           `Role: ${n.role || 'CLIENT'}`,
-          (n.battery_level != null ? `Battery: ${n.battery_level}` : null),
+          (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
           (n.last_heard ? `Last seen: ${timeAgo(n.last_heard)}` : null),
-          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time)}` : null)
+          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time)}` : null),
+          (n.uptime_seconds ? `Uptime: ${timeHum(n.uptime_seconds)}` : null),
         ].filter(Boolean);
         marker.bindPopup(lines.join('<br/>'));
         marker.addTo(markersLayer);
