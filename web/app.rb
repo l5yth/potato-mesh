@@ -45,6 +45,7 @@ def upsert_node(db, node_id, n)
   pos = n["position"] || {}
   role = user["role"] || "CLIENT"
   lh = n["lastHeard"]
+  now = Time.now.to_i
   row = [
     node_id,
     n["num"],
@@ -58,8 +59,8 @@ def upsert_node(db, node_id, n)
     n["isFavorite"],
     n["hopsAway"],
     n["snr"],
-    lh,
-    lh,
+    now,
+    lh || now,
     met["batteryLevel"],
     met["voltage"],
     met["channelUtilization"],

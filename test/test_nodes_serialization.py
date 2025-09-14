@@ -52,14 +52,18 @@ def test_upsert_node_handles_position(tmp_path):
         assert row is not None
         assert row[0] == 52.5
         assert row[1] == 100
-        assert row[2] == 100
+        initial_last_heard = row[2]
+        assert initial_last_heard is not None and initial_last_heard >= row[1]
 
-        n["lastHeard"] = 200
+        # Changing the reported lastHeard should not affect stored last_heard
+        # which is always updated to the current time
+        n["lastHeard"] = 0
         nodes.upsert_node("node1", n)
         nodes.conn.commit()
         row2 = nodes.conn.execute(
             "SELECT first_heard, last_heard FROM nodes WHERE node_id=?", ("node1",)
         ).fetchone()
-        assert row2 == (100, 200)
+        assert row2[0] == 100
+        assert row2[1] >= initial_last_heard
     finally:
         os.chdir(cwd)

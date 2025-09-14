@@ -42,11 +42,13 @@ def test_query_nodes_from_web_app(tmp_path):
     data = json.loads(out)
     conn = sqlite3.connect(db_path)
     threshold = int(time.time()) - 7 * 24 * 60 * 60
-    expected = conn.execute("SELECT COUNT(*) FROM nodes WHERE last_heard >= ?", (threshold,)).fetchone()[0]
-    old_count = conn.execute("SELECT COUNT(*) FROM nodes WHERE last_heard < ?", (threshold,)).fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    recent = conn.execute(
+        "SELECT COUNT(*) FROM nodes WHERE last_heard >= ?", (threshold,)
+    ).fetchone()[0]
     conn.close()
-    assert old_count > 0
-    assert len(data) == expected
+    assert recent == total
+    assert len(data) == recent
     last_heards = [item["last_heard"] for item in data]
     assert last_heards == sorted(last_heards, reverse=True)
     assert all(lh is None or lh >= threshold for lh in last_heards)

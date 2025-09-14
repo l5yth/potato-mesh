@@ -28,6 +28,7 @@ def upsert_node(node_id, n):
     met = _get(n, "deviceMetrics") or {}
     pos = _get(n, "position") or {}
     lh = _get(n, "lastHeard")
+    now = int(time.time())
     row = (
         node_id,
         _get(n, "num"),
@@ -41,8 +42,8 @@ def upsert_node(node_id, n):
         _get(n, "isFavorite"),
         _get(n, "hopsAway"),
         _get(n, "snr"),
-        lh,
-        lh,
+        now,
+        lh or now,
         _get(met, "batteryLevel"),
         _get(met, "voltage"),
         _get(met, "channelUtilization"),
