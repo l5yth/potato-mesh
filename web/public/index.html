@@ -316,24 +316,30 @@
         for (const n of nodes) {
           if (n.node_id && !seenNodeIds.has(n.node_id)) {
             newNodes.push(n);
-            seenNodeIds.add(n.node_id);
           }
-        }
-        newNodes.sort((a, b) => (a.first_heard ?? 0) - (b.first_heard ?? 0));
-        for (const n of newNodes) {
-          addNewNodeChatEntry(n);
         }
         const messages = await fetchMessages();
         const newMessages = [];
         for (const m of messages) {
           if (m.id && !seenMessageIds.has(m.id)) {
             newMessages.push(m);
-            seenMessageIds.add(m.id);
           }
         }
-        newMessages.sort((a, b) => (a.rx_time ?? 0) - (b.rx_time ?? 0));
-        for (const m of newMessages) {
-          addNewMessageChatEntry(m);
+        const entries = [];
+        for (const n of newNodes) entries.push({ type: 'node', ts: n.first_heard ?? 0, item: n });
+        for (const m of newMessages) entries.push({ type: 'msg', ts: m.rx_time ?? 0, item: m });
+        entries.sort((a, b) => {
+          if (a.ts !== b.ts) return a.ts - b.ts;
+          return a.type === 'node' && b.type === 'msg' ? -1 : a.type === 'msg' && b.type === 'node' ? 1 : 0;
+        });
+        for (const e of entries) {
+          if (e.type === 'node') {
+            addNewNodeChatEntry(e.item);
+            if (e.item.node_id) seenNodeIds.add(e.item.node_id);
+          } else {
+            addNewMessageChatEntry(e.item);
+            if (e.item.id) seenMessageIds.add(e.item.id);
+          }
         }
         allNodes = nodes;
         applyFilter();
