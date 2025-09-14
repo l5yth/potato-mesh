@@ -14,9 +14,9 @@ def query_nodes(limit)
   min_last_heard = Time.now.to_i - 7 * 24 * 60 * 60
   rows = db.execute <<~SQL, [min_last_heard, limit]
                       SELECT node_id, short_name, long_name, hw_model, role, snr,
-                             battery_level, voltage, last_heard, uptime_seconds,
-                             channel_utilization, air_util_tx, position_time,
-                             latitude, longitude, altitude
+                             battery_level, voltage, last_heard, first_heard,
+                             uptime_seconds, channel_utilization, air_util_tx,
+                             position_time, latitude, longitude, altitude
                       FROM nodes
                       WHERE last_heard >= ?
                       ORDER BY last_heard DESC
