@@ -44,6 +44,11 @@
     .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
     #map .leaflet-tile { filter: opacity(70%); }
     footer { position: fixed; bottom: 0; left: var(--pad); width: calc(100% - 2 * var(--pad)); background: #fafafa; border-top: 1px solid #ddd; text-align: center; font-size: 12px; padding: 4px 0; }
+    @media (max-width: 768px) {
+      .map-row { flex-direction: column; }
+      #map { order: 1; flex: none; max-width: 100%; height: 50vh; }
+      #chat { order: 2; flex: none; max-width: 100%; height: 30vh; }
+    }
   </style>
 </head>
 <body>
