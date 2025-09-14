@@ -89,7 +89,11 @@ def upsert_node(node_id, n):
 # --- Message logging via PubSub -----------------------------------------------
 def _iso(ts: int | float) -> str:
     import datetime
-    return datetime.datetime.utcfromtimestamp(int(ts)).isoformat() + "Z"
+    return (
+        datetime.datetime.fromtimestamp(int(ts), datetime.UTC)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 def _first(d: dict, *names, default=None):
     """Return first present key from names (supports nested 'a.b' lookups)."""
