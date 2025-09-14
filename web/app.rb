@@ -3,8 +3,8 @@ require "sinatra"
 require "json"
 require "sqlite3"
 
-# run ../data/nodes.sh to nodespopulate nodes database
-DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/nodes.db"))
+# run ../data/mesh.sh to populate nodes and messages database
+DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 
 set :public_folder, File.join(__dir__, "public")
 

@@ -2,4 +2,4 @@
 
 python -m venv .venv && source .venv/bin/activate
 pip install meshtastic
-python nodes.py
+python mesh.py
