@@ -51,8 +51,8 @@
   <div class="row meta">
     <div>
       <span id="refreshInfo"></span>
-      <span id="status" class="pill">loading…</span>
       <button id="refreshBtn" type="button">Refresh now</button>
+      <span id="status" class="pill">loading…</span>
     </div>
     <div class="controls">
       <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
@@ -160,7 +160,7 @@
 
     function renderShortHtml(short, role){
       if (!short) {
-        return `<span class="short-name" style="background:#ccc">&nbsp;&nbsp;&nbsp;&nbsp;</span>`;
+        return `<span class="short-name" style="background:#ccc">?&nbsp;&nbsp;&nbsp;</span>`;
       }
       const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
       const color = roleColors[role] || roleColors.CLIENT;
@@ -179,21 +179,19 @@
       const div = document.createElement('div');
       const ts = formatDate(new Date(n.first_heard * 1000));
       div.className = 'chat-entry-node';
-      const nodeId = escapeHtml(n.node_id || '');
       const short = renderShortHtml(n.short_name, n.role);
       const longName = escapeHtml(n.long_name || '');
-      div.innerHTML = `[${ts}] ${nodeId} ${short} <em>New node: ${longName}</em>`;
+      div.innerHTML = `[${ts}] ${short} <em>New node: ${longName}</em>`;
       appendChatEntry(div);
     }
 
     function addNewMessageChatEntry(m) {
       const div = document.createElement('div');
       const ts = formatDate(new Date(m.rx_time * 1000));
-      const from = m.from_id ? escapeHtml(m.from_id) : '<em>(unknown)</em>';
       const short = renderShortHtml(m.node?.short_name, m.node?.role);
       const text = escapeHtml(m.text || '');
       div.className = 'chat-entry-msg';
-      div.innerHTML = `[${ts}] ${from} ${short} ${text}`;
+      div.innerHTML = `[${ts}] ${short} ${text}`;
       appendChatEntry(div);
     }
 
@@ -413,14 +411,14 @@
 
     function updateRefreshInfo(nodes, nowSec) {
       const windows = [
-        { label: '1h', secs: 3600 },
-        { label: '1d', secs: 86400 },
-        { label: '1w', secs: 7 * 86400 },
-        { label: '1m', secs: 30 * 86400 },
+        { label: 'hour', secs: 3600 },
+        { label: 'day', secs: 86400 },
+        { label: 'week', secs: 7 * 86400 },
+        { label: 'month', secs: 30 * 86400 },
       ];
       const counts = windows.map(w => {
         const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
-        return `${w.label}: ${c}`;
+        return `${c}/${w.label}`;
       }).join(', ');
       refreshInfo.textContent = `#MediumFast — active nodes: ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
     }
