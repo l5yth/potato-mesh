@@ -161,6 +161,12 @@
             pad(d.getSeconds());
     }
 
+    function fmtHw(v) {
+      if (v == null) return "";
+      if (v == "UNSET") return "";
+      return String(v);
+    }
+
     function fmtCoords(v, d = 5) {
       if (v == null) return "";
       const n = Number(v);
@@ -218,7 +224,7 @@
           <td>${n.long_name || ""}</td>
           <td>${timeAgo(n.last_heard)}</td>
           <td>${n.role || "CLIENT"}</td>
-          <td>${n.hw_model || ""}</td>
+          <td>${fmtHw(n.hw_model)}</td>
           <td>${fmtAlt(n.battery_level, "%")}</td>
           <td>${fmtAlt(n.voltage, "V")}</td>
           <td>${timeHum(n.uptime_seconds)}</td>
@@ -252,7 +258,7 @@
         const lines = [
           `<b>${n.long_name || ''}</b>`,
           `<b>${n.short_name || ''}</b> <span class="mono">${n.node_id || ''}</span>`,
-          n.hw_model ? `Model: ${n.hw_model}` : null,
+          n.hw_model ? `Model: ${fmtHw(n.hw_model)}` : null,
           `Role: ${n.role || 'CLIENT'}`,
           (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
           (n.last_heard ? `Last seen: ${timeAgo(n.last_heard)}` : null),
