@@ -2,8 +2,8 @@
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS nodes (
-  node_id            TEXT PRIMARY KEY,  -- e.g. "!0c63e027"
-  num                INTEGER,           -- numeric node number
+  node_id            TEXT PRIMARY KEY,
+  num                INTEGER,
   short_name         TEXT,
   long_name          TEXT,
   macaddr            TEXT,
@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   is_favorite        BOOLEAN,
   hops_away          INTEGER,
   snr                REAL,
-  last_heard         INTEGER,           -- unix seconds
-  first_heard        INTEGER NOT NULL,  -- first time we saw node
+  last_heard         INTEGER,
+  first_heard        INTEGER,
   battery_level      REAL,
   voltage            REAL,
   channel_utilization REAL,
