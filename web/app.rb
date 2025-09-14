@@ -9,8 +9,7 @@ DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/nodes.db"))
 set :public_folder, File.join(__dir__, "public")
 
 def query_nodes(limit)
-  db = SQLite3::Database.new(DB_PATH)
-  db.results_as_hash = true
+  db = SQLite3::Database.new(DB_PATH, results_as_hash: true)
   min_last_heard = Time.now.to_i - 7 * 24 * 60 * 60
   rows = db.execute <<~SQL, [min_last_heard, limit]
                       SELECT node_id, short_name, long_name, hw_model, role, snr,
@@ -35,7 +34,7 @@ end
 
 get "/api/nodes" do
   content_type :json
-  limit = [params["limit"]&.to_i || 200, 1000].min
+  limit = params.fetch("limit", 200).to_i.clamp(0, 1000)
   query_nodes(limit).to_json
 end
 
