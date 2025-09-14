@@ -13,6 +13,7 @@ DB = os.environ.get("MESH_DB", "mesh.db")
 PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
 SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "30"))
 CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
+DEBUG = os.environ.get("DEBUG") == "1"
 
 # --- DB setup -----------------------------------------------------------------
 nodeSchema = Path(__file__).with_name("nodes.sql").read_text()
@@ -80,6 +81,10 @@ def upsert_node(node_id, n):
         """,
             row,
         )
+
+    if DEBUG:
+        short = _get(user, "shortName")
+        print(f"[debug] upserted node {node_id} shortName={short!r}")
 
 # --- Message logging via PubSub -----------------------------------------------
 def _iso(ts: int | float) -> str:
@@ -167,6 +172,11 @@ def store_packet_dict(p: dict):
             row,
         )
         conn.commit()
+
+    if DEBUG:
+        print(
+            f"[debug] stored message from {from_id!r} to {to_id!r} ch={ch} text={text!r}"
+        )
 
 # PubSub receive handler
 def on_receive(packet, interface):
