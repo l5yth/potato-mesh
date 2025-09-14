@@ -37,6 +37,14 @@ def upsert_node(node_id, n):
     met = _get(n, "deviceMetrics") or {}
     pos = _get(n, "position") or {}
     lh = _get(n, "lastHeard")
+    pt = _get(pos, "time")
+    now = int(time.time())
+    if lh is not None and lh > now:
+        lh = now
+    if pt is not None and pt > now:
+        pt = now
+    if pt is not None and (lh is None or lh < pt):
+        lh = pt
     row = (
         node_id,
         _get(n, "num"),
@@ -57,7 +65,7 @@ def upsert_node(node_id, n):
         _get(met, "channelUtilization"),
         _get(met, "airUtilTx"),
         _get(met, "uptimeSeconds"),
-        _get(pos, "time"),
+        pt,
         _get(pos, "locationSource"),
         _get(pos, "latitude"),
         _get(pos, "longitude"),
