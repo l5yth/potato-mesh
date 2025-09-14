@@ -25,14 +25,14 @@ def query_nodes(limit)
                     SQL
   rows.each do |r|
     r["role"] ||= "CLIENT"
-    lh = r["last_heard"]
-    pt = r["position_time"]
+    lh = r["last_heard"]&.to_i
+    pt = r["position_time"]&.to_i
     lh = now if lh && lh > now
     pt = nil if pt && pt > now
     r["last_heard"] = lh
     r["position_time"] = pt
-    r["last_seen_iso"] = Time.at(lh.to_i).utc.iso8601 if lh
-    r["pos_time_iso"] = Time.at(pt.to_i).utc.iso8601 if pt
+    r["last_seen_iso"] = Time.at(lh).utc.iso8601 if lh
+    r["pos_time_iso"] = Time.at(pt).utc.iso8601 if pt
   end
   rows
 ensure
