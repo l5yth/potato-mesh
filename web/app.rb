@@ -39,6 +39,36 @@ get "/api/nodes" do
   query_nodes(limit).to_json
 end
 
+def query_messages(limit)
+  db = SQLite3::Database.new(DB_PATH)
+  db.results_as_hash = true
+  rows = db.execute <<~SQL, [limit]
+                      SELECT m.*, n.*
+                      FROM messages m
+                      LEFT JOIN nodes n ON m.from_id = n.node_id
+                      ORDER BY m.rx_time DESC
+                      LIMIT ?
+                    SQL
+  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text snr rssi hop_limit raw_json]
+  rows.each do |r|
+    node = {}
+    r.keys.each do |k|
+      next if msg_fields.include?(k)
+      node[k] = r.delete(k)
+    end
+    r["node"] = node unless node.empty?
+  end
+  rows
+ensure
+  db&.close
+end
+
+get "/api/messages" do
+  content_type :json
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_messages(limit).to_json
+end
+
 def upsert_node(db, node_id, n)
   user = n["user"] || {}
   met = n["deviceMetrics"] || {}
