@@ -27,6 +27,10 @@ def query_nodes(limit)
     r["role"] ||= "CLIENT"
     lh = r["last_heard"]
     pt = r["position_time"]
+    lh = now if lh && lh > now
+    pt = nil if pt && pt > now
+    r["last_heard"] = lh
+    r["position_time"] = pt
     r["last_seen_iso"] = Time.at(lh.to_i).utc.iso8601 if lh
     r["pos_time_iso"] = Time.at(pt.to_i).utc.iso8601 if pt
   end
@@ -80,8 +84,8 @@ def upsert_node(db, node_id, n)
   lh = n["lastHeard"]
   pt = pos["time"]
   now = Time.now.to_i
+  pt = nil if pt && pt > now
   lh = now if lh && lh > now
-  pt = now if pt && pt > now
   lh = pt if pt && (!lh || lh < pt)
   row = [
     node_id,
