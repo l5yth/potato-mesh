@@ -5,13 +5,14 @@ require "sqlite3"
 
 # run ../data/mesh.sh to populate nodes and messages database
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
+WEEK_SECONDS = 7 * 24 * 60 * 60
 
 set :public_folder, File.join(__dir__, "public")
 
 def query_nodes(limit)
-  db = SQLite3::Database.new(DB_PATH)
-  db.results_as_hash = true
-  min_last_heard = Time.now.to_i - 7 * 24 * 60 * 60
+  db = SQLite3::Database.new(DB_PATH, readonly: true, results_as_hash: true)
+  now = Time.now.to_i
+  min_last_heard = now - WEEK_SECONDS
   rows = db.execute <<~SQL, [min_last_heard, limit]
                       SELECT node_id, short_name, long_name, hw_model, role, snr,
                              battery_level, voltage, last_heard, first_heard,
@@ -24,9 +25,10 @@ def query_nodes(limit)
                     SQL
   rows.each do |r|
     r["role"] ||= "CLIENT"
-    lh = r["last_heard"]; pt = r["position_time"]
-    r["last_seen_iso"] = lh ? Time.at(lh.to_i).utc.iso8601 : nil
-    r["pos_time_iso"] = pt ? Time.at(pt.to_i).utc.iso8601 : nil
+    lh = r["last_heard"]
+    pt = r["position_time"]
+    r["last_seen_iso"] = Time.at(lh.to_i).utc.iso8601 if lh
+    r["pos_time_iso"] = Time.at(pt.to_i).utc.iso8601 if pt
   end
   rows
 ensure
