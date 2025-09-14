@@ -318,6 +318,7 @@
       renderTable(nodes, nowSec);
       renderMap(nodes, nowSec);
       updateCount(nodes.length);
+      updateRefreshInfo(nodes, nowSec);
     }
 
     filterInput.addEventListener('input', applyFilter);
@@ -372,6 +373,20 @@
       const text = `${baseTitle} (${count})`;
       titleEl.textContent = text;
       headerEl.textContent = text;
+    }
+
+    function updateRefreshInfo(nodes, nowSec) {
+      const windows = [
+        { label: '1h', secs: 3600 },
+        { label: '1d', secs: 86400 },
+        { label: '1w', secs: 7 * 86400 },
+        { label: '1m', secs: 30 * 86400 },
+      ];
+      const counts = windows.map(w => {
+        const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
+        return `${w.label}: ${c}`;
+      }).join(', ');
+      refreshInfo.textContent = `#MediumFast — active nodes: ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
     }
   </script>
 </body>
