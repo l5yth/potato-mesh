@@ -32,8 +32,10 @@
     .row { display: flex; gap: var(--pad); align-items: center; justify-content: space-between; }
     .map-row { display: flex; gap: var(--pad); align-items: stretch; }
     #chat { flex: 0 0 33%; max-width: 33%; height: 60vh; border: 1px solid #ddd; border-radius: 8px; overflow-y: auto; padding: 6px; font-size: 12px; }
-    .chat-entry-node { font-family: ui-monospace, Menlo, Consolas, monospace; color: #555 }
-    .chat-entry-msg { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .chat-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; border-bottom: 1px solid #ddd; padding: 2px 0; }
+    .chat-info { font-family: ui-monospace, Menlo, Consolas, monospace; color: #555; white-space: nowrap; }
+    .chat-msg { font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+    .short-name { display: inline-block; padding: 0 4px; border-radius: 4px; }
     .controls { display: flex; gap: 8px; align-items: center; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
@@ -106,6 +108,7 @@
     let allNodes = [];
     const seenNodeIds = new Set();
     const seenMessageIds = new Set();
+    const CHAT_LIMIT = 1000;
     const NODE_LIMIT = 1000;
     const REFRESH_MS = 60000;
     refreshInfo.textContent = `#MediumFast — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
@@ -153,33 +156,49 @@
         .replace(/'/g, '&#39;');
     }
 
-    function renderShortHtml(short){
-      return escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
-    }
+      function addNewNodeChatEntry(n) {
+        const row = document.createElement('div');
+        row.className = 'chat-row';
+        const info = document.createElement('div');
+        info.className = 'chat-info';
+        const msg = document.createElement('div');
+        msg.className = 'chat-msg';
+        const ts = formatDate(new Date(n.first_heard * 1000));
+        const nodeId = escapeHtml(n.node_id || '');
+        const short = escapeHtml(n.short_name || '');
+        const longName = escapeHtml(n.long_name || '');
+        const role = n.role || '';
+        const color = roleColors[role] || '#eee';
+        info.innerHTML = `[${ts}] ${nodeId} <span class="short-name" style="background:${color}">${short}</span> ${longName}`;
+        msg.textContent = 'New node';
+        row.appendChild(info);
+        row.appendChild(msg);
+        chatEl.appendChild(row);
+        while (chatEl.children.length > CHAT_LIMIT) chatEl.removeChild(chatEl.firstChild);
+        chatEl.scrollTop = chatEl.scrollHeight;
+      }
 
-    function addNewNodeChatEntry(n) {
-      const div = document.createElement('div');
-      const ts = formatDate(new Date(n.first_heard * 1000));
-      div.className = 'chat-entry-node';
-      const nodeId = escapeHtml(n.node_id || '');
-      const short = renderShortHtml(n.short_name || '');
-      const longName = escapeHtml(n.long_name || '');
-      div.innerHTML = `[${ts}] ${nodeId} ${short} <em>New node: ${longName}</em>`;
-      chatEl.appendChild(div);
-      chatEl.scrollTop = chatEl.scrollHeight;
-    }
-
-    function addNewMessageChatEntry(m) {
-      const div = document.createElement('div');
-      const ts = formatDate(new Date(m.rx_time * 1000));
-      const from = m.from_id ? escapeHtml(m.from_id) : '<em>(unknown)</em>';
-      const short = renderShortHtml(m.node?.short_name || '');
-      const text = escapeHtml(m.text || '');
-      div.className = 'chat-entry-msg';
-      div.innerHTML = `[${ts}] ${from} ${short} ${text}`;
-      chatEl.appendChild(div);
-      chatEl.scrollTop = chatEl.scrollHeight;
-    }
+      function addNewMessageChatEntry(m) {
+        const row = document.createElement('div');
+        row.className = 'chat-row';
+        const info = document.createElement('div');
+        info.className = 'chat-info';
+        const msg = document.createElement('div');
+        msg.className = 'chat-msg';
+        const ts = formatDate(new Date(m.rx_time * 1000));
+        const from = m.from_id ? escapeHtml(m.from_id) : '<em>(unknown)</em>';
+        const short = escapeHtml(m.node?.short_name || '');
+        const longName = escapeHtml(m.node?.long_name || '');
+        const role = m.node?.role || '';
+        const color = roleColors[role] || '#eee';
+        info.innerHTML = `[${ts}] ${from} <span class="short-name" style="background:${color}">${short}</span> ${longName}`;
+        msg.textContent = m.text || '';
+        row.appendChild(info);
+        row.appendChild(msg);
+        chatEl.appendChild(row);
+        while (chatEl.children.length > CHAT_LIMIT) chatEl.removeChild(chatEl.firstChild);
+        chatEl.scrollTop = chatEl.scrollHeight;
+      }
 
     function pad(n) { return String(n).padStart(2, "0"); }
 
@@ -237,7 +256,7 @@
       return r.json();
     }
 
-    async function fetchMessages(limit = NODE_LIMIT) {
+    async function fetchMessages(limit = CHAT_LIMIT) {
       const r = await fetch(`/api/messages?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
