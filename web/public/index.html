@@ -159,7 +159,7 @@
       if (!short) {
         return `<span class="short-name" style="background:#ccc">&nbsp;&nbsp;&nbsp;&nbsp;</span>`;
       }
-      const padded = String(short).padStart(4, ' ').replace(/ /g, '&nbsp;');
+      const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
       const color = roleColors[role] || roleColors.CLIENT;
       return `<span class="short-name" style="background:${color}">${padded}</span>`;
     }
