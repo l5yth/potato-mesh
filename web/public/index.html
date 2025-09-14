@@ -187,7 +187,7 @@
         midnight.setHours(0, 0, 0, 0);
         const div = document.createElement('div');
         div.className = 'chat-entry-date';
-        div.textContent = `[${formatDate(midnight)}]`;
+        div.textContent = `-- ${formatDate(midnight)} --`;
         appendChatEntry(div);
       }
     }
@@ -195,7 +195,7 @@
     function addNewNodeChatEntry(n) {
       maybeAddDateDivider(n.first_heard);
       const div = document.createElement('div');
-      const ts = formatDate(new Date(n.first_heard * 1000));
+      const ts = formatTime(new Date(n.first_heard * 1000));
       div.className = 'chat-entry-node';
       const short = renderShortHtml(n.short_name, n.role);
       const longName = escapeHtml(n.long_name || '');
@@ -206,7 +206,7 @@
     function addNewMessageChatEntry(m) {
       maybeAddDateDivider(m.rx_time);
       const div = document.createElement('div');
-      const ts = formatDate(new Date(m.rx_time * 1000));
+      const ts = formatTime(new Date(m.rx_time * 1000));
       const short = renderShortHtml(m.node?.short_name, m.node?.role);
       const text = escapeHtml(m.text || '');
       div.className = 'chat-entry-msg';
@@ -216,13 +216,16 @@
 
     function pad(n) { return String(n).padStart(2, "0"); }
 
+    function formatTime(d) {
+      return pad(d.getHours()) + ":" +
+            pad(d.getMinutes()) + ":" +
+            pad(d.getSeconds());
+    }
+
     function formatDate(d) {
       return d.getFullYear() + "-" +
             pad(d.getMonth() + 1) + "-" +
-            pad(d.getDate()) + " " +
-            pad(d.getHours()) + ":" +
-            pad(d.getMinutes()) + ":" +
-            pad(d.getSeconds());
+            pad(d.getDate());
     }
 
     function fmtHw(v) {
