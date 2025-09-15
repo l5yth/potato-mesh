@@ -2,6 +2,7 @@
 require "sinatra"
 require "json"
 require "sqlite3"
+require "fileutils"
 
 # run ../data/mesh.sh to populate nodes and messages database
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
@@ -16,6 +17,30 @@ MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "52.502889").to_f
 MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
+
+def db_schema_present?
+  return false unless File.exist?(DB_PATH)
+  db = SQLite3::Database.new(DB_PATH, readonly: true)
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages')").flatten
+  tables.include?("nodes") && tables.include?("messages")
+rescue SQLite3::Exception
+  false
+ensure
+  db&.close
+end
+
+def init_db
+  FileUtils.mkdir_p(File.dirname(DB_PATH))
+  db = SQLite3::Database.new(DB_PATH)
+  %w[nodes messages].each do |schema|
+    sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
+    db.execute_batch(File.read(sql_file))
+  end
+ensure
+  db&.close
+end
+
+init_db unless db_schema_present?
 
 def query_nodes(limit)
   db = SQLite3::Database.new(DB_PATH, readonly: true, results_as_hash: true)
