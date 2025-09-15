@@ -141,7 +141,29 @@ end
 def require_token!
   token = ENV["API_TOKEN"]
   provided = request.env["HTTP_AUTHORIZATION"].to_s.sub(/^Bearer\s+/i, "")
-  halt 403, { error: "Forbidden" }.to_json unless token && provided == token
+  halt 403, { error: "Forbidden" }.to_json unless token && !token.empty? && provided == token
+end
+
+def insert_message(db, m)
+  rx_time = m["rx_time"]&.to_i || Time.now.to_i
+  rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
+  row = [
+    rx_time,
+    rx_iso,
+    m["from_id"],
+    m["to_id"],
+    m["channel"],
+    m["portnum"],
+    m["text"],
+    m["snr"],
+    m["rssi"],
+    m["hop_limit"],
+    m["raw_json"],
+  ]
+  db.execute <<~SQL, row
+               INSERT INTO messages(rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit,raw_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             SQL
 end
 
 post "/api/nodes" do
@@ -156,6 +178,25 @@ post "/api/nodes" do
   db = SQLite3::Database.new(DB_PATH)
   data.each do |node_id, node|
     upsert_node(db, node_id, node)
+  end
+  { status: "ok" }.to_json
+ensure
+  db&.close
+end
+
+post "/api/messages" do
+  require_token!
+  content_type :json
+  begin
+    data = JSON.parse(request.body.read)
+  rescue JSON::ParserError
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+  messages = data.is_a?(Array) ? data : [data]
+  halt 400, { error: "too many messages" }.to_json if messages.size > 1000
+  db = SQLite3::Database.new(DB_PATH)
+  messages.each do |msg|
+    insert_message(db, msg)
   end
   { status: "ok" }.to_json
 ensure

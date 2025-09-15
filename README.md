@@ -20,11 +20,8 @@ what works:
 * displaying new node notifications and chat messages in default channel in chat box
 * displaying active node count and filtering nodes by name
 * exposing nodes and messages to api endpoints
-
-what does not work _(yet):_
-
-* posting nodes and messages to the api endpoints _(wip)_
-
+* posting nodes and messages to the api endpoints with authentication
+ 
 ## requirements
 
 requires a meshtastic node connected (via serial) to gather mesh data and the meshtastic cli.
@@ -78,7 +75,7 @@ Puma starting in single mode...
 * Listening on http://127.0.0.1:41447
 ```
 
-set `API_TOKEN` required for authorizations on the api post-endpoints (wip).
+set `API_TOKEN` required for authorizations on the api post-endpoints.
 
 the web app can be configured with environment variables (defaults shown):
 
@@ -100,8 +97,10 @@ the web app contains an api:
 
 * GET `/api/nodes?limit=1000` - returns the latest 1000 nodes reported to the app
 * GET `/api/messages?limit=1000` - returns the latest 1000 messages
+* POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
+* POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
-the `POST` apis are _currently being worked on (tm)._
+the `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
 ## license
 
