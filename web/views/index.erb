@@ -36,6 +36,7 @@
     .chat-entry-msg { font-family: ui-monospace, Menlo, Consolas, monospace; }
     .chat-entry-date { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: bold; }
     .short-name { display:inline-block; border-radius:4px; padding:0 2px; }
+    .chat-popup { position: absolute; z-index: 1000; }
     .controls { display: flex; gap: 8px; align-items: center; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
@@ -211,6 +212,53 @@
       return `<span class="short-name" style="background:${color}">${padded}</span>`;
     }
 
+    function nodePopupHtml(n, nowSec) {
+      const lines = [
+        `<b>${n.long_name || ''}</b>`,
+        `${renderShortHtml(n.short_name, n.role)} <span class="mono">${n.node_id || ''}</span>`,
+        n.hw_model ? `Model: ${fmtHw(n.hw_model)}` : null,
+        `Role: ${n.role || 'CLIENT'}`,
+        (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
+        (n.last_heard ? `Last seen: ${timeAgo(n.last_heard, nowSec)}` : null),
+        (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time, nowSec)}` : null),
+        (n.uptime_seconds ? `Uptime: ${timeHum(n.uptime_seconds)}` : null),
+      ].filter(Boolean);
+      return lines.join('<br/>');
+    }
+
+    let chatTooltip;
+    let chatTooltipTarget;
+
+    function showNodeTooltip(target, node) {
+      if (!node) return;
+      const nowSec = Date.now() / 1000;
+      const html = nodePopupHtml(node, nowSec);
+      if (!chatTooltip) {
+        chatTooltip = document.createElement('div');
+        chatTooltip.className = 'leaflet-popup chat-popup';
+        chatTooltip.style.display = 'none';
+        document.body.appendChild(chatTooltip);
+      }
+      chatTooltip.innerHTML = `<div class="leaflet-popup-content-wrapper"><div class="leaflet-popup-content">${html}</div></div><div class="leaflet-popup-tip-container"><div class="leaflet-popup-tip"></div></div>`;
+      const rect = target.getBoundingClientRect();
+      chatTooltip.style.left = `${window.scrollX + rect.left}px`;
+      chatTooltip.style.top = `${window.scrollY + rect.bottom}px`;
+      if (chatTooltipTarget === target && chatTooltip.style.display !== 'none') {
+        chatTooltip.style.display = 'none';
+        chatTooltipTarget = null;
+      } else {
+        chatTooltip.style.display = 'block';
+        chatTooltipTarget = target;
+      }
+    }
+
+    document.addEventListener('click', (e) => {
+      if (chatTooltip && chatTooltip.style.display !== 'none' && !chatTooltip.contains(e.target) && e.target !== chatTooltipTarget) {
+        chatTooltip.style.display = 'none';
+        chatTooltipTarget = null;
+      }
+    });
+
     function appendChatEntry(div) {
       chatEl.appendChild(div);
       while (chatEl.childElementCount > CHAT_LIMIT) {
@@ -242,6 +290,13 @@
       const short = renderShortHtml(n.short_name, n.role);
       const longName = escapeHtml(n.long_name || '');
       div.innerHTML = `[${ts}] ${short} <em>New node: ${longName}</em>`;
+      const shortEl = div.querySelector('.short-name');
+      if (shortEl) {
+        shortEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showNodeTooltip(shortEl, n);
+        });
+      }
       appendChatEntry(div);
     }
 
@@ -253,6 +308,13 @@
       const text = escapeHtml(m.text || '');
       div.className = 'chat-entry-msg';
       div.innerHTML = `[${ts}] ${short} ${text}`;
+      const shortEl = div.querySelector('.short-name');
+      if (shortEl && m.node) {
+        shortEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showNodeTooltip(shortEl, m.node);
+        });
+      }
       appendChatEntry(div);
     }
 
@@ -384,17 +446,7 @@
           fillOpacity: 0.7,
           opacity: 0.7
         });
-        const lines = [
-          `<b>${n.long_name || ''}</b>`,
-          `${renderShortHtml(n.short_name, n.role)} <span class="mono">${n.node_id || ''}</span>`,
-          n.hw_model ? `Model: ${fmtHw(n.hw_model)}` : null,
-          `Role: ${n.role || 'CLIENT'}`,
-          (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
-          (n.last_heard ? `Last seen: ${timeAgo(n.last_heard, nowSec)}` : null),
-          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time, nowSec)}` : null),
-          (n.uptime_seconds ? `Uptime: ${timeHum(n.uptime_seconds)}` : null),
-        ].filter(Boolean);
-        marker.bindPopup(lines.join('<br/>'));
+        marker.bindPopup(nodePopupHtml(n, nowSec));
         marker.addTo(markersLayer);
         pts.push([lat, lon]);
       }
