@@ -86,7 +86,13 @@ def query_messages(limit)
   rows = db.execute <<~SQL, [limit]
                       SELECT m.*, n.*, m.snr AS msg_snr
                       FROM messages m
-                      LEFT JOIN nodes n ON m.from_id = n.node_id
+                      LEFT JOIN nodes n ON (
+                        m.from_id = n.node_id OR (
+                          CAST(m.from_id AS TEXT) <> '' AND
+                          CAST(m.from_id AS TEXT) GLOB '[0-9]*' AND
+                          CAST(m.from_id AS INTEGER) = n.num
+                        )
+                      )
                       ORDER BY m.rx_time DESC
                       LIMIT ?
                     SQL
@@ -191,11 +197,14 @@ def insert_message(db, m)
   return unless msg_id
   rx_time = m["rx_time"]&.to_i || Time.now.to_i
   rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
+  from_id = normalize_node_id(db, m["from_id"]) || m["from_id"]
+  from_id = from_id.to_s.strip unless from_id.nil?
+  from_id = nil if from_id&.empty?
   row = [
     msg_id,
     rx_time,
     rx_iso,
-    m["from_id"],
+    from_id,
     m["to_id"],
     m["channel"],
     m["portnum"],
@@ -208,6 +217,23 @@ def insert_message(db, m)
                INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
                VALUES (?,?,?,?,?,?,?,?,?,?,?)
              SQL
+end
+
+def normalize_node_id(db, node_ref)
+  return nil if node_ref.nil?
+  ref_str = node_ref.to_s.strip
+  return nil if ref_str.empty?
+
+  node_id = db.get_first_value("SELECT node_id FROM nodes WHERE node_id = ?", [ref_str])
+  return node_id if node_id
+
+  begin
+    ref_num = Integer(ref_str, 10)
+  rescue ArgumentError
+    return nil
+  end
+
+  db.get_first_value("SELECT node_id FROM nodes WHERE num = ?", [ref_num])
 end
 
 post "/api/nodes" do
