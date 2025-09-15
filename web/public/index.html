@@ -50,6 +50,26 @@
       #map { order: 1; flex: none; max-width: 100%; height: 50vh; }
       #chat { order: 2; flex: none; max-width: 100%; height: 30vh; }
     }
+
+    /* Dark mode overrides */
+    body.dark { background: #111; color: #eee; }
+    body.dark .meta { color: #bbb; }
+    body.dark .pill { background: #444; }
+    body.dark #map { border-color: #444; }
+    body.dark #chat { border-color: #444; background: #222; color: #eee; }
+    body.dark th, body.dark td { border-bottom-color: #444; }
+    body.dark th { background: #222; }
+    body.dark button { background: #333; border-color: #444; color: #eee; }
+    body.dark button:hover { background: #444; }
+    body.dark label { color: #ddd; }
+    body.dark input[type="text"] { background: #222; color: #eee; border-color: #444; }
+    body.dark .legend { background: #333; border-color: #444; color: #eee; }
+    body.dark footer { background: #222; border-top-color: #444; color: #eee; }
+    body.dark a { color: #9bd; }
+    body.dark .chat-entry-node { color: #777 }
+    body.dark .chat-entry-msg { color: #bbb }
+    body.dark .short-name { color: #555 }
+    body.dark .chat-entry-date { color: #bbb }
   </style>
 </head>
 <body>
@@ -63,6 +83,7 @@
     <div class="controls">
       <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
       <input type="text" id="filterInput" placeholder="Filter nodes" />
+      <button id="themeToggle" type="button" aria-label="Toggle dark mode">🌙</button>
     </div>
   </div>
 
@@ -105,6 +126,7 @@
     const fitBoundsEl = document.getElementById('fitBounds');
     const refreshBtn = document.getElementById('refreshBtn');
     const filterInput = document.getElementById('filterInput');
+    const themeToggle = document.getElementById('themeToggle');
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
     const chatEl = document.getElementById('chat');
@@ -136,10 +158,15 @@
 
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
-    const tiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}.png', {
+    const lightTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png', {
       maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors &amp; WMF Labs'
-    }).addTo(map);
+      attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
+    });
+    const darkTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
+    });
+    let tiles = lightTiles.addTo(map);
     // Default view (Berlin center) until first data arrives
     map.setView(MAP_CENTER, 10);
 
@@ -154,6 +181,14 @@
       return div;
     };
     legend.addTo(map);
+
+    themeToggle.addEventListener('click', () => {
+      const dark = document.body.classList.toggle('dark');
+      themeToggle.textContent = dark ? '☀️' : '🌙';
+      map.removeLayer(tiles);
+      tiles = dark ? darkTiles : lightTiles;
+      tiles.addTo(map);
+    });
 
     // --- Helpers ---
     function escapeHtml(str) {
