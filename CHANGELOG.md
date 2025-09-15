@@ -2,6 +2,7 @@
 
 ## v0.1.0
 
+* Fix nested dataclass serialization for node snapshots
 * Show daily node count in title and header by @l5yth in https://github.com/l5yth/potato-mesh/pull/49
 * Add daily date separators to chat log by @l5yth in https://github.com/l5yth/potato-mesh/pull/47
 * Feat: make frontend responsive for mobile by @l5yth in https://github.com/l5yth/potato-mesh/pull/46

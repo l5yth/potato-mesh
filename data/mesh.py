@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import dataclasses
 import json, os, time, threading, signal, urllib.request, urllib.error
 
 from meshtastic.serial_interface import SerialInterface
@@ -42,16 +43,32 @@ def _post_json(path: str, payload: dict):
 # --- Node upsert --------------------------------------------------------------
 def _node_to_dict(n) -> dict:
     """Convert Meshtastic node/user objects into plain dicts."""
-    if isinstance(n, dict):
-        return n
-    if isinstance(n, ProtoMessage):
-        return MessageToDict(
-            n, preserving_proto_field_name=True, use_integers_for_enums=False
-        )
-    try:
-        return json.loads(json.dumps(n, default=lambda o: getattr(o, "__dict__", str(o))))
-    except Exception:
-        return {"_unparsed": str(n)}
+
+    def _convert(value):
+        """Recursively convert dataclasses and protobuf messages."""
+        if isinstance(value, dict):
+            return {k: _convert(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [_convert(v) for v in value]
+        if dataclasses.is_dataclass(value):
+            return {k: _convert(getattr(value, k)) for k in value.__dataclass_fields__}
+        if isinstance(value, ProtoMessage):
+            return MessageToDict(
+                value, preserving_proto_field_name=True, use_integers_for_enums=False
+            )
+        if isinstance(value, bytes):
+            try:
+                return value.decode()
+            except Exception:
+                return value.hex()
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return str(value)
+
+    return _convert(n)
 
 
 def upsert_node(node_id, n):
