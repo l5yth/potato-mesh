@@ -157,6 +157,13 @@ def store_packet_dict(p: dict):
     from_id = _first(p, "fromId", "from_id", "from", default=None)
     to_id = _first(p, "toId", "to_id", "to", default=None)
 
+    if (from_id is None or str(from_id) == "") and DEBUG:
+        try:
+            raw = json.dumps(p, default=str)
+        except Exception:
+            raw = str(p)
+        print(f"[debug] packet missing from_id: {raw}")
+
     # link metrics
     snr = _first(p, "snr", "rx_snr", "rxSnr", default=None)
     rssi = _first(p, "rssi", "rx_rssi", "rxRssi", default=None)
