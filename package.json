@@ -1,0 +1,16 @@
+{
+  "name": "potato-mesh",
+  "version": "1.0.0",
+  "description": "a simple node dashboard for berlin mediumfast",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "NODE_V8_COVERAGE=web/coverage-js node --test web/test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

@@ -4,3 +4,9 @@ gem "sinatra", "~> 4.0"
 gem "sqlite3", "~> 1.7"
 gem "rackup", "~> 2.2"
 gem "puma", "~> 7.0"
+
+group :development, :test do
+  gem "rspec", "~> 3.12"
+  gem "rack-test", "~> 2.1"
+  gem "simplecov", "~> 0.22"
+end
