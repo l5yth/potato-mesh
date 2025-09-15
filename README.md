@@ -2,6 +2,8 @@
 
  a simple meshtastic node dashboard for your local community. here: berlin mediumfast.
 
+ demo: [potatomesh.net](https://potatomesh.net)
+
  ![screenshot of the first version](./scrot-0.1.png)
 
 ## status
