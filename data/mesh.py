@@ -40,11 +40,26 @@ def _post_json(path: str, payload: dict):
 
 
 # --- Node upsert --------------------------------------------------------------
+def _node_to_dict(n) -> dict:
+    """Convert Meshtastic node/user objects into plain dicts."""
+    if isinstance(n, dict):
+        return n
+    if isinstance(n, ProtoMessage):
+        return MessageToDict(
+            n, preserving_proto_field_name=True, use_integers_for_enums=False
+        )
+    try:
+        return json.loads(json.dumps(n, default=lambda o: getattr(o, "__dict__", str(o))))
+    except Exception:
+        return {"_unparsed": str(n)}
+
+
 def upsert_node(node_id, n):
-    _post_json("/api/nodes", {node_id: n})
+    ndict = _node_to_dict(n)
+    _post_json("/api/nodes", {node_id: ndict})
 
     if DEBUG:
-        user = _get(n, "user") or {}
+        user = _get(ndict, "user") or {}
         short = _get(user, "shortName")
         print(f"[debug] upserted node {node_id} shortName={short!r}")
 
