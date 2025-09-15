@@ -38,7 +38,6 @@
     .chat-entry-date { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: bold; }
     .short-name { display:inline-block; border-radius:4px; padding:0 2px; }
     .meta-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-    .subheading { margin: 0; font-size: 16px; font-weight: 500; color: #333; }
     .refresh-info { margin: 0; color: #555; }
     .refresh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .controls { display: flex; gap: 8px; align-items: center; }
@@ -49,6 +48,7 @@
     .legend { background: #fff; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; line-height: 18px; }
     .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
     #map .leaflet-tile { filter: opacity(70%); }
+    #nodes { font-size: 12px; }
     footer { position: fixed; bottom: 0; left: var(--pad); width: calc(100% - 2 * var(--pad)); background: #fafafa; border-top: 1px solid #ddd; text-align: center; font-size: 12px; padding: 4px 0; }
     @media (max-width: 768px) {
       .row { flex-direction: column; align-items: stretch; gap: var(--pad); }
@@ -61,15 +61,12 @@
       .refresh-actions { flex-direction: column; align-items: flex-start; gap: 6px; }
       #map { order: 1; flex: none; max-width: 100%; height: 50vh; }
       #chat { order: 2; flex: none; max-width: 100%; height: 30vh; }
-      #nodes { font-size: 12px; }
       #nodes th:nth-child(1),
       #nodes td:nth-child(1),
       #nodes th:nth-child(5),
       #nodes td:nth-child(5),
       #nodes th:nth-child(6),
       #nodes td:nth-child(6),
-      #nodes th:nth-child(8),
-      #nodes td:nth-child(8),
       #nodes th:nth-child(9),
       #nodes td:nth-child(9),
       #nodes th:nth-child(12),
@@ -87,7 +84,6 @@
     /* Dark mode overrides */
     body.dark { background: #111; color: #eee; }
     body.dark .meta { color: #bbb; }
-    body.dark .subheading { color: #ddd; }
     body.dark .refresh-info { color: #bbb; }
     body.dark .pill { background: #444; }
     body.dark #map { border-color: #444; }
@@ -110,8 +106,7 @@
   <h1><%= site_name %></h1>
   <div class="row meta">
     <div class="meta-info">
-      <p id="subHeading" class="subheading">Live data for <%= default_channel %> (<%= default_frequency %>)</p>
-      <p id="refreshInfo" class="refresh-info" aria-live="polite">Active nodes (hour/day/week): … — auto-refresh every <%= refresh_interval_seconds %> seconds.</p>
+      <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes (hour/day/week): … — auto-refresh every <%= refresh_interval_seconds %> seconds.</p>
       <div class="refresh-actions">
         <button id="refreshBtn" type="button">Refresh now</button>
         <span id="status" class="pill">loading…</span>
@@ -170,7 +165,6 @@
     const headerEl = document.querySelector('h1');
     const chatEl = document.getElementById('chat');
     const refreshInfo = document.getElementById('refreshInfo');
-    const subHeadingEl = document.getElementById('subHeading');
     const baseTitle = document.title;
     let allNodes = [];
     const seenNodeIds = new Set();
@@ -179,8 +173,7 @@
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
-    subHeadingEl.textContent = `Live data for <%= default_channel %> (<%= default_frequency %>)`;
-    refreshInfo.textContent = `Active nodes (hour/day/week): … — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
+    refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes (hour/day/week): … — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
 
     const MAP_CENTER = L.latLng(<%= map_center_lat %>, <%= map_center_lon %>);
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
@@ -524,7 +517,7 @@
         const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
         return `${c}/${w.label}`;
       }).join(', ');
-      refreshInfo.textContent = `Active nodes (hour/day/week): ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
+      refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes (hour/day/week): ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
     }
   </script>
 </body>
