@@ -118,7 +118,7 @@
   <footer>
     PotatoMesh GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
     <% if matrix_room && !matrix_room.empty? %>
-      — Meshtastic <%= site_name %> Matrix:
+      — <%= site_name %> Matrix:
       <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
     <% end %>
   </footer>
@@ -141,7 +141,7 @@
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
     const REFRESH_MS = 60000;
-    refreshInfo.textContent = `#MediumFast — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
+    refreshInfo.textContent = `${baseTitle} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
 
     const MAP_CENTER = L.latLng(<%= map_center_lat %>, <%= map_center_lon %>);
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
@@ -485,7 +485,7 @@
         const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
         return `${c}/${w.label}`;
       }).join(', ');
-      refreshInfo.textContent = `#MediumFast — active nodes: ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
+      refreshInfo.textContent = `${baseTitle} — active nodes: ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
     }
   </script>
 </body>
