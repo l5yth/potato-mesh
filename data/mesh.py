@@ -157,7 +157,6 @@ def store_packet_dict(p: dict):
         "snr": float(snr) if snr is not None else None,
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
-        "raw_json": p,
     }
     _post_json("/api/messages", msg)
 

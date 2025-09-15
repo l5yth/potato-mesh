@@ -63,7 +63,7 @@ def query_messages(limit)
                       ORDER BY m.rx_time DESC
                       LIMIT ?
                     SQL
-  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit raw_json]
+  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit]
   rows.each do |r|
     node = {}
     r.keys.each do |k|
@@ -168,11 +168,10 @@ def insert_message(db, m)
     m["snr"],
     m["rssi"],
     m["hop_limit"],
-    m["raw_json"],
   ]
   db.execute <<~SQL, row
-               INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit,raw_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+               INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
              SQL
 end
 
