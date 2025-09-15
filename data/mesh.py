@@ -195,7 +195,7 @@ def store_packet_dict(p: dict):
         conn.execute(
             """INSERT OR IGNORE INTO messages
                (id, rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             row,
         )
         conn.commit()
