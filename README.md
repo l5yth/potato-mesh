@@ -22,6 +22,7 @@ what works:
 what does not work _(yet):_
 
 * posting nodes and messages to the api endpoints _(wip)_
+* white-label for your community (need to updated some berlin-specific hardcoded stuff)
 
 ## requirements
 
