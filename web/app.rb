@@ -165,7 +165,7 @@ def insert_message(db, m)
   ]
   db.execute <<~SQL, row
                INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit,raw_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
              SQL
 end
 
