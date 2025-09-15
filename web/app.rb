@@ -18,6 +18,7 @@ MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "52.502889").to_f
 MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
+DEBUG = ENV["DEBUG"] == "1"
 
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
@@ -91,6 +92,11 @@ def query_messages(limit)
                     SQL
   msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit]
   rows.each do |r|
+    if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
+      raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
+      warn "[debug] messages row before join: #{raw.inspect}"
+      warn "[debug] row after join: #{r.inspect}"
+    end
     node = {}
     r.keys.each do |k|
       next if msg_fields.include?(k)
@@ -98,6 +104,9 @@ def query_messages(limit)
     end
     r["snr"] = r.delete("msg_snr")
     r["node"] = node unless node.empty?
+    if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
+      warn "[debug] row after processing: #{r.inspect}"
+    end
   end
   rows
 ensure
