@@ -1,11 +1,10 @@
 # potato-mesh
 
- a simple meshtastic node dashboard for your local community.
- defaults are tuned for the Meshtastic Berlin network but can be adjusted via environment variables.
+a simple meshtastic node dashboard for your local community.
 
- demo: [potatomesh.net](https://potatomesh.net)
+demo for berlin mediumfast: [potatomesh.net](https://potatomesh.net)
 
- ![screenshot of the first version](./scrot-0.1.png)
+![screenshot of the first version](./scrot-0.1.png)
 
 ## status
 
@@ -84,6 +83,7 @@ set `API_TOKEN` required for authorizations on the api post-endpoints (wip).
 the web app can be configured with environment variables (defaults shown):
 
 * `SITE_NAME` - title and header shown in the ui (default: "Meshtastic Berlin")
+* `DEFAULT_CHANNEL` - default channel shown in the ui (default: "#MediumFast")
 * `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `52.502889` / `13.404194`)
 * `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
 * `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)

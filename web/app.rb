@@ -11,6 +11,7 @@ set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
 SITE_NAME = ENV.fetch("SITE_NAME", "Meshtastic Berlin")
+DEFAULT_CHANNEL = ENV.fetch("DEFAULT_CHANNEL", "#MediumFast")
 MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "52.502889").to_f
 MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
@@ -164,6 +165,7 @@ end
 get "/" do
   erb :index, locals: {
     site_name: SITE_NAME,
+    default_channel: DEFAULT_CHANNEL,
     map_center_lat: MAP_CENTER_LAT,
     map_center_lon: MAP_CENTER_LON,
     max_node_distance_km: MAX_NODE_DISTANCE_KM,
