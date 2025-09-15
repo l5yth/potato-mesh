@@ -145,9 +145,12 @@ def require_token!
 end
 
 def insert_message(db, m)
+  msg_id = m["id"] || m["packet_id"]
+  return unless msg_id
   rx_time = m["rx_time"]&.to_i || Time.now.to_i
   rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
   row = [
+    msg_id,
     rx_time,
     rx_iso,
     m["from_id"],
@@ -161,8 +164,8 @@ def insert_message(db, m)
     m["raw_json"],
   ]
   db.execute <<~SQL, row
-               INSERT INTO messages(rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit,raw_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit,raw_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
              SQL
 end
 
