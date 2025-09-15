@@ -1,6 +1,6 @@
 # potato-mesh
 
-a simple meshtastic node dashboard for your local community.
+a simple meshtastic node dashboard for your local community. _no mqtt clutter, just local lora aether._
 
 demo for berlin mediumfast: [potatomesh.net](https://potatomesh.net)
 
