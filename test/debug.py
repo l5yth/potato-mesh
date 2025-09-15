@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import time, json, base64, threading
-from pubsub import pub                   # comes with meshtastic
+from pubsub import pub  # comes with meshtastic
 from meshtastic.serial_interface import SerialInterface
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
@@ -11,13 +11,16 @@ packet_count = 0
 last_rx_ts = None
 stop = threading.Event()
 
+
 def to_jsonable(obj):
     """Recursively convert protobuf/bytes/etc. into JSON-serializable structures."""
     if obj is None:
         return None
     if isinstance(obj, ProtoMessage):
         # Convert protobuf to dict; bytes become base64 by default
-        return MessageToDict(obj, preserving_proto_field_name=True, use_integers_for_enums=False)
+        return MessageToDict(
+            obj, preserving_proto_field_name=True, use_integers_for_enums=False
+        )
     if isinstance(obj, bytes):
         return {"__bytes_b64__": base64.b64encode(obj).decode("ascii")}
     if isinstance(obj, (str, int, float, bool)):
@@ -28,6 +31,7 @@ def to_jsonable(obj):
         return [to_jsonable(v) for v in obj]
     # fallback
     return str(obj)
+
 
 def extract_text(d):
     """Best-effort pull of decoded text from a dict produced by to_jsonable()."""
@@ -41,6 +45,7 @@ def extract_text(d):
         return dec.get("text")
     return None
 
+
 def on_receive(packet, interface):
     global packet_count, last_rx_ts
     packet_count += 1
@@ -49,7 +54,7 @@ def on_receive(packet, interface):
     d = to_jsonable(packet)
     text = extract_text(d)
     frm = d.get("from") or d.get("from_id") or d.get("fromId")
-    to  = d.get("to") or d.get("to_id") or d.get("toId")
+    to = d.get("to") or d.get("to_id") or d.get("toId")
     portnum = (d.get("decoded") or {}).get("portnum")
 
     print(f"\n=== PACKET #{packet_count} RECEIVED ===")
@@ -64,11 +69,14 @@ def on_receive(packet, interface):
         # Shouldn't happen after to_jsonable, but keep a guard
         print("[warn] JSON dump failed even after conversion:", e)
 
+
 def on_connected(interface, *args, **kwargs):
     print("[info] connection established")
 
+
 def on_disconnected(interface, *args, **kwargs):
     print("[info] disconnected")
+
 
 def main():
     print(f"Opening Meshtastic on {PORT} …")
@@ -86,8 +94,12 @@ def main():
             time.sleep(0.5)
             now = time.time()
             if now - last_heartbeat >= 5:
-                since = "never" if last_rx_ts is None else f"{int(now - last_rx_ts)}s ago"
-                print(f"[heartbeat] alive; packets={packet_count} (last packet {since})")
+                since = (
+                    "never" if last_rx_ts is None else f"{int(now - last_rx_ts)}s ago"
+                )
+                print(
+                    f"[heartbeat] alive; packets={packet_count} (last packet {since})"
+                )
                 last_heartbeat = now
     except KeyboardInterrupt:
         pass
@@ -97,6 +109,7 @@ def main():
         except Exception:
             pass
         print("\nExiting.")
+
 
 if __name__ == "__main__":
     main()

@@ -111,23 +111,23 @@ def upsert_node(db, node_id, n)
     pos["locationSource"],
     pos["latitude"],
     pos["longitude"],
-    pos["altitude"]
+    pos["altitude"],
   ]
   db.execute <<~SQL, row
-    INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
-                      hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                      position_time,location_source,latitude,longitude,altitude)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(node_id) DO UPDATE SET
-      num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
-      hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
-      is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
-      battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
-      air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
-      location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
-      altitude=excluded.altitude
-    WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
-  SQL
+               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
+                                 hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
+                                 position_time,location_source,latitude,longitude,altitude)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(node_id) DO UPDATE SET
+                 num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
+                 hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
+                 is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                 battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
+                 air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
+                 location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
+                 altitude=excluded.altitude
+               WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
+             SQL
 end
 
 def require_token!

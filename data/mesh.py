@@ -25,11 +25,13 @@ conn.commit()
 
 DB_LOCK = threading.Lock()
 
+
 def _get(obj, key, default=None):
     """Return value for key/attribute from dicts or objects."""
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
 
 # --- Node upsert --------------------------------------------------------------
 def upsert_node(node_id, n):
@@ -94,14 +96,17 @@ def upsert_node(node_id, n):
         short = _get(user, "shortName")
         print(f"[debug] upserted node {node_id} shortName={short!r}")
 
+
 # --- Message logging via PubSub -----------------------------------------------
 def _iso(ts: int | float) -> str:
     import datetime
+
     return (
         datetime.datetime.fromtimestamp(int(ts), datetime.UTC)
         .isoformat()
         .replace("+00:00", "Z")
     )
+
 
 def _first(d: dict, *names, default=None):
     """Return first present key from names (supports nested 'a.b' lookups)."""
@@ -119,17 +124,21 @@ def _first(d: dict, *names, default=None):
             return cur
     return default
 
+
 def _pkt_to_dict(packet) -> dict:
     """Convert protobuf MeshPacket or already-dict into a JSON-friendly dict."""
     if isinstance(packet, dict):
         return packet
     if isinstance(packet, ProtoMessage):
-        return MessageToDict(packet, preserving_proto_field_name=True, use_integers_for_enums=False)
+        return MessageToDict(
+            packet, preserving_proto_field_name=True, use_integers_for_enums=False
+        )
     # Last resort: try to read attributes
     try:
         return json.loads(json.dumps(packet, default=lambda o: str(o)))
     except Exception:
         return {"_unparsed": str(packet)}
+
 
 def store_packet_dict(p: dict):
     """
@@ -159,12 +168,12 @@ def store_packet_dict(p: dict):
     # timestamps & ids
     rx_time = int(_first(p, "rxTime", "rx_time", default=time.time()))
     from_id = _first(p, "fromId", "from_id", "from", default=None)
-    to_id   = _first(p, "toId", "to_id", "to", default=None)
+    to_id = _first(p, "toId", "to_id", "to", default=None)
 
     # link metrics
-    snr  = _first(p, "snr", "rx_snr", "rxSnr", default=None)
+    snr = _first(p, "snr", "rx_snr", "rxSnr", default=None)
     rssi = _first(p, "rssi", "rx_rssi", "rxRssi", default=None)
-    hop  = _first(p, "hopLimit", "hop_limit", default=None)
+    hop = _first(p, "hopLimit", "hop_limit", default=None)
 
     row = (
         rx_time,
@@ -192,6 +201,7 @@ def store_packet_dict(p: dict):
             f"[debug] stored message from {from_id!r} to {to_id!r} ch={ch} text={text!r}"
         )
 
+
 # PubSub receive handler
 def on_receive(packet, interface):
     p = None
@@ -202,6 +212,7 @@ def on_receive(packet, interface):
         info = list(p.keys()) if isinstance(p, dict) else type(packet)
         print(f"[warn] failed to store packet: {e} | info: {info}")
 
+
 # --- Main ---------------------------------------------------------------------
 def main():
     # Subscribe to PubSub topics (reliable in current meshtastic)
@@ -210,8 +221,10 @@ def main():
     iface = SerialInterface(devPath=PORT)
 
     stop = threading.Event()
+
     def handle_sig(*_):
         stop.set()
+
     signal.signal(signal.SIGINT, handle_sig)
     signal.signal(signal.SIGTERM, handle_sig)
 
@@ -234,6 +247,7 @@ def main():
     with DB_LOCK:
         conn.commit()
     conn.close()
+
 
 if __name__ == "__main__":
     main()
