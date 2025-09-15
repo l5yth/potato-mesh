@@ -6,7 +6,7 @@
 
 ## status
 
-in active development.
+_in active development._
 
 what works:
 
@@ -16,10 +16,12 @@ what works:
 * displaying nodes ordered by last seen in a web app table view
 * displaying nodes by geographic coordinates on a map layer, coloured by device role
 * displaying new node notifications and chat messages in default channel in chat box
+* displaying active node count and filtering nodes by name
+* exposing nodes and messages to api endpoints
 
-what does not work (yet):
+what does not work _(yet):_
 
-* posting nodes and messages to the api endpoints (wip)
+* posting nodes and messages to the api endpoints _(wip)_
 
 ## requirements
 
@@ -76,6 +78,15 @@ Puma starting in single mode...
 
 set `API_TOKEN` required for authorizations on the api post-endpoints (wip).
 
-### license
+## api
+
+the web app contains an api:
+
+* GET `/api/nodes?limit=1000` - returns the latest 1000 nodes reported to the app
+* GET `/api/messages?limit=1000` - returns the latest 1000 messages
+
+the `POST` apis are _currently being worked on (tm)._
+
+## license
 
 apache v2.0
