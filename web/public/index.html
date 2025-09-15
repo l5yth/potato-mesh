@@ -377,7 +377,7 @@
       const nowSec = Date.now()/1000;
       renderTable(nodes, nowSec);
       renderMap(nodes, nowSec);
-      updateCount(nodes.length);
+      updateCount(nodes, nowSec);
       updateRefreshInfo(nodes, nowSec);
     }
 
@@ -430,7 +430,9 @@
     setInterval(refresh, REFRESH_MS);
     refreshBtn.addEventListener('click', refresh);
 
-    function updateCount(count) {
+    function updateCount(nodes, nowSec) {
+      const dayAgoSec = nowSec - 86400;
+      const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= dayAgoSec).length;
       const text = `${baseTitle} (${count})`;
       titleEl.textContent = text;
       headerEl.textContent = text;
