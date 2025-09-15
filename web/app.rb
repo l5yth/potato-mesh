@@ -95,6 +95,13 @@ def upsert_node(db, node_id, n)
   pt = nil if pt && pt > now
   lh = now if lh && lh > now
   lh = pt if pt && (!lh || lh < pt)
+  bool = ->(v) {
+    case v
+    when true then 1
+    when false then 0
+    else v
+    end
+  }
   row = [
     node_id,
     n["num"],
@@ -104,8 +111,8 @@ def upsert_node(db, node_id, n)
     user["hwModel"] || n["hwModel"],
     role,
     user["publicKey"],
-    user["isUnmessagable"],
-    n["isFavorite"],
+    bool.call(user["isUnmessagable"]),
+    bool.call(n["isFavorite"]),
     n["hopsAway"],
     n["snr"],
     lh,
