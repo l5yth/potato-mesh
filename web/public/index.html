@@ -443,7 +443,6 @@
         { label: 'hour', secs: 3600 },
         { label: 'day', secs: 86400 },
         { label: 'week', secs: 7 * 86400 },
-        { label: 'month', secs: 30 * 86400 },
       ];
       const counts = windows.map(w => {
         const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
