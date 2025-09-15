@@ -26,7 +26,7 @@ what works:
 
 requires a meshtastic node connected (via serial) to gather mesh data and the meshtastic cli.
 
-requires the meshtastic python api for the database.
+requires the meshtastic python api for communicating with the device.
 
 ```bash
 python -m venv .venv
@@ -41,14 +41,16 @@ gem install bundler
 bundle install
 ```
 
-### database
+### ingest
 
-uses python meshtastic library to ingest mesh data into an sqlite3 database locally
+uses the meshtastic python library to ingest mesh data and post nodes and messages
+to the configured potatomesh instance.
 
-run `mesh.sh` in `data/` to keep updating node records and parsing new incoming messages.
+run `mesh.sh` in `data/` with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating
+node records and parsing new incoming messages.
 
 ```bash
-MESH_SERIAL=/dev/ttyACM0 DEBUG=1 ./mesh.sh
+POTATOMESH_INSTANCE=https://potatomesh.net API_TOKEN=TOKEN MESH_SERIAL=/dev/ttyACM0 DEBUG=1 ./mesh.sh
 [...]
 [debug] upserted node !849b7154 shortName='7154'
 [debug] upserted node !ba653ae8 shortName='3ae8'
@@ -56,7 +58,8 @@ MESH_SERIAL=/dev/ttyACM0 DEBUG=1 ./mesh.sh
 [debug] stored message from '!9ee71c38' to '^all' ch=0 text='Guten Morgen!'
 ```
 
-enable debug output with `DEBUG=1`, specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`).
+enable debug output with `DEBUG=1`, specify the serial port with `MESH_SERIAL`
+(default `/dev/ttyACM0`).
 
 ### web app
 
