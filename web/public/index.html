@@ -66,6 +66,10 @@
     body.dark .legend { background: #333; border-color: #444; color: #eee; }
     body.dark footer { background: #222; border-top-color: #444; color: #eee; }
     body.dark a { color: #9bd; }
+    body.dark .chat-entry-node { color: #777 }
+    body.dark .chat-entry-msg { color: #bbb }
+    body.dark .short-name { color: #555 }
+    body.dark .chat-entry-date { color: #bbb }
   </style>
 </head>
 <body>
@@ -77,9 +81,9 @@
       <span id="status" class="pill">loading…</span>
     </div>
     <div class="controls">
-      <button id="themeToggle" type="button" aria-label="Toggle dark mode">🌙</button>
       <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
       <input type="text" id="filterInput" placeholder="Filter nodes" />
+      <button id="themeToggle" type="button" aria-label="Toggle dark mode">🌙</button>
     </div>
   </div>
 
