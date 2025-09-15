@@ -200,7 +200,12 @@ def main():
         try:
             nodes = getattr(iface, "nodes", {}) or {}
             for node_id, n in nodes.items():
-                upsert_node(node_id, n)
+                try:
+                    upsert_node(node_id, n)
+                except Exception as e:
+                    print(f"[warn] failed to update node snapshot for {node_id}: {e}")
+                    if DEBUG:
+                        print(f"[debug] node object: {n!r}")
         except Exception as e:
             print(f"[warn] failed to update node snapshot: {e}")
         stop.wait(SNAPSHOT_SECS)
