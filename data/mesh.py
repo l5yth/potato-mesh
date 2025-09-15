@@ -166,6 +166,9 @@ def store_packet_dict(p: dict):
         ch = 0
 
     # timestamps & ids
+    pkt_id = _first(p, "id", "packet_id", "packetId", default=None)
+    if pkt_id is None:
+        return  # ignore packets without an id
     rx_time = int(_first(p, "rxTime", "rx_time", default=time.time()))
     from_id = _first(p, "fromId", "from_id", "from", default=None)
     to_id = _first(p, "toId", "to_id", "to", default=None)
@@ -176,6 +179,7 @@ def store_packet_dict(p: dict):
     hop = _first(p, "hopLimit", "hop_limit", default=None)
 
     row = (
+        int(pkt_id),
         rx_time,
         _iso(rx_time),
         from_id,
@@ -189,9 +193,9 @@ def store_packet_dict(p: dict):
     )
     with DB_LOCK:
         conn.execute(
-            """INSERT INTO messages
-               (rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            """INSERT OR IGNORE INTO messages
+               (id, rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             row,
         )
         conn.commit()

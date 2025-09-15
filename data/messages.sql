@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS messages (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    id        INTEGER PRIMARY KEY,     -- meshtastic packet id
     rx_time   INTEGER NOT NULL,        -- unix seconds when received
     rx_iso    TEXT NOT NULL,           -- ISO8601 UTC timestamp
     from_id   TEXT,                    -- sender node id (string form)
