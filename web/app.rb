@@ -8,6 +8,13 @@ DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 WEEK_SECONDS = 7 * 24 * 60 * 60
 
 set :public_folder, File.join(__dir__, "public")
+set :views, File.join(__dir__, "views")
+
+SITE_NAME = ENV.fetch("SITE_NAME", "Meshtastic Network")
+MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "0").to_f
+MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "0").to_f
+MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "1000").to_f
+MATRIX_ROOM = ENV["MATRIX_ROOM"]
 
 def query_nodes(limit)
   db = SQLite3::Database.new(DB_PATH, readonly: true, results_as_hash: true)
@@ -155,5 +162,11 @@ ensure
 end
 
 get "/" do
-  send_file File.join(settings.public_folder, "index.html")
+  erb :index, locals: {
+    site_name: SITE_NAME,
+    map_center_lat: MAP_CENTER_LAT,
+    map_center_lon: MAP_CENTER_LON,
+    max_node_distance_km: MAX_NODE_DISTANCE_KM,
+    matrix_room: MATRIX_ROOM
+  }
 end

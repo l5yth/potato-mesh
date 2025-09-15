@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Meshtastic Berlin</title>
+  <title><%= site_name %></title>
 
   <!-- Leaflet CSS/JS (CDN) -->
   <link
@@ -73,7 +73,7 @@
   </style>
 </head>
 <body>
-  <h1>Meshtastic Berlin</h1>
+  <h1><%= site_name %></h1>
   <div class="row meta">
     <div>
       <span id="refreshInfo"></span>
@@ -116,9 +116,11 @@
   </table>
 
   <footer>
-    PotatoMesh GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a> —
-    Meshtastic Berlin Matrix:
-    <a href="https://matrix.to/#/#meshtastic-berlin:matrix.org" target="_blank">#meshtastic-berlin:matrix.org</a>
+    PotatoMesh GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
+    <% if matrix_room && !matrix_room.empty? %>
+      — Meshtastic <%= site_name %> Matrix:
+      <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
+    <% end %>
   </footer>
 
   <script>
@@ -141,8 +143,8 @@
     const REFRESH_MS = 60000;
     refreshInfo.textContent = `#MediumFast — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
 
-    const MAP_CENTER = L.latLng(52.502889, 13.404194);
-    const MAX_NODE_DISTANCE_KM = 137;
+    const MAP_CENTER = L.latLng(<%= map_center_lat %>, <%= map_center_lon %>);
+    const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
 
     const roleColors = Object.freeze({
       CLIENT: '#A8D5BA',
@@ -167,7 +169,7 @@
       attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
     });
     let tiles = lightTiles.addTo(map);
-    // Default view (Berlin center) until first data arrives
+    // Default view until first data arrives
     map.setView(MAP_CENTER, 10);
 
     const markersLayer = L.layerGroup().addTo(map);
