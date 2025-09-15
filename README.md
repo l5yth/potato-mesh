@@ -1,10 +1,10 @@
 # potato-mesh
 
- a simple meshtastic node dashboard for your local community. here: berlin mediumfast.
+a simple meshtastic node dashboard for your local community.
 
- demo: [potatomesh.net](https://potatomesh.net)
+demo for berlin mediumfast: [potatomesh.net](https://potatomesh.net)
 
- ![screenshot of the first version](./scrot-0.1.png)
+![screenshot of the first version](./scrot-0.1.png)
 
 ## status
 
@@ -24,7 +24,6 @@ what works:
 what does not work _(yet):_
 
 * posting nodes and messages to the api endpoints _(wip)_
-* white-label for your community (need to updated some berlin-specific hardcoded stuff)
 
 ## requirements
 
@@ -80,6 +79,20 @@ Puma starting in single mode...
 ```
 
 set `API_TOKEN` required for authorizations on the api post-endpoints (wip).
+
+the web app can be configured with environment variables (defaults shown):
+
+* `SITE_NAME` - title and header shown in the ui (default: "Meshtastic Berlin")
+* `DEFAULT_CHANNEL` - default channel shown in the ui (default: "#MediumFast")
+* `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `52.502889` / `13.404194`)
+* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
+* `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)
+
+example:
+
+```bash
+SITE_NAME="Meshtastic Berlin" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 MAX_NODE_DISTANCE_KM=137 MATRIX_ROOM="#meshtastic-berlin:matrix.org" ./app.sh
+```
 
 ## api
 
