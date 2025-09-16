@@ -30,7 +30,19 @@ jobs:
     - name: Set up dependencies 
       run: bundle install
     - name: Run tests
-      run: bundle exec rspec
+      run: |
+        mkdir -p tmp/test-results
+        bundle exec rspec \
+          --require rspec_junit_formatter \
+          --format progress \
+          --format RspecJunitFormatter \
+          --out tmp/test-results/rspec.xml
+    - name: Upload test results to Codecov
+      uses: codecov/test-results-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./web/tmp/test-results/rspec.xml
+        flags: ruby-${{ matrix.ruby-version }}
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
