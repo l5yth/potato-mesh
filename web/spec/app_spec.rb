@@ -488,5 +488,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
     end
+
+    context "when DEBUG logging is enabled" do
+      it "logs diagnostics for messages missing a sender" do
+        stub_const("DEBUG", true)
+        allow(Kernel).to receive(:warn)
+
+        message_id = 987_654
+        payload = {
+          "packet_id" => message_id,
+          "from_id" => " ",
+          "text" => "debug logging",
+        }
+
+        post "/api/messages", payload.to_json, auth_headers
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        get "/api/messages"
+        expect(last_response).to be_ok
+
+        expect(Kernel).to have_received(:warn).with(
+          a_string_matching(/\[debug\] messages row before join: .*"id"=>#{message_id}/),
+        )
+        expect(Kernel).to have_received(:warn).with(
+          a_string_matching(/\[debug\] row after join: .*"id"=>#{message_id}/),
+        )
+        expect(Kernel).to have_received(:warn).with(
+          a_string_matching(/\[debug\] row after processing: .*"id"=>#{message_id}/),
+        )
+
+        messages = JSON.parse(last_response.body)
+        expect(messages.size).to eq(1)
+        expect(messages.first["from_id"]).to be_nil
+      end
+    end
   end
 end
