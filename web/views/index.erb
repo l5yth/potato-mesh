@@ -54,6 +54,12 @@
     .chat-entry-msg { font-family: ui-monospace, Menlo, Consolas, monospace; }
     .chat-entry-date { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: bold; }
     .short-name { display:inline-block; border-radius:4px; padding:0 2px; }
+    .short-name[data-node-info] { cursor: pointer; }
+    .short-info-overlay { position: absolute; background: #fff; color: #111; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); padding: 8px 10px 10px; font-size: 11px; line-height: 1.4; min-width: 200px; max-width: 240px; z-index: 2000; }
+    .short-info-overlay[hidden] { display: none; }
+    .short-info-overlay .short-info-close { position: absolute; top: 4px; right: 4px; border: none; background: transparent; font-size: 14px; line-height: 1; padding: 2px; border-radius: 4px; cursor: pointer; color: inherit; }
+    .short-info-overlay .short-info-close:hover { background: rgba(0, 0, 0, 0.08); }
+    .short-info-content { margin: 0; }
     .meta-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     .refresh-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; }
     .refresh-info { margin: 0; color: #555; }
@@ -162,6 +168,8 @@
     body.dark .info-intro { color: #bbb; }
     body.dark .info-details dt { color: #ddd; }
     body.dark .info-close:hover { background: rgba(255, 255, 255, 0.1); }
+    body.dark .short-info-overlay { background: #1c1c1c; border-color: #444; color: #eee; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); }
+    body.dark .short-info-overlay .short-info-close:hover { background: rgba(255, 255, 255, 0.1); }
   </style>
 </head>
 <body>
@@ -237,6 +245,11 @@
     <tbody></tbody>
   </table>
 
+  <div id="shortInfoOverlay" class="short-info-overlay" role="dialog" hidden>
+    <button type="button" class="short-info-close" aria-label="Close node details">×</button>
+    <div class="short-info-content"></div>
+  </div>
+
   <footer>
     PotatoMesh GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
     <% if matrix_room && !matrix_room.empty? %>
@@ -256,12 +269,16 @@
     const infoOverlay = document.getElementById('infoOverlay');
     const infoClose = document.getElementById('infoClose');
     const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
+    const shortInfoOverlay = document.getElementById('shortInfoOverlay');
+    const shortInfoClose = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-close') : null;
+    const shortInfoContent = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-content') : null;
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
     const chatEl = document.getElementById('chat');
     const refreshInfo = document.getElementById('refreshInfo');
     const baseTitle = document.title;
     let allNodes = [];
+    let shortInfoAnchor = null;
     const seenNodeIds = new Set();
     const seenMessageIds = new Set();
     let lastChatDate;
@@ -367,6 +384,56 @@
       });
     }
 
+    if (shortInfoClose) {
+      shortInfoClose.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        closeShortInfoOverlay();
+      });
+    }
+
+    document.addEventListener('click', event => {
+      const shortTarget = event.target.closest('.short-name');
+      if (shortTarget && shortTarget.dataset && shortTarget.dataset.nodeInfo) {
+        event.preventDefault();
+        event.stopPropagation();
+        let info = null;
+        try {
+          info = JSON.parse(shortTarget.dataset.nodeInfo);
+        } catch (err) {
+          console.warn('Failed to parse node info payload', err);
+        }
+        if (!info) return;
+        if (!info.shortName && shortTarget.textContent) {
+          info.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
+        }
+        if (!info.role) {
+          info.role = 'CLIENT';
+        }
+        if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === shortTarget) {
+          closeShortInfoOverlay();
+        } else {
+          openShortInfoOverlay(shortTarget, info);
+        }
+        return;
+      }
+      if (shortInfoOverlay && !shortInfoOverlay.hidden && !shortInfoOverlay.contains(event.target)) {
+        closeShortInfoOverlay();
+      }
+    });
+
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && shortInfoOverlay && !shortInfoOverlay.hidden) {
+        closeShortInfoOverlay();
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      if (shortInfoOverlay && !shortInfoOverlay.hidden) {
+        requestAnimationFrame(positionShortInfoOverlay);
+      }
+    });
+
     // --- Helpers ---
     function escapeHtml(str) {
       return String(str)
@@ -377,15 +444,99 @@
         .replace(/'/g, '&#39;');
     }
 
-    function renderShortHtml(short, role, longName){
+    function renderShortHtml(short, role, longName, nodeData = null){
       const safeTitle = longName ? escapeHtml(String(longName)) : '';
       const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
+      const resolvedRole = role || (nodeData && nodeData.role) || 'CLIENT';
+      let infoAttr = '';
+      if (nodeData && typeof nodeData === 'object') {
+        const info = {
+          nodeId: nodeData.node_id ?? nodeData.nodeId ?? '',
+          shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
+          longName: nodeData.long_name ?? longName ?? '',
+          role: resolvedRole,
+          hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
+          battery: nodeData.battery_level ?? nodeData.battery ?? null,
+          voltage: nodeData.voltage ?? null,
+          uptime: nodeData.uptime_seconds ?? nodeData.uptime ?? null,
+          channel: nodeData.channel_utilization ?? nodeData.channel ?? null,
+          airUtil: nodeData.air_util_tx ?? nodeData.airUtil ?? null,
+        };
+        infoAttr = ` data-node-info="${escapeHtml(JSON.stringify(info))}"`;
+      }
       if (!short) {
-        return `<span class="short-name" style="background:#ccc"${titleAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
+        return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
       }
       const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
-      const color = roleColors[role] || roleColors.CLIENT;
-      return `<span class="short-name" style="background:${color}"${titleAttr}>${padded}</span>`;
+      const color = roleColors[resolvedRole] || roleColors.CLIENT;
+      return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
+    }
+
+    function formatShortInfoUptime(value) {
+      if (value == null || value === '') return '';
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '';
+      return num === 0 ? '0s' : timeHum(num);
+    }
+
+    function shortInfoValueOrDash(value) {
+      return value != null && value !== '' ? String(value) : '—';
+    }
+
+    function closeShortInfoOverlay() {
+      if (!shortInfoOverlay) return;
+      shortInfoOverlay.hidden = true;
+      shortInfoOverlay.style.visibility = 'visible';
+      shortInfoAnchor = null;
+    }
+
+    function positionShortInfoOverlay() {
+      if (!shortInfoOverlay || shortInfoOverlay.hidden || !shortInfoAnchor) return;
+      if (!document.body.contains(shortInfoAnchor)) {
+        closeShortInfoOverlay();
+        return;
+      }
+      const rect = shortInfoAnchor.getBoundingClientRect();
+      const overlayRect = shortInfoOverlay.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+      let left = rect.left + window.scrollX;
+      let top = rect.top + window.scrollY;
+      const maxLeft = window.scrollX + viewportWidth - overlayRect.width - 8;
+      const maxTop = window.scrollY + viewportHeight - overlayRect.height - 8;
+      left = Math.max(window.scrollX + 8, Math.min(left, maxLeft));
+      top = Math.max(window.scrollY + 8, Math.min(top, maxTop));
+      shortInfoOverlay.style.left = `${left}px`;
+      shortInfoOverlay.style.top = `${top}px`;
+      shortInfoOverlay.style.visibility = 'visible';
+    }
+
+    function openShortInfoOverlay(target, info) {
+      if (!shortInfoOverlay || !shortInfoContent || !info) return;
+      const lines = [];
+      const longNameValue = shortInfoValueOrDash(info.longName ?? '');
+      lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
+      const shortParts = [];
+      shortParts.push(renderShortHtml(info.shortName, info.role, info.longName));
+      const nodeIdValue = shortInfoValueOrDash(info.nodeId ?? '');
+      if (nodeIdValue !== '—') {
+        shortParts.push(`<span class="mono">${escapeHtml(nodeIdValue)}</span>`);
+      }
+      if (shortParts.length) {
+        lines.push(shortParts.join(' '));
+      }
+      lines.push(`Role: ${escapeHtml(shortInfoValueOrDash(info.role || 'CLIENT'))}`);
+      lines.push(`Model: ${escapeHtml(shortInfoValueOrDash(fmtHw(info.hwModel)))}`);
+      lines.push(`Battery: ${escapeHtml(shortInfoValueOrDash(fmtAlt(info.battery, '%')))}`);
+      lines.push(`Voltage: ${escapeHtml(shortInfoValueOrDash(fmtAlt(info.voltage, 'V')))}`);
+      lines.push(`Uptime: ${escapeHtml(shortInfoValueOrDash(formatShortInfoUptime(info.uptime)))}`);
+      lines.push(`Channel Util: ${escapeHtml(shortInfoValueOrDash(fmtTx(info.channel)))}`);
+      lines.push(`Air Util Tx: ${escapeHtml(shortInfoValueOrDash(fmtTx(info.airUtil)))}`);
+      shortInfoContent.innerHTML = lines.join('<br/>');
+      shortInfoAnchor = target;
+      shortInfoOverlay.hidden = false;
+      shortInfoOverlay.style.visibility = 'hidden';
+      requestAnimationFrame(positionShortInfoOverlay);
     }
 
     function appendChatEntry(div) {
@@ -416,7 +567,7 @@
       const div = document.createElement('div');
       const ts = formatTime(new Date(n.first_heard * 1000));
       div.className = 'chat-entry-node';
-      const short = renderShortHtml(n.short_name, n.role, n.long_name);
+      const short = renderShortHtml(n.short_name, n.role, n.long_name, n);
       const longName = escapeHtml(n.long_name || '');
       div.innerHTML = `[${ts}] ${short} <em>New node: ${longName}</em>`;
       appendChatEntry(div);
@@ -426,7 +577,7 @@
       maybeAddDateDivider(m.rx_time);
       const div = document.createElement('div');
       const ts = formatTime(new Date(m.rx_time * 1000));
-      const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name);
+      const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
       const text = escapeHtml(m.text || '');
       div.className = 'chat-entry-msg';
       div.innerHTML = `[${ts}] ${short} ${text}`;
@@ -523,7 +674,7 @@
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td class="mono">${n.node_id || ""}</td>
-          <td>${renderShortHtml(n.short_name, n.role, n.long_name)}</td>
+          <td>${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
           <td>${n.long_name || ""}</td>
           <td>${timeAgo(n.last_heard, nowSec)}</td>
           <td>${n.role || "CLIENT"}</td>
@@ -540,6 +691,9 @@
         frag.appendChild(tr);
       }
       tb.replaceChildren(frag);
+      if (shortInfoOverlay && shortInfoAnchor && !document.body.contains(shortInfoAnchor)) {
+        closeShortInfoOverlay();
+      }
     }
 
     function renderMap(nodes, nowSec) {
@@ -563,7 +717,7 @@
         });
         const lines = [
           `<b>${n.long_name || ''}</b>`,
-          `${renderShortHtml(n.short_name, n.role, n.long_name)} <span class="mono">${n.node_id || ''}</span>`,
+          `${renderShortHtml(n.short_name, n.role, n.long_name, n)} <span class="mono">${n.node_id || ''}</span>`,
           n.hw_model ? `Model: ${fmtHw(n.hw_model)}` : null,
           `Role: ${n.role || 'CLIENT'}`,
           (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
