@@ -1,10 +1,10 @@
 # Potato-Mesh
 
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5y/potato-mesh/spec.yml?branch=main)](https://github.com/l5y/potato-mesh/actions)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/l5y/potato-mesh)](https://github.com/l5y/potato-mesh/releases)
-[![codecov](https://codecov.io/gh/l5y/potato-mesh/branch/main/graph/badge.svg?token=IK7USBPBZY)](https://codecov.io/gh/l5y/potato-mesh)
-[![Open-Source License](https://img.shields.io/github/license/l5y/potato-mesh)](LICENSE)
-[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5y/potato-mesh/issues)
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5yth/potato-mesh/ruby.yml?branch=main)](https://github.com/l5yth/potato-mesh/actions)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/l5yth/potato-mesh)](https://github.com/l5yth/potato-mesh/releases)
+[![codecov](https://codecov.io/gh/l5yth/potato-mesh/branch/main/graph/badge.svg?token=FS7252JVZT)](https://codecov.io/gh/l5yth/potato-mesh)
+[![Open-Source License](https://img.shields.io/github/license/l5yth/potato-mesh)](LICENSE)
+[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5yth/potato-mesh/issues)
 
 A simple Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
 
