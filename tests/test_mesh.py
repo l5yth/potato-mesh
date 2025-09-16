@@ -30,7 +30,9 @@ def mesh_module(monkeypatch):
     meshtastic_mod.serial_interface = serial_interface_mod
 
     monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
-    monkeypatch.setitem(sys.modules, "meshtastic.serial_interface", serial_interface_mod)
+    monkeypatch.setitem(
+        sys.modules, "meshtastic.serial_interface", serial_interface_mod
+    )
 
     # Stub pubsub.pub
     pubsub_mod = types.ModuleType("pubsub")
@@ -121,7 +123,9 @@ def test_node_to_dict_handles_nested_structures(mesh_module):
 def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
-    monkeypatch.setattr(mesh, "_post_json", lambda path, payload: captured.append((path, payload)))
+    monkeypatch.setattr(
+        mesh, "_post_json", lambda path, payload: captured.append((path, payload))
+    )
 
     packet = {
         "id": 123,
@@ -160,7 +164,9 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
-    monkeypatch.setattr(mesh, "_post_json", lambda *args, **kwargs: captured.append(args))
+    monkeypatch.setattr(
+        mesh, "_post_json", lambda *args, **kwargs: captured.append(args)
+    )
 
     packet = {
         "id": 456,
