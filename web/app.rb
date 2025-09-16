@@ -377,6 +377,10 @@ def insert_message(db, m)
   rx_time = m["rx_time"]&.to_i || Time.now.to_i
   rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
   raw_from_id = m["from_id"]
+  if raw_from_id.nil? || raw_from_id.to_s.strip.empty?
+    alt_from = m["from"]
+    raw_from_id = alt_from unless alt_from.nil? || alt_from.to_s.strip.empty?
+  end
   trimmed_from_id = raw_from_id.nil? ? nil : raw_from_id.to_s.strip
   trimmed_from_id = nil if trimmed_from_id&.empty?
   canonical_from_id = normalize_node_id(db, raw_from_id)
@@ -401,10 +405,25 @@ def insert_message(db, m)
     m["hop_limit"],
   ]
   with_busy_retry do
-    db.execute <<~SQL, row
-                 INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?)
-               SQL
+    existing = db.get_first_row("SELECT from_id FROM messages WHERE id = ?", [msg_id])
+    if existing
+      if from_id
+        existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
+        existing_from_str = existing_from&.to_s
+        should_update = existing_from_str.nil? || existing_from_str.strip.empty?
+        should_update ||= existing_from != from_id
+        db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if should_update
+      end
+    else
+      begin
+        db.execute <<~SQL, row
+                     INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                   SQL
+      rescue SQLite3::ConstraintException
+        db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if from_id
+      end
+    end
   end
 end
 
