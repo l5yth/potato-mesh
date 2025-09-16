@@ -42,6 +42,7 @@
     .refresh-info { margin: 0; color: #555; }
     .refresh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-self: end; }
     .controls { display: flex; gap: 8px; align-items: center; }
+    .controls label { display: inline-flex; align-items: center; gap: 6px; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
     label { font-size: 14px; color: #333; }
@@ -54,13 +55,12 @@
     @media (max-width: 768px) {
       .row { flex-direction: column; align-items: stretch; gap: var(--pad); }
       .map-row { flex-direction: column; }
-      .controls { order: 2; flex-wrap: wrap; justify-content: flex-start; width: 100%; gap: 12px; }
-      .controls label { flex: 1 1 100%; }
-      .controls input[type="text"] { flex: 1 1 auto; min-width: 0; }
-      .controls button { align-self: flex-start; }
+      .controls { order: 2; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; width: 100%; gap: 12px; }
+      .controls input[type="text"] { width: 100%; }
+      .controls button { justify-self: end; }
       .meta-info { order: 1; width: 100%; }
-      .refresh-row { grid-template-columns: 1fr; }
-      .refresh-actions { flex-direction: column; align-items: flex-start; gap: 6px; justify-self: stretch; }
+      .refresh-row { grid-template-columns: 1fr; row-gap: 8px; }
+      .refresh-actions { flex-direction: row; align-items: center; gap: 8px; justify-self: start; flex-wrap: nowrap; }
       #map { order: 1; flex: none; max-width: 100%; height: 50vh; }
       #chat { order: 2; flex: none; max-width: 100%; height: 30vh; }
       #nodes th:nth-child(1),
