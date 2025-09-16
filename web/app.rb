@@ -236,6 +236,48 @@ get "/api/messages" do
   query_messages(limit).to_json
 end
 
+# Determine the numeric node reference for a canonical node identifier.
+#
+# The Meshtastic protobuf encodes the node ID as a hexadecimal string prefixed
+# with an exclamation mark (for example ``!4ed36bd0``).  Many payloads also
+# include a decimal ``num`` alias, but some integrations omit it.  When the
+# alias is missing we can reconstruct it from the canonical identifier so that
+# later joins using ``nodes.num`` continue to work.
+#
+# @param node_id [String, nil] canonical node identifier (e.g. ``!4ed36bd0``).
+# @param payload [Hash] raw node payload provided by the data daemon.
+# @return [Integer, nil] numeric node reference if it can be determined.
+def resolve_node_num(node_id, payload)
+  raw = payload["num"]
+
+  case raw
+  when Integer
+    return raw
+  when Numeric
+    return raw.to_i
+  when String
+    trimmed = raw.strip
+    return nil if trimmed.empty?
+    return Integer(trimmed, 10) if trimmed.match?(/\A[0-9]+\z/)
+    return Integer(trimmed.delete_prefix("0x").delete_prefix("0X"), 16) if trimmed.match?(/\A0[xX][0-9A-Fa-f]+\z/)
+    if trimmed.match?(/\A[0-9A-Fa-f]+\z/)
+      canonical = node_id.is_a?(String) ? node_id.strip : ""
+      return Integer(trimmed, 16) if canonical.match?(/\A!?[0-9A-Fa-f]+\z/)
+    end
+  end
+
+  return nil unless node_id.is_a?(String)
+
+  hex = node_id.strip
+  return nil if hex.empty?
+  hex = hex.delete_prefix("!")
+  return nil unless hex.match?(/\A[0-9A-Fa-f]+\z/)
+
+  Integer(hex, 16)
+rescue ArgumentError
+  nil
+end
+
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -259,9 +301,11 @@ def upsert_node(db, node_id, n)
     else v
     end
   }
+  node_num = resolve_node_num(node_id, n)
+
   row = [
     node_id,
-    n["num"],
+    node_num,
     user["shortName"],
     user["longName"],
     user["macaddr"],
