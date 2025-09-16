@@ -536,8 +536,28 @@ RSpec.describe "Potato Mesh Sinatra app" do
         acc[row["id"]] = row
       end
 
-      nodes_by_id = nodes_fixture.each_with_object({}) do |node, acc|
-        acc[node["node_id"]] = expected_node_row(node)
+      nodes_by_id = {}
+      node_aliases = {}
+
+      nodes_fixture.each do |node|
+        node_id = node["node_id"]
+        expected_row = expected_node_row(node)
+        nodes_by_id[node_id] = expected_row
+
+        if (num = node["num"])
+          node_aliases[num.to_s] = node_id
+        end
+      end
+
+      messages_fixture.each do |message|
+        node = message["node"]
+        next unless node.is_a?(Hash)
+
+        canonical = node["node_id"]
+        num = node["num"]
+        next unless canonical && num
+
+        node_aliases[num.to_s] ||= canonical
       end
 
       messages_fixture.each do |message|
@@ -556,7 +576,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(actual_row["hop_limit"]).to eq(expected["hop_limit"])
 
         if expected["from_id"]
-          node_expected = nodes_by_id.fetch(expected["from_id"])
+          lookup_id = expected["from_id"]
+          node_expected = nodes_by_id[lookup_id]
+
+          unless node_expected
+            canonical_id = node_aliases[lookup_id.to_s]
+            expect(canonical_id).not_to be_nil,
+                                      "node fixture missing for from_id #{lookup_id.inspect}"
+            node_expected = nodes_by_id.fetch(canonical_id)
+          end
+
           node_actual = actual_row.fetch("node")
 
           expect(node_actual["node_id"]).to eq(node_expected["node_id"])
