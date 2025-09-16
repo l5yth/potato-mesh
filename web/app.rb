@@ -19,10 +19,12 @@
 # this web process reads from, providing JSON APIs and a rendered HTML index
 # page for human visitors.
 require "sinatra"
+require "sinatra/streaming"
 require "json"
 require "sqlite3"
 require "fileutils"
 require "logger"
+require "thread"
 
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
@@ -42,6 +44,69 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
+class UpdateBroadcaster
+  def initialize
+    @subscribers = []
+    @mutex = Mutex.new
+    @sequence = 0
+  end
+
+  def subscribe(stream)
+    @mutex.synchronize do
+      @subscribers << stream
+    end
+  end
+
+  def unsubscribe(stream)
+    @mutex.synchronize do
+      @subscribers.delete(stream)
+    end
+  end
+
+  def broadcast(types)
+    payload = nil
+    data = nil
+    @mutex.synchronize do
+      payload = build_payload(types)
+      data = "data: #{JSON.generate(payload)}\n\n"
+      @subscribers.delete_if do |subscriber|
+        begin
+          subscriber << data
+          false
+        rescue StandardError
+          true
+        end
+      end
+    end
+    payload
+  end
+
+  def last_sequence
+    @mutex.synchronize { @sequence }
+  end
+
+  def reset!
+    @mutex.synchronize do
+      @sequence = 0
+      @subscribers.clear
+    end
+  end
+
+  private
+
+  def build_payload(types)
+    list = Array(types).flatten.compact.map(&:to_s).uniq
+    @sequence += 1
+    { types: list, seq: @sequence, at: Time.now.to_i }
+  end
+end
+
+UPDATE_NOTIFIER = UpdateBroadcaster.new
+
+def broadcast_update(*types)
+  UPDATE_NOTIFIER.broadcast(types)
+end
+
 class << Sinatra::Application
   def apply_logger_level!
     logger = settings.logger
@@ -57,6 +122,8 @@ Sinatra::Application.configure do
   use Rack::CommonLogger, app_logger
   Sinatra::Application.apply_logger_level!
 end
+
+helpers Sinatra::Streaming
 
 # Open the SQLite database with a configured busy timeout.
 #
@@ -329,6 +396,7 @@ def upsert_node(db, node_id, n)
     pos["longitude"],
     pos["altitude"],
   ]
+  changed = false
   with_busy_retry do
     db.execute <<~SQL, row
                  INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
@@ -345,7 +413,9 @@ def upsert_node(db, node_id, n)
                    altitude=excluded.altitude
                  WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                SQL
+    changed ||= db.changes.positive?
   end
+  changed
 end
 
 # Ensure the request includes the expected bearer token.
@@ -404,6 +474,7 @@ def insert_message(db, m)
     m["rssi"],
     m["hop_limit"],
   ]
+  changed = false
   with_busy_retry do
     existing = db.get_first_row("SELECT from_id FROM messages WHERE id = ?", [msg_id])
     if existing
@@ -412,7 +483,10 @@ def insert_message(db, m)
         existing_from_str = existing_from&.to_s
         should_update = existing_from_str.nil? || existing_from_str.strip.empty?
         should_update ||= existing_from != from_id
-        db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if should_update
+        if should_update
+          db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id])
+          changed ||= db.changes.positive?
+        end
       end
     else
       begin
@@ -420,11 +494,16 @@ def insert_message(db, m)
                      INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
                      VALUES (?,?,?,?,?,?,?,?,?,?,?)
                    SQL
+        changed ||= db.changes.positive?
       rescue SQLite3::ConstraintException
-        db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if from_id
+        if from_id
+          db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id])
+          changed ||= db.changes.positive?
+        end
       end
     end
   end
+  changed
 end
 
 # Resolve a node reference to the canonical node ID when possible.
@@ -462,9 +541,11 @@ post "/api/nodes" do
   end
   halt 400, { error: "too many nodes" }.to_json if data.is_a?(Hash) && data.size > 1000
   db = open_database
+  any_changes = false
   data.each do |node_id, node|
-    upsert_node(db, node_id, node)
+    any_changes ||= upsert_node(db, node_id, node)
   end
+  broadcast_update("nodes") if any_changes
   { status: "ok" }.to_json
 ensure
   db&.close
@@ -484,12 +565,30 @@ post "/api/messages" do
   messages = data.is_a?(Array) ? data : [data]
   halt 400, { error: "too many messages" }.to_json if messages.size > 1000
   db = open_database
+  any_changes = false
   messages.each do |msg|
-    insert_message(db, msg)
+    any_changes ||= insert_message(db, msg)
   end
+  broadcast_update("messages") if any_changes
   { status: "ok" }.to_json
 ensure
   db&.close
+end
+
+# GET /api/updates/stream
+#
+# Provides a server-sent events stream notifying clients when new nodes or
+# messages are stored.
+get "/api/updates/stream" do
+  content_type "text/event-stream"
+  headers "Cache-Control" => "no-cache", "X-Accel-Buffering" => "no"
+  stream(:keep_open) do |out|
+    UPDATE_NOTIFIER.subscribe(out)
+    out << ": connected #{Time.now.to_i}\n\n"
+    callback = proc { UPDATE_NOTIFIER.unsubscribe(out) }
+    out.callback(&callback)
+    out.errback(&callback)
+  end
 end
 
 # GET /

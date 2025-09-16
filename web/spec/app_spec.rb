@@ -152,6 +152,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     ENV["API_TOKEN"] = api_token
     allow(Time).to receive(:now).and_return(reference_time)
     clear_database
+    UPDATE_NOTIFIER.reset!
   end
 
   after do
@@ -372,6 +373,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_heard).to eq(expected_last_heard(node))
       end
     end
+
+    it "emits an update notification when nodes are stored" do
+      node = nodes_fixture.first
+      payload = { node["node_id"] => build_node_payload(node) }
+
+      expect do
+        post "/api/nodes", payload.to_json, auth_headers
+      end.to change { UPDATE_NOTIFIER.last_sequence }.by(1)
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+    end
   end
 
   describe "POST /api/messages" do
@@ -591,6 +604,27 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["rx_iso"]).to eq(initial_iso)
         expect(row["text"]).to eq("initial payload")
       end
+    end
+
+    it "emits an update notification when messages are stored" do
+      import_nodes_fixture
+      message = messages_fixture.first.reject { |key, _| key == "node" }
+
+      expect do
+        post "/api/messages", message.to_json, auth_headers
+      end.to change { UPDATE_NOTIFIER.last_sequence }.by(1)
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+    end
+
+    it "does not emit notifications when messages are skipped" do
+      expect do
+        post "/api/messages", { "text" => "missing id" }.to_json, auth_headers
+      end.not_to change { UPDATE_NOTIFIER.last_sequence }
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
     end
   end
 

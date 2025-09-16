@@ -171,7 +171,7 @@
       <div class="refresh-row">
         <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes: …</p>
         <div class="refresh-actions">
-          <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
+          <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh when new updates arrive (fallback <%= refresh_interval_seconds %>s)</label>
           <button id="refreshBtn" type="button">Refresh now</button>
           <span id="status" class="pill">loading…</span>
         </div>
@@ -200,7 +200,7 @@
         <dt>Visible range</dt>
         <dd>Nodes within roughly <%= max_node_distance_km %> km of the center are shown.</dd>
         <dt>Auto-refresh</dt>
-        <dd>Updates every <%= refresh_interval_seconds %> seconds.</dd>
+        <dd>Listens for API updates and refreshes when new data is available. Falls back to periodic refresh every <%= refresh_interval_seconds %> seconds if live updates are unavailable.</dd>
         <% if matrix_room && !matrix_room.empty? %>
           <dt>Matrix room</dt>
           <dd><a href="https://matrix.to/#/<%= matrix_room %>" target="_blank" rel="noreferrer noopener"><%= matrix_room %></a></dd>
@@ -268,17 +268,136 @@
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
+    const supportsEventSource = typeof window !== 'undefined' && typeof window.EventSource === 'function';
+    const UPDATE_STREAM_URL = '/api/updates/stream';
+    const UPDATE_RECONNECT_MS = 5000;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
     let refreshTimer = null;
+    let updatesSource = null;
+    let updatesReconnectTimer = null;
+    let updateStreamFailures = 0;
+    let refreshInProgress = false;
+    let refreshQueued = false;
 
-    function restartAutoRefresh() {
+    function stopAutoRefresh() {
       if (refreshTimer) {
         clearInterval(refreshTimer);
         refreshTimer = null;
       }
+      if (updatesReconnectTimer) {
+        clearTimeout(updatesReconnectTimer);
+        updatesReconnectTimer = null;
+      }
+      if (updatesSource) {
+        updatesSource.close();
+        updatesSource = null;
+      }
+      updateStreamFailures = 0;
+    }
+
+    function startFallbackTimer() {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+      }
+      if (updatesReconnectTimer) {
+        clearTimeout(updatesReconnectTimer);
+        updatesReconnectTimer = null;
+      }
       if (autoRefreshEl && autoRefreshEl.checked) {
-        refreshTimer = setInterval(refresh, REFRESH_MS);
+        statusEl.textContent = 'falling back to periodic refresh';
+      }
+      refreshTimer = setInterval(() => {
+        refresh();
+      }, REFRESH_MS);
+    }
+
+    function scheduleUpdateReconnect() {
+      if (updatesReconnectTimer || !autoRefreshEl || !autoRefreshEl.checked) {
+        return;
+      }
+      updatesReconnectTimer = setTimeout(() => {
+        updatesReconnectTimer = null;
+        if (autoRefreshEl && autoRefreshEl.checked) {
+          connectUpdateStream();
+        }
+      }, UPDATE_RECONNECT_MS);
+    }
+
+    function handleUpdateMessage(event) {
+      if (!autoRefreshEl || !autoRefreshEl.checked) {
+        return;
+      }
+      if (!event.data) {
+        refresh();
+        return;
+      }
+      try {
+        const payload = JSON.parse(event.data);
+        const types = Array.isArray(payload.types) ? payload.types : null;
+        if (!types || types.length === 0 || types.some(type => type === 'nodes' || type === 'messages')) {
+          refresh();
+        }
+      } catch (err) {
+        console.error('Failed to parse update event', err);
+        refresh();
+      }
+    }
+
+    function handleUpdateError() {
+      if (!updatesSource) {
+        return;
+      }
+      if (updatesSource.readyState === EventSource.CLOSED) {
+        updatesSource.close();
+        updatesSource = null;
+        updateStreamFailures += 1;
+        if (!autoRefreshEl || !autoRefreshEl.checked) {
+          return;
+        }
+        if (updateStreamFailures >= 3) {
+          console.warn('Update stream unavailable, falling back to periodic refresh');
+          startFallbackTimer();
+          return;
+        }
+        scheduleUpdateReconnect();
+      }
+    }
+
+    function connectUpdateStream() {
+      if (!autoRefreshEl || !autoRefreshEl.checked) {
+        return;
+      }
+      if (!supportsEventSource) {
+        startFallbackTimer();
+        return;
+      }
+      if (updatesSource) {
+        return;
+      }
+      try {
+        updatesSource = new EventSource(UPDATE_STREAM_URL);
+      } catch (err) {
+        console.error('Unable to start update stream', err);
+        startFallbackTimer();
+        return;
+      }
+      updatesSource.addEventListener('open', () => {
+        updateStreamFailures = 0;
+      });
+      updatesSource.addEventListener('message', handleUpdateMessage);
+      updatesSource.addEventListener('error', handleUpdateError);
+    }
+
+    function updateAutoRefreshState() {
+      stopAutoRefresh();
+      if (!autoRefreshEl || !autoRefreshEl.checked) {
+        return;
+      }
+      if (supportsEventSource) {
+        connectUpdateStream();
+      } else {
+        startFallbackTimer();
       }
     }
 
@@ -598,6 +717,11 @@
     filterInput.addEventListener('input', applyFilter);
 
     async function refresh() {
+      if (refreshInProgress) {
+        refreshQueued = true;
+        return;
+      }
+      refreshInProgress = true;
       try {
         statusEl.textContent = 'refreshing…';
         const nodes = await fetchNodes();
@@ -637,18 +761,28 @@
       } catch (e) {
         statusEl.textContent = 'error: ' + e.message;
         console.error(e);
+      } finally {
+        refreshInProgress = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          refresh();
+        }
       }
     }
 
+    updateAutoRefreshState();
     refresh();
-    restartAutoRefresh();
-    refreshBtn.addEventListener('click', refresh);
+    refreshBtn.addEventListener('click', () => {
+      refresh();
+    });
 
     if (autoRefreshEl) {
       autoRefreshEl.addEventListener('change', () => {
-        restartAutoRefresh();
+        updateAutoRefreshState();
         if (autoRefreshEl.checked) {
           refresh();
+        } else {
+          statusEl.textContent = 'auto-refresh paused';
         }
       });
     }
