@@ -54,6 +54,9 @@
     .chat-entry-msg { font-family: ui-monospace, Menlo, Consolas, monospace; }
     .chat-entry-date { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: bold; }
     .short-name { display:inline-block; border-radius:4px; padding:0 2px; }
+    .short-name-node { cursor: pointer; }
+    .short-name-node:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+    .short-name-display { cursor: default; }
     .meta-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     .refresh-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; }
     .refresh-info { margin: 0; color: #555; }
@@ -87,6 +90,19 @@
     .info-details dt { font-weight: 600; margin-top: 12px; color: #222; }
     .info-details dd { margin: 4px 0 0; }
     .info-details dd a { color: inherit; word-break: break-word; }
+    #nodeOverlay[hidden] { display: none; }
+    .node-flyout { position: absolute; z-index: 1500; background: #fff; color: #111; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2); padding: 8px 12px 10px; font-size: 12px; line-height: 1.35; min-width: 200px; max-width: 260px; }
+    .node-flyout button { font: inherit; }
+    .node-flyout-head { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: start; }
+    .node-flyout-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .node-flyout-long { font-weight: 600; word-break: break-word; }
+    .node-flyout-id { font-size: 11px; color: #666; }
+    .node-flyout-details { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; row-gap: 4px; }
+    .node-flyout-details dt { font-weight: 600; color: #444; margin: 0; }
+    .node-flyout-details dd { margin: 0; color: #222; }
+    .node-flyout-close { position: absolute; top: 4px; right: 4px; border: none; background: transparent; font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 4px; cursor: pointer; color: inherit; }
+    .node-flyout-close:hover { background: rgba(0, 0, 0, 0.08); }
+    .node-flyout-close:focus-visible { outline: 2px solid #4a90e2; outline-offset: 2px; }
     @media (max-width: 768px) {
       .row { flex-direction: column; align-items: stretch; gap: var(--pad); }
       .map-row { flex-direction: column; }
@@ -148,6 +164,11 @@
     body.dark .info-intro { color: #bbb; }
     body.dark .info-details dt { color: #ddd; }
     body.dark .info-close:hover { background: rgba(255, 255, 255, 0.1); }
+    body.dark .node-flyout { background: #1c1c1c; color: #eee; border-color: #444; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7); }
+    body.dark .node-flyout-id { color: #aaa; }
+    body.dark .node-flyout-details dt { color: #ccc; }
+    body.dark .node-flyout-details dd { color: #eee; }
+    body.dark .node-flyout-close:hover { background: rgba(255, 255, 255, 0.12); }
   </style>
 </head>
 <body>
@@ -349,16 +370,287 @@
         .replace(/'/g, '&#39;');
     }
 
-    function renderShortHtml(short, role, longName){
+    function renderShortHtml(short, role, longName, extraClass = ''){
       const safeTitle = longName ? escapeHtml(String(longName)) : '';
       const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
+      const classes = ['short-name'];
+      if (extraClass) classes.push(extraClass);
+      const classAttr = `class="${classes.join(' ')}"`;
       if (!short) {
-        return `<span class="short-name" style="background:#ccc"${titleAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
+        return `<span ${classAttr} style="background:#ccc"${titleAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
       }
       const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
       const color = roleColors[role] || roleColors.CLIENT;
-      return `<span class="short-name" style="background:${color}"${titleAttr}>${padded}</span>`;
+      return `<span ${classAttr} style="background:${color}"${titleAttr}>${padded}</span>`;
     }
+
+    const nodeOverlay = document.createElement('div');
+    nodeOverlay.id = 'nodeOverlay';
+    nodeOverlay.className = 'node-flyout';
+    nodeOverlay.hidden = true;
+    nodeOverlay.setAttribute('role', 'dialog');
+    nodeOverlay.setAttribute('aria-modal', 'false');
+    nodeOverlay.tabIndex = -1;
+    nodeOverlay.innerHTML = `<button type="button" class="node-flyout-close" aria-label="Close node details">×</button><div class="node-flyout-content"></div>`;
+    document.body.appendChild(nodeOverlay);
+    const nodeOverlayContent = nodeOverlay.querySelector('.node-flyout-content');
+    const nodeOverlayClose = nodeOverlay.querySelector('.node-flyout-close');
+    let nodeOverlayAnchor = null;
+
+    function overlayValue(v) {
+      if (v == null) return '—';
+      const str = String(v);
+      return str.trim() ? escapeHtml(str) : '—';
+    }
+
+    function updateOverlayPosition() {
+      if (!nodeOverlayAnchor || nodeOverlay.hidden) return;
+      if (!nodeOverlayAnchor.isConnected) {
+        closeNodeOverlay(false);
+        return;
+      }
+      const rect = nodeOverlayAnchor.getBoundingClientRect();
+      nodeOverlay.style.left = `${rect.left + window.scrollX}px`;
+      nodeOverlay.style.top = `${rect.top + window.scrollY}px`;
+    }
+
+    function closeNodeOverlay(restoreFocus = true) {
+      if (nodeOverlay.hidden) return;
+      const anchor = nodeOverlayAnchor;
+      nodeOverlay.hidden = true;
+      nodeOverlay.removeAttribute('aria-label');
+      nodeOverlayAnchor = null;
+      if (anchor && anchor.isConnected) {
+        anchor.setAttribute('aria-expanded', 'false');
+        if (restoreFocus) {
+          anchor.focus();
+        }
+      }
+    }
+
+    function openNodeOverlay(target) {
+      if (nodeOverlayAnchor && nodeOverlayAnchor !== target && nodeOverlayAnchor.isConnected) {
+        nodeOverlayAnchor.setAttribute('aria-expanded', 'false');
+      }
+      nodeOverlayAnchor = target;
+      const { dataset } = target;
+      const shortName = dataset.shortName || '';
+      const role = dataset.role || 'CLIENT';
+      const longName = dataset.longName || '';
+      const nodeId = dataset.nodeId || '';
+      const hwModel = dataset.hwModel || '';
+      const battery = dataset.battery || '';
+      const voltage = dataset.voltage || '';
+      const uptime = dataset.uptime || '';
+      const channel = dataset.channelUtil || '';
+      const airUtil = dataset.airUtil || '';
+      const labelBits = [shortName, longName || nodeId].filter(Boolean);
+      nodeOverlay.setAttribute('aria-label', `Node details for ${labelBits.join(' ') || 'node'}`);
+      nodeOverlayContent.innerHTML = `
+        <div class="node-flyout-head">
+          <div class="node-flyout-short">${renderShortHtml(shortName, role, longName, 'short-name-display')}</div>
+          <div class="node-flyout-meta">
+            <div class="node-flyout-long">${overlayValue(longName)}</div>
+            <div class="node-flyout-id mono">ID: ${overlayValue(nodeId)}</div>
+          </div>
+        </div>
+        <dl class="node-flyout-details">
+          <dt>Short</dt><dd>${overlayValue(shortName)}</dd>
+          <dt>Long</dt><dd>${overlayValue(longName)}</dd>
+          <dt>Role</dt><dd>${overlayValue(role)}</dd>
+          <dt>HW</dt><dd>${overlayValue(hwModel)}</dd>
+          <dt>Battery</dt><dd>${overlayValue(battery)}</dd>
+          <dt>Voltage</dt><dd>${overlayValue(voltage)}</dd>
+          <dt>Uptime</dt><dd>${overlayValue(uptime)}</dd>
+          <dt>Channel</dt><dd>${overlayValue(channel)}</dd>
+          <dt>Air Util</dt><dd>${overlayValue(airUtil)}</dd>
+        </dl>
+      `;
+      target.setAttribute('aria-expanded', 'true');
+      nodeOverlay.hidden = false;
+      updateOverlayPosition();
+      nodeOverlayClose.focus();
+    }
+
+    function toggleNodeOverlay(target) {
+      if (!target) return;
+      if (!nodeOverlay.hidden && nodeOverlayAnchor === target) {
+        closeNodeOverlay();
+      } else {
+        openNodeOverlay(target);
+      }
+    }
+
+    function handleShortClick(event) {
+      event.stopPropagation();
+      event.preventDefault();
+      toggleNodeOverlay(event.currentTarget);
+    }
+
+    function handleShortKeydown(event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleNodeOverlay(event.currentTarget);
+      }
+    }
+
+    nodeOverlay.addEventListener('click', event => {
+      event.stopPropagation();
+    });
+    nodeOverlayClose.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeNodeOverlay();
+    });
+    document.addEventListener('click', event => {
+      if (nodeOverlay.hidden) return;
+      if (nodeOverlay.contains(event.target)) return;
+      closeNodeOverlay(false);
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !nodeOverlay.hidden) {
+        event.preventDefault();
+        closeNodeOverlay();
+      }
+    });
+    window.addEventListener('scroll', updateOverlayPosition, { passive: true });
+    window.addEventListener('resize', updateOverlayPosition);
+
+
+    const nodeOverlay = document.createElement('div');
+    nodeOverlay.id = 'nodeOverlay';
+    nodeOverlay.className = 'node-flyout';
+    nodeOverlay.hidden = true;
+    nodeOverlay.setAttribute('role', 'dialog');
+    nodeOverlay.setAttribute('aria-modal', 'false');
+    nodeOverlay.tabIndex = -1;
+    nodeOverlay.innerHTML = `<button type="button" class="node-flyout-close" aria-label="Close node details">×</button><div class="node-flyout-content"></div>`;
+    document.body.appendChild(nodeOverlay);
+    const nodeOverlayContent = nodeOverlay.querySelector('.node-flyout-content');
+    const nodeOverlayClose = nodeOverlay.querySelector('.node-flyout-close');
+    let nodeOverlayAnchor = null;
+
+    function overlayValue(v) {
+      if (v == null) return '—';
+      const str = String(v);
+      return str.trim() ? escapeHtml(str) : '—';
+    }
+
+    function updateOverlayPosition() {
+      if (!nodeOverlayAnchor || nodeOverlay.hidden) return;
+      if (!nodeOverlayAnchor.isConnected) {
+        closeNodeOverlay(false);
+        return;
+      }
+      const rect = nodeOverlayAnchor.getBoundingClientRect();
+      nodeOverlay.style.left = `${rect.left + window.scrollX}px`;
+      nodeOverlay.style.top = `${rect.top + window.scrollY}px`;
+    }
+
+    function closeNodeOverlay(restoreFocus = true) {
+      if (nodeOverlay.hidden) return;
+      const anchor = nodeOverlayAnchor;
+      nodeOverlay.hidden = true;
+      nodeOverlay.removeAttribute('aria-label');
+      nodeOverlayAnchor = null;
+      if (anchor && anchor.isConnected) {
+        anchor.setAttribute('aria-expanded', 'false');
+        if (restoreFocus) {
+          anchor.focus();
+        }
+      }
+    }
+
+    function openNodeOverlay(target) {
+      if (nodeOverlayAnchor && nodeOverlayAnchor !== target && nodeOverlayAnchor.isConnected) {
+        nodeOverlayAnchor.setAttribute('aria-expanded', 'false');
+      }
+      nodeOverlayAnchor = target;
+      const { dataset } = target;
+      const shortName = dataset.shortName || '';
+      const role = dataset.role || 'CLIENT';
+      const longName = dataset.longName || '';
+      const nodeId = dataset.nodeId || '';
+      const hwModel = dataset.hwModel || '';
+      const battery = dataset.battery || '';
+      const voltage = dataset.voltage || '';
+      const uptime = dataset.uptime || '';
+      const channel = dataset.channelUtil || '';
+      const airUtil = dataset.airUtil || '';
+      const labelBits = [shortName, longName || nodeId].filter(Boolean);
+      nodeOverlay.setAttribute('aria-label', `Node details for ${labelBits.join(' ') || 'node'}`);
+      nodeOverlayContent.innerHTML = `
+        <div class="node-flyout-head">
+          <div class="node-flyout-short">${renderShortHtml(shortName, role, longName, 'short-name-display')}</div>
+          <div class="node-flyout-meta">
+            <div class="node-flyout-long">${overlayValue(longName)}</div>
+            <div class="node-flyout-id mono">ID: ${overlayValue(nodeId)}</div>
+          </div>
+        </div>
+        <dl class="node-flyout-details">
+          <dt>Short</dt><dd>${overlayValue(shortName)}</dd>
+          <dt>Long</dt><dd>${overlayValue(longName)}</dd>
+          <dt>Role</dt><dd>${overlayValue(role)}</dd>
+          <dt>HW</dt><dd>${overlayValue(hwModel)}</dd>
+          <dt>Battery</dt><dd>${overlayValue(battery)}</dd>
+          <dt>Voltage</dt><dd>${overlayValue(voltage)}</dd>
+          <dt>Uptime</dt><dd>${overlayValue(uptime)}</dd>
+          <dt>Channel</dt><dd>${overlayValue(channel)}</dd>
+          <dt>Air Util</dt><dd>${overlayValue(airUtil)}</dd>
+        </dl>
+      `;
+      target.setAttribute('aria-expanded', 'true');
+      nodeOverlay.hidden = false;
+      updateOverlayPosition();
+      nodeOverlayClose.focus();
+    }
+
+    function toggleNodeOverlay(target) {
+      if (!target) return;
+      if (!nodeOverlay.hidden && nodeOverlayAnchor === target) {
+        closeNodeOverlay();
+      } else {
+        openNodeOverlay(target);
+      }
+    }
+
+    function handleShortClick(event) {
+      event.stopPropagation();
+      event.preventDefault();
+      toggleNodeOverlay(event.currentTarget);
+    }
+
+    function handleShortKeydown(event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleNodeOverlay(event.currentTarget);
+      }
+    }
+
+    nodeOverlay.addEventListener('click', event => {
+      event.stopPropagation();
+    });
+    nodeOverlayClose.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeNodeOverlay();
+    });
+    document.addEventListener('click', event => {
+      if (nodeOverlay.hidden) return;
+      if (nodeOverlay.contains(event.target)) return;
+      closeNodeOverlay(false);
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !nodeOverlay.hidden) {
+        event.preventDefault();
+        closeNodeOverlay();
+      }
+    });
+    window.addEventListener('scroll', updateOverlayPosition, { passive: true });
+    window.addEventListener('resize', updateOverlayPosition);
+
 
     function appendChatEntry(div) {
       chatEl.appendChild(div);
@@ -493,25 +785,68 @@
       const frag = document.createDocumentFragment();
       for (const n of nodes) {
         const tr = document.createElement('tr');
+        const nodeId = n.node_id != null ? String(n.node_id) : '';
+        const shortName = n.short_name != null ? String(n.short_name) : '';
+        const longName = n.long_name != null ? String(n.long_name) : '';
+        const role = n.role || 'CLIENT';
+        const shortHtml = renderShortHtml(shortName, role, longName, 'short-name-node');
+        const lastHeard = timeAgo(n.last_heard, nowSec);
+        const hwModel = fmtHw(n.hw_model);
+        const battery = fmtAlt(n.battery_level, '%');
+        const voltage = fmtAlt(n.voltage, 'V');
+        const uptime = timeHum(n.uptime_seconds);
+        const channelUtil = fmtTx(n.channel_utilization);
+        const airUtil = fmtTx(n.air_util_tx);
+        const latitude = fmtCoords(n.latitude);
+        const longitude = fmtCoords(n.longitude);
+        const altitude = fmtAlt(n.altitude, 'm');
+        const position = n.pos_time_iso ? `${timeAgo(n.position_time, nowSec)}` : '';
         tr.innerHTML = `
-          <td class="mono">${n.node_id || ""}</td>
-          <td>${renderShortHtml(n.short_name, n.role, n.long_name)}</td>
-          <td>${n.long_name || ""}</td>
-          <td>${timeAgo(n.last_heard, nowSec)}</td>
-          <td>${n.role || "CLIENT"}</td>
-          <td>${fmtHw(n.hw_model)}</td>
-          <td>${fmtAlt(n.battery_level, "%")}</td>
-          <td>${fmtAlt(n.voltage, "V")}</td>
-          <td>${timeHum(n.uptime_seconds)}</td>
-          <td>${fmtTx(n.channel_utilization)}</td>
-          <td>${fmtTx(n.air_util_tx)}</td>
-          <td>${fmtCoords(n.latitude)}</td>
-          <td>${fmtCoords(n.longitude)}</td>
-          <td>${fmtAlt(n.altitude, "m")}</td>
-          <td class="mono">${n.pos_time_iso ? `${timeAgo(n.position_time, nowSec)}` : ""}</td>`;
+          <td class="mono">${nodeId}</td>
+          <td>${shortHtml}</td>
+          <td>${longName}</td>
+          <td>${lastHeard}</td>
+          <td>${role}</td>
+          <td>${hwModel}</td>
+          <td>${battery}</td>
+          <td>${voltage}</td>
+          <td>${uptime}</td>
+          <td>${channelUtil}</td>
+          <td>${airUtil}</td>
+          <td>${latitude}</td>
+          <td>${longitude}</td>
+          <td>${altitude}</td>
+          <td class="mono">${position}</td>`;
+        const shortEl = tr.querySelector('.short-name');
+        if (shortEl) {
+          shortEl.dataset.nodeId = nodeId;
+          shortEl.dataset.shortName = shortName;
+          shortEl.dataset.longName = longName;
+          shortEl.dataset.role = role;
+          shortEl.dataset.hwModel = hwModel;
+          shortEl.dataset.battery = battery;
+          shortEl.dataset.voltage = voltage;
+          shortEl.dataset.uptime = uptime;
+          shortEl.dataset.channelUtil = channelUtil;
+          shortEl.dataset.airUtil = airUtil;
+          const labelParts = [shortName, longName, nodeId ? `ID ${nodeId}` : ''].filter(Boolean);
+          shortEl.classList.add('short-name-node');
+          shortEl.setAttribute('role', 'button');
+          shortEl.setAttribute('tabindex', '0');
+          shortEl.setAttribute('aria-haspopup', 'dialog');
+          shortEl.setAttribute('aria-expanded', 'false');
+          shortEl.setAttribute('aria-label', `Show node details for ${labelParts.join(' ') || 'node'}`);
+          shortEl.addEventListener('click', handleShortClick);
+          shortEl.addEventListener('keydown', handleShortKeydown);
+        }
         frag.appendChild(tr);
       }
       tb.replaceChildren(frag);
+      if (nodeOverlayAnchor && !nodeOverlayAnchor.isConnected) {
+        closeNodeOverlay(false);
+      } else {
+        updateOverlayPosition();
+      }
     }
 
     function renderMap(nodes, nowSec) {
