@@ -38,8 +38,9 @@
     .chat-entry-date { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: bold; }
     .short-name { display:inline-block; border-radius:4px; padding:0 2px; }
     .meta-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+    .refresh-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; }
     .refresh-info { margin: 0; color: #555; }
-    .refresh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .refresh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-self: end; }
     .controls { display: flex; gap: 8px; align-items: center; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
@@ -58,7 +59,8 @@
       .controls input[type="text"] { flex: 1 1 auto; min-width: 0; }
       .controls button { align-self: flex-start; }
       .meta-info { order: 1; width: 100%; }
-      .refresh-actions { flex-direction: column; align-items: flex-start; gap: 6px; }
+      .refresh-row { grid-template-columns: 1fr; }
+      .refresh-actions { flex-direction: column; align-items: flex-start; gap: 6px; justify-self: stretch; }
       #map { order: 1; flex: none; max-width: 100%; height: 50vh; }
       #chat { order: 2; flex: none; max-width: 100%; height: 30vh; }
       #nodes th:nth-child(1),
@@ -106,10 +108,12 @@
   <h1><%= site_name %></h1>
   <div class="row meta">
     <div class="meta-info">
-      <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes: … — auto-refresh every <%= refresh_interval_seconds %> seconds.</p>
-      <div class="refresh-actions">
-        <button id="refreshBtn" type="button">Refresh now</button>
-        <span id="status" class="pill">loading…</span>
+      <div class="refresh-row">
+        <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes: … — auto-refresh every <%= refresh_interval_seconds %> seconds.</p>
+        <div class="refresh-actions">
+          <button id="refreshBtn" type="button">Refresh now</button>
+          <span id="status" class="pill">loading…</span>
+        </div>
       </div>
     </div>
     <div class="controls">
