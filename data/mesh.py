@@ -45,7 +45,9 @@ def _post_json(path: str, payload: dict):
         return
     url = f"{INSTANCE}{path}"
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
     if API_TOKEN:
         req.add_header("Authorization", f"Bearer {API_TOKEN}")
     try:
@@ -290,13 +292,17 @@ def main():
             node_items = _node_items_snapshot(nodes)
             if node_items is None:
                 if DEBUG:
-                    print("[debug] skipping node snapshot; nodes changed during iteration")
+                    print(
+                        "[debug] skipping node snapshot; nodes changed during iteration"
+                    )
             else:
                 for node_id, n in node_items:
                     try:
                         upsert_node(node_id, n)
                     except Exception as e:
-                        print(f"[warn] failed to update node snapshot for {node_id}: {e}")
+                        print(
+                            f"[warn] failed to update node snapshot for {node_id}: {e}"
+                        )
                         if DEBUG:
                             print(f"[debug] node object: {n!r}")
         except Exception as e:
