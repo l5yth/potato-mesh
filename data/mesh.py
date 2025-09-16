@@ -14,6 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Mesh daemon helpers for synchronising Meshtastic data.
+
+This module wraps the Meshtastic serial interface and exposes helper
+functions that serialise nodes and text messages to JSON before forwarding
+them to the accompanying web API.  It also provides the long-running daemon
+entry point that performs these synchronisation tasks.
+"""
+
 import dataclasses
 import json, os, time, threading, signal, urllib.request, urllib.error
 from collections.abc import Mapping
@@ -33,7 +41,16 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
 def _get(obj, key, default=None):
-    """Return value for key/attribute from dicts or objects."""
+    """Return a key or attribute value from ``obj``.
+
+    Args:
+        obj: Mapping or object containing the desired value.
+        key: Key or attribute name to look up.
+        default: Value returned when the key is missing.
+
+    Returns:
+        The resolved value if present, otherwise ``default``.
+    """
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
@@ -41,6 +58,13 @@ def _get(obj, key, default=None):
 
 # --- HTTP helpers -------------------------------------------------------------
 def _post_json(path: str, payload: dict):
+    """Send a JSON payload to the configured web API.
+
+    Args:
+        path: API path relative to the configured ``INSTANCE``.
+        payload: Mapping serialised to JSON for the request body.
+    """
+
     if not INSTANCE:
         return
     url = f"{INSTANCE}{path}"
@@ -60,7 +84,14 @@ def _post_json(path: str, payload: dict):
 
 # --- Node upsert --------------------------------------------------------------
 def _node_to_dict(n) -> dict:
-    """Convert Meshtastic node/user objects into plain dicts."""
+    """Convert Meshtastic node or user structures into plain dictionaries.
+
+    Args:
+        n: ``dict``, dataclass or protobuf message describing a node or user.
+
+    Returns:
+        JSON serialisable representation of ``n``.
+    """
 
     def _convert(value):
         """Recursively convert dataclasses and protobuf messages."""
@@ -90,6 +121,13 @@ def _node_to_dict(n) -> dict:
 
 
 def upsert_node(node_id, n):
+    """Forward a node snapshot to the web API.
+
+    Args:
+        node_id: Unique identifier of the node in the mesh.
+        n: Node object obtained from the Meshtastic serial interface.
+    """
+
     ndict = _node_to_dict(n)
     _post_json("/api/nodes", {node_id: ndict})
 
@@ -101,6 +139,15 @@ def upsert_node(node_id, n):
 
 # --- Message logging via PubSub -----------------------------------------------
 def _iso(ts: int | float) -> str:
+    """Return an ISO-8601 timestamp string for ``ts``.
+
+    Args:
+        ts: POSIX timestamp as ``int`` or ``float``.
+
+    Returns:
+        Timestamp formatted with a trailing ``Z`` to denote UTC.
+    """
+
     import datetime
 
     return (
@@ -111,11 +158,19 @@ def _iso(ts: int | float) -> str:
 
 
 def _first(d, *names, default=None):
-    """Return first non-empty key from names (supports nested 'a.b' lookups).
+    """Return the first non-empty key from ``names`` (supports nested lookups).
 
     Keys that resolve to ``None`` or an empty string are skipped so callers can
     provide multiple potential field names without accidentally capturing an
     explicit ``null`` value.
+
+    Args:
+        d: Mapping or object to query.
+        *names: Candidate field names using dotted paths for nesting.
+        default: Value returned when all candidates are missing.
+
+    Returns:
+        The first matching value or ``default`` if none resolve to content.
     """
 
     def _mapping_get(obj, key):
@@ -147,7 +202,14 @@ def _first(d, *names, default=None):
 
 
 def _pkt_to_dict(packet) -> dict:
-    """Convert protobuf MeshPacket or already-dict into a JSON-friendly dict."""
+    """Normalise a received packet into a JSON-friendly dictionary.
+
+    Args:
+        packet: Protobuf ``MeshPacket`` or dictionary received from the daemon.
+
+    Returns:
+        Packet data ready for JSON serialisation.
+    """
     if isinstance(packet, dict):
         return packet
     if isinstance(packet, ProtoMessage):
@@ -162,9 +224,14 @@ def _pkt_to_dict(packet) -> dict:
 
 
 def store_packet_dict(p: dict):
-    """
-    Store only TEXT messages (decoded.payload.text) by posting to the API.
-    Safe against snake/camel case differences.
+    """Persist text messages extracted from a decoded packet.
+
+    Only packets from the ``TEXT_MESSAGE_APP`` port are forwarded to the
+    web API. Field lookups tolerate camelCase and snake_case variants for
+    compatibility across Meshtastic releases.
+
+    Args:
+        p: Packet dictionary produced by ``_pkt_to_dict``.
     """
     dec = p.get("decoded") or {}
     text = _first(dec, "payload.text", "text", default=None)
@@ -229,6 +296,13 @@ def store_packet_dict(p: dict):
 
 # PubSub receive handler
 def on_receive(packet, interface):
+    """PubSub callback that stores inbound text messages.
+
+    Args:
+        packet: Packet received from the Meshtastic interface.
+        interface: Serial interface instance (unused).
+    """
+
     p = None
     try:
         p = _pkt_to_dict(packet)
@@ -240,13 +314,20 @@ def on_receive(packet, interface):
 
 # --- Main ---------------------------------------------------------------------
 def _node_items_snapshot(nodes_obj, retries: int = 3):
-    """Return a snapshot list of (node_id, node) pairs.
+    """Return a snapshot list of ``(node_id, node)`` pairs.
 
-    The SerialInterface updates ``iface.nodes`` from another thread. When that
-    happens while we iterate over the dictionary Python raises ``RuntimeError``
-    because the dictionary changed size during iteration. To keep the daemon
-    quiet we retry a few times and, if it keeps changing, bail out for this loop
-    iteration.
+    The Meshtastic ``SerialInterface`` updates ``iface.nodes`` from another
+    thread. When that happens during iteration Python raises ``RuntimeError``.
+    To keep the daemon quiet we retry a few times and, if it keeps changing,
+    bail out for this loop.
+
+    Args:
+        nodes_obj: Container mapping node IDs to node objects.
+        retries: Number of attempts performed before giving up.
+
+    Returns:
+        Snapshot of node entries or ``None`` when retries were exhausted because
+        the container kept mutating.
     """
 
     if not nodes_obj:
@@ -278,6 +359,8 @@ def _node_items_snapshot(nodes_obj, retries: int = 3):
 
 
 def main():
+    """Run the mesh synchronisation daemon."""
+
     # Subscribe to PubSub topics (reliable in current meshtastic)
     pub.subscribe(on_receive, "meshtastic.receive")
 
@@ -286,6 +369,8 @@ def main():
     stop = threading.Event()
 
     def handle_sig(*_):
+        """Stop the daemon when a termination signal is received."""
+
         stop.set()
 
     signal.signal(signal.SIGINT, handle_sig)

@@ -13,6 +13,11 @@
 # limitations under the License.
 
 # frozen_string_literal: true
+#
+# Main Sinatra application exposing the Meshtastic node and message archive.
+# The daemon in +data/mesh.py+ pushes updates into the SQLite database that
+# this web process reads from, providing JSON APIs and a rendered HTML index
+# page for human visitors.
 
 require "sinatra"
 require "json"
@@ -35,6 +40,9 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
+# Checks whether the SQLite database already contains the required tables.
+#
+# @return [Boolean] true when both +nodes+ and +messages+ tables exist.
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = SQLite3::Database.new(DB_PATH, readonly: true)
@@ -46,6 +54,9 @@ ensure
   db&.close
 end
 
+# Create the SQLite database and seed it with the node and message schemas.
+#
+# @return [void]
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = SQLite3::Database.new(DB_PATH)
@@ -59,6 +70,10 @@ end
 
 init_db unless db_schema_present?
 
+# Retrieve recently heard nodes ordered by their last contact time.
+#
+# @param limit [Integer] maximum number of rows returned.
+# @return [Array<Hash>] collection of node records formatted for the API.
 def query_nodes(limit)
   db = SQLite3::Database.new(DB_PATH, readonly: true, results_as_hash: true)
   now = Time.now.to_i
@@ -89,12 +104,19 @@ ensure
   db&.close
 end
 
+# GET /api/nodes
+#
+# Returns a JSON array of the most recently heard nodes.
 get "/api/nodes" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_nodes(limit).to_json
 end
 
+# Retrieve recent text messages joined with related node information.
+#
+# @param limit [Integer] maximum number of rows returned.
+# @return [Array<Hash>] collection of message rows suitable for serialisation.
 def query_messages(limit)
   db = SQLite3::Database.new(DB_PATH, readonly: true)
   db.results_as_hash = true
@@ -134,12 +156,20 @@ ensure
   db&.close
 end
 
+# GET /api/messages
+#
+# Returns a JSON array of stored text messages including node metadata.
 get "/api/messages" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_messages(limit).to_json
 end
 
+# Insert or update a node row with the most recent metrics.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param node_id [String] primary identifier for the node.
+# @param n [Hash] node payload provided by the data daemon.
 def upsert_node(db, node_id, n)
   user = n["user"] || {}
   met = n["deviceMetrics"] || {}
@@ -201,12 +231,20 @@ def upsert_node(db, node_id, n)
              SQL
 end
 
+# Ensure the request includes the expected bearer token.
+#
+# @return [void]
+# @raise [Sinatra::Halt] when authentication fails.
 def require_token!
   token = ENV["API_TOKEN"]
   provided = request.env["HTTP_AUTHORIZATION"].to_s.sub(/^Bearer\s+/i, "")
   halt 403, { error: "Forbidden" }.to_json unless token && !token.empty? && provided == token
 end
 
+# Insert a text message if it does not already exist.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param m [Hash] message payload provided by the data daemon.
 def insert_message(db, m)
   msg_id = m["id"] || m["packet_id"]
   return unless msg_id
@@ -234,6 +272,11 @@ def insert_message(db, m)
              SQL
 end
 
+# Resolve a node reference to the canonical node ID when possible.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param node_ref [Object] raw node identifier or numeric reference.
+# @return [String, nil] canonical node ID or nil if it cannot be resolved.
 def normalize_node_id(db, node_ref)
   return nil if node_ref.nil?
   ref_str = node_ref.to_s.strip
@@ -251,6 +294,9 @@ def normalize_node_id(db, node_ref)
   db.get_first_value("SELECT node_id FROM nodes WHERE num = ?", [ref_num])
 end
 
+# POST /api/nodes
+#
+# Upserts one or more nodes provided as a JSON object keyed by node ID.
 post "/api/nodes" do
   require_token!
   content_type :json
@@ -269,6 +315,9 @@ ensure
   db&.close
 end
 
+# POST /api/messages
+#
+# Accepts an array or object describing text messages and stores each entry.
 post "/api/messages" do
   require_token!
   content_type :json
@@ -288,6 +337,9 @@ ensure
   db&.close
 end
 
+# GET /
+#
+# Renders the main site with configuration-driven defaults for the template.
 get "/" do
   erb :index, locals: {
                 site_name: SITE_NAME,
