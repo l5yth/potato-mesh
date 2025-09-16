@@ -16,7 +16,6 @@
 
 set -euo pipefail
 
-python -m venv .venv
-source .venv/bin/activate
-pip install -U meshtastic black pytest
-exec python mesh.py
+sqlite3 ../data/mesh.db ".backup './mesh.db'"
+curl http://127.0.0.1:41447/api/nodes |jq > ./nodes.json
+curl http://127.0.0.1:41447/api/messages |jq > ./messages.json

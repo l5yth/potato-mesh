@@ -13,19 +13,17 @@
 # limitations under the License.
 
 # frozen_string_literal: true
-#
+
 # Main Sinatra application exposing the Meshtastic node and message archive.
 # The daemon in +data/mesh.py+ pushes updates into the SQLite database that
 # this web process reads from, providing JSON APIs and a rendered HTML index
 # page for human visitors.
-
 require "sinatra"
 require "json"
 require "sqlite3"
 require "fileutils"
 require "logger"
 
-# run ../data/mesh.sh to populate nodes and messages database
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
 DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
@@ -197,7 +195,29 @@ def query_messages(limit)
       node[k] = r.delete(k)
     end
     r["snr"] = r.delete("msg_snr")
-    r["node"] = node unless node.empty?
+    if r["from_id"] && (node["node_id"].nil? || node["node_id"].to_s.empty?)
+      lookup_keys = []
+      canonical = normalize_node_id(db, r["from_id"])
+      lookup_keys << canonical if canonical
+      raw_ref = r["from_id"].to_s.strip
+      lookup_keys << raw_ref unless raw_ref.empty?
+      lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
+      fallback = nil
+      lookup_keys.uniq.each do |ref|
+        sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
+        fallback = db.get_first_row(sql, [ref])
+        break if fallback
+      end
+      if fallback
+        fallback.each do |key, value|
+          next unless key.is_a?(String)
+          next if msg_fields.include?(key)
+          node[key] = value if node[key].nil?
+        end
+      end
+    end
+    node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
+    r["node"] = node
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       Kernel.warn "[debug] row after processing: #{r.inspect}"
     end
