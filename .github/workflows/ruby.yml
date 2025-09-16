@@ -27,8 +27,10 @@ jobs:
         ruby-version: ${{ matrix.ruby-version }}
         bundler-cache: true
         working-directory: ./web
-    - name: Set up dependencies 
+    - name: Set up dependencies
       run: bundle install
+    - name: Run rufo
+      run: bundle exec rufo --check .
     - name: Run tests
       run: |
         mkdir -p tmp/test-results
