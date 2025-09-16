@@ -115,8 +115,8 @@ def query_messages(limit)
   rows.each do |r|
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
-      warn "[debug] messages row before join: #{raw.inspect}"
-      warn "[debug] row after join: #{r.inspect}"
+      Kernel.warn "[debug] messages row before join: #{raw.inspect}"
+      Kernel.warn "[debug] row after join: #{r.inspect}"
     end
     node = {}
     r.keys.each do |k|
@@ -126,7 +126,7 @@ def query_messages(limit)
     r["snr"] = r.delete("msg_snr")
     r["node"] = node unless node.empty?
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
-      warn "[debug] row after processing: #{r.inspect}"
+      Kernel.warn "[debug] row after processing: #{r.inspect}"
     end
   end
   rows
