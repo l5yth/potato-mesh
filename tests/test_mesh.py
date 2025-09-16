@@ -3,6 +3,7 @@ import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -219,3 +220,214 @@ def test_node_items_snapshot_returns_none_when_still_mutating(mesh_module):
     snapshot = mesh._node_items_snapshot(nodes, retries=2)
 
     assert snapshot is None
+
+
+def test_get_handles_dicts_and_objects(mesh_module):
+    mesh = mesh_module
+
+    class Dummy:
+        value = "obj"
+
+    assert mesh._get({"key": 1}, "key") == 1
+    assert mesh._get({"key": 1}, "missing", "fallback") == "fallback"
+    dummy = Dummy()
+    assert mesh._get(dummy, "value") == "obj"
+    assert mesh._get(dummy, "missing", "default") == "default"
+
+
+def test_post_json_skips_without_instance(mesh_module, monkeypatch):
+    mesh = mesh_module
+    monkeypatch.setattr(mesh, "INSTANCE", "")
+
+    def fail_request(*_, **__):
+        raise AssertionError("Request should not be created when INSTANCE is empty")
+
+    monkeypatch.setattr(mesh.urllib.request, "Request", fail_request)
+    mesh._post_json("/ignored", {"foo": "bar"})
+
+
+def test_post_json_sends_payload_with_token(mesh_module, monkeypatch):
+    mesh = mesh_module
+    monkeypatch.setattr(mesh, "INSTANCE", "https://example.test")
+    monkeypatch.setattr(mesh, "API_TOKEN", "secret")
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        captured["req"] = req
+
+        class DummyResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        return DummyResponse()
+
+    monkeypatch.setattr(mesh.urllib.request, "urlopen", fake_urlopen)
+
+    mesh._post_json("/api/test", {"hello": "world"})
+
+    req = captured["req"]
+    assert req.full_url == "https://example.test/api/test"
+    assert req.headers["Content-type"] == "application/json"
+    assert req.get_header("Authorization") == "Bearer secret"
+    assert mesh.json.loads(req.data.decode("utf-8")) == {"hello": "world"}
+
+
+def test_node_to_dict_handles_non_utf8_bytes(mesh_module):
+    mesh = mesh_module
+
+    @dataclass
+    class Node:
+        payload: bytes
+        other: object
+
+    class Custom:
+        def __str__(self):
+            return "custom!"
+
+    node = Node(b"\xff", Custom())
+    result = mesh._node_to_dict(node)
+
+    assert result["payload"] == "ff"
+    assert result["other"] == "custom!"
+
+
+def test_first_prefers_first_non_empty_value(mesh_module):
+    mesh = mesh_module
+    data = {"primary": {"value": ""}, "secondary": {"value": "found"}}
+
+    assert mesh._first(data, "primary.value", "secondary.value") == "found"
+    assert mesh._first(data, "missing.path", default="fallback") == "fallback"
+
+
+def test_first_handles_attribute_sources(mesh_module):
+    mesh = mesh_module
+    ns = SimpleNamespace(empty=None, value="attr")
+
+    assert mesh._first(ns, "empty", "value") == "attr"
+
+
+def test_pkt_to_dict_handles_dict_and_proto(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    assert mesh._pkt_to_dict({"a": 1}) == {"a": 1}
+
+    class DummyProto(mesh.ProtoMessage):
+        def to_dict(self):
+            return {"value": 5}
+
+    assert mesh._pkt_to_dict(DummyProto()) == {"value": 5}
+
+    class Unknown:
+        pass
+
+    def broken_dumps(*_, **__):
+        raise TypeError("boom")
+
+    monkeypatch.setattr(mesh.json, "dumps", broken_dumps)
+    fallback = mesh._pkt_to_dict(Unknown())
+    assert set(fallback) == {"_unparsed"}
+    assert isinstance(fallback["_unparsed"], str)
+
+
+def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(mesh, "_post_json", lambda path, payload: captured.append(payload))
+
+    packet = {
+        "id": "789",
+        "rxTime": 123456,
+        "from": "!abc",
+        "to": "!def",
+        "channel": "5",
+        "decoded": {"text": "hi", "portnum": 1},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected message to be stored"
+    payload = captured[0]
+    assert payload["channel"] == 5
+    assert payload["portnum"] == "1"
+    assert payload["text"] == "hi"
+    assert payload["snr"] is None and payload["rssi"] is None
+
+
+def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(mesh, "_post_json", lambda path, payload: captured.append(payload))
+
+    packet = {
+        "id": 321,
+        "rxTime": 999,
+        "fromId": "!abc",
+        "decoded": {
+            "payload": {"text": "hello"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": "not-a-number",
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    assert captured[0]["channel"] == 0
+
+
+def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    def fail_post(*_, **__):
+        raise AssertionError("Should not post without an id")
+
+    monkeypatch.setattr(mesh, "_post_json", fail_post)
+
+    packet = {"decoded": {"payload": {"text": "hello"}, "portnum": "TEXT_MESSAGE_APP"}}
+    mesh.store_packet_dict(packet)
+
+
+def test_on_receive_logs_when_store_fails(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+    monkeypatch.setattr(mesh, "_pkt_to_dict", lambda pkt: {"id": 1})
+
+    def boom(*_, **__):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(mesh, "store_packet_dict", boom)
+
+    mesh.on_receive(object(), interface=None)
+
+    captured = capsys.readouterr()
+    assert "failed to store packet" in captured.out
+
+
+def test_node_items_snapshot_iterable_without_items(mesh_module):
+    mesh = mesh_module
+
+    class Iterable:
+        def __init__(self):
+            self._data = {"node": {"foo": "bar"}}
+
+        def __iter__(self):
+            return iter(self._data)
+
+        def __getitem__(self, key):
+            return self._data[key]
+
+    snapshot = mesh._node_items_snapshot(Iterable(), retries=1)
+    assert snapshot == [("node", {"foo": "bar"})]
+
+
+def test_node_items_snapshot_handles_empty_input(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._node_items_snapshot(None) == []
+    assert mesh._node_items_snapshot({}) == []
