@@ -516,6 +516,82 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(tables).to eq(1)
       end
     end
+
+    it "updates existing messages only when sender information is provided" do
+      message_id = 9001
+      initial_time = reference_time.to_i - 120
+      initial_iso = Time.at(initial_time).utc.iso8601
+      base_payload = {
+        "packet_id" => message_id,
+        "rx_time" => initial_time,
+        "rx_iso" => initial_iso,
+        "to_id" => "^all",
+        "channel" => 1,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "initial payload",
+        "snr" => 7.25,
+        "rssi" => -58,
+        "hop_limit" => 2,
+      }
+
+      post "/api/messages", base_payload.merge("from_id" => nil).to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row("SELECT id, from_id, rx_time, rx_iso, text FROM messages WHERE id = ?", [message_id])
+
+        expect(row["from_id"]).to be_nil
+        expect(row["rx_time"]).to eq(initial_time)
+        expect(row["rx_iso"]).to eq(initial_iso)
+        expect(row["text"]).to eq("initial payload")
+      end
+
+      updated_time = initial_time + 60
+      updated_iso = Time.at(updated_time).utc.iso8601
+      post "/api/messages", base_payload.merge(
+        "rx_time" => updated_time,
+        "rx_iso" => updated_iso,
+        "text" => "overwritten without sender",
+        "from_id" => " ",
+      ).to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row("SELECT id, from_id, rx_time, rx_iso, text FROM messages WHERE id = ?", [message_id])
+
+        expect(row["from_id"]).to be_nil
+        expect(row["rx_time"]).to eq(initial_time)
+        expect(row["rx_iso"]).to eq(initial_iso)
+        expect(row["text"]).to eq("initial payload")
+      end
+
+      final_time = updated_time + 30
+      final_iso = Time.at(final_time).utc.iso8601
+      post "/api/messages", base_payload.merge(
+        "rx_time" => final_time,
+        "rx_iso" => final_iso,
+        "from" => "!spec-sender",
+      ).to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row("SELECT id, from_id, rx_time, rx_iso, text FROM messages WHERE id = ?", [message_id])
+
+        expect(row["from_id"]).to eq("!spec-sender")
+        expect(row["rx_time"]).to eq(initial_time)
+        expect(row["rx_iso"]).to eq(initial_iso)
+        expect(row["text"]).to eq("initial payload")
+      end
+    end
   end
 
   describe "GET /api/nodes" do
