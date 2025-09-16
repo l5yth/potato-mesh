@@ -24,7 +24,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
 
   def fixture_path(name)
-    File.expand_path("../../test/#{name}", __dir__)
+    File.expand_path("../../tests/#{name}", __dir__)
   end
 
   def with_db(readonly: false)

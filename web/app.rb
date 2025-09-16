@@ -13,18 +13,16 @@
 # limitations under the License.
 
 # frozen_string_literal: true
-#
+
 # Main Sinatra application exposing the Meshtastic node and message archive.
 # The daemon in +data/mesh.py+ pushes updates into the SQLite database that
 # this web process reads from, providing JSON APIs and a rendered HTML index
 # page for human visitors.
-
 require "sinatra"
 require "json"
 require "sqlite3"
 require "fileutils"
 
-# run ../data/mesh.sh to populate nodes and messages database
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 WEEK_SECONDS = 7 * 24 * 60 * 60
 
