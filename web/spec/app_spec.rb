@@ -555,7 +555,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "rx_time" => updated_time,
         "rx_iso" => updated_iso,
         "text" => "overwritten without sender",
-        "from_id" => " "
+        "from_id" => " ",
       ).to_json, auth_headers
 
       expect(last_response).to be_ok
