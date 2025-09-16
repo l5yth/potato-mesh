@@ -23,6 +23,8 @@ entry point that performs these synchronisation tasks.
 """
 
 import dataclasses
+import heapq
+import itertools
 import json, os, time, threading, signal, urllib.request, urllib.error
 from collections.abc import Mapping
 
@@ -38,6 +40,17 @@ CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 DEBUG = os.environ.get("DEBUG") == "1"
 INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
 API_TOKEN = os.environ.get("API_TOKEN", "")
+
+
+# --- POST queue ----------------------------------------------------------------
+_POST_QUEUE_LOCK = threading.Lock()
+_POST_QUEUE = []
+_POST_QUEUE_COUNTER = itertools.count()
+_POST_QUEUE_ACTIVE = False
+
+_NODE_POST_PRIORITY = 0
+_MESSAGE_POST_PRIORITY = 10
+_DEFAULT_POST_PRIORITY = 50
 
 
 def _get(obj, key, default=None):
@@ -80,6 +93,51 @@ def _post_json(path: str, payload: dict):
     except Exception as e:
         if DEBUG:
             print(f"[warn] POST {url} failed: {e}")
+
+
+def _enqueue_post_json(path: str, payload: dict, priority: int):
+    """Store a POST request in the priority queue."""
+
+    with _POST_QUEUE_LOCK:
+        heapq.heappush(
+            _POST_QUEUE, (priority, next(_POST_QUEUE_COUNTER), path, payload)
+        )
+
+
+def _drain_post_queue():
+    """Process queued POST requests in priority order."""
+
+    global _POST_QUEUE_ACTIVE
+    while True:
+        with _POST_QUEUE_LOCK:
+            if not _POST_QUEUE:
+                _POST_QUEUE_ACTIVE = False
+                return
+            _priority, _idx, path, payload = heapq.heappop(_POST_QUEUE)
+        _post_json(path, payload)
+
+
+def _queue_post_json(
+    path: str, payload: dict, *, priority: int = _DEFAULT_POST_PRIORITY
+):
+    """Queue a POST request and start processing if idle."""
+
+    global _POST_QUEUE_ACTIVE
+    _enqueue_post_json(path, payload, priority)
+    with _POST_QUEUE_LOCK:
+        if _POST_QUEUE_ACTIVE:
+            return
+        _POST_QUEUE_ACTIVE = True
+    _drain_post_queue()
+
+
+def _clear_post_queue():
+    """Clear the pending POST queue (used by tests)."""
+
+    global _POST_QUEUE_ACTIVE
+    with _POST_QUEUE_LOCK:
+        _POST_QUEUE.clear()
+        _POST_QUEUE_ACTIVE = False
 
 
 # --- Node upsert --------------------------------------------------------------
@@ -129,7 +187,7 @@ def upsert_node(node_id, n):
     """
 
     ndict = _node_to_dict(n)
-    _post_json("/api/nodes", {node_id: ndict})
+    _queue_post_json("/api/nodes", {node_id: ndict}, priority=_NODE_POST_PRIORITY)
 
     if DEBUG:
         user = _get(ndict, "user") or {}
@@ -286,7 +344,7 @@ def store_packet_dict(p: dict):
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
     }
-    _post_json("/api/messages", msg)
+    _queue_post_json("/api/messages", msg, priority=_MESSAGE_POST_PRIORITY)
 
     if DEBUG:
         print(
