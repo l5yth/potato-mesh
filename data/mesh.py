@@ -217,6 +217,44 @@ def on_receive(packet, interface):
 
 
 # --- Main ---------------------------------------------------------------------
+def _node_items_snapshot(nodes_obj, retries: int = 3):
+    """Return a snapshot list of (node_id, node) pairs.
+
+    The SerialInterface updates ``iface.nodes`` from another thread. When that
+    happens while we iterate over the dictionary Python raises ``RuntimeError``
+    because the dictionary changed size during iteration. To keep the daemon
+    quiet we retry a few times and, if it keeps changing, bail out for this loop
+    iteration.
+    """
+
+    if not nodes_obj:
+        return []
+
+    items_callable = getattr(nodes_obj, "items", None)
+    if callable(items_callable):
+        for _ in range(max(1, retries)):
+            try:
+                return list(items_callable())
+            except RuntimeError as err:
+                if "dictionary changed size during iteration" not in str(err):
+                    raise
+                time.sleep(0)
+        return None
+
+    if hasattr(nodes_obj, "__iter__") and hasattr(nodes_obj, "__getitem__"):
+        for _ in range(max(1, retries)):
+            try:
+                keys = list(nodes_obj)
+                return [(k, nodes_obj[k]) for k in keys]
+            except RuntimeError as err:
+                if "dictionary changed size during iteration" not in str(err):
+                    raise
+                time.sleep(0)
+        return None
+
+    return []
+
+
 def main():
     # Subscribe to PubSub topics (reliable in current meshtastic)
     pub.subscribe(on_receive, "meshtastic.receive")
@@ -238,13 +276,18 @@ def main():
     while not stop.is_set():
         try:
             nodes = getattr(iface, "nodes", {}) or {}
-            for node_id, n in nodes.items():
-                try:
-                    upsert_node(node_id, n)
-                except Exception as e:
-                    print(f"[warn] failed to update node snapshot for {node_id}: {e}")
-                    if DEBUG:
-                        print(f"[debug] node object: {n!r}")
+            node_items = _node_items_snapshot(nodes)
+            if node_items is None:
+                if DEBUG:
+                    print("[debug] skipping node snapshot; nodes changed during iteration")
+            else:
+                for node_id, n in node_items:
+                    try:
+                        upsert_node(node_id, n)
+                    except Exception as e:
+                        print(f"[warn] failed to update node snapshot for {node_id}: {e}")
+                        if DEBUG:
+                            print(f"[debug] node object: {n!r}")
         except Exception as e:
             print(f"[warn] failed to update node snapshot: {e}")
         stop.wait(SNAPSHOT_SECS)
