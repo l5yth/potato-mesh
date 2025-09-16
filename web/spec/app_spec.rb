@@ -105,6 +105,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
     }
   end
 
+  def max_or_zero(values)
+    filtered = values.compact
+    return 0 if filtered.empty?
+
+    filtered.map { |value| value.to_i }.max
+  end
+
   def expect_same_value(actual, expected, tolerance: 1e-6)
     if expected.nil?
       expect(actual).to be_nil
@@ -689,6 +696,52 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(messages.size).to eq(1)
         expect(messages.first["from_id"]).to be_nil
       end
+    end
+  end
+
+  describe "GET /api/updates" do
+    it "returns zeros when no data is stored" do
+      get "/api/updates"
+      expect(last_response).to be_ok
+
+      body = JSON.parse(last_response.body)
+      expect(body).to eq(
+        "node_count" => 0,
+        "nodes_last_heard" => 0,
+        "nodes_first_heard" => 0,
+        "nodes_position_time" => 0,
+        "message_count" => 0,
+        "messages_last_rx_time" => 0,
+        "messages_last_id" => 0,
+      )
+    end
+
+    it "summarises the latest node and message updates" do
+      import_nodes_fixture
+      import_messages_fixture
+
+      get "/api/updates"
+      expect(last_response).to be_ok
+
+      body = JSON.parse(last_response.body)
+
+      expected_last_heard = max_or_zero(
+        nodes_fixture.map { |node| expected_node_row(node)["last_heard"] },
+      )
+      expected_first_heard = max_or_zero(
+        nodes_fixture.map { |node| expected_node_row(node)["first_heard"] },
+      )
+      expected_position_time = max_or_zero(nodes_fixture.map { |node| node["position_time"] })
+      expected_message_rx_time = max_or_zero(messages_fixture.map { |message| message["rx_time"] })
+      expected_message_id = max_or_zero(messages_fixture.map { |message| message["id"] })
+
+      expect(body["node_count"]).to eq(nodes_fixture.size)
+      expect(body["message_count"]).to eq(messages_fixture.size)
+      expect(body["nodes_last_heard"]).to eq(expected_last_heard)
+      expect(body["nodes_first_heard"]).to eq(expected_first_heard)
+      expect(body["nodes_position_time"]).to eq(expected_position_time)
+      expect(body["messages_last_rx_time"]).to eq(expected_message_rx_time)
+      expect(body["messages_last_id"]).to eq(expected_message_id)
     end
   end
 end

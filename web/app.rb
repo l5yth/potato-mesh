@@ -227,6 +227,40 @@ ensure
   db&.close
 end
 
+# Retrieve metadata describing the most recent node and message updates.
+#
+# @return [Hash] counts and timestamp markers for change detection.
+def query_update_markers
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  row = db.get_first_row <<~SQL
+          SELECT
+            (SELECT COUNT(1) FROM nodes) AS node_count,
+            (SELECT COALESCE(MAX(last_heard), 0) FROM nodes) AS nodes_last_heard,
+            (SELECT COALESCE(MAX(first_heard), 0) FROM nodes) AS nodes_first_heard,
+            (SELECT COALESCE(MAX(position_time), 0) FROM nodes) AS nodes_position_time,
+            (SELECT COUNT(1) FROM messages) AS message_count,
+            (SELECT COALESCE(MAX(rx_time), 0) FROM messages) AS messages_last_rx_time,
+            (SELECT COALESCE(MAX(id), 0) FROM messages) AS messages_last_id
+        SQL
+  row ||= {}
+  keys = %w[
+    node_count
+    nodes_last_heard
+    nodes_first_heard
+    nodes_position_time
+    message_count
+    messages_last_rx_time
+    messages_last_id
+  ]
+  keys.each do |key|
+    row[key] = row.fetch(key, 0).to_i
+  end
+  row
+ensure
+  db&.close
+end
+
 # GET /api/messages
 #
 # Returns a JSON array of stored text messages including node metadata.
@@ -234,6 +268,14 @@ get "/api/messages" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_messages(limit).to_json
+end
+
+# GET /api/updates
+#
+# Returns counts and timestamps used by the web UI to detect new content.
+get "/api/updates" do
+  content_type :json
+  query_update_markers.to_json
 end
 
 # Determine the numeric node reference for a canonical node identifier.
