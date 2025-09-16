@@ -41,7 +41,7 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
-Sinatra::Application.define_singleton_method(:apply_logger_level!) do
+def Sinatra::Application.apply_logger_level!
   logger = settings.logger
   return unless logger
 
@@ -52,7 +52,7 @@ Sinatra::Application.configure do
   app_logger = Logger.new($stdout)
   set :logger, app_logger
   use Rack::CommonLogger, app_logger
-  apply_logger_level!
+  Sinatra::Application.apply_logger_level!
 end
 
 # Checks whether the SQLite database already contains the required tables.
