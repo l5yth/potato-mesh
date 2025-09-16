@@ -59,10 +59,7 @@
     .short-info-overlay[hidden] { display: none; }
     .short-info-overlay .short-info-close { position: absolute; top: 4px; right: 4px; border: none; background: transparent; font-size: 14px; line-height: 1; padding: 2px; border-radius: 4px; cursor: pointer; color: inherit; }
     .short-info-overlay .short-info-close:hover { background: rgba(0, 0, 0, 0.08); }
-    .short-info-list { margin: 0; padding: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; row-gap: 2px; }
-    .short-info-list dt { font-weight: 600; }
-    .short-info-list dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-    .short-info-list dd span { white-space: nowrap; }
+    .short-info-content { margin: 0; }
     .meta-info { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
     .refresh-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; }
     .refresh-info { margin: 0; color: #555; }
@@ -250,7 +247,7 @@
 
   <div id="shortInfoOverlay" class="short-info-overlay" role="dialog" hidden>
     <button type="button" class="short-info-close" aria-label="Close node details">×</button>
-    <dl class="short-info-list"></dl>
+    <div class="short-info-content"></div>
   </div>
 
   <footer>
@@ -274,7 +271,7 @@
     const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
     const shortInfoOverlay = document.getElementById('shortInfoOverlay');
     const shortInfoClose = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-close') : null;
-    const shortInfoList = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-list') : null;
+    const shortInfoContent = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-content') : null;
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
     const chatEl = document.getElementById('chat');
@@ -475,15 +472,15 @@
       return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
     }
 
-    function formatShortInfoValue(value) {
-      return value == null || value === '' ? '—' : String(value);
-    }
-
     function formatShortInfoUptime(value) {
       if (value == null || value === '') return '';
       const num = Number(value);
       if (!Number.isFinite(num)) return '';
       return num === 0 ? '0s' : timeHum(num);
+    }
+
+    function shortInfoValueOrDash(value) {
+      return value != null && value !== '' ? String(value) : '—';
     }
 
     function closeShortInfoOverlay() {
@@ -515,26 +512,27 @@
     }
 
     function openShortInfoOverlay(target, info) {
-      if (!shortInfoOverlay || !shortInfoList || !info) return;
-      const rows = [
-        ['Node ID', info.nodeId ?? ''],
-        ['Short', info.shortName ?? ''],
-        ['Long', info.longName ?? ''],
-        ['Role', info.role || 'CLIENT'],
-        ['HW Model', info.hwModel ?? ''],
-        ['Battery', fmtAlt(info.battery, '%')],
-        ['Voltage', fmtAlt(info.voltage, 'V')],
-        ['Uptime', formatShortInfoUptime(info.uptime)],
-        ['Channel', fmtTx(info.channel)],
-        ['Air Util', fmtTx(info.airUtil)],
-      ];
-      shortInfoList.innerHTML = rows
-        .map(([label, value]) => {
-          const safeLabel = escapeHtml(label);
-          const safeValue = escapeHtml(formatShortInfoValue(value));
-          return `<dt>${safeLabel}</dt><dd><span>${safeValue}</span></dd>`;
-        })
-        .join('');
+      if (!shortInfoOverlay || !shortInfoContent || !info) return;
+      const lines = [];
+      const longNameValue = shortInfoValueOrDash(info.longName ?? '');
+      lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
+      const shortParts = [];
+      shortParts.push(renderShortHtml(info.shortName, info.role, info.longName));
+      const nodeIdValue = shortInfoValueOrDash(info.nodeId ?? '');
+      if (nodeIdValue !== '—') {
+        shortParts.push(`<span class="mono">${escapeHtml(nodeIdValue)}</span>`);
+      }
+      if (shortParts.length) {
+        lines.push(shortParts.join(' '));
+      }
+      lines.push(`Role: ${escapeHtml(shortInfoValueOrDash(info.role || 'CLIENT'))}`);
+      lines.push(`Model: ${escapeHtml(shortInfoValueOrDash(fmtHw(info.hwModel)))}`);
+      lines.push(`Battery: ${escapeHtml(shortInfoValueOrDash(fmtAlt(info.battery, '%')))}`);
+      lines.push(`Voltage: ${escapeHtml(shortInfoValueOrDash(fmtAlt(info.voltage, 'V')))}`);
+      lines.push(`Uptime: ${escapeHtml(shortInfoValueOrDash(formatShortInfoUptime(info.uptime)))}`);
+      lines.push(`Channel Util: ${escapeHtml(shortInfoValueOrDash(fmtTx(info.channel)))}`);
+      lines.push(`Air Util Tx: ${escapeHtml(shortInfoValueOrDash(fmtTx(info.airUtil)))}`);
+      shortInfoContent.innerHTML = lines.join('<br/>');
       shortInfoAnchor = target;
       shortInfoOverlay.hidden = false;
       shortInfoOverlay.style.visibility = 'hidden';
