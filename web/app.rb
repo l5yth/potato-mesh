@@ -27,6 +27,9 @@ require "logger"
 
 # run ../data/mesh.sh to populate nodes and messages database
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
+DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
+DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
+DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
 WEEK_SECONDS = 7 * 24 * 60 * 60
 
 set :public_folder, File.join(__dir__, "public")
@@ -57,12 +60,42 @@ Sinatra::Application.configure do
   Sinatra::Application.apply_logger_level!
 end
 
+# Open the SQLite database with a configured busy timeout.
+#
+# @param readonly [Boolean] whether to open the database in read-only mode.
+# @return [SQLite3::Database]
+def open_database(readonly: false)
+  SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
+    db.busy_timeout = DB_BUSY_TIMEOUT_MS
+  end
+end
+
+# Execute the provided block, retrying when SQLite reports the database is
+# temporarily locked.
+#
+# @param max_retries [Integer] maximum number of retries after the initial
+#   attempt.
+# @param base_delay [Float] base delay in seconds for linear backoff between
+#   retries.
+# @yieldreturn [Object] result of the block once it succeeds.
+def with_busy_retry(max_retries: DB_BUSY_MAX_RETRIES, base_delay: DB_BUSY_RETRY_DELAY)
+  attempts = 0
+  begin
+    yield
+  rescue SQLite3::BusyException
+    attempts += 1
+    raise if attempts > max_retries
+    sleep(base_delay * attempts)
+    retry
+  end
+end
+
 # Checks whether the SQLite database already contains the required tables.
 #
 # @return [Boolean] true when both +nodes+ and +messages+ tables exist.
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
-  db = SQLite3::Database.new(DB_PATH, readonly: true)
+  db = open_database(readonly: true)
   tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages')").flatten
   tables.include?("nodes") && tables.include?("messages")
 rescue SQLite3::Exception
@@ -76,7 +109,7 @@ end
 # @return [void]
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
-  db = SQLite3::Database.new(DB_PATH)
+  db = open_database
   %w[nodes messages].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
@@ -92,7 +125,8 @@ init_db unless db_schema_present?
 # @param limit [Integer] maximum number of rows returned.
 # @return [Array<Hash>] collection of node records formatted for the API.
 def query_nodes(limit)
-  db = SQLite3::Database.new(DB_PATH, readonly: true, results_as_hash: true)
+  db = open_database(readonly: true)
+  db.results_as_hash = true
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
   rows = db.execute <<~SQL, [min_last_heard, limit]
@@ -135,7 +169,7 @@ end
 # @param limit [Integer] maximum number of rows returned.
 # @return [Array<Hash>] collection of message rows suitable for serialisation.
 def query_messages(limit)
-  db = SQLite3::Database.new(DB_PATH, readonly: true)
+  db = open_database(readonly: true)
   db.results_as_hash = true
   rows = db.execute <<~SQL, [limit]
                       SELECT m.*, n.*, m.snr AS msg_snr
@@ -231,21 +265,23 @@ def upsert_node(db, node_id, n)
     pos["longitude"],
     pos["altitude"],
   ]
-  db.execute <<~SQL, row
-               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
-                                 hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                 position_time,location_source,latitude,longitude,altitude)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(node_id) DO UPDATE SET
-                 num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
-                 hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
-                 is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
-                 battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
-                 air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
-                 location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
-                 altitude=excluded.altitude
-               WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
-             SQL
+  with_busy_retry do
+    db.execute <<~SQL, row
+                 INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
+                                   hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
+                                   position_time,location_source,latitude,longitude,altitude)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(node_id) DO UPDATE SET
+                   num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
+                   hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
+                   is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                   battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
+                   air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
+                   location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
+                   altitude=excluded.altitude
+                 WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
+               SQL
+  end
 end
 
 # Ensure the request includes the expected bearer token.
@@ -283,10 +319,12 @@ def insert_message(db, m)
     m["rssi"],
     m["hop_limit"],
   ]
-  db.execute <<~SQL, row
-               INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)
-             SQL
+  with_busy_retry do
+    db.execute <<~SQL, row
+                 INSERT OR IGNORE INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               SQL
+  end
 end
 
 # Resolve a node reference to the canonical node ID when possible.
@@ -323,7 +361,7 @@ post "/api/nodes" do
     halt 400, { error: "invalid JSON" }.to_json
   end
   halt 400, { error: "too many nodes" }.to_json if data.is_a?(Hash) && data.size > 1000
-  db = SQLite3::Database.new(DB_PATH)
+  db = open_database
   data.each do |node_id, node|
     upsert_node(db, node_id, node)
   end
@@ -345,7 +383,7 @@ post "/api/messages" do
   end
   messages = data.is_a?(Array) ? data : [data]
   halt 400, { error: "too many messages" }.to_json if messages.size > 1000
-  db = SQLite3::Database.new(DB_PATH)
+  db = open_database
   messages.each do |msg|
     insert_message(db, msg)
   end
