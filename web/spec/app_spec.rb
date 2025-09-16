@@ -344,6 +344,34 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(tables).to eq(1)
       end
     end
+
+    it "retries node upserts when the database reports it is locked" do
+      node = nodes_fixture.first
+      payload = { node["node_id"] => build_node_payload(node) }
+
+      call_count = 0
+      allow_any_instance_of(SQLite3::Database).to receive(:execute).and_wrap_original do |method, sql, *args|
+        if sql.include?("INSERT INTO nodes")
+          call_count += 1
+          raise SQLite3::BusyException, "database is locked" if call_count == 1
+        end
+        method.call(sql, *args)
+      end
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+      expect(call_count).to be >= 2
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM nodes WHERE node_id = ?", [node["node_id"]])
+        expect(count).to eq(1)
+
+        last_heard = db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [node["node_id"]])
+        expect(last_heard).to eq(expected_last_heard(node))
+      end
+    end
   end
 
   describe "POST /api/messages" do
