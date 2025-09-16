@@ -15,9 +15,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./data
     steps:
     - uses: actions/checkout@v5
     - name: Set up Python 3.13
