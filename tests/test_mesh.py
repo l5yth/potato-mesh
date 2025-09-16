@@ -415,9 +415,7 @@ def test_post_queue_prioritises_nodes(mesh_module, monkeypatch):
 
     monkeypatch.setattr(mesh, "_post_json", record)
 
-    mesh._enqueue_post_json(
-        "/api/messages", {"id": 1}, mesh._MESSAGE_POST_PRIORITY
-    )
+    mesh._enqueue_post_json("/api/messages", {"id": 1}, mesh._MESSAGE_POST_PRIORITY)
     mesh._enqueue_post_json(
         "/api/nodes", {"!node": {"foo": "bar"}}, mesh._NODE_POST_PRIORITY
     )

@@ -117,7 +117,9 @@ def _drain_post_queue():
         _post_json(path, payload)
 
 
-def _queue_post_json(path: str, payload: dict, *, priority: int = _DEFAULT_POST_PRIORITY):
+def _queue_post_json(
+    path: str, payload: dict, *, priority: int = _DEFAULT_POST_PRIORITY
+):
     """Queue a POST request and start processing if idle."""
 
     global _POST_QUEUE_ACTIVE
