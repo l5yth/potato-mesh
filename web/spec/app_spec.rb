@@ -582,7 +582,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           unless node_expected
             canonical_id = node_aliases[lookup_id.to_s]
             expect(canonical_id).not_to be_nil,
-                                      "node fixture missing for from_id #{lookup_id.inspect}"
+                                        "node fixture missing for from_id #{lookup_id.inspect}"
             node_expected = nodes_by_id.fetch(canonical_id)
           end
 
