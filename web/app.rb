@@ -382,10 +382,10 @@ def insert_message(db, m)
   canonical_from_id = normalize_node_id(db, raw_from_id)
   use_canonical = canonical_from_id && (trimmed_from_id.nil? || prefer_canonical_sender?(m))
   from_id = if use_canonical
-              canonical_from_id.to_s.strip
-            else
-              trimmed_from_id
-            end
+      canonical_from_id.to_s.strip
+    else
+      trimmed_from_id
+    end
   from_id = nil if from_id&.empty?
   row = [
     msg_id,
