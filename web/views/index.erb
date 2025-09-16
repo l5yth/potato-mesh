@@ -69,10 +69,22 @@
     #map .leaflet-tile { filter: opacity(70%); }
     #nodes { font-size: 12px; }
     footer { position: fixed; bottom: 0; left: var(--pad); width: calc(100% - 2 * var(--pad)); background: #fafafa; border-top: 1px solid #ddd; text-align: center; font-size: 12px; padding: 4px 0; }
+    .info-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: var(--pad); z-index: 1000; }
+    .info-overlay[hidden] { display: none; }
+    .info-dialog { background: #fff; color: #111; max-width: 420px; width: min(100%, 420px); border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2); position: relative; padding: 20px 24px; outline: none; }
+    .info-dialog:focus { outline: 2px solid #4a90e2; outline-offset: 4px; }
+    .info-close { position: absolute; top: 10px; right: 10px; padding: 4px; border: none; background: transparent; font-size: 20px; line-height: 1; border-radius: 999px; }
+    .info-close:hover { background: rgba(0, 0, 0, 0.06); }
+    .info-title { margin: 0 0 8px; font-size: 20px; }
+    .info-intro { margin: 0 0 12px; font-size: 14px; color: #444; }
+    .info-details { margin: 0; font-size: 14px; line-height: 1.6; }
+    .info-details dt { font-weight: 600; margin-top: 12px; color: #222; }
+    .info-details dd { margin: 4px 0 0; }
+    .info-details dd a { color: inherit; word-break: break-word; }
     @media (max-width: 768px) {
       .row { flex-direction: column; align-items: stretch; gap: var(--pad); }
       .map-row { flex-direction: column; }
-      .controls { order: 2; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; width: 100%; gap: 12px; }
+      .controls { order: 2; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; width: 100%; gap: 12px; }
       .controls input[type="text"] { width: 100%; }
       .controls button { justify-self: end; }
       .meta-info { order: 1; width: 100%; }
@@ -119,6 +131,11 @@
     body.dark .chat-entry-msg { color: #bbb }
     body.dark .short-name { color: #555 }
     body.dark .chat-entry-date { color: #bbb }
+    body.dark .info-overlay { background: rgba(0, 0, 0, 0.7); }
+    body.dark .info-dialog { background: #1c1c1c; color: #eee; border: 1px solid #444; }
+    body.dark .info-intro { color: #bbb; }
+    body.dark .info-details dt { color: #ddd; }
+    body.dark .info-close:hover { background: rgba(255, 255, 255, 0.1); }
   </style>
 </head>
 <body>
@@ -137,6 +154,31 @@
       <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
       <input type="text" id="filterInput" placeholder="Filter nodes" />
       <button id="themeToggle" type="button" aria-label="Toggle dark mode">🌙</button>
+      <button id="infoBtn" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information">ℹ️ Info</button>
+    </div>
+  </div>
+
+  <div id="infoOverlay" class="info-overlay" role="dialog" aria-modal="true" aria-labelledby="infoTitle" hidden>
+    <div class="info-dialog" tabindex="-1">
+      <button type="button" class="info-close" id="infoClose" aria-label="Close site information">×</button>
+      <h2 id="infoTitle" class="info-title">About <%= site_name %></h2>
+      <p class="info-intro">Quick facts about this PotatoMesh instance.</p>
+      <dl class="info-details">
+        <dt>Default channel</dt>
+        <dd><%= default_channel %></dd>
+        <dt>Frequency</dt>
+        <dd><%= default_frequency %></dd>
+        <dt>Map center</dt>
+        <dd><%= format("%.5f, %.5f", map_center_lat, map_center_lon) %></dd>
+        <dt>Visible range</dt>
+        <dd>Nodes within roughly <%= max_node_distance_km %> km of the center are shown.</dd>
+        <dt>Auto-refresh</dt>
+        <dd>Updates every <%= refresh_interval_seconds %> seconds.</dd>
+        <% if matrix_room && !matrix_room.empty? %>
+          <dt>Matrix room</dt>
+          <dd><a href="https://matrix.to/#/<%= matrix_room %>" target="_blank" rel="noreferrer noopener"><%= matrix_room %></a></dd>
+        <% end %>
+      </dl>
     </div>
   </div>
 
@@ -182,6 +224,10 @@
     const refreshBtn = document.getElementById('refreshBtn');
     const filterInput = document.getElementById('filterInput');
     const themeToggle = document.getElementById('themeToggle');
+    const infoBtn = document.getElementById('infoBtn');
+    const infoOverlay = document.getElementById('infoOverlay');
+    const infoClose = document.getElementById('infoClose');
+    const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
     const chatEl = document.getElementById('chat');
@@ -244,6 +290,42 @@
       tiles = dark ? darkTiles : lightTiles;
       tiles.addTo(map);
     });
+
+    let lastFocusBeforeInfo = null;
+
+    function openInfoOverlay() {
+      if (!infoOverlay || !infoDialog) return;
+      lastFocusBeforeInfo = document.activeElement;
+      infoOverlay.hidden = false;
+      document.body.style.setProperty('overflow', 'hidden');
+      infoDialog.focus();
+    }
+
+    function closeInfoOverlay() {
+      if (!infoOverlay || !infoDialog) return;
+      infoOverlay.hidden = true;
+      document.body.style.removeProperty('overflow');
+      const target = lastFocusBeforeInfo && typeof lastFocusBeforeInfo.focus === 'function' ? lastFocusBeforeInfo : infoBtn;
+      if (target && typeof target.focus === 'function') {
+        target.focus();
+      }
+      lastFocusBeforeInfo = null;
+    }
+
+    if (infoBtn && infoOverlay && infoClose) {
+      infoBtn.addEventListener('click', openInfoOverlay);
+      infoClose.addEventListener('click', closeInfoOverlay);
+      infoOverlay.addEventListener('click', event => {
+        if (event.target === infoOverlay) {
+          closeInfoOverlay();
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !infoOverlay.hidden) {
+          closeInfoOverlay();
+        }
+      });
+    }
 
     // --- Helpers ---
     function escapeHtml(str) {
