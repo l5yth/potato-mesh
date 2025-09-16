@@ -1,5 +1,11 @@
 # Potato-Mesh
 
+[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5y/potato-mesh/spec.yml?branch=main)](https://github.com/l5y/potato-mesh/actions)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/l5y/potato-mesh)](https://github.com/l5y/potato-mesh/releases)
+[![codecov](https://codecov.io/gh/l5y/potato-mesh/branch/main/graph/badge.svg?token=IK7USBPBZY)](https://codecov.io/gh/l5y/potato-mesh)
+[![Open-Source License](https://img.shields.io/github/license/l5y/potato-mesh)](LICENSE)
+[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5y/potato-mesh/issues)
+
 A simple Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
 
 * Web app with chat window and map view showing nodes and messages.
