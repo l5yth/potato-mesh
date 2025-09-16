@@ -509,13 +509,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_response).to be_ok
 
         expect(Kernel).to have_received(:warn).with(
-          a_string_matching(/\[debug\] messages row before join: .*"id"=>#{message_id}/),
+          a_string_matching(/\[debug\] messages row before join: .*"id"\s*=>\s*#{message_id}/),
         )
         expect(Kernel).to have_received(:warn).with(
-          a_string_matching(/\[debug\] row after join: .*"id"=>#{message_id}/),
+          a_string_matching(/\[debug\] row after join: .*"id"\s*=>\s*#{message_id}/),
         )
         expect(Kernel).to have_received(:warn).with(
-          a_string_matching(/\[debug\] row after processing: .*"id"=>#{message_id}/),
+          a_string_matching(/\[debug\] row after processing: .*"id"\s*=>\s*#{message_id}/),
         )
 
         messages = JSON.parse(last_response.body)
