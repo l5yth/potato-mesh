@@ -16,6 +16,7 @@
 
 import dataclasses
 import json, os, time, threading, signal, urllib.request, urllib.error
+from collections.abc import Mapping
 
 from meshtastic.serial_interface import SerialInterface
 from pubsub import pub
@@ -107,17 +108,27 @@ def _iso(ts: int | float) -> str:
     )
 
 
-def _first(d: dict, *names, default=None):
+def _first(d, *names, default=None):
     """Return first present key from names (supports nested 'a.b' lookups)."""
+
+    def _mapping_get(obj, key):
+        if isinstance(obj, Mapping) and key in obj:
+            return True, obj[key]
+        if hasattr(obj, "__getitem__"):
+            try:
+                return True, obj[key]
+            except Exception:
+                pass
+        if hasattr(obj, key):
+            return True, getattr(obj, key)
+        return False, None
+
     for name in names:
         cur = d
-        parts = name.split(".")
         ok = True
-        for p in parts:
-            if isinstance(cur, dict) and p in cur:
-                cur = cur[p]
-            else:
-                ok = False
+        for part in name.split("."):
+            ok, cur = _mapping_get(cur, part)
+            if not ok:
                 break
         if ok:
             return cur
