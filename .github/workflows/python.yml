@@ -24,10 +24,24 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install black pytest meshtastic
+        pip install black pytest pytest-cov meshtastic
     - name: Lint with black
       run: |
         black --check ./
-    - name: Test with pytest
+    - name: Test with pytest and coverage
       run: |
-        pytest
+        mkdir -p reports
+        pytest --cov=data --cov-report=term --cov-report=xml:reports/python-coverage.xml --junitxml=reports/python-junit.xml
+    - name: Upload coverage to Codecov
+      if: always()
+      uses: codecov/codecov-action@v5
+      with:
+        files: reports/python-coverage.xml
+        flags: python-ingestor
+        name: python-ingestor
+    - name: Upload test results to Codecov
+      if: always()
+      uses: codecov/test-results-action@v1
+      with:
+        files: reports/python-junit.xml
+        flags: python-ingestor
