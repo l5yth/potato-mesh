@@ -85,9 +85,14 @@ def mesh_module(monkeypatch):
     else:
         module = importlib.import_module(module_name)
 
+    if hasattr(module, "_clear_post_queue"):
+        module._clear_post_queue()
+
     yield module
 
     # Ensure a clean import for the next test
+    if hasattr(module, "_clear_post_queue"):
+        module._clear_post_queue()
     sys.modules.pop(module_name, None)
 
 
@@ -125,7 +130,9 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
     monkeypatch.setattr(
-        mesh, "_post_json", lambda path, payload: captured.append((path, payload))
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
 
     packet = {
@@ -147,7 +154,7 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     mesh.store_packet_dict(packet)
 
     assert captured, "Expected POST to be triggered for text message"
-    path, payload = captured[0]
+    path, payload, priority = captured[0]
     assert path == "/api/messages"
     assert payload["id"] == 123
     assert payload["channel"] == 4
@@ -160,13 +167,16 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert payload["hop_limit"] == 3
     assert payload["snr"] == pytest.approx(1.25)
     assert payload["rssi"] == -70
+    assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
     monkeypatch.setattr(
-        mesh, "_post_json", lambda *args, **kwargs: captured.append(args)
+        mesh,
+        "_queue_post_json",
+        lambda *args, **kwargs: captured.append((args, kwargs)),
     )
 
     packet = {
@@ -182,7 +192,7 @@ def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
 
     mesh.store_packet_dict(packet)
 
-    assert not captured, "Non-text messages should not be posted"
+    assert not captured, "Non-text messages should not be queued"
 
 
 def test_node_items_snapshot_handles_transient_runtime_error(mesh_module):
@@ -340,7 +350,9 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
     monkeypatch.setattr(
-        mesh, "_post_json", lambda path, payload: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
 
     packet = {
@@ -355,18 +367,22 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     mesh.store_packet_dict(packet)
 
     assert captured, "Expected message to be stored"
-    payload = captured[0]
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
     assert payload["channel"] == 5
     assert payload["portnum"] == "1"
     assert payload["text"] == "hi"
     assert payload["snr"] is None and payload["rssi"] is None
+    assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
 def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
     monkeypatch.setattr(
-        mesh, "_post_json", lambda path, payload: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
 
     packet = {
@@ -383,7 +399,32 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     mesh.store_packet_dict(packet)
 
     assert captured
-    assert captured[0]["channel"] == 0
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["channel"] == 0
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_post_queue_prioritises_nodes(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh._clear_post_queue()
+    calls = []
+
+    def record(path, payload):
+        calls.append((path, payload))
+
+    monkeypatch.setattr(mesh, "_post_json", record)
+
+    mesh._enqueue_post_json(
+        "/api/messages", {"id": 1}, mesh._MESSAGE_POST_PRIORITY
+    )
+    mesh._enqueue_post_json(
+        "/api/nodes", {"!node": {"foo": "bar"}}, mesh._NODE_POST_PRIORITY
+    )
+
+    mesh._drain_post_queue()
+
+    assert [path for path, _ in calls] == ["/api/nodes", "/api/messages"]
 
 
 def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
@@ -392,7 +433,7 @@ def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
     def fail_post(*_, **__):
         raise AssertionError("Should not post without an id")
 
-    monkeypatch.setattr(mesh, "_post_json", fail_post)
+    monkeypatch.setattr(mesh, "_queue_post_json", fail_post)
 
     packet = {"decoded": {"payload": {"text": "hello"}, "portnum": "TEXT_MESSAGE_APP"}}
     mesh.store_packet_dict(packet)
