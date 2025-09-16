@@ -358,6 +358,15 @@ def require_token!
   halt 403, { error: "Forbidden" }.to_json unless token && !token.empty? && provided == token
 end
 
+# Determine whether the canonical node identifier should replace the provided
+# sender reference for a message payload.
+#
+# @param message [Object] raw request payload element.
+# @return [Boolean]
+def prefer_canonical_sender?(message)
+  message.is_a?(Hash) && message.key?("packet_id") && !message.key?("id")
+end
+
 # Insert a text message if it does not already exist.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -368,12 +377,15 @@ def insert_message(db, m)
   rx_time = m["rx_time"]&.to_i || Time.now.to_i
   rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
   raw_from_id = m["from_id"]
-  from_id = raw_from_id
-  from_id = from_id.to_s.strip unless from_id.nil?
-  if from_id.nil? || from_id.empty?
-    canonical = normalize_node_id(db, raw_from_id)
-    from_id = canonical&.to_s&.strip
-  end
+  trimmed_from_id = raw_from_id.nil? ? nil : raw_from_id.to_s.strip
+  trimmed_from_id = nil if trimmed_from_id&.empty?
+  canonical_from_id = normalize_node_id(db, raw_from_id)
+  use_canonical = canonical_from_id && (trimmed_from_id.nil? || prefer_canonical_sender?(m))
+  from_id = if use_canonical
+              canonical_from_id.to_s.strip
+            else
+              trimmed_from_id
+            end
   from_id = nil if from_id&.empty?
   row = [
     msg_id,
