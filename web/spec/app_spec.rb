@@ -18,6 +18,7 @@ require "spec_helper"
 require "sqlite3"
 require "json"
 require "time"
+require "base64"
 
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
@@ -196,6 +197,34 @@ RSpec.describe "Potato Mesh Sinatra app" do
     ensure
       ENV["API_TOKEN"] = api_token
     end
+
+    it "rejects requests with the wrong bearer token" do
+      headers = auth_headers.merge("HTTP_AUTHORIZATION" => "Bearer wrong-token")
+
+      post "/api/messages", {}.to_json, headers
+
+      expect(last_response.status).to eq(403)
+      expect(JSON.parse(last_response.body)).to eq("error" => "Forbidden")
+    end
+
+    it "does not accept alternate authorization schemes" do
+      basic = Base64.strict_encode64("attacker:password")
+      headers = auth_headers.merge("HTTP_AUTHORIZATION" => "Basic #{basic}")
+
+      post "/api/nodes", {}.to_json, headers
+
+      expect(last_response.status).to eq(403)
+      expect(JSON.parse(last_response.body)).to eq("error" => "Forbidden")
+    end
+
+    it "rejects tokens with unexpected trailing characters" do
+      headers = auth_headers.merge("HTTP_AUTHORIZATION" => "Bearer #{api_token} ")
+
+      post "/api/messages", {}.to_json, headers
+
+      expect(last_response.status).to eq(403)
+      expect(JSON.parse(last_response.body)).to eq("error" => "Forbidden")
+    end
   end
 
   describe "POST /api/nodes" do
@@ -261,6 +290,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         count = db.get_first_value("SELECT COUNT(*) FROM nodes")
         expect(count).to eq(0)
+      end
+    end
+
+    it "treats SQL-looking node identifiers as plain data" do
+      malicious_id = "spec-node'); DROP TABLE nodes;--"
+      payload = {
+        malicious_id => {
+          "user" => { "shortName" => "Spec Attack" },
+          "lastHeard" => reference_time.to_i,
+        },
+      }
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT node_id, short_name FROM nodes WHERE node_id = ?",
+          [malicious_id],
+        )
+
+        expect(row["node_id"]).to eq(malicious_id)
+        expect(row["short_name"]).to eq("Spec Attack")
+
+        tables = db.get_first_value(
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'",
+        )
+        expect(tables).to eq(1)
       end
     end
   end
@@ -376,6 +436,35 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(second["rx_time"]).to eq(reference_time.to_i)
         expect(second["rx_iso"]).to eq(reference_time.utc.iso8601)
         expect(second["text"]).to eq("blank")
+      end
+    end
+
+    it "stores messages containing SQL control characters without executing them" do
+      payload = {
+        "packet_id" => 404,
+        "from_id" => "attacker",
+        "text" => "'); DROP TABLE nodes;--",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT id, text FROM messages WHERE id = ?",
+          [404],
+        )
+
+        expect(row["id"]).to eq(404)
+        expect(row["text"]).to eq("'); DROP TABLE nodes;--")
+
+        tables = db.get_first_value(
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'",
+        )
+        expect(tables).to eq(1)
       end
     end
   end
