@@ -14,6 +14,22 @@
 
 # frozen_string_literal: true
 
+require "simplecov"
+require "simplecov_json_formatter"
+
+SimpleCov.formatters = SimpleCov::Formatter::MultiFormatter.new(
+  [
+    SimpleCov::Formatter::SimpleFormatter,
+    SimpleCov::Formatter::HTMLFormatter,
+    SimpleCov::Formatter::JSONFormatter,
+  ],
+)
+
+SimpleCov.start do
+  enable_coverage :branch
+  add_filter "/spec/"
+end
+
 require "tmpdir"
 require "fileutils"
 
