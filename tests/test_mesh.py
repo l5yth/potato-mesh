@@ -96,6 +96,12 @@ def mesh_module(monkeypatch):
     sys.modules.pop(module_name, None)
 
 
+def test_snapshot_interval_defaults_to_60_seconds(mesh_module):
+    mesh = mesh_module
+
+    assert mesh.SNAPSHOT_SECS == 60
+
+
 def test_node_to_dict_handles_nested_structures(mesh_module):
     mesh = mesh_module
 

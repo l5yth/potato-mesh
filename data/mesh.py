@@ -35,7 +35,7 @@ from google.protobuf.message import Message as ProtoMessage
 
 # --- Config (env overrides) ---------------------------------------------------
 PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
-SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "30"))
+SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "60"))
 CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 DEBUG = os.environ.get("DEBUG") == "1"
 INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
