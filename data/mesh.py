@@ -111,7 +111,12 @@ def _iso(ts: int | float) -> str:
 
 
 def _first(d, *names, default=None):
-    """Return first present key from names (supports nested 'a.b' lookups)."""
+    """Return first non-empty key from names (supports nested 'a.b' lookups).
+
+    Keys that resolve to ``None`` or an empty string are skipped so callers can
+    provide multiple potential field names without accidentally capturing an
+    explicit ``null`` value.
+    """
 
     def _mapping_get(obj, key):
         if isinstance(obj, Mapping) and key in obj:
@@ -133,6 +138,10 @@ def _first(d, *names, default=None):
             if not ok:
                 break
         if ok:
+            if cur is None:
+                continue
+            if isinstance(cur, str) and cur == "":
+                continue
             return cur
     return default
 
