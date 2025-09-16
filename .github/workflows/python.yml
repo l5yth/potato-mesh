@@ -36,12 +36,15 @@ jobs:
       if: always()
       uses: codecov/codecov-action@v5
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         files: reports/python-coverage.xml
         flags: python-ingestor
         name: python-ingestor
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     - name: Upload test results to Codecov
-      if: always()
       uses: codecov/test-results-action@v1
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         files: reports/python-junit.xml
         flags: python-ingestor
