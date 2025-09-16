@@ -31,3 +31,10 @@ jobs:
       run: bundle install
     - name: Run tests
       run: bundle exec rspec
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        fail_ci_if_error: false
+        flags: ruby-${{ matrix.ruby-version }}
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
