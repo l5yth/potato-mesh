@@ -158,6 +158,27 @@ RSpec.describe "Potato Mesh Sinatra app" do
     ENV["API_TOKEN"] = @original_token
   end
 
+  describe "logging configuration" do
+    before do
+      Sinatra::Application.apply_logger_level!
+    end
+
+    after do
+      Sinatra::Application.apply_logger_level!
+    end
+
+    it "defaults to WARN when debug logging is disabled" do
+      expect(Sinatra::Application.settings.logger.level).to eq(Logger::WARN)
+    end
+
+    it "switches to DEBUG when debug logging is enabled" do
+      stub_const("DEBUG", true)
+      Sinatra::Application.apply_logger_level!
+
+      expect(Sinatra::Application.settings.logger.level).to eq(Logger::DEBUG)
+    end
+  end
+
   describe "GET /" do
     it "responds successfully" do
       get "/"
