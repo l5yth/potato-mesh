@@ -26,5 +26,7 @@ jobs:
       with:
         ruby-version: ${{ matrix.ruby-version }}
         bundler-cache: true
+    - name: Set up dependencies 
+      run: bundle install
     - name: Run tests
       run: bundle exec rspec
