@@ -178,6 +178,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "authentication" do
+    it "rejects requests without a matching bearer token" do
+      post "/api/nodes", {}.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(403)
+      expect(JSON.parse(last_response.body)).to eq("error" => "Forbidden")
+    end
+
+    it "rejects requests when the API token is not configured" do
+      ENV["API_TOKEN"] = nil
+
+      post "/api/messages", {}.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(403)
+      expect(JSON.parse(last_response.body)).to eq("error" => "Forbidden")
+    ensure
+      ENV["API_TOKEN"] = api_token
+    end
+  end
+
   describe "POST /api/nodes" do
     it "imports nodes from fixture data into the database" do
       import_nodes_fixture
@@ -220,6 +240,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
     end
+
+    it "returns 400 when the payload is not valid JSON" do
+      post "/api/nodes", "{", auth_headers
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+    end
+
+    it "returns 400 when more than 1000 nodes are provided" do
+      payload = (0..1000).each_with_object({}) do |i, acc|
+        acc["node-#{i}"] = {}
+      end
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "too many nodes")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM nodes")
+        expect(count).to eq(0)
+      end
+    end
   end
 
   describe "POST /api/messages" do
@@ -255,6 +298,84 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(row["rssi"]).to eq(expected["rssi"])
           expect(row["hop_limit"]).to eq(expected["hop_limit"])
         end
+      end
+    end
+
+    it "returns 400 when the payload is not valid JSON" do
+      post "/api/messages", "{", auth_headers
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+    end
+
+    it "returns 400 when more than 1000 messages are provided" do
+      payload = Array.new(1001) { |i| { "packet_id" => i + 1 } }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "too many messages")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM messages")
+        expect(count).to eq(0)
+      end
+    end
+
+    it "accepts array payloads, normalizes node references, and skips messages without an id" do
+      node_id = "!spec-normalized"
+      node_payload = {
+        node_id => {
+          "num" => 123,
+          "user" => { "shortName" => "Spec" },
+          "lastHeard" => reference_time.to_i - 60,
+          "position" => { "time" => reference_time.to_i - 120 },
+        },
+      }
+
+      post "/api/nodes", node_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      messages_payload = [
+        {
+          "packet_id" => 101,
+          "from_id" => "123",
+          "text" => "normalized",
+        },
+        {
+          "packet_id" => 102,
+          "from_id" => " ",
+          "text" => "blank",
+        },
+        {
+          "text" => "missing id",
+        },
+      ]
+
+      post "/api/messages", messages_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        rows = db.execute("SELECT id, from_id, rx_time, rx_iso, text FROM messages ORDER BY id")
+
+        expect(rows.size).to eq(2)
+
+        first, second = rows
+
+        expect(first["id"]).to eq(101)
+        expect(first["from_id"]).to eq(node_id)
+        expect(first["rx_time"]).to eq(reference_time.to_i)
+        expect(first["rx_iso"]).to eq(reference_time.utc.iso8601)
+        expect(first["text"]).to eq("normalized")
+
+        expect(second["id"]).to eq(102)
+        expect(second["from_id"]).to be_nil
+        expect(second["rx_time"]).to eq(reference_time.to_i)
+        expect(second["rx_iso"]).to eq(reference_time.utc.iso8601)
+        expect(second["text"]).to eq("blank")
       end
     end
   end
