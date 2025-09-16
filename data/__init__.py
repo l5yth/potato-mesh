@@ -11,3 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""Data utilities for the Potato Mesh synchronisation daemon.
+
+The ``data.mesh`` module exposes helpers for reading Meshtastic node and
+message information before forwarding it to the accompanying web application.
+"""
