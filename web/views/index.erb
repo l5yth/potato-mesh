@@ -58,6 +58,7 @@
     .refresh-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; width: 100%; }
     .refresh-info { margin: 0; color: #555; }
     .refresh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-self: end; }
+    .auto-refresh-toggle { display: inline-flex; align-items: center; gap: 6px; }
     .controls { display: flex; gap: 8px; align-items: center; }
     .controls label { display: inline-flex; align-items: center; gap: 6px; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
@@ -143,8 +144,9 @@
   <div class="row meta">
     <div class="meta-info">
       <div class="refresh-row">
-        <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes: … — auto-refresh every <%= refresh_interval_seconds %> seconds.</p>
+        <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes: …</p>
         <div class="refresh-actions">
+          <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
           <button id="refreshBtn" type="button">Refresh now</button>
           <span id="status" class="pill">loading…</span>
         </div>
@@ -221,6 +223,7 @@
   <script>
     const statusEl = document.getElementById('status');
     const fitBoundsEl = document.getElementById('fitBounds');
+    const autoRefreshEl = document.getElementById('autoRefresh');
     const refreshBtn = document.getElementById('refreshBtn');
     const filterInput = document.getElementById('filterInput');
     const themeToggle = document.getElementById('themeToggle');
@@ -240,7 +243,19 @@
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
-    refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: … — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
+    refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
+
+    let refreshTimer = null;
+
+    function restartAutoRefresh() {
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+      if (autoRefreshEl && autoRefreshEl.checked) {
+        refreshTimer = setInterval(refresh, REFRESH_MS);
+      }
+    }
 
     const MAP_CENTER = L.latLng(<%= map_center_lat %>, <%= map_center_lon %>);
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
@@ -601,8 +616,17 @@
     }
 
     refresh();
-    setInterval(refresh, REFRESH_MS);
+    restartAutoRefresh();
     refreshBtn.addEventListener('click', refresh);
+
+    if (autoRefreshEl) {
+      autoRefreshEl.addEventListener('change', () => {
+        restartAutoRefresh();
+        if (autoRefreshEl.checked) {
+          refresh();
+        }
+      });
+    }
 
     function updateCount(nodes, nowSec) {
       const dayAgoSec = nowSec - 86400;
@@ -622,7 +646,7 @@
         const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
         return `${c}/${w.label}`;
       }).join(', ');
-      refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: ${counts} — auto-refresh every ${REFRESH_MS / 1000} seconds.`;
+      refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: ${counts}.`;
     }
   </script>
 </body>
