@@ -367,8 +367,13 @@ def insert_message(db, m)
   return unless msg_id
   rx_time = m["rx_time"]&.to_i || Time.now.to_i
   rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
-  from_id = normalize_node_id(db, m["from_id"]) || m["from_id"]
+  raw_from_id = m["from_id"]
+  from_id = raw_from_id
   from_id = from_id.to_s.strip unless from_id.nil?
+  if from_id.nil? || from_id.empty?
+    canonical = normalize_node_id(db, raw_from_id)
+    from_id = canonical&.to_s&.strip
+  end
   from_id = nil if from_id&.empty?
   row = [
     msg_id,
