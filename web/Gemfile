@@ -23,4 +23,6 @@ group :test do
   gem "rspec", "~> 3.12"
   gem "rack-test", "~> 2.1"
   gem "rufo", "~> 0.18.1"
+  gem "simplecov", "~> 0.22", require: false
+  gem "simplecov_json_formatter", "~> 0.1", require: false
 end
