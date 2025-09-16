@@ -57,3 +57,7 @@ Gemfile.lock
 
 # Python cache directories
 __pycache__/
+.coverage
+coverage.xml
+htmlcov/
+reports/
