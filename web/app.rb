@@ -41,11 +41,13 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
-def Sinatra::Application.apply_logger_level!
-  logger = settings.logger
-  return unless logger
+class << Sinatra::Application
+  def apply_logger_level!
+    logger = settings.logger
+    return unless logger
 
-  logger.level = DEBUG ? Logger::DEBUG : Logger::WARN
+    logger.level = DEBUG ? Logger::DEBUG : Logger::WARN
+  end
 end
 
 Sinatra::Application.configure do
