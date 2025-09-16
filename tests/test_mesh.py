@@ -339,7 +339,9 @@ def test_pkt_to_dict_handles_dict_and_proto(mesh_module, monkeypatch):
 def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
-    monkeypatch.setattr(mesh, "_post_json", lambda path, payload: captured.append(payload))
+    monkeypatch.setattr(
+        mesh, "_post_json", lambda path, payload: captured.append(payload)
+    )
 
     packet = {
         "id": "789",
@@ -363,7 +365,9 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
 def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
-    monkeypatch.setattr(mesh, "_post_json", lambda path, payload: captured.append(payload))
+    monkeypatch.setattr(
+        mesh, "_post_json", lambda path, payload: captured.append(payload)
+    )
 
     packet = {
         "id": 321,
