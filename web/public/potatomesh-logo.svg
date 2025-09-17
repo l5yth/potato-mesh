@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#3c6840" />
+      <stop offset="100%" stop-color="#272d20" />
+    </radialGradient>
+    <radialGradient id="potatoFill" cx="45%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#b6e6bb" />
+      <stop offset="100%" stop-color="#6fb376" />
+    </radialGradient>
+    <radialGradient id="potatoInner" cx="40%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#d3f3d6" />
+      <stop offset="100%" stop-color="#7fc382" />
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="rgba(140, 255, 170, 0.55)" />
+      <stop offset="100%" stop-color="rgba(140, 255, 170, 0)" />
+    </radialGradient>
+    <linearGradient id="mFill" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0e1c35" />
+      <stop offset="100%" stop-color="#1f334f" />
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="20" result="blur" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)" />
+  <ellipse cx="256" cy="270" rx="220" ry="200" fill="url(#glow)" />
+  <g transform="translate(0,-10)">
+    <path d="M162 138c-56 18-98 84-80 146 20 70 92 128 188 134 98 6 176-54 190-128 12-66-26-140-100-162-40-12-86-8-132 4-34 10-56 12-66 6z" fill="url(#potatoFill)" stroke="#35764e" stroke-width="12" stroke-linejoin="round" />
+    <path d="M186 196c-36 12-62 58-50 96 14 46 64 84 132 90 70 6 124-38 134-88 8-46-18-98-72-114-28-8-62-6-96 2-24 6-40 8-48 4z" fill="url(#potatoInner)" stroke="#4b9a67" stroke-width="10" stroke-linejoin="round" />
+    <path d="M236 118c-12 20-4 46 26 58 32 12 78 4 104-18 28-24 20-54-12-62-40-12-94-8-118 22z" fill="#f6e8b8" stroke="#d8cda0" stroke-width="10" stroke-linejoin="round" />
+    <g fill="#6fb376">
+      <circle cx="204" cy="230" r="12" />
+      <circle cx="268" cy="246" r="10" />
+      <circle cx="234" cy="296" r="10" />
+      <circle cx="300" cy="300" r="10" />
+      <circle cx="326" cy="260" r="9" />
+      <circle cx="260" cy="210" r="8" />
+    </g>
+    <text x="256" y="328" text-anchor="middle" font-family="'DejaVu Sans', 'Montserrat', 'Segoe UI', sans-serif" font-size="190" font-weight="700" fill="url(#mFill)" stroke="#081122" stroke-width="8" paint-order="stroke">
+      M
+    </text>
+  </g>
+</svg>
