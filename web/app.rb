@@ -32,12 +32,12 @@ DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
 WEEK_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
 MAX_JSON_BODY_BYTES = begin
-  raw = ENV.fetch("MAX_JSON_BODY_BYTES", DEFAULT_MAX_JSON_BODY_BYTES.to_s)
-  value = Integer(raw, 10)
-  value.positive? ? value : DEFAULT_MAX_JSON_BODY_BYTES
-rescue ArgumentError
-  DEFAULT_MAX_JSON_BODY_BYTES
-end
+    raw = ENV.fetch("MAX_JSON_BODY_BYTES", DEFAULT_MAX_JSON_BODY_BYTES.to_s)
+    value = Integer(raw, 10)
+    value.positive? ? value : DEFAULT_MAX_JSON_BODY_BYTES
+  rescue ArgumentError
+    DEFAULT_MAX_JSON_BODY_BYTES
+  end
 
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
