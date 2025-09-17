@@ -186,7 +186,7 @@
 <body>
   <h1 class="site-title">
     <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
-    <span><%= site_name %></span>
+    <span class="site-title-text"><%= site_name %></span>
   </h1>
   <div class="row meta">
     <div class="meta-info">
@@ -288,6 +288,7 @@
     const shortInfoContent = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-content') : null;
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
+    const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
     const chatEl = document.getElementById('chat');
     const refreshInfo = document.getElementById('refreshInfo');
     const baseTitle = document.title;
@@ -959,7 +960,11 @@
       const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= dayAgoSec).length;
       const text = `${baseTitle} (${count})`;
       titleEl.textContent = text;
-      headerEl.textContent = text;
+      if (headerTitleTextEl) {
+        headerTitleTextEl.textContent = text;
+      } else if (headerEl) {
+        headerEl.textContent = text;
+      }
     }
 
     function updateRefreshInfo(nodes, nowSec) {
