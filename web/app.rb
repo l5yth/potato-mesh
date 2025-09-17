@@ -68,6 +68,20 @@ def open_database(readonly: false)
   end
 end
 
+# Execute the provided block with a database connection.
+#
+# @param readonly [Boolean] whether to open the database in read-only mode.
+# @param results_as_hash [Boolean] whether to return query rows as hashes.
+# @yieldparam db [SQLite3::Database]
+# @yieldreturn [Object] value returned by the block.
+def with_database(readonly: false, results_as_hash: false)
+  db = open_database(readonly: readonly)
+  db.results_as_hash = true if results_as_hash
+  yield db
+ensure
+  db&.close
+end
+
 # Execute the provided block, retrying when SQLite reports the database is
 # temporarily locked.
 #
@@ -93,13 +107,12 @@ end
 # @return [Boolean] true when both +nodes+ and +messages+ tables exist.
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
-  db = open_database(readonly: true)
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages')").flatten
-  tables.include?("nodes") && tables.include?("messages")
+  with_database(readonly: true) do |db|
+    tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages')").flatten
+    tables.include?("nodes") && tables.include?("messages")
+  end
 rescue SQLite3::Exception
   false
-ensure
-  db&.close
 end
 
 # Create the SQLite database and seed it with the node and message schemas.
@@ -107,13 +120,12 @@ end
 # @return [void]
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
-  db = open_database
-  %w[nodes messages].each do |schema|
-    sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
-    db.execute_batch(File.read(sql_file))
+  with_database do |db|
+    %w[nodes messages].each do |schema|
+      sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
+      db.execute_batch(File.read(sql_file))
+    end
   end
-ensure
-  db&.close
 end
 
 init_db unless db_schema_present?
@@ -123,34 +135,31 @@ init_db unless db_schema_present?
 # @param limit [Integer] maximum number of rows returned.
 # @return [Array<Hash>] collection of node records formatted for the API.
 def query_nodes(limit)
-  db = open_database(readonly: true)
-  db.results_as_hash = true
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
-  rows = db.execute <<~SQL, [min_last_heard, limit]
-                      SELECT node_id, short_name, long_name, hw_model, role, snr,
-                             battery_level, voltage, last_heard, first_heard,
-                             uptime_seconds, channel_utilization, air_util_tx,
-                             position_time, latitude, longitude, altitude
-                      FROM nodes
-                      WHERE last_heard >= ?
-                      ORDER BY last_heard DESC
-                      LIMIT ?
-                    SQL
-  rows.each do |r|
-    r["role"] ||= "CLIENT"
-    lh = r["last_heard"]&.to_i
-    pt = r["position_time"]&.to_i
-    lh = now if lh && lh > now
-    pt = nil if pt && pt > now
-    r["last_heard"] = lh
-    r["position_time"] = pt
-    r["last_seen_iso"] = Time.at(lh).utc.iso8601 if lh
-    r["pos_time_iso"] = Time.at(pt).utc.iso8601 if pt
+
+  with_database(readonly: true, results_as_hash: true) do |db|
+    db.execute(<<~SQL, [min_last_heard, limit]).map do |row|
+      normalize_node_row(row, now)
+    end
   end
-  rows
-ensure
-  db&.close
+end
+
+def normalize_node_row(row, current_time)
+  row["role"] ||= "CLIENT"
+
+  last_heard = row["last_heard"]&.to_i
+  position_time = row["position_time"]&.to_i
+
+  last_heard = current_time if last_heard && last_heard > current_time
+  position_time = nil if position_time && position_time > current_time
+
+  row["last_heard"] = last_heard
+  row["position_time"] = position_time
+  row["last_seen_iso"] = Time.at(last_heard).utc.iso8601 if last_heard
+  row["pos_time_iso"] = Time.at(position_time).utc.iso8601 if position_time
+
+  row
 end
 
 # GET /api/nodes
@@ -166,65 +175,106 @@ end
 #
 # @param limit [Integer] maximum number of rows returned.
 # @return [Array<Hash>] collection of message rows suitable for serialisation.
+MESSAGE_FIELDS = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit].freeze
+MESSAGE_QUERY_SQL = <<~SQL
+  SELECT m.*, n.*, m.snr AS msg_snr
+  FROM messages m
+  LEFT JOIN nodes n ON (
+    m.from_id = n.node_id OR (
+      CAST(m.from_id AS TEXT) <> '' AND
+      CAST(m.from_id AS TEXT) GLOB '[0-9]*' AND
+      CAST(m.from_id AS INTEGER) = n.num
+    )
+  )
+  ORDER BY m.rx_time DESC
+  LIMIT ?
+SQL
+
 def query_messages(limit)
-  db = open_database(readonly: true)
-  db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
-                      SELECT m.*, n.*, m.snr AS msg_snr
-                      FROM messages m
-                      LEFT JOIN nodes n ON (
-                        m.from_id = n.node_id OR (
-                          CAST(m.from_id AS TEXT) <> '' AND
-                          CAST(m.from_id AS TEXT) GLOB '[0-9]*' AND
-                          CAST(m.from_id AS INTEGER) = n.num
-                        )
-                      )
-                      ORDER BY m.rx_time DESC
-                      LIMIT ?
-                    SQL
-  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit]
-  rows.each do |r|
-    if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
-      raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
-      Kernel.warn "[debug] messages row before join: #{raw.inspect}"
-      Kernel.warn "[debug] row after join: #{r.inspect}"
-    end
-    node = {}
-    r.keys.each do |k|
-      next if msg_fields.include?(k)
-      node[k] = r.delete(k)
-    end
-    r["snr"] = r.delete("msg_snr")
-    if r["from_id"] && (node["node_id"].nil? || node["node_id"].to_s.empty?)
-      lookup_keys = []
-      canonical = normalize_node_id(db, r["from_id"])
-      lookup_keys << canonical if canonical
-      raw_ref = r["from_id"].to_s.strip
-      lookup_keys << raw_ref unless raw_ref.empty?
-      lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
-      fallback = nil
-      lookup_keys.uniq.each do |ref|
-        sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
-        fallback = db.get_first_row(sql, [ref])
-        break if fallback
-      end
-      if fallback
-        fallback.each do |key, value|
-          next unless key.is_a?(String)
-          next if msg_fields.include?(key)
-          node[key] = value if node[key].nil?
-        end
-      end
-    end
-    node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
-    r["node"] = node
-    if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
-      Kernel.warn "[debug] row after processing: #{r.inspect}"
+  with_database(readonly: true, results_as_hash: true) do |db|
+    db.execute(MESSAGE_QUERY_SQL, [limit]).map do |row|
+      build_message_row(db, row)
     end
   end
-  rows
-ensure
-  db&.close
+end
+
+def build_message_row(db, row)
+  log_missing_sender_state(db, row, :before_processing)
+
+  node = extract_node_attributes(row)
+  row["snr"] = row.delete("msg_snr")
+
+  populate_fallback_node_data(db, row, node)
+  node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
+
+  row["node"] = node
+
+  log_missing_sender_state(db, row, :after_processing)
+  row
+end
+
+def extract_node_attributes(row)
+  node = {}
+  row.keys.each do |key|
+    next if MESSAGE_FIELDS.include?(key)
+
+    node[key] = row.delete(key)
+  end
+  node
+end
+
+def populate_fallback_node_data(db, row, node)
+  from_id = row["from_id"]
+  return unless from_id
+  return unless node["node_id"].nil? || node["node_id"].to_s.empty?
+
+  fallback = find_node_fallback(db, fallback_lookup_keys(db, from_id))
+  return unless fallback
+
+  fallback.each do |key, value|
+    next unless key.is_a?(String)
+    next if MESSAGE_FIELDS.include?(key)
+
+    node[key] = value if node[key].nil?
+  end
+end
+
+def fallback_lookup_keys(db, raw_from_id)
+  lookup_keys = []
+  canonical = normalize_node_id(db, raw_from_id)
+  lookup_keys << canonical if canonical
+
+  raw_ref = raw_from_id.to_s.strip
+  unless raw_ref.empty?
+    lookup_keys << raw_ref
+    lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
+  end
+
+  lookup_keys.uniq
+end
+
+def find_node_fallback(db, lookup_keys)
+  lookup_keys.each do |ref|
+    sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
+    fallback = db.get_first_row(sql, [ref])
+    return fallback if fallback
+  end
+  nil
+end
+
+def log_missing_sender_state(db, row, stage)
+  return unless DEBUG
+  from_id = row["from_id"]
+  return unless from_id.nil? || from_id.to_s.empty?
+
+  case stage
+  when :before_processing
+    raw = db.execute("SELECT * FROM messages WHERE id = ?", [row["id"]]).first
+    Kernel.warn "[debug] messages row before join: #{raw.inspect}"
+    Kernel.warn "[debug] row after join: #{row.inspect}"
+  when :after_processing
+    Kernel.warn "[debug] row after processing: #{row.inspect}"
+  end
 end
 
 # GET /api/messages
@@ -461,13 +511,12 @@ post "/api/nodes" do
     halt 400, { error: "invalid JSON" }.to_json
   end
   halt 400, { error: "too many nodes" }.to_json if data.is_a?(Hash) && data.size > 1000
-  db = open_database
-  data.each do |node_id, node|
-    upsert_node(db, node_id, node)
+  with_database do |db|
+    data.each do |node_id, node|
+      upsert_node(db, node_id, node)
+    end
   end
   { status: "ok" }.to_json
-ensure
-  db&.close
 end
 
 # POST /api/messages
@@ -483,13 +532,12 @@ post "/api/messages" do
   end
   messages = data.is_a?(Array) ? data : [data]
   halt 400, { error: "too many messages" }.to_json if messages.size > 1000
-  db = open_database
-  messages.each do |msg|
-    insert_message(db, msg)
+  with_database do |db|
+    messages.each do |msg|
+      insert_message(db, msg)
+    end
   end
   { status: "ok" }.to_json
-ensure
-  db&.close
 end
 
 # GET /
