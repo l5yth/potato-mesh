@@ -69,6 +69,11 @@
     .controls label { display: inline-flex; align-items: center; gap: 6px; }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
     button:hover { background: #f6f6f6; }
+    .sort-button { padding: 0; border: none; background: none; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .sort-button:hover { background: none; }
+    .sort-button:focus-visible { outline: 2px solid #4a90e2; outline-offset: 2px; }
+    .sort-indicator { font-size: 0.75em; opacity: 0.6; }
+    th[aria-sort] .sort-indicator { opacity: 1; }
     label { font-size: 14px; color: #333; }
     input[type="text"] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; }
     .legend { background: #fff; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; line-height: 18px; }
@@ -148,6 +153,8 @@
     body.dark th { background: #222; }
     body.dark button { background: #333; border-color: #444; color: #eee; }
     body.dark button:hover { background: #444; }
+    body.dark .sort-button { background: none; border: none; color: inherit; }
+    body.dark .sort-button:hover { background: none; }
     body.dark label { color: #ddd; }
     body.dark input[type="text"] { background: #222; color: #eee; border-color: #444; }
     body.dark .legend { background: #333; border-color: #444; color: #eee; }
@@ -225,21 +232,21 @@
   <table id="nodes">
     <thead>
       <tr>
-        <th>Node ID</th>
-        <th>Short</th>
-        <th>Long Name</th>
-        <th>Last Seen</th>
-        <th>Role</th>
-        <th>HW Model</th>
-        <th>Battery</th>
-        <th>Voltage</th>
-        <th>Uptime</th>
-        <th>Channel Util</th>
-        <th>Air Util Tx</th>
-        <th>Latitude</th>
-        <th>Longitude</th>
-        <th>Altitude</th>
-        <th>Last Position</th>
+        <th><button type="button" class="sort-button" data-sort-key="node_id" data-sort-label="Node ID">Node ID <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="short_name" data-sort-label="Short Name">Short <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="long_name" data-sort-label="Long Name">Long Name <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="last_heard" data-sort-label="Last Seen">Last Seen <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="role" data-sort-label="Role">Role <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="hw_model" data-sort-label="Hardware Model">HW Model <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="battery_level" data-sort-label="Battery Level">Battery <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="voltage" data-sort-label="Voltage">Voltage <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="uptime_seconds" data-sort-label="Uptime">Uptime <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="channel_utilization" data-sort-label="Channel Utilization">Channel Util <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="air_util_tx" data-sort-label="Air Utilization (Tx)">Air Util Tx <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="latitude" data-sort-label="Latitude">Latitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="longitude" data-sort-label="Longitude">Longitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="altitude" data-sort-label="Altitude">Altitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="position_time" data-sort-label="Last Position">Last Position <span class="sort-indicator" aria-hidden="true"></span></button></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -277,6 +284,29 @@
     const chatEl = document.getElementById('chat');
     const refreshInfo = document.getElementById('refreshInfo');
     const baseTitle = document.title;
+    const nodesTable = document.getElementById('nodes');
+    const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
+    const tableSorters = {
+      node_id: { getValue: n => n.node_id, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+      short_name: { getValue: n => n.short_name, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+      long_name: { getValue: n => n.long_name, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+      last_heard: { getValue: n => n.last_heard, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      role: { getValue: n => n.role, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+      hw_model: { getValue: n => n.hw_model, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+      battery_level: { getValue: n => n.battery_level, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      voltage: { getValue: n => n.voltage, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      uptime_seconds: { getValue: n => n.uptime_seconds, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      channel_utilization: { getValue: n => n.channel_utilization, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      air_util_tx: { getValue: n => n.air_util_tx, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      latitude: { getValue: n => n.latitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
+      longitude: { getValue: n => n.longitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
+      altitude: { getValue: n => n.altitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      position_time: { getValue: n => n.position_time, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' }
+    };
+    let sortState = {
+      key: 'last_heard',
+      direction: tableSorters.last_heard ? tableSorters.last_heard.defaultDirection : 'desc'
+    };
     let allNodes = [];
     let shortInfoAnchor = null;
     const seenNodeIds = new Set();
@@ -288,6 +318,111 @@
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
     let refreshTimer = null;
+
+    function hasStringValue(value) {
+      if (value == null) return false;
+      return String(value).trim().length > 0;
+    }
+
+    function hasNumberValue(value) {
+      if (value == null || value === '') return false;
+      const num = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(num);
+    }
+
+    function compareString(a, b) {
+      const strA = (a == null ? '' : String(a)).trim();
+      const strB = (b == null ? '' : String(b)).trim();
+      const hasA = strA.length > 0;
+      const hasB = strB.length > 0;
+      if (!hasA && !hasB) return 0;
+      if (!hasA) return 1;
+      if (!hasB) return -1;
+      return strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
+    }
+
+    function compareNumber(a, b) {
+      const numA = typeof a === 'number' ? a : Number(a);
+      const numB = typeof b === 'number' ? b : Number(b);
+      const validA = Number.isFinite(numA);
+      const validB = Number.isFinite(numB);
+      if (validA && validB) {
+        if (numA === numB) return 0;
+        return numA < numB ? -1 : 1;
+      }
+      if (validA) return -1;
+      if (validB) return 1;
+      return 0;
+    }
+
+    function sortNodes(nodes) {
+      if (!Array.isArray(nodes)) return [];
+      const config = tableSorters[sortState.key];
+      if (!config) return nodes.slice();
+      const dir = sortState.direction === 'asc' ? 1 : -1;
+      const getter = config.getValue;
+      const hasValue = config.hasValue;
+      const compare = config.compare;
+      const arr = nodes.slice();
+      arr.sort((a, b) => {
+        const valueA = getter(a);
+        const valueB = getter(b);
+        const presentA = hasValue ? hasValue(valueA) : valueA != null && valueA !== '';
+        const presentB = hasValue ? hasValue(valueB) : valueB != null && valueB !== '';
+        if (!presentA && !presentB) return 0;
+        if (!presentA) return 1;
+        if (!presentB) return -1;
+        const result = compare(valueA, valueB);
+        return result * dir;
+      });
+      return arr;
+    }
+
+    function updateSortIndicators() {
+      if (!nodesTable || !sortButtons.length) return;
+      nodesTable.querySelectorAll('thead th').forEach(th => th.removeAttribute('aria-sort'));
+      sortButtons.forEach(button => {
+        const indicator = button.querySelector('.sort-indicator');
+        if (indicator) indicator.textContent = '';
+        button.removeAttribute('data-sort-active');
+        button.setAttribute('aria-pressed', 'false');
+        const label = button.dataset.sortLabel || button.textContent.trim();
+        button.setAttribute('aria-label', `Sort by ${label}`);
+      });
+      const activeButton = sortButtons.find(button => button.dataset.sortKey === sortState.key);
+      if (!activeButton) return;
+      const indicator = activeButton.querySelector('.sort-indicator');
+      if (indicator) indicator.textContent = sortState.direction === 'asc' ? '▲' : '▼';
+      const th = activeButton.closest('th');
+      if (th) {
+        th.setAttribute('aria-sort', sortState.direction === 'asc' ? 'ascending' : 'descending');
+      }
+      activeButton.setAttribute('data-sort-active', 'true');
+      activeButton.setAttribute('aria-pressed', 'true');
+      const label = activeButton.dataset.sortLabel || activeButton.textContent.trim();
+      const directionLabel = sortState.direction === 'asc' ? 'ascending' : 'descending';
+      const nextDirection = sortState.direction === 'asc' ? 'descending' : 'ascending';
+      activeButton.setAttribute('aria-label', `${label}, sorted ${directionLabel}. Activate to sort ${nextDirection}.`);
+    }
+
+    if (sortButtons.length) {
+      sortButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          const key = button.dataset.sortKey;
+          if (!key) return;
+          if (sortState.key === key) {
+            sortState = { key, direction: sortState.direction === 'asc' ? 'desc' : 'asc' };
+          } else {
+            const config = tableSorters[key];
+            const dir = config && config.defaultDirection ? config.defaultDirection : 'asc';
+            sortState = { key, direction: dir };
+          }
+          applyFilter();
+        });
+      });
+    }
+
+    updateSortIndicators();
 
     function restartAutoRefresh() {
       if (refreshTimer) {
@@ -736,20 +871,25 @@
     }
 
     function applyFilter() {
-      const q = filterInput.value.trim().toLowerCase();
-      const nodes = !q ? allNodes : allNodes.filter(n => {
+      const rawQuery = filterInput ? filterInput.value : '';
+      const q = rawQuery.trim().toLowerCase();
+      const filteredNodes = !q ? allNodes.slice() : allNodes.filter(n => {
         return [n.node_id, n.short_name, n.long_name]
-          .filter(Boolean)
-          .some(v => v.toLowerCase().includes(q));
+          .filter(value => value != null && value !== '')
+          .some(value => String(value).toLowerCase().includes(q));
       });
+      const sortedNodes = sortNodes(filteredNodes);
       const nowSec = Date.now()/1000;
-      renderTable(nodes, nowSec);
-      renderMap(nodes, nowSec);
-      updateCount(nodes, nowSec);
-      updateRefreshInfo(nodes, nowSec);
+      renderTable(sortedNodes, nowSec);
+      renderMap(sortedNodes, nowSec);
+      updateCount(sortedNodes, nowSec);
+      updateRefreshInfo(sortedNodes, nowSec);
+      updateSortIndicators();
     }
 
-    filterInput.addEventListener('input', applyFilter);
+    if (filterInput) {
+      filterInput.addEventListener('input', applyFilter);
+    }
 
     async function refresh() {
       try {
