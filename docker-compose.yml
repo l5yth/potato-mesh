@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      target: production
+    container_name: potatomesh-web
+    ports:
+      - "41447:41447"
+    environment:
+      - SITE_NAME=${SITE_NAME:-Meshtastic Berlin}
+      - DEFAULT_CHANNEL=${DEFAULT_CHANNEL:-#MediumFast}
+      - DEFAULT_FREQUENCY=${DEFAULT_FREQUENCY:-868MHz}
+      - MAP_CENTER_LAT=${MAP_CENTER_LAT:-52.502889}
+      - MAP_CENTER_LON=${MAP_CENTER_LON:-13.404194}
+      - MAX_NODE_DISTANCE_KM=${MAX_NODE_DISTANCE_KM:-137}
+      - MATRIX_ROOM=${MATRIX_ROOM:-#meshtastic-berlin:matrix.org}
+      - API_TOKEN=${API_TOKEN}
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      - potatomesh_data:/app/data
+      - potatomesh_logs:/app/logs
+    networks:
+      - potatomesh-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:41447/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  ingestor:
+    build:
+      context: ./data
+      dockerfile: Dockerfile
+      target: production
+    container_name: potatomesh-ingestor
+    environment:
+      - MESH_SERIAL=${MESH_SERIAL:-/dev/ttyACM0}
+      - MESH_SNAPSHOT_SECS=${MESH_SNAPSHOT_SECS:-60}
+      - MESH_CHANNEL_INDEX=${MESH_CHANNEL_INDEX:-0}
+      - POTATOMESH_INSTANCE=${POTATOMESH_INSTANCE:-http://web:41447}
+      - API_TOKEN=${API_TOKEN}
+      - DEBUG=${DEBUG:-0}
+    volumes:
+      - potatomesh_data:/app/data
+      - potatomesh_logs:/app/logs
+    devices:
+      - ${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}
+    networks:
+      - potatomesh-network
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "python.*mesh.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  potatomesh_data:
+    driver: local
+  potatomesh_logs:
+    driver: local
+
+networks:
+  potatomesh-network:
+    driver: bridge

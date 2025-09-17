@@ -1,0 +1,26 @@
+version: '3.8'
+
+# Development overrides for docker-compose.yml
+services:
+  web:
+    build:
+      target: builder
+    environment:
+      - DEBUG=1
+    volumes:
+      - ./web:/app
+      - /app/vendor/bundle  # Exclude vendor directory from volume mount
+    command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]
+    ports:
+      - "41447:41447"
+      - "9292:9292"  # Additional port for development tools
+
+  ingestor:
+    build:
+      target: builder
+    environment:
+      - DEBUG=1
+    volumes:
+      - ./data:/app
+      - /app/.local  # Exclude Python packages from volume mount
+    command: ["python", "mesh.py"]
