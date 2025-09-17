@@ -1,5 +1,17 @@
 # <img src="./web/public/potatomesh-logo.svg" height="16px> Potato-Mesh
 
+<h1>
+  <img src="./web/public/potatomesh-logo.svg" height="20">
+  Potato-Mesh
+</h1>
+
+# 🥔 Potato-Mesh
+
+# Potato-Mesh ![logo](./web/public/potatomesh-logo.svg)
+
+# ![logo](./web/public/potatomesh-logo.svg) Potato-Mesh
+
+
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5yth/potato-mesh/ruby.yml?branch=main)](https://github.com/l5yth/potato-mesh/actions)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/l5yth/potato-mesh)](https://github.com/l5yth/potato-mesh/releases)
 [![codecov](https://codecov.io/gh/l5yth/potato-mesh/branch/main/graph/badge.svg?token=FS7252JVZT)](https://codecov.io/gh/l5yth/potato-mesh)
