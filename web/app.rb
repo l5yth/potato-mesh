@@ -23,12 +23,21 @@ require "json"
 require "sqlite3"
 require "fileutils"
 require "logger"
+require "rack/utils"
 
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
 DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
 DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
 WEEK_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
+MAX_JSON_BODY_BYTES = begin
+    raw = ENV.fetch("MAX_JSON_BODY_BYTES", DEFAULT_MAX_JSON_BODY_BYTES.to_s)
+    value = Integer(raw, 10)
+    value.positive? ? value : DEFAULT_MAX_JSON_BODY_BYTES
+  rescue ArgumentError
+    DEFAULT_MAX_JSON_BODY_BYTES
+  end
 
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
@@ -355,7 +364,42 @@ end
 def require_token!
   token = ENV["API_TOKEN"]
   provided = request.env["HTTP_AUTHORIZATION"].to_s.sub(/^Bearer\s+/i, "")
-  halt 403, { error: "Forbidden" }.to_json unless token && !token.empty? && provided == token
+  halt 403, { error: "Forbidden" }.to_json unless token && !token.empty? && secure_token_match?(token, provided)
+end
+
+# Perform a constant-time comparison between two strings, returning false on
+# length mismatches or invalid input.
+#
+# @param expected [String]
+# @param provided [String]
+# @return [Boolean]
+def secure_token_match?(expected, provided)
+  return false unless expected.is_a?(String) && provided.is_a?(String)
+
+  expected_bytes = expected.b
+  provided_bytes = provided.b
+  return false unless expected_bytes.bytesize == provided_bytes.bytesize
+  Rack::Utils.secure_compare(expected_bytes, provided_bytes)
+rescue Rack::Utils::SecurityError
+  false
+end
+
+# Read the request body enforcing a maximum allowed size.
+#
+# @param limit [Integer, nil] optional override for the number of bytes.
+# @return [String]
+def read_json_body(limit: nil)
+  max_bytes = limit || MAX_JSON_BODY_BYTES
+  max_bytes = max_bytes.to_i
+  max_bytes = MAX_JSON_BODY_BYTES if max_bytes <= 0
+
+  body = request.body.read(max_bytes + 1)
+  body = "" if body.nil?
+  halt 413, { error: "payload too large" }.to_json if body.bytesize > max_bytes
+
+  body
+ensure
+  request.body.rewind if request.body.respond_to?(:rewind)
 end
 
 # Determine whether the canonical node identifier should replace the provided
@@ -456,7 +500,7 @@ post "/api/nodes" do
   require_token!
   content_type :json
   begin
-    data = JSON.parse(request.body.read)
+    data = JSON.parse(read_json_body)
   rescue JSON::ParserError
     halt 400, { error: "invalid JSON" }.to_json
   end
@@ -477,7 +521,7 @@ post "/api/messages" do
   require_token!
   content_type :json
   begin
-    data = JSON.parse(request.body.read)
+    data = JSON.parse(read_json_body)
   rescue JSON::ParserError
     halt 400, { error: "invalid JSON" }.to_json
   end

@@ -314,6 +314,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "returns 413 when the request body exceeds the configured byte limit" do
+      limit = 64
+      stub_const("MAX_JSON_BODY_BYTES", limit)
+      payload = { "huge-node" => { "user" => { "shortName" => "A" * (limit + 50) } } }.to_json
+      expect(payload.bytesize).to be > limit
+
+      post "/api/nodes", payload, auth_headers
+
+      expect(last_response.status).to eq(413)
+      expect(JSON.parse(last_response.body)).to eq("error" => "payload too large")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM nodes")
+        expect(count).to eq(0)
+      end
+    end
+
     it "treats SQL-looking node identifiers as plain data" do
       malicious_id = "spec-node'); DROP TABLE nodes;--"
       payload = {
@@ -415,6 +432,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response.status).to eq(400)
       expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+    end
+
+    it "rejects message payloads that are larger than the configured byte limit" do
+      limit = 64
+      stub_const("MAX_JSON_BODY_BYTES", limit)
+      payload = [{ "id" => "m1", "text" => "A" * (limit + 50) }].to_json
+      expect(payload.bytesize).to be > limit
+
+      post "/api/messages", payload, auth_headers
+
+      expect(last_response.status).to eq(413)
+      expect(JSON.parse(last_response.body)).to eq("error" => "payload too large")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM messages")
+        expect(count).to eq(0)
+      end
     end
 
     it "returns 400 when more than 1000 messages are provided" do
