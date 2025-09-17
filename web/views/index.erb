@@ -21,6 +21,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title><%= site_name %></title>
+  <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
 
   <!-- Leaflet CSS/JS (CDN) -->
@@ -40,7 +41,9 @@
     :root { --pad: 16px; }
     body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); padding-bottom: 32px; }
     h1  { margin: 0 0 8px }
-    .meta { color:#555; margin-bottom:12px }
+    .site-title { display: inline-flex; align-items: center; gap: 12px; }
+    .site-title img { width: 52px; height: 52px; display: block; border-radius: 12px; }
+  .meta { color:#555; margin-bottom:12px }
     .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px }
     #map { flex: 1; height: 60vh; border: 1px solid #ddd; border-radius: 8px; }
     table { border-collapse: collapse; width: 100%; margin: 0; }
@@ -114,6 +117,7 @@
 
     @media (max-width: 768px) {
       .row { flex-direction: column; align-items: stretch; gap: var(--pad); }
+      .site-title img { width: 44px; height: 44px; }
       .map-row { flex-direction: column; }
       .controls { order: 2; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; width: 100%; gap: 12px; }
       .controls input[type="text"] { width: 100%; }
@@ -180,7 +184,10 @@
   </style>
 </head>
 <body>
-  <h1><%= site_name %></h1>
+  <h1 class="site-title">
+    <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
+    <span class="site-title-text"><%= site_name %></span>
+  </h1>
   <div class="row meta">
     <div class="meta-info">
       <div class="refresh-row">
@@ -281,6 +288,7 @@
     const shortInfoContent = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-content') : null;
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
+    const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
     const chatEl = document.getElementById('chat');
     const refreshInfo = document.getElementById('refreshInfo');
     const baseTitle = document.title;
@@ -952,7 +960,11 @@
       const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= dayAgoSec).length;
       const text = `${baseTitle} (${count})`;
       titleEl.textContent = text;
-      headerEl.textContent = text;
+      if (headerTitleTextEl) {
+        headerTitleTextEl.textContent = text;
+      } else if (headerEl) {
+        headerEl.textContent = text;
+      }
     }
 
     function updateRefreshInfo(nodes, nowSec) {
