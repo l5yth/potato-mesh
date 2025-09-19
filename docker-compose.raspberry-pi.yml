@@ -1,8 +1,9 @@
 version: '3.8'
 
+# Raspberry Pi optimized configuration
 services:
   web:
-    image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+    image: ghcr.io/l5yth/potato-mesh-web-linux-armv7:latest
     container_name: potatomesh-web
     ports:
       - "41447:41447"
@@ -26,14 +27,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 256M
           cpus: '0.5'
         reservations:
-          memory: 256M
+          memory: 128M
           cpus: '0.25'
 
   ingestor:
-    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:latest
     container_name: potatomesh-ingestor
     environment:
       - MESH_SERIAL=${MESH_SERIAL:-/dev/ttyACM0}
@@ -58,10 +59,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 128M
           cpus: '0.25'
         reservations:
-          memory: 128M
+          memory: 64M
           cpus: '0.1'
 
 volumes:
@@ -69,4 +70,3 @@ volumes:
     driver: local
   potatomesh_logs:
     driver: local
-
