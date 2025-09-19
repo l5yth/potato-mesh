@@ -90,7 +90,7 @@
     .legend-hidden { display: none !important; }
     .legend-toggle { margin-top: 8px; }
     .legend-toggle-button { font-size: 12px; }
-    #map .leaflet-tile { filter: opacity(70%); }
+    #map .leaflet-tile.map-tiles { opacity: 0.75; }
     .leaflet-popup-content-wrapper,
     .leaflet-popup-tip {
       background: #fff;
@@ -194,6 +194,16 @@
     body.dark .info-close:hover { background: rgba(255, 255, 255, 0.1); }
     body.dark .short-info-overlay { background: #1c1c1c; border-color: #444; color: #eee; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); }
     body.dark .short-info-overlay .short-info-close:hover { background: rgba(255, 255, 255, 0.1); }
+  </style>
+  <style id="map-tiles-light">
+    body:not(.dark) #map .leaflet-tile.map-tiles {
+      filter: grayscale(1) brightness(0.92) contrast(1.05);
+    }
+  </style>
+  <style id="map-tiles-dark">
+    body.dark #map .leaflet-tile.map-tiles {
+      filter: grayscale(1) invert(1) brightness(0.88) contrast(1.1);
+    }
   </style>
 </head>
 <body>
@@ -475,13 +485,17 @@
 
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
-    const lightTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
+    const lightTiles = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution:
+        '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France',
+      className: 'map-tiles'
     });
-    const darkTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
+    const darkTiles = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution:
+        '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France',
+      className: 'map-tiles'
     });
     let tiles = lightTiles.addTo(map);
     // Default view until first data arrives
