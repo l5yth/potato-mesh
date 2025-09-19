@@ -14,11 +14,173 @@ A simple Meshtastic-powered node dashboard for your local community. _No MQTT cl
 * Shows new node notifications (first seen) in chat.
 * Allows searching and filtering for nodes in map and table view.
 
-Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
+- Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
 ![screenshot of the second version](./scrot-0.2.png)
 
+## 🐳 Quick Start with Docker
+
+The easiest way to run PotatoMesh is with Docker. This eliminates the need to install Ruby, Python, and system dependencies manually.
+
+### Option 1: Use Published Images (Recommended)
+
+Run PotatoMesh using pre-built images from GitHub Container Registry:
+
+```bash
+# Clone the repository
+git clone https://github.com/l5yth/potato-mesh.git
+cd potato-mesh
+
+# Configure your setup (generates API token and sets up environment)
+./configure.sh
+
+# Start PotatoMesh with published images
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Access the dashboard at http://localhost:41447
+```
+
+### Option 2: Build from Source
+
+If you want to customize the images or run on unsupported architectures, build locally:
+
+**Prerequisites:**
+
+- Docker Engine 20.10+ and Docker Compose 2.0+
+- A Meshtastic device connected to your system
+- **Raspberry Pi users**: Use the optimized configuration (see [DOCKER.md](docs/DOCKER.md#raspberry-pi--arm-devices))
+
+**1. Clone and Configure:**
+
+```bash
+# Clone the repository
+git clone https://github.com/l5yth/potato-mesh.git
+cd potato-mesh
+
+# Copy and configure environment variables
+cp .env.example .env
+# Edit .env with your specific configuration (see below)
+```
+
+**2. Configure Your Setup:**
+
+Run the configuration script to set up your local settings:
+
+```bash
+# Interactive configuration
+./configure.sh
+```
+
+The script will prompt you for:
+
+- **Site Name**: Your local mesh network name
+- **Map Center**: Latitude/longitude for your location
+- **Default Channel**: Your preferred Meshtastic channel
+- **Default Frequency**: Your region's frequency (868MHz, 915MHz, etc.)
+- **Matrix Room**: Optional Matrix chat room for your community
+- **Max Node Distance**: Maximum distance to show nodes (km)
+- **API Token**: Secure token for ingestor authentication
+- **Stadia Maps API Key**: API key for map tiles (optional, with setup instructions)
+
+Or manually edit the `.env` file if you prefer.
+
+**3. Start PotatoMesh:**
+
+```bash
+# Start the full stack
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Check status
+docker-compose ps
+```
+
+### 4. Access the Dashboard
+
+Open your browser to `http://localhost:41447` to view the PotatoMesh dashboard.
+
+### 5. Stop PotatoMesh
+
+```bash
+# Stop all services
+docker-compose down
+
+# Stop and remove all data (WARNING: loses all data)
+docker-compose down -v
+```
+
+For detailed Docker documentation, see [DOCKER.md](docs/DOCKER.md).
+
+## 📦 Available Docker Images
+
+PotatoMesh provides pre-built Docker images for multiple architectures and operating systems. All images are available on GitHub Container Registry (GHCR.io).
+
+### Web Application Images
+
+| Image | Architecture | OS | Description | Pull Command |
+|-------|-------------|----|-------------|--------------|
+| [`ghcr.io/l5yth/potato-mesh-web-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-amd64) | x86_64 | Linux | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest` |
+| [`ghcr.io/l5yth/potato-mesh-web-linux-arm64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-arm64) | ARM64 | Linux | ARM64 (Apple Silicon, ARM servers) | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-arm64:latest` |
+| [`ghcr.io/l5yth/potato-mesh-web-linux-armv7`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-armv7) | ARMv7 | Linux | ARMv7 (Raspberry Pi 3/4) | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-armv7:latest` |
+| [`ghcr.io/l5yth/potato-mesh-web-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-windows-amd64) | x86_64 | Windows | Windows x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-windows-amd64:latest` |
+
+### Ingestor Service Images
+
+| Image | Architecture | OS | Description | Pull Command |
+|-------|-------------|----|-------------|--------------|
+| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-amd64) | x86_64 | Linux | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest` |
+| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-arm64) | ARM64 | Linux | ARM64 (Apple Silicon, ARM servers) | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64:latest` |
+| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-armv7) | ARMv7 | Linux | ARMv7 (Raspberry Pi 3/4) | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:latest` |
+| [`ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-windows-amd64) | x86_64 | Windows | Windows x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64:latest` |
+
+### Quick Platform Examples
+
+**Raspberry Pi (ARMv7):**
+```bash
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-armv7:latest
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:latest
+```
+
+**Apple Silicon Mac (ARM64):**
+```bash
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-arm64:latest
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64:latest
+```
+
+**Standard Linux/Windows (x86_64):**
+```bash
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+```
+
+### Image Tags
+
+All images support the following tag formats:
+- `latest` - Latest stable release
+- `v1.0.0` - Specific version (replace with actual version)
+- `main` - Latest development build
+
+---
+
 ## Web App
+
+### 🐳 Docker (Recommended)
+
+The web app runs automatically when you start the full stack with Docker:
+
+```bash
+# Start the web app
+docker-compose up -d web
+```
+
+The web app will be available at `http://localhost:41447`.
+
+### 📦 Manual Installation
 
 Requires Ruby for the Sinatra web app and SQLite3 for the app's database.
 
@@ -48,17 +210,17 @@ of the node map. Set `API_TOKEN` required for authorizations on the API's POST e
 
 The web app can be configured with environment variables (defaults shown):
 
-* `SITE_NAME` - title and header shown in the ui (default: "Meshtastic Berlin")
+* `SITE_NAME` - title and header shown in the ui (default: "My Meshtastic Network")
 * `DEFAULT_CHANNEL` - default channel shown in the ui (default: "#MediumFast")
 * `DEFAULT_FREQUENCY` - default channel shown in the ui (default: "868MHz")
 * `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `52.502889` / `13.404194`)
-* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
-* `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)
+* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `50`)
+* `MATRIX_ROOM` - matrix room id for a footer link (default: empty)
 
 Example:
 
 ```bash
-SITE_NAME="Meshtastic Berlin" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 MAX_NODE_DISTANCE_KM=137 MATRIX_ROOM="#meshtastic-berlin:matrix.org" ./app.sh
+SITE_NAME="My Meshtastic Network" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 MAX_NODE_DISTANCE_KM=50 MATRIX_ROOM="" ./app.sh
 ```
 
 ### API
@@ -82,6 +244,26 @@ by ID and there will be no duplication.
 
 For convenience, the directory `./data` contains a Python ingestor. It connects to a local
 Meshtastic node via serial port to gather nodes and messages seen by the node.
+
+### 🐳 Docker (Recommended)
+
+The ingestor runs automatically when you start the full stack with Docker:
+
+```bash
+# Start the full stack (includes ingestor)
+docker-compose up -d
+
+# Or start just the ingestor
+docker-compose up -d ingestor
+
+# View ingestor logs
+docker-compose logs -f ingestor
+```
+
+The ingestor will automatically connect to your Meshtastic device using the `MESH_SERIAL`
+path configured in your `.env` file.
+
+### 📦 Manual Installation
 
 ```bash
 pacman -S python
@@ -109,6 +291,68 @@ Mesh daemon: nodes+messages → http://127.0.0.1 | port=41447 | channel=0
 Run the script with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating
 node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
 specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`), etc.
+
+## ⚙️ Configuration
+
+### Customizing Defaults
+
+Before running PotatoMesh, you should customize the default settings for your location and preferences:
+
+```bash
+# Run the configuration script
+./configure.sh
+
+# Or manually edit the .env file
+nano .env
+```
+
+The configuration script will prompt you for:
+
+- **Site Name**: Your local mesh network name
+- **Map Center**: Latitude/longitude for your location
+- **Default Channel**: Your preferred Meshtastic channel
+- **Default Frequency**: Your region's frequency (868MHz, 915MHz, etc.)
+- **Matrix Room**: Optional Matrix chat room for your community
+- **Max Node Distance**: Maximum distance to show nodes (km)
+- **Stadia Maps API Key**: API key for map tiles (optional, with setup instructions)
+
+### Platform-Specific Device Access
+
+#### macOS Users
+
+**Important**: Docker Desktop on macOS has limitations with serial device access. For the best experience on macOS, we recommend running the ingestor natively while using Docker for the web app.
+
+**Option 1: Hybrid Approach (Recommended for macOS)**
+
+```bash
+# Run web app in Docker
+docker-compose up -d web
+
+# Run ingestor natively on macOS
+python3 -m venv venv
+source venv/bin/activate
+pip install -r data/requirements.txt
+MESH_SERIAL=/dev/cu.usbmodem* POTATOMESH_INSTANCE=http://localhost:41447 API_TOKEN=your-api-token python data/mesh.py
+```
+
+**Option 2: Docker with Device Access (Limited Support)**
+
+```bash
+# Note: This may not work reliably on macOS Docker Desktop
+docker-compose up -d
+```
+
+#### Linux/Windows Users
+
+Standard Docker device mapping works on Linux and Windows:
+
+```bash
+# Linux/Windows - standard approach
+docker run --device=/dev/ttyACM0 \
+  -e MESH_SERIAL=/dev/ttyACM0 \
+  -e API_TOKEN=your-api-token \
+  ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+```
 
 ## License
 
