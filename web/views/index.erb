@@ -283,6 +283,9 @@
       — <%= site_name %> Matrix:
       <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
     <% end %>
+    <% if version && !version.empty? %>
+      — <span class="mono">Version: <%= version %></span>
+    <% end %>
   </footer>
 
   <script>

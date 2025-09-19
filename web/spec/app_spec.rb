@@ -184,6 +184,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/"
       expect(last_response).to be_ok
     end
+
+    it "includes the application version in the footer" do
+      get "/"
+      expect(last_response.body).to include("Version: #{APP_VERSION}")
+    end
   end
 
   describe "database initialization" do
