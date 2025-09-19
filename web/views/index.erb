@@ -519,24 +519,25 @@
     const TILE_FILTER_DARK = '<%= tile_filter_dark %>';
 
     function resolveTileFilter() {
-      const style = window.getComputedStyle(document.body);
-      const resolved = style.getPropertyValue('--map-tiles-filter');
-      if (resolved && resolved.trim().length) {
-        return resolved.trim();
-      }
       return document.body.classList.contains('dark') ? TILE_FILTER_DARK : TILE_FILTER_LIGHT;
     }
 
-    function applyFilterToTileElement(tile) {
+    function applyFilterToTileElement(tile, filterValue) {
       if (!tile) return;
-      const filterValue = resolveTileFilter();
-      tile.style.filter = filterValue;
-      tile.style.webkitFilter = filterValue;
+      const value = filterValue || resolveTileFilter();
+      tile.style.filter = value;
+      tile.style.webkitFilter = value;
     }
 
     function applyFiltersToAllTiles() {
+      const filterValue = resolveTileFilter();
       const tileEls = document.querySelectorAll('#map .leaflet-tile.map-tiles');
-      tileEls.forEach(applyFilterToTileElement);
+      tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
+      const tileContainer = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
+      if (tileContainer) {
+        tileContainer.style.filter = filterValue;
+        tileContainer.style.webkitFilter = filterValue;
+      }
     }
 
     const tiles = L.tileLayer(TILE_LAYER_URL, {
@@ -548,7 +549,7 @@
 
     tiles.on('tileload', event => {
       if (!event || !event.tile) return;
-      applyFilterToTileElement(event.tile);
+      applyFilterToTileElement(event.tile, resolveTileFilter());
     });
 
     tiles.on('load', applyFiltersToAllTiles);
