@@ -79,8 +79,17 @@
     th[aria-sort] .sort-indicator { opacity: 1; }
     label { font-size: 14px; color: #333; }
     input[type="text"] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; }
-    .legend { background: #fff; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; line-height: 18px; }
-    .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: middle; }
+    .legend { position: relative; background: #fff; padding: 8px 10px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 12px; line-height: 18px; min-width: 160px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
+    .legend-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-weight: 600; }
+    .legend-title { font-size: 13px; }
+    .legend-close { border: none; background: transparent; cursor: pointer; padding: 2px; line-height: 1; font-size: 16px; border-radius: 4px; color: inherit; }
+    .legend-close:hover { background: rgba(0, 0, 0, 0.08); }
+    .legend-items { display: flex; flex-direction: column; gap: 4px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+    .legend-hidden { display: none !important; }
+    .legend-toggle { margin-top: 8px; }
+    .legend-toggle-button { font-size: 12px; }
     #map .leaflet-tile { filter: opacity(70%); }
     .leaflet-popup-content-wrapper,
     .leaflet-popup-tip {
@@ -145,6 +154,7 @@
       #nodes td:nth-child(15) {
         display: none;
       }
+      .legend { max-width: min(240px, 80vw); }
     }
 
     /* Dark mode overrides */
@@ -161,7 +171,10 @@
     body.dark .sort-button:hover { background: none; }
     body.dark label { color: #ddd; }
     body.dark input[type="text"] { background: #222; color: #eee; border-color: #444; }
-    body.dark .legend { background: #333; border-color: #444; color: #eee; }
+    body.dark .legend { background: #333; border-color: #444; color: #eee; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45); }
+    body.dark .legend-close:hover { background: rgba(255, 255, 255, 0.1); }
+    body.dark .legend-toggle-button { background: #333; border-color: #444; color: #eee; }
+    body.dark .legend-toggle-button:hover { background: #444; }
     body.dark .leaflet-popup-content-wrapper,
     body.dark .leaflet-popup-tip {
       background: #333;
@@ -269,6 +282,9 @@
     <% if matrix_room && !matrix_room.empty? %>
       — <%= site_name %> Matrix:
       <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
+    <% end %>
+    <% if version && !version.empty? %>
+      — <span class="mono">Version: <%= version %></span>
     <% end %>
   </footer>
 
@@ -473,15 +489,91 @@
 
     const markersLayer = L.layerGroup().addTo(map);
 
+    let legendContainer = null;
+    let legendToggleButton = null;
+    let legendVisible = true;
+
+    function setLegendVisibility(visible) {
+      legendVisible = visible;
+      if (legendContainer) {
+        legendContainer.classList.toggle('legend-hidden', !visible);
+        legendContainer.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      }
+      if (legendToggleButton) {
+        legendToggleButton.setAttribute('aria-pressed', visible ? 'true' : 'false');
+        legendToggleButton.setAttribute('aria-label', visible ? 'Hide map legend' : 'Show map legend');
+        legendToggleButton.textContent = visible ? 'Hide legend' : 'Show legend';
+      }
+    }
+
     const legend = L.control({ position: 'bottomright' });
     legend.onAdd = function () {
       const div = L.DomUtil.create('div', 'legend');
+      div.id = 'mapLegend';
+      div.setAttribute('role', 'region');
+      div.setAttribute('aria-label', 'Map legend');
+      legendContainer = div;
+
+      const header = L.DomUtil.create('div', 'legend-header', div);
+      const title = L.DomUtil.create('span', 'legend-title', header);
+      title.textContent = 'Legend';
+      const closeButton = L.DomUtil.create('button', 'legend-close', header);
+      closeButton.type = 'button';
+      closeButton.setAttribute('aria-label', 'Hide legend');
+      closeButton.textContent = '×';
+      closeButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setLegendVisibility(false);
+        if (legendToggleButton) {
+          legendToggleButton.focus();
+        }
+      });
+
+      const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
       for (const [role, color] of Object.entries(roleColors)) {
-        div.innerHTML += `<div><span style="background:${color}"></span>${role}</div>`;
+        const item = L.DomUtil.create('div', 'legend-item', itemsContainer);
+        const swatch = L.DomUtil.create('span', 'legend-swatch', item);
+        swatch.style.background = color;
+        swatch.setAttribute('aria-hidden', 'true');
+        const label = L.DomUtil.create('span', 'legend-label', item);
+        label.textContent = role;
       }
+
+      L.DomEvent.disableClickPropagation(div);
+      L.DomEvent.disableScrollPropagation(div);
+
       return div;
     };
     legend.addTo(map);
+    legendContainer = legend.getContainer();
+
+    const legendToggleControl = L.control({ position: 'bottomright' });
+    legendToggleControl.onAdd = function () {
+      const container = L.DomUtil.create('div', 'leaflet-control legend-toggle');
+      const button = L.DomUtil.create('button', 'legend-toggle-button', container);
+      button.type = 'button';
+      button.textContent = 'Hide legend';
+      button.setAttribute('aria-pressed', 'true');
+      button.setAttribute('aria-label', 'Hide map legend');
+      button.setAttribute('aria-controls', 'mapLegend');
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setLegendVisibility(!legendVisible);
+      });
+      legendToggleButton = button;
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+      return container;
+    };
+    legendToggleControl.addTo(map);
+
+    const legendMediaQuery = window.matchMedia('(max-width: 768px)');
+    setLegendVisibility(!legendMediaQuery.matches);
+    legendMediaQuery.addEventListener('change', event => {
+      setLegendVisibility(!event.matches);
+    });
 
     themeToggle.addEventListener('click', () => {
       const dark = document.body.classList.toggle('dark');

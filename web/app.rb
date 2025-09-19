@@ -24,6 +24,7 @@ require "sqlite3"
 require "fileutils"
 require "logger"
 require "rack/utils"
+require "open3"
 
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
@@ -38,6 +39,33 @@ MAX_JSON_BODY_BYTES = begin
   rescue ArgumentError
     DEFAULT_MAX_JSON_BODY_BYTES
   end
+VERSION_FALLBACK = "v0.2.0"
+
+def determine_app_version
+  repo_root = File.expand_path("..", __dir__)
+  git_dir = File.join(repo_root, ".git")
+  return VERSION_FALLBACK unless File.directory?(git_dir)
+
+  stdout, status = Open3.capture2("git", "-C", repo_root, "describe", "--tags", "--long", "--abbrev=7")
+  return VERSION_FALLBACK unless status.success?
+
+  raw = stdout.strip
+  return VERSION_FALLBACK if raw.empty?
+
+  match = /\A(?<tag>.+)-(?<count>\d+)-g(?<hash>[0-9a-f]+)\z/.match(raw)
+  return raw unless match
+
+  tag = match[:tag]
+  count = match[:count].to_i
+  hash = match[:hash]
+  return tag if count.zero?
+
+  "#{tag}+#{count}-#{hash}"
+rescue StandardError
+  VERSION_FALLBACK
+end
+
+APP_VERSION = determine_app_version
 
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
@@ -548,5 +576,6 @@ get "/" do
                 map_center_lon: MAP_CENTER_LON,
                 max_node_distance_km: MAX_NODE_DISTANCE_KM,
                 matrix_room: MATRIX_ROOM,
+                version: APP_VERSION,
               }
 end
