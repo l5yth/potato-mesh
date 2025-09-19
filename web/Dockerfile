@@ -1,23 +1,25 @@
-# Multi-stage build for PotatoMesh Web Application
-FROM ruby:3.2-alpine AS builder
+# Main application builder stage
+FROM ruby:3.4-alpine AS builder
 
-# Install build dependencies
+# Install build dependencies and SQLite3
 RUN apk add --no-cache \
     build-base \
     sqlite-dev \
-    linux-headers
+    linux-headers \
+    pkgconfig
 
 # Set working directory
 WORKDIR /app
 
 # Copy Gemfile and install dependencies
-COPY Gemfile Gemfile.lock* ./
-RUN bundle config set --local deployment 'true' && \
-    bundle config set --local without 'development test' && \
+COPY web/Gemfile web/Gemfile.lock* ./
+
+# Install gems with SQLite3 support
+RUN bundle config set --local without 'development test' && \
     bundle install --jobs=4 --retry=3
 
 # Production stage
-FROM ruby:3.2-alpine AS production
+FROM ruby:3.4-alpine AS production
 
 # Install runtime dependencies
 RUN apk add --no-cache \
@@ -35,8 +37,12 @@ WORKDIR /app
 # Copy installed gems from builder stage
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 
-# Copy application code
-COPY --chown=potatomesh:potatomesh . .
+# Copy application code (exclude Dockerfile from web directory)
+COPY --chown=potatomesh:potatomesh web/app.rb web/app.sh web/Gemfile web/Gemfile.lock* web/public/ web/spec/ ./
+COPY --chown=potatomesh:potatomesh web/views/ ./views/
+
+# Copy SQL schema files from data directory
+COPY --chown=potatomesh:potatomesh data/*.sql /data/
 
 # Create data directory for SQLite database
 RUN mkdir -p /app/data && \
@@ -48,23 +54,20 @@ USER potatomesh
 # Expose port
 EXPOSE 41447
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:41447/ || exit 1
-
-# Default environment variables
-ENV MESH_DB=/app/data/mesh.db \
+# Default environment variables (can be overridden by host)
+ENV APP_ENV=production \
+    MESH_DB=/app/data/mesh.db \
     DB_BUSY_TIMEOUT_MS=5000 \
     DB_BUSY_MAX_RETRIES=5 \
     DB_BUSY_RETRY_DELAY=0.05 \
     MAX_JSON_BODY_BYTES=1048576 \
-    SITE_NAME="Meshtastic Berlin" \
+    SITE_NAME="Denver Mesh Network" \
     DEFAULT_CHANNEL="#MediumFast" \
-    DEFAULT_FREQUENCY="868MHz" \
-    MAP_CENTER_LAT=52.502889 \
-    MAP_CENTER_LON=13.404194 \
-    MAX_NODE_DISTANCE_KM=137 \
-    MATRIX_ROOM="#meshtastic-berlin:matrix.org" \
+    DEFAULT_FREQUENCY="915MHz" \
+    MAP_CENTER_LAT=39.7392 \
+    MAP_CENTER_LON=-104.9903 \
+    MAX_NODE_DISTANCE_KM=50 \
+    MATRIX_ROOM="" \
     DEBUG=0
 
 # Start the application

@@ -8,7 +8,6 @@ CHANGELOG.md
 *.md
 
 # Docker files
-Dockerfile*
 docker-compose*.yml
 .dockerignore
 

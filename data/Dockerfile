@@ -1,31 +1,37 @@
 # Multi-stage build for PotatoMesh Data Ingestor
-FROM python:3.11-alpine AS builder
+FROM python:3.13-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache \
     gcc \
     musl-dev \
     linux-headers \
-    build-base
+    build-base \
+    && if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "armv7l" ]; then \
+        apk add --no-cache \
+        g++ \
+        make; \
+    fi
 
 # Set working directory
 WORKDIR /app
 
 # Copy requirements and install Python dependencies
-COPY requirements.txt ./
+COPY data/requirements.txt ./
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Production stage
-FROM python:3.11-alpine AS production
+FROM python:3.13-alpine AS production
 
 # Install runtime dependencies
 RUN apk add --no-cache \
     tzdata \
     curl
 
-# Create non-root user
+# Create non-root user and add to dialout group for serial access
 RUN addgroup -g 1000 -S potatomesh && \
-    adduser -u 1000 -S potatomesh -G potatomesh
+    adduser -u 1000 -S potatomesh -G potatomesh && \
+    adduser potatomesh dialout
 
 # Set working directory
 WORKDIR /app
@@ -34,7 +40,7 @@ WORKDIR /app
 COPY --from=builder /root/.local /home/potatomesh/.local
 
 # Copy application code
-COPY --chown=potatomesh:potatomesh . .
+COPY --chown=potatomesh:potatomesh data/ .
 
 # Switch to non-root user
 USER potatomesh
@@ -42,11 +48,7 @@ USER potatomesh
 # Add local Python packages to PATH
 ENV PATH=/home/potatomesh/.local/bin:$PATH
 
-# Health check (check if process is running)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD pgrep -f "python.*mesh.py" || exit 1
-
-# Default environment variables
+# Default environment variables (can be overridden by host)
 ENV MESH_SERIAL=/dev/ttyACM0 \
     MESH_SNAPSHOT_SECS=60 \
     MESH_CHANNEL_INDEX=0 \
