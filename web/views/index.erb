@@ -459,11 +459,11 @@
 
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
-    const lightTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png', {
+    const lightTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key=<%= ENV["STADIA_API_KEY"] %>', {
       maxZoom: 18,
       attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
     });
-    const darkTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png', {
+    const darkTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png?api_key=<%= ENV["STADIA_API_KEY"] %>', {
       maxZoom: 18,
       attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
     });
