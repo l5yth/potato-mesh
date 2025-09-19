@@ -1,6 +1,6 @@
 # Production dependencies
 meshtastic>=2.0.0
-google-protobuf>=4.0.0
+protobuf>=4.21.12
 
 # Development dependencies (optional)
 black>=23.0.0
