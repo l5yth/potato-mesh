@@ -23,6 +23,8 @@
   <title><%= site_name %></title>
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
+  <% tile_filter_light = 'grayscale(1) saturate(0) brightness(0.92) contrast(1.05)' %>
+  <% tile_filter_dark = 'grayscale(1) invert(1) saturate(0) brightness(0.88) contrast(1.1)' %>
 
   <!-- Leaflet CSS/JS (CDN) -->
   <link
@@ -38,8 +40,17 @@
   ></script>
 
   <style>
-    :root { --pad: 16px; }
-    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); padding-bottom: 32px; }
+    :root {
+      --pad: 16px;
+      --map-tile-filter-light: <%= tile_filter_light %>;
+      --map-tile-filter-dark: <%= tile_filter_dark %>;
+    }
+    body {
+      font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+      margin: var(--pad);
+      padding-bottom: 32px;
+      --map-tiles-filter: var(--map-tile-filter-light);
+    }
     h1  { margin: 0 0 8px }
     .site-title { display: inline-flex; align-items: center; gap: 12px; }
     .site-title img { width: 52px; height: 52px; display: block; border-radius: 12px; }
@@ -90,7 +101,11 @@
     .legend-hidden { display: none !important; }
     .legend-toggle { margin-top: 8px; }
     .legend-toggle-button { font-size: 12px; }
-    #map .leaflet-tile.map-tiles { opacity: 0.75; }
+    #map .leaflet-tile.map-tiles {
+      opacity: 0.75;
+      filter: var(--map-tiles-filter, var(--map-tile-filter-light));
+      -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-light));
+    }
     .leaflet-popup-content-wrapper,
     .leaflet-popup-tip {
       background: #fff;
@@ -158,7 +173,11 @@
     }
 
     /* Dark mode overrides */
-    body.dark { background: #111; color: #eee; }
+    body.dark {
+      background: #111;
+      color: #eee;
+      --map-tiles-filter: var(--map-tile-filter-dark);
+    }
     body.dark .meta { color: #bbb; }
     body.dark .refresh-info { color: #bbb; }
     body.dark .pill { background: #444; }
@@ -196,13 +215,21 @@
     body.dark .short-info-overlay .short-info-close:hover { background: rgba(255, 255, 255, 0.1); }
   </style>
   <style id="map-tiles-light">
+    body:not(.dark) {
+      --map-tiles-filter: var(--map-tile-filter-light);
+    }
     body:not(.dark) #map .leaflet-tile.map-tiles {
-      filter: grayscale(1) brightness(0.92) contrast(1.05);
+      filter: <%= tile_filter_light %>;
+      -webkit-filter: <%= tile_filter_light %>;
     }
   </style>
   <style id="map-tiles-dark">
+    body.dark {
+      --map-tiles-filter: var(--map-tile-filter-dark);
+    }
     body.dark #map .leaflet-tile.map-tiles {
-      filter: grayscale(1) invert(1) brightness(0.88) contrast(1.1);
+      filter: <%= tile_filter_dark %>;
+      -webkit-filter: <%= tile_filter_dark %>;
     }
   </style>
 </head>
@@ -485,21 +512,51 @@
 
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
-    const lightTiles = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+    const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+    const TILE_ATTRIBUTION =
+      '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France';
+    const TILE_FILTER_LIGHT = '<%= tile_filter_light %>';
+    const TILE_FILTER_DARK = '<%= tile_filter_dark %>';
+
+    function resolveTileFilter() {
+      const style = window.getComputedStyle(document.body);
+      const resolved = style.getPropertyValue('--map-tiles-filter');
+      if (resolved && resolved.trim().length) {
+        return resolved.trim();
+      }
+      return document.body.classList.contains('dark') ? TILE_FILTER_DARK : TILE_FILTER_LIGHT;
+    }
+
+    function applyFilterToTileElement(tile) {
+      if (!tile) return;
+      const filterValue = resolveTileFilter();
+      tile.style.filter = filterValue;
+      tile.style.webkitFilter = filterValue;
+    }
+
+    function applyFiltersToAllTiles() {
+      const tileEls = document.querySelectorAll('#map .leaflet-tile.map-tiles');
+      tileEls.forEach(applyFilterToTileElement);
+    }
+
+    const tiles = L.tileLayer(TILE_LAYER_URL, {
       maxZoom: 19,
-      attribution:
-        '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France',
-      className: 'map-tiles'
+      attribution: TILE_ATTRIBUTION,
+      className: 'map-tiles',
+      crossOrigin: 'anonymous'
     });
-    const darkTiles = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution:
-        '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France',
-      className: 'map-tiles'
+
+    tiles.on('tileload', event => {
+      if (!event || !event.tile) return;
+      applyFilterToTileElement(event.tile);
     });
-    let tiles = lightTiles.addTo(map);
+
+    tiles.on('load', applyFiltersToAllTiles);
+
+    tiles.addTo(map);
     // Default view until first data arrives
     map.setView(MAP_CENTER, 10);
+    applyFiltersToAllTiles();
 
     const markersLayer = L.layerGroup().addTo(map);
 
@@ -592,9 +649,7 @@
     themeToggle.addEventListener('click', () => {
       const dark = document.body.classList.toggle('dark');
       themeToggle.textContent = dark ? '☀️' : '🌙';
-      map.removeLayer(tiles);
-      tiles = dark ? darkTiles : lightTiles;
-      tiles.addTo(map);
+      applyFiltersToAllTiles();
     });
 
     let lastFocusBeforeInfo = null;
