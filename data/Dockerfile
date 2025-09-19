@@ -6,12 +6,7 @@ RUN apk add --no-cache \
     gcc \
     musl-dev \
     linux-headers \
-    build-base \
-    && if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "armv7l" ]; then \
-        apk add --no-cache \
-        g++ \
-        make; \
-    fi
+    build-base
 
 # Set working directory
 WORKDIR /app

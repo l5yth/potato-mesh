@@ -51,7 +51,6 @@ If you want to customize the images or run on unsupported architectures, build l
 
 - Docker Engine 20.10+ and Docker Compose 2.0+
 - A Meshtastic device connected to your system
-- **Raspberry Pi users**: Use the optimized configuration (see [DOCKER.md](docs/DOCKER.md#raspberry-pi--arm-devices))
 
 **1. Clone and Configure:**
 
@@ -114,7 +113,7 @@ docker-compose down
 docker-compose down -v
 ```
 
-For detailed Docker documentation, see [DOCKER.md](docs/DOCKER.md).
+For detailed Docker documentation, see [DOCKER.md](DOCKER.md).
 
 ## 📦 Available Docker Images
 
@@ -125,8 +124,6 @@ PotatoMesh provides pre-built Docker images for multiple architectures and opera
 | Image | Architecture | OS | Description | Pull Command |
 |-------|-------------|----|-------------|--------------|
 | [`ghcr.io/l5yth/potato-mesh-web-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-amd64) | x86_64 | Linux | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest` |
-| [`ghcr.io/l5yth/potato-mesh-web-linux-arm64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-arm64) | ARM64 | Linux | ARM64 (Apple Silicon, ARM servers) | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-arm64:latest` |
-| [`ghcr.io/l5yth/potato-mesh-web-linux-armv7`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-armv7) | ARMv7 | Linux | ARMv7 (Raspberry Pi 3/4) | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-armv7:latest` |
 | [`ghcr.io/l5yth/potato-mesh-web-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-windows-amd64) | x86_64 | Windows | Windows x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-windows-amd64:latest` |
 
 ### Ingestor Service Images
@@ -134,22 +131,14 @@ PotatoMesh provides pre-built Docker images for multiple architectures and opera
 | Image | Architecture | OS | Description | Pull Command |
 |-------|-------------|----|-------------|--------------|
 | [`ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-amd64) | x86_64 | Linux | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest` |
-| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-arm64) | ARM64 | Linux | ARM64 (Apple Silicon, ARM servers) | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64:latest` |
-| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-armv7) | ARMv7 | Linux | ARMv7 (Raspberry Pi 3/4) | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:latest` |
 | [`ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-windows-amd64) | x86_64 | Windows | Windows x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64:latest` |
 
 ### Quick Platform Examples
 
-**Raspberry Pi (ARMv7):**
+**Linux x86_64:**
 ```bash
-docker pull ghcr.io/l5yth/potato-mesh-web-linux-armv7:latest
-docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:latest
-```
-
-**Apple Silicon Mac (ARM64):**
-```bash
-docker pull ghcr.io/l5yth/potato-mesh-web-linux-arm64:latest
-docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64:latest
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
 ```
 
 **Standard Linux/Windows (x86_64):**
