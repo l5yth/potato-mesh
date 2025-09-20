@@ -14,7 +14,7 @@ A simple Meshtastic-powered node dashboard for your local community. _No MQTT cl
 * Shows new node notifications (first seen) in chat.
 * Allows searching and filtering for nodes in map and table view.
 
-- Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
+Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
 ![screenshot of the second version](./scrot-0.2.png)
 
