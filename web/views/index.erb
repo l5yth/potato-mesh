@@ -321,13 +321,14 @@
   </div>
 
   <footer>
-    PotatoMesh GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
+    PotatoMesh
+    <% if version && !version.empty? %>
+      <span class="mono"><%= version %></span> —
+    <% end %>
+    GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
     <% if matrix_room && !matrix_room.empty? %>
       — <%= site_name %> Matrix:
       <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
-    <% end %>
-    <% if version && !version.empty? %>
-      — <span class="mono">Version: <%= version %></span>
     <% end %>
   </footer>
 
