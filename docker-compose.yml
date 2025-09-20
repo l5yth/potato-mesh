@@ -15,7 +15,6 @@ services:
       - MAX_NODE_DISTANCE_KM=${MAX_NODE_DISTANCE_KM:-50}
       - MATRIX_ROOM=${MATRIX_ROOM:-}
       - API_TOKEN=${API_TOKEN}
-      - STADIA_API_KEY=${STADIA_API_KEY}
       - DEBUG=${DEBUG:-0}
     volumes:
       - potatomesh_data:/app/data

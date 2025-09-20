@@ -62,7 +62,6 @@ MAP_CENTER_LON=$(grep "^MAP_CENTER_LON=" .env 2>/dev/null | cut -d'=' -f2- | tr 
 MAX_NODE_DISTANCE_KM=$(grep "^MAX_NODE_DISTANCE_KM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "50")
 MATRIX_ROOM=$(grep "^MATRIX_ROOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
-STADIA_API_KEY=$(grep "^STADIA_API_KEY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 
 echo "📍 Location Settings"
 echo "-------------------"
@@ -81,15 +80,6 @@ echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
 read_with_default "Matrix Room (optional, e.g., #meshtastic:matrix.org)" "$MATRIX_ROOM" MATRIX_ROOM
-
-echo ""
-echo "🗺️  Map Settings"
-echo "---------------"
-echo "Stadia Maps provides high-quality map tiles for the web interface."
-echo "You can get a free API key at: https://client.stadiamaps.com/"
-echo "If you don't have a key, the app will use basic OpenStreetMap tiles."
-echo ""
-read_with_default "Stadia Maps API Key (optional)" "$STADIA_API_KEY" STADIA_API_KEY
 
 echo ""
 echo "🔐 Security Settings"
@@ -133,7 +123,6 @@ update_env "MAP_CENTER_LAT" "$MAP_CENTER_LAT"
 update_env "MAP_CENTER_LON" "$MAP_CENTER_LON"
 update_env "MAX_NODE_DISTANCE_KM" "$MAX_NODE_DISTANCE_KM"
 update_env "MATRIX_ROOM" "\"$MATRIX_ROOM\""
-update_env "STADIA_API_KEY" "$STADIA_API_KEY"
 update_env "API_TOKEN" "$API_TOKEN"
 
 # Add other common settings if they don't exist
@@ -158,7 +147,6 @@ echo "   Max Distance: ${MAX_NODE_DISTANCE_KM}km"
 echo "   Channel: $DEFAULT_CHANNEL"
 echo "   Frequency: $DEFAULT_FREQUENCY"
 echo "   Matrix Room: ${MATRIX_ROOM:-'Not set'}"
-echo "   Stadia API Key: ${STADIA_API_KEY:+Set}${STADIA_API_KEY:-'Not set'}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo ""
 echo "🚀 You can now start PotatoMesh with:"
