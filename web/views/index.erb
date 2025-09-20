@@ -524,9 +524,25 @@
 
     function applyFilterToTileElement(tile, filterValue) {
       if (!tile) return;
+      if (tile.classList && !tile.classList.contains('map-tiles')) {
+        tile.classList.add('map-tiles');
+      }
       const value = filterValue || resolveTileFilter();
       tile.style.filter = value;
       tile.style.webkitFilter = value;
+    }
+
+    function ensureTileHasCurrentFilter(tile) {
+      if (!tile) return;
+      const apply = () => {
+        const filterValue = resolveTileFilter();
+        applyFilterToTileElement(tile, filterValue);
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(apply);
+      } else {
+        apply();
+      }
     }
 
     function applyFiltersToAllTiles() {
@@ -547,9 +563,14 @@
       crossOrigin: 'anonymous'
     });
 
+    tiles.on('tileloadstart', event => {
+      if (!event || !event.tile) return;
+      ensureTileHasCurrentFilter(event.tile);
+    });
+
     tiles.on('tileload', event => {
       if (!event || !event.tile) return;
-      applyFilterToTileElement(event.tile, resolveTileFilter());
+      ensureTileHasCurrentFilter(event.tile);
     });
 
     tiles.on('load', applyFiltersToAllTiles);
