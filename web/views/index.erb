@@ -534,20 +534,13 @@
 
     function ensureTileHasCurrentFilter(tile) {
       if (!tile) return;
-      const apply = () => {
-        const filterValue = resolveTileFilter();
-        applyFilterToTileElement(tile, filterValue);
-      };
-      if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(apply);
-      } else {
-        apply();
-      }
+      const filterValue = resolveTileFilter();
+      applyFilterToTileElement(tile, filterValue);
     }
 
     function applyFiltersToAllTiles() {
       const filterValue = resolveTileFilter();
-      const tileEls = document.querySelectorAll('#map .leaflet-tile.map-tiles');
+      const tileEls = document.querySelectorAll('#map .leaflet-tile');
       tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
       const tileContainer = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
       if (tileContainer) {
@@ -563,6 +556,36 @@
       crossOrigin: 'anonymous'
     });
 
+    let tilesObserver = null;
+
+    function observeTileContainer() {
+      if (typeof MutationObserver !== 'function') return;
+      const container = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
+      if (!container) return;
+      if (tilesObserver) {
+        tilesObserver.disconnect();
+      }
+      const handleNode = (node, filterValue) => {
+        if (!node || node.nodeType !== 1) return;
+        if (node.classList && node.classList.contains('leaflet-tile')) {
+          applyFilterToTileElement(node, filterValue);
+        }
+        if (typeof node.querySelectorAll === 'function') {
+          const nestedTiles = node.querySelectorAll('.leaflet-tile');
+          nestedTiles.forEach(tile => applyFilterToTileElement(tile, filterValue));
+        }
+      };
+      tilesObserver = new MutationObserver(mutations => {
+        const filterValue = resolveTileFilter();
+        mutations.forEach(mutation => {
+          for (const node of mutation.addedNodes) {
+            handleNode(node, filterValue);
+          }
+        });
+      });
+      tilesObserver.observe(container, { childList: true, subtree: true });
+    }
+
     tiles.on('tileloadstart', event => {
       if (!event || !event.tile) return;
       ensureTileHasCurrentFilter(event.tile);
@@ -573,9 +596,13 @@
       ensureTileHasCurrentFilter(event.tile);
     });
 
-    tiles.on('load', applyFiltersToAllTiles);
+    tiles.on('load', () => {
+      applyFiltersToAllTiles();
+      observeTileContainer();
+    });
 
     tiles.addTo(map);
+    observeTileContainer();
     // Default view until first data arrives
     map.setView(MAP_CENTER, 10);
     applyFiltersToAllTiles();
