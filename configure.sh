@@ -79,7 +79,7 @@ read_with_default "Default Frequency (868MHz, 915MHz, etc.)" "$DEFAULT_FREQUENCY
 echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
-read_with_default "Matrix Room (optional, e.g., #meshtastic:matrix.org)" "$MATRIX_ROOM" MATRIX_ROOM
+read_with_default "Matrix Room (optional, e.g., #meshtastic-berlin:matrix.org)" "$MATRIX_ROOM" MATRIX_ROOM
 
 echo ""
 echo "🔐 Security Settings"
