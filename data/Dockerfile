@@ -11,12 +11,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apk add --no-cache \
-    tzdata \
-    curl
-
 COPY data/requirements.txt ./
-RUN python -m pip install --no-cache-dir -r requirements.txt
+RUN set -eux; \
+    apk add --no-cache \
+        tzdata \
+        curl; \
+    apk add --no-cache --virtual .build-deps \
+        gcc \
+        musl-dev \
+        linux-headers \
+        build-base; \
+    python -m pip install --no-cache-dir -r requirements.txt; \
+    apk del .build-deps
 
 COPY data/ .
 RUN addgroup -S potatomesh && \
