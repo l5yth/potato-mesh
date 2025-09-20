@@ -1,0 +1,21 @@
+version: '3.8'
+
+# Development overrides for docker-compose.yml
+services:
+  web:
+    environment:
+      - DEBUG=1
+    volumes:
+      - ./web:/app
+      - ./data:/data  # Mount data directory for SQL files
+      - /app/vendor/bundle  # Exclude vendor directory from volume mount
+    ports:
+      - "41447:41447"
+      - "9292:9292"  # Additional port for development tools
+
+  ingestor:
+    environment:
+      - DEBUG=1
+    volumes:
+      - ./data:/app
+      - /app/.local  # Exclude Python packages from volume mount

@@ -1,0 +1,74 @@
+# Main application builder stage
+FROM ruby:3.4-alpine AS builder
+
+# Install build dependencies and SQLite3
+RUN apk add --no-cache \
+    build-base \
+    sqlite-dev \
+    linux-headers \
+    pkgconfig
+
+# Set working directory
+WORKDIR /app
+
+# Copy Gemfile and install dependencies
+COPY web/Gemfile web/Gemfile.lock* ./
+
+# Install gems with SQLite3 support
+RUN bundle config set --local without 'development test' && \
+    bundle install --jobs=4 --retry=3
+
+# Production stage
+FROM ruby:3.4-alpine AS production
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    sqlite \
+    tzdata \
+    curl
+
+# Create non-root user
+RUN addgroup -g 1000 -S potatomesh && \
+    adduser -u 1000 -S potatomesh -G potatomesh
+
+# Set working directory
+WORKDIR /app
+
+# Copy installed gems from builder stage
+COPY --from=builder /usr/local/bundle /usr/local/bundle
+
+# Copy application code (exclude Dockerfile from web directory)
+COPY --chown=potatomesh:potatomesh web/app.rb web/app.sh web/Gemfile web/Gemfile.lock* web/public/ web/spec/ ./
+COPY --chown=potatomesh:potatomesh web/views/ ./views/
+
+# Copy SQL schema files from data directory
+COPY --chown=potatomesh:potatomesh data/*.sql /data/
+
+# Create data directory for SQLite database
+RUN mkdir -p /app/data && \
+    chown -R potatomesh:potatomesh /app/data
+
+# Switch to non-root user
+USER potatomesh
+
+# Expose port
+EXPOSE 41447
+
+# Default environment variables (can be overridden by host)
+ENV APP_ENV=production \
+    MESH_DB=/app/data/mesh.db \
+    DB_BUSY_TIMEOUT_MS=5000 \
+    DB_BUSY_MAX_RETRIES=5 \
+    DB_BUSY_RETRY_DELAY=0.05 \
+    MAX_JSON_BODY_BYTES=1048576 \
+    SITE_NAME="Berlin Mesh Network" \
+    DEFAULT_CHANNEL="#MediumFast" \
+    DEFAULT_FREQUENCY="868MHz" \
+    MAP_CENTER_LAT=52.502889 \
+    MAP_CENTER_LON=13.404194 \
+    MAX_NODE_DISTANCE_KM=50 \
+    MATRIX_ROOM="" \
+    DEBUG=0
+
+# Start the application
+CMD ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]

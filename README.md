@@ -18,6 +18,14 @@ Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
 ![screenshot of the second version](./scrot-0.2.png)
 
+## 🐳 Quick Start with Docker
+
+```bash
+./configure.sh          # Configure your setup
+docker-compose up -d     # Start services
+docker-compose logs -f   # View logs
+```
+
 ## Web App
 
 Requires Ruby for the Sinatra web app and SQLite3 for the app's database.
