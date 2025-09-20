@@ -23,6 +23,8 @@
   <title><%= site_name %></title>
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
+  <% tile_filter_light = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)" %>
+  <% tile_filter_dark = "grayscale(1) invert(1) saturate(0) brightness(0.88) contrast(1.1)" %>
 
   <!-- Leaflet CSS/JS (CDN) -->
   <link
@@ -38,8 +40,17 @@
   ></script>
 
   <style>
-    :root { --pad: 16px; }
-    body { font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif; margin: var(--pad); padding-bottom: 32px; }
+    :root {
+      --pad: 16px;
+      --map-tile-filter-light: <%= tile_filter_light %>;
+      --map-tile-filter-dark: <%= tile_filter_dark %>;
+    }
+    body {
+      font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
+      margin: var(--pad);
+      padding-bottom: 32px;
+      --map-tiles-filter: var(--map-tile-filter-light);
+    }
     h1  { margin: 0 0 8px }
     .site-title { display: inline-flex; align-items: center; gap: 12px; }
     .site-title img { width: 52px; height: 52px; display: block; border-radius: 12px; }
@@ -90,7 +101,11 @@
     .legend-hidden { display: none !important; }
     .legend-toggle { margin-top: 8px; }
     .legend-toggle-button { font-size: 12px; }
-    #map .leaflet-tile { filter: opacity(70%); }
+    #map .leaflet-tile.map-tiles {
+      opacity: 0.75;
+      filter: var(--map-tiles-filter, var(--map-tile-filter-light));
+      -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-light));
+    }
     .leaflet-popup-content-wrapper,
     .leaflet-popup-tip {
       background: #fff;
@@ -158,7 +173,11 @@
     }
 
     /* Dark mode overrides */
-    body.dark { background: #111; color: #eee; }
+    body.dark {
+      background: #111;
+      color: #eee;
+      --map-tiles-filter: var(--map-tile-filter-dark);
+    }
     body.dark .meta { color: #bbb; }
     body.dark .refresh-info { color: #bbb; }
     body.dark .pill { background: #444; }
@@ -194,6 +213,24 @@
     body.dark .info-close:hover { background: rgba(255, 255, 255, 0.1); }
     body.dark .short-info-overlay { background: #1c1c1c; border-color: #444; color: #eee; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55); }
     body.dark .short-info-overlay .short-info-close:hover { background: rgba(255, 255, 255, 0.1); }
+  </style>
+  <style id="map-tiles-light">
+    body:not(.dark) {
+      --map-tiles-filter: var(--map-tile-filter-light);
+    }
+    body:not(.dark) #map .leaflet-tile.map-tiles {
+      filter: <%= tile_filter_light %>;
+      -webkit-filter: <%= tile_filter_light %>;
+    }
+  </style>
+  <style id="map-tiles-dark">
+    body.dark {
+      --map-tiles-filter: var(--map-tile-filter-dark);
+    }
+    body.dark #map .leaflet-tile.map-tiles {
+      filter: <%= tile_filter_dark %>;
+      -webkit-filter: <%= tile_filter_dark %>;
+    }
   </style>
 </head>
 <body>
@@ -475,17 +512,52 @@
 
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
-    const lightTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key=<%= ENV["STADIA_API_KEY"] %>', {
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
+    const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+    const TILE_ATTRIBUTION =
+      '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France';
+    const TILE_FILTER_LIGHT = '<%= tile_filter_light %>';
+    const TILE_FILTER_DARK = '<%= tile_filter_dark %>';
+
+    function resolveTileFilter() {
+      return document.body.classList.contains('dark') ? TILE_FILTER_DARK : TILE_FILTER_LIGHT;
+    }
+
+    function applyFilterToTileElement(tile, filterValue) {
+      if (!tile) return;
+      const value = filterValue || resolveTileFilter();
+      tile.style.filter = value;
+      tile.style.webkitFilter = value;
+    }
+
+    function applyFiltersToAllTiles() {
+      const filterValue = resolveTileFilter();
+      const tileEls = document.querySelectorAll('#map .leaflet-tile.map-tiles');
+      tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
+      const tileContainer = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
+      if (tileContainer) {
+        tileContainer.style.filter = filterValue;
+        tileContainer.style.webkitFilter = filterValue;
+      }
+    }
+
+    const tiles = L.tileLayer(TILE_LAYER_URL, {
+      maxZoom: 19,
+      attribution: TILE_ATTRIBUTION,
+      className: 'map-tiles',
+      crossOrigin: 'anonymous'
     });
-    const darkTiles = L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png?api_key=<%= ENV["STADIA_API_KEY"] %>', {
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors &amp; Stadia Maps'
+
+    tiles.on('tileload', event => {
+      if (!event || !event.tile) return;
+      applyFilterToTileElement(event.tile, resolveTileFilter());
     });
-    let tiles = lightTiles.addTo(map);
+
+    tiles.on('load', applyFiltersToAllTiles);
+
+    tiles.addTo(map);
     // Default view until first data arrives
     map.setView(MAP_CENTER, 10);
+    applyFiltersToAllTiles();
 
     const markersLayer = L.layerGroup().addTo(map);
 
@@ -578,9 +650,7 @@
     themeToggle.addEventListener('click', () => {
       const dark = document.body.classList.toggle('dark');
       themeToggle.textContent = dark ? '☀️' : '🌙';
-      map.removeLayer(tiles);
-      tiles = dark ? darkTiles : lightTiles;
-      tiles.addTo(map);
+      applyFiltersToAllTiles();
     });
 
     let lastFocusBeforeInfo = null;
