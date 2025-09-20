@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## v0.3.0
+
+* Add comprehensive Docker support with multi-architecture builds and automated CI/CD by @trose in <https://github.com/l5yth/potato-mesh/pull/122>
+
 ## v0.2.0
 
 * Update readme for 0.2 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/118>

@@ -1,0 +1,7 @@
+# Production dependencies
+meshtastic>=2.0.0
+protobuf>=4.21.12
+
+# Development dependencies (optional)
+black>=23.0.0
+pytest>=7.0.0
