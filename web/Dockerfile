@@ -1,5 +1,5 @@
 # Main application builder stage
-FROM ruby:3.4-alpine AS builder
+FROM ruby:3.3-alpine AS builder
 
 # Install build dependencies and SQLite3
 RUN apk add --no-cache \
@@ -19,7 +19,7 @@ RUN bundle config set --local without 'development test' && \
     bundle install --jobs=4 --retry=3
 
 # Production stage
-FROM ruby:3.4-alpine AS production
+FROM ruby:3.3-alpine AS production
 
 # Install runtime dependencies
 RUN apk add --no-cache \
