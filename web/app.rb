@@ -39,7 +39,7 @@ MAX_JSON_BODY_BYTES = begin
   rescue ArgumentError
     DEFAULT_MAX_JSON_BODY_BYTES
   end
-VERSION_FALLBACK = "v0.2.0"
+VERSION_FALLBACK = "v0.2.1"
 
 def determine_app_version
   repo_root = File.expand_path("..", __dir__)

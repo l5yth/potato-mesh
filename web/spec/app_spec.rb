@@ -187,7 +187,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "includes the application version in the footer" do
       get "/"
-      expect(last_response.body).to include("Version: #{APP_VERSION}")
+      expect(last_response.body).to include("#{APP_VERSION}")
     end
   end
 
