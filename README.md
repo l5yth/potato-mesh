@@ -20,98 +20,13 @@ A simple Meshtastic-powered node dashboard for your local community. _No MQTT cl
 
 ## 🐳 Quick Start with Docker
 
-The easiest way to run PotatoMesh is with Docker. This eliminates the need to install Ruby, Python, and system dependencies manually.
-
-### Option 1: Use Published Images (Recommended)
-
-Run PotatoMesh using pre-built images from GitHub Container Registry:
-
 ```bash
-# Clone the repository
-git clone https://github.com/l5yth/potato-mesh.git
-cd potato-mesh
-
-# Configure your setup (generates API token and sets up environment)
-./configure.sh
-
-# Start PotatoMesh with published images
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Access the dashboard at http://localhost:41447
+./configure.sh          # Configure your setup
+docker-compose up -d     # Start services
+docker-compose logs -f   # View logs
 ```
 
-### Option 2: Build from Source
-
-If you want to customize the images or run on unsupported architectures, build locally:
-
-**Prerequisites:**
-
-- Docker Engine 20.10+ and Docker Compose 2.0+
-- A Meshtastic device connected to your system
-
-**1. Clone and Configure:**
-
-```bash
-# Clone the repository
-git clone https://github.com/l5yth/potato-mesh.git
-cd potato-mesh
-
-# Copy and configure environment variables
-cp .env.example .env
-# Edit .env with your specific configuration (see below)
-```
-
-**2. Configure Your Setup:**
-
-Run the configuration script to set up your local settings:
-
-```bash
-# Interactive configuration
-./configure.sh
-```
-
-The script will prompt you for:
-
-- **Site Name**: Your local mesh network name
-- **Map Center**: Latitude/longitude for your location
-- **Default Channel**: Your preferred Meshtastic channel
-- **Default Frequency**: Your region's frequency (868MHz, 915MHz, etc.)
-- **Matrix Room**: Optional Matrix chat room for your community
-- **Max Node Distance**: Maximum distance to show nodes (km)
-- **API Token**: Secure token for ingestor authentication
-- **Stadia Maps API Key**: API key for map tiles (optional, with setup instructions)
-
-Or manually edit the `.env` file if you prefer.
-
-**3. Start PotatoMesh:**
-
-```bash
-# Start the full stack
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Check status
-docker-compose ps
-```
-
-### 4. Access the Dashboard
-
-Open your browser to `http://localhost:41447` to view the PotatoMesh dashboard.
-
-### 5. Stop PotatoMesh
-
-```bash
-# Stop all services
-docker-compose down
-
-# Stop and remove all data (WARNING: loses all data)
-docker-compose down -v
-```
+Access the dashboard at `http://localhost:41447`
 
 For detailed Docker documentation, see [DOCKER.md](DOCKER.md).
 
@@ -121,27 +36,29 @@ PotatoMesh provides pre-built Docker images for multiple architectures and opera
 
 ### Web Application Images
 
-| Image | Architecture | OS | Description | Pull Command |
-|-------|-------------|----|-------------|--------------|
-| [`ghcr.io/l5yth/potato-mesh-web-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-amd64) | x86_64 | Linux | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest` |
-| [`ghcr.io/l5yth/potato-mesh-web-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-windows-amd64) | x86_64 | Windows | Windows x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-windows-amd64:latest` |
+| Image                                                                                                                             | Architecture | OS      | Description           | Pull Command                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------- | --------------------- | ------------------------------------------------------------------ |
+| [`ghcr.io/l5yth/potato-mesh-web-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-linux-amd64)     | x86_64       | Linux   | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest`   |
+| [`ghcr.io/l5yth/potato-mesh-web-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-web-windows-amd64) | x86_64       | Windows | Windows x86_64        | `docker pull ghcr.io/l5yth/potato-mesh-web-windows-amd64:latest` |
 
 ### Ingestor Service Images
 
-| Image | Architecture | OS | Description | Pull Command |
-|-------|-------------|----|-------------|--------------|
-| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-amd64) | x86_64 | Linux | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest` |
-| [`ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-windows-amd64) | x86_64 | Windows | Windows x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64:latest` |
+| Image                                                                                                                                       | Architecture | OS      | Description           | Pull Command                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------- | --------------------- | ----------------------------------------------------------------------- |
+| [`ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-linux-amd64)     | x86_64       | Linux   | Standard Linux x86_64 | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest`   |
+| [`ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64`](https://github.com/l5yth/potato-mesh/pkgs/container/potato-mesh-ingestor-windows-amd64) | x86_64       | Windows | Windows x86_64        | `docker pull ghcr.io/l5yth/potato-mesh-ingestor-windows-amd64:latest` |
 
 ### Quick Platform Examples
 
 **Linux x86_64:**
+
 ```bash
 docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
 docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
 ```
 
 **Standard Linux/Windows (x86_64):**
+
 ```bash
 docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
 docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
@@ -150,6 +67,7 @@ docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
 ### Image Tags
 
 All images support the following tag formats:
+
 - `latest` - Latest stable release
 - `v1.0.0` - Specific version (replace with actual version)
 - `main` - Latest development build
@@ -199,17 +117,17 @@ of the node map. Set `API_TOKEN` required for authorizations on the API's POST e
 
 The web app can be configured with environment variables (defaults shown):
 
-* `SITE_NAME` - title and header shown in the ui (default: "My Meshtastic Network")
+* `SITE_NAME` - title and header shown in the ui (default: "Meshtastic Berlin")
 * `DEFAULT_CHANNEL` - default channel shown in the ui (default: "#MediumFast")
 * `DEFAULT_FREQUENCY` - default channel shown in the ui (default: "868MHz")
 * `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `52.502889` / `13.404194`)
-* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `50`)
-* `MATRIX_ROOM` - matrix room id for a footer link (default: empty)
+* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: 137)
+* `MATRIX_ROOM` - matrix room id for a footer link (default: **`` `#meshtastic-berlin:matrix.org` ``**)
 
 Example:
 
 ```bash
-SITE_NAME="My Meshtastic Network" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 MAX_NODE_DISTANCE_KM=50 MATRIX_ROOM="" ./app.sh
+SITE_NAME="Meshtastic Berlin" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 MAX_NODE_DISTANCE_KM=137 MATRIX_ROOM="" ./app.sh
 ```
 
 ### API
@@ -234,33 +152,7 @@ by ID and there will be no duplication.
 For convenience, the directory `./data` contains a Python ingestor. It connects to a local
 Meshtastic node via serial port to gather nodes and messages seen by the node.
 
-### 🐳 Docker (Recommended)
-
-The ingestor runs automatically when you start the full stack with Docker:
-
-```bash
-# Start the full stack (includes ingestor)
-docker-compose up -d
-
-# Or start just the ingestor
-docker-compose up -d ingestor
-
-# View ingestor logs
-docker-compose logs -f ingestor
-```
-
-The ingestor will automatically connect to your Meshtastic device using the `MESH_SERIAL`
-path configured in your `.env` file.
-
-### 📦 Manual Installation
-
-```bash
-pacman -S python
-cd ./data
-python -m venv .venv
-source .venv/bin/activate
-pip install -U meshtastic
-```
+* [ ] pacman -S python
 
 It uses the Meshtastic Python library to ingest mesh data and post nodes and messages
 to the configured potato-mesh instance.
