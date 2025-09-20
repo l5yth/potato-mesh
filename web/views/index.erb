@@ -24,7 +24,7 @@
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
   <% tile_filter_light = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)" %>
-  <% tile_filter_dark = "grayscale(1) invert(1) saturate(0) brightness(0.88) contrast(1.1)" %>
+  <% tile_filter_dark = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)" %>
 
   <!-- Leaflet CSS/JS (CDN) -->
   <link
@@ -101,6 +101,8 @@
     .legend-hidden { display: none !important; }
     .legend-toggle { margin-top: 8px; }
     .legend-toggle-button { font-size: 12px; }
+    #map .leaflet-tile-pane,
+    #map .leaflet-layer,
     #map .leaflet-tile.map-tiles {
       opacity: 0.75;
       filter: var(--map-tiles-filter, var(--map-tile-filter-light));
@@ -216,8 +218,10 @@
   </style>
   <style id="map-tiles-light">
     body:not(.dark) {
-      --map-tiles-filter: var(--map-tile-filter-light);
+      --map-tiles-filter: <%= tile_filter_light %>;
     }
+    body:not(.dark) #map .leaflet-tile-pane,
+    body:not(.dark) #map .leaflet-layer,
     body:not(.dark) #map .leaflet-tile.map-tiles {
       filter: <%= tile_filter_light %>;
       -webkit-filter: <%= tile_filter_light %>;
@@ -225,8 +229,10 @@
   </style>
   <style id="map-tiles-dark">
     body.dark {
-      --map-tiles-filter: var(--map-tile-filter-dark);
+      --map-tiles-filter: <%= tile_filter_dark %>;
     }
+    body.dark #map .leaflet-tile-pane,
+    body.dark #map .leaflet-layer,
     body.dark #map .leaflet-tile.map-tiles {
       filter: <%= tile_filter_dark %>;
       -webkit-filter: <%= tile_filter_dark %>;
@@ -524,20 +530,42 @@
 
     function applyFilterToTileElement(tile, filterValue) {
       if (!tile) return;
+      if (tile.classList && !tile.classList.contains('map-tiles')) {
+        tile.classList.add('map-tiles');
+      }
       const value = filterValue || resolveTileFilter();
-      tile.style.filter = value;
-      tile.style.webkitFilter = value;
+      if (tile.style) {
+        tile.style.filter = value;
+        tile.style.webkitFilter = value;
+      }
+    }
+
+    function applyFilterToTileContainers(filterValue) {
+      const value = filterValue || resolveTileFilter();
+      const tileContainer = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
+      if (tileContainer && tileContainer.style) {
+        tileContainer.style.filter = value;
+        tileContainer.style.webkitFilter = value;
+      }
+      const tilePane = map && typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
+      if (tilePane && tilePane.style) {
+        tilePane.style.filter = value;
+        tilePane.style.webkitFilter = value;
+      }
+    }
+
+    function ensureTileHasCurrentFilter(tile) {
+      if (!tile) return;
+      const filterValue = resolveTileFilter();
+      applyFilterToTileElement(tile, filterValue);
     }
 
     function applyFiltersToAllTiles() {
       const filterValue = resolveTileFilter();
-      const tileEls = document.querySelectorAll('#map .leaflet-tile.map-tiles');
+      document.body.style.setProperty('--map-tiles-filter', filterValue);
+      const tileEls = document.querySelectorAll('#map .leaflet-tile');
       tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
-      const tileContainer = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
-      if (tileContainer) {
-        tileContainer.style.filter = filterValue;
-        tileContainer.style.webkitFilter = filterValue;
-      }
+      applyFilterToTileContainers(filterValue);
     }
 
     const tiles = L.tileLayer(TILE_LAYER_URL, {
@@ -547,17 +575,64 @@
       crossOrigin: 'anonymous'
     });
 
-    tiles.on('tileload', event => {
+    let tileDomObserver = null;
+
+    function observeTileContainer() {
+      if (typeof MutationObserver !== 'function') return;
+      const container = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
+      const tilePane = map && typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
+      const targets = [];
+      if (container) targets.push(container);
+      if (tilePane && !targets.includes(tilePane)) targets.push(tilePane);
+      if (!targets.length) return;
+      if (tileDomObserver) {
+        tileDomObserver.disconnect();
+      }
+      const handleNode = (node, filterValue) => {
+        if (!node || node.nodeType !== 1) return;
+        if (node.classList && node.classList.contains('leaflet-tile')) {
+          applyFilterToTileElement(node, filterValue);
+        }
+        if (typeof node.querySelectorAll === 'function') {
+          const nestedTiles = node.querySelectorAll('.leaflet-tile');
+          nestedTiles.forEach(tile => applyFilterToTileElement(tile, filterValue));
+        }
+      };
+      tileDomObserver = new MutationObserver(mutations => {
+        const filterValue = resolveTileFilter();
+        mutations.forEach(mutation => {
+          mutation.addedNodes.forEach(node => handleNode(node, filterValue));
+        });
+        applyFilterToTileContainers(filterValue);
+      });
+      targets.forEach(target => tileDomObserver.observe(target, { childList: true, subtree: true }));
+    }
+
+    tiles.on('tileloadstart', event => {
       if (!event || !event.tile) return;
-      applyFilterToTileElement(event.tile, resolveTileFilter());
+      ensureTileHasCurrentFilter(event.tile);
+      applyFilterToTileContainers();
     });
 
-    tiles.on('load', applyFiltersToAllTiles);
+    tiles.on('tileload', event => {
+      if (!event || !event.tile) return;
+      ensureTileHasCurrentFilter(event.tile);
+      applyFilterToTileContainers();
+    });
+
+    tiles.on('load', () => {
+      applyFiltersToAllTiles();
+      observeTileContainer();
+    });
 
     tiles.addTo(map);
+    observeTileContainer();
     // Default view until first data arrives
     map.setView(MAP_CENTER, 10);
     applyFiltersToAllTiles();
+
+    map.on('moveend', applyFiltersToAllTiles);
+    map.on('zoomend', applyFiltersToAllTiles);
 
     const markersLayer = L.layerGroup().addTo(map);
 
