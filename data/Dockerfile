@@ -33,6 +33,8 @@ RUN addgroup -S potatomesh && \
 USER potatomesh
 
 ENV MESH_SERIAL=/dev/ttyACM0 \
+    MESH_TCP_ADDRESS="" \
+    MESH_TCP_PORT="" \
     MESH_SNAPSHOT_SECS=60 \
     MESH_CHANNEL_INDEX=0 \
     DEBUG=0 \
@@ -59,6 +61,8 @@ COPY data/ .
 USER ContainerUser
 
 ENV MESH_SERIAL=/dev/ttyACM0 \
+    MESH_TCP_ADDRESS="" \
+    MESH_TCP_PORT="" \
     MESH_SNAPSHOT_SECS=60 \
     MESH_CHANNEL_INDEX=0 \
     DEBUG=0 \

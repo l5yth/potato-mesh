@@ -19,7 +19,9 @@ def mesh_module(monkeypatch):
     serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
 
     class DummySerialInterface:
-        def __init__(self, *_, **__):
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
             self.closed = False
 
         def close(self):
@@ -27,12 +29,29 @@ def mesh_module(monkeypatch):
 
     serial_interface_mod.SerialInterface = DummySerialInterface
 
+    tcp_interface_mod = types.ModuleType("meshtastic.tcp_interface")
+
+    class DummyTCPInterface:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    tcp_interface_mod.TCPInterface = DummyTCPInterface
+
     meshtastic_mod = types.ModuleType("meshtastic")
     meshtastic_mod.serial_interface = serial_interface_mod
+    meshtastic_mod.tcp_interface = tcp_interface_mod
 
     monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
     monkeypatch.setitem(
         sys.modules, "meshtastic.serial_interface", serial_interface_mod
+    )
+    monkeypatch.setitem(
+        sys.modules, "meshtastic.tcp_interface", tcp_interface_mod
     )
 
     # Stub pubsub.pub
@@ -480,3 +499,71 @@ def test_node_items_snapshot_handles_empty_input(mesh_module):
 
     assert mesh._node_items_snapshot(None) == []
     assert mesh._node_items_snapshot({}) == []
+
+
+def test_create_interface_uses_serial_when_tcp_not_configured(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = ""
+    mesh.TCP_PORT_RAW = ""
+
+    iface, desc = mesh._create_interface()
+
+    assert isinstance(iface, mesh.SerialInterface)
+    assert iface.kwargs["devPath"] == mesh.PORT
+    assert desc == f"port={mesh.PORT}"
+
+
+def test_create_interface_supports_tcp_address_with_port(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = "192.0.2.1:4500"
+    mesh.TCP_PORT_RAW = ""
+
+    iface, desc = mesh._create_interface()
+
+    assert isinstance(iface, mesh.TCPInterface)
+    assert iface.kwargs["hostname"] == "192.0.2.1"
+    assert iface.kwargs["port"] == 4500
+    assert desc == "ip=192.0.2.1:4500"
+
+
+def test_create_interface_uses_default_port_when_missing(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = "192.0.2.2"
+    mesh.TCP_PORT_RAW = ""
+
+    iface, desc = mesh._create_interface()
+
+    assert isinstance(iface, mesh.TCPInterface)
+    assert iface.kwargs["hostname"] == "192.0.2.2"
+    assert iface.kwargs["port"] == mesh._DEFAULT_TCP_PORT
+    assert desc == f"ip=192.0.2.2:{mesh._DEFAULT_TCP_PORT}"
+
+
+def test_create_interface_respects_port_override(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = "192.0.2.3"
+    mesh.TCP_PORT_RAW = "4501"
+
+    iface, desc = mesh._create_interface()
+
+    assert isinstance(iface, mesh.TCPInterface)
+    assert iface.kwargs["port"] == 4501
+    assert desc == "ip=192.0.2.3:4501"
+
+
+def test_create_interface_raises_for_invalid_tcp_address(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = "192.0.2.4:not-a-port"
+    mesh.TCP_PORT_RAW = ""
+
+    with pytest.raises(ValueError):
+        mesh._create_interface()
+
+
+def test_create_interface_raises_for_invalid_port_override(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = "192.0.2.5"
+    mesh.TCP_PORT_RAW = "invalid"
+
+    with pytest.raises(ValueError):
+        mesh._create_interface()

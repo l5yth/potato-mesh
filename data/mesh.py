@@ -29,12 +29,16 @@ import json, os, time, threading, signal, urllib.request, urllib.error
 from collections.abc import Mapping
 
 from meshtastic.serial_interface import SerialInterface
+from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
 
 # --- Config (env overrides) ---------------------------------------------------
 PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
+TCP_ADDRESS = os.environ.get("MESH_TCP_ADDRESS", "").strip()
+TCP_PORT_RAW = os.environ.get("MESH_TCP_PORT", "").strip()
+_DEFAULT_TCP_PORT = 4403
 SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "60"))
 CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 DEBUG = os.environ.get("DEBUG") == "1"
@@ -416,13 +420,89 @@ def _node_items_snapshot(nodes_obj, retries: int = 3):
     return []
 
 
+def _parse_tcp_address(address: str, port_raw: str) -> tuple[str, int]:
+    """Resolve TCP hostname and port from environment variables."""
+
+    addr = (address or "").strip()
+    if not addr:
+        raise ValueError("MESH_TCP_ADDRESS must not be empty when provided")
+
+    host = addr
+    port = _DEFAULT_TCP_PORT
+    override_port: int | None = None
+
+    if port_raw:
+        try:
+            override_port = int(port_raw)
+        except ValueError as exc:  # pragma: no cover - defensive guard
+            raise ValueError(
+                f"Invalid MESH_TCP_PORT value: {port_raw!r}"
+            ) from exc
+
+    if addr.startswith("["):
+        end = addr.find("]")
+        if end == -1:
+            raise ValueError(
+                f"Invalid MESH_TCP_ADDRESS value: {address!r}"
+            )
+        host = addr[1:end]
+        remainder = addr[end + 1 :]
+        if remainder.startswith(":") and remainder[1:]:
+            try:
+                port = int(remainder[1:])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid TCP port in MESH_TCP_ADDRESS: {address!r}"
+                ) from exc
+    else:
+        colon_count = addr.count(":")
+        if colon_count == 1:
+            host_part, _, port_part = addr.partition(":")
+            if not host_part or not port_part:
+                raise ValueError(
+                    f"Invalid MESH_TCP_ADDRESS value: {address!r}"
+                )
+            try:
+                port = int(port_part)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid TCP port in MESH_TCP_ADDRESS: {address!r}"
+                ) from exc
+            host = host_part
+        else:
+            host = addr
+
+    if override_port is not None:
+        port = override_port
+
+    if not host:
+        raise ValueError("MESH_TCP_ADDRESS must include a host")
+
+    return host, port
+
+
+def _create_interface():
+    """Create a Meshtastic interface from serial or TCP configuration."""
+
+    if TCP_ADDRESS:
+        host, port = _parse_tcp_address(TCP_ADDRESS, TCP_PORT_RAW)
+        iface = TCPInterface(hostname=host, port=port)
+        host_for_log = host
+        if ":" in host and not host.startswith("["):
+            host_for_log = f"[{host}]"
+        return iface, f"ip={host_for_log}:{port}"
+
+    iface = SerialInterface(devPath=PORT)
+    return iface, f"port={PORT}"
+
+
 def main():
     """Run the mesh synchronisation daemon."""
 
     # Subscribe to PubSub topics (reliable in current meshtastic)
     pub.subscribe(on_receive, "meshtastic.receive")
 
-    iface = SerialInterface(devPath=PORT)
+    iface, connection_info = _create_interface()
 
     stop = threading.Event()
 
@@ -436,7 +516,8 @@ def main():
 
     target = INSTANCE or "(no POTATOMESH_INSTANCE)"
     print(
-        f"Mesh daemon: nodes+messages → {target} | port={PORT} | channel={CHANNEL_INDEX}"
+        "Mesh daemon: nodes+messages → "
+        f"{target} | {connection_info} | channel={CHANNEL_INDEX}"
     )
     while not stop.is_set():
         try:
