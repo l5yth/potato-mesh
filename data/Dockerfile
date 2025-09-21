@@ -15,7 +15,9 @@ COPY data/requirements.txt ./
 RUN set -eux; \
     apk add --no-cache \
         tzdata \
-        curl; \
+        curl \
+        libstdc++ \
+        libgcc; \
     apk add --no-cache --virtual .build-deps \
         gcc \
         musl-dev \
