@@ -102,6 +102,33 @@ def test_snapshot_interval_defaults_to_60_seconds(mesh_module):
     assert mesh.SNAPSHOT_SECS == 60
 
 
+@pytest.mark.parametrize("value", ["mock", "Mock", " disabled "])
+def test_create_serial_interface_allows_mock(mesh_module, value):
+    mesh = mesh_module
+
+    iface = mesh._create_serial_interface(value)
+
+    assert isinstance(iface.nodes, dict)
+    iface.close()
+
+
+def test_create_serial_interface_uses_serial_module(mesh_module, monkeypatch):
+    mesh = mesh_module
+    created = {}
+    sentinel = object()
+
+    def fake_interface(*, devPath):
+        created["devPath"] = devPath
+        return SimpleNamespace(nodes={"!foo": sentinel}, close=lambda: None)
+
+    monkeypatch.setattr(mesh, "SerialInterface", fake_interface)
+
+    iface = mesh._create_serial_interface("/dev/ttyTEST")
+
+    assert created["devPath"] == "/dev/ttyTEST"
+    assert iface.nodes == {"!foo": sentinel}
+
+
 def test_node_to_dict_handles_nested_structures(mesh_module):
     mesh = mesh_module
 
