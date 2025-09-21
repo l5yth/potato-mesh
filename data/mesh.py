@@ -42,6 +42,43 @@ INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
 API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
+# --- Serial interface helpers --------------------------------------------------
+
+
+class _DummySerialInterface:
+    """In-memory replacement for ``meshtastic.serial_interface.SerialInterface``.
+
+    The GitHub Actions release tests run the ingestor container without access
+    to a serial device.  When ``MESH_SERIAL`` is set to ``"mock"`` (or similar)
+    we provide this stub interface so the daemon can start and exercise its
+    background loop without failing due to missing hardware.
+    """
+
+    def __init__(self):
+        self.nodes = {}
+
+    def close(self):
+        """Mirror the real interface API."""
+        pass
+
+
+def _create_serial_interface(port: str):
+    """Return an appropriate serial interface for ``port``.
+
+    Passing ``mock`` (case-insensitive) or an empty value skips hardware access
+    and returns :class:`_DummySerialInterface`.  This makes it possible to run
+    the container in CI environments that do not expose serial devices while
+    keeping production behaviour unchanged.
+    """
+
+    port_value = (port or "").strip()
+    if port_value.lower() in {"", "mock", "none", "null", "disabled"}:
+        if DEBUG:
+            print(f"[debug] using dummy serial interface for port={port_value!r}")
+        return _DummySerialInterface()
+    return SerialInterface(devPath=port_value)
+
+
 # --- POST queue ----------------------------------------------------------------
 _POST_QUEUE_LOCK = threading.Lock()
 _POST_QUEUE = []
@@ -422,7 +459,7 @@ def main():
     # Subscribe to PubSub topics (reliable in current meshtastic)
     pub.subscribe(on_receive, "meshtastic.receive")
 
-    iface = SerialInterface(devPath=PORT)
+    iface = _create_serial_interface(PORT)
 
     stop = threading.Event()
 

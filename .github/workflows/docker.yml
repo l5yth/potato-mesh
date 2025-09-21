@@ -130,6 +130,7 @@ jobs:
         docker run --rm --name ingestor-test \
           -e POTATOMESH_INSTANCE=http://localhost:41447 \
           -e API_TOKEN=test-token \
+          -e MESH_SERIAL=mock \
           -e DEBUG=1 \
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:${{ steps.version.outputs.version }} &
         sleep 5
