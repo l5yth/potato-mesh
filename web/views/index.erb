@@ -96,7 +96,24 @@
     .legend-close { border: none; background: transparent; cursor: pointer; padding: 2px; line-height: 1; font-size: 16px; border-radius: 4px; color: inherit; }
     .legend-close:hover { background: rgba(0, 0, 0, 0.08); }
     .legend-items { display: flex; flex-direction: column; gap: 4px; }
-    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font: inherit;
+      color: inherit;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 4px 6px;
+      cursor: pointer;
+      width: 100%;
+      justify-content: flex-start;
+      text-align: left;
+    }
+    .legend-item:hover { background: rgba(0, 0, 0, 0.05); }
+    .legend-item:focus-visible { outline: 2px solid #4a90e2; outline-offset: 2px; }
+    .legend-item[aria-pressed="true"] { border-color: rgba(0, 0, 0, 0.2); background: rgba(0, 0, 0, 0.08); }
     .legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
     .legend-hidden { display: none !important; }
     .legend-toggle { margin-top: 8px; }
@@ -196,6 +213,8 @@
     body.dark .legend-close:hover { background: rgba(255, 255, 255, 0.1); }
     body.dark .legend-toggle-button { background: #333; border-color: #444; color: #eee; }
     body.dark .legend-toggle-button:hover { background: #444; }
+    body.dark .legend-item:hover { background: rgba(255, 255, 255, 0.1); }
+    body.dark .legend-item[aria-pressed="true"] { border-color: rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.16); }
     body.dark .leaflet-popup-content-wrapper,
     body.dark .leaflet-popup-tip {
       background: #333;
@@ -517,6 +536,28 @@
       ROUTER: '#E88B94'
     });
 
+    const activeRoleFilters = new Set();
+    const legendRoleButtons = new Map();
+
+    function normalizeRole(role) {
+      if (role == null) return 'CLIENT';
+      const str = String(role).trim();
+      return str.length ? str : 'CLIENT';
+    }
+
+    function getRoleKey(role) {
+      const normalized = normalizeRole(role);
+      if (roleColors[normalized]) return normalized;
+      const upper = normalized.toUpperCase();
+      if (roleColors[upper]) return upper;
+      return normalized;
+    }
+
+    function getRoleColor(role) {
+      const key = getRoleKey(role);
+      return roleColors[key] || roleColors.CLIENT || '#3388ff';
+    }
+
     // --- Map setup ---
     const map = L.map('map', { worldCopyJump: true });
     const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
@@ -641,17 +682,58 @@
     let legendToggleButton = null;
     let legendVisible = true;
 
+    function updateLegendToggleState() {
+      if (!legendToggleButton) return;
+      const hasFilters = activeRoleFilters.size > 0;
+      legendToggleButton.setAttribute('aria-pressed', legendVisible ? 'true' : 'false');
+      const baseLabel = legendVisible ? 'Hide map legend' : 'Show map legend';
+      const baseText = legendVisible ? 'Hide legend' : 'Show legend';
+      const labelSuffix = hasFilters ? ' (role filters active)' : '';
+      const textSuffix = hasFilters ? ' (filters)' : '';
+      legendToggleButton.setAttribute('aria-label', baseLabel + labelSuffix);
+      legendToggleButton.textContent = baseText + textSuffix;
+      if (hasFilters) {
+        legendToggleButton.setAttribute('data-has-active-filters', 'true');
+      } else {
+        legendToggleButton.removeAttribute('data-has-active-filters');
+      }
+    }
+
     function setLegendVisibility(visible) {
       legendVisible = visible;
       if (legendContainer) {
         legendContainer.classList.toggle('legend-hidden', !visible);
         legendContainer.setAttribute('aria-hidden', visible ? 'false' : 'true');
       }
-      if (legendToggleButton) {
-        legendToggleButton.setAttribute('aria-pressed', visible ? 'true' : 'false');
-        legendToggleButton.setAttribute('aria-label', visible ? 'Hide map legend' : 'Show map legend');
-        legendToggleButton.textContent = visible ? 'Hide legend' : 'Show legend';
+      updateLegendToggleState();
+    }
+
+    function updateLegendRoleFiltersUI() {
+      const hasFilters = activeRoleFilters.size > 0;
+      legendRoleButtons.forEach((button, role) => {
+        if (!button) return;
+        const isActive = activeRoleFilters.has(role);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      if (legendContainer) {
+        if (hasFilters) {
+          legendContainer.setAttribute('data-has-active-filters', 'true');
+        } else {
+          legendContainer.removeAttribute('data-has-active-filters');
+        }
       }
+      updateLegendToggleState();
+    }
+
+    function toggleRoleFilter(role) {
+      if (!role) return;
+      if (activeRoleFilters.has(role)) {
+        activeRoleFilters.delete(role);
+      } else {
+        activeRoleFilters.add(role);
+      }
+      updateLegendRoleFiltersUI();
+      applyFilter();
     }
 
     const legend = L.control({ position: 'bottomright' });
@@ -679,14 +761,33 @@
       });
 
       const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
+      legendRoleButtons.clear();
       for (const [role, color] of Object.entries(roleColors)) {
-        const item = L.DomUtil.create('div', 'legend-item', itemsContainer);
+        const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
+        item.type = 'button';
+        item.setAttribute('aria-pressed', 'false');
+        item.dataset.role = role;
         const swatch = L.DomUtil.create('span', 'legend-swatch', item);
         swatch.style.background = color;
         swatch.setAttribute('aria-hidden', 'true');
         const label = L.DomUtil.create('span', 'legend-label', item);
         label.textContent = role;
+        item.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          const exclusive = event.metaKey || event.ctrlKey;
+          if (exclusive) {
+            activeRoleFilters.clear();
+            activeRoleFilters.add(role);
+            updateLegendRoleFiltersUI();
+            applyFilter();
+          } else {
+            toggleRoleFilter(role);
+          }
+        });
+        legendRoleButtons.set(role, item);
       }
+      updateLegendRoleFiltersUI();
 
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
@@ -711,6 +812,7 @@
         setLegendVisibility(!legendVisible);
       });
       legendToggleButton = button;
+      updateLegendToggleState();
       L.DomEvent.disableClickPropagation(container);
       L.DomEvent.disableScrollPropagation(container);
       return container;
@@ -828,14 +930,14 @@
     function renderShortHtml(short, role, longName, nodeData = null){
       const safeTitle = longName ? escapeHtml(String(longName)) : '';
       const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
-      const resolvedRole = role || (nodeData && nodeData.role) || 'CLIENT';
+      const roleValue = normalizeRole(role != null && role !== '' ? role : (nodeData && nodeData.role));
       let infoAttr = '';
       if (nodeData && typeof nodeData === 'object') {
         const info = {
           nodeId: nodeData.node_id ?? nodeData.nodeId ?? '',
           shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
           longName: nodeData.long_name ?? longName ?? '',
-          role: resolvedRole,
+          role: roleValue,
           hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
           battery: nodeData.battery_level ?? nodeData.battery ?? null,
           voltage: nodeData.voltage ?? null,
@@ -849,7 +951,7 @@
         return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
       }
       const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
-      const color = roleColors[resolvedRole] || roleColors.CLIENT;
+      const color = getRoleColor(roleValue);
       return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
     }
 
@@ -1087,7 +1189,7 @@
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
         if (n.distance_km != null && n.distance_km > MAX_NODE_DISTANCE_KM) continue;
 
-        const color = roleColors[n.role] || '#3388ff';
+        const color = getRoleColor(n.role);
         const marker = L.circleMarker([lat, lon], {
           radius: 9,
           color: '#000',
@@ -1116,14 +1218,23 @@
       }
     }
 
+    function matchesTextFilter(node, query) {
+      if (!query) return true;
+      return [node?.node_id, node?.short_name, node?.long_name]
+        .filter(value => value != null && value !== '')
+        .some(value => String(value).toLowerCase().includes(query));
+    }
+
+    function matchesRoleFilter(node) {
+      if (!activeRoleFilters.size) return true;
+      const roleKey = getRoleKey(node && node.role);
+      return activeRoleFilters.has(roleKey);
+    }
+
     function applyFilter() {
       const rawQuery = filterInput ? filterInput.value : '';
       const q = rawQuery.trim().toLowerCase();
-      const filteredNodes = !q ? allNodes.slice() : allNodes.filter(n => {
-        return [n.node_id, n.short_name, n.long_name]
-          .filter(value => value != null && value !== '')
-          .some(value => String(value).toLowerCase().includes(q));
-      });
+      const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n));
       const sortedNodes = sortNodes(filteredNodes);
       const nowSec = Date.now()/1000;
       renderTable(sortedNodes, nowSec);
