@@ -25,6 +25,7 @@ require "fileutils"
 require "logger"
 require "rack/utils"
 require "open3"
+require "time"
 
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
