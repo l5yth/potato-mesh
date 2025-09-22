@@ -30,7 +30,11 @@ import json, os, time, threading, signal, urllib.request, urllib.error, urllib.p
 from collections.abc import Mapping
 
 from meshtastic.serial_interface import SerialInterface
-from meshtastic.tcp_interface import TCPInterface
+
+try:  # pragma: no cover - optional dependency available in newer Meshtastic
+    from meshtastic.tcp_interface import TCPInterface
+except ImportError:  # pragma: no cover - optional dependency
+    TCPInterface = None  # type: ignore[assignment]
 from pubsub import pub
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
@@ -121,6 +125,11 @@ def _create_serial_interface(port: str):
             print(
                 "[debug] using TCP interface for host="
                 f"{host!r} port={tcp_port!r}"
+            )
+        if TCPInterface is None:
+            raise ImportError(
+                "Meshtastic TCP support requires a Meshtastic installation "
+                "that provides 'meshtastic.tcp_interface'."
             )
         return TCPInterface(hostname=host, portNumber=tcp_port)
     return SerialInterface(devPath=port_value)
