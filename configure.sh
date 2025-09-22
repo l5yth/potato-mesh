@@ -130,6 +130,14 @@ if ! grep -q "^MESH_SERIAL=" .env; then
     echo "MESH_SERIAL=/dev/ttyACM0" >> .env
 fi
 
+if ! grep -q "^MESH_TCP_ADDRESS=" .env; then
+    echo "MESH_TCP_ADDRESS=" >> .env
+fi
+
+if ! grep -q "^MESH_TCP_PORT=" .env; then
+    echo "MESH_TCP_PORT=" >> .env
+fi
+
 if ! grep -q "^DEBUG=" .env; then
     echo "DEBUG=0" >> .env
 fi

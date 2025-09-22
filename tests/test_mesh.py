@@ -50,9 +50,7 @@ def mesh_module(monkeypatch):
     monkeypatch.setitem(
         sys.modules, "meshtastic.serial_interface", serial_interface_mod
     )
-    monkeypatch.setitem(
-        sys.modules, "meshtastic.tcp_interface", tcp_interface_mod
-    )
+    monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
 
     # Stub pubsub.pub
     pubsub_mod = types.ModuleType("pubsub")
@@ -566,4 +564,14 @@ def test_create_interface_raises_for_invalid_port_override(mesh_module):
     mesh.TCP_PORT_RAW = "invalid"
 
     with pytest.raises(ValueError):
+        mesh._create_interface()
+
+
+def test_create_interface_requires_tcp_module(mesh_module):
+    mesh = mesh_module
+    mesh.TCP_ADDRESS = "192.0.2.6"
+    mesh.TCP_PORT_RAW = ""
+    mesh.TCPInterface = None
+
+    with pytest.raises(RuntimeError):
         mesh._create_interface()

@@ -36,6 +36,8 @@ services:
     container_name: potatomesh-ingestor
     environment:
       - MESH_SERIAL=${MESH_SERIAL:-/dev/ttyACM0}
+      - MESH_TCP_ADDRESS=${MESH_TCP_ADDRESS:-}
+      - MESH_TCP_PORT=${MESH_TCP_PORT:-}
       - MESH_SNAPSHOT_SECS=${MESH_SNAPSHOT_SECS:-60}
       - MESH_CHANNEL_INDEX=${MESH_CHANNEL_INDEX:-0}
       - POTATOMESH_INSTANCE=${POTATOMESH_INSTANCE:-http://web:41447}

@@ -25,11 +25,20 @@ entry point that performs these synchronisation tasks.
 import dataclasses
 import heapq
 import itertools
-import json, os, time, threading, signal, urllib.request, urllib.error
+import json
+import os
+import signal
+import threading
+import time
+import urllib.request
 from collections.abc import Mapping
 
 from meshtastic.serial_interface import SerialInterface
-from meshtastic.tcp_interface import TCPInterface
+
+try:  # pragma: no cover - depends on meshtastic version at runtime
+    from meshtastic.tcp_interface import TCPInterface
+except ImportError:  # pragma: no cover - optional dependency guard
+    TCPInterface = None  # type: ignore[assignment]
 from pubsub import pub
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
@@ -435,16 +444,12 @@ def _parse_tcp_address(address: str, port_raw: str) -> tuple[str, int]:
         try:
             override_port = int(port_raw)
         except ValueError as exc:  # pragma: no cover - defensive guard
-            raise ValueError(
-                f"Invalid MESH_TCP_PORT value: {port_raw!r}"
-            ) from exc
+            raise ValueError(f"Invalid MESH_TCP_PORT value: {port_raw!r}") from exc
 
     if addr.startswith("["):
         end = addr.find("]")
         if end == -1:
-            raise ValueError(
-                f"Invalid MESH_TCP_ADDRESS value: {address!r}"
-            )
+            raise ValueError(f"Invalid MESH_TCP_ADDRESS value: {address!r}")
         host = addr[1:end]
         remainder = addr[end + 1 :]
         if remainder.startswith(":") and remainder[1:]:
@@ -459,9 +464,7 @@ def _parse_tcp_address(address: str, port_raw: str) -> tuple[str, int]:
         if colon_count == 1:
             host_part, _, port_part = addr.partition(":")
             if not host_part or not port_part:
-                raise ValueError(
-                    f"Invalid MESH_TCP_ADDRESS value: {address!r}"
-                )
+                raise ValueError(f"Invalid MESH_TCP_ADDRESS value: {address!r}")
             try:
                 port = int(port_part)
             except ValueError as exc:
@@ -485,6 +488,11 @@ def _create_interface():
     """Create a Meshtastic interface from serial or TCP configuration."""
 
     if TCP_ADDRESS:
+        if TCPInterface is None:
+            raise RuntimeError(
+                "MESH_TCP_ADDRESS is set but meshtastic.tcp_interface is unavailable; "
+                "upgrade the meshtastic package to enable TCP connections."
+            )
         host, port = _parse_tcp_address(TCP_ADDRESS, TCP_PORT_RAW)
         iface = TCPInterface(hostname=host, port=port)
         host_for_log = host
