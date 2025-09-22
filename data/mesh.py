@@ -24,11 +24,13 @@ entry point that performs these synchronisation tasks.
 
 import dataclasses
 import heapq
+import ipaddress
 import itertools
-import json, os, time, threading, signal, urllib.request, urllib.error
+import json, os, time, threading, signal, urllib.request, urllib.error, urllib.parse
 from collections.abc import Mapping
 
 from meshtastic.serial_interface import SerialInterface
+from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
@@ -43,6 +45,9 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
 # --- Serial interface helpers --------------------------------------------------
+
+
+_DEFAULT_TCP_PORT = 4403
 
 
 class _DummySerialInterface:
@@ -62,6 +67,39 @@ class _DummySerialInterface:
         pass
 
 
+def _parse_network_target(value: str) -> tuple[str, int] | None:
+    """Return ``(host, port)`` when ``value`` is an IP address string.
+
+    The ingestor accepts values such as ``192.168.1.10`` or
+    ``tcp://192.168.1.10:4500`` for ``MESH_SERIAL`` to support Meshtastic
+    devices shared via TCP.  Serial device paths (``/dev/ttyACM0``) are ignored
+    by returning ``None``.
+    """
+
+    if not value:
+        return None
+
+    parsed_values = []
+    if "://" in value:
+        parsed_values.append(urllib.parse.urlparse(value, scheme="tcp"))
+    parsed_values.append(urllib.parse.urlparse(f"//{value}", scheme="tcp"))
+
+    for parsed in parsed_values:
+        host = parsed.hostname
+        if not host:
+            continue
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        return host, port or _DEFAULT_TCP_PORT
+    return None
+
+
 def _create_serial_interface(port: str):
     """Return an appropriate serial interface for ``port``.
 
@@ -76,6 +114,15 @@ def _create_serial_interface(port: str):
         if DEBUG:
             print(f"[debug] using dummy serial interface for port={port_value!r}")
         return _DummySerialInterface()
+    network_target = _parse_network_target(port_value)
+    if network_target:
+        host, tcp_port = network_target
+        if DEBUG:
+            print(
+                "[debug] using TCP interface for host="
+                f"{host!r} port={tcp_port!r}"
+            )
+        return TCPInterface(hostname=host, portNumber=tcp_port)
     return SerialInterface(devPath=port_value)
 
 

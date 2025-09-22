@@ -98,8 +98,9 @@ accepts data through the API POST endpoints. Benefit is, here multiple nodes acr
 community can feed the dashboard with data. The web app handles messages and nodes
 by ID and there will be no duplication.
 
-For convenience, the directory `./data` contains a Python ingestor. It connects to a local
-Meshtastic node via serial port to gather nodes and messages seen by the node.
+For convenience, the directory `./data` contains a Python ingestor. It connects to a
+Meshtastic node via serial port or to a remote device that exposes the Meshtastic TCP
+interface to gather nodes and messages seen by the node.
 
 ```bash
 pacman -S python
@@ -126,7 +127,8 @@ Mesh daemon: nodes+messages → http://127.0.0.1 | port=41447 | channel=0
 
 Run the script with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating
 node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
-specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`), etc.
+specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`) or set it to an IP
+address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
 
 ## License
 

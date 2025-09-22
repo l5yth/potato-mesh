@@ -27,13 +27,26 @@ def mesh_module(monkeypatch):
 
     serial_interface_mod.SerialInterface = DummySerialInterface
 
+    tcp_interface_mod = types.ModuleType("meshtastic.tcp_interface")
+
+    class DummyTCPInterface:
+        def __init__(self, *_, **__):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    tcp_interface_mod.TCPInterface = DummyTCPInterface
+
     meshtastic_mod = types.ModuleType("meshtastic")
     meshtastic_mod.serial_interface = serial_interface_mod
+    meshtastic_mod.tcp_interface = tcp_interface_mod
 
     monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
     monkeypatch.setitem(
         sys.modules, "meshtastic.serial_interface", serial_interface_mod
     )
+    monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
 
     # Stub pubsub.pub
     pubsub_mod = types.ModuleType("pubsub")
@@ -127,6 +140,40 @@ def test_create_serial_interface_uses_serial_module(mesh_module, monkeypatch):
 
     assert created["devPath"] == "/dev/ttyTEST"
     assert iface.nodes == {"!foo": sentinel}
+
+
+def test_create_serial_interface_uses_tcp_for_ip(mesh_module, monkeypatch):
+    mesh = mesh_module
+    created = {}
+
+    def fake_tcp_interface(*, hostname, portNumber, **_):
+        created["hostname"] = hostname
+        created["portNumber"] = portNumber
+        return SimpleNamespace(nodes={}, close=lambda: None)
+
+    monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
+
+    iface = mesh._create_serial_interface("192.168.1.25:4500")
+
+    assert created == {"hostname": "192.168.1.25", "portNumber": 4500}
+    assert iface.nodes == {}
+
+
+def test_create_serial_interface_defaults_tcp_port(mesh_module, monkeypatch):
+    mesh = mesh_module
+    created = {}
+
+    def fake_tcp_interface(*, hostname, portNumber, **_):
+        created["hostname"] = hostname
+        created["portNumber"] = portNumber
+        return SimpleNamespace(nodes={}, close=lambda: None)
+
+    monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
+
+    mesh._create_serial_interface("tcp://10.20.30.40")
+
+    assert created["hostname"] == "10.20.30.40"
+    assert created["portNumber"] == mesh._DEFAULT_TCP_PORT
 
 
 def test_node_to_dict_handles_nested_structures(mesh_module):
