@@ -69,3 +69,7 @@ volumes:
   potatomesh_logs:
     driver: local
 
+networks:
+  potatomesh-network:
+    driver: bridge
+
