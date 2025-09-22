@@ -1,6 +1,10 @@
 # Main application builder stage
 FROM ruby:3.3-alpine AS builder
 
+# Ensure native extensions are built against musl libc rather than
+# using glibc precompiled binaries (which fail on Alpine).
+ENV BUNDLE_FORCE_RUBY_PLATFORM=true
+
 # Install build dependencies and SQLite3
 RUN apk add --no-cache \
     build-base \
@@ -15,8 +19,8 @@ WORKDIR /app
 COPY web/Gemfile web/Gemfile.lock* ./
 
 # Install gems with SQLite3 support
-RUN bundle config set --local without 'development test' && \
-    bundle config set --local force_ruby_platform true && \
+RUN bundle config set --local force_ruby_platform true && \
+    bundle config set --local without 'development test' && \
     bundle install --jobs=4 --retry=3
 
 # Production stage
