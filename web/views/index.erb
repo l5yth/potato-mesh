@@ -396,6 +396,7 @@
     let lastChatDate;
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
+    const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
@@ -1050,13 +1051,24 @@
       for (const m of messages || []) {
         entries.push({ type: 'msg', ts: m.rx_time ?? 0, item: m });
       }
-      entries.sort((a, b) => {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const cutoff = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
+      const recentEntries = entries.filter(entry => {
+        if (entry == null) return false;
+        const rawTs = entry.ts;
+        if (rawTs == null) return false;
+        const ts = typeof rawTs === 'number' ? rawTs : Number(rawTs);
+        if (!Number.isFinite(ts)) return false;
+        entry.ts = ts;
+        return ts >= cutoff;
+      });
+      recentEntries.sort((a, b) => {
         if (a.ts !== b.ts) return a.ts - b.ts;
         return a.type === 'node' && b.type === 'msg' ? -1 : a.type === 'msg' && b.type === 'node' ? 1 : 0;
       });
       const frag = document.createDocumentFragment();
       lastChatDate = null;
-      for (const entry of entries) {
+      for (const entry of recentEntries) {
         const divider = maybeCreateDateDivider(entry.ts);
         if (divider) frag.appendChild(divider);
         if (entry.type === 'node') {
