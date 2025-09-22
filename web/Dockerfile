@@ -16,6 +16,7 @@ COPY web/Gemfile web/Gemfile.lock* ./
 
 # Install gems with SQLite3 support
 RUN bundle config set --local without 'development test' && \
+    bundle config set --local force_ruby_platform true && \
     bundle install --jobs=4 --retry=3
 
 # Production stage
