@@ -26,6 +26,16 @@ docker-compose up -d     # Start services
 docker-compose logs -f   # View logs
 ```
 
+PotatoMesh uses host networking by default so it can run on restricted
+systems where Docker cannot create bridged interfaces.  The web UI listens on
+`http://127.0.0.1:41447` immediately without explicit port mappings.  If you
+are using Docker Desktop (macOS/Windows) or otherwise require bridged
+networking, enable the Compose profile with:
+
+```bash
+COMPOSE_PROFILES=bridge docker-compose up -d
+```
+
 ## Web App
 
 Requires Ruby for the Sinatra web app and SQLite3 for the app's database.

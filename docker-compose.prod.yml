@@ -1,33 +1,29 @@
-version: '3.8'
-
 # Production overrides for docker-compose.yml
 services:
   web:
     build:
       target: production
     environment:
-      - DEBUG=0
+      DEBUG: 0
     restart: always
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
-        reservations:
-          memory: 256M
-          cpus: '0.25'
+
+  web-bridge:
+    build:
+      target: production
+    environment:
+      DEBUG: 0
+    restart: always
 
   ingestor:
     build:
       target: production
     environment:
-      - DEBUG=0
+      DEBUG: 0
     restart: always
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.25'
-        reservations:
-          memory: 128M
-          cpus: '0.1'
+
+  ingestor-bridge:
+    build:
+      target: production
+    environment:
+      DEBUG: 0
+    restart: always

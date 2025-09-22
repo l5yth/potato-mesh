@@ -1,67 +1,85 @@
-version: '3.8'
+x-web-base: &web-base
+  image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+  environment:
+    SITE_NAME: ${SITE_NAME:-My Meshtastic Network}
+    DEFAULT_CHANNEL: ${DEFAULT_CHANNEL:-#MediumFast}
+    DEFAULT_FREQUENCY: ${DEFAULT_FREQUENCY:-868MHz}
+    MAP_CENTER_LAT: ${MAP_CENTER_LAT:-52.502889}
+    MAP_CENTER_LON: ${MAP_CENTER_LON:-13.404194}
+    MAX_NODE_DISTANCE_KM: ${MAX_NODE_DISTANCE_KM:-50}
+    MATRIX_ROOM: ${MATRIX_ROOM:-}
+    API_TOKEN: ${API_TOKEN}
+    DEBUG: ${DEBUG:-0}
+  volumes:
+    - potatomesh_data:/app/data
+    - potatomesh_logs:/app/logs
+  restart: unless-stopped
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+        cpus: '0.5'
+      reservations:
+        memory: 256M
+        cpus: '0.25'
+
+x-ingestor-base: &ingestor-base
+  image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+  environment:
+    MESH_SERIAL: ${MESH_SERIAL:-/dev/ttyACM0}
+    MESH_SNAPSHOT_SECS: ${MESH_SNAPSHOT_SECS:-60}
+    MESH_CHANNEL_INDEX: ${MESH_CHANNEL_INDEX:-0}
+    POTATOMESH_INSTANCE: ${POTATOMESH_INSTANCE:-http://web:41447}
+    API_TOKEN: ${API_TOKEN}
+    DEBUG: ${DEBUG:-0}
+  volumes:
+    - potatomesh_data:/app/data
+    - potatomesh_logs:/app/logs
+  devices:
+    - ${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}
+  privileged: false
+  restart: unless-stopped
+  deploy:
+    resources:
+      limits:
+        memory: 256M
+        cpus: '0.25'
+      reservations:
+        memory: 128M
+        cpus: '0.1'
 
 services:
   web:
-    image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
-    container_name: potatomesh-web
-    ports:
-      - "41447:41447"
-    environment:
-      - SITE_NAME=${SITE_NAME:-My Meshtastic Network}
-      - DEFAULT_CHANNEL=${DEFAULT_CHANNEL:-#MediumFast}
-      - DEFAULT_FREQUENCY=${DEFAULT_FREQUENCY:-868MHz}
-      - MAP_CENTER_LAT=${MAP_CENTER_LAT:-52.502889}
-      - MAP_CENTER_LON=${MAP_CENTER_LON:-13.404194}
-      - MAX_NODE_DISTANCE_KM=${MAX_NODE_DISTANCE_KM:-50}
-      - MATRIX_ROOM=${MATRIX_ROOM:-}
-      - API_TOKEN=${API_TOKEN}
-      - DEBUG=${DEBUG:-0}
-    volumes:
-      - potatomesh_data:/app/data
-      - potatomesh_logs:/app/logs
-    networks:
-      - potatomesh-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: '0.5'
-        reservations:
-          memory: 256M
-          cpus: '0.25'
+    <<: *web-base
+    network_mode: host
 
   ingestor:
-    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
-    container_name: potatomesh-ingestor
-    environment:
-      - MESH_SERIAL=${MESH_SERIAL:-/dev/ttyACM0}
-      - MESH_SNAPSHOT_SECS=${MESH_SNAPSHOT_SECS:-60}
-      - MESH_CHANNEL_INDEX=${MESH_CHANNEL_INDEX:-0}
-      - POTATOMESH_INSTANCE=${POTATOMESH_INSTANCE:-http://web:41447}
-      - API_TOKEN=${API_TOKEN}
-      - DEBUG=${DEBUG:-0}
-    volumes:
-      - potatomesh_data:/app/data
-      - potatomesh_logs:/app/logs
-    devices:
-      # Map Meshtastic serial device from host to container
-      # Common paths: /dev/ttyACM0, /dev/ttyUSB0, /dev/cu.usbserial-*
-      - ${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}
-    privileged: false
+    <<: *ingestor-base
+    network_mode: host
+    depends_on:
+      - web
+    extra_hosts:
+      - "web:127.0.0.1"
+
+  web-bridge:
+    <<: *web-base
+    container_name: potatomesh-web-bridge
+    networks:
+      - potatomesh-network
+    ports:
+      - "41447:41447"
+    profiles:
+      - bridge
+
+  ingestor-bridge:
+    <<: *ingestor-base
+    container_name: potatomesh-ingestor-bridge
     networks:
       - potatomesh-network
     depends_on:
-      - web
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '0.25'
-        reservations:
-          memory: 128M
-          cpus: '0.1'
+      - web-bridge
+    profiles:
+      - bridge
 
 volumes:
   potatomesh_data:
@@ -72,4 +90,3 @@ volumes:
 networks:
   potatomesh-network:
     driver: bridge
-

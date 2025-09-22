@@ -8,6 +8,16 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+The default configuration attaches both services to the host network.  This
+avoids creating Docker bridge interfaces on platforms where that operation is
+blocked.  Access the dashboard at `http://127.0.0.1:41447` as soon as the
+containers are running.  On Docker Desktop (macOS/Windows) or when you prefer
+traditional bridged networking, start Compose with the `bridge` profile:
+
+```bash
+COMPOSE_PROFILES=bridge docker-compose up -d
+```
+
 Access at `http://localhost:41447`
 
 ## Configuration
