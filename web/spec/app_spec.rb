@@ -127,7 +127,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   def import_messages_fixture
     messages_fixture.each do |message|
-      payload = message.reject { |key, _| key == "node" }
+      payload = message.reject { |key, _| %w[node from_node_id from_node_num to_node_id to_node_num].include?(key) }
       post "/api/messages", payload.to_json, auth_headers
       expect(last_response).to be_ok
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
@@ -678,7 +678,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
-        rows = db.execute("SELECT id, from_id, rx_time, rx_iso, text FROM messages ORDER BY id")
+        rows = db.execute(
+          "SELECT id, from_id, from_node_id, from_node_num, to_id, to_node_id, to_node_num, rx_time, rx_iso, text, encrypted FROM messages ORDER BY id",
+        )
 
         expect(rows.size).to eq(2)
 
@@ -686,16 +688,122 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(first["id"]).to eq(101)
         expect(first["from_id"]).to eq(node_id)
+        expect(first["from_node_id"]).to eq(node_id)
+        expect(first["from_node_num"]).to eq(123)
         expect(first["rx_time"]).to eq(reference_time.to_i)
         expect(first["rx_iso"]).to eq(reference_time.utc.iso8601)
         expect(first["text"]).to eq("normalized")
+        expect(first["to_node_id"]).to be_nil
+        expect(first["to_node_num"]).to be_nil
+        expect(first["encrypted"]).to be_nil
 
         expect(second["id"]).to eq(102)
         expect(second["from_id"]).to be_nil
+        expect(second["from_node_id"]).to be_nil
+        expect(second["from_node_num"]).to be_nil
         expect(second["rx_time"]).to eq(reference_time.to_i)
         expect(second["rx_iso"]).to eq(reference_time.utc.iso8601)
         expect(second["text"]).to eq("blank")
+        expect(second["to_node_id"]).to be_nil
+        expect(second["to_node_num"]).to be_nil
+        expect(second["encrypted"]).to be_nil
       end
+    end
+
+    it "stores encrypted messages and resolves node references" do
+      sender_id = "!feedc0de"
+      sender_num = 0xfeedc0de
+      receiver_id = "!c0ffee99"
+      receiver_num = 0xc0ffee99
+
+      sender_node = {
+        "node_id" => sender_id,
+        "short_name" => "EncS",
+        "long_name" => "Encrypted Sender",
+        "hw_model" => "TEST",
+        "role" => "CLIENT",
+        "snr" => 5.5,
+        "battery_level" => 80.0,
+        "voltage" => 3.9,
+        "last_heard" => reference_time.to_i - 30,
+        "position_time" => reference_time.to_i - 60,
+        "latitude" => 52.1,
+        "longitude" => 13.1,
+        "altitude" => 42.0,
+      }
+      sender_payload = build_node_payload(sender_node)
+      sender_payload["num"] = sender_num
+
+      receiver_node = {
+        "node_id" => receiver_id,
+        "short_name" => "EncR",
+        "long_name" => "Encrypted Receiver",
+        "hw_model" => "TEST",
+        "role" => "CLIENT",
+        "snr" => 4.25,
+        "battery_level" => 75.0,
+        "voltage" => 3.8,
+        "last_heard" => reference_time.to_i - 40,
+        "position_time" => reference_time.to_i - 70,
+        "latitude" => 52.2,
+        "longitude" => 13.2,
+        "altitude" => 35.0,
+      }
+      receiver_payload = build_node_payload(receiver_node)
+      receiver_payload["num"] = receiver_num
+
+      post "/api/nodes", { sender_id => sender_payload }.to_json, auth_headers
+      expect(last_response).to be_ok
+      post "/api/nodes", { receiver_id => receiver_payload }.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      encrypted_b64 = Base64.strict_encode64("secret message")
+      payload = {
+        "packet_id" => 777_001,
+        "rx_time" => reference_time.to_i,
+        "rx_iso" => reference_time.utc.iso8601,
+        "from_id" => sender_num.to_s,
+        "to_id" => receiver_id,
+        "channel" => 8,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "encrypted" => encrypted_b64,
+        "snr" => -12.5,
+        "rssi" => -109,
+        "hop_limit" => 3,
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT from_id, from_node_id, from_node_num, to_id, to_node_id, to_node_num, text, encrypted FROM messages WHERE id = ?",
+          [777_001],
+        )
+
+        expect(row["from_id"]).to eq(sender_id)
+        expect(row["from_node_id"]).to eq(sender_id)
+        expect(row["from_node_num"]).to eq(sender_num)
+        expect(row["to_id"]).to eq(receiver_id)
+        expect(row["to_node_id"]).to eq(receiver_id)
+        expect(row["to_node_num"]).to eq(receiver_num)
+        expect(row["text"]).to be_nil
+        expect(row["encrypted"]).to eq(encrypted_b64)
+      end
+
+      get "/api/messages"
+      expect(last_response).to be_ok
+
+      messages = JSON.parse(last_response.body)
+      encrypted_entry = messages.find { |message| message["id"] == 777_001 }
+      expect(encrypted_entry).not_to be_nil
+      expect(encrypted_entry["encrypted"]).to eq(encrypted_b64)
+      expect(encrypted_entry["text"]).to be_nil
+      expect(encrypted_entry["from_node_id"]).to eq(sender_id)
+      expect(encrypted_entry["to_node_id"]).to eq(receiver_id)
     end
 
     it "stores messages containing SQL control characters without executing them" do
@@ -902,10 +1010,21 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(actual_row["rx_time"]).to eq(expected["rx_time"])
         expect(actual_row["rx_iso"]).to eq(expected["rx_iso"])
         expect(actual_row["from_id"]).to eq(expected["from_id"])
+        expected_from_node_id = expected["from_node_id"] || message.dig("node", "node_id")
+        expect(actual_row["from_node_id"]).to eq(expected_from_node_id)
+        expected_from_node_num = expected["from_node_num"] || message.dig("node", "num")
+        expect(actual_row["from_node_num"]).to eq(expected_from_node_num)
         expect(actual_row["to_id"]).to eq(expected["to_id"])
+        expected_to_node_id = expected.key?("to_node_id") ? expected["to_node_id"] : nil
+        if expected_to_node_id.nil? && expected["to_id"].is_a?(String) && expected["to_id"].start_with?("!")
+          expected_to_node_id = expected["to_id"]
+        end
+        expect(actual_row["to_node_id"]).to eq(expected_to_node_id)
+        expect(actual_row["to_node_num"]).to eq(expected["to_node_num"])
         expect(actual_row["channel"]).to eq(expected["channel"])
         expect(actual_row["portnum"]).to eq(expected["portnum"])
         expect(actual_row["text"]).to eq(expected["text"])
+        expect(actual_row["encrypted"]).to eq(expected["encrypted"])
         expect_same_value(actual_row["snr"], expected["snr"])
         expect(actual_row["rssi"]).to eq(expected["rssi"])
         expect(actual_row["hop_limit"]).to eq(expected["hop_limit"])

@@ -1001,8 +1001,11 @@ def store_packet_dict(p: dict):
         return
 
     text = _first(dec, "payload.text", "text", default=None)
-    if not text:
-        return  # ignore non-text packets
+    encrypted = _first(dec, "payload.encrypted", "encrypted", default=None)
+    if encrypted is None:
+        encrypted = _first(p, "encrypted", default=None)
+    if not text and not encrypted:
+        return  # ignore packets that lack text and encrypted payloads
 
     # port filter: only keep packets from the TEXT_MESSAGE_APP port
     if portnum and portnum not in {"1", "TEXT_MESSAGE_APP"}:
@@ -1046,6 +1049,7 @@ def store_packet_dict(p: dict):
         "channel": ch,
         "portnum": str(portnum) if portnum is not None else None,
         "text": text,
+        "encrypted": encrypted,
         "snr": float(snr) if snr is not None else None,
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
