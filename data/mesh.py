@@ -88,10 +88,19 @@ _POST_QUEUE = []
 _POST_QUEUE_COUNTER = itertools.count()
 _POST_QUEUE_ACTIVE = False
 
-_NODE_POST_PRIORITY = 0
-_POSITION_POST_PRIORITY = 5
-_MESSAGE_POST_PRIORITY = 10
+_MESSAGE_POST_PRIORITY = 0
+_POSITION_POST_PRIORITY = 10
+_NODE_POST_PRIORITY = 20
 _DEFAULT_POST_PRIORITY = 50
+
+_RECEIVE_TOPICS = (
+    "meshtastic.receive",
+    "meshtastic.receive.text",
+    "meshtastic.receive.position",
+    "meshtastic.receive.POSITION_APP",
+    "meshtastic.receive.user",
+    "meshtastic.receive.NODEINFO_APP",
+)
 
 
 def _get(obj, key, default=None):
@@ -980,6 +989,11 @@ def on_receive(packet, interface):
         interface: Serial interface instance (unused).
     """
 
+    if isinstance(packet, dict):
+        if packet.get("_potatomesh_seen"):
+            return
+        packet["_potatomesh_seen"] = True
+
     p = None
     try:
         p = _pkt_to_dict(packet)
@@ -987,6 +1001,20 @@ def on_receive(packet, interface):
     except Exception as e:
         info = list(p.keys()) if isinstance(p, dict) else type(packet)
         print(f"[warn] failed to store packet: {e} | info: {info}")
+
+
+def _subscribe_receive_topics() -> list[str]:
+    """Subscribe ``on_receive`` to relevant PubSub topics."""
+
+    subscribed = []
+    for topic in _RECEIVE_TOPICS:
+        try:
+            pub.subscribe(on_receive, topic)
+            subscribed.append(topic)
+        except Exception as exc:  # pragma: no cover - pub may raise in prod only
+            if DEBUG:
+                print(f"[debug] failed to subscribe to {topic!r}: {exc}")
+    return subscribed
 
 
 # --- Main ---------------------------------------------------------------------
@@ -1039,7 +1067,9 @@ def main():
     """Run the mesh synchronisation daemon."""
 
     # Subscribe to PubSub topics (reliable in current meshtastic)
-    pub.subscribe(on_receive, "meshtastic.receive")
+    subscribed = _subscribe_receive_topics()
+    if DEBUG and subscribed:
+        print(f"[debug] subscribed to receive topics: {', '.join(subscribed)}")
 
     iface = _create_serial_interface(PORT)
 

@@ -685,7 +685,7 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
-def test_post_queue_prioritises_nodes(mesh_module, monkeypatch):
+def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
     mesh._clear_post_queue()
     calls = []
@@ -702,7 +702,7 @@ def test_post_queue_prioritises_nodes(mesh_module, monkeypatch):
 
     mesh._drain_post_queue()
 
-    assert [path for path, _ in calls] == ["/api/nodes", "/api/messages"]
+    assert [path for path, _ in calls] == ["/api/messages", "/api/nodes"]
 
 
 def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
