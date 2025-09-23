@@ -314,7 +314,77 @@ ensure
   db&.close
 end
 
+def migrations_directory
+  File.expand_path("../data/migrations", __dir__)
+end
+
+def migration_files
+  dir = migrations_directory
+  return [] unless Dir.exist?(dir)
+
+  Dir.children(dir).select { |name| name.match?(/\A\d+_.+\.sql\z/) }.sort
+end
+
+def ensure_schema_migrations_table(db)
+  db.execute <<~SQL
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version TEXT PRIMARY KEY
+    ) WITHOUT ROWID
+  SQL
+end
+
+def migration_applied?(db, version)
+  db.get_first_value("SELECT 1 FROM schema_migrations WHERE version = ?", [version])
+end
+
+def should_skip_migration?(db, version)
+  case version
+  when "001"
+    info = db.execute("PRAGMA table_info(messages)")
+    info.any? do |row|
+      name = row.is_a?(Hash) ? row["name"] : row[1]
+      name.to_s == "payload_b64"
+    end
+  else
+    false
+  end
+end
+
+def apply_pending_migrations
+  files = migration_files
+  return if files.empty?
+
+  db = open_database
+  ensure_schema_migrations_table(db)
+  files.each do |filename|
+    match = filename.match(/\A(\d+)_/)
+    next unless match
+
+    version = match[1]
+    next if migration_applied?(db, version)
+
+    should_skip = should_skip_migration?(db, version)
+    unless should_skip
+      path = File.join(migrations_directory, filename)
+      sql = File.read(path)
+      begin
+        with_busy_retry do
+          db.transaction do
+            db.execute_batch(sql)
+          end
+        end
+      rescue SQLite3::SQLException => e
+        raise SQLite3::SQLException, "Migration #{version} (#{filename}) failed: #{e.message}"
+      end
+    end
+    db.execute("INSERT OR IGNORE INTO schema_migrations(version) VALUES (?)", [version])
+  end
+ensure
+  db&.close
+end
+
 init_db unless db_schema_present?
+apply_pending_migrations
 
 # Retrieve recently heard nodes ordered by their last contact time.
 #

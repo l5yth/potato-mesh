@@ -94,6 +94,16 @@ The web app contains an API:
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
+### Database migrations
+
+Schema updates are versioned as SQL files in [`data/migrations`](data/migrations). The web application applies any pending migrations automatically during startup so long-lived installations stay in sync. To apply them manually against an existing database you can run:
+
+```bash
+sqlite3 data/mesh.db < data/migrations/001_add_payload_b64_to_messages.sql
+```
+
+Each file is only executed once and recorded in the `schema_migrations` table.
+
 ## Python Ingestor
 
 The web app is not meant to be run locally connected to a Meshtastic node but rather
