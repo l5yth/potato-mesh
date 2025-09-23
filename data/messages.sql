@@ -17,11 +17,7 @@ CREATE TABLE IF NOT EXISTS messages (
     rx_time   INTEGER NOT NULL,
     rx_iso    TEXT NOT NULL,
     from_id   TEXT,
-    from_node_id TEXT,
-    from_node_num INTEGER,
     to_id     TEXT,
-    to_node_id TEXT,
-    to_node_num INTEGER,
     channel   INTEGER,
     portnum   TEXT,
     text      TEXT,
@@ -34,9 +30,5 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);
 CREATE INDEX IF NOT EXISTS idx_messages_from_id   ON messages(from_id);
 CREATE INDEX IF NOT EXISTS idx_messages_to_id     ON messages(to_id);
-CREATE INDEX IF NOT EXISTS idx_messages_from_node_id ON messages(from_node_id);
-CREATE INDEX IF NOT EXISTS idx_messages_from_node_num ON messages(from_node_num);
-CREATE INDEX IF NOT EXISTS idx_messages_to_node_id ON messages(to_node_id);
-CREATE INDEX IF NOT EXISTS idx_messages_to_node_num ON messages(to_node_num);
 CREATE INDEX IF NOT EXISTS idx_messages_channel   ON messages(channel);
 CREATE INDEX IF NOT EXISTS idx_messages_portnum   ON messages(portnum);

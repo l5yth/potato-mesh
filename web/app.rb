@@ -344,24 +344,17 @@ def query_messages(limit)
                       SELECT m.*, n.*, m.snr AS msg_snr
                       FROM messages m
                       LEFT JOIN nodes n ON (
-                        (m.from_node_id IS NOT NULL AND TRIM(m.from_node_id) <> '' AND m.from_node_id = n.node_id)
-                        OR (m.from_node_num IS NOT NULL AND m.from_node_num = n.num)
-                        OR (
-                          CAST(m.from_id AS TEXT) <> '' AND (
-                            CAST(m.from_id AS TEXT) = n.node_id OR (
-                              CAST(m.from_id AS TEXT) GLOB '[0-9]*' AND
-                              CAST(m.from_id AS INTEGER) = n.num
-                            )
+                        m.from_id IS NOT NULL AND TRIM(m.from_id) <> '' AND (
+                          m.from_id = n.node_id OR (
+                            m.from_id GLOB '[0-9]*' AND CAST(m.from_id AS INTEGER) = n.num
                           )
                         )
                       )
                       ORDER BY m.rx_time DESC
                       LIMIT ?
                     SQL
-  msg_fields = %w[id rx_time rx_iso from_id from_node_id from_node_num to_id to_node_id to_node_num channel portnum text encrypted msg_snr rssi hop_limit]
+  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit]
   rows.each do |r|
-    r["from_node_num"] = coerce_integer(r["from_node_num"])
-    r["to_node_num"] = coerce_integer(r["to_node_num"])
 
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
@@ -374,19 +367,14 @@ def query_messages(limit)
       node[k] = r.delete(k)
     end
     r["snr"] = r.delete("msg_snr")
-    references = [r["from_node_id"], r["from_id"], r["from_node_num"]].compact
+    references = [r["from_id"]].compact
     if references.any? && (node["node_id"].nil? || node["node_id"].to_s.empty?)
       lookup_keys = []
-      canonical = string_or_nil(r["from_node_id"]) || normalize_node_id(db, r["from_id"])
+      canonical = normalize_node_id(db, r["from_id"])
       lookup_keys << canonical if canonical
       raw_ref = r["from_id"].to_s.strip
       lookup_keys << raw_ref unless raw_ref.empty?
-      from_num = r["from_node_num"]
-      if from_num
-        lookup_keys << from_num
-      elsif raw_ref.match?(/\A[0-9]+\z/)
-        lookup_keys << raw_ref.to_i
-      end
+      lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
       fallback = nil
       lookup_keys.uniq.each do |ref|
         sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
@@ -628,56 +616,6 @@ end
 # @return [Boolean]
 def prefer_canonical_sender?(message)
   message.is_a?(Hash) && message.key?("packet_id") && !message.key?("id")
-end
-
-# Resolve message sender/recipient references to database node identifiers.
-#
-# @param db [SQLite3::Database] open database handle.
-# @param raw_ref [Object] raw identifier provided in the payload.
-# @param provided_ids [Array<Object>] optional candidate identifiers to normalise.
-# @param provided_nums [Array<Object>] optional candidate numeric identifiers.
-# @return [Array(String, Integer)] pair containing canonical node ID and numeric reference.
-def resolve_message_node_reference(db, raw_ref, provided_ids: [], provided_nums: [])
-  canonical = nil
-  Array(provided_ids).compact.each do |candidate|
-    normalised = normalize_node_id(db, candidate)
-    next unless normalised
-
-    canonical = string_or_nil(normalised)
-    break if canonical
-  end
-
-  unless canonical
-    normalised = normalize_node_id(db, raw_ref)
-    canonical = string_or_nil(normalised)
-  end
-
-  node_num = nil
-  Array(provided_nums).compact.each do |candidate|
-    node_num = coerce_integer(candidate)
-    break if node_num
-  end
-
-  if node_num.nil?
-    node_num = coerce_integer(raw_ref)
-    if node_num.nil?
-      Array(provided_ids).compact.each do |candidate|
-        node_num = coerce_integer(candidate)
-        break if node_num
-      end
-    end
-  end
-
-  if canonical && node_num.nil?
-    lookup = db.get_first_value("SELECT num FROM nodes WHERE node_id = ?", [canonical])
-    node_num = coerce_integer(lookup)
-  end
-
-  if node_num && canonical.nil?
-    canonical = string_or_nil(normalize_node_id(db, node_num))
-  end
-
-  [canonical, node_num]
 end
 
 # Update or create a node entry using information from a position payload.
@@ -962,31 +900,17 @@ def insert_message(db, m)
 
   trimmed_from_id = string_or_nil(raw_from_id)
   canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
-  use_canonical = canonical_from_id && (trimmed_from_id.nil? || prefer_canonical_sender?(m))
-  from_id = use_canonical ? canonical_from_id : trimmed_from_id
-
-  from_node_id, from_node_num = resolve_message_node_reference(
-    db,
-    raw_from_id,
-    provided_ids: [canonical_from_id, m["from_node_id"]],
-    provided_nums: [m["from_node_num"]],
+  numeric_sender = trimmed_from_id&.match?(/\A[0-9]+\z/)
+  use_canonical = canonical_from_id && (
+    trimmed_from_id.nil? || prefer_canonical_sender?(m) || numeric_sender
   )
-  from_node_id ||= canonical_from_id
-  from_node_id = string_or_nil(from_node_id)
-  from_node_num = coerce_integer(from_node_num)
+  from_id = use_canonical ? canonical_from_id : trimmed_from_id
 
   raw_to_id = m["to_id"]
   raw_to_id = m["to"] if raw_to_id.nil? || raw_to_id.to_s.strip.empty?
-  to_id = string_or_nil(raw_to_id)
-
-  to_node_id, to_node_num = resolve_message_node_reference(
-    db,
-    raw_to_id,
-    provided_ids: [m["to_node_id"]],
-    provided_nums: [m["to_node_num"]],
-  )
-  to_node_id = string_or_nil(to_node_id)
-  to_node_num = coerce_integer(to_node_num)
+  trimmed_to_id = string_or_nil(raw_to_id)
+  canonical_to_id = string_or_nil(normalize_node_id(db, raw_to_id))
+  to_id = canonical_to_id || trimmed_to_id
 
   encrypted = string_or_nil(m["encrypted"])
 
@@ -995,11 +919,7 @@ def insert_message(db, m)
     rx_time,
     rx_iso,
     from_id,
-    from_node_id,
-    from_node_num,
     to_id,
-    to_node_id,
-    to_node_num,
     m["channel"],
     m["portnum"],
     m["text"],
@@ -1011,7 +931,7 @@ def insert_message(db, m)
 
   with_busy_retry do
     existing = db.get_first_row(
-      "SELECT from_id, from_node_id, from_node_num, to_id, to_node_id, to_node_num, encrypted FROM messages WHERE id = ?",
+      "SELECT from_id, to_id, encrypted FROM messages WHERE id = ?",
       [msg_id],
     )
     if existing
@@ -1025,46 +945,16 @@ def insert_message(db, m)
         updates["from_id"] = from_id if should_update
       end
 
-      if from_node_id
-        existing_from_node_id = existing.is_a?(Hash) ? existing["from_node_id"] : existing[1]
-        existing_from_node_id_str = existing_from_node_id&.to_s
-        should_update = existing_from_node_id_str.nil? || existing_from_node_id_str.strip.empty?
-        should_update ||= existing_from_node_id != from_node_id
-        updates["from_node_id"] = from_node_id if should_update
-      end
-
-      if from_node_num
-        existing_from_node_num = existing.is_a?(Hash) ? existing["from_node_num"] : existing[2]
-        should_update = existing_from_node_num.nil?
-        should_update ||= coerce_integer(existing_from_node_num) != from_node_num
-        updates["from_node_num"] = from_node_num if should_update
-      end
-
       if to_id
-        existing_to = existing.is_a?(Hash) ? existing["to_id"] : existing[3]
+        existing_to = existing.is_a?(Hash) ? existing["to_id"] : existing[1]
         existing_to_str = existing_to&.to_s
         should_update = existing_to_str.nil? || existing_to_str.strip.empty?
         should_update ||= existing_to != to_id
         updates["to_id"] = to_id if should_update
       end
 
-      if to_node_id
-        existing_to_node_id = existing.is_a?(Hash) ? existing["to_node_id"] : existing[4]
-        existing_to_node_id_str = existing_to_node_id&.to_s
-        should_update = existing_to_node_id_str.nil? || existing_to_node_id_str.strip.empty?
-        should_update ||= existing_to_node_id != to_node_id
-        updates["to_node_id"] = to_node_id if should_update
-      end
-
-      if to_node_num
-        existing_to_node_num = existing.is_a?(Hash) ? existing["to_node_num"] : existing[5]
-        should_update = existing_to_node_num.nil?
-        should_update ||= coerce_integer(existing_to_node_num) != to_node_num
-        updates["to_node_num"] = to_node_num if should_update
-      end
-
       if encrypted
-        existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[6]
+        existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[2]
         existing_encrypted_str = existing_encrypted&.to_s
         should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
         should_update ||= existing_encrypted != encrypted
@@ -1078,17 +968,13 @@ def insert_message(db, m)
     else
       begin
         db.execute <<~SQL, row
-                     INSERT INTO messages(id,rx_time,rx_iso,from_id,from_node_id,from_node_num,to_id,to_node_id,to_node_num,channel,portnum,text,encrypted,snr,rssi,hop_limit)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    SQL
       rescue SQLite3::ConstraintException
         fallback_updates = {}
         fallback_updates["from_id"] = from_id if from_id
-        fallback_updates["from_node_id"] = from_node_id if from_node_id
-        fallback_updates["from_node_num"] = from_node_num if from_node_num
         fallback_updates["to_id"] = to_id if to_id
-        fallback_updates["to_node_id"] = to_node_id if to_node_id
-        fallback_updates["to_node_num"] = to_node_num if to_node_num
         fallback_updates["encrypted"] = encrypted if encrypted
         unless fallback_updates.empty?
           assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
