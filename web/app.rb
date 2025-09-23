@@ -900,17 +900,29 @@ def insert_message(db, m)
 
   trimmed_from_id = string_or_nil(raw_from_id)
   canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
-  numeric_sender = trimmed_from_id&.match?(/\A[0-9]+\z/)
-  use_canonical = canonical_from_id && (
-    trimmed_from_id.nil? || prefer_canonical_sender?(m) || numeric_sender
-  )
-  from_id = use_canonical ? canonical_from_id : trimmed_from_id
+  from_id = trimmed_from_id
+  if canonical_from_id
+    if from_id.nil?
+      from_id = canonical_from_id
+    elsif prefer_canonical_sender?(m)
+      from_id = canonical_from_id
+    elsif from_id.start_with?("!") && from_id.casecmp(canonical_from_id) != 0
+      from_id = canonical_from_id
+    end
+  end
 
   raw_to_id = m["to_id"]
   raw_to_id = m["to"] if raw_to_id.nil? || raw_to_id.to_s.strip.empty?
   trimmed_to_id = string_or_nil(raw_to_id)
   canonical_to_id = string_or_nil(normalize_node_id(db, raw_to_id))
-  to_id = canonical_to_id || trimmed_to_id
+  to_id = trimmed_to_id
+  if canonical_to_id
+    if to_id.nil?
+      to_id = canonical_to_id
+    elsif to_id.start_with?("!") && to_id.casecmp(canonical_to_id) != 0
+      to_id = canonical_to_id
+    end
+  end
 
   encrypted = string_or_nil(m["encrypted"])
 
