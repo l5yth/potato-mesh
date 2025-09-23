@@ -1061,9 +1061,14 @@
       const div = document.createElement('div');
       const ts = formatTime(new Date(m.rx_time * 1000));
       const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
-      const text = escapeHtml(m.text || '');
+      let bodyHtml = '';
+      if (m.text && m.text.length > 0) {
+        bodyHtml = escapeHtml(m.text);
+      } else if (m.payload_b64) {
+        bodyHtml = '<em>[encrypted message]</em>';
+      }
       div.className = 'chat-entry-msg';
-      div.innerHTML = `[${ts}] ${short} ${text}`;
+      div.innerHTML = `[${ts}] ${short} ${bodyHtml}`;
       return div;
     }
 

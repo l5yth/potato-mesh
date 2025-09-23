@@ -353,7 +353,7 @@ def query_messages(limit)
                       ORDER BY m.rx_time DESC
                       LIMIT ?
                     SQL
-  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text msg_snr rssi hop_limit]
+  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text payload_b64 msg_snr rssi hop_limit]
   rows.each do |r|
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
@@ -879,6 +879,24 @@ def insert_position(db, payload)
   )
 end
 
+# Ensure the messages table includes a payload column for encrypted packets.
+#
+# @param db [SQLite3::Database] open database handle.
+def ensure_messages_payload_column(db)
+  info = db.execute("PRAGMA table_info(messages)")
+  has_column = info.any? do |row|
+    name = row.is_a?(Hash) ? row["name"] : row[1]
+    name.to_s == "payload_b64"
+  end
+  return if has_column
+
+  begin
+    db.execute("ALTER TABLE messages ADD COLUMN payload_b64 TEXT")
+  rescue SQLite3::SQLException => e
+    raise unless e.message.include?("duplicate column name")
+  end
+end
+
 # Insert a text message if it does not already exist.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -903,6 +921,7 @@ def insert_message(db, m)
       trimmed_from_id
     end
   from_id = nil if from_id&.empty?
+  payload_b64 = string_or_nil(m["payload_b64"] || m["encrypted"])
   row = [
     msg_id,
     rx_time,
@@ -915,9 +934,11 @@ def insert_message(db, m)
     m["snr"],
     m["rssi"],
     m["hop_limit"],
+    payload_b64,
   ]
   with_busy_retry do
-    existing = db.get_first_row("SELECT from_id FROM messages WHERE id = ?", [msg_id])
+    ensure_messages_payload_column(db)
+    existing = db.get_first_row("SELECT from_id, payload_b64 FROM messages WHERE id = ?", [msg_id])
     if existing
       if from_id
         existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
@@ -926,14 +947,39 @@ def insert_message(db, m)
         should_update ||= existing_from != from_id
         db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if should_update
       end
+      if payload_b64
+        existing_payload = existing.is_a?(Hash) ? existing["payload_b64"] : existing[1]
+        existing_payload_str = existing_payload&.to_s
+        should_update_payload = existing_payload_str.nil? || existing_payload_str.strip.empty?
+        should_update_payload ||= existing_payload_str != payload_b64
+        db.execute("UPDATE messages SET payload_b64 = ? WHERE id = ?", [payload_b64, msg_id]) if should_update_payload
+      end
     else
       begin
         db.execute <<~SQL, row
-                     INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit)
-                     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                     INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,snr,rssi,hop_limit,payload_b64)
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    SQL
       rescue SQLite3::ConstraintException
-        db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if from_id
+        fallback = db.get_first_row("SELECT from_id, payload_b64 FROM messages WHERE id = ?", [msg_id])
+        if fallback
+          if from_id
+            existing_from = fallback.is_a?(Hash) ? fallback["from_id"] : fallback[0]
+            existing_from_str = existing_from&.to_s
+            should_update = existing_from_str.nil? || existing_from_str.strip.empty?
+            should_update ||= existing_from != from_id
+            db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if should_update
+          end
+          if payload_b64
+            existing_payload = fallback.is_a?(Hash) ? fallback["payload_b64"] : fallback[1]
+            existing_payload_str = existing_payload&.to_s
+            should_update_payload = existing_payload_str.nil? || existing_payload_str.strip.empty?
+            should_update_payload ||= existing_payload_str != payload_b64
+            db.execute("UPDATE messages SET payload_b64 = ? WHERE id = ?", [payload_b64, msg_id]) if should_update_payload
+          end
+        elsif from_id
+          db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id])
+        end
       end
     end
   end

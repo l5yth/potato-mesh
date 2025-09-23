@@ -228,6 +228,52 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_posts_encrypted_message(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    encrypted_payload = "I1o6iHf/4zh6EheEGKAaLEUniUHmrahjPOImvuRHQHT8WQ=="
+    packet = {
+        "id": 1_715_659_614,
+        "rxTime": 1_758_620_500,
+        "from": 2_988_082_812,
+        "to": 4_294_967_295,
+        "channel": 8,
+        "encrypted": encrypted_payload,
+        "hopLimit": 3,
+        "rxSnr": -12.5,
+        "rxRssi": -109,
+        "toId": "^all",
+        "raw": {
+            "encrypted": encrypted_payload,
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST to be triggered for encrypted message"
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+    assert payload["id"] == 1_715_659_614
+    assert payload["rx_time"] == 1_758_620_500
+    assert payload["rx_iso"] == mesh._iso(1_758_620_500)
+    assert payload["from_id"] == 2_988_082_812
+    assert payload["to_id"] == "^all"
+    assert payload["channel"] == 8
+    assert payload["portnum"] is None
+    assert payload["text"] is None
+    assert payload["payload_b64"] == encrypted_payload
+    assert payload["hop_limit"] == 3
+    assert payload["snr"] == pytest.approx(-12.5)
+    assert payload["rssi"] == -109
+
+
 def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []

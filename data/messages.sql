@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS messages (
     text      TEXT,
     snr       REAL,
     rssi      INTEGER,
-    hop_limit INTEGER
+    hop_limit INTEGER,
+    payload_b64 TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);

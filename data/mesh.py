@@ -990,6 +990,8 @@ def store_packet_dict(p: dict):
     dec = p.get("decoded") or {}
 
     portnum_raw = _first(dec, "portnum", default=None)
+    if portnum_raw is None:
+        portnum_raw = _first(p, "portnum", default=None)
     portnum = str(portnum_raw).upper() if portnum_raw is not None else None
 
     if portnum in {"5", "NODEINFO_APP"}:
@@ -1000,9 +1002,41 @@ def store_packet_dict(p: dict):
         store_position_packet(p, dec)
         return
 
-    text = _first(dec, "payload.text", "text", default=None)
-    if not text:
-        return  # ignore non-text packets
+    text = _first(
+        p,
+        "decoded.payload.text",
+        "decoded.text",
+        "text",
+        default=None,
+    )
+    if isinstance(text, (bytes, bytearray, memoryview)):
+        raw_text = bytes(text)
+        try:
+            text = raw_text.decode("utf-8")
+        except Exception:
+            text = raw_text.decode("utf-8", "replace")
+
+    encrypted_b64 = _first(
+        p,
+        "decoded.payload.encrypted",
+        "decoded.encrypted",
+        "encrypted",
+        "raw.encrypted",
+        default=None,
+    )
+    if isinstance(encrypted_b64, (bytes, bytearray, memoryview)):
+        encrypted_b64 = base64.b64encode(bytes(encrypted_b64)).decode("ascii", "ignore")
+    elif encrypted_b64 is not None:
+        encrypted_b64 = str(encrypted_b64)
+    if isinstance(text, str) and text == "":
+        text = None
+    if encrypted_b64 is not None:
+        encrypted_b64 = encrypted_b64.strip()
+        if not encrypted_b64:
+            encrypted_b64 = None
+
+    if text is None and not encrypted_b64:
+        return  # ignore packets without any readable or encrypted payload
 
     # port filter: only keep packets from the TEXT_MESSAGE_APP port
     if portnum and portnum not in {"1", "TEXT_MESSAGE_APP"}:
@@ -1050,11 +1084,14 @@ def store_packet_dict(p: dict):
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
     }
+    if encrypted_b64:
+        msg["payload_b64"] = encrypted_b64
     _queue_post_json("/api/messages", msg, priority=_MESSAGE_POST_PRIORITY)
 
     if DEBUG:
+        preview = text if text is not None else "<encrypted>"
         print(
-            f"[debug] stored message from {from_id!r} to {to_id!r} ch={ch} text={text!r}"
+            f"[debug] stored message from {from_id!r} to {to_id!r} ch={ch} text={preview!r}"
         )
 
 
