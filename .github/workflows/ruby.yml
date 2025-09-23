@@ -29,8 +29,6 @@ jobs:
         working-directory: ./web
     - name: Set up dependencies
       run: bundle install
-    - name: Run rufo
-      run: bundle exec rufo --check .
     - name: Run tests
       run: |
         mkdir -p tmp/test-results
@@ -53,3 +51,5 @@ jobs:
         flags: ruby-${{ matrix.ruby-version }}
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    - name: Run rufo
+      run: bundle exec rufo --check .
