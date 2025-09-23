@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.mesh_interface import MeshInterface
+from pubsub import pub
 
 PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
 OUT = os.environ.get("MESH_DUMP_FILE", "meshtastic-dump.ndjson")
@@ -36,8 +37,8 @@ def on_node(node, iface):
     write("node", {"node": node})
 
 
-iface.setPacketHandler(on_packet)
-iface.setNodeHandler(on_node)
+iface.onReceive = on_packet
+pub.subscribe(on_node, "meshtastic.node")
 
 # Write a little header so you know what you captured
 try:
@@ -58,6 +59,10 @@ except Exception as e:
 def _stop(signum, frame):
     write("meta", {"event": "stopping"})
     try:
+        try:
+            pub.unsubscribe(on_node, "meshtastic.node")
+        except Exception:
+            pass
         iface.close()
     finally:
         f.close()
