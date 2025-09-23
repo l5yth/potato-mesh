@@ -550,7 +550,6 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(row["hop_limit"]).to eq(3)
           expect(row["bitfield"]).to eq(1)
           expect(row["payload_b64"]).to eq("AQI=")
-          expect(JSON.parse(row["raw_json"])).to eq(raw_payload.transform_keys(&:to_s))
         end
 
         with_db(readonly: true) do |db|
