@@ -42,6 +42,14 @@ MAX_JSON_BODY_BYTES = begin
   end
 VERSION_FALLBACK = "v0.2.1"
 
+def fetch_config_string(key, default)
+  value = ENV[key]
+  return default if value.nil?
+
+  trimmed = value.strip
+  trimmed.empty? ? default : trimmed
+end
+
 def determine_app_version
   repo_root = File.expand_path("..", __dir__)
   git_dir = File.join(repo_root, ".git")
@@ -71,14 +79,84 @@ APP_VERSION = determine_app_version
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
-SITE_NAME = ENV.fetch("SITE_NAME", "Meshtastic Berlin")
-DEFAULT_CHANNEL = ENV.fetch("DEFAULT_CHANNEL", "#MediumFast")
-DEFAULT_FREQUENCY = ENV.fetch("DEFAULT_FREQUENCY", "868MHz")
+SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
+DEFAULT_CHANNEL = fetch_config_string("DEFAULT_CHANNEL", "#MediumFast")
+DEFAULT_FREQUENCY = fetch_config_string("DEFAULT_FREQUENCY", "868MHz")
 MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "52.502889").to_f
 MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
+
+def sanitized_string(value)
+  value.to_s.strip
+end
+
+def sanitized_site_name
+  sanitized_string(SITE_NAME)
+end
+
+def sanitized_default_channel
+  sanitized_string(DEFAULT_CHANNEL)
+end
+
+def sanitized_default_frequency
+  sanitized_string(DEFAULT_FREQUENCY)
+end
+
+def sanitized_matrix_room
+  value = sanitized_string(MATRIX_ROOM)
+  value.empty? ? nil : value
+end
+
+def sanitized_max_distance_km
+  return nil unless defined?(MAX_NODE_DISTANCE_KM)
+
+  distance = MAX_NODE_DISTANCE_KM
+  return nil unless distance.is_a?(Numeric)
+  return nil unless distance.positive?
+
+  distance
+end
+
+def formatted_distance_km(distance)
+  format("%.1f", distance).sub(/\.0\z/, "")
+end
+
+def meta_description
+  site = sanitized_site_name
+  channel = sanitized_default_channel
+  frequency = sanitized_default_frequency
+  matrix = sanitized_matrix_room
+
+  summary = "Live Meshtastic mesh map for #{site}"
+  if channel.empty? && frequency.empty?
+    summary += "."
+  elsif channel.empty?
+    summary += " tuned to #{frequency}."
+  elsif frequency.empty?
+    summary += " on #{channel}."
+  else
+    summary += " on #{channel} (#{frequency})."
+  end
+
+  sentences = [summary, "Track nodes, messages, and coverage in real time."]
+  if (distance = sanitized_max_distance_km)
+    sentences << "Shows nodes within roughly #{formatted_distance_km(distance)} km of the map center."
+  end
+  sentences << "Join the community in #{matrix} on Matrix." if matrix
+
+  sentences.join(" ")
+end
+
+def meta_configuration
+  site = sanitized_site_name
+  {
+    title: site,
+    name: site,
+    description: meta_description,
+  }
+end
 
 class << Sinatra::Application
   def apply_logger_level!
@@ -569,14 +647,19 @@ end
 #
 # Renders the main site with configuration-driven defaults for the template.
 get "/" do
+  meta = meta_configuration
+
   erb :index, locals: {
-                site_name: SITE_NAME,
-                default_channel: DEFAULT_CHANNEL,
-                default_frequency: DEFAULT_FREQUENCY,
+                site_name: meta[:name],
+                meta_title: meta[:title],
+                meta_name: meta[:name],
+                meta_description: meta[:description],
+                default_channel: sanitized_default_channel,
+                default_frequency: sanitized_default_frequency,
                 map_center_lat: MAP_CENTER_LAT,
                 map_center_lon: MAP_CENTER_LON,
                 max_node_distance_km: MAX_NODE_DISTANCE_KM,
-                matrix_room: MATRIX_ROOM,
+                matrix_room: sanitized_matrix_room,
                 version: APP_VERSION,
               }
 end

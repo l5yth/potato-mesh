@@ -73,6 +73,10 @@ The web app can be configured with environment variables (defaults shown):
 * `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
 * `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)
 
+The application derives SEO-friendly document titles, descriptions, and social
+preview tags from these existing configuration values and reuses the bundled
+logo for Open Graph and Twitter cards.
+
 Example:
 
 ```bash
