@@ -410,7 +410,7 @@ def query_positions(limit)
                              to_id, latitude, longitude, altitude, location_source,
                              precision_bits, sats_in_view, pdop, ground_speed,
                              ground_track, snr, rssi, hop_limit, bitfield,
-                             payload_b64, raw_json
+                             payload_b64
                       FROM positions
                       ORDER BY rx_time DESC
                       LIMIT ?
@@ -812,17 +812,6 @@ def insert_position(db, payload)
   payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
   payload_b64 ||= string_or_nil(position_section.dig("payload", "__bytes_b64__"))
 
-  raw_value = payload["raw_json"] || payload["raw"] || position_section["raw"]
-  raw_json = if raw_value.is_a?(String)
-      raw_value
-    elsif raw_value
-      begin
-        JSON.dump(raw_value)
-      rescue StandardError
-        raw_value.to_s
-      end
-    end
-
   row = [
     pos_id,
     node_id,
@@ -845,14 +834,13 @@ def insert_position(db, payload)
     hop_limit,
     bitfield,
     payload_b64,
-    raw_json,
   ]
 
   with_busy_retry do
     db.execute <<~SQL, row
                  INSERT INTO positions(id,node_id,node_num,rx_time,rx_iso,position_time,to_id,latitude,longitude,altitude,location_source,
-                                       precision_bits,sats_in_view,pdop,ground_speed,ground_track,snr,rssi,hop_limit,bitfield,payload_b64,raw_json)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                       precision_bits,sats_in_view,pdop,ground_speed,ground_track,snr,rssi,hop_limit,bitfield,payload_b64)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(id) DO UPDATE SET
                    node_id=COALESCE(excluded.node_id,positions.node_id),
                    node_num=COALESCE(excluded.node_num,positions.node_num),
@@ -873,8 +861,7 @@ def insert_position(db, payload)
                    rssi=COALESCE(excluded.rssi,positions.rssi),
                    hop_limit=COALESCE(excluded.hop_limit,positions.hop_limit),
                    bitfield=COALESCE(excluded.bitfield,positions.bitfield),
-                   payload_b64=COALESCE(excluded.payload_b64,positions.payload_b64),
-                   raw_json=COALESCE(excluded.raw_json,positions.raw_json)
+                   payload_b64=COALESCE(excluded.payload_b64,positions.payload_b64)
                SQL
   end
 

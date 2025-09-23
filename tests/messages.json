@@ -13,7 +13,6 @@
     "snr": -13.25,
     "node": {
       "snr": -13.25,
-      "raw_json": null,
       "node_id": "!bba83318",
       "num": 3148362520,
       "short_name": "BerF",
@@ -53,7 +52,6 @@
     "snr": -12.0,
     "node": {
       "snr": -12.0,
-      "raw_json": null,
       "node_id": "!43b6e530",
       "num": 1136059696,
       "short_name": "FFSR",
@@ -93,7 +91,6 @@
     "snr": -13.5,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!d42e18e8",
       "num": 3559790824,
       "short_name": "RRun",
@@ -133,7 +130,6 @@
     "snr": -13.0,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!d42e18e8",
       "num": 3559790824,
       "short_name": "RRun",
@@ -173,7 +169,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -213,7 +208,6 @@
     "snr": 11.25,
     "node": {
       "snr": 11.25,
-      "raw_json": null,
       "node_id": "!4ed36bd0",
       "num": 1322478544,
       "short_name": "RDM",
@@ -253,7 +247,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -293,7 +286,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -333,7 +325,6 @@
     "snr": 12.0,
     "node": {
       "snr": 12.0,
-      "raw_json": null,
       "node_id": "!b03c97a4",
       "num": 2956760996,
       "short_name": "BLN1",
@@ -373,7 +364,6 @@
     "snr": -15.0,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9eeb25ec",
       "num": 2666210796,
       "short_name": "25ec",
@@ -413,7 +403,6 @@
     "snr": 11.25,
     "node": {
       "snr": 11.25,
-      "raw_json": null,
       "node_id": "!f9b0938c",
       "num": 4189098892,
       "short_name": "Ed-1",
@@ -453,7 +442,6 @@
     "snr": 11.25,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!6c73bf84",
       "num": 1819524996,
       "short_name": "ts1",
@@ -493,7 +481,6 @@
     "snr": 11.25,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -533,7 +520,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -573,7 +559,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!6cf821fb",
       "num": 1828200955,
       "short_name": "OKP1",
@@ -613,7 +598,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!6cf821fb",
       "num": 1828200955,
       "short_name": "OKP1",
@@ -653,7 +637,6 @@
     "snr": 10.5,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -693,7 +676,6 @@
     "snr": 10.25,
     "node": {
       "snr": 10.25,
-      "raw_json": null,
       "node_id": "!db2b23f4",
       "num": 3677037556,
       "short_name": "Eagl",
@@ -733,7 +715,6 @@
     "snr": 11.25,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!6cf821fb",
       "num": 1828200955,
       "short_name": "OKP1",
@@ -773,7 +754,6 @@
     "snr": 11.0,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -813,7 +793,6 @@
     "snr": -11.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!177cfa26",
       "num": 394066470,
       "short_name": "lun1",
@@ -853,7 +832,6 @@
     "snr": 11.25,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!9ea0c780",
       "num": 2661336960,
       "short_name": "nguE",
@@ -893,7 +871,6 @@
     "snr": 10.75,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -933,7 +910,6 @@
     "snr": 11.5,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!e80cda12",
       "num": 3893156370,
       "short_name": "mowW",
@@ -973,7 +949,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -1013,7 +988,6 @@
     "snr": 11.5,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -1053,7 +1027,6 @@
     "snr": 11.5,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -1093,7 +1066,6 @@
     "snr": -11.75,
     "node": {
       "snr": -9.75,
-      "raw_json": null,
       "node_id": "!a0cb1608",
       "num": 2697664008,
       "short_name": "KBV5",
@@ -1133,7 +1105,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.25,
-      "raw_json": null,
       "node_id": "!bcf10936",
       "num": 3169913142,
       "short_name": "0936",
@@ -1173,7 +1144,6 @@
     "snr": 11.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -1213,7 +1183,6 @@
     "snr": -13.25,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!a0cc6904",
       "num": 2697750788,
       "short_name": "Kdû",
@@ -1253,7 +1222,6 @@
     "snr": 10.5,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -1293,7 +1261,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9eeb25ec",
       "num": 2666210796,
       "short_name": "25ec",
@@ -1333,7 +1300,6 @@
     "snr": -14.0,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!a0cc6904",
       "num": 2697750788,
       "short_name": "Kdû",
@@ -1373,7 +1339,6 @@
     "snr": 11.25,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9eeb25ec",
       "num": 2666210796,
       "short_name": "25ec",
@@ -1413,7 +1378,6 @@
     "snr": 11.5,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9eeb25ec",
       "num": 2666210796,
       "short_name": "25ec",
@@ -1453,7 +1417,6 @@
     "snr": 11.75,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9eeb25ec",
       "num": 2666210796,
       "short_name": "25ec",
@@ -1493,7 +1456,6 @@
     "snr": 11.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -1533,7 +1495,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!03b9ca11",
       "num": 62507537,
       "short_name": "ca11",
@@ -1573,7 +1534,6 @@
     "snr": 7.5,
     "node": {
       "snr": 10.25,
-      "raw_json": null,
       "node_id": "!db2b23f4",
       "num": 3677037556,
       "short_name": "Eagl",
@@ -1613,7 +1573,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -1653,7 +1612,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.25,
-      "raw_json": null,
       "node_id": "!db2b23f4",
       "num": 3677037556,
       "short_name": "Eagl",
@@ -1693,7 +1651,6 @@
     "snr": 10.75,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -1733,7 +1690,6 @@
     "snr": 10.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -1773,7 +1729,6 @@
     "snr": 10.5,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -1813,7 +1768,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!a0cc6904",
       "num": 2697750788,
       "short_name": "Kdû",
@@ -1853,7 +1807,6 @@
     "snr": -12.25,
     "node": {
       "snr": -12.25,
-      "raw_json": null,
       "node_id": "!2f945044",
       "num": 798249028,
       "short_name": "BND",
@@ -1893,7 +1846,6 @@
     "snr": 11.0,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -1933,7 +1885,6 @@
     "snr": 10.5,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9ee71c38",
       "num": 2665946168,
       "short_name": "1c38",
@@ -1973,7 +1924,6 @@
     "snr": 10.75,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -2013,7 +1963,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -2053,7 +2002,6 @@
     "snr": 10.5,
     "node": {
       "snr": -6.25,
-      "raw_json": null,
       "node_id": "!7c5b0920",
       "num": 2086340896,
       "short_name": "FFTB",
@@ -2093,7 +2041,6 @@
     "snr": 10.25,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -2133,7 +2080,6 @@
     "snr": 11.25,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!9ea0c780",
       "num": 2661336960,
       "short_name": "nguE",
@@ -2173,7 +2119,6 @@
     "snr": 10.75,
     "node": {
       "snr": -12.75,
-      "raw_json": null,
       "node_id": "!0910c922",
       "num": 152095010,
       "short_name": "c922",
@@ -2213,7 +2158,6 @@
     "snr": 11.0,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -2253,7 +2197,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!9ee71430",
       "num": 2665944112,
       "short_name": "FiSp",
@@ -2293,7 +2236,6 @@
     "snr": 11.5,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -2333,7 +2275,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.25,
-      "raw_json": null,
       "node_id": "!bcf10936",
       "num": 3169913142,
       "short_name": "0936",
@@ -2373,7 +2314,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.25,
-      "raw_json": null,
       "node_id": "!16ced364",
       "num": 382653284,
       "short_name": "Pat",
@@ -2413,7 +2353,6 @@
     "snr": 11.25,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9ee71c38",
       "num": 2665946168,
       "short_name": "1c38",
@@ -2453,7 +2392,6 @@
     "snr": 10.5,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9ee71c38",
       "num": 2665946168,
       "short_name": "1c38",
@@ -2493,7 +2431,6 @@
     "snr": 10.25,
     "node": {
       "snr": 10.0,
-      "raw_json": null,
       "node_id": "!a3deea53",
       "num": 2749295187,
       "short_name": "🐸",
@@ -2533,7 +2470,6 @@
     "snr": 9.0,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!9ea0c780",
       "num": 2661336960,
       "short_name": "nguE",
@@ -2573,7 +2509,6 @@
     "snr": 11.5,
     "node": {
       "snr": -13.25,
-      "raw_json": null,
       "node_id": "!bba83318",
       "num": 3148362520,
       "short_name": "BerF",
@@ -2613,7 +2548,6 @@
     "snr": 9.25,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9ee71c38",
       "num": 2665946168,
       "short_name": "1c38",
@@ -2653,7 +2587,6 @@
     "snr": 10.25,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!e80cda12",
       "num": 3893156370,
       "short_name": "mowW",
@@ -2693,7 +2626,6 @@
     "snr": -5.0,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!a0cc6904",
       "num": 2697750788,
       "short_name": "Kdû",
@@ -2733,7 +2665,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!e80cda12",
       "num": 3893156370,
       "short_name": "mowW",
@@ -2773,7 +2704,6 @@
     "snr": 0.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -2813,7 +2743,6 @@
     "snr": 11.25,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -2853,7 +2782,6 @@
     "snr": 11.5,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -2893,7 +2821,6 @@
     "snr": 10.0,
     "node": {
       "snr": 11.25,
-      "raw_json": null,
       "node_id": "!16ced364",
       "num": 382653284,
       "short_name": "Pat",
@@ -2933,7 +2860,6 @@
     "snr": 11.0,
     "node": {
       "snr": -9.75,
-      "raw_json": null,
       "node_id": "!a0cb1608",
       "num": 2697664008,
       "short_name": "KBV5",
@@ -2973,7 +2899,6 @@
     "snr": 9.5,
     "node": {
       "snr": -9.75,
-      "raw_json": null,
       "node_id": "!a0cb1608",
       "num": 2697664008,
       "short_name": "KBV5",
@@ -3013,7 +2938,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -3053,7 +2977,6 @@
     "snr": 11.0,
     "node": {
       "snr": -12.0,
-      "raw_json": null,
       "node_id": "!43b6e530",
       "num": 1136059696,
       "short_name": "FFSR",
@@ -3093,7 +3016,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!e80cda12",
       "num": 3893156370,
       "short_name": "mowW",
@@ -3133,7 +3055,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -3173,7 +3094,6 @@
     "snr": 10.25,
     "node": {
       "snr": 11.25,
-      "raw_json": null,
       "node_id": "!16ced364",
       "num": 382653284,
       "short_name": "Pat",
@@ -3213,7 +3133,6 @@
     "snr": 10.5,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -3253,7 +3172,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
@@ -3293,7 +3211,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.0,
-      "raw_json": null,
       "node_id": "!abbdf3f7",
       "num": 2881352695,
       "short_name": "f3f7",
@@ -3333,7 +3250,6 @@
     "snr": 10.5,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!c0c32348",
       "num": 3234014024,
       "short_name": "CooP",
@@ -3373,7 +3289,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.25,
-      "raw_json": null,
       "node_id": "!16ced364",
       "num": 382653284,
       "short_name": "Pat",
@@ -3413,7 +3328,6 @@
     "snr": 10.5,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -3453,7 +3367,6 @@
     "snr": -12.5,
     "node": {
       "snr": -9.75,
-      "raw_json": null,
       "node_id": "!a0cb1608",
       "num": 2697664008,
       "short_name": "KBV5",
@@ -3493,7 +3406,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!da635e24",
       "num": 3663945252,
       "short_name": "LAN",
@@ -3533,7 +3445,6 @@
     "snr": -8.75,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -3573,7 +3484,6 @@
     "snr": 10.25,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!5d823fb1",
       "num": 1568817073,
       "short_name": "3fb1",
@@ -3613,7 +3523,6 @@
     "snr": 11.25,
     "node": {
       "snr": -12.0,
-      "raw_json": null,
       "node_id": "!43b6e530",
       "num": 1136059696,
       "short_name": "FFSR",
@@ -3653,7 +3562,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!849a8ba4",
       "num": 2224720804,
       "short_name": "MGN1",
@@ -3693,7 +3601,6 @@
     "snr": -13.25,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!849a8ba4",
       "num": 2224720804,
       "short_name": "MGN1",
@@ -3733,7 +3640,6 @@
     "snr": 10.75,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!9c93a2df",
       "num": 2626921183,
       "short_name": "xaRa",
@@ -3773,7 +3679,6 @@
     "snr": 11.25,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9ee71c38",
       "num": 2665946168,
       "short_name": "1c38",
@@ -3813,7 +3718,6 @@
     "snr": 11.0,
     "node": {
       "snr": 11.5,
-      "raw_json": null,
       "node_id": "!9ee71c38",
       "num": 2665946168,
       "short_name": "1c38",
@@ -3853,7 +3757,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!5d823fb1",
       "num": 1568817073,
       "short_name": "3fb1",
@@ -3893,7 +3796,6 @@
     "snr": 11.0,
     "node": {
       "snr": 10.5,
-      "raw_json": null,
       "node_id": "!6c73bf84",
       "num": 1819524996,
       "short_name": "ts1",
@@ -3933,7 +3835,6 @@
     "snr": 11.25,
     "node": {
       "snr": null,
-      "raw_json": null,
       "node_id": null,
       "num": null,
       "short_name": null,
@@ -3973,7 +3874,6 @@
     "snr": 11.25,
     "node": {
       "snr": 10.75,
-      "raw_json": null,
       "node_id": "!194a7351",
       "num": 424309585,
       "short_name": "l5y7",
