@@ -189,6 +189,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/"
       expect(last_response.body).to include("#{APP_VERSION}")
     end
+
+    it "includes SEO metadata from configuration" do
+      stub_const("SITE_NAME", "Spec Mesh Title")
+      stub_const("DEFAULT_CHANNEL", "#SpecChannel")
+      stub_const("DEFAULT_FREQUENCY", "915MHz")
+      stub_const("MAX_NODE_DISTANCE_KM", 120.5)
+      stub_const("MATRIX_ROOM", " #spec-room:example.org ")
+
+      expected_description = "Live Meshtastic mesh map for Spec Mesh Title on #SpecChannel (915MHz). Track nodes, messages, and coverage in real time. Shows nodes within roughly 120.5 km of the map center. Join the community in #spec-room:example.org on Matrix."
+
+      get "/"
+
+      expect(last_response.body).to include(%(meta name="description" content="#{expected_description}" />))
+      expect(last_response.body).to include('<meta property="og:title" content="Spec Mesh Title" />')
+      expect(last_response.body).to include('<meta property="og:site_name" content="Spec Mesh Title" />')
+      expect(last_response.body).to include('<meta name="twitter:image" content="http://example.org/potatomesh-logo.svg" />')
+    end
   end
 
   describe "database initialization" do

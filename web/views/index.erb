@@ -20,7 +20,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title><%= site_name %></title>
+  <% meta_title_html = Rack::Utils.escape_html(meta_title) %>
+  <% meta_name_html = Rack::Utils.escape_html(meta_name) %>
+  <% meta_description_html = Rack::Utils.escape_html(meta_description) %>
+  <% request_path = request.path.to_s.empty? ? "/" : request.path %>
+  <% canonical_url = "#{request.base_url}#{request_path}" %>
+  <% canonical_html = Rack::Utils.escape_html(canonical_url) %>
+  <% logo_url = "#{request.base_url}/potatomesh-logo.svg" %>
+  <% logo_url_html = Rack::Utils.escape_html(logo_url) %>
+  <% logo_alt_html = Rack::Utils.escape_html("#{meta_name} logo") %>
+  <title><%= meta_title_html %></title>
+  <meta name="application-name" content="<%= meta_name_html %>" />
+  <meta name="apple-mobile-web-app-title" content="<%= meta_name_html %>" />
+  <meta name="description" content="<%= meta_description_html %>" />
+  <link rel="canonical" href="<%= canonical_html %>" />
+  <meta property="og:title" content="<%= meta_title_html %>" />
+  <meta property="og:site_name" content="<%= meta_name_html %>" />
+  <meta property="og:description" content="<%= meta_description_html %>" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="<%= canonical_html %>" />
+  <meta property="og:image" content="<%= logo_url_html %>" />
+  <meta property="og:image:alt" content="<%= logo_alt_html %>" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="<%= meta_title_html %>" />
+  <meta name="twitter:description" content="<%= meta_description_html %>" />
+  <meta name="twitter:image" content="<%= logo_url_html %>" />
+  <meta name="twitter:image:alt" content="<%= logo_alt_html %>" />
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
   <% tile_filter_light = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)" %>
