@@ -38,6 +38,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     with_db do |db|
       db.execute("DELETE FROM messages")
       db.execute("DELETE FROM nodes")
+      db.execute("DELETE FROM positions")
     end
   end
 
@@ -473,6 +474,160 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe "POST /api/positions" do
+      it "stores position packets and updates node metadata" do
+        node_id = "!specpos01"
+        node_num = 0x1234_5678
+        initial_last_heard = reference_time.to_i - 600
+        node_payload = {
+          node_id => {
+            "num" => node_num,
+            "user" => { "shortName" => "SpecPos" },
+            "lastHeard" => initial_last_heard,
+            "position" => {
+              "time" => initial_last_heard - 60,
+              "latitude" => 52.0,
+              "longitude" => 13.0,
+            },
+          },
+        }
+
+        post "/api/nodes", node_payload.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        rx_time = reference_time.to_i - 120
+        position_time = rx_time - 30
+        raw_payload = { "time" => position_time, "latitude_i" => (52.5 * 1e7).to_i }
+        position_payload = {
+          "id" => 9_001,
+          "node_id" => node_id,
+          "node_num" => node_num,
+          "rx_time" => rx_time,
+          "rx_iso" => Time.at(rx_time).utc.iso8601,
+          "to_id" => "^all",
+          "latitude" => 52.5,
+          "longitude" => 13.4,
+          "altitude" => 42.0,
+          "position_time" => position_time,
+          "location_source" => "LOC_INTERNAL",
+          "precision_bits" => 15,
+          "sats_in_view" => 6,
+          "pdop" => 2.5,
+          "ground_speed" => 3.2,
+          "ground_track" => 180.0,
+          "snr" => -8.5,
+          "rssi" => -90,
+          "hop_limit" => 3,
+          "bitfield" => 1,
+          "payload_b64" => "AQI=",
+          "raw" => raw_payload,
+        }
+
+        post "/api/positions", position_payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT * FROM positions WHERE id = ?", [9_001])
+          expect(row["node_id"]).to eq(node_id)
+          expect(row["node_num"]).to eq(node_num)
+          expect(row["rx_time"]).to eq(rx_time)
+          expect(row["rx_iso"]).to eq(Time.at(rx_time).utc.iso8601)
+          expect(row["position_time"]).to eq(position_time)
+          expect_same_value(row["latitude"], 52.5)
+          expect_same_value(row["longitude"], 13.4)
+          expect_same_value(row["altitude"], 42.0)
+          expect(row["location_source"]).to eq("LOC_INTERNAL")
+          expect(row["precision_bits"]).to eq(15)
+          expect(row["sats_in_view"]).to eq(6)
+          expect_same_value(row["pdop"], 2.5)
+          expect_same_value(row["ground_speed"], 3.2)
+          expect_same_value(row["ground_track"], 180.0)
+          expect_same_value(row["snr"], -8.5)
+          expect(row["rssi"]).to eq(-90)
+          expect(row["hop_limit"]).to eq(3)
+          expect(row["bitfield"]).to eq(1)
+          expect(row["payload_b64"]).to eq("AQI=")
+          expect(JSON.parse(row["raw_json"])).to eq(raw_payload.transform_keys(&:to_s))
+        end
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          node_row = db.get_first_row(
+            "SELECT last_heard, position_time, latitude, longitude, altitude, location_source, snr FROM nodes WHERE node_id = ?",
+            [node_id],
+          )
+          expect(node_row["last_heard"]).to eq(rx_time)
+          expect(node_row["position_time"]).to eq(position_time)
+          expect_same_value(node_row["latitude"], 52.5)
+          expect_same_value(node_row["longitude"], 13.4)
+          expect_same_value(node_row["altitude"], 42.0)
+          expect(node_row["location_source"]).to eq("LOC_INTERNAL")
+          expect_same_value(node_row["snr"], -8.5)
+        end
+      end
+
+      it "creates node records when none exist" do
+        node_id = "!specnew01"
+        node_num = 0xfeed_cafe
+        rx_time = reference_time.to_i - 60
+        position_time = rx_time - 10
+        payload = {
+          "id" => 9_002,
+          "node_id" => node_id,
+          "node_num" => node_num,
+          "rx_time" => rx_time,
+          "rx_iso" => Time.at(rx_time).utc.iso8601,
+          "latitude" => 52.1,
+          "longitude" => 13.1,
+          "altitude" => 33.0,
+          "position_time" => position_time,
+          "location_source" => "LOC_EXTERNAL",
+        }
+
+        post "/api/positions", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          node_row = db.get_first_row("SELECT * FROM nodes WHERE node_id = ?", [node_id])
+          expect(node_row).not_to be_nil
+          expect(node_row["num"]).to eq(node_num)
+          expect(node_row["last_heard"]).to eq(rx_time)
+          expect(node_row["first_heard"]).to eq(rx_time)
+          expect(node_row["position_time"]).to eq(position_time)
+          expect_same_value(node_row["latitude"], 52.1)
+          expect_same_value(node_row["longitude"], 13.1)
+          expect_same_value(node_row["altitude"], 33.0)
+          expect(node_row["location_source"]).to eq("LOC_EXTERNAL")
+        end
+      end
+
+      it "returns 400 when the payload is not valid JSON" do
+        post "/api/positions", "{", auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+      end
+
+      it "returns 400 when more than 1000 positions are provided" do
+        payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
+
+        post "/api/positions", payload.to_json, auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "too many positions")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM positions")
+          expect(count).to eq(0)
+        end
+      end
+    end
+
     it "returns 400 when more than 1000 messages are provided" do
       payload = Array.new(1001) { |i| { "packet_id" => i + 1 } }
 
@@ -821,6 +976,43 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(messages.size).to eq(1)
         expect(messages.first["from_id"]).to be_nil
       end
+    end
+  end
+
+  describe "GET /api/positions" do
+    it "returns stored positions ordered by receive time" do
+      node_id = "!specfetch"
+      rx_times = [reference_time.to_i - 50, reference_time.to_i - 10]
+      rx_times.each_with_index do |rx_time, idx|
+        payload = {
+          "id" => 20_000 + idx,
+          "node_id" => node_id,
+          "rx_time" => rx_time,
+          "rx_iso" => Time.at(rx_time).utc.iso8601,
+          "position_time" => rx_time - 5,
+          "latitude" => 52.0 + idx,
+          "longitude" => 13.0 + idx,
+          "payload_b64" => "AQI=",
+        }
+        post "/api/positions", payload.to_json, auth_headers
+        expect(last_response).to be_ok
+      end
+
+      get "/api/positions?limit=1"
+
+      expect(last_response).to be_ok
+      data = JSON.parse(last_response.body)
+      expect(data.length).to eq(1)
+      entry = data.first
+      expect(entry["id"]).to eq(20_001)
+      expect(entry["node_id"]).to eq(node_id)
+      expect(entry["rx_time"]).to eq(rx_times.last)
+      expect(entry["rx_iso"]).to eq(Time.at(rx_times.last).utc.iso8601)
+      expect(entry["position_time"]).to eq(rx_times.last - 5)
+      expect(entry["position_time_iso"]).to eq(Time.at(rx_times.last - 5).utc.iso8601)
+      expect(entry["latitude"]).to eq(53.0)
+      expect(entry["longitude"]).to eq(14.0)
+      expect(entry["payload_b64"]).to eq("AQI=")
     end
   end
 end

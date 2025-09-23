@@ -109,6 +109,60 @@ def sanitized_matrix_room
   value.empty? ? nil : value
 end
 
+def string_or_nil(value)
+  return nil if value.nil?
+
+  str = value.is_a?(String) ? value : value.to_s
+  trimmed = str.strip
+  trimmed.empty? ? nil : trimmed
+end
+
+def coerce_integer(value)
+  case value
+  when Integer
+    value
+  when Float
+    value.finite? ? value.to_i : nil
+  when Numeric
+    value.to_i
+  when String
+    trimmed = value.strip
+    return nil if trimmed.empty?
+    return trimmed.to_i(16) if trimmed.match?(/\A0[xX][0-9A-Fa-f]+\z/)
+    return trimmed.to_i(10) if trimmed.match?(/\A-?\d+\z/)
+    begin
+      float_val = Float(trimmed)
+      float_val.finite? ? float_val.to_i : nil
+    rescue ArgumentError
+      nil
+    end
+  else
+    nil
+  end
+end
+
+def coerce_float(value)
+  case value
+  when Float
+    value.finite? ? value : nil
+  when Integer
+    value.to_f
+  when Numeric
+    value.to_f
+  when String
+    trimmed = value.strip
+    return nil if trimmed.empty?
+    begin
+      float_val = Float(trimmed)
+      float_val.finite? ? float_val : nil
+    rescue ArgumentError
+      nil
+    end
+  else
+    nil
+  end
+end
+
 def sanitized_max_distance_km
   return nil unless defined?(MAX_NODE_DISTANCE_KM)
 
@@ -210,8 +264,9 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages')").flatten
-  tables.include?("nodes") && tables.include?("messages")
+  required = %w[nodes messages positions]
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions')").flatten
+  (required - tables).empty?
 rescue SQLite3::Exception
   false
 ensure
@@ -224,7 +279,7 @@ end
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = open_database
-  %w[nodes messages].each do |schema|
+  %w[nodes messages positions].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
   end
@@ -343,6 +398,40 @@ ensure
   db&.close
 end
 
+# Retrieve recorded position packets ordered by receive time.
+#
+# @param limit [Integer] maximum number of rows returned.
+# @return [Array<Hash>] collection of position rows formatted for the API.
+def query_positions(limit)
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  rows = db.execute <<~SQL, [limit]
+                      SELECT id, node_id, node_num, rx_time, rx_iso, position_time,
+                             to_id, latitude, longitude, altitude, location_source,
+                             precision_bits, sats_in_view, pdop, ground_speed,
+                             ground_track, snr, rssi, hop_limit, bitfield,
+                             payload_b64, raw_json
+                      FROM positions
+                      ORDER BY rx_time DESC
+                      LIMIT ?
+                    SQL
+  rows.each do |r|
+    pt = r["position_time"]
+    if pt
+      begin
+        r["position_time"] = Integer(pt, 10)
+      rescue ArgumentError, TypeError
+        r["position_time"] = coerce_integer(pt)
+      end
+    end
+    pt_val = r["position_time"]
+    r["position_time_iso"] = Time.at(pt_val).utc.iso8601 if pt_val
+  end
+  rows
+ensure
+  db&.close
+end
+
 # GET /api/messages
 #
 # Returns a JSON array of stored text messages including node metadata.
@@ -350,6 +439,15 @@ get "/api/messages" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_messages(limit).to_json
+end
+
+# GET /api/positions
+#
+# Returns a JSON array of recorded position packets.
+get "/api/positions" do
+  content_type :json
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_positions(limit).to_json
 end
 
 # Determine the numeric node reference for a canonical node identifier.
@@ -518,6 +616,282 @@ def prefer_canonical_sender?(message)
   message.is_a?(Hash) && message.key?("packet_id") && !message.key?("id")
 end
 
+# Update or create a node entry using information from a position payload.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param node_id [String, nil] canonical node identifier when available.
+# @param node_num [Integer, nil] numeric node reference if known.
+# @param rx_time [Integer] time the packet was received by the gateway.
+# @param position_time [Integer, nil] timestamp reported by the device.
+# @param location_source [String, nil] location source flag from the packet.
+# @param latitude [Float, nil] reported latitude.
+# @param longitude [Float, nil] reported longitude.
+# @param altitude [Float, nil] reported altitude.
+# @param snr [Float, nil] link SNR for the packet.
+def update_node_from_position(db, node_id, node_num, rx_time, position_time, location_source, latitude, longitude, altitude, snr)
+  num = coerce_integer(node_num)
+  id = string_or_nil(node_id)
+  if id&.start_with?("!")
+    id = "!#{id.delete_prefix("!").downcase}"
+  end
+  id ||= format("!%08x", num & 0xFFFFFFFF) if num
+  return unless id
+
+  now = Time.now.to_i
+  rx = coerce_integer(rx_time) || now
+  rx = now if rx && rx > now
+  pos_time = coerce_integer(position_time)
+  pos_time = nil if pos_time && pos_time > now
+  last_heard = [rx, pos_time].compact.max || rx
+  last_heard = now if last_heard && last_heard > now
+
+  loc = string_or_nil(location_source)
+  lat = coerce_float(latitude)
+  lon = coerce_float(longitude)
+  alt = coerce_float(altitude)
+  snr_val = coerce_float(snr)
+
+  row = [
+    id,
+    num,
+    last_heard,
+    last_heard,
+    pos_time,
+    loc,
+    lat,
+    lon,
+    alt,
+    snr_val,
+  ]
+  with_busy_retry do
+    db.execute <<~SQL, row
+                 INSERT INTO nodes(node_id,num,last_heard,first_heard,position_time,location_source,latitude,longitude,altitude,snr)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(node_id) DO UPDATE SET
+                   num=COALESCE(excluded.num,nodes.num),
+                   snr=COALESCE(excluded.snr,nodes.snr),
+                   last_heard=MAX(COALESCE(nodes.last_heard,0),COALESCE(excluded.last_heard,0)),
+                   position_time=CASE
+                     WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                       THEN excluded.position_time
+                     ELSE nodes.position_time
+                   END,
+                   location_source=CASE
+                     WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                          AND excluded.location_source IS NOT NULL
+                       THEN excluded.location_source
+                     ELSE nodes.location_source
+                   END,
+                   latitude=CASE
+                     WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                          AND excluded.latitude IS NOT NULL
+                       THEN excluded.latitude
+                     ELSE nodes.latitude
+                   END,
+                   longitude=CASE
+                     WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                          AND excluded.longitude IS NOT NULL
+                       THEN excluded.longitude
+                     ELSE nodes.longitude
+                   END,
+                   altitude=CASE
+                     WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                          AND excluded.altitude IS NOT NULL
+                       THEN excluded.altitude
+                     ELSE nodes.altitude
+                   END
+               SQL
+  end
+end
+
+# Insert a position packet into the history table and refresh node metadata.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param payload [Hash] position payload provided by the data daemon.
+def insert_position(db, payload)
+  pos_id = coerce_integer(payload["id"] || payload["packet_id"])
+  return unless pos_id
+
+  now = Time.now.to_i
+  rx_time = coerce_integer(payload["rx_time"])
+  rx_time = now if rx_time.nil? || rx_time > now
+  rx_iso = string_or_nil(payload["rx_iso"])
+  rx_iso ||= Time.at(rx_time).utc.iso8601
+
+  raw_node_id = payload["node_id"] || payload["from_id"] || payload["from"]
+  node_id = string_or_nil(raw_node_id)
+  node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
+  raw_node_num = coerce_integer(payload["node_num"]) || coerce_integer(payload["num"])
+  node_id ||= format("!%08x", raw_node_num & 0xFFFFFFFF) if node_id.nil? && raw_node_num
+
+  payload_for_num = payload.is_a?(Hash) ? payload.dup : {}
+  payload_for_num["num"] ||= raw_node_num if raw_node_num
+  node_num = resolve_node_num(node_id, payload_for_num)
+  node_num ||= raw_node_num
+  canonical = normalize_node_id(db, node_id || node_num)
+  node_id = canonical if canonical
+
+  to_id = string_or_nil(payload["to_id"] || payload["to"])
+
+  position_section = payload["position"].is_a?(Hash) ? payload["position"] : {}
+
+  lat = coerce_float(payload["latitude"]) || coerce_float(position_section["latitude"])
+  lon = coerce_float(payload["longitude"]) || coerce_float(position_section["longitude"])
+  alt = coerce_float(payload["altitude"]) || coerce_float(position_section["altitude"])
+
+  lat ||= begin
+      lat_i = coerce_integer(position_section["latitudeI"] || position_section["latitude_i"] || position_section.dig("raw", "latitude_i"))
+      lat_i ? lat_i / 1e7 : nil
+    end
+  lon ||= begin
+      lon_i = coerce_integer(position_section["longitudeI"] || position_section["longitude_i"] || position_section.dig("raw", "longitude_i"))
+      lon_i ? lon_i / 1e7 : nil
+    end
+  alt ||= coerce_float(position_section.dig("raw", "altitude"))
+
+  position_time = coerce_integer(
+    payload["position_time"] ||
+    position_section["time"] ||
+    position_section.dig("raw", "time"),
+  )
+
+  location_source = string_or_nil(
+    payload["location_source"] ||
+    payload["locationSource"] ||
+    position_section["location_source"] ||
+    position_section["locationSource"] ||
+    position_section.dig("raw", "location_source"),
+  )
+
+  precision_bits = coerce_integer(
+    payload["precision_bits"] ||
+    payload["precisionBits"] ||
+    position_section["precision_bits"] ||
+    position_section["precisionBits"] ||
+    position_section.dig("raw", "precision_bits"),
+  )
+
+  sats_in_view = coerce_integer(
+    payload["sats_in_view"] ||
+    payload["satsInView"] ||
+    position_section["sats_in_view"] ||
+    position_section["satsInView"] ||
+    position_section.dig("raw", "sats_in_view"),
+  )
+
+  pdop = coerce_float(
+    payload["pdop"] ||
+    payload["PDOP"] ||
+    position_section["pdop"] ||
+    position_section["PDOP"] ||
+    position_section.dig("raw", "PDOP") ||
+    position_section.dig("raw", "pdop"),
+  )
+
+  ground_speed = coerce_float(
+    payload["ground_speed"] ||
+    payload["groundSpeed"] ||
+    position_section["ground_speed"] ||
+    position_section["groundSpeed"] ||
+    position_section.dig("raw", "ground_speed"),
+  )
+
+  ground_track = coerce_float(
+    payload["ground_track"] ||
+    payload["groundTrack"] ||
+    position_section["ground_track"] ||
+    position_section["groundTrack"] ||
+    position_section.dig("raw", "ground_track"),
+  )
+
+  snr = coerce_float(payload["snr"] || payload["rx_snr"] || payload["rxSnr"])
+  rssi = coerce_integer(payload["rssi"] || payload["rx_rssi"] || payload["rxRssi"])
+  hop_limit = coerce_integer(payload["hop_limit"] || payload["hopLimit"])
+  bitfield = coerce_integer(payload["bitfield"])
+
+  payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
+  payload_b64 ||= string_or_nil(position_section.dig("payload", "__bytes_b64__"))
+
+  raw_value = payload["raw_json"] || payload["raw"] || position_section["raw"]
+  raw_json = if raw_value.is_a?(String)
+      raw_value
+    elsif raw_value
+      begin
+        JSON.dump(raw_value)
+      rescue StandardError
+        raw_value.to_s
+      end
+    end
+
+  row = [
+    pos_id,
+    node_id,
+    node_num,
+    rx_time,
+    rx_iso,
+    position_time,
+    to_id,
+    lat,
+    lon,
+    alt,
+    location_source,
+    precision_bits,
+    sats_in_view,
+    pdop,
+    ground_speed,
+    ground_track,
+    snr,
+    rssi,
+    hop_limit,
+    bitfield,
+    payload_b64,
+    raw_json,
+  ]
+
+  with_busy_retry do
+    db.execute <<~SQL, row
+                 INSERT INTO positions(id,node_id,node_num,rx_time,rx_iso,position_time,to_id,latitude,longitude,altitude,location_source,
+                                       precision_bits,sats_in_view,pdop,ground_speed,ground_track,snr,rssi,hop_limit,bitfield,payload_b64,raw_json)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   node_id=COALESCE(excluded.node_id,positions.node_id),
+                   node_num=COALESCE(excluded.node_num,positions.node_num),
+                   rx_time=excluded.rx_time,
+                   rx_iso=excluded.rx_iso,
+                   position_time=COALESCE(excluded.position_time,positions.position_time),
+                   to_id=COALESCE(excluded.to_id,positions.to_id),
+                   latitude=COALESCE(excluded.latitude,positions.latitude),
+                   longitude=COALESCE(excluded.longitude,positions.longitude),
+                   altitude=COALESCE(excluded.altitude,positions.altitude),
+                   location_source=COALESCE(excluded.location_source,positions.location_source),
+                   precision_bits=COALESCE(excluded.precision_bits,positions.precision_bits),
+                   sats_in_view=COALESCE(excluded.sats_in_view,positions.sats_in_view),
+                   pdop=COALESCE(excluded.pdop,positions.pdop),
+                   ground_speed=COALESCE(excluded.ground_speed,positions.ground_speed),
+                   ground_track=COALESCE(excluded.ground_track,positions.ground_track),
+                   snr=COALESCE(excluded.snr,positions.snr),
+                   rssi=COALESCE(excluded.rssi,positions.rssi),
+                   hop_limit=COALESCE(excluded.hop_limit,positions.hop_limit),
+                   bitfield=COALESCE(excluded.bitfield,positions.bitfield),
+                   payload_b64=COALESCE(excluded.payload_b64,positions.payload_b64),
+                   raw_json=COALESCE(excluded.raw_json,positions.raw_json)
+               SQL
+  end
+
+  update_node_from_position(
+    db,
+    node_id,
+    node_num,
+    rx_time,
+    position_time,
+    location_source,
+    lat,
+    lon,
+    alt,
+    snr,
+  )
+end
+
 # Insert a text message if it does not already exist.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -637,6 +1011,28 @@ post "/api/messages" do
   db = open_database
   messages.each do |msg|
     insert_message(db, msg)
+  end
+  { status: "ok" }.to_json
+ensure
+  db&.close
+end
+
+# POST /api/positions
+#
+# Accepts an array or object describing position packets and stores each entry.
+post "/api/positions" do
+  require_token!
+  content_type :json
+  begin
+    data = JSON.parse(read_json_body)
+  rescue JSON::ParserError
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+  positions = data.is_a?(Array) ? data : [data]
+  halt 400, { error: "too many positions" }.to_json if positions.size > 1000
+  db = open_database
+  positions.each do |pos|
+    insert_position(db, pos)
   end
   { status: "ok" }.to_json
 ensure
