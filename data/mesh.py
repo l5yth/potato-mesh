@@ -674,9 +674,7 @@ def store_nodeinfo_packet(packet: dict, decoded: Mapping):
     if node_info and "is_ignored" in node_info_fields:
         node_payload["isIgnored"] = bool(node_info.is_ignored)
     if node_info and "is_key_manually_verified" in node_info_fields:
-        node_payload["isKeyManuallyVerified"] = bool(
-            node_info.is_key_manually_verified
-        )
+        node_payload["isKeyManuallyVerified"] = bool(node_info.is_key_manually_verified)
 
     metrics = _nodeinfo_metrics_dict(node_info)
     decoded_metrics = decoded.get("deviceMetrics")
@@ -699,14 +697,15 @@ def store_nodeinfo_packet(packet: dict, decoded: Mapping):
         except (TypeError, ValueError):
             pass
 
-    _queue_post_json("/api/nodes", {node_id: node_payload}, priority=_NODE_POST_PRIORITY)
+    _queue_post_json(
+        "/api/nodes", {node_id: node_payload}, priority=_NODE_POST_PRIORITY
+    )
 
     if DEBUG:
         short = None
         if isinstance(user_dict, Mapping):
             short = user_dict.get("shortName")
         print(f"[debug] stored nodeinfo for {node_id} shortName={short!r}")
-
 
 
 def store_packet_dict(p: dict):

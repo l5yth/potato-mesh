@@ -21,7 +21,9 @@ def mesh_module(monkeypatch):
     except Exception:  # pragma: no cover - dependency may be unavailable in CI
         real_meshtastic = None
 
-    real_protobuf = getattr(real_meshtastic, "protobuf", None) if real_meshtastic else None
+    real_protobuf = (
+        getattr(real_meshtastic, "protobuf", None) if real_meshtastic else None
+    )
 
     # Stub meshtastic.serial_interface.SerialInterface
     serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
@@ -373,6 +375,8 @@ def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
     assert node_entry["num"] == 0x01020304
     assert node_entry["lastHeard"] == 200
     assert node_entry["snr"] == pytest.approx(1.5)
+
+
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
