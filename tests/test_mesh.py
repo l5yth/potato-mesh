@@ -228,6 +228,79 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 200498337,
+        "rxTime": 1_758_624_186,
+        "fromId": "!b1fa2b07",
+        "toId": "^all",
+        "rxSnr": -9.5,
+        "rxRssi": -104,
+        "decoded": {
+            "portnum": "POSITION_APP",
+            "bitfield": 1,
+            "position": {
+                "latitudeI": int(52.518912 * 1e7),
+                "longitudeI": int(13.5512064 * 1e7),
+                "altitude": -16,
+                "time": 1_758_624_189,
+                "locationSource": "LOC_INTERNAL",
+                "precisionBits": 17,
+                "satsInView": 7,
+                "PDOP": 211,
+                "groundSpeed": 2,
+                "groundTrack": 0,
+                "raw": {
+                    "latitude_i": int(52.518912 * 1e7),
+                    "longitude_i": int(13.5512064 * 1e7),
+                    "altitude": -16,
+                    "time": 1_758_624_189,
+                },
+            },
+            "payload": {
+                "__bytes_b64__": "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST to be triggered for position packet"
+    path, payload, priority = captured[0]
+    assert path == "/api/positions"
+    assert priority == mesh._POSITION_POST_PRIORITY
+    assert payload["id"] == 200498337
+    assert payload["node_id"] == "!b1fa2b07"
+    assert payload["node_num"] == int("b1fa2b07", 16)
+    assert payload["num"] == payload["node_num"]
+    assert payload["rx_time"] == 1_758_624_186
+    assert payload["rx_iso"] == mesh._iso(1_758_624_186)
+    assert payload["latitude"] == pytest.approx(52.518912)
+    assert payload["longitude"] == pytest.approx(13.5512064)
+    assert payload["altitude"] == pytest.approx(-16)
+    assert payload["position_time"] == 1_758_624_189
+    assert payload["location_source"] == "LOC_INTERNAL"
+    assert payload["precision_bits"] == 17
+    assert payload["sats_in_view"] == 7
+    assert payload["pdop"] == pytest.approx(211.0)
+    assert payload["ground_speed"] == pytest.approx(2.0)
+    assert payload["ground_track"] == pytest.approx(0.0)
+    assert payload["snr"] == pytest.approx(-9.5)
+    assert payload["rssi"] == -104
+    assert payload["hop_limit"] is None
+    assert payload["bitfield"] == 1
+    assert payload["payload_b64"] == "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER"
+    assert payload["raw"]["time"] == 1_758_624_189
+
+
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
@@ -393,7 +466,7 @@ def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
         "toId": "!def",
         "decoded": {
             "payload": {"text": "ignored"},
-            "portnum": "POSITION_APP",
+            "portnum": "ENVIRONMENTAL_MEASUREMENT",
         },
     }
 

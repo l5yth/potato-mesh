@@ -27,6 +27,7 @@ import dataclasses
 import heapq
 import itertools
 import json, os, time, threading, signal, urllib.request, urllib.error
+import math
 from collections.abc import Mapping
 
 from meshtastic.serial_interface import SerialInterface
@@ -88,6 +89,7 @@ _POST_QUEUE_COUNTER = itertools.count()
 _POST_QUEUE_ACTIVE = False
 
 _NODE_POST_PRIORITY = 0
+_POSITION_POST_PRIORITY = 5
 _MESSAGE_POST_PRIORITY = 10
 _DEFAULT_POST_PRIORITY = 50
 
@@ -309,6 +311,64 @@ def _first(d, *names, default=None):
                 continue
             return cur
     return default
+
+
+def _coerce_int(value):
+    """Return ``value`` converted to ``int`` when possible."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) else None
+    if isinstance(value, (str, bytes, bytearray)):
+        text = value.decode() if isinstance(value, (bytes, bytearray)) else value
+        stripped = text.strip()
+        if not stripped:
+            return None
+        try:
+            if stripped.lower().startswith("0x"):
+                return int(stripped, 16)
+            return int(stripped, 10)
+        except ValueError:
+            try:
+                return int(float(stripped))
+            except ValueError:
+                return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(value):
+    """Return ``value`` converted to ``float`` when possible."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        result = float(value)
+        return result if math.isfinite(result) else None
+    if isinstance(value, (str, bytes, bytearray)):
+        text = value.decode() if isinstance(value, (bytes, bytearray)) else value
+        stripped = text.strip()
+        if not stripped:
+            return None
+        try:
+            result = float(stripped)
+        except ValueError:
+            return None
+        return result if math.isfinite(result) else None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
 
 
 def _pkt_to_dict(packet) -> dict:
@@ -558,6 +618,127 @@ def _nodeinfo_user_dict(node_info, decoded_user) -> dict | None:
     return user_dict
 
 
+def store_position_packet(packet: dict, decoded: Mapping):
+    """Handle ``POSITION_APP`` packets and forward them to ``/api/positions``."""
+
+    node_ref = _first(packet, "fromId", "from_id", "from", default=None)
+    if node_ref is None:
+        node_ref = _first(decoded, "num", default=None)
+    node_id = _canonical_node_id(node_ref)
+    if node_id is None:
+        return
+
+    node_num = _coerce_int(_first(decoded, "num", default=None))
+    if node_num is None:
+        node_num = _node_num_from_id(node_id)
+
+    pkt_id = _coerce_int(_first(packet, "id", "packet_id", "packetId", default=None))
+    if pkt_id is None:
+        return
+
+    rx_time = _coerce_int(_first(packet, "rxTime", "rx_time", default=time.time()))
+    if rx_time is None:
+        rx_time = int(time.time())
+
+    to_id = _first(packet, "toId", "to_id", "to", default=None)
+    to_id = to_id if to_id not in {"", None} else None
+
+    position_section = decoded.get("position") if isinstance(decoded, Mapping) else None
+    if not isinstance(position_section, Mapping):
+        position_section = {}
+
+    latitude = _coerce_float(_first(position_section, "latitude", "raw.latitude", default=None))
+    if latitude is None:
+        lat_i = _coerce_int(
+            _first(position_section, "latitudeI", "latitude_i", "raw.latitude_i", default=None)
+        )
+        if lat_i is not None:
+            latitude = lat_i / 1e7
+
+    longitude = _coerce_float(_first(position_section, "longitude", "raw.longitude", default=None))
+    if longitude is None:
+        lon_i = _coerce_int(
+            _first(position_section, "longitudeI", "longitude_i", "raw.longitude_i", default=None)
+        )
+        if lon_i is not None:
+            longitude = lon_i / 1e7
+
+    altitude = _coerce_float(_first(position_section, "altitude", "raw.altitude", default=None))
+    position_time = _coerce_int(_first(position_section, "time", "raw.time", default=None))
+    location_source = _first(
+        position_section,
+        "locationSource",
+        "location_source",
+        "raw.location_source",
+        default=None,
+    )
+    location_source = str(location_source).strip() if location_source not in {None, ""} else None
+
+    precision_bits = _coerce_int(
+        _first(position_section, "precisionBits", "precision_bits", "raw.precision_bits", default=None)
+    )
+    sats_in_view = _coerce_int(
+        _first(position_section, "satsInView", "sats_in_view", "raw.sats_in_view", default=None)
+    )
+    pdop = _coerce_float(_first(position_section, "PDOP", "pdop", "raw.PDOP", "raw.pdop", default=None))
+    ground_speed = _coerce_float(
+        _first(position_section, "groundSpeed", "ground_speed", "raw.ground_speed", default=None)
+    )
+    ground_track = _coerce_float(
+        _first(position_section, "groundTrack", "ground_track", "raw.ground_track", default=None)
+    )
+
+    snr = _coerce_float(_first(packet, "snr", "rx_snr", "rxSnr", default=None))
+    rssi = _coerce_int(_first(packet, "rssi", "rx_rssi", "rxRssi", default=None))
+    hop_limit = _coerce_int(_first(packet, "hopLimit", "hop_limit", default=None))
+    bitfield = _coerce_int(_first(decoded, "bitfield", default=None))
+
+    payload_bytes = _extract_payload_bytes(decoded)
+    payload_b64 = base64.b64encode(payload_bytes).decode("ascii") if payload_bytes else None
+
+    raw_section = decoded.get("raw") if isinstance(decoded, Mapping) else None
+    raw_payload = _node_to_dict(raw_section) if raw_section else None
+    if raw_payload is None and position_section:
+        raw_position = position_section.get("raw") if isinstance(position_section, Mapping) else None
+        if raw_position:
+            raw_payload = _node_to_dict(raw_position)
+
+    position_payload = {
+        "id": pkt_id,
+        "node_id": node_id,
+        "node_num": node_num,
+        "num": node_num,
+        "from_id": node_id,
+        "to_id": to_id,
+        "rx_time": rx_time,
+        "rx_iso": _iso(rx_time),
+        "latitude": latitude,
+        "longitude": longitude,
+        "altitude": altitude,
+        "position_time": position_time,
+        "location_source": location_source,
+        "precision_bits": precision_bits,
+        "sats_in_view": sats_in_view,
+        "pdop": pdop,
+        "ground_speed": ground_speed,
+        "ground_track": ground_track,
+        "snr": snr,
+        "rssi": rssi,
+        "hop_limit": hop_limit,
+        "bitfield": bitfield,
+        "payload_b64": payload_b64,
+    }
+    if raw_payload:
+        position_payload["raw"] = raw_payload
+
+    _queue_post_json("/api/positions", position_payload, priority=_POSITION_POST_PRIORITY)
+
+    if DEBUG:
+        print(
+            f"[debug] stored position for {node_id} lat={latitude!r} lon={longitude!r} rx_time={rx_time}"
+        )
+
+
 def store_nodeinfo_packet(packet: dict, decoded: Mapping):
     """Handle ``NODEINFO_APP`` packets and forward them to ``/api/nodes``."""
 
@@ -726,6 +907,10 @@ def store_packet_dict(p: dict):
 
     if portnum in {"5", "NODEINFO_APP"}:
         store_nodeinfo_packet(p, dec)
+        return
+
+    if portnum in {"4", "POSITION_APP"}:
+        store_position_packet(p, dec)
         return
 
     text = _first(dec, "payload.text", "text", default=None)
