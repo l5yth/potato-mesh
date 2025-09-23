@@ -557,6 +557,18 @@
       ROUTER: '#E88B94'
     });
 
+    const roleRenderOrder = Object.freeze({
+      CLIENT: 1,
+      CLIENT_HIDDEN: 2,
+      CLIENT_MUTE: 3,
+      TRACKER: 4,
+      SENSOR: 5,
+      LOST_AND_FOUND: 6,
+      REPEATER: 7,
+      ROUTER_LATE: 8,
+      ROUTER: 9
+    });
+
     const activeRoleFilters = new Set();
     const legendRoleButtons = new Map();
 
@@ -577,6 +589,12 @@
     function getRoleColor(role) {
       const key = getRoleKey(role);
       return roleColors[key] || roleColors.CLIENT || '#3388ff';
+    }
+
+    function getRoleRenderPriority(role) {
+      const key = getRoleKey(role);
+      const priority = roleRenderOrder[key];
+      return typeof priority === 'number' ? priority : 0;
     }
 
     // --- Map setup ---
@@ -1224,7 +1242,17 @@
     function renderMap(nodes, nowSec) {
       markersLayer.clearLayers();
       const pts = [];
-      for (const n of nodes) {
+      const nodesByRenderOrder = nodes
+        .map((node, index) => ({ node, index }))
+        .sort((a, b) => {
+          const orderA = getRoleRenderPriority(a.node && a.node.role);
+          const orderB = getRoleRenderPriority(b.node && b.node.role);
+          if (orderA !== orderB) return orderA - orderB;
+          return a.index - b.index;
+        })
+        .map(entry => entry.node);
+
+      for (const n of nodesByRenderOrder) {
         const latRaw = n.latitude, lonRaw = n.longitude;
         if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
         const lat = Number(latRaw), lon = Number(lonRaw);
