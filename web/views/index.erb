@@ -88,16 +88,16 @@
     .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
     .row { display: flex; gap: var(--pad); align-items: center; justify-content: space-between; }
     .map-row { display: flex; gap: var(--pad); align-items: stretch; }
-    #chat { flex: 0 0 33%; max-width: 33%; height: 60vh; border: 1px solid #ddd; border-radius: 8px; font-size: 12px; display: flex; flex-direction: column; background: #fff; overflow: hidden; }
-    .chat-tabs { display: flex; gap: 0; border-bottom: 1px solid #ddd; background: #f6f6f6; border-top-left-radius: 8px; border-top-right-radius: 8px; overflow: hidden; }
+    #chat { flex: 0 0 33%; max-width: 33%; height: 60vh; border: 1px solid #ddd; border-radius: 8px; font-size: 12px; display: flex; flex-direction: column; background: #fff; overflow: hidden; position: relative; }
+    .chat-tabs { display: flex; gap: 0; border-bottom: 1px solid #ddd; background: #f6f6f6; border-top-left-radius: 8px; border-top-right-radius: 8px; overflow: hidden; position: sticky; top: 0; z-index: 5; }
     .chat-tab { flex: 1; border: none; background: transparent; padding: 8px 10px; cursor: pointer; font: inherit; font-weight: 600; color: #333; }
     .chat-tab + .chat-tab { border-left: 1px solid #ddd; }
     .chat-tab[aria-selected="true"] { background: #fff; color: #111; border-bottom: 2px solid #4a90e2; }
     .chat-tab[aria-selected="false"] { font-weight: 500; }
     .chat-tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
-    .chat-panel { flex: 1; display: flex; }
+    .chat-panel { flex: 1; display: flex; min-height: 0; overflow: hidden; }
     .chat-panel[hidden] { display: none; }
-    .chat-log { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .chat-log { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
     .chat-empty { margin: 12px 0; font-style: italic; color: #666; }
     .chat-entry-node { font-family: ui-monospace, Menlo, Consolas, monospace; color: #555 }
     .chat-entry-msg { font-family: ui-monospace, Menlo, Consolas, monospace; }
