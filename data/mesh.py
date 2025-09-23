@@ -483,18 +483,28 @@ def _node_num_from_id(node_id) -> int | None:
 def _merge_mappings(base, extra):
     """Recursively merge mapping ``extra`` into ``base`` without mutation."""
 
+    base_dict: dict
+    if isinstance(base, Mapping):
+        base_dict = dict(base)
+    elif base:
+        converted_base = _node_to_dict(base)
+        base_dict = dict(converted_base) if isinstance(converted_base, Mapping) else {}
+    else:
+        base_dict = {}
+
     if not isinstance(extra, Mapping):
-        return base if isinstance(base, Mapping) else (dict(base) if base else {})
-    result = dict(base) if isinstance(base, Mapping) else {}
+        converted_extra = _node_to_dict(extra)
+        if not isinstance(converted_extra, Mapping):
+            return base_dict
+        extra = converted_extra
+
     for key, value in extra.items():
         if isinstance(value, Mapping):
-            existing = result.get(key)
-            result[key] = _merge_mappings(
-                existing if isinstance(existing, Mapping) else {}, value
-            )
+            existing = base_dict.get(key)
+            base_dict[key] = _merge_mappings(existing, value)
         else:
-            result[key] = value
-    return result
+            base_dict[key] = _node_to_dict(value)
+    return base_dict
 
 
 def _extract_payload_bytes(decoded_section: Mapping) -> bytes | None:
@@ -615,6 +625,18 @@ def _nodeinfo_user_dict(node_info, decoded_user) -> dict | None:
                 )
             except Exception:
                 user_dict = None
+
+    if isinstance(decoded_user, ProtoMessage):
+        try:
+            from google.protobuf.json_format import MessageToDict
+
+            decoded_user = MessageToDict(
+                decoded_user,
+                preserving_proto_field_name=False,
+                use_integers_for_enums=False,
+            )
+        except Exception:
+            decoded_user = _node_to_dict(decoded_user)
 
     if isinstance(decoded_user, Mapping):
         user_dict = _merge_mappings(user_dict, decoded_user)
