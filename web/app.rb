@@ -391,6 +391,16 @@ def query_messages(limit)
     end
     node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
     r["node"] = node
+
+    canonical_from_id = string_or_nil(node["node_id"]) || string_or_nil(normalize_node_id(db, r["from_id"]))
+    if canonical_from_id
+      raw_from_id = string_or_nil(r["from_id"])
+      if raw_from_id.nil? || raw_from_id.match?(/\A[0-9]+\z/)
+        r["from_id"] = canonical_from_id
+      elsif raw_from_id.start_with?("!") && raw_from_id.casecmp(canonical_from_id) != 0
+        r["from_id"] = canonical_from_id
+      end
+    end
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       Kernel.warn "[debug] row after processing: #{r.inspect}"
     end
