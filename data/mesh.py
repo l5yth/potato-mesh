@@ -656,24 +656,44 @@ def store_position_packet(packet: dict, decoded: Mapping):
     if not isinstance(position_section, Mapping):
         position_section = {}
 
-    latitude = _coerce_float(_first(position_section, "latitude", "raw.latitude", default=None))
+    latitude = _coerce_float(
+        _first(position_section, "latitude", "raw.latitude", default=None)
+    )
     if latitude is None:
         lat_i = _coerce_int(
-            _first(position_section, "latitudeI", "latitude_i", "raw.latitude_i", default=None)
+            _first(
+                position_section,
+                "latitudeI",
+                "latitude_i",
+                "raw.latitude_i",
+                default=None,
+            )
         )
         if lat_i is not None:
             latitude = lat_i / 1e7
 
-    longitude = _coerce_float(_first(position_section, "longitude", "raw.longitude", default=None))
+    longitude = _coerce_float(
+        _first(position_section, "longitude", "raw.longitude", default=None)
+    )
     if longitude is None:
         lon_i = _coerce_int(
-            _first(position_section, "longitudeI", "longitude_i", "raw.longitude_i", default=None)
+            _first(
+                position_section,
+                "longitudeI",
+                "longitude_i",
+                "raw.longitude_i",
+                default=None,
+            )
         )
         if lon_i is not None:
             longitude = lon_i / 1e7
 
-    altitude = _coerce_float(_first(position_section, "altitude", "raw.altitude", default=None))
-    position_time = _coerce_int(_first(position_section, "time", "raw.time", default=None))
+    altitude = _coerce_float(
+        _first(position_section, "altitude", "raw.altitude", default=None)
+    )
+    position_time = _coerce_int(
+        _first(position_section, "time", "raw.time", default=None)
+    )
     location_source = _first(
         position_section,
         "locationSource",
@@ -681,20 +701,48 @@ def store_position_packet(packet: dict, decoded: Mapping):
         "raw.location_source",
         default=None,
     )
-    location_source = str(location_source).strip() if location_source not in {None, ""} else None
+    location_source = (
+        str(location_source).strip() if location_source not in {None, ""} else None
+    )
 
     precision_bits = _coerce_int(
-        _first(position_section, "precisionBits", "precision_bits", "raw.precision_bits", default=None)
+        _first(
+            position_section,
+            "precisionBits",
+            "precision_bits",
+            "raw.precision_bits",
+            default=None,
+        )
     )
     sats_in_view = _coerce_int(
-        _first(position_section, "satsInView", "sats_in_view", "raw.sats_in_view", default=None)
+        _first(
+            position_section,
+            "satsInView",
+            "sats_in_view",
+            "raw.sats_in_view",
+            default=None,
+        )
     )
-    pdop = _coerce_float(_first(position_section, "PDOP", "pdop", "raw.PDOP", "raw.pdop", default=None))
+    pdop = _coerce_float(
+        _first(position_section, "PDOP", "pdop", "raw.PDOP", "raw.pdop", default=None)
+    )
     ground_speed = _coerce_float(
-        _first(position_section, "groundSpeed", "ground_speed", "raw.ground_speed", default=None)
+        _first(
+            position_section,
+            "groundSpeed",
+            "ground_speed",
+            "raw.ground_speed",
+            default=None,
+        )
     )
     ground_track = _coerce_float(
-        _first(position_section, "groundTrack", "ground_track", "raw.ground_track", default=None)
+        _first(
+            position_section,
+            "groundTrack",
+            "ground_track",
+            "raw.ground_track",
+            default=None,
+        )
     )
 
     snr = _coerce_float(_first(packet, "snr", "rx_snr", "rxSnr", default=None))
@@ -703,12 +751,18 @@ def store_position_packet(packet: dict, decoded: Mapping):
     bitfield = _coerce_int(_first(decoded, "bitfield", default=None))
 
     payload_bytes = _extract_payload_bytes(decoded)
-    payload_b64 = base64.b64encode(payload_bytes).decode("ascii") if payload_bytes else None
+    payload_b64 = (
+        base64.b64encode(payload_bytes).decode("ascii") if payload_bytes else None
+    )
 
     raw_section = decoded.get("raw") if isinstance(decoded, Mapping) else None
     raw_payload = _node_to_dict(raw_section) if raw_section else None
     if raw_payload is None and position_section:
-        raw_position = position_section.get("raw") if isinstance(position_section, Mapping) else None
+        raw_position = (
+            position_section.get("raw")
+            if isinstance(position_section, Mapping)
+            else None
+        )
         if raw_position:
             raw_payload = _node_to_dict(raw_position)
 
@@ -740,7 +794,9 @@ def store_position_packet(packet: dict, decoded: Mapping):
     if raw_payload:
         position_payload["raw"] = raw_payload
 
-    _queue_post_json("/api/positions", position_payload, priority=_POSITION_POST_PRIORITY)
+    _queue_post_json(
+        "/api/positions", position_payload, priority=_POSITION_POST_PRIORITY
+    )
 
     if DEBUG:
         print(

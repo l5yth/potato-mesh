@@ -740,13 +740,13 @@ def insert_position(db, payload)
   alt = coerce_float(payload["altitude"]) || coerce_float(position_section["altitude"])
 
   lat ||= begin
-    lat_i = coerce_integer(position_section["latitudeI"] || position_section["latitude_i"] || position_section.dig("raw", "latitude_i"))
-    lat_i ? lat_i / 1e7 : nil
-  end
+      lat_i = coerce_integer(position_section["latitudeI"] || position_section["latitude_i"] || position_section.dig("raw", "latitude_i"))
+      lat_i ? lat_i / 1e7 : nil
+    end
   lon ||= begin
-    lon_i = coerce_integer(position_section["longitudeI"] || position_section["longitude_i"] || position_section.dig("raw", "longitude_i"))
-    lon_i ? lon_i / 1e7 : nil
-  end
+      lon_i = coerce_integer(position_section["longitudeI"] || position_section["longitude_i"] || position_section.dig("raw", "longitude_i"))
+      lon_i ? lon_i / 1e7 : nil
+    end
   alt ||= coerce_float(position_section.dig("raw", "altitude"))
 
   position_time = coerce_integer(
@@ -814,14 +814,14 @@ def insert_position(db, payload)
 
   raw_value = payload["raw_json"] || payload["raw"] || position_section["raw"]
   raw_json = if raw_value.is_a?(String)
-    raw_value
-  elsif raw_value
-    begin
-      JSON.dump(raw_value)
-    rescue StandardError
-      raw_value.to_s
+      raw_value
+    elsif raw_value
+      begin
+        JSON.dump(raw_value)
+      rescue StandardError
+        raw_value.to_s
+      end
     end
-  end
 
   row = [
     pos_id,

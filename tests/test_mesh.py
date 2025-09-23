@@ -297,7 +297,10 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     assert payload["rssi"] == -104
     assert payload["hop_limit"] is None
     assert payload["bitfield"] == 1
-    assert payload["payload_b64"] == "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER"
+    assert (
+        payload["payload_b64"]
+        == "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER"
+    )
     assert payload["raw"]["time"] == 1_758_624_189
 
 
