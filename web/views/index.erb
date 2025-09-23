@@ -936,6 +936,16 @@
         .replace(/'/g, '&#39;');
     }
 
+    function hasNodeMetadata(node) {
+      if (!node || typeof node !== 'object') return false;
+      return ['short_name', 'long_name', 'node_id'].some(key => {
+        const value = node[key];
+        if (value == null) return false;
+        if (typeof value === 'string') return value.trim().length > 0;
+        return String(value).trim().length > 0;
+      });
+    }
+
     function renderShortHtml(short, role, longName, nodeData = null){
       const safeTitle = longName ? escapeHtml(String(longName)) : '';
       const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
@@ -962,6 +972,23 @@
       const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
       const color = getRoleColor(roleValue);
       return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
+    }
+
+    function renderNodeReference(node, fallbackId, options = {}) {
+      const includeFallback = Boolean(options.includeFallback);
+      const hasData = hasNodeMetadata(node);
+      const data = hasData ? node : null;
+      const badge = renderShortHtml(
+        data ? data.short_name : null,
+        data ? data.role : null,
+        data ? data.long_name : null,
+        data
+      );
+      const fallback = fallbackId != null ? String(fallbackId).trim() : '';
+      if (!includeFallback || !fallback) {
+        return badge;
+      }
+      return `${badge} <span class="mono">${escapeHtml(fallback)}</span>`;
     }
 
     function formatShortInfoUptime(value) {
@@ -1060,7 +1087,21 @@
     function createMessageChatEntry(m) {
       const div = document.createElement('div');
       const ts = formatTime(new Date(m.rx_time * 1000));
-      const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
+      const fromNode = m.from_node || m.node || null;
+      const fromId = m.from_id != null ? String(m.from_id).trim() : '';
+      const fromNodeId = fromNode && fromNode.node_id != null ? String(fromNode.node_id).trim() : '';
+      const includeFromFallback = !!fromId && (!fromNodeId || fromNodeId !== fromId);
+      const fromLabel = renderNodeReference(fromNode, fromId, { includeFallback: includeFromFallback });
+      const toNode = m.to_node || null;
+      const rawToId = m.to_id != null ? String(m.to_id).trim() : '';
+      let toLabel = '';
+      if (hasNodeMetadata(toNode)) {
+        const toNodeId = toNode && toNode.node_id != null ? String(toNode.node_id).trim() : '';
+        const includeToFallback = !!rawToId && !rawToId.startsWith('^') && (!toNodeId || toNodeId !== rawToId);
+        toLabel = renderNodeReference(toNode, rawToId, { includeFallback: includeToFallback });
+      } else if (rawToId) {
+        toLabel = `<span class="mono">${escapeHtml(rawToId)}</span>`;
+      }
       let bodyHtml = '';
       if (m.text && m.text.length > 0) {
         bodyHtml = escapeHtml(m.text);
@@ -1068,7 +1109,14 @@
         bodyHtml = '<em>[encrypted message]</em>';
       }
       div.className = 'chat-entry-msg';
-      div.innerHTML = `[${ts}] ${short} ${bodyHtml}`;
+      const pieces = [`[${ts}]`, fromLabel];
+      if (toLabel) {
+        pieces.push('→', toLabel);
+      }
+      if (bodyHtml) {
+        pieces.push(bodyHtml);
+      }
+      div.innerHTML = pieces.join(' ');
       return div;
     }
 

@@ -76,6 +76,33 @@ end
 
 APP_VERSION = determine_app_version
 
+MESSAGE_NODE_COLUMNS = %w[
+  node_id
+  num
+  short_name
+  long_name
+  macaddr
+  hw_model
+  role
+  public_key
+  is_unmessagable
+  is_favorite
+  hops_away
+  snr
+  last_heard
+  first_heard
+  battery_level
+  voltage
+  channel_utilization
+  air_util_tx
+  uptime_seconds
+  position_time
+  location_source
+  latitude
+  longitude
+  altitude
+].freeze
+
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
@@ -340,55 +367,50 @@ end
 def query_messages(limit)
   db = open_database(readonly: true)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
-                      SELECT m.*, n.*, m.snr AS msg_snr
-                      FROM messages m
-                      LEFT JOIN nodes n ON (
-                        m.from_id = n.node_id OR (
-                          CAST(m.from_id AS TEXT) <> '' AND
-                          CAST(m.from_id AS TEXT) GLOB '[0-9]*' AND
-                          CAST(m.from_id AS INTEGER) = n.num
-                        )
-                      )
-                      ORDER BY m.rx_time DESC
-                      LIMIT ?
-                    SQL
-  msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text payload_b64 msg_snr rssi hop_limit]
+  from_node_select = MESSAGE_NODE_COLUMNS.map { |col| "nf.#{col} AS from_node_#{col}" }.join(", ")
+  to_node_select = MESSAGE_NODE_COLUMNS.map { |col| "nt.#{col} AS to_node_#{col}" }.join(", ")
+  select_parts = ["m.*", from_node_select, to_node_select, "m.snr AS msg_snr"].reject(&:empty?)
+  sql = <<~SQL
+    SELECT #{select_parts.join(', ')}
+    FROM messages m
+    LEFT JOIN nodes nf ON (
+      m.from_id = nf.node_id OR (
+        CAST(m.from_id AS TEXT) <> '' AND
+        CAST(m.from_id AS TEXT) GLOB '[0-9]*' AND
+        CAST(m.from_id AS INTEGER) = nf.num
+      )
+    )
+    LEFT JOIN nodes nt ON (
+      m.to_id = nt.node_id OR (
+        CAST(m.to_id AS TEXT) <> '' AND
+        CAST(m.to_id AS TEXT) GLOB '[0-9]*' AND
+        CAST(m.to_id AS INTEGER) = nt.num
+      )
+    )
+    ORDER BY m.rx_time DESC
+    LIMIT ?
+  SQL
+  rows = db.execute(sql, [limit])
   rows.each do |r|
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
       Kernel.warn "[debug] messages row before join: #{raw.inspect}"
       Kernel.warn "[debug] row after join: #{r.inspect}"
     end
-    node = {}
-    r.keys.each do |k|
-      next if msg_fields.include?(k)
-      node[k] = r.delete(k)
+    from_node = {}
+    to_node = {}
+    MESSAGE_NODE_COLUMNS.each do |col|
+      from_node[col] = r.delete("from_node_#{col}")
+      to_node[col] = r.delete("to_node_#{col}")
     end
     r["snr"] = r.delete("msg_snr")
-    if r["from_id"] && (node["node_id"].nil? || node["node_id"].to_s.empty?)
-      lookup_keys = []
-      canonical = normalize_node_id(db, r["from_id"])
-      lookup_keys << canonical if canonical
-      raw_ref = r["from_id"].to_s.strip
-      lookup_keys << raw_ref unless raw_ref.empty?
-      lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
-      fallback = nil
-      lookup_keys.uniq.each do |ref|
-        sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
-        fallback = db.get_first_row(sql, [ref])
-        break if fallback
-      end
-      if fallback
-        fallback.each do |key, value|
-          next unless key.is_a?(String)
-          next if msg_fields.include?(key)
-          node[key] = value if node[key].nil?
-        end
-      end
-    end
-    node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
-    r["node"] = node
+    from_node = hydrate_message_node(db, r["from_id"], from_node)
+    to_node = hydrate_message_node(db, r["to_id"], to_node)
+    from_node = normalize_message_node_hash(from_node)
+    to_node = normalize_message_node_hash(to_node)
+    r["from_node"] = from_node
+    r["to_node"] = to_node
+    r["node"] = from_node || {}
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       Kernel.warn "[debug] row after processing: #{r.inspect}"
     end
@@ -614,6 +636,86 @@ end
 # @return [Boolean]
 def prefer_canonical_sender?(message)
   message.is_a?(Hash) && message.key?("packet_id") && !message.key?("id")
+end
+
+def resolve_message_node_id(db, primary_value, fallback_value: nil, prefer_canonical: false)
+  candidate = primary_value
+  candidate_str = string_or_nil(candidate)
+  fallback_str = string_or_nil(fallback_value)
+  candidate = fallback_str if candidate_str.nil? && fallback_str
+  trimmed = string_or_nil(candidate)
+  canonical = normalize_node_id(db, candidate)
+  canonical_str = string_or_nil(canonical)
+  digits_only = trimmed && trimmed.match?(/\A[0-9]+\z/)
+  return canonical_str if canonical_str && (prefer_canonical || trimmed.nil? || digits_only)
+  trimmed
+end
+
+def hydrate_message_node(db, node_ref, node)
+  node ||= {}
+  return node if node_ref.nil?
+
+  existing_id = node["node_id"]
+  if existing_id.is_a?(String)
+    existing_id = existing_id.strip
+  elsif !existing_id.nil?
+    existing_id = existing_id.to_s
+  end
+  return node if existing_id && !existing_id.empty?
+
+  lookup_keys = []
+  canonical = normalize_node_id(db, node_ref)
+  lookup_keys << canonical if canonical
+  raw_ref = node_ref.to_s.strip
+  lookup_keys << raw_ref unless raw_ref.empty?
+  lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
+
+  fallback = nil
+  lookup_keys.uniq.each do |ref|
+    sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
+    fallback = db.get_first_row(sql, [ref])
+    break if fallback
+  end
+
+  if fallback
+    fallback.each do |key, value|
+      next unless key.is_a?(String)
+      node[key] = value if node[key].nil?
+    end
+  end
+
+  node
+end
+
+def normalize_message_node_hash(node)
+  return nil unless node.is_a?(Hash)
+
+  cleaned = {}
+  node.each do |key, value|
+    next unless key.is_a?(String)
+    cleaned[key] = value unless value.nil?
+  end
+
+  role_from_node = node["role"]
+  if role_from_node.is_a?(String)
+    role_from_node = role_from_node.strip
+    role_from_node = nil if role_from_node.empty?
+  end
+
+  if cleaned.key?("role")
+    role_value = cleaned["role"]
+    if role_value.is_a?(String)
+      role_value = role_value.strip
+      role_value = nil if role_value.empty?
+    end
+    cleaned["role"] = role_value
+    cleaned.delete("role") if cleaned["role"].nil?
+  end
+
+  cleaned["role"] = role_from_node if !cleaned.key?("role") && role_from_node
+  cleaned["role"] ||= "CLIENT" if cleaned.any?
+
+  cleaned.empty? ? nil : cleaned
 end
 
 # Update or create a node entry using information from a position payload.
@@ -906,28 +1008,25 @@ def insert_message(db, m)
   return unless msg_id
   rx_time = m["rx_time"]&.to_i || Time.now.to_i
   rx_iso = m["rx_iso"] || Time.at(rx_time).utc.iso8601
-  raw_from_id = m["from_id"]
-  if raw_from_id.nil? || raw_from_id.to_s.strip.empty?
-    alt_from = m["from"]
-    raw_from_id = alt_from unless alt_from.nil? || alt_from.to_s.strip.empty?
-  end
-  trimmed_from_id = raw_from_id.nil? ? nil : raw_from_id.to_s.strip
-  trimmed_from_id = nil if trimmed_from_id&.empty?
-  canonical_from_id = normalize_node_id(db, raw_from_id)
-  use_canonical = canonical_from_id && (trimmed_from_id.nil? || prefer_canonical_sender?(m))
-  from_id = if use_canonical
-      canonical_from_id.to_s.strip
-    else
-      trimmed_from_id
-    end
-  from_id = nil if from_id&.empty?
+  from_id = resolve_message_node_id(
+    db,
+    m["from_id"],
+    fallback_value: m["from"],
+    prefer_canonical: prefer_canonical_sender?(m)
+  )
+  to_id = resolve_message_node_id(
+    db,
+    m["to_id"],
+    fallback_value: m["to"],
+    prefer_canonical: true
+  )
   payload_b64 = string_or_nil(m["payload_b64"] || m["encrypted"])
   row = [
     msg_id,
     rx_time,
     rx_iso,
     from_id,
-    m["to_id"],
+    to_id,
     m["channel"],
     m["portnum"],
     m["text"],
@@ -938,17 +1037,24 @@ def insert_message(db, m)
   ]
   with_busy_retry do
     ensure_messages_payload_column(db)
-    existing = db.get_first_row("SELECT from_id, payload_b64 FROM messages WHERE id = ?", [msg_id])
+    existing = db.get_first_row("SELECT from_id, to_id, payload_b64 FROM messages WHERE id = ?", [msg_id])
     if existing
       if from_id
         existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
-        existing_from_str = existing_from&.to_s
-        should_update = existing_from_str.nil? || existing_from_str.strip.empty?
-        should_update ||= existing_from != from_id
+        existing_from_str = existing_from.nil? ? nil : existing_from.to_s.strip
+        should_update = existing_from_str.nil? || existing_from_str.empty?
+        should_update ||= existing_from_str != from_id
         db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if should_update
       end
+      if to_id
+        existing_to = existing.is_a?(Hash) ? existing["to_id"] : existing[1]
+        existing_to_str = existing_to.nil? ? nil : existing_to.to_s.strip
+        should_update_to = existing_to_str.nil? || existing_to_str.empty?
+        should_update_to ||= existing_to_str != to_id
+        db.execute("UPDATE messages SET to_id = ? WHERE id = ?", [to_id, msg_id]) if should_update_to
+      end
       if payload_b64
-        existing_payload = existing.is_a?(Hash) ? existing["payload_b64"] : existing[1]
+        existing_payload = existing.is_a?(Hash) ? existing["payload_b64"] : existing[2]
         existing_payload_str = existing_payload&.to_s
         should_update_payload = existing_payload_str.nil? || existing_payload_str.strip.empty?
         should_update_payload ||= existing_payload_str != payload_b64
@@ -961,24 +1067,33 @@ def insert_message(db, m)
                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                    SQL
       rescue SQLite3::ConstraintException
-        fallback = db.get_first_row("SELECT from_id, payload_b64 FROM messages WHERE id = ?", [msg_id])
+        fallback = db.get_first_row("SELECT from_id, to_id, payload_b64 FROM messages WHERE id = ?", [msg_id])
         if fallback
           if from_id
             existing_from = fallback.is_a?(Hash) ? fallback["from_id"] : fallback[0]
-            existing_from_str = existing_from&.to_s
-            should_update = existing_from_str.nil? || existing_from_str.strip.empty?
-            should_update ||= existing_from != from_id
+            existing_from_str = existing_from.nil? ? nil : existing_from.to_s.strip
+            should_update = existing_from_str.nil? || existing_from_str.empty?
+            should_update ||= existing_from_str != from_id
             db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if should_update
           end
+          if to_id
+            existing_to = fallback.is_a?(Hash) ? fallback["to_id"] : fallback[1]
+            existing_to_str = existing_to.nil? ? nil : existing_to.to_s.strip
+            should_update_to = existing_to_str.nil? || existing_to_str.empty?
+            should_update_to ||= existing_to_str != to_id
+            db.execute("UPDATE messages SET to_id = ? WHERE id = ?", [to_id, msg_id]) if should_update_to
+          end
           if payload_b64
-            existing_payload = fallback.is_a?(Hash) ? fallback["payload_b64"] : fallback[1]
+            existing_payload = fallback.is_a?(Hash) ? fallback["payload_b64"] : fallback[2]
             existing_payload_str = existing_payload&.to_s
             should_update_payload = existing_payload_str.nil? || existing_payload_str.strip.empty?
             should_update_payload ||= existing_payload_str != payload_b64
             db.execute("UPDATE messages SET payload_b64 = ? WHERE id = ?", [payload_b64, msg_id]) if should_update_payload
           end
-        elsif from_id
-          db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id])
+        else
+          db.execute("UPDATE messages SET from_id = ? WHERE id = ?", [from_id, msg_id]) if from_id
+          db.execute("UPDATE messages SET to_id = ? WHERE id = ?", [to_id, msg_id]) if to_id
+          db.execute("UPDATE messages SET payload_b64 = ? WHERE id = ?", [payload_b64, msg_id]) if payload_b64
         end
       end
     end
