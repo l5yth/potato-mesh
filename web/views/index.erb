@@ -484,14 +484,95 @@
     const CHAT_LIMIT = 1000;
     const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
     const CHAT_TAB_STORAGE_KEY = 'potatomesh.chat.tab';
-    let activeChatTab = 'public';
-    try {
-      const storedTab = window.localStorage ? window.localStorage.getItem(CHAT_TAB_STORAGE_KEY) : null;
-      if (storedTab === 'encrypted' || storedTab === 'public') {
-        activeChatTab = storedTab;
+
+    function normalizeChatTabValue(value) {
+      if (value === 'public' || value === 'encrypted') {
+        return value;
       }
-    } catch (err) {
-      /* ignore storage errors */
+      if (typeof value === 'string') {
+        const trimmed = value.trim().toLowerCase();
+        if (trimmed === 'public' || trimmed === 'encrypted') {
+          return trimmed;
+        }
+      }
+      return null;
+    }
+
+    function buildChatTabStorageList() {
+      const storages = [];
+      try {
+        if (window.localStorage) {
+          storages.push(window.localStorage);
+        }
+      } catch (err) {
+        /* ignore storage errors */
+      }
+      try {
+        if (window.sessionStorage) {
+          storages.push(window.sessionStorage);
+        }
+      } catch (err) {
+        /* ignore storage errors */
+      }
+      return storages;
+    }
+
+    const chatTabStorages = buildChatTabStorageList();
+
+    function readStoredChatTab() {
+      for (const storage of chatTabStorages) {
+        try {
+          const value = storage.getItem(CHAT_TAB_STORAGE_KEY);
+          const normalized = normalizeChatTabValue(value);
+          if (normalized) {
+            return normalized;
+          }
+        } catch (err) {
+          /* ignore storage errors */
+        }
+      }
+      return null;
+    }
+
+    function persistStoredChatTab(tab) {
+      let wrote = false;
+      for (const storage of chatTabStorages) {
+        try {
+          storage.setItem(CHAT_TAB_STORAGE_KEY, tab);
+          wrote = true;
+        } catch (err) {
+          /* ignore storage errors */
+        }
+      }
+      return wrote;
+    }
+
+    function readChatTabFromHash() {
+      if (!window.location || typeof window.location.hash !== 'string') return null;
+      const rawHash = window.location.hash.trim();
+      if (!rawHash) return null;
+      const normalizedHash = rawHash.replace(/^#/, '');
+      const direct = normalizeChatTabValue(normalizedHash);
+      if (direct) return direct;
+      try {
+        const params = new URLSearchParams(normalizedHash);
+        const candidate = params.get('chatTab') || params.get('chat') || params.get('tab');
+        return normalizeChatTabValue(candidate);
+      } catch (err) {
+        return null;
+      }
+    }
+
+    const storedChatTab = readStoredChatTab();
+    const hashChatTab = readChatTabFromHash();
+    let activeChatTab = hashChatTab || storedChatTab || 'public';
+    if (hashChatTab && hashChatTab !== storedChatTab) {
+      persistStoredChatTab(hashChatTab);
+    } else if (!storedChatTab) {
+      persistStoredChatTab(activeChatTab);
+    }
+    if (chatContainer) {
+      chatContainer.dataset.activeTab = activeChatTab;
     }
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
@@ -534,12 +615,16 @@
       return 0;
     }
 
-    function setActiveChatTab(tab, { focus = true } = {}) {
-      if (!chatPanels[tab]) return;
-      activeChatTab = tab;
+    function setActiveChatTab(tab, { focus = true, persist = true } = {}) {
+      const normalizedTab = normalizeChatTabValue(tab);
+      if (!normalizedTab || !chatPanels[normalizedTab]) return;
+      activeChatTab = normalizedTab;
+      if (chatContainer) {
+        chatContainer.dataset.activeTab = normalizedTab;
+      }
       chatTabButtons.forEach(button => {
-        const buttonTab = button.dataset.chatTab || 'public';
-        const isActive = buttonTab === tab;
+        const buttonTab = normalizeChatTabValue(button.dataset.chatTab) || 'public';
+        const isActive = buttonTab === normalizedTab;
         button.setAttribute('aria-selected', isActive ? 'true' : 'false');
         button.setAttribute('tabindex', isActive ? '0' : '-1');
         if (isActive && focus) {
@@ -548,21 +633,17 @@
       });
       Object.entries(chatPanels).forEach(([key, panel]) => {
         if (!panel) return;
-        panel.hidden = key !== tab;
+        panel.hidden = key !== normalizedTab;
       });
-      try {
-        if (window.localStorage) {
-          window.localStorage.setItem(CHAT_TAB_STORAGE_KEY, tab);
-        }
-      } catch (err) {
-        /* ignore storage errors */
+      if (persist) {
+        persistStoredChatTab(normalizedTab);
       }
     }
 
     if (chatTabButtons.length) {
       chatTabButtons.forEach(button => {
         button.addEventListener('click', () => {
-          const tab = button.dataset.chatTab || 'public';
+          const tab = normalizeChatTabValue(button.dataset.chatTab) || 'public';
           setActiveChatTab(tab, { focus: false });
         });
         button.addEventListener('keydown', event => {
@@ -573,23 +654,48 @@
           event.preventDefault();
           const currentIndex = chatTabButtons.indexOf(button);
           if (key === 'Home') {
-            setActiveChatTab(chatTabButtons[0]?.dataset.chatTab || 'public');
+            const firstTab = normalizeChatTabValue(chatTabButtons[0]?.dataset.chatTab) || 'public';
+            setActiveChatTab(firstTab);
             return;
           }
           if (key === 'End') {
             const last = chatTabButtons[chatTabButtons.length - 1];
-            if (last) setActiveChatTab(last.dataset.chatTab || 'public');
+            if (last) {
+              const lastTab = normalizeChatTabValue(last.dataset.chatTab) || 'public';
+              setActiveChatTab(lastTab);
+            }
             return;
           }
           const delta = key === 'ArrowRight' ? 1 : -1;
           const nextIndex = (currentIndex + delta + chatTabButtons.length) % chatTabButtons.length;
           const target = chatTabButtons[nextIndex];
           if (target) {
-            setActiveChatTab(target.dataset.chatTab || 'public');
+            const targetTab = normalizeChatTabValue(target.dataset.chatTab) || 'public';
+            setActiveChatTab(targetTab);
           }
         });
       });
-      setActiveChatTab(activeChatTab, { focus: false });
+      setActiveChatTab(activeChatTab, { focus: false, persist: false });
+    }
+
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('storage', event => {
+        if (!event || event.key !== CHAT_TAB_STORAGE_KEY) return;
+        const newValue = normalizeChatTabValue(event.newValue);
+        if (newValue) {
+          if (newValue !== activeChatTab) {
+            setActiveChatTab(newValue, { focus: false, persist: false });
+          }
+        } else if (activeChatTab !== 'public') {
+          setActiveChatTab('public', { focus: false, persist: false });
+        }
+      });
+      window.addEventListener('hashchange', () => {
+        const nextTab = readChatTabFromHash();
+        if (nextTab && nextTab !== activeChatTab) {
+          setActiveChatTab(nextTab, { focus: false, persist: false });
+        }
+      });
     }
 
     function sortNodes(nodes) {
@@ -1329,6 +1435,7 @@
       const preparedEncrypted = normalizeChatEntries(encryptedEntries);
       renderChatSection(chatLogPublic, preparedPublic, 'No public activity yet.');
       renderChatSection(chatLogEncrypted, preparedEncrypted, 'No encrypted messages captured.');
+      setActiveChatTab(activeChatTab, { focus: false, persist: false });
     }
 
     function pad(n) { return String(n).padStart(2, "0"); }
