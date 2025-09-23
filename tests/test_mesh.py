@@ -417,6 +417,91 @@ def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
     assert "deviceMetrics" not in node_entry
 
 
+def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import mesh_pb2
+
+    user_msg = mesh_pb2.User()
+    user_msg.id = "!44556677"
+    user_msg.short_name = "Proto"
+    user_msg.long_name = "Proto User"
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.snr = 2.5
+
+    payload_b64 = base64.b64encode(node_info.SerializeToString()).decode()
+    packet = {
+        "id": 73,
+        "rxTime": 5_000,
+        "fromId": "!44556677",
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "payload": {"__bytes_b64__": payload_b64},
+            "user": user_msg,
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    node_entry = payload["!44556677"]
+    assert node_entry["lastHeard"] == 5_000
+    assert node_entry["user"]["shortName"] == "Proto"
+    assert node_entry["user"]["longName"] == "Proto User"
+
+
+def test_store_packet_dict_nodeinfo_sanitizes_nested_proto(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import mesh_pb2
+
+    user_msg = mesh_pb2.User()
+    user_msg.id = "!55667788"
+    user_msg.short_name = "Nested"
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.hops_away = 1
+
+    payload_b64 = base64.b64encode(node_info.SerializeToString()).decode()
+    packet = {
+        "id": 74,
+        "rxTime": 6_000,
+        "fromId": "!55667788",
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "payload": {"__bytes_b64__": payload_b64},
+            "user": {
+                "id": "!55667788",
+                "shortName": "Nested",
+                "raw": user_msg,
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    node_entry = payload["!55667788"]
+    assert node_entry["user"]["shortName"] == "Nested"
+    assert isinstance(node_entry["user"]["raw"], dict)
+    assert node_entry["user"]["raw"]["id"] == "!55667788"
+
+
 def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
     mesh_module, monkeypatch
 ):
