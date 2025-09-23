@@ -1161,6 +1161,27 @@
       return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
     }
 
+    function normalizeNodeNameValue(value) {
+      if (value == null) return '';
+      const str = String(value).trim();
+      return str.length ? str : '';
+    }
+
+    function applyNodeNameFallback(node) {
+      if (!node || typeof node !== 'object') return;
+      const short = normalizeNodeNameValue(node.short_name ?? node.shortName);
+      const long = normalizeNodeNameValue(node.long_name ?? node.longName);
+      if (short || long) return;
+      const nodeId = normalizeNodeNameValue(node.node_id ?? node.nodeId);
+      if (!nodeId) return;
+      const fallbackShort = nodeId.slice(-4);
+      const fallbackLong = `Meshtastic ${nodeId}`;
+      node.short_name = fallbackShort;
+      node.long_name = fallbackLong;
+      if ('shortName' in node) node.shortName = fallbackShort;
+      if ('longName' in node) node.longName = fallbackLong;
+    }
+
     function timeHum(unixSec) {
       if (!unixSec) return "";
       if (unixSec < 0) return "0s";
@@ -1322,8 +1343,12 @@
       try {
         statusEl.textContent = 'refreshing…';
         const nodes = await fetchNodes();
+        nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
         const messages = await fetchMessages();
+        messages.forEach(message => {
+          if (message && message.node) applyNodeNameFallback(message.node);
+        });
         renderChatLog(nodes, messages);
         allNodes = nodes;
         applyFilter();
