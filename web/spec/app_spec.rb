@@ -450,6 +450,107 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "creates hidden node records for unknown senders" do
+      rx_time = reference_time.to_i - 120
+      payload = {
+        "id" => 9_100,
+        "rx_time" => rx_time,
+        "rx_iso" => Time.at(rx_time).utc.iso8601,
+        "from_id" => "!deadbeef",
+        "to_id" => "^all",
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "spec hidden client",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        node = db.get_first_row(
+          "SELECT node_id, num, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          ["!deadbeef"],
+        )
+        expect(node).not_to be_nil
+        expect(node["num"]).to eq(0xdeadbeef)
+        expect(node["short_name"]).to eq("beef")
+        expect(node["long_name"]).to eq("Meshtasticbeef")
+        expect(node["role"]).to eq("CLIENT_HIDDEN")
+      end
+    end
+
+    it "derives hidden metadata from decimal sender references" do
+      rx_time = reference_time.to_i - 90
+      decimal_ref = 305_419_896 # 0x12345678
+      payload = {
+        "id" => 9_101,
+        "rx_time" => rx_time,
+        "rx_iso" => Time.at(rx_time).utc.iso8601,
+        "from_id" => decimal_ref.to_s,
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "decimal sender",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        node = db.get_first_row(
+          "SELECT node_id, num, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          ["!12345678"],
+        )
+        expect(node).not_to be_nil
+        expect(node["num"]).to eq(decimal_ref)
+        expect(node["short_name"]).to eq("5678")
+        expect(node["long_name"]).to eq("Meshtastic5678")
+        expect(node["role"]).to eq("CLIENT_HIDDEN")
+      end
+    end
+
+    it "does not override populated node metadata" do
+      node_id = "!00ff0001"
+      node_num = 0x00ff_0001
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id,num,short_name,long_name,role) VALUES (?,?,?,?,?)",
+          [node_id, node_num, "KNOWN", "Known Node", "ROUTER"],
+        )
+      end
+
+      payload = {
+        "id" => 9_102,
+        "rx_time" => reference_time.to_i - 60,
+        "from_id" => node_id,
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "existing node",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        node = db.get_first_row(
+          "SELECT node_id, num, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+        expect(node).not_to be_nil
+        expect(node["num"]).to eq(node_num)
+        expect(node["short_name"]).to eq("KNOWN")
+        expect(node["long_name"]).to eq("Known Node")
+        expect(node["role"]).to eq("ROUTER")
+      end
+    end
+
     it "returns 400 when the payload is not valid JSON" do
       post "/api/messages", "{", auth_headers
 

@@ -504,6 +504,133 @@ rescue ArgumentError
   nil
 end
 
+# Derive canonical node identifiers for references that may include
+# hexadecimal ``!`` IDs or decimal numeric values.
+#
+# @param reference [Object] raw node identifier or numeric reference.
+# @param fallback_num [Object, nil] optional secondary source for the node number.
+# @return [Array<String, Integer>] pair containing the canonical node ID and
+#   the numeric node reference when either can be determined.
+def canonical_node_reference(reference, fallback_num: nil)
+  num = nil
+  id = nil
+
+  if reference.is_a?(Integer)
+    num = reference
+  elsif reference
+    str = reference.to_s.strip
+    unless str.empty?
+      if str.start_with?("^")
+        return [nil, nil]
+      elsif str.start_with?("!")
+        hex = str.delete_prefix("!")
+        id = "!#{hex.downcase}"
+        begin
+          num = Integer(hex, 16)
+        rescue ArgumentError
+          num = nil
+        end
+      elsif str.match?(/\A0[xX][0-9A-Fa-f]+\z/)
+        begin
+          num = Integer(str, 16)
+        rescue ArgumentError
+          num = nil
+        end
+      elsif str.match?(/\A-?\d+\z/)
+        begin
+          num = Integer(str, 10)
+        rescue ArgumentError
+          num = nil
+        end
+      else
+        id = str
+      end
+    end
+  end
+
+  fallback = coerce_integer(fallback_num)
+  num ||= fallback
+
+  if id
+    id = "!#{id.delete_prefix("!").downcase}" if id.start_with?("!")
+  elsif num
+    id = format("!%08x", num & 0xFFFFFFFF)
+  end
+
+  if id && num.nil?
+    hex = id.delete_prefix("!")
+    num = Integer(hex, 16) if hex.match?(/\A[0-9a-f]{1,16}\z/)
+  end
+
+  [id, num]
+rescue ArgumentError
+  [id, num]
+end
+
+# Insert or update a node entry representing a hidden client when no other
+# metadata is available. The role defaults to ``CLIENT_HIDDEN`` and the short
+# and long names are derived from the last four characters of the node ID.
+# Existing records keep their values when those fields are already populated.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param reference [Object] raw node identifier reference.
+# @param fallback_num [Object, nil] optional numeric reference used when the
+#   primary reference does not include a parsable number.
+def ensure_hidden_client_node(db, reference, fallback_num: nil)
+  id, num = canonical_node_reference(reference, fallback_num: fallback_num)
+  return unless id
+
+  canonical = normalize_node_id(db, id || num)
+  id = canonical if canonical
+  if canonical && num.nil?
+    num = coerce_integer(db.get_first_value("SELECT num FROM nodes WHERE node_id = ?", [id]))
+  end
+
+  suffix = id[-4, 4] || id
+  short_name = suffix
+  long_name = "Meshtastic#{suffix}"
+
+  with_busy_retry do
+    existing = db.get_first_row(
+      "SELECT short_name, long_name, role, num FROM nodes WHERE node_id = ?",
+      [id],
+    )
+
+    if existing
+      existing_hash = if existing.is_a?(Hash)
+        existing
+      else
+        {
+          "short_name" => existing[0],
+          "long_name" => existing[1],
+          "role" => existing[2],
+          "num" => existing[3],
+        }
+      end
+
+      updates = {}
+      updates["short_name"] = short_name if string_or_nil(existing_hash["short_name"]).nil?
+      updates["long_name"] = long_name if string_or_nil(existing_hash["long_name"]).nil?
+      updates["role"] = "CLIENT_HIDDEN" if string_or_nil(existing_hash["role"]).nil?
+
+      if num && coerce_integer(existing_hash["num"]) != num
+        updates["num"] = num
+      end
+
+      unless updates.empty?
+        assignments = updates.map { |column, _| "#{column} = ?" }.join(", ")
+        db.execute("UPDATE nodes SET #{assignments} WHERE node_id = ?", updates.values + [id])
+      end
+    else
+      row = [id, num, short_name, long_name, "CLIENT_HIDDEN"]
+      db.execute(
+        "INSERT INTO nodes(node_id,num,short_name,long_name,role) VALUES (?,?,?,?,?)",
+        row,
+      )
+    end
+  end
+end
+
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -920,6 +1047,9 @@ def insert_message(db, m)
       from_id = canonical_from_id
     end
   end
+
+  fallback_from_num = m["from_num"] || m["fromNum"] || m["from_id_num"] || m["fromIdNum"]
+  ensure_hidden_client_node(db, from_id || raw_from_id, fallback_num: fallback_from_num)
 
   raw_to_id = m["to_id"]
   raw_to_id = m["to"] if raw_to_id.nil? || raw_to_id.to_s.strip.empty?
