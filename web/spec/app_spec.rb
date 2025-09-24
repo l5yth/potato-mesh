@@ -314,6 +314,55 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "retains hidden client role when user metadata omits role" do
+      hidden_id = "!f6b3f9bf"
+      hidden_num = 0xf6b3f9bf
+      rx_time = reference_time.to_i - 120
+      message_payload = {
+        "id" => 9_200,
+        "rx_time" => rx_time,
+        "rx_iso" => Time.at(rx_time).utc.iso8601,
+        "from_id" => hidden_id,
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "hidden node ping",
+      }
+
+      post "/api/messages", message_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      node_payload = {
+        hidden_id => {
+          "num" => hidden_num,
+          "user" => {
+            "shortName" => "SpecHidden",
+            "longName" => "Spec Hidden",
+          },
+          "lastHeard" => rx_time,
+          "snr" => 6.5,
+        },
+      }
+
+      post "/api/nodes", node_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        node = db.get_first_row(
+          "SELECT short_name, long_name, role FROM nodes WHERE node_id = ?",
+          [hidden_id],
+        )
+        expect(node).not_to be_nil
+        expect(node["short_name"]).to eq("SpecHidden")
+        expect(node["long_name"]).to eq("Spec Hidden")
+        expect(node["role"]).to eq("CLIENT_HIDDEN")
+      end
+    end
+
     it "returns 400 when the payload is not valid JSON" do
       post "/api/nodes", "{", auth_headers
 
@@ -477,7 +526,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(node).not_to be_nil
         expect(node["num"]).to eq(0xdeadbeef)
         expect(node["short_name"]).to eq("beef")
-        expect(node["long_name"]).to eq("Meshtasticbeef")
+        expect(node["long_name"]).to eq("Meshtastic beef")
         expect(node["role"]).to eq("CLIENT_HIDDEN")
       end
     end
@@ -508,7 +557,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(node).not_to be_nil
         expect(node["num"]).to eq(decimal_ref)
         expect(node["short_name"]).to eq("5678")
-        expect(node["long_name"]).to eq("Meshtastic5678")
+        expect(node["long_name"]).to eq("Meshtastic 5678")
         expect(node["role"]).to eq("CLIENT_HIDDEN")
       end
     end

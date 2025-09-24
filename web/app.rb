@@ -586,9 +586,11 @@ def ensure_hidden_client_node(db, reference, fallback_num: nil)
     num = coerce_integer(db.get_first_value("SELECT num FROM nodes WHERE node_id = ?", [id]))
   end
 
-  suffix = id[-4, 4] || id
+  hex = id.delete_prefix("!")
+  suffix = hex[-4, 4] || hex
+  suffix = suffix.to_s.downcase
   short_name = suffix
-  long_name = "Meshtastic#{suffix}"
+  long_name = "Meshtastic #{suffix}".strip
 
   with_busy_retry do
     existing = db.get_first_row(
@@ -640,7 +642,33 @@ def upsert_node(db, node_id, n)
   user = n["user"] || {}
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
-  role = user["role"] || "CLIENT"
+
+  node_num = resolve_node_num(node_id, n)
+  canonical_id, canonical_num = canonical_node_reference(node_id, fallback_num: node_num)
+  normalized_id = canonical_id || string_or_nil(node_id)
+  node_id = normalized_id if normalized_id
+  node_num = canonical_num || node_num
+
+  role = string_or_nil(user["role"])
+  if role.nil?
+    ensure_ref = node_id || node_num
+    ensure_hidden_client_node(db, ensure_ref, fallback_num: node_num) if ensure_ref
+
+    existing_role = nil
+    if node_id
+      existing_role = string_or_nil(
+        db.get_first_value("SELECT role FROM nodes WHERE node_id = ?", [node_id]),
+      )
+    end
+    if existing_role.nil? && node_num
+      existing_role = string_or_nil(
+        db.get_first_value("SELECT role FROM nodes WHERE num = ?", [node_num]),
+      )
+    end
+
+    role = existing_role || "CLIENT"
+  end
+
   lh = n["lastHeard"]
   pt = pos["time"]
   now = Time.now.to_i
@@ -654,7 +682,6 @@ def upsert_node(db, node_id, n)
     else v
     end
   }
-  node_num = resolve_node_num(node_id, n)
 
   row = [
     node_id,
