@@ -356,7 +356,6 @@ def query_messages(limit)
                     SQL
   msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit]
   rows.each do |r|
-
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
       Kernel.warn "[debug] messages row before join: #{raw.inspect}"
