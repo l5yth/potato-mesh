@@ -504,17 +504,167 @@ rescue ArgumentError
   nil
 end
 
+HIDDEN_CLIENT_USER_KEYS = %w[shortName longName macaddr hwModel role publicKey id].freeze
+HIDDEN_CLIENT_METRIC_KEYS = %w[batteryLevel voltage channelUtilization airUtilTx uptimeSeconds].freeze
+HIDDEN_CLIENT_POSITION_KEYS = %w[
+  time
+  latitude
+  longitude
+  altitude
+  location_source
+  locationSource
+  latitudeI
+  latitude_i
+  longitudeI
+  longitude_i
+].freeze
+
+def canonicalize_node_id(node_id)
+  id = string_or_nil(node_id)
+  return nil if id.nil?
+
+  if id.start_with?("!")
+    sanitized = id.delete_prefix("!").downcase
+    return nil if sanitized.empty?
+
+    return "!#{sanitized}"
+  end
+
+  trimmed = id.strip
+  trimmed.empty? ? nil : trimmed
+end
+
+def determine_node_identity(raw_node_id, payload)
+  data = payload.is_a?(Hash) ? payload : {}
+  canonical = canonicalize_node_id(raw_node_id)
+  node_num = resolve_node_num(canonical, data)
+  canonical ||= format("!%08x", node_num & 0xFFFFFFFF) if node_num
+  [canonical, node_num]
+end
+
+def hash_contains_values?(hash, keys)
+  return false unless hash.is_a?(Hash)
+
+  keys.any? do |key|
+    value = hash[key]
+    next false if value.nil?
+
+    return true if value.is_a?(Numeric)
+
+    if value.is_a?(String)
+      !value.strip.empty?
+    elsif value == true
+      true
+    elsif value.respond_to?(:empty?)
+      !value.empty?
+    else
+      true
+    end
+  end
+end
+
+def hidden_payload_without_metadata?(user_section, position_section, metrics_section)
+  has_user = hash_contains_values?(user_section, HIDDEN_CLIENT_USER_KEYS)
+  has_position = hash_contains_values?(position_section, HIDDEN_CLIENT_POSITION_KEYS)
+  has_metrics = hash_contains_values?(metrics_section, HIDDEN_CLIENT_METRIC_KEYS)
+  !has_user && !has_position && !has_metrics
+end
+
+def fetch_existing_node_metadata(db, node_id, node_num)
+  row = nil
+  if node_id
+    row = db.get_first_row(
+      "SELECT short_name, long_name, role FROM nodes WHERE node_id = ?",
+      [node_id],
+    )
+  end
+  if row.nil? && node_num
+    row = db.get_first_row(
+      "SELECT short_name, long_name, role FROM nodes WHERE num = ?",
+      [node_num],
+    )
+  end
+  return nil unless row
+
+  short_name, long_name, role =
+    if row.is_a?(Hash)
+      [row["short_name"], row["long_name"], row["role"]]
+    else
+      [row[0], row[1], row[2]]
+    end
+  { short_name: short_name, long_name: long_name, role: role }
+end
+
+def assign_if_blank(target, key, value)
+  return if value.nil?
+
+  existing = target[key]
+  if existing.is_a?(String)
+    return unless existing.strip.empty?
+  elsif !existing.nil?
+    return
+  end
+
+  target[key] = value
+end
+
+def hidden_client_default_attributes(node_id, node_num)
+  hex_source = nil
+  if node_id
+    candidate = node_id.delete_prefix("!")
+    hex_source = candidate if candidate.match?(/\A[0-9A-Fa-f]+\z/)
+  end
+  if hex_source.nil? && node_num
+    hex_source = format("%08x", node_num.to_i & 0xFFFFFFFF)
+  end
+  return {} unless hex_source
+
+  hex = hex_source.downcase
+  return {} if hex.empty?
+
+  short_id = hex.length <= 4 ? hex : hex[-4, 4]
+  {
+    "shortName" => short_id,
+    "longName" => "Meshtastic #{short_id}",
+    "role" => "CLIENT_HIDDEN",
+  }
+end
+
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
 # @param node_id [String] primary identifier for the node.
 # @param n [Hash] node payload provided by the data daemon.
 def upsert_node(db, node_id, n)
-  user = n["user"] || {}
-  met = n["deviceMetrics"] || {}
-  pos = n["position"] || {}
-  role = user["role"] || "CLIENT"
-  lh = n["lastHeard"]
+  node = n.is_a?(Hash) ? n : {}
+  node_id, node_num = determine_node_identity(node_id, node)
+  return unless node_id
+
+  user_section = node["user"]
+  user = user_section.is_a?(Hash) ? user_section.dup : {}
+  met = node["deviceMetrics"].is_a?(Hash) ? node["deviceMetrics"] : {}
+  pos = node["position"].is_a?(Hash) ? node["position"] : {}
+
+  hidden_candidate = hidden_payload_without_metadata?(user_section, pos, met)
+
+  existing_meta = fetch_existing_node_metadata(db, node_id, node_num)
+  existing_short = existing_meta ? string_or_nil(existing_meta[:short_name]) : nil
+  existing_long = existing_meta ? string_or_nil(existing_meta[:long_name]) : nil
+  existing_role = existing_meta ? string_or_nil(existing_meta[:role]) : nil
+
+  if hidden_candidate && existing_short.nil? && existing_long.nil? && existing_role.nil?
+    hidden_defaults = hidden_client_default_attributes(node_id, node_num)
+    hidden_defaults.each do |key, value|
+      assign_if_blank(user, key, value)
+    end
+  end
+
+  assign_if_blank(user, "shortName", existing_short) if existing_short
+  assign_if_blank(user, "longName", existing_long) if existing_long
+  assign_if_blank(user, "role", existing_role) if existing_role
+
+  role = string_or_nil(user["role"]) || "CLIENT"
+  lh = node["lastHeard"]
   pt = pos["time"]
   now = Time.now.to_i
   pt = nil if pt && pt > now
@@ -527,7 +677,6 @@ def upsert_node(db, node_id, n)
     else v
     end
   }
-  node_num = resolve_node_num(node_id, n)
 
   row = [
     node_id,
@@ -535,13 +684,13 @@ def upsert_node(db, node_id, n)
     user["shortName"],
     user["longName"],
     user["macaddr"],
-    user["hwModel"] || n["hwModel"],
+    user["hwModel"] || node["hwModel"],
     role,
     user["publicKey"],
     bool.call(user["isUnmessagable"]),
-    bool.call(n["isFavorite"]),
-    n["hopsAway"],
-    n["snr"],
+    bool.call(node["isFavorite"]),
+    node["hopsAway"],
+    node["snr"],
     lh,
     lh,
     met["batteryLevel"],
@@ -550,7 +699,7 @@ def upsert_node(db, node_id, n)
     met["airUtilTx"],
     met["uptimeSeconds"],
     pt,
-    pos["locationSource"],
+    pos["locationSource"] || pos["location_source"],
     pos["latitude"],
     pos["longitude"],
     pos["altitude"],

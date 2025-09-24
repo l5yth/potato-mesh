@@ -412,6 +412,111 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_heard).to eq(expected_last_heard(node))
       end
     end
+
+    it "applies hidden client defaults when only identifiers are known" do
+      raw_node_id = "!F6B3F9BF"
+      numeric_id = 0xF6B3F9BF
+      payload = {
+        raw_node_id => {
+          "num" => numeric_id,
+          "lastHeard" => reference_time.to_i,
+        },
+      }
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT node_id, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          ["!f6b3f9bf"],
+        )
+
+        expect(row["node_id"]).to eq("!f6b3f9bf")
+        expect(row["short_name"]).to eq("f9bf")
+        expect(row["long_name"]).to eq("Meshtastic f9bf")
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
+      end
+
+      get "/api/nodes"
+
+      expect(last_response).to be_ok
+
+      nodes = JSON.parse(last_response.body)
+      expect(nodes).to be_an(Array)
+      expect(nodes.size).to eq(1)
+
+      entry = nodes.first
+      expect(entry["node_id"]).to eq("!f6b3f9bf")
+      expect(entry["short_name"]).to eq("f9bf")
+      expect(entry["long_name"]).to eq("Meshtastic f9bf")
+      expect(entry["role"]).to eq("CLIENT_HIDDEN")
+    end
+
+    it "preserves existing metadata when hidden payloads arrive later" do
+      node = {
+        "node_id" => "!feedc0de",
+        "short_name" => "Orig",
+        "long_name" => "Original Node",
+        "hw_model" => "TBEAM",
+        "role" => "ROUTER",
+        "snr" => 9.25,
+        "battery_level" => 77.0,
+        "voltage" => 3.91,
+        "last_heard" => reference_time.to_i - 120,
+        "position_time" => reference_time.to_i - 150,
+        "latitude" => 52.51,
+        "longitude" => 13.41,
+        "altitude" => 45.0,
+      }
+      initial_payload = { node["node_id"] => build_node_payload(node) }
+
+      post "/api/nodes", initial_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      hidden_payload = {
+        node["node_id"] => {
+          "num" => 0xfeedc0de,
+          "lastHeard" => reference_time.to_i - 60,
+        },
+      }
+
+      post "/api/nodes", hidden_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT short_name, long_name, role FROM nodes WHERE node_id = ?",
+          ["!feedc0de"],
+        )
+
+        expect(row["short_name"]).to eq("Orig")
+        expect(row["long_name"]).to eq("Original Node")
+        expect(row["role"]).to eq("ROUTER")
+      end
+
+      get "/api/nodes"
+
+      expect(last_response).to be_ok
+
+      nodes = JSON.parse(last_response.body)
+      expect(nodes).to be_an(Array)
+      expect(nodes).not_to be_empty
+
+      entry = nodes.find { |n| n["node_id"] == "!feedc0de" }
+      expect(entry).not_to be_nil
+      expect(entry["short_name"]).to eq("Orig")
+      expect(entry["long_name"]).to eq("Original Node")
+      expect(entry["role"]).to eq("ROUTER")
+    end
   end
 
   describe "POST /api/messages" do
