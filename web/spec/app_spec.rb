@@ -794,12 +794,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
 
       messages = JSON.parse(last_response.body)
-      encrypted_entry = messages.find { |message| message["id"] == 777_001 }
-      expect(encrypted_entry).not_to be_nil
-      expect(encrypted_entry["encrypted"]).to eq(encrypted_b64)
-      expect(encrypted_entry["text"]).to be_nil
-      expect(encrypted_entry["from_id"]).to eq(sender_id)
-      expect(encrypted_entry["to_id"]).to eq(receiver_id)
+      expect(messages).to be_an(Array)
+      expect(messages).to be_empty
     end
 
     it "stores messages containing SQL control characters without executing them" do

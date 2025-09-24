@@ -350,6 +350,7 @@ def query_messages(limit)
                           )
                         )
                       )
+                      WHERE COALESCE(TRIM(m.encrypted), '') = ''
                       ORDER BY m.rx_time DESC
                       LIMIT ?
                     SQL
