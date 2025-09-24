@@ -40,7 +40,71 @@ MAX_JSON_BODY_BYTES = begin
   rescue ArgumentError
     DEFAULT_MAX_JSON_BODY_BYTES
   end
+NODE_DETAIL_KEYS = %w[
+  short_name
+  long_name
+  macaddr
+  hw_model
+  public_key
+  is_unmessagable
+  is_favorite
+  hops_away
+  snr
+  battery_level
+  voltage
+  channel_utilization
+  air_util_tx
+  uptime_seconds
+  position_time
+  location_source
+  latitude
+  longitude
+  altitude
+].freeze
 VERSION_FALLBACK = "v0.2.1"
+
+def value_present?(value)
+  case value
+  when nil
+    false
+  when String
+    !value.strip.empty?
+  else
+    true
+  end
+end
+
+def node_hash_value(data, key)
+  return nil unless data.respond_to?(:[])
+
+  if data.respond_to?(:key?)
+    return data[key] if data.key?(key)
+    symbol_key = key.to_sym
+    return data[symbol_key] if data.key?(symbol_key)
+  end
+
+  data[key]
+rescue StandardError
+  nil
+end
+
+def node_details_present?(data)
+  return false unless data.respond_to?(:[])
+
+  NODE_DETAIL_KEYS.any? do |key|
+    value = node_hash_value(data, key)
+    value_present?(value)
+  end
+end
+
+def node_record_empty?(row)
+  return true unless row
+
+  details_absent = !node_details_present?(row)
+  role_value = node_hash_value(row, "role")
+  role_absent = !value_present?(role_value) || role_value == "CLIENT"
+  details_absent && role_absent
+end
 
 def fetch_config_string(key, default)
   value = ENV[key]
@@ -309,7 +373,13 @@ def query_nodes(limit)
                       LIMIT ?
                     SQL
   rows.each do |r|
-    r["role"] ||= "CLIENT"
+    role_value = string_or_nil(r["role"])
+    if role_value
+      r["role"] = role_value
+    else
+      r["role"] = "CLIENT_HIDDEN" unless node_details_present?(r)
+      r["role"] ||= "CLIENT"
+    end
     lh = r["last_heard"]&.to_i
     pt = r["position_time"]&.to_i
     lh = now if lh && lh > now
@@ -389,7 +459,13 @@ def query_messages(limit)
         end
       end
     end
-    node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
+    role_value = string_or_nil(node["role"])
+    if role_value
+      node["role"] = role_value
+    else
+      node["role"] = "CLIENT_HIDDEN" unless node_details_present?(node)
+      node["role"] ||= "CLIENT"
+    end
     r["node"] = node
 
     canonical_from_id = string_or_nil(node["node_id"]) || string_or_nil(normalize_node_id(db, r["from_id"]))
@@ -504,6 +580,31 @@ rescue ArgumentError
   nil
 end
 
+def hidden_node_suffix(node_id, node_num)
+  id = string_or_nil(node_id)
+  if id
+    trimmed = id.delete_prefix("!").downcase
+    suffix = trimmed[-4, 4] || trimmed
+    return suffix unless suffix.nil? || suffix.empty?
+  end
+
+  num = node_num
+  num = coerce_integer(num) unless num.is_a?(Integer) || num.nil?
+  return nil unless num
+
+  format("%04x", num & 0xFFFF)
+end
+
+def fetch_existing_node(db, node_id)
+  return nil unless db && node_id
+
+  original = db.results_as_hash
+  db.results_as_hash = true
+  db.get_first_row("SELECT * FROM nodes WHERE node_id = ?", [node_id])
+ensure
+  db.results_as_hash = original if original != db.results_as_hash
+end
+
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -513,13 +614,14 @@ def upsert_node(db, node_id, n)
   user = n["user"] || {}
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
-  role = user["role"] || "CLIENT"
-  lh = n["lastHeard"]
-  pt = pos["time"]
-  now = Time.now.to_i
-  pt = nil if pt && pt > now
-  lh = now if lh && lh > now
-  lh = pt if pt && (!lh || lh < pt)
+
+  short_name = string_or_nil(user["shortName"])
+  long_name = string_or_nil(user["longName"])
+  macaddr = string_or_nil(user["macaddr"])
+  hw_model = string_or_nil(user["hwModel"]) || string_or_nil(n["hwModel"])
+  role = string_or_nil(user["role"])
+  public_key = string_or_nil(user["publicKey"])
+
   bool = ->(v) {
     case v
     when true then 1
@@ -527,33 +629,119 @@ def upsert_node(db, node_id, n)
     else v
     end
   }
+
+  is_unmessagable = bool.call(user["isUnmessagable"])
+  is_favorite = bool.call(n["isFavorite"])
+  hops_away = n["hopsAway"]
+  snr = n["snr"]
+  lh = n["lastHeard"]
+  pt = pos["time"]
+
+  now = Time.now.to_i
+  pt = nil if pt && pt > now
+  lh = now if lh && lh > now
+  lh = pt if pt && (!lh || lh < pt)
+  first_heard = lh
+
+  battery_level = met["batteryLevel"]
+  voltage = met["voltage"]
+  channel_utilization = met["channelUtilization"]
+  air_util_tx = met["airUtilTx"]
+  uptime_seconds = met["uptimeSeconds"]
+  position_time = pt
+  location_source = string_or_nil(pos["locationSource"])
+  latitude = pos["latitude"]
+  longitude = pos["longitude"]
+  altitude = pos["altitude"]
+
   node_num = resolve_node_num(node_id, n)
+
+  payload_snapshot = {
+    "short_name" => short_name,
+    "long_name" => long_name,
+    "macaddr" => macaddr,
+    "hw_model" => hw_model,
+    "public_key" => public_key,
+    "is_unmessagable" => is_unmessagable,
+    "is_favorite" => is_favorite,
+    "hops_away" => hops_away,
+    "snr" => snr,
+    "battery_level" => battery_level,
+    "voltage" => voltage,
+    "channel_utilization" => channel_utilization,
+    "air_util_tx" => air_util_tx,
+    "uptime_seconds" => uptime_seconds,
+    "position_time" => position_time,
+    "location_source" => location_source,
+    "latitude" => latitude,
+    "longitude" => longitude,
+    "altitude" => altitude,
+  }
+
+  existing = nil
+  unless node_details_present?(payload_snapshot)
+    existing = fetch_existing_node(db, node_id)
+    if existing.nil? || node_record_empty?(existing)
+      suffix = hidden_node_suffix(node_id, node_num)
+      role = "CLIENT_HIDDEN"
+      if suffix
+        short_name = suffix
+        long_name = "Meshtastic #{suffix}"
+      end
+    else
+      node_num ||= node_hash_value(existing, "num")
+      short_name ||= node_hash_value(existing, "short_name")
+      long_name ||= node_hash_value(existing, "long_name")
+      macaddr ||= node_hash_value(existing, "macaddr")
+      hw_model ||= node_hash_value(existing, "hw_model")
+      role ||= string_or_nil(node_hash_value(existing, "role"))
+      public_key ||= string_or_nil(node_hash_value(existing, "public_key"))
+      is_unmessagable = node_hash_value(existing, "is_unmessagable") if is_unmessagable.nil?
+      is_favorite = node_hash_value(existing, "is_favorite") if is_favorite.nil?
+      hops_away ||= node_hash_value(existing, "hops_away")
+      snr ||= node_hash_value(existing, "snr")
+      lh ||= node_hash_value(existing, "last_heard")
+      first_heard ||= node_hash_value(existing, "first_heard")
+      battery_level ||= node_hash_value(existing, "battery_level")
+      voltage ||= node_hash_value(existing, "voltage")
+      channel_utilization ||= node_hash_value(existing, "channel_utilization")
+      air_util_tx ||= node_hash_value(existing, "air_util_tx")
+      uptime_seconds ||= node_hash_value(existing, "uptime_seconds")
+      position_time ||= node_hash_value(existing, "position_time")
+      location_source ||= string_or_nil(node_hash_value(existing, "location_source"))
+      latitude ||= node_hash_value(existing, "latitude")
+      longitude ||= node_hash_value(existing, "longitude")
+      altitude ||= node_hash_value(existing, "altitude")
+    end
+  end
+
+  role ||= "CLIENT"
 
   row = [
     node_id,
     node_num,
-    user["shortName"],
-    user["longName"],
-    user["macaddr"],
-    user["hwModel"] || n["hwModel"],
+    short_name,
+    long_name,
+    macaddr,
+    hw_model,
     role,
-    user["publicKey"],
-    bool.call(user["isUnmessagable"]),
-    bool.call(n["isFavorite"]),
-    n["hopsAway"],
-    n["snr"],
+    public_key,
+    is_unmessagable,
+    is_favorite,
+    hops_away,
+    snr,
     lh,
-    lh,
-    met["batteryLevel"],
-    met["voltage"],
-    met["channelUtilization"],
-    met["airUtilTx"],
-    met["uptimeSeconds"],
-    pt,
-    pos["locationSource"],
-    pos["latitude"],
-    pos["longitude"],
-    pos["altitude"],
+    first_heard,
+    battery_level,
+    voltage,
+    channel_utilization,
+    air_util_tx,
+    uptime_seconds,
+    position_time,
+    location_source,
+    latitude,
+    longitude,
+    altitude,
   ]
   with_busy_retry do
     db.execute <<~SQL, row

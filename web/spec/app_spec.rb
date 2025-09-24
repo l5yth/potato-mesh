@@ -385,6 +385,56 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "marks nodes without metadata as hidden clients" do
+      node_id = "!ABCDEF12"
+      payload = { node_id => {} }
+
+      2.times do
+        post "/api/nodes", payload.to_json, auth_headers
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT short_name, long_name, role FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row["short_name"]).to eq("ef12")
+        expect(row["long_name"]).to eq("Meshtastic ef12")
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
+      end
+    end
+
+    it "preserves existing node metadata when receiving empty payloads" do
+      node = nodes_fixture.first
+      full_payload = { node["node_id"] => build_node_payload(node) }
+
+      post "/api/nodes", full_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      empty_payload = { node["node_id"] => {} }
+      post "/api/nodes", empty_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT short_name, long_name, role, hw_model FROM nodes WHERE node_id = ?",
+          [node["node_id"]],
+        )
+
+        expect(row["short_name"]).to eq(node["short_name"])
+        expect(row["long_name"]).to eq(node["long_name"])
+        expect(row["role"]).to eq(node["role"])
+        expect(row["hw_model"]).to eq(node["hw_model"])
+      end
+    end
+
     it "retries node upserts when the database reports it is locked" do
       node = nodes_fixture.first
       payload = { node["node_id"] => build_node_payload(node) }
@@ -953,6 +1003,28 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(actual_row).not_to have_key("pos_time_iso")
         end
       end
+    end
+
+    it "defaults nodes without metadata to hidden clients" do
+      node_id = "!feedf00d"
+      heard_at = reference_time.to_i - 10
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+          [node_id, 0xfeedf00d, heard_at, heard_at],
+        )
+      end
+
+      get "/api/nodes"
+
+      expect(last_response).to be_ok
+
+      nodes = JSON.parse(last_response.body)
+      entry = nodes.find { |row| row["node_id"] == node_id }
+
+      expect(entry).not_to be_nil
+      expect(entry["role"]).to eq("CLIENT_HIDDEN")
     end
   end
 
