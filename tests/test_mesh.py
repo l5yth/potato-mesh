@@ -740,6 +740,7 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     assert payload["channel"] == 5
     assert payload["portnum"] == "1"
     assert payload["text"] == "hi"
+    assert payload["encrypted"] is None
     assert payload["snr"] is None and payload["rssi"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
@@ -770,6 +771,37 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     path, payload, priority = captured[0]
     assert path == "/api/messages"
     assert payload["channel"] == 0
+    assert payload["encrypted"] is None
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 555,
+        "rxTime": 111,
+        "from": 2988082812,
+        "to": "!receiver",
+        "channel": 8,
+        "encrypted": "abc123==",
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["encrypted"] == "abc123=="
+    assert payload["text"] is None
+    assert payload["from_id"] == 2988082812
+    assert payload["to_id"] == "!receiver"
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 

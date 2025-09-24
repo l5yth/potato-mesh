@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS messages (
     channel   INTEGER,
     portnum   TEXT,
     text      TEXT,
+    encrypted TEXT,
     snr       REAL,
     rssi      INTEGER,
     hop_limit INTEGER

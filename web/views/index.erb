@@ -1092,6 +1092,7 @@
         entries.push({ type: 'node', ts: n.first_heard ?? 0, item: n });
       }
       for (const m of messages || []) {
+        if (!m || m.encrypted) continue;
         entries.push({ type: 'msg', ts: m.rx_time ?? 0, item: m });
       }
       const nowSeconds = Math.floor(Date.now() / 1000);
