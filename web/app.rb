@@ -294,7 +294,7 @@ init_db unless db_schema_present?
 # @param limit [Integer] maximum number of rows returned.
 # @return [Array<Hash>] collection of node records formatted for the API.
 def query_nodes(limit)
-  db = open_database(readonly: true)
+  db = open_database
   db.results_as_hash = true
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
@@ -309,7 +309,23 @@ def query_nodes(limit)
                       LIMIT ?
                     SQL
   rows.each do |r|
-    r["role"] ||= "CLIENT"
+    role = string_or_nil(r["role"])
+    short_name = string_or_nil(r["short_name"])
+    long_name = string_or_nil(r["long_name"])
+
+    if r["node_id"] && (role.nil? || short_name.nil? || long_name.nil?)
+      ensure_hidden_client_node(db, r["node_id"])
+      refreshed = fetch_node_record(db, node_id: r["node_id"])
+      if refreshed
+        short_name ||= string_or_nil(refreshed["short_name"])
+        long_name ||= string_or_nil(refreshed["long_name"])
+        role ||= string_or_nil(refreshed["role"])
+      end
+    end
+
+    r["short_name"] = short_name if short_name
+    r["long_name"] = long_name if long_name
+    r["role"] = role || "CLIENT"
     lh = r["last_heard"]&.to_i
     pt = r["position_time"]&.to_i
     lh = now if lh && lh > now
@@ -338,7 +354,7 @@ end
 # @param limit [Integer] maximum number of rows returned.
 # @return [Array<Hash>] collection of message rows suitable for serialisation.
 def query_messages(limit)
-  db = open_database(readonly: true)
+  db = open_database
   db.results_as_hash = true
   rows = db.execute <<~SQL, [limit]
                       SELECT m.*, n.*, m.snr AS msg_snr
@@ -389,7 +405,34 @@ def query_messages(limit)
         end
       end
     end
-    node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
+    if node.key?("role")
+      node_role = string_or_nil(node["role"])
+      node_short = string_or_nil(node["short_name"])
+      node_long = string_or_nil(node["long_name"])
+      node_num = coerce_integer(node["num"])
+      ensure_reference = string_or_nil(node["node_id"]) || references.first
+      fallback_num = node_num || coerce_integer(references.first)
+
+      if (node_role.nil? || node_short.nil? || node_long.nil?) && (ensure_reference || fallback_num)
+        ensure_hidden_client_node(db, ensure_reference || fallback_num, fallback_num: fallback_num)
+        refreshed = fetch_node_record(
+          db,
+          node_id: string_or_nil(node["node_id"]) || string_or_nil(normalize_node_id(db, ensure_reference)),
+          node_num: fallback_num,
+        )
+        if refreshed
+          node_short ||= string_or_nil(refreshed["short_name"])
+          node_long ||= string_or_nil(refreshed["long_name"])
+          node_role ||= string_or_nil(refreshed["role"])
+          node["node_id"] ||= refreshed["node_id"] if refreshed["node_id"]
+          node["num"] ||= refreshed["num"] if refreshed["num"]
+        end
+      end
+
+      node["short_name"] = node_short if node_short
+      node["long_name"] = node_long if node_long
+      node["role"] = node_role || "CLIENT"
+    end
     r["node"] = node
 
     canonical_from_id = string_or_nil(node["node_id"]) || string_or_nil(normalize_node_id(db, r["from_id"]))
@@ -567,6 +610,40 @@ rescue ArgumentError
   [id, num]
 end
 
+def row_to_hash(row, columns)
+  return nil unless row
+
+  return row if row.is_a?(Hash)
+
+  columns.each_with_index.each_with_object({}) do |(column, index), acc|
+    acc[column] = row[index]
+  end
+end
+
+def fetch_node_record(db, node_id: nil, node_num: nil)
+  columns = %w[node_id num short_name long_name role]
+
+  if node_id
+    row = db.get_first_row(
+      "SELECT node_id,num,short_name,long_name,role FROM nodes WHERE node_id = ?",
+      [node_id],
+    )
+    hash = row_to_hash(row, columns)
+    return hash if hash
+  end
+
+  if node_num
+    row = db.get_first_row(
+      "SELECT node_id,num,short_name,long_name,role FROM nodes WHERE num = ?",
+      [node_num],
+    )
+    hash = row_to_hash(row, columns)
+    return hash if hash
+  end
+
+  nil
+end
+
 # Insert or update a node entry representing a hidden client when no other
 # metadata is available. The role defaults to ``CLIENT_HIDDEN`` and the short
 # and long names are derived from the last four characters of the node ID.
@@ -593,35 +670,22 @@ def ensure_hidden_client_node(db, reference, fallback_num: nil)
   long_name = "Meshtastic #{suffix}".strip
 
   with_busy_retry do
-    existing = db.get_first_row(
-      "SELECT short_name, long_name, role, num FROM nodes WHERE node_id = ?",
-      [id],
-    )
+    existing = fetch_node_record(db, node_id: id, node_num: num)
 
     if existing
-      existing_hash = if existing.is_a?(Hash)
-        existing
-      else
-        {
-          "short_name" => existing[0],
-          "long_name" => existing[1],
-          "role" => existing[2],
-          "num" => existing[3],
-        }
-      end
-
       updates = {}
-      updates["short_name"] = short_name if string_or_nil(existing_hash["short_name"]).nil?
-      updates["long_name"] = long_name if string_or_nil(existing_hash["long_name"]).nil?
-      updates["role"] = "CLIENT_HIDDEN" if string_or_nil(existing_hash["role"]).nil?
+      updates["short_name"] = short_name if string_or_nil(existing["short_name"]).nil?
+      updates["long_name"] = long_name if string_or_nil(existing["long_name"]).nil?
+      updates["role"] = "CLIENT_HIDDEN" if string_or_nil(existing["role"]).nil?
 
-      if num && coerce_integer(existing_hash["num"]) != num
+      if num && coerce_integer(existing["num"]) != num
         updates["num"] = num
       end
 
       unless updates.empty?
         assignments = updates.map { |column, _| "#{column} = ?" }.join(", ")
-        db.execute("UPDATE nodes SET #{assignments} WHERE node_id = ?", updates.values + [id])
+        target_id = string_or_nil(existing["node_id"]) || id
+        db.execute("UPDATE nodes SET #{assignments} WHERE node_id = ?", updates.values + [target_id])
       end
     else
       row = [id, num, short_name, long_name, "CLIENT_HIDDEN"]
@@ -649,24 +713,28 @@ def upsert_node(db, node_id, n)
   node_id = normalized_id if normalized_id
   node_num = canonical_num || node_num
 
+  existing = fetch_node_record(db, node_id: node_id, node_num: node_num)
+  existing_num = coerce_integer(existing && existing["num"])
+  node_num ||= existing_num
+
+  user_short_name = string_or_nil(user["shortName"])
+  user_long_name = string_or_nil(user["longName"])
+
+  short_name = user_short_name || string_or_nil(existing && existing["short_name"])
+  long_name = user_long_name || string_or_nil(existing && existing["long_name"])
+
   role = string_or_nil(user["role"])
+  role ||= string_or_nil(existing && existing["role"])
   if role.nil?
     ensure_ref = node_id || node_num
     ensure_hidden_client_node(db, ensure_ref, fallback_num: node_num) if ensure_ref
 
-    existing_role = nil
-    if node_id
-      existing_role = string_or_nil(
-        db.get_first_value("SELECT role FROM nodes WHERE node_id = ?", [node_id]),
-      )
-    end
-    if existing_role.nil? && node_num
-      existing_role = string_or_nil(
-        db.get_first_value("SELECT role FROM nodes WHERE num = ?", [node_num]),
-      )
-    end
-
-    role = existing_role || "CLIENT"
+    existing = fetch_node_record(db, node_id: node_id, node_num: node_num)
+    existing_num = coerce_integer(existing && existing["num"])
+    node_num ||= existing_num
+    short_name ||= string_or_nil(existing && existing["short_name"])
+    long_name ||= string_or_nil(existing && existing["long_name"])
+    role = string_or_nil(existing && existing["role"]) || "CLIENT"
   end
 
   lh = n["lastHeard"]
@@ -686,8 +754,8 @@ def upsert_node(db, node_id, n)
   row = [
     node_id,
     node_num,
-    user["shortName"],
-    user["longName"],
+    short_name,
+    long_name,
     user["macaddr"],
     user["hwModel"] || n["hwModel"],
     role,

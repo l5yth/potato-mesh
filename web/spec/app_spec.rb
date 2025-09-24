@@ -363,6 +363,61 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "preserves hidden defaults when the node payload omits metadata" do
+      hidden_id = "!aa55bb33"
+      hidden_num = 0xaa55bb33
+      rx_time = reference_time.to_i - 150
+
+      post "/api/messages", {
+        "id" => 9_205,
+        "rx_time" => rx_time,
+        "from_id" => hidden_id,
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "metadata free",
+      }.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        node = db.get_first_row(
+          "SELECT node_id, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          [hidden_id],
+        )
+        expect(node).not_to be_nil
+        expect(node["short_name"]).to eq("bb33")
+        expect(node["long_name"]).to eq("Meshtastic bb33")
+        expect(node["role"]).to eq("CLIENT_HIDDEN")
+      end
+
+      payload = {
+        hidden_id => {
+          "num" => hidden_num,
+          "lastHeard" => rx_time,
+          "user" => {},
+        },
+      }
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        node = db.get_first_row(
+          "SELECT node_id, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          [hidden_id],
+        )
+        expect(node).not_to be_nil
+        expect(node["short_name"]).to eq("bb33")
+        expect(node["long_name"]).to eq("Meshtastic bb33")
+        expect(node["role"]).to eq("CLIENT_HIDDEN")
+      end
+    end
+
     it "returns 400 when the payload is not valid JSON" do
       post "/api/nodes", "{", auth_headers
 
@@ -1207,6 +1262,39 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(actual_row["node"]["node_id"]).to be_nil
         end
       end
+    end
+
+    it "returns hidden metadata for messages from unseen nodes" do
+      hidden_id = "!f6b3f9bf"
+      rx_time = reference_time.to_i - 45
+
+      post "/api/messages", {
+        "id" => 9_300,
+        "rx_time" => rx_time,
+        "rx_iso" => Time.at(rx_time).utc.iso8601,
+        "from_id" => hidden_id,
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "hidden ping",
+      }.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      get "/api/messages"
+
+      expect(last_response).to be_ok
+      data = JSON.parse(last_response.body)
+      expect(data.size).to eq(1)
+      entry = data.first
+
+      expect(entry["from_id"]).to eq(hidden_id)
+
+      node = entry.fetch("node")
+      expect(node["node_id"]).to eq(hidden_id)
+      expect(node["short_name"]).to eq("f9bf")
+      expect(node["long_name"]).to eq("Meshtastic f9bf")
+      expect(node["role"]).to eq("CLIENT_HIDDEN")
     end
 
     context "when DEBUG logging is enabled" do
