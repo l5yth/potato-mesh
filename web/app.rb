@@ -591,14 +591,34 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
 
   node_id, node_num, short_id = parts
 
+  heard_time = coerce_integer(heard_time)
+
   existing = db.get_first_value(
     "SELECT 1 FROM nodes WHERE node_id = ? LIMIT 1",
     [node_id],
   )
-  return if existing
+
+  if existing
+    if heard_time
+      with_busy_retry do
+        db.execute(
+          <<~SQL,
+          UPDATE nodes
+             SET last_heard = MAX(COALESCE(last_heard, 0), ?),
+                 first_heard = CASE
+                   WHEN first_heard IS NULL OR first_heard > ? THEN ?
+                   ELSE first_heard
+                 END
+           WHERE node_id = ?
+        SQL
+          [heard_time, heard_time, heard_time, node_id],
+        )
+      end
+    end
+    return false
+  end
 
   long_name = "Meshtastic #{short_id}"
-  heard_time = coerce_integer(heard_time)
   inserted = false
 
   with_busy_retry do
@@ -675,12 +695,17 @@ def upsert_node(db, node_id, n)
                  ON CONFLICT(node_id) DO UPDATE SET
                    num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                    hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
-                   is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                   is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr,
                    battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                    air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
                    location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
-                   altitude=excluded.altitude
-                 WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
+                   altitude=excluded.altitude,
+                   last_heard=MAX(COALESCE(nodes.last_heard, 0), COALESCE(excluded.last_heard, 0)),
+                   first_heard=CASE
+                     WHEN nodes.first_heard IS NULL THEN excluded.first_heard
+                     WHEN excluded.first_heard IS NULL THEN nodes.first_heard
+                     ELSE MIN(nodes.first_heard, excluded.first_heard)
+                   END
                SQL
   end
 end

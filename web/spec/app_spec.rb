@@ -412,6 +412,44 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_heard).to eq(expected_last_heard(node))
       end
     end
+
+    it "keeps the most recent last heard value while applying newer metadata" do
+      node_id = "!update-node"
+      initial_last = reference_time.to_i
+      older_last = initial_last - 600
+
+      first_payload = {
+        node_id => {
+          "user" => { "shortName" => "Initial" },
+          "lastHeard" => initial_last,
+        },
+      }
+
+      post "/api/nodes", first_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      second_payload = {
+        node_id => {
+          "user" => { "shortName" => "Updated" },
+          "lastHeard" => older_last,
+        },
+      }
+
+      post "/api/nodes", second_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT short_name, last_heard, first_heard FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row["short_name"]).to eq("Updated")
+        expect(row["last_heard"]).to eq(initial_last)
+        expect(row["first_heard"]).to eq(older_last)
+      end
+    end
   end
 
   describe "#ensure_unknown_node" do
@@ -462,10 +500,28 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "returns false when the node already exists" do
+    it "updates the last heard time when the node already exists" do
+      initial = reference_time.to_i - 30
+      later = reference_time.to_i
+
       with_db do |db|
-        expect(ensure_unknown_node(db, "!0000c0de", nil)).to be_truthy
-        expect(ensure_unknown_node(db, "!0000c0de", nil)).to be_falsey
+        expect(ensure_unknown_node(db, "!0000c0de", nil, heard_time: initial)).to be_truthy
+        expect(ensure_unknown_node(db, "!0000c0de", nil, heard_time: later)).to be_falsey
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          <<~SQL,
+          SELECT last_heard, first_heard
+          FROM nodes
+          WHERE node_id = ?
+        SQL
+          ["!0000c0de"],
+        )
+
+        expect(row["last_heard"]).to eq(later)
+        expect(row["first_heard"]).to eq(initial)
       end
     end
   end
