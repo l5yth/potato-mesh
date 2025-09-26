@@ -1,3 +1,4 @@
+import base64
 import importlib
 import sys
 import types
@@ -14,6 +15,15 @@ def mesh_module(monkeypatch):
 
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(repo_root))
+
+    try:
+        import meshtastic as real_meshtastic  # type: ignore
+    except Exception:  # pragma: no cover - dependency may be unavailable in CI
+        real_meshtastic = None
+
+    real_protobuf = (
+        getattr(real_meshtastic, "protobuf", None) if real_meshtastic else None
+    )
 
     # Stub meshtastic.serial_interface.SerialInterface
     serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
@@ -41,12 +51,16 @@ def mesh_module(monkeypatch):
     meshtastic_mod = types.ModuleType("meshtastic")
     meshtastic_mod.serial_interface = serial_interface_mod
     meshtastic_mod.tcp_interface = tcp_interface_mod
+    if real_protobuf is not None:
+        meshtastic_mod.protobuf = real_protobuf
 
     monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
     monkeypatch.setitem(
         sys.modules, "meshtastic.serial_interface", serial_interface_mod
     )
     monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
+    if real_protobuf is not None:
+        monkeypatch.setitem(sys.modules, "meshtastic.protobuf", real_protobuf)
 
     # Stub pubsub.pub
     pubsub_mod = types.ModuleType("pubsub")
@@ -61,36 +75,47 @@ def mesh_module(monkeypatch):
     pubsub_mod.pub = DummyPub()
     monkeypatch.setitem(sys.modules, "pubsub", pubsub_mod)
 
-    # Stub google.protobuf modules used by mesh.py
-    json_format_mod = types.ModuleType("google.protobuf.json_format")
+    # Prefer real google.protobuf modules when available, otherwise provide stubs
+    try:
+        from google.protobuf import json_format as json_format_mod  # type: ignore
+        from google.protobuf import message as message_mod  # type: ignore
+    except Exception:  # pragma: no cover - protobuf may be missing in CI
+        json_format_mod = types.ModuleType("google.protobuf.json_format")
 
-    def message_to_dict(obj, *_, **__):
-        if hasattr(obj, "to_dict"):
-            return obj.to_dict()
-        if hasattr(obj, "__dict__"):
-            return dict(obj.__dict__)
-        return {}
+        def message_to_dict(obj, *_, **__):
+            if hasattr(obj, "to_dict"):
+                return obj.to_dict()
+            if hasattr(obj, "__dict__"):
+                return dict(obj.__dict__)
+            return {}
 
-    json_format_mod.MessageToDict = message_to_dict
+        json_format_mod.MessageToDict = message_to_dict
 
-    message_mod = types.ModuleType("google.protobuf.message")
+        message_mod = types.ModuleType("google.protobuf.message")
 
-    class DummyProtoMessage:
-        pass
+        class DummyProtoMessage:
+            pass
 
-    message_mod.Message = DummyProtoMessage
+        class DummyDecodeError(Exception):
+            pass
 
-    protobuf_mod = types.ModuleType("google.protobuf")
-    protobuf_mod.json_format = json_format_mod
-    protobuf_mod.message = message_mod
+        message_mod.Message = DummyProtoMessage
+        message_mod.DecodeError = DummyDecodeError
 
-    google_mod = types.ModuleType("google")
-    google_mod.protobuf = protobuf_mod
+        protobuf_mod = types.ModuleType("google.protobuf")
+        protobuf_mod.json_format = json_format_mod
+        protobuf_mod.message = message_mod
 
-    monkeypatch.setitem(sys.modules, "google", google_mod)
-    monkeypatch.setitem(sys.modules, "google.protobuf", protobuf_mod)
-    monkeypatch.setitem(sys.modules, "google.protobuf.json_format", json_format_mod)
-    monkeypatch.setitem(sys.modules, "google.protobuf.message", message_mod)
+        google_mod = types.ModuleType("google")
+        google_mod.protobuf = protobuf_mod
+
+        monkeypatch.setitem(sys.modules, "google", google_mod)
+        monkeypatch.setitem(sys.modules, "google.protobuf", protobuf_mod)
+        monkeypatch.setitem(sys.modules, "google.protobuf.json_format", json_format_mod)
+        monkeypatch.setitem(sys.modules, "google.protobuf.message", message_mod)
+    else:
+        monkeypatch.setitem(sys.modules, "google.protobuf.json_format", json_format_mod)
+        monkeypatch.setitem(sys.modules, "google.protobuf.message", message_mod)
 
     module_name = "data.mesh"
     if module_name in sys.modules:
@@ -267,6 +292,316 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 200498337,
+        "rxTime": 1_758_624_186,
+        "fromId": "!b1fa2b07",
+        "toId": "^all",
+        "rxSnr": -9.5,
+        "rxRssi": -104,
+        "decoded": {
+            "portnum": "POSITION_APP",
+            "bitfield": 1,
+            "position": {
+                "latitudeI": int(52.518912 * 1e7),
+                "longitudeI": int(13.5512064 * 1e7),
+                "altitude": -16,
+                "time": 1_758_624_189,
+                "locationSource": "LOC_INTERNAL",
+                "precisionBits": 17,
+                "satsInView": 7,
+                "PDOP": 211,
+                "groundSpeed": 2,
+                "groundTrack": 0,
+                "raw": {
+                    "latitude_i": int(52.518912 * 1e7),
+                    "longitude_i": int(13.5512064 * 1e7),
+                    "altitude": -16,
+                    "time": 1_758_624_189,
+                },
+            },
+            "payload": {
+                "__bytes_b64__": "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST to be triggered for position packet"
+    path, payload, priority = captured[0]
+    assert path == "/api/positions"
+    assert priority == mesh._POSITION_POST_PRIORITY
+    assert payload["id"] == 200498337
+    assert payload["node_id"] == "!b1fa2b07"
+    assert payload["node_num"] == int("b1fa2b07", 16)
+    assert payload["num"] == payload["node_num"]
+    assert payload["rx_time"] == 1_758_624_186
+    assert payload["rx_iso"] == mesh._iso(1_758_624_186)
+    assert payload["latitude"] == pytest.approx(52.518912)
+    assert payload["longitude"] == pytest.approx(13.5512064)
+    assert payload["altitude"] == pytest.approx(-16)
+    assert payload["position_time"] == 1_758_624_189
+    assert payload["location_source"] == "LOC_INTERNAL"
+    assert payload["precision_bits"] == 17
+    assert payload["sats_in_view"] == 7
+    assert payload["pdop"] == pytest.approx(211.0)
+    assert payload["ground_speed"] == pytest.approx(2.0)
+    assert payload["ground_track"] == pytest.approx(0.0)
+    assert payload["snr"] == pytest.approx(-9.5)
+    assert payload["rssi"] == -104
+    assert payload["hop_limit"] is None
+    assert payload["bitfield"] == 1
+    assert (
+        payload["payload_b64"]
+        == "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER"
+    )
+    assert payload["raw"]["time"] == 1_758_624_189
+
+
+def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import config_pb2, mesh_pb2
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.num = 321
+    user = node_info.user
+    user.id = "!abcd1234"
+    user.short_name = "LoRa"
+    user.long_name = "LoRa Node"
+    user.role = config_pb2.Config.DeviceConfig.Role.Value("CLIENT")
+    user.hw_model = mesh_pb2.HardwareModel.Value("TBEAM")
+    node_info.device_metrics.battery_level = 87
+    node_info.device_metrics.voltage = 3.91
+    node_info.device_metrics.channel_utilization = 5.5
+    node_info.device_metrics.air_util_tx = 0.12
+    node_info.device_metrics.uptime_seconds = 4321
+    node_info.position.latitude_i = int(52.5 * 1e7)
+    node_info.position.longitude_i = int(13.4 * 1e7)
+    node_info.position.altitude = 48
+    node_info.position.time = 1_700_000_050
+    node_info.position.location_source = mesh_pb2.Position.LocSource.Value(
+        "LOC_INTERNAL"
+    )
+    node_info.snr = 9.5
+    node_info.last_heard = 1_700_000_040
+    node_info.hops_away = 2
+    node_info.is_favorite = True
+
+    payload_b64 = base64.b64encode(node_info.SerializeToString()).decode()
+    packet = {
+        "id": 999,
+        "rxTime": 1_700_000_200,
+        "from": int("abcd1234", 16),
+        "rxSnr": -5.5,
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "payload": {"__bytes_b64__": payload_b64},
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected nodeinfo packet to trigger POST"
+    path, payload, priority = captured[0]
+    assert path == "/api/nodes"
+    assert priority == mesh._NODE_POST_PRIORITY
+    assert "!abcd1234" in payload
+    node_entry = payload["!abcd1234"]
+    assert node_entry["num"] == 321
+    assert node_entry["lastHeard"] == 1_700_000_200
+    assert node_entry["snr"] == pytest.approx(9.5)
+    assert node_entry["hopsAway"] == 2
+    assert node_entry["isFavorite"] is True
+    assert node_entry["user"]["shortName"] == "LoRa"
+    assert node_entry["deviceMetrics"]["batteryLevel"] == pytest.approx(87)
+    assert node_entry["deviceMetrics"]["voltage"] == pytest.approx(3.91)
+    assert node_entry["deviceMetrics"]["uptimeSeconds"] == 4321
+    assert node_entry["position"]["latitude"] == pytest.approx(52.5)
+    assert node_entry["position"]["longitude"] == pytest.approx(13.4)
+    assert node_entry["position"]["time"] == 1_700_000_050
+
+
+def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import mesh_pb2
+
+    user_msg = mesh_pb2.User()
+    user_msg.id = "!11223344"
+    user_msg.short_name = "Test"
+    user_msg.long_name = "Test Node"
+
+    payload_b64 = base64.b64encode(user_msg.SerializeToString()).decode()
+    packet = {
+        "id": 42,
+        "rxTime": 1_234,
+        "from": int("11223344", 16),
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "payload": {"__bytes_b64__": payload_b64},
+            "user": {
+                "id": "!11223344",
+                "shortName": "Test",
+                "longName": "Test Node",
+                "hwModel": "HELTEC_V3",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    node_entry = payload["!11223344"]
+    assert node_entry["lastHeard"] == 1_234
+    assert node_entry["user"]["longName"] == "Test Node"
+    assert "deviceMetrics" not in node_entry
+
+
+def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import mesh_pb2
+
+    user_msg = mesh_pb2.User()
+    user_msg.id = "!44556677"
+    user_msg.short_name = "Proto"
+    user_msg.long_name = "Proto User"
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.snr = 2.5
+
+    payload_b64 = base64.b64encode(node_info.SerializeToString()).decode()
+    packet = {
+        "id": 73,
+        "rxTime": 5_000,
+        "fromId": "!44556677",
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "payload": {"__bytes_b64__": payload_b64},
+            "user": user_msg,
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    node_entry = payload["!44556677"]
+    assert node_entry["lastHeard"] == 5_000
+    assert node_entry["user"]["shortName"] == "Proto"
+    assert node_entry["user"]["longName"] == "Proto User"
+
+
+def test_store_packet_dict_nodeinfo_sanitizes_nested_proto(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import mesh_pb2
+
+    user_msg = mesh_pb2.User()
+    user_msg.id = "!55667788"
+    user_msg.short_name = "Nested"
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.hops_away = 1
+
+    payload_b64 = base64.b64encode(node_info.SerializeToString()).decode()
+    packet = {
+        "id": 74,
+        "rxTime": 6_000,
+        "fromId": "!55667788",
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "payload": {"__bytes_b64__": payload_b64},
+            "user": {
+                "id": "!55667788",
+                "shortName": "Nested",
+                "raw": user_msg,
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    node_entry = payload["!55667788"]
+    assert node_entry["user"]["shortName"] == "Nested"
+    assert isinstance(node_entry["user"]["raw"], dict)
+    assert node_entry["user"]["raw"]["id"] == "!55667788"
+
+
+def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
+    mesh_module, monkeypatch
+):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    from meshtastic.protobuf import mesh_pb2
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.snr = 1.5
+    node_info.last_heard = 100
+
+    payload_b64 = base64.b64encode(node_info.SerializeToString()).decode()
+    packet = {
+        "id": 7,
+        "rxTime": 200,
+        "from": 0x01020304,
+        "decoded": {"portnum": 5, "payload": {"__bytes_b64__": payload_b64}},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert "!01020304" in payload
+    node_entry = payload["!01020304"]
+    assert node_entry["num"] == 0x01020304
+    assert node_entry["lastHeard"] == 200
+    assert node_entry["snr"] == pytest.approx(1.5)
+
+
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
@@ -283,7 +618,7 @@ def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
         "toId": "!def",
         "decoded": {
             "payload": {"text": "ignored"},
-            "portnum": "POSITION_APP",
+            "portnum": "ENVIRONMENTAL_MEASUREMENT",
         },
     }
 
@@ -469,6 +804,7 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     assert payload["channel"] == 5
     assert payload["portnum"] == "1"
     assert payload["text"] == "hi"
+    assert payload["encrypted"] is None
     assert payload["snr"] is None and payload["rssi"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
@@ -499,10 +835,41 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     path, payload, priority = captured[0]
     assert path == "/api/messages"
     assert payload["channel"] == 0
+    assert payload["encrypted"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
-def test_post_queue_prioritises_nodes(mesh_module, monkeypatch):
+def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 555,
+        "rxTime": 111,
+        "from": 2988082812,
+        "to": "!receiver",
+        "channel": 8,
+        "encrypted": "abc123==",
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["encrypted"] == "abc123=="
+    assert payload["text"] is None
+    assert payload["from_id"] == 2988082812
+    assert payload["to_id"] == "!receiver"
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
     mesh._clear_post_queue()
     calls = []
@@ -519,7 +886,7 @@ def test_post_queue_prioritises_nodes(mesh_module, monkeypatch):
 
     mesh._drain_post_queue()
 
-    assert [path for path, _ in calls] == ["/api/nodes", "/api/messages"]
+    assert [path for path, _ in calls] == ["/api/messages", "/api/nodes"]
 
 
 def test_store_packet_dict_requires_id(mesh_module, monkeypatch):

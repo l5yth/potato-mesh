@@ -21,10 +21,10 @@ CREATE TABLE IF NOT EXISTS messages (
     channel   INTEGER,
     portnum   TEXT,
     text      TEXT,
+    encrypted TEXT,
     snr       REAL,
     rssi      INTEGER,
-    hop_limit INTEGER,
-    raw_json  TEXT
+    hop_limit INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);

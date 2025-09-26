@@ -20,7 +20,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title><%= site_name %></title>
+  <% meta_title_html = Rack::Utils.escape_html(meta_title) %>
+  <% meta_name_html = Rack::Utils.escape_html(meta_name) %>
+  <% meta_description_html = Rack::Utils.escape_html(meta_description) %>
+  <% request_path = request.path.to_s.empty? ? "/" : request.path %>
+  <% canonical_url = "#{request.base_url}#{request_path}" %>
+  <% canonical_html = Rack::Utils.escape_html(canonical_url) %>
+  <% logo_url = "#{request.base_url}/potatomesh-logo.svg" %>
+  <% logo_url_html = Rack::Utils.escape_html(logo_url) %>
+  <% logo_alt_html = Rack::Utils.escape_html("#{meta_name} logo") %>
+  <title><%= meta_title_html %></title>
+  <meta name="application-name" content="<%= meta_name_html %>" />
+  <meta name="apple-mobile-web-app-title" content="<%= meta_name_html %>" />
+  <meta name="description" content="<%= meta_description_html %>" />
+  <link rel="canonical" href="<%= canonical_html %>" />
+  <meta property="og:title" content="<%= meta_title_html %>" />
+  <meta property="og:site_name" content="<%= meta_name_html %>" />
+  <meta property="og:description" content="<%= meta_description_html %>" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="<%= canonical_html %>" />
+  <meta property="og:image" content="<%= logo_url_html %>" />
+  <meta property="og:image:alt" content="<%= logo_alt_html %>" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="<%= meta_title_html %>" />
+  <meta name="twitter:description" content="<%= meta_description_html %>" />
+  <meta name="twitter:image" content="<%= logo_url_html %>" />
+  <meta name="twitter:image:alt" content="<%= logo_alt_html %>" />
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
   <% tile_filter_light = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)" %>
@@ -396,6 +421,7 @@
     let lastChatDate;
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
+    const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
@@ -531,6 +557,18 @@
       ROUTER: '#E88B94'
     });
 
+    const roleRenderOrder = Object.freeze({
+      CLIENT: 1,
+      CLIENT_HIDDEN: 2,
+      CLIENT_MUTE: 3,
+      TRACKER: 4,
+      SENSOR: 5,
+      LOST_AND_FOUND: 6,
+      REPEATER: 7,
+      ROUTER_LATE: 8,
+      ROUTER: 9
+    });
+
     const activeRoleFilters = new Set();
     const legendRoleButtons = new Map();
 
@@ -551,6 +589,12 @@
     function getRoleColor(role) {
       const key = getRoleKey(role);
       return roleColors[key] || roleColors.CLIENT || '#3388ff';
+    }
+
+    function getRoleRenderPriority(role) {
+      const key = getRoleKey(role);
+      const priority = roleRenderOrder[key];
+      return typeof priority === 'number' ? priority : 0;
     }
 
     // --- Map setup ---
@@ -1048,15 +1092,27 @@
         entries.push({ type: 'node', ts: n.first_heard ?? 0, item: n });
       }
       for (const m of messages || []) {
+        if (!m || m.encrypted) continue;
         entries.push({ type: 'msg', ts: m.rx_time ?? 0, item: m });
       }
-      entries.sort((a, b) => {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const cutoff = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
+      const recentEntries = entries.filter(entry => {
+        if (entry == null) return false;
+        const rawTs = entry.ts;
+        if (rawTs == null) return false;
+        const ts = typeof rawTs === 'number' ? rawTs : Number(rawTs);
+        if (!Number.isFinite(ts)) return false;
+        entry.ts = ts;
+        return ts >= cutoff;
+      });
+      recentEntries.sort((a, b) => {
         if (a.ts !== b.ts) return a.ts - b.ts;
         return a.type === 'node' && b.type === 'msg' ? -1 : a.type === 'msg' && b.type === 'node' ? 1 : 0;
       });
       const frag = document.createDocumentFragment();
       lastChatDate = null;
-      for (const entry of entries) {
+      for (const entry of recentEntries) {
         const divider = maybeCreateDateDivider(entry.ts);
         if (divider) frag.appendChild(divider);
         if (entry.type === 'node') {
@@ -1104,6 +1160,27 @@
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
+    }
+
+    function normalizeNodeNameValue(value) {
+      if (value == null) return '';
+      const str = String(value).trim();
+      return str.length ? str : '';
+    }
+
+    function applyNodeNameFallback(node) {
+      if (!node || typeof node !== 'object') return;
+      const short = normalizeNodeNameValue(node.short_name ?? node.shortName);
+      const long = normalizeNodeNameValue(node.long_name ?? node.longName);
+      if (short || long) return;
+      const nodeId = normalizeNodeNameValue(node.node_id ?? node.nodeId);
+      if (!nodeId) return;
+      const fallbackShort = nodeId.slice(-4);
+      const fallbackLong = `Meshtastic ${nodeId}`;
+      node.short_name = fallbackShort;
+      node.long_name = fallbackLong;
+      if ('shortName' in node) node.shortName = fallbackShort;
+      if ('longName' in node) node.longName = fallbackLong;
     }
 
     function timeHum(unixSec) {
@@ -1187,7 +1264,17 @@
     function renderMap(nodes, nowSec) {
       markersLayer.clearLayers();
       const pts = [];
-      for (const n of nodes) {
+      const nodesByRenderOrder = nodes
+        .map((node, index) => ({ node, index }))
+        .sort((a, b) => {
+          const orderA = getRoleRenderPriority(a.node && a.node.role);
+          const orderB = getRoleRenderPriority(b.node && b.node.role);
+          if (orderA !== orderB) return orderA - orderB;
+          return a.index - b.index;
+        })
+        .map(entry => entry.node);
+
+      for (const n of nodesByRenderOrder) {
         const latRaw = n.latitude, lonRaw = n.longitude;
         if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
         const lat = Number(latRaw), lon = Number(lonRaw);
@@ -1257,8 +1344,12 @@
       try {
         statusEl.textContent = 'refreshing…';
         const nodes = await fetchNodes();
+        nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
         const messages = await fetchMessages();
+        messages.forEach(message => {
+          if (message && message.node) applyNodeNameFallback(message.node);
+        });
         renderChatLog(nodes, messages);
         allNodes = nodes;
         applyFilter();
