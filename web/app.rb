@@ -585,7 +585,7 @@ end
 # @param node_ref [Object] raw identifier extracted from the payload.
 # @param fallback_num [Object] optional numeric reference used when the
 #   identifier is missing.
-def ensure_unknown_node(db, node_ref, fallback_num = nil)
+def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
   parts = canonical_node_parts(node_ref, fallback_num)
   return unless parts
 
@@ -598,7 +598,7 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil)
   return if existing
 
   long_name = "Meshtastic #{short_id}"
-  now = Time.now.to_i
+  heard_time = coerce_integer(heard_time)
   inserted = false
 
   with_busy_retry do
@@ -607,7 +607,7 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil)
       INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role,last_heard,first_heard)
       VALUES (?,?,?,?,?,?,?)
     SQL
-      [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN", now, now],
+      [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN", heard_time, heard_time],
     )
     inserted = db.changes.positive?
   end
@@ -854,7 +854,7 @@ def insert_position(db, payload)
   canonical = normalize_node_id(db, node_id || node_num)
   node_id = canonical if canonical
 
-  ensure_unknown_node(db, node_id || node_num, node_num)
+  ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
 
   to_id = string_or_nil(payload["to_id"] || payload["to"])
 
@@ -1049,7 +1049,7 @@ def insert_message(db, m)
 
   encrypted = string_or_nil(m["encrypted"])
 
-  ensure_unknown_node(db, from_id || raw_from_id, m["from_num"])
+  ensure_unknown_node(db, from_id || raw_from_id, m["from_num"], heard_time: rx_time)
 
   row = [
     msg_id,
