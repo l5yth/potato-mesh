@@ -625,12 +625,13 @@ def upsert_node(db, node_id, n)
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
   role = user["role"] || "CLIENT"
-  lh = n["lastHeard"]
-  pt = pos["time"]
+  lh = coerce_integer(n["lastHeard"])
+  pt = coerce_integer(pos["time"])
   now = Time.now.to_i
   pt = nil if pt && pt > now
   lh = now if lh && lh > now
   lh = pt if pt && (!lh || lh < pt)
+  lh ||= now
   bool = ->(v) {
     case v
     when true then 1
@@ -676,6 +677,7 @@ def upsert_node(db, node_id, n)
                    num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                    hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
                    is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                   first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                    battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                    air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
                    location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
@@ -794,6 +796,7 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
                    num=COALESCE(excluded.num,nodes.num),
                    snr=COALESCE(excluded.snr,nodes.snr),
                    last_heard=MAX(COALESCE(nodes.last_heard,0),COALESCE(excluded.last_heard,0)),
+                   first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                    position_time=CASE
                      WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
                        THEN excluded.position_time
