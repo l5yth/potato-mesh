@@ -1257,7 +1257,11 @@ def main():
                 stop.wait(retry_delay)
                 if _RECONNECT_MAX_DELAY_SECS > 0:
                     retry_delay = min(
-                        retry_delay * 2 if retry_delay else _RECONNECT_INITIAL_DELAY_SECS,
+                        (
+                            retry_delay * 2
+                            if retry_delay
+                            else _RECONNECT_INITIAL_DELAY_SECS
+                        ),
                         _RECONNECT_MAX_DELAY_SECS,
                     )
                 continue
