@@ -598,16 +598,21 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil)
   return if existing
 
   long_name = "Meshtastic #{short_id}"
+  now = Time.now.to_i
+  inserted = false
 
   with_busy_retry do
     db.execute(
       <<~SQL,
-      INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role)
-      VALUES (?,?,?,?,?)
+      INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role,last_heard,first_heard)
+      VALUES (?,?,?,?,?,?,?)
     SQL
-      [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN"],
+      [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN", now, now],
     )
+    inserted = db.changes.positive?
   end
+
+  inserted
 end
 
 # Insert or update a node row with the most recent metrics.
