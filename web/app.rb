@@ -602,9 +602,9 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil)
   with_busy_retry do
     db.execute(
       <<~SQL,
-        INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role)
-        VALUES (?,?,?,?,?)
-      SQL
+      INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role)
+      VALUES (?,?,?,?,?)
+    SQL
       [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN"],
     )
   end
