@@ -140,10 +140,7 @@ def _create_serial_interface(port: str):
     if network_target:
         host, tcp_port = network_target
         if DEBUG:
-            print(
-                "[debug] using TCP interface for host="
-                f"{host!r} port={tcp_port!r}"
-            )
+            print("[debug] using TCP interface for host=" f"{host!r} port={tcp_port!r}")
         return TCPInterface(hostname=host, portNumber=tcp_port)
     return SerialInterface(devPath=port_value)
 
