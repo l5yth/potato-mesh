@@ -321,6 +321,65 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
     end
 
+    it "updates timestamps when the payload omits lastHeard" do
+      node_id = "!spectime01"
+      payload = {
+        node_id => {
+          "user" => { "shortName" => "Spec Time" },
+        },
+      }
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row["last_heard"]).to eq(reference_time.to_i)
+        expect(row["first_heard"]).to eq(reference_time.to_i)
+      end
+    end
+
+    it "preserves the original first_heard when updating nodes" do
+      node_id = "!spectime02"
+      initial_first = reference_time.to_i - 600
+      initial_last = reference_time.to_i - 300
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard) VALUES (?,?,?)",
+          [node_id, initial_last, initial_first],
+        )
+      end
+
+      payload = {
+        node_id => {
+          "user" => { "shortName" => "Spec Update" },
+          "lastHeard" => reference_time.to_i,
+        },
+      }
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row["last_heard"]).to eq(reference_time.to_i)
+        expect(row["first_heard"]).to eq(initial_first)
+      end
+    end
+
     it "returns 400 when more than 1000 nodes are provided" do
       payload = (0..1000).each_with_object({}) do |i, acc|
         acc["node-#{i}"] = {}
@@ -724,6 +783,41 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(row["short_name"]).to eq("C0DE")
           expect(row["long_name"]).to eq("Meshtastic C0DE")
           expect(row["role"]).to eq("CLIENT_HIDDEN")
+        end
+      end
+
+      it "fills first_heard when updating an existing node without one" do
+        node_id = "!specposfh"
+        rx_time = reference_time.to_i - 90
+
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, last_heard, first_heard) VALUES (?,?,?)",
+            [node_id, nil, nil],
+          )
+        end
+
+        payload = {
+          "id" => 51,
+          "node_id" => node_id,
+          "rx_time" => rx_time,
+          "latitude" => 51.5,
+          "longitude" => -0.12,
+        }
+
+        post "/api/positions", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row(
+            "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
+            [node_id],
+          )
+
+          expect(row["last_heard"]).to eq(rx_time)
+          expect(row["first_heard"]).to eq(rx_time)
         end
       end
 
