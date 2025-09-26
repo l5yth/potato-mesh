@@ -414,6 +414,62 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "#ensure_unknown_node" do
+    it "creates a hidden placeholder with timestamps for chat notifications" do
+      with_db do |db|
+        created = ensure_unknown_node(db, "!1234abcd", nil, heard_time: reference_time.to_i)
+        expect(created).to be_truthy
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          <<~SQL,
+          SELECT short_name, long_name, role, last_heard, first_heard
+          FROM nodes
+          WHERE node_id = ?
+        SQL
+          ["!1234abcd"],
+        )
+
+        expect(row["short_name"]).to eq("ABCD")
+        expect(row["long_name"]).to eq("Meshtastic ABCD")
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
+        expect(row["last_heard"]).to eq(reference_time.to_i)
+        expect(row["first_heard"]).to eq(reference_time.to_i)
+      end
+    end
+
+    it "leaves timestamps nil when no receive time is provided" do
+      with_db do |db|
+        created = ensure_unknown_node(db, "!1111beef", nil)
+        expect(created).to be_truthy
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          <<~SQL,
+          SELECT last_heard, first_heard
+          FROM nodes
+          WHERE node_id = ?
+        SQL
+          ["!1111beef"],
+        )
+
+        expect(row["last_heard"]).to be_nil
+        expect(row["first_heard"]).to be_nil
+      end
+    end
+
+    it "returns false when the node already exists" do
+      with_db do |db|
+        expect(ensure_unknown_node(db, "!0000c0de", nil)).to be_truthy
+        expect(ensure_unknown_node(db, "!0000c0de", nil)).to be_falsey
+      end
+    end
+  end
+
   describe "POST /api/messages" do
     it "persists messages from fixture data" do
       import_nodes_fixture
@@ -470,7 +526,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row(
-          "SELECT node_id, num, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          "SELECT node_id, num, short_name, long_name, role, last_heard, first_heard FROM nodes WHERE node_id = ?",
           ["!feedf00d"],
         )
 
@@ -480,6 +536,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["short_name"]).to eq("F00D")
         expect(row["long_name"]).to eq("Meshtastic F00D")
         expect(row["role"]).to eq("CLIENT_HIDDEN")
+        expect(row["last_heard"]).to eq(payload["rx_time"])
+        expect(row["first_heard"]).to eq(payload["rx_time"])
       end
     end
 
