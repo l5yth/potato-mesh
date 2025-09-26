@@ -18,34 +18,104 @@
 
 <html lang="en">
 <head>
+
+<style>
+  :root {
+    --bg: #f6f3ee;
+    --bg2: #ffffff;
+    --fg: #0c0f12;
+    --muted: #5c6773;
+    --card: rgba(0,0,0,0.03);
+    --line: rgba(12,15,18,0.08);
+    --accent: #2b6cb0;
+    --row-alt: rgba(0,0,0,0.02);
+    --table-head-bg: rgba(0,0,0,0.06);
+    --table-head-fg: var(--fg);
+  }
+  body.dark {
+    --bg: #0e1418;
+    --bg2: #0e141b;
+    --fg: #e6ebf0;
+    --muted: #9aa7b4;
+    --card: rgba(255,255,255,0.04);
+    --line: rgba(255,255,255,0.10);
+    --accent: #5fa8ff;
+    --row-alt: rgba(255,255,255,0.05);
+    --table-head-bg: rgba(255,255,255,0.06);
+    --table-head-fg: var(--fg);
+  }
+  html, body {
+    background-color: var(--bg);
+    color: var(--fg);
+    background-image: var(--bg-image, none);
+    background-size: cover;
+    background-attachment: fixed;
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+  a { color: var(--accent); }
+  hr { border-color: var(--line); }
+  .card, .panel, .box {
+    background: var(--card);
+    backdrop-filter: blur(2px);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  table { border-collapse: collapse; width: 100%; border: 1px solid var(--line); }
+  thead th {
+    background: var(--table-head-bg);
+    color: var(--table-head-fg);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    padding: 8px;
+  }
+  tbody td { padding: 8px; border-bottom: 1px solid var(--line); }
+  tbody tr:nth-child(even) td { background: var(--row-alt); }
+  .leaflet-container { background: transparent !important; color: var(--fg); }
+</style>
+
+
+<script>
+  (function () {
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    function setCookie(name, value, opts) {
+      opts = Object.assign({ path: '/', 'max-age': 60*60*24*365, SameSite: 'Lax' }, opts || {});
+      let updated = encodeURIComponent(name) + '=' + encodeURIComponent(value);
+      for (const k in opts) {
+        updated += '; ' + k + (opts[k] === true ? '' : '=' + opts[k]);
+      }
+      document.cookie = updated;
+    }
+
+    var theme = getCookie('theme');
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = 'dark';
+      setCookie('theme', 'dark');
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      if (theme === 'dark') {
+        document.body.classList.add('dark');
+      } else {
+        document.body.classList.remove('dark');
+      }
+      var btn = document.getElementById('themeToggle');
+      if (btn) btn.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+      if (typeof window.applyFiltersToAllTiles === 'function') {
+        window.applyFiltersToAllTiles();
+      }
+    });
+
+    window.__themeCookie = { getCookie, setCookie };
+  })();
+</script>
+<meta name="color-scheme" content="dark light">
+
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <% meta_title_html = Rack::Utils.escape_html(meta_title) %>
-  <% meta_name_html = Rack::Utils.escape_html(meta_name) %>
-  <% meta_description_html = Rack::Utils.escape_html(meta_description) %>
-  <% request_path = request.path.to_s.empty? ? "/" : request.path %>
-  <% canonical_url = "#{request.base_url}#{request_path}" %>
-  <% canonical_html = Rack::Utils.escape_html(canonical_url) %>
-  <% logo_url = "#{request.base_url}/potatomesh-logo.svg" %>
-  <% logo_url_html = Rack::Utils.escape_html(logo_url) %>
-  <% logo_alt_html = Rack::Utils.escape_html("#{meta_name} logo") %>
-  <title><%= meta_title_html %></title>
-  <meta name="application-name" content="<%= meta_name_html %>" />
-  <meta name="apple-mobile-web-app-title" content="<%= meta_name_html %>" />
-  <meta name="description" content="<%= meta_description_html %>" />
-  <link rel="canonical" href="<%= canonical_html %>" />
-  <meta property="og:title" content="<%= meta_title_html %>" />
-  <meta property="og:site_name" content="<%= meta_name_html %>" />
-  <meta property="og:description" content="<%= meta_description_html %>" />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="<%= canonical_html %>" />
-  <meta property="og:image" content="<%= logo_url_html %>" />
-  <meta property="og:image:alt" content="<%= logo_alt_html %>" />
-  <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="<%= meta_title_html %>" />
-  <meta name="twitter:description" content="<%= meta_description_html %>" />
-  <meta name="twitter:image" content="<%= logo_url_html %>" />
-  <meta name="twitter:image:alt" content="<%= logo_alt_html %>" />
+  <title><%= site_name %></title>
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
   <% tile_filter_light = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)" %>
@@ -279,6 +349,94 @@
       -webkit-filter: <%= tile_filter_dark %>;
     }
   </style>
+
+<script>
+(function(){
+  function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++)h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19;return function(){h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);return (h^h>>>16)>>>0;};}
+  function mulberry32(a){return function(){var t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
+  function genBackground(theme){
+    var seedInput = location.hostname + '::' + theme;
+    var seed = xmur3(seedInput)();
+    var rnd = mulberry32(seed);
+    var w = 1400, h = 900;
+    var c = document.createElement('canvas'); c.width=w; c.height=h;
+    var ctx = c.getContext('2d');
+    if(theme==='dark'){
+      var g = ctx.createLinearGradient(0,0,w,h);
+      g.addColorStop(0, '#0b1119');
+      g.addColorStop(1, '#121b27');
+      ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+    } else {
+      var g2 = ctx.createLinearGradient(0,0,w,h);
+      g2.addColorStop(0, '#efe8d9'); g2.addColorStop(1, '#dfe5ec');
+      ctx.fillStyle = g2; ctx.fillRect(0,0,w,h);
+    }
+    ctx.globalAlpha = (theme==='dark') ? 0.05 : 0.06;
+    for(var i=0;i<14000;i++){
+      var x = Math.floor(rnd()*w), y = Math.floor(rnd()*h);
+      var s = Math.floor(rnd()*2)+1;
+      ctx.fillStyle = (theme==='dark') ? '#ffffff' : '#000000';
+      ctx.fillRect(x,y,s,s);
+    }
+    var rad = ctx.createRadialGradient(w*0.5,h*0.5,Math.min(w,h)*0.2, w*0.5,h*0.5,Math.max(w,h)*0.7);
+    if(theme==='dark'){
+      rad.addColorStop(0,'rgba(0,0,0,0)');
+      rad.addColorStop(1,'rgba(0,0,0,0.20)');
+    } else {
+      rad.addColorStop(0,'rgba(255,255,255,0)');
+      rad.addColorStop(1,'rgba(255,255,255,0.22)');
+    }
+    ctx.globalAlpha = 1; ctx.fillStyle = rad; ctx.fillRect(0,0,w,h);
+    var url = c.toDataURL('image/png');
+    document.documentElement.style.setProperty('--bg-image', 'url('+url+')');
+  }
+  function currentTheme(){
+    return document.body.classList.contains('dark') ? 'dark' : 'light';
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    genBackground(currentTheme());
+  });
+  window.addEventListener('themechange', function(e){
+    var theme = e.detail && e.detail.theme || currentTheme();
+    genBackground(theme);
+  });
+  var obs = new MutationObserver(function(){ genBackground(currentTheme());});
+  obs.observe(document.documentElement, { attributes:true, attributeFilter:['class'] });
+  window.__regenBackground = genBackground;
+})();
+</script>
+
+
+<style>
+  /* Make common wrappers transparent so the generated background is visible */
+  #app, main, .container, .content, .wrapper, .layout, .page, .root, body > div:first-child {
+    background: transparent !important;
+  }
+  /* Soften dark cards a bit to avoid heavy overlay */
+  body.dark .card, body.dark .panel, body.dark .box {
+    background: rgba(255,255,255,0.02);
+    border-color: rgba(255,255,255,0.07);
+  }
+  body.dark thead th {
+    background: rgba(255,255,255,0.04);
+  }
+</style>
+
+
+<style>
+/* Dark theme: avoid any solid blocks that hide the background */
+body.dark :is(#app, main, .container, .content, .wrapper, .page, .layout, .root, .section) {
+  background: rgba(255,255,255,0.04) !important;
+}
+/* Dark theme tables & boxes */
+body.dark :is(.card, .panel, .box) {
+  background: var(--card) !important;
+  border-color: var(--line) !important;
+}
+/* Defensive: Leaflet map stays transparent */
+body.dark .leaflet-container { background: transparent !important; }
+</style>
+
 </head>
 <body>
   <h1 class="site-title">
@@ -421,7 +579,6 @@
     let lastChatDate;
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
-    const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
@@ -545,31 +702,16 @@
     const MAP_CENTER = L.latLng(<%= map_center_lat %>, <%= map_center_lon %>);
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
 
-    // Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
     const roleColors = Object.freeze({
-      CLIENT_HIDDEN: '#A9CBE8',
-      SENSOR: '#A8D5BA',
-      TRACKER: '#B9DFAC',
-      CLIENT_MUTE: '#CDE7A9',
-      CLIENT: '#E8E6A1',
-      CLIENT_BASE: '#F6D0A6',
+      CLIENT: '#A8D5BA',
+      CLIENT_HIDDEN: '#B8DCA9',
+      CLIENT_MUTE: '#D2E3A2',
+      TRACKER: '#E8E6A1',
+      SENSOR: '#F4E3A3',
+      LOST_AND_FOUND: '#F9D4A6',
       REPEATER: '#F7B7A3',
       ROUTER_LATE: '#F29AA3',
-      ROUTER: '#E88B94',
-      LOST_AND_FOUND: '#C3A8E8'
-    });
-
-    const roleRenderOrder = Object.freeze({
-      CLIENT_HIDDEN: 1,
-      SENSOR: 2,
-      TRACKER: 3,
-      CLIENT_MUTE: 4,
-      CLIENT: 5,
-      CLIENT_BASE: 6,
-      REPEATER: 7,
-      ROUTER_LATE: 8,
-      ROUTER: 9,
-      LOST_AND_FOUND: 10
+      ROUTER: '#E88B94'
     });
 
     const activeRoleFilters = new Set();
@@ -594,14 +736,8 @@
       return roleColors[key] || roleColors.CLIENT || '#3388ff';
     }
 
-    function getRoleRenderPriority(role) {
-      const key = getRoleKey(role);
-      const priority = roleRenderOrder[key];
-      return typeof priority === 'number' ? priority : 0;
-    }
-
     // --- Map setup ---
-    const map = L.map('map', { worldCopyJump: true });
+    const map = L.map('map', { worldCopyJump: true, attributionControl: false  });
     const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
     const TILE_ATTRIBUTION =
       '&copy; OpenStreetMap contributors, tiles style by Humanitarian OpenStreetMap Team, hosted by OpenStreetMap France';
@@ -654,7 +790,7 @@
 
     const tiles = L.tileLayer(TILE_LAYER_URL, {
       maxZoom: 19,
-      attribution: TILE_ATTRIBUTION,
+      // attribution: TILE_ATTRIBUTION, //
       className: 'map-tiles',
       crossOrigin: 'anonymous'
     });
@@ -856,10 +992,12 @@
     });
 
     themeToggle.addEventListener('click', () => {
-      const dark = document.body.classList.toggle('dark');
-      themeToggle.textContent = dark ? '☀️' : '🌙';
-      applyFiltersToAllTiles();
-    });
+  const dark = document.body.classList.toggle('dark');
+  themeToggle.textContent = dark ? '☀️' : '🌙';
+  if (window.__themeCookie) window.__themeCookie.setCookie('theme', dark ? 'dark' : 'light');
+  window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: dark?'dark':'light' } }));
+  if (typeof window.applyFiltersToAllTiles === 'function') window.applyFiltersToAllTiles();
+});
 
     let lastFocusBeforeInfo = null;
 
@@ -1095,27 +1233,15 @@
         entries.push({ type: 'node', ts: n.first_heard ?? 0, item: n });
       }
       for (const m of messages || []) {
-        if (!m || m.encrypted) continue;
         entries.push({ type: 'msg', ts: m.rx_time ?? 0, item: m });
       }
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      const cutoff = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
-      const recentEntries = entries.filter(entry => {
-        if (entry == null) return false;
-        const rawTs = entry.ts;
-        if (rawTs == null) return false;
-        const ts = typeof rawTs === 'number' ? rawTs : Number(rawTs);
-        if (!Number.isFinite(ts)) return false;
-        entry.ts = ts;
-        return ts >= cutoff;
-      });
-      recentEntries.sort((a, b) => {
+      entries.sort((a, b) => {
         if (a.ts !== b.ts) return a.ts - b.ts;
         return a.type === 'node' && b.type === 'msg' ? -1 : a.type === 'msg' && b.type === 'node' ? 1 : 0;
       });
       const frag = document.createDocumentFragment();
       lastChatDate = null;
-      for (const entry of recentEntries) {
+      for (const entry of entries) {
         const divider = maybeCreateDateDivider(entry.ts);
         if (divider) frag.appendChild(divider);
         if (entry.type === 'node') {
@@ -1163,27 +1289,6 @@
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
-    }
-
-    function normalizeNodeNameValue(value) {
-      if (value == null) return '';
-      const str = String(value).trim();
-      return str.length ? str : '';
-    }
-
-    function applyNodeNameFallback(node) {
-      if (!node || typeof node !== 'object') return;
-      const short = normalizeNodeNameValue(node.short_name ?? node.shortName);
-      const long = normalizeNodeNameValue(node.long_name ?? node.longName);
-      if (short || long) return;
-      const nodeId = normalizeNodeNameValue(node.node_id ?? node.nodeId);
-      if (!nodeId) return;
-      const fallbackShort = nodeId.slice(-4);
-      const fallbackLong = `Meshtastic ${nodeId}`;
-      node.short_name = fallbackShort;
-      node.long_name = fallbackLong;
-      if ('shortName' in node) node.shortName = fallbackShort;
-      if ('longName' in node) node.longName = fallbackLong;
     }
 
     function timeHum(unixSec) {
@@ -1267,17 +1372,7 @@
     function renderMap(nodes, nowSec) {
       markersLayer.clearLayers();
       const pts = [];
-      const nodesByRenderOrder = nodes
-        .map((node, index) => ({ node, index }))
-        .sort((a, b) => {
-          const orderA = getRoleRenderPriority(a.node && a.node.role);
-          const orderB = getRoleRenderPriority(b.node && b.node.role);
-          if (orderA !== orderB) return orderA - orderB;
-          return a.index - b.index;
-        })
-        .map(entry => entry.node);
-
-      for (const n of nodesByRenderOrder) {
+      for (const n of nodes) {
         const latRaw = n.latitude, lonRaw = n.longitude;
         if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
         const lat = Number(latRaw), lon = Number(lonRaw);
@@ -1347,12 +1442,8 @@
       try {
         statusEl.textContent = 'refreshing…';
         const nodes = await fetchNodes();
-        nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
         const messages = await fetchMessages();
-        messages.forEach(message => {
-          if (message && message.node) applyNodeNameFallback(message.node);
-        });
         renderChatLog(nodes, messages);
         allNodes = nodes;
         applyFilter();
