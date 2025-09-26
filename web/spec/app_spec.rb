@@ -450,10 +450,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.results_as_hash = true
         row = db.get_first_row(
           <<~SQL,
-            SELECT last_heard, first_heard
-            FROM nodes
-            WHERE node_id = ?
-          SQL
+          SELECT last_heard, first_heard
+          FROM nodes
+          WHERE node_id = ?
+        SQL
           ["!1111beef"],
         )
 
