@@ -778,6 +778,116 @@ def test_pkt_to_dict_handles_dict_and_proto(mesh_module, monkeypatch):
     assert isinstance(fallback["_unparsed"], str)
 
 
+def test_main_retries_interface_creation(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    attempts = []
+
+    class DummyEvent:
+        def __init__(self):
+            self.wait_calls = 0
+
+        def is_set(self):
+            return self.wait_calls >= 3
+
+        def set(self):
+            self.wait_calls = 3
+
+        def wait(self, timeout):
+            self.wait_calls += 1
+            return self.is_set()
+
+    class DummyInterface:
+        def __init__(self):
+            self.closed = False
+            self.nodes = {}
+
+        def close(self):
+            self.closed = True
+
+    iface = DummyInterface()
+
+    def fake_create(port):
+        attempts.append(port)
+        if len(attempts) < 3:
+            raise RuntimeError("boom")
+        return iface
+
+    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
+    monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
+    monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
+    monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh, "_RECONNECT_MAX_DELAY_SECS", 0)
+
+    mesh.main()
+
+    assert len(attempts) == 3
+    assert iface.closed is True
+
+
+def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    class DummyEvent:
+        def __init__(self):
+            self.wait_calls = 0
+
+        def is_set(self):
+            return self.wait_calls >= 2
+
+        def set(self):
+            self.wait_calls = 2
+
+        def wait(self, timeout):
+            self.wait_calls += 1
+            return self.is_set()
+
+    interfaces = []
+
+    def fake_create(port):
+        fail_first = not interfaces
+
+        class FlakyInterface:
+            def __init__(self, should_fail):
+                self.closed = False
+                self._should_fail = should_fail
+                self._calls = 0
+
+            @property
+            def nodes(self):
+                self._calls += 1
+                if self._should_fail and self._calls == 1:
+                    raise RuntimeError("temporary failure")
+                return {"!node": {"id": 1}}
+
+            def close(self):
+                self.closed = True
+
+        interface = FlakyInterface(fail_first)
+        interfaces.append(interface)
+        return interface
+
+    upsert_calls = []
+
+    def record_upsert(node_id, node):
+        upsert_calls.append(node_id)
+
+    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
+    monkeypatch.setattr(mesh, "upsert_node", record_upsert)
+    monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
+    monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
+    monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh, "_RECONNECT_MAX_DELAY_SECS", 0)
+
+    mesh.main()
+
+    assert len(interfaces) >= 2
+    assert interfaces[0].closed is True
+    assert upsert_calls == ["!node"]
+
+
 def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
