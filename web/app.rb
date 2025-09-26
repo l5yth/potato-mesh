@@ -504,6 +504,112 @@ rescue ArgumentError
   nil
 end
 
+# Determine canonical node identifiers and derived metadata for a reference.
+#
+# @param node_ref [Object] raw node identifier or numeric reference.
+# @param fallback_num [Object] optional numeric reference used when the
+#   identifier does not encode the value directly.
+# @return [Array(String, Integer, String), nil] tuple containing the canonical
+#   node ID, numeric node reference, and uppercase short identifier suffix when
+#   the reference can be parsed. Returns nil when the reference cannot be
+#   converted into a canonical ID.
+def canonical_node_parts(node_ref, fallback_num = nil)
+  fallback = coerce_integer(fallback_num)
+
+  hex = nil
+  num = nil
+
+  case node_ref
+  when Integer
+    num = node_ref
+  when Numeric
+    num = node_ref.to_i
+  when String
+    trimmed = node_ref.strip
+    return nil if trimmed.empty?
+
+    if trimmed.start_with?("!")
+      hex = trimmed.delete_prefix("!")
+    elsif trimmed.match?(/\A0[xX][0-9A-Fa-f]+\z/)
+      hex = trimmed[2..].to_s
+    elsif trimmed.match?(/\A-?\d+\z/)
+      num = trimmed.to_i
+    elsif trimmed.match?(/\A[0-9A-Fa-f]+\z/)
+      hex = trimmed
+    else
+      return nil
+    end
+  when nil
+    num = fallback if fallback
+  else
+    return nil
+  end
+
+  num ||= fallback if fallback
+
+  if hex
+    begin
+      num ||= Integer(hex, 16)
+    rescue ArgumentError
+      return nil
+    end
+  elsif num
+    return nil if num.negative?
+    hex = format("%08x", num & 0xFFFFFFFF)
+  else
+    return nil
+  end
+
+  return nil if hex.nil? || hex.empty?
+
+  begin
+    parsed = Integer(hex, 16)
+  rescue ArgumentError
+    return nil
+  end
+
+  parsed &= 0xFFFFFFFF
+  canonical_hex = format("%08x", parsed)
+  short_id = canonical_hex[-4, 4].upcase
+
+  ["!#{canonical_hex}", parsed, short_id]
+end
+
+# Ensure a placeholder node entry exists for the provided identifier.
+#
+# Messages and telemetry can reference nodes before the daemon has received a
+# full node snapshot. When this happens we create a minimal hidden entry so the
+# sender can be resolved in the UI until richer metadata becomes available.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param node_ref [Object] raw identifier extracted from the payload.
+# @param fallback_num [Object] optional numeric reference used when the
+#   identifier is missing.
+def ensure_unknown_node(db, node_ref, fallback_num = nil)
+  parts = canonical_node_parts(node_ref, fallback_num)
+  return unless parts
+
+  node_id, node_num, short_id = parts
+
+  existing = db.get_first_value(
+    "SELECT 1 FROM nodes WHERE node_id = ? LIMIT 1",
+    [node_id],
+  )
+  return if existing
+
+  long_name = "Meshtastic #{short_id}"
+
+  with_busy_retry do
+    db.execute(
+      <<~SQL,
+        INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role)
+        VALUES (?,?,?,?,?)
+      SQL
+      [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN"],
+    )
+  end
+end
+
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -743,6 +849,8 @@ def insert_position(db, payload)
   canonical = normalize_node_id(db, node_id || node_num)
   node_id = canonical if canonical
 
+  ensure_unknown_node(db, node_id || node_num, node_num)
+
   to_id = string_or_nil(payload["to_id"] || payload["to"])
 
   position_section = payload["position"].is_a?(Hash) ? payload["position"] : {}
@@ -935,6 +1043,8 @@ def insert_message(db, m)
   end
 
   encrypted = string_or_nil(m["encrypted"])
+
+  ensure_unknown_node(db, from_id || raw_from_id, m["from_num"])
 
   row = [
     msg_id,

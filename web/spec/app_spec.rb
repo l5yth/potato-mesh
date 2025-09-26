@@ -450,6 +450,39 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "creates hidden nodes for unknown message senders" do
+      payload = {
+        "id" => 9_999,
+        "rx_time" => reference_time.to_i,
+        "rx_iso" => reference_time.iso8601,
+        "from_id" => "!feedf00d",
+        "to_id" => "^all",
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "Spec placeholder message",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT node_id, num, short_name, long_name, role FROM nodes WHERE node_id = ?",
+          ["!feedf00d"],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["node_id"]).to eq("!feedf00d")
+        expect(row["num"]).to eq(0xfeedf00d)
+        expect(row["short_name"]).to eq("F00D")
+        expect(row["long_name"]).to eq("Meshtastic F00D")
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
+      end
+    end
+
     it "returns 400 when the payload is not valid JSON" do
       post "/api/messages", "{", auth_headers
 
@@ -602,6 +635,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(node_row["longitude"], 13.1)
           expect_same_value(node_row["altitude"], 33.0)
           expect(node_row["location_source"]).to eq("LOC_EXTERNAL")
+        end
+      end
+
+      it "creates hidden nodes for unknown position senders" do
+        payload = {
+          "id" => 42,
+          "node_id" => "!0badc0de",
+          "rx_time" => reference_time.to_i,
+          "rx_iso" => reference_time.iso8601,
+          "latitude" => 52.1,
+          "longitude" => 13.1,
+        }
+
+        post "/api/positions", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row(
+            "SELECT node_id, num, short_name, long_name, role FROM nodes WHERE node_id = ?",
+            ["!0badc0de"],
+          )
+
+          expect(row).not_to be_nil
+          expect(row["node_id"]).to eq("!0badc0de")
+          expect(row["num"]).to eq(0x0badc0de)
+          expect(row["short_name"]).to eq("C0DE")
+          expect(row["long_name"]).to eq("Meshtastic C0DE")
+          expect(row["role"]).to eq("CLIENT_HIDDEN")
         end
       end
 
