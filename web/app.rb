@@ -26,6 +26,8 @@ require "logger"
 require "rack/utils"
 require "open3"
 require "time"
+require "digest"
+
 
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
@@ -287,7 +289,58 @@ ensure
   db&.close
 end
 
-init_db unless db_schema_present?
+
+# ---- Idempotent schema bootstrap & migrations ----
+def table_exists?(db, name)
+  !!db.get_first_value("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", [name])
+end
+
+def columns_of(db, table)
+  db.execute("PRAGMA table_info(#{table})").map { |r| r[1] }
+end
+
+def ensure_table_from_sql(db, table, sql_path)
+  return if table_exists?(db, table)
+  sql = File.read(sql_path)
+  with_busy_retry { db.execute_batch(sql) }
+end
+
+def ensure_column(db, table, column, type_sql)
+  cols = columns_of(db, table)
+  return if cols.include?(column)
+  with_busy_retry { db.execute("ALTER TABLE #{table} ADD COLUMN #{column} #{type_sql}") }
+end
+
+def ensure_index(db, idx_name, sql_create)
+  exists = db.get_first_value("SELECT 1 FROM sqlite_master WHERE type='index' AND name=? LIMIT 1", [idx_name])
+  return if exists
+  with_busy_retry { db.execute(sql_create) }
+end
+
+def ensure_baseline_schema!
+  db = open_database
+  root = File.expand_path("..", __dir__)
+  ensure_table_from_sql(db, "nodes",     File.join(root, "data/nodes.sql"))
+  ensure_table_from_sql(db, "messages",  File.join(root, "data/messages.sql"))
+  ensure_table_from_sql(db, "positions", File.join(root, "data/positions.sql"))
+ensure
+  db&.close
+end
+
+def migrate_schema!
+  db = open_database
+  ensure_column(db, "messages", "encrypted", "TEXT")
+ensure
+  db&.close
+end
+
+def boot_schema!
+  ensure_baseline_schema!
+  migrate_schema!
+end
+# ---- end schema helpers ----
+
+boot_schema!
 
 # Retrieve recently heard nodes ordered by their last contact time.
 #
@@ -504,117 +557,6 @@ rescue ArgumentError
   nil
 end
 
-# Determine canonical node identifiers and derived metadata for a reference.
-#
-# @param node_ref [Object] raw node identifier or numeric reference.
-# @param fallback_num [Object] optional numeric reference used when the
-#   identifier does not encode the value directly.
-# @return [Array(String, Integer, String), nil] tuple containing the canonical
-#   node ID, numeric node reference, and uppercase short identifier suffix when
-#   the reference can be parsed. Returns nil when the reference cannot be
-#   converted into a canonical ID.
-def canonical_node_parts(node_ref, fallback_num = nil)
-  fallback = coerce_integer(fallback_num)
-
-  hex = nil
-  num = nil
-
-  case node_ref
-  when Integer
-    num = node_ref
-  when Numeric
-    num = node_ref.to_i
-  when String
-    trimmed = node_ref.strip
-    return nil if trimmed.empty?
-
-    if trimmed.start_with?("!")
-      hex = trimmed.delete_prefix("!")
-    elsif trimmed.match?(/\A0[xX][0-9A-Fa-f]+\z/)
-      hex = trimmed[2..].to_s
-    elsif trimmed.match?(/\A-?\d+\z/)
-      num = trimmed.to_i
-    elsif trimmed.match?(/\A[0-9A-Fa-f]+\z/)
-      hex = trimmed
-    else
-      return nil
-    end
-  when nil
-    num = fallback if fallback
-  else
-    return nil
-  end
-
-  num ||= fallback if fallback
-
-  if hex
-    begin
-      num ||= Integer(hex, 16)
-    rescue ArgumentError
-      return nil
-    end
-  elsif num
-    return nil if num.negative?
-    hex = format("%08x", num & 0xFFFFFFFF)
-  else
-    return nil
-  end
-
-  return nil if hex.nil? || hex.empty?
-
-  begin
-    parsed = Integer(hex, 16)
-  rescue ArgumentError
-    return nil
-  end
-
-  parsed &= 0xFFFFFFFF
-  canonical_hex = format("%08x", parsed)
-  short_id = canonical_hex[-4, 4].upcase
-
-  ["!#{canonical_hex}", parsed, short_id]
-end
-
-# Ensure a placeholder node entry exists for the provided identifier.
-#
-# Messages and telemetry can reference nodes before the daemon has received a
-# full node snapshot. When this happens we create a minimal hidden entry so the
-# sender can be resolved in the UI until richer metadata becomes available.
-#
-# @param db [SQLite3::Database] open database handle.
-# @param node_ref [Object] raw identifier extracted from the payload.
-# @param fallback_num [Object] optional numeric reference used when the
-#   identifier is missing.
-def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
-  parts = canonical_node_parts(node_ref, fallback_num)
-  return unless parts
-
-  node_id, node_num, short_id = parts
-
-  existing = db.get_first_value(
-    "SELECT 1 FROM nodes WHERE node_id = ? LIMIT 1",
-    [node_id],
-  )
-  return if existing
-
-  long_name = "Meshtastic #{short_id}"
-  heard_time = coerce_integer(heard_time)
-  inserted = false
-
-  with_busy_retry do
-    db.execute(
-      <<~SQL,
-      INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role,last_heard,first_heard)
-      VALUES (?,?,?,?,?,?,?)
-    SQL
-      [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN", heard_time, heard_time],
-    )
-    inserted = db.changes.positive?
-  end
-
-  inserted
-end
-
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -625,13 +567,12 @@ def upsert_node(db, node_id, n)
   met = n["deviceMetrics"] || {}
   pos = n["position"] || {}
   role = user["role"] || "CLIENT"
-  lh = coerce_integer(n["lastHeard"])
-  pt = coerce_integer(pos["time"])
+  lh = n["lastHeard"]
+  pt = pos["time"]
   now = Time.now.to_i
   pt = nil if pt && pt > now
   lh = now if lh && lh > now
   lh = pt if pt && (!lh || lh < pt)
-  lh ||= now
   bool = ->(v) {
     case v
     when true then 1
@@ -677,7 +618,6 @@ def upsert_node(db, node_id, n)
                    num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                    hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
                    is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
-                   first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                    battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                    air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
                    location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
@@ -796,7 +736,6 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
                    num=COALESCE(excluded.num,nodes.num),
                    snr=COALESCE(excluded.snr,nodes.snr),
                    last_heard=MAX(COALESCE(nodes.last_heard,0),COALESCE(excluded.last_heard,0)),
-                   first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                    position_time=CASE
                      WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
                        THEN excluded.position_time
@@ -856,8 +795,6 @@ def insert_position(db, payload)
   node_num ||= raw_node_num
   canonical = normalize_node_id(db, node_id || node_num)
   node_id = canonical if canonical
-
-  ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
 
   to_id = string_or_nil(payload["to_id"] || payload["to"])
 
@@ -1052,8 +989,6 @@ def insert_message(db, m)
 
   encrypted = string_or_nil(m["encrypted"])
 
-  ensure_unknown_node(db, from_id || raw_from_id, m["from_num"], heard_time: rx_time)
-
   row = [
     msg_id,
     rx_time,
@@ -1212,11 +1147,35 @@ ensure
   db&.close
 end
 
+
+# Лого из корня приложения (/app/potatomesh-logo.svg)
+get "/potatomesh-logo.svg" do
+  # Sinatra знает корень через settings.root (обычно это каталог app.rb)
+  path = File.expand_path("potatomesh-logo.svg", settings.root)
+
+  # отладка в лог (видно в docker logs)
+  settings.logger&.info("logo_path=#{path} exist=#{File.exist?(path)} file=#{File.file?(path)}")
+
+  halt 404, "Not Found" unless File.exist?(path) && File.readable?(path)
+
+  content_type "image/svg+xml"
+  last_modified File.mtime(path)
+  cache_control :public, max_age: 3600
+  send_file path
+end
+
 # GET /
 #
 # Renders the main site with configuration-driven defaults for the template.
+
+
+
+
+
 get "/" do
   meta = meta_configuration
+
+  response.set_cookie('theme', value: 'dark', path: '/', max_age: 60*60*24*365, same_site: :lax) unless request.cookies['theme']
 
   erb :index, locals: {
                 site_name: meta[:name],
