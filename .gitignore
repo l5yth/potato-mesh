@@ -65,3 +65,4 @@ reports/
 
 # AI planning and documentation
 ai_docs/
+*.log
