@@ -40,7 +40,7 @@ MAX_JSON_BODY_BYTES = begin
   rescue ArgumentError
     DEFAULT_MAX_JSON_BODY_BYTES
   end
-VERSION_FALLBACK = "v0.2.1"
+VERSION_FALLBACK = "v0.3.0"
 
 def fetch_config_string(key, default)
   value = ENV[key]
