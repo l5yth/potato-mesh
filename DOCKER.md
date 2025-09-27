@@ -32,11 +32,12 @@ Edit `.env` file or run `./configure.sh` to set:
 ## Device Setup
 
 **Find your device:**
+
 ```bash
 # Linux
 ls /dev/ttyACM* /dev/ttyUSB*
 
-# macOS  
+# macOS
 ls /dev/cu.usbserial-*
 
 # Windows
@@ -44,6 +45,7 @@ ls /dev/ttyS*
 ```
 
 **Set permissions (Linux/macOS):**
+
 ```bash
 sudo chmod 666 /dev/ttyACM0
 # Or add user to dialout group
@@ -72,6 +74,7 @@ docker-compose pull && docker-compose up -d
 ## Troubleshooting
 
 **Device access issues:**
+
 ```bash
 # Check device exists and permissions
 ls -la /dev/ttyACM0
@@ -81,12 +84,14 @@ sudo chmod 666 /dev/ttyACM0
 ```
 
 **Port conflicts:**
+
 ```bash
 # Find what's using port 41447
 sudo lsof -i :41447
 ```
 
 **Container issues:**
+
 ```bash
 # Check logs
 docker-compose logs

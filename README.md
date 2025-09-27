@@ -16,9 +16,9 @@ A simple Meshtastic-powered node dashboard for your local community. _No MQTT cl
 
 Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
-![screenshot of the second version](./scrot-0.2.png)
+![screenshot of the third version](./scrot-0.3.png)
 
-## 🐳 Quick Start with Docker
+## Quick Start with Docker
 
 ```bash
 ./configure.sh          # Configure your setup
@@ -27,8 +27,8 @@ docker-compose logs -f   # View logs
 ```
 
 PotatoMesh uses host networking by default so it can run on restricted
-systems where Docker cannot create bridged interfaces.  The web UI listens on
-`http://127.0.0.1:41447` immediately without explicit port mappings.  If you
+systems where Docker cannot create bridged interfaces. The web UI listens on
+`http://127.0.0.1:41447` immediately without explicit port mappings. If you
 are using Docker Desktop (macOS/Windows) or otherwise require bridged
 networking, enable the Compose profile with:
 
@@ -88,8 +88,10 @@ SITE_NAME="Meshtastic Berlin" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 
 The web app contains an API:
 
 * GET `/api/nodes?limit=100` - returns the latest 100 nodes reported to the app
+* GET `/api/positions?limit=100` - returns the latest 100 position data
 * GET `/api/messages?limit=100` - returns the latest 100 messages
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
+* POST `/api/messages` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
@@ -133,6 +135,11 @@ Run the script with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating
 node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
 specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`) or set it to an IP
 address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
+
+## Demos
+
+* <https://potatomesh.net/>
+* <https://vrs.kdd2105.ru/>
 
 ## License
 
