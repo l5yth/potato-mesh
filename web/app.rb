@@ -1214,7 +1214,7 @@ end
 
 get "/potatomesh-logo.svg" do
   # Sinatra знает корень через settings.root (обычно это каталог app.rb)
-  path = File.expand_path("potatomesh-logo.svg", settings.root)
+  path = File.expand_path("potatomesh-logo.svg", settings.public_folder)
 
   # отладка в лог (видно в docker logs)
   settings.logger&.info("logo_path=#{path} exist=#{File.exist?(path)}
