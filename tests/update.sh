@@ -18,4 +18,5 @@ set -euo pipefail
 
 sqlite3 ../data/mesh.db ".backup './mesh.db'"
 curl http://127.0.0.1:41447/api/nodes |jq > ./nodes.json
+curl http://127.0.0.1:41447/api/positions |jq > ./positions.json
 curl http://127.0.0.1:41447/api/messages |jq > ./messages.json
