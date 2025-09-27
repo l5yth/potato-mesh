@@ -18,6 +18,103 @@
 
 <html lang="en">
 <head>
+  <style>
+  :root {
+    --bg: #f6f3ee;
+    --bg2: #ffffff;
+    --fg: #0c0f12;
+    --muted: #5c6773;
+    --card: rgba(0,0,0,0.03);
+    --line: rgba(12,15,18,0.08);
+    --accent: #2b6cb0;
+    --row-alt: rgba(0,0,0,0.02);
+    --table-head-bg: rgba(0,0,0,0.06);
+    --table-head-fg: var(--fg);
+  }
+  body.dark {
+    --bg: #0e1418;
+    --bg2: #0e141b;
+    --fg: #e6ebf0;
+    --muted: #9aa7b4;
+    --card: rgba(255,255,255,0.04);
+    --line: rgba(255,255,255,0.10);
+    --accent: #5fa8ff;
+    --row-alt: rgba(255,255,255,0.05);
+    --table-head-bg: rgba(255,255,255,0.06);
+    --table-head-fg: var(--fg);
+  }
+  html, body {
+    background-color: var(--bg);
+    color: var(--fg);
+    background-image: var(--bg-image, none);
+    background-size: cover;
+    background-attachment: fixed;
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+  a { color: var(--accent); }
+  hr { border-color: var(--line); }
+  .card, .panel, .box {
+    background: var(--card);
+    backdrop-filter: blur(2px);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  table { border-collapse: collapse; width: 100%; border: 1px solid
+var(--line); }
+  thead th {
+    background: var(--table-head-bg);
+    color: var(--table-head-fg);
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    padding: 8px;
+  }
+  tbody td { padding: 8px; border-bottom: 1px solid var(--line); }
+  tbody tr:nth-child(even) td { background: var(--row-alt); }
+  .leaflet-container { background: transparent !important; color:
+var(--fg); }
+</style>
+<script>
+  (function () {
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(?:^|; )' +
+name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : null;
+    }
+    function setCookie(name, value, opts) {
+      opts = Object.assign({ path: '/', 'max-age': 60*60*24*365, SameSite:
+'Lax' }, opts || {});
+      let updated = encodeURIComponent(name) + '=' +
+encodeURIComponent(value);
+      for (const k in opts) {
+        updated += '; ' + k + (opts[k] === true ? '' : '=' + opts[k]);
+      }
+      document.cookie = updated;
+    }
+
+    var theme = getCookie('theme');
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = 'dark';
+      setCookie('theme', 'dark');
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      if (theme === 'dark') {
+        document.body.classList.add('dark');
+      } else {
+        document.body.classList.remove('dark');
+      }
+      var btn = document.getElementById('themeToggle');
+      if (btn) btn.textContent = document.body.classList.contains('dark') ?
+'☀️' : '🌙';
+      if (typeof window.applyFiltersToAllTiles === 'function') {
+        window.applyFiltersToAllTiles();
+      }
+    });
+
+    window.__themeCookie = { getCookie, setCookie };
+  })();
+</script>
+<meta name="color-scheme" content="dark light">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <% meta_title_html = Rack::Utils.escape_html(meta_title) %>
@@ -279,104 +376,6 @@
       -webkit-filter: <%= tile_filter_dark %>;
     }
   </style>
-  <style>
-  :root {
-    --bg: #f6f3ee;
-    --bg2: #ffffff;
-    --fg: #0c0f12;
-    --muted: #5c6773;
-    --card: rgba(0,0,0,0.03);
-    --line: rgba(12,15,18,0.08);
-    --accent: #2b6cb0;
-    --row-alt: rgba(0,0,0,0.02);
-    --table-head-bg: rgba(0,0,0,0.06);
-    --table-head-fg: var(--fg);
-  }
-  body.dark {
-    --bg: #0e1418;
-    --bg2: #0e141b;
-    --fg: #e6ebf0;
-    --muted: #9aa7b4;
-    --card: rgba(255,255,255,0.04);
-    --line: rgba(255,255,255,0.10);
-    --accent: #5fa8ff;
-    --row-alt: rgba(255,255,255,0.05);
-    --table-head-bg: rgba(255,255,255,0.06);
-    --table-head-fg: var(--fg);
-  }
-  html, body {
-    background-color: var(--bg);
-    color: var(--fg);
-    background-image: var(--bg-image, none);
-    background-size: cover;
-    background-attachment: fixed;
-    transition: background-color 160ms ease, color 160ms ease;
-  }
-  a { color: var(--accent); }
-  hr { border-color: var(--line); }
-  .card, .panel, .box {
-    background: var(--card);
-    backdrop-filter: blur(2px);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-  }
-  table { border-collapse: collapse; width: 100%; border: 1px solid
-var(--line); }
-  thead th {
-    background: var(--table-head-bg);
-    color: var(--table-head-fg);
-    text-align: left;
-    border-bottom: 1px solid var(--line);
-    padding: 8px;
-  }
-  tbody td { padding: 8px; border-bottom: 1px solid var(--line); }
-  tbody tr:nth-child(even) td { background: var(--row-alt); }
-  .leaflet-container { background: transparent !important; color:
-var(--fg); }
-</style>
-
-<script>
-  (function () {
-    function getCookie(name) {
-      const m = document.cookie.match(new RegExp('(?:^|; )' +
-name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-      return m ? decodeURIComponent(m[1]) : null;
-    }
-    function setCookie(name, value, opts) {
-      opts = Object.assign({ path: '/', 'max-age': 60*60*24*365, SameSite:
-'Lax' }, opts || {});
-      let updated = encodeURIComponent(name) + '=' +
-encodeURIComponent(value);
-      for (const k in opts) {
-        updated += '; ' + k + (opts[k] === true ? '' : '=' + opts[k]);
-      }
-      document.cookie = updated;
-    }
-
-    var theme = getCookie('theme');
-    if (theme !== 'dark' && theme !== 'light') {
-      theme = 'dark';
-      setCookie('theme', 'dark');
-    }
-
-    document.addEventListener('DOMContentLoaded', function () {
-      if (theme === 'dark') {
-        document.body.classList.add('dark');
-      } else {
-        document.body.classList.remove('dark');
-      }
-      var btn = document.getElementById('themeToggle');
-      if (btn) btn.textContent = document.body.classList.contains('dark') ?
-'☀️' : '🌙';
-      if (typeof window.applyFiltersToAllTiles === 'function') {
-        window.applyFiltersToAllTiles();
-      }
-    });
-
-    window.__themeCookie = { getCookie, setCookie };
-  })();
-</script>
-<meta name="color-scheme" content="dark light">
 </head>
 <body>
   <h1 class="site-title">

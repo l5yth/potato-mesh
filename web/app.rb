@@ -1234,6 +1234,8 @@ end
 get "/" do
   meta = meta_configuration
 
+  response.set_cookie("theme", value: "dark", path: "/", max_age: 60 * 60 * 24 * 7, same_site: :lax) unless request.cookies["theme"]
+
   erb :index, locals: {
                 site_name: meta[:name],
                 meta_title: meta[:title],
