@@ -74,32 +74,38 @@ var(--line); }
 var(--fg); }
 </style>
 <script>
-  (function () {
-    function getCookie(name) {
-      const m = document.cookie.match(new RegExp('(?:^|; )' +
-name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-      return m ? decodeURIComponent(m[1]) : null;
-    }
-    function setCookie(name, value, opts) {
-      opts = Object.assign({ path: '/', 'max-age': 60*60*24*365, SameSite:
-'Lax' }, opts || {});
-      let updated = encodeURIComponent(name) + '=' +
-encodeURIComponent(value);
-      for (const k in opts) {
-        updated += '; ' + k + (opts[k] === true ? '' : '=' + opts[k]);
+    (function () {
+      var THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
+
+      function getCookie(name) {
+        const m = document.cookie.match(new RegExp('(?:^|; )' +
+  name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+        return m ? decodeURIComponent(m[1]) : null;
       }
-      document.cookie = updated;
-    }
+      function setCookie(name, value, opts) {
+        opts = Object.assign({ path: '/', 'max-age': THEME_COOKIE_MAX_AGE, SameSite:
+  'Lax' }, opts || {});
+        let updated = encodeURIComponent(name) + '=' +
+  encodeURIComponent(value);
+        for (const k in opts) {
+          updated += '; ' + k + (opts[k] === true ? '' : '=' + opts[k]);
+        }
+        document.cookie = updated;
+      }
 
-    var theme = getCookie('theme');
-    if (theme !== 'dark' && theme !== 'light') {
-      theme = 'dark';
-      setCookie('theme', 'dark');
-    }
+      function persistTheme(value) {
+        setCookie('theme', value, { 'max-age': THEME_COOKIE_MAX_AGE });
+      }
 
-    document.addEventListener('DOMContentLoaded', function () {
-      if (theme === 'dark') {
-        document.body.classList.add('dark');
+      var theme = getCookie('theme');
+      if (theme !== 'dark' && theme !== 'light') {
+        theme = 'dark';
+      }
+      persistTheme(theme);
+
+      document.addEventListener('DOMContentLoaded', function () {
+        if (theme === 'dark') {
+          document.body.classList.add('dark');
       } else {
         document.body.classList.remove('dark');
       }
@@ -111,9 +117,9 @@ encodeURIComponent(value);
       }
     });
 
-    window.__themeCookie = { getCookie, setCookie };
-  })();
-</script>
+      window.__themeCookie = { getCookie, setCookie, persistTheme, maxAge: THEME_COOKIE_MAX_AGE };
+    })();
+  </script>
 <meta name="color-scheme" content="dark light">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -143,6 +149,7 @@ encodeURIComponent(value);
   <meta name="twitter:description" content="<%= meta_description_html %>" />
   <meta name="twitter:image" content="<%= logo_url_html %>" />
   <meta name="twitter:image:alt" content="<%= logo_alt_html %>" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
   <% refresh_interval_seconds = 60 %>
   <% tile_filter_light = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)" %>
@@ -203,7 +210,7 @@ encodeURIComponent(value);
     .auto-refresh-toggle { display: inline-flex; align-items: center; gap: 6px; }
     .controls { display: flex; gap: 8px; align-items: center; }
     .controls label { display: inline-flex; align-items: center; gap: 6px; }
-    button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+    button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; color: var(--fg); }
     button:hover { background: #f6f6f6; }
     .sort-button { padding: 0; border: none; background: none; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
     .sort-button:hover { background: none; }
@@ -212,7 +219,7 @@ encodeURIComponent(value);
     th[aria-sort] .sort-indicator { opacity: 1; }
     label { font-size: 14px; color: #333; }
     input[type="text"] { padding: 6px 10px; border: 1px solid #ccc; border-radius: 6px; }
-    .legend { position: relative; background: #fff; padding: 8px 10px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 12px; line-height: 18px; min-width: 160px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
+    .legend { position: relative; background: #fff; color: var(--fg); padding: 8px 10px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 12px; line-height: 18px; min-width: 160px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
     .legend-header { display: flex; align-items: center; justify-content: flex-start; gap: 4px; margin-bottom: 6px; font-weight: 600; }
     .legend-title { font-size: 13px; }
     .legend-items { display: flex; flex-direction: column; gap: 2px; }
@@ -237,7 +244,7 @@ encodeURIComponent(value);
     .legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
     .legend-hidden { display: none !important; }
     .legend-toggle { margin-top: 8px; }
-    .legend-toggle-button { font-size: 12px; }
+    .legend-toggle-button { font-size: 12px; color: var(--fg); }
     #map .leaflet-tile-pane,
     #map .leaflet-layer,
     #map .leaflet-tile.map-tiles {
@@ -253,7 +260,7 @@ encodeURIComponent(value);
     }
     #nodes { font-size: 12px; }
     footer { position: fixed; bottom: 0; left: var(--pad); width: calc(100% - 2 * var(--pad)); background: #fafafa; border-top: 1px solid #ddd; text-align: center; font-size: 12px; padding: 4px 0; }
-    .info-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: var(--pad); z-index: 1000; }
+    .info-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; padding: var(--pad); z-index: 4000; }
     .info-overlay[hidden] { display: none; }
     .info-dialog { background: #fff; color: #111; max-width: 420px; width: min(100%, 420px); border-radius: 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2); position: relative; padding: 20px 24px; outline: none; }
     .info-dialog:focus { outline: 2px solid #4a90e2; outline-offset: 4px; }
@@ -278,7 +285,7 @@ encodeURIComponent(value);
       }
     }
 
-    @media (max-width: 768px) {
+    @media (max-width: 1024px) {
       .row { flex-direction: column; align-items: stretch; gap: var(--pad); }
       .site-title img { width: 44px; height: 44px; }
       .map-row { flex-direction: column; }
@@ -1025,19 +1032,26 @@ encodeURIComponent(value);
     };
     legendToggleControl.addTo(map);
 
-    const legendMediaQuery = window.matchMedia('(max-width: 768px)');
+    const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
     setLegendVisibility(!legendMediaQuery.matches);
     legendMediaQuery.addEventListener('change', event => {
       setLegendVisibility(!event.matches);
     });
 
-    themeToggle.addEventListener('click', () => {
-      const dark = document.body.classList.toggle('dark');
-      themeToggle.textContent = dark ? '☀️' : '🌙';
-      if (window.__themeCookie) window.__themeCookie.setCookie('theme', dark ? 'dark' : 'light');
-      window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: dark?'dark':'light' } }));
-      if (typeof window.applyFiltersToAllTiles === 'function') window.applyFiltersToAllTiles();
-    });
+      themeToggle.addEventListener('click', () => {
+        const dark = document.body.classList.toggle('dark');
+        const themeValue = dark ? 'dark' : 'light';
+        themeToggle.textContent = dark ? '☀️' : '🌙';
+        if (window.__themeCookie) {
+          if (typeof window.__themeCookie.persistTheme === 'function') {
+            window.__themeCookie.persistTheme(themeValue);
+          } else if (typeof window.__themeCookie.setCookie === 'function') {
+            window.__themeCookie.setCookie('theme', themeValue);
+          }
+        }
+        window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: themeValue } }));
+        if (typeof window.applyFiltersToAllTiles === 'function') window.applyFiltersToAllTiles();
+      });
 
     let lastFocusBeforeInfo = null;
 
