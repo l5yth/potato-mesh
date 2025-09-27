@@ -1212,11 +1212,29 @@ ensure
   db&.close
 end
 
+get "/potatomesh-logo.svg" do
+  # Sinatra знает корень через settings.root (обычно это каталог app.rb)
+  path = File.expand_path("potatomesh-logo.svg", settings.public_folder)
+
+  # отладка в лог (видно в docker logs)
+  settings.logger&.info("logo_path=#{path} exist=#{File.exist?(path)}
+file=#{File.file?(path)}")
+
+  halt 404, "Not Found" unless File.exist?(path) && File.readable?(path)
+
+  content_type "image/svg+xml"
+  last_modified File.mtime(path)
+  cache_control :public, max_age: 3600
+  send_file path
+end
+
 # GET /
 #
 # Renders the main site with configuration-driven defaults for the template.
 get "/" do
   meta = meta_configuration
+
+  response.set_cookie("theme", value: "dark", path: "/", max_age: 60 * 60 * 24 * 7, same_site: :lax) unless request.cookies["theme"]
 
   erb :index, locals: {
                 site_name: meta[:name],
