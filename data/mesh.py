@@ -53,6 +53,12 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 _DEFAULT_TCP_PORT = 4403
 
 
+# Reconnect configuration: retry delays are adjustable via environment
+# variables to ease testing while keeping sensible defaults in production.
+_RECONNECT_INITIAL_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_INITIAL", "5"))
+_RECONNECT_MAX_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_MAX", "60"))
+
+
 class _DummySerialInterface:
     """In-memory replacement for ``meshtastic.serial_interface.SerialInterface``.
 
@@ -1216,7 +1222,16 @@ def main():
     if DEBUG and subscribed:
         print(f"[debug] subscribed to receive topics: {', '.join(subscribed)}")
 
-    iface = _create_serial_interface(PORT)
+    def _close_interface(iface_obj):
+        if iface_obj is None:
+            return
+        try:
+            iface_obj.close()
+        except Exception:
+            pass
+
+    iface = None
+    retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
 
     stop = threading.Event()
 
@@ -1233,6 +1248,24 @@ def main():
         f"Mesh daemon: nodes+messages → {target} | port={PORT} | channel={CHANNEL_INDEX}"
     )
     while not stop.is_set():
+        if iface is None:
+            try:
+                iface = _create_serial_interface(PORT)
+                retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
+            except Exception as exc:
+                print(f"[warn] failed to create mesh interface: {exc}")
+                stop.wait(retry_delay)
+                if _RECONNECT_MAX_DELAY_SECS > 0:
+                    retry_delay = min(
+                        (
+                            retry_delay * 2
+                            if retry_delay
+                            else _RECONNECT_INITIAL_DELAY_SECS
+                        ),
+                        _RECONNECT_MAX_DELAY_SECS,
+                    )
+                continue
+
         try:
             nodes = getattr(iface, "nodes", {}) or {}
             node_items = _node_items_snapshot(nodes)
@@ -1253,12 +1286,20 @@ def main():
                             print(f"[debug] node object: {n!r}")
         except Exception as e:
             print(f"[warn] failed to update node snapshot: {e}")
+            _close_interface(iface)
+            iface = None
+            stop.wait(retry_delay)
+            if _RECONNECT_MAX_DELAY_SECS > 0:
+                retry_delay = min(
+                    retry_delay * 2 if retry_delay else _RECONNECT_INITIAL_DELAY_SECS,
+                    _RECONNECT_MAX_DELAY_SECS,
+                )
+            continue
+
+        retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
         stop.wait(SNAPSHOT_SECS)
 
-    try:
-        iface.close()
-    except Exception:
-        pass
+    _close_interface(iface)
 
 
 if __name__ == "__main__":
