@@ -79,6 +79,16 @@ APP_VERSION = determine_app_version
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
+get "/favicon.ico" do
+  cache_control :public, max_age: WEEK_SECONDS
+  ico_path = File.join(settings.public_folder, "favicon.ico")
+  if File.file?(ico_path)
+    send_file ico_path, type: "image/x-icon"
+  else
+    send_file File.join(settings.public_folder, "potatomesh-logo.svg"), type: "image/svg+xml"
+  end
+end
+
 SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
 DEFAULT_CHANNEL = fetch_config_string("DEFAULT_CHANNEL", "#MediumFast")
 DEFAULT_FREQUENCY = fetch_config_string("DEFAULT_FREQUENCY", "868MHz")
