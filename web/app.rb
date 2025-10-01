@@ -1064,6 +1064,9 @@ def insert_message(db, m)
 
   ensure_unknown_node(db, from_id || raw_from_id, m["from_num"], heard_time: rx_time)
 
+  update_sender_last_heard =
+    encrypted && !encrypted.strip.empty? && from_id && rx_time
+
   row = [
     msg_id,
     rx_time,
@@ -1131,6 +1134,18 @@ def insert_message(db, m)
           db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])
         end
       end
+    end
+  end
+
+  if update_sender_last_heard
+    with_busy_retry do
+      db.execute <<~SQL, [rx_time, rx_time, from_id, rx_time]
+        UPDATE nodes
+           SET last_heard = ?,
+               first_heard = COALESCE(first_heard, ?)
+         WHERE node_id = ?
+           AND COALESCE(last_heard, 0) <= ?
+      SQL
     end
   end
 end
