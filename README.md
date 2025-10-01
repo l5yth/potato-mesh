@@ -91,7 +91,7 @@ The web app contains an API:
 * GET `/api/positions?limit=100` - returns the latest 100 position data
 * GET `/api/messages?limit=100` - returns the latest 100 messages
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
-* POST `/api/messages` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
+* POST `/api/positions` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
@@ -140,6 +140,7 @@ address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
 
 * <https://potatomesh.net/>
 * <https://vrs.kdd2105.ru/>
+* <https://potatomesh.stratospire.com/>
 
 ## License
 
