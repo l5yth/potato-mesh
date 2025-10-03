@@ -1,5 +1,5 @@
 x-web-base: &web-base
-  image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+  image: ghcr.io/l5yth/potato-mesh-web-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
   environment:
     SITE_NAME: ${SITE_NAME:-My Meshtastic Network}
     DEFAULT_CHANNEL: ${DEFAULT_CHANNEL:-#MediumFast}
@@ -24,7 +24,7 @@ x-web-base: &web-base
         cpus: '0.25'
 
 x-ingestor-base: &ingestor-base
-  image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+  image: ghcr.io/l5yth/potato-mesh-ingestor-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
   environment:
     MESH_SERIAL: ${MESH_SERIAL:-/dev/ttyACM0}
     MESH_SNAPSHOT_SECS: ${MESH_SNAPSHOT_SECS:-60}

@@ -18,23 +18,6 @@ Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
 ![screenshot of the third version](./scrot-0.3.png)
 
-## Quick Start with Docker
-
-```bash
-./configure.sh          # Configure your setup
-docker-compose up -d     # Start services
-docker-compose logs -f   # View logs
-```
-
-PotatoMesh uses host networking by default so it can run on restricted
-systems where Docker cannot create bridged interfaces. The web UI listens on
-`http://127.0.0.1:41447` immediately without explicit port mappings. If you
-are using Docker Desktop (macOS/Windows) or otherwise require bridged
-networking, enable the Compose profile with:
-
-```bash
-COMPOSE_PROFILES=bridge docker-compose up -d
-```
 
 ## Web App
 
@@ -141,6 +124,10 @@ address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
 * <https://potatomesh.net/>
 * <https://vrs.kdd2105.ru/>
 * <https://potatomesh.stratospire.com/>
+
+## Docker
+
+Looking for container deployment instructions? See the [Docker guide](DOCKER.md).
 
 ## License
 

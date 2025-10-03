@@ -62,6 +62,7 @@ MAP_CENTER_LON=$(grep "^MAP_CENTER_LON=" .env 2>/dev/null | cut -d'=' -f2- | tr 
 MAX_NODE_DISTANCE_KM=$(grep "^MAX_NODE_DISTANCE_KM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "50")
 MATRIX_ROOM=$(grep "^MATRIX_ROOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
 
 echo "📍 Location Settings"
 echo "-------------------"
@@ -80,6 +81,12 @@ echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
 read_with_default "Matrix Room (optional, e.g., #meshtastic-berlin:matrix.org)" "$MATRIX_ROOM" MATRIX_ROOM
+
+echo ""
+echo "🛠 Docker Settings"
+echo "------------------"
+echo "Specify the Docker image architecture for your host (linux-amd64, linux-arm64, linux-armv7)."
+read_with_default "Docker image architecture" "$POTATOMESH_IMAGE_ARCH" POTATOMESH_IMAGE_ARCH
 
 echo ""
 echo "🔐 Security Settings"
@@ -124,6 +131,7 @@ update_env "MAP_CENTER_LON" "$MAP_CENTER_LON"
 update_env "MAX_NODE_DISTANCE_KM" "$MAX_NODE_DISTANCE_KM"
 update_env "MATRIX_ROOM" "\"$MATRIX_ROOM\""
 update_env "API_TOKEN" "$API_TOKEN"
+update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
 
 # Add other common settings if they don't exist
 if ! grep -q "^MESH_SERIAL=" .env; then
@@ -148,6 +156,7 @@ echo "   Channel: $DEFAULT_CHANNEL"
 echo "   Frequency: $DEFAULT_FREQUENCY"
 echo "   Matrix Room: ${MATRIX_ROOM:-'Not set'}"
 echo "   API Token: ${API_TOKEN:0:8}..."
+echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo ""
 echo "🚀 You can now start PotatoMesh with:"
 echo "   docker-compose up -d"

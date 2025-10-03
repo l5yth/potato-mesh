@@ -33,6 +33,7 @@ jobs:
         architecture:
           - { name: linux-amd64, platform: linux/amd64, label: "Linux x86_64" }
           - { name: linux-arm64, platform: linux/arm64, label: "Linux ARM64" }
+          - { name: linux-armv7, platform: linux/arm/v7, label: "Linux ARMv7" }
 
     steps:
     - name: Checkout repository
@@ -161,11 +162,13 @@ jobs:
         echo "### 🌐 Web Application" >> $GITHUB_STEP_SUMMARY
         echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
         echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
+        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
+
         # Ingestor images
         echo "### 📡 Ingestor Service" >> $GITHUB_STEP_SUMMARY
         echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
         echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
+        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
