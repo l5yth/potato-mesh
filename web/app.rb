@@ -209,10 +209,10 @@ def meta_description
   end
 
   activity_sentence = if private_mode?
-    "Track nodes and coverage in real time."
-  else
-    "Track nodes, messages, and coverage in real time."
-  end
+      "Track nodes and coverage in real time."
+    else
+      "Track nodes, messages, and coverage in real time."
+    end
 
   sentences = [summary, activity_sentence]
   if (distance = sanitized_max_distance_km)

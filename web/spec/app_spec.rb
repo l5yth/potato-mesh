@@ -1368,9 +1368,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       body = last_response.body
       expect(body).not_to include('<div id="chat"')
-      expect(body).to include('const CHAT_ENABLED = false;')
-      expect(body).not_to include('Track nodes, messages, and coverage in real time.')
-      expect(body).to include('Track nodes and coverage in real time.')
+      expect(body).to include("const CHAT_ENABLED = false;")
+      expect(body).not_to include("Track nodes, messages, and coverage in real time.")
+      expect(body).to include("Track nodes and coverage in real time.")
     end
   end
 
