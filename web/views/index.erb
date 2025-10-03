@@ -185,7 +185,56 @@ var(--fg); }
     .site-title img { width: 52px; height: 52px; display: block; border-radius: 12px; }
   .meta { color:#555; margin-bottom:12px }
     .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px }
-    #map { flex: 1; height: 60vh; border: 1px solid #ddd; border-radius: 8px; }
+    #map {
+      position: relative;
+      flex: 1;
+      height: 60vh;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #map[data-map-status="placeholder"] {
+      background: repeating-linear-gradient(135deg, rgba(0,0,0,0.02), rgba(0,0,0,0.02) 12px, rgba(0,0,0,0.04) 12px, rgba(0,0,0,0.04) 24px);
+    }
+    #map .map-placeholder-message {
+      text-align: center;
+      color: #555;
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 0 16px;
+    }
+    #map .map-placeholder-message strong { display: block; margin-bottom: 6px; font-size: 16px; }
+    #map .map-placeholder-message span { display: block; margin-top: 4px; }
+    body.dark #map .map-placeholder-message { color: #ddd; }
+    #map .map-status-message {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1.2;
+      backdrop-filter: blur(6px);
+      pointer-events: none;
+      border: 1px solid rgba(0,0,0,0.15);
+      background: rgba(255,255,255,0.9);
+      color: #333;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      z-index: 1200;
+    }
+    body.dark #map[data-map-status="placeholder"] {
+      background: repeating-linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.02) 12px, rgba(255,255,255,0.06) 12px, rgba(255,255,255,0.06) 24px);
+    }
+    body.dark #map .map-status-message {
+      border-color: rgba(255,255,255,0.16);
+      background: rgba(0,0,0,0.65);
+      color: #eee;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
     table { border-collapse: collapse; width: 100%; margin: 0; }
     th, td { padding: 4px 6px; text-align: left; }
     th { position: sticky; top: 0; background: #fafafa; }
@@ -728,8 +777,18 @@ var(--fg); }
       }
     }
 
-    const MAP_CENTER = L.latLng(<%= map_center_lat %>, <%= map_center_lon %>);
+    const MAP_CENTER_COORDS = Object.freeze({ lat: <%= map_center_lat %>, lon: <%= map_center_lon %> });
+    const hasLeaflet = typeof window !== 'undefined' && typeof window.L === 'object' && window.L && typeof window.L.map === 'function';
+    const mapContainer = document.getElementById('map');
+    let mapStatusEl = null;
+    let map = null;
+    let mapCenterLatLng = null;
+    let tiles = null;
+    let offlineTiles = null;
+    let usingOfflineTiles = false;
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
+    let markersLayer = null;
+    let tileDomObserver = null;
 
     // Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
     const roleColors = Object.freeze({
@@ -761,6 +820,46 @@ var(--fg); }
     const activeRoleFilters = new Set();
     const legendRoleButtons = new Map();
 
+    function ensureMapStatusElement() {
+      if (!mapContainer) return null;
+      if (mapStatusEl && mapStatusEl.parentElement === mapContainer) {
+        return mapStatusEl;
+      }
+      mapStatusEl = document.createElement('div');
+      mapStatusEl.className = 'map-status-message';
+      mapStatusEl.hidden = true;
+      mapContainer.appendChild(mapStatusEl);
+      return mapStatusEl;
+    }
+
+    function showMapStatus(message) {
+      if (!mapContainer) return;
+      const el = ensureMapStatusElement();
+      if (!el) return;
+      if (message) {
+        el.textContent = message;
+        el.hidden = false;
+      } else {
+        el.hidden = true;
+      }
+    }
+
+    function hideMapStatus() {
+      if (mapStatusEl) {
+        mapStatusEl.hidden = true;
+      }
+    }
+
+    function setMapPlaceholder(message) {
+      if (!mapContainer) return;
+      mapContainer.dataset.mapStatus = 'placeholder';
+      mapContainer.innerHTML = '';
+      const placeholder = document.createElement('div');
+      placeholder.className = 'map-placeholder-message';
+      placeholder.innerHTML = `<strong>Map unavailable</strong>${message ? `<br/><span>${message}</span>` : ''}`;
+      mapContainer.appendChild(placeholder);
+    }
+
     function normalizeRole(role) {
       if (role == null) return 'CLIENT';
       const str = String(role).trim();
@@ -787,17 +886,20 @@ var(--fg); }
     }
 
     // --- Map setup ---
-    const map = L.map('map', { worldCopyJump: true, attributionControl: false });
     const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
     const TILE_FILTER_LIGHT = '<%= tile_filter_light %>';
     const TILE_FILTER_DARK = '<%= tile_filter_dark %>';
+
+    if (hasLeaflet) {
+      mapCenterLatLng = L.latLng(MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
+    }
 
     function resolveTileFilter() {
       return document.body.classList.contains('dark') ? TILE_FILTER_DARK : TILE_FILTER_LIGHT;
     }
 
     function applyFilterToTileElement(tile, filterValue) {
-      if (!tile) return;
+      if (!tile || usingOfflineTiles) return;
       if (tile.classList && !tile.classList.contains('map-tiles')) {
         tile.classList.add('map-tiles');
       }
@@ -808,14 +910,21 @@ var(--fg); }
       }
     }
 
+    function getActiveTileLayerContainer() {
+      if (!map) return null;
+      const layer = usingOfflineTiles ? offlineTiles : tiles;
+      return layer && typeof layer.getContainer === 'function' ? layer.getContainer() : null;
+    }
+
     function applyFilterToTileContainers(filterValue) {
+      if (!map) return;
       const value = filterValue || resolveTileFilter();
-      const tileContainer = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
-      if (tileContainer && tileContainer.style) {
-        tileContainer.style.filter = value;
-        tileContainer.style.webkitFilter = value;
+      const container = getActiveTileLayerContainer();
+      if (container && container.style) {
+        container.style.filter = value;
+        container.style.webkitFilter = value;
       }
-      const tilePane = map && typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
+      const tilePane = typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
       if (tilePane && tilePane.style) {
         tilePane.style.filter = value;
         tilePane.style.webkitFilter = value;
@@ -823,85 +932,205 @@ var(--fg); }
     }
 
     function ensureTileHasCurrentFilter(tile) {
-      if (!tile) return;
+      if (!map || usingOfflineTiles) return;
       const filterValue = resolveTileFilter();
       applyFilterToTileElement(tile, filterValue);
     }
 
     function applyFiltersToAllTiles() {
+      if (!map) return;
       const filterValue = resolveTileFilter();
       document.body.style.setProperty('--map-tiles-filter', filterValue);
-      const tileEls = document.querySelectorAll('#map .leaflet-tile');
-      tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
+      if (!usingOfflineTiles) {
+        const tileEls = mapContainer ? mapContainer.querySelectorAll('.leaflet-tile') : [];
+        tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
+      }
       applyFilterToTileContainers(filterValue);
     }
 
-    const tiles = L.tileLayer(TILE_LAYER_URL, {
-      maxZoom: 19,
-      className: 'map-tiles',
-      crossOrigin: 'anonymous'
-    });
+    function tileToLon(x, z) {
+      return (x / Math.pow(2, z)) * 360 - 180;
+    }
 
-    let tileDomObserver = null;
+    function tileToLat(y, z) {
+      const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z);
+      return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+    }
 
-    function observeTileContainer() {
-      if (typeof MutationObserver !== 'function') return;
-      const container = tiles && typeof tiles.getContainer === 'function' ? tiles.getContainer() : null;
-      const tilePane = map && typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
+    function createOfflineTileLayer() {
+      if (!hasLeaflet) return null;
+      const offlineLayer = L.gridLayer({ className: 'map-tiles map-tiles-offline' });
+      offlineLayer.createTile = coords => {
+        const size = 256;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, size, size);
+        gradient.addColorStop(0, 'rgba(33, 66, 110, 0.92)');
+        gradient.addColorStop(1, 'rgba(64, 98, 144, 0.92)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, size, size);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+        ctx.lineWidth = 1;
+        const steps = 4;
+        for (let i = 1; i < steps; i++) {
+          const pos = (size / steps) * i;
+          ctx.beginPath();
+          ctx.moveTo(pos, 0);
+          ctx.lineTo(pos, size);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, pos);
+          ctx.lineTo(size, pos);
+          ctx.stroke();
+        }
+
+        const west = tileToLon(coords.x, coords.z);
+        const east = tileToLon(coords.x + 1, coords.z);
+        const north = tileToLat(coords.y, coords.z);
+        const south = tileToLat(coords.y + 1, coords.z);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${west.toFixed(1)}°`, 8, 8);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`${east.toFixed(1)}°`, 8, size - 8);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${north.toFixed(1)}°`, size - 8, 8);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`${south.toFixed(1)}°`, size - 8, size - 8);
+
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.font = 'bold 22px system-ui, sans-serif';
+        ctx.fillText('PotatoMesh offline basemap', size / 2, size / 2);
+
+        return canvas;
+      };
+      return offlineLayer;
+    }
+
+    function disconnectTileObserver() {
+      if (tileDomObserver) {
+        tileDomObserver.disconnect();
+        tileDomObserver = null;
+      }
+    }
+
+    function observeTileContainer(layer) {
+      if (!map || typeof MutationObserver !== 'function') return;
+      const targetLayer = layer || (usingOfflineTiles ? offlineTiles : tiles);
+      const container = targetLayer && typeof targetLayer.getContainer === 'function' ? targetLayer.getContainer() : null;
+      const tilePane = typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
       const targets = [];
       if (container) targets.push(container);
       if (tilePane && !targets.includes(tilePane)) targets.push(tilePane);
       if (!targets.length) return;
-      if (tileDomObserver) {
-        tileDomObserver.disconnect();
-      }
-      const handleNode = (node, filterValue) => {
-        if (!node || node.nodeType !== 1) return;
-        if (node.classList && node.classList.contains('leaflet-tile')) {
-          applyFilterToTileElement(node, filterValue);
-        }
-        if (typeof node.querySelectorAll === 'function') {
-          const nestedTiles = node.querySelectorAll('.leaflet-tile');
-          nestedTiles.forEach(tile => applyFilterToTileElement(tile, filterValue));
-        }
-      };
+      disconnectTileObserver();
       tileDomObserver = new MutationObserver(mutations => {
         const filterValue = resolveTileFilter();
         mutations.forEach(mutation => {
-          mutation.addedNodes.forEach(node => handleNode(node, filterValue));
+          mutation.addedNodes.forEach(node => {
+            if (!node || node.nodeType !== 1) return;
+            if (!usingOfflineTiles && node.classList && node.classList.contains('leaflet-tile')) {
+              applyFilterToTileElement(node, filterValue);
+            }
+            if (typeof node.querySelectorAll === 'function') {
+              const nestedTiles = node.querySelectorAll('.leaflet-tile');
+              nestedTiles.forEach(tile => applyFilterToTileElement(tile, filterValue));
+            }
+          });
         });
         applyFilterToTileContainers(filterValue);
       });
       targets.forEach(target => tileDomObserver.observe(target, { childList: true, subtree: true }));
     }
 
-    tiles.on('tileloadstart', event => {
-      if (!event || !event.tile) return;
-      ensureTileHasCurrentFilter(event.tile);
-      applyFilterToTileContainers();
-    });
-
-    tiles.on('tileload', event => {
-      if (!event || !event.tile) return;
-      ensureTileHasCurrentFilter(event.tile);
-      applyFilterToTileContainers();
-    });
-
-    tiles.on('load', () => {
+    function activateOfflineTiles(message) {
+      if (!hasLeaflet || !map) {
+        if (mapContainer) {
+          setMapPlaceholder(message);
+        }
+        return;
+      }
+      if (usingOfflineTiles) {
+        if (message) showMapStatus(message);
+        return;
+      }
+      usingOfflineTiles = true;
+      if (tiles && map.hasLayer(tiles)) {
+        map.removeLayer(tiles);
+      }
+      if (!offlineTiles) {
+        offlineTiles = createOfflineTileLayer();
+      }
+      if (offlineTiles) {
+        offlineTiles.addTo(map);
+        observeTileContainer(offlineTiles);
+      }
+      if (message) {
+        showMapStatus(message);
+      }
       applyFiltersToAllTiles();
-      observeTileContainer();
-    });
+    }
 
-    tiles.addTo(map);
-    observeTileContainer();
-    // Default view until first data arrives
-    map.setView(MAP_CENTER, 10);
-    applyFiltersToAllTiles();
+    if (hasLeaflet && mapContainer) {
+      map = L.map(mapContainer, { worldCopyJump: true, attributionControl: false });
+      showMapStatus('Loading map tiles…');
+      tiles = L.tileLayer(TILE_LAYER_URL, {
+        maxZoom: 19,
+        className: 'map-tiles',
+        crossOrigin: 'anonymous'
+      });
 
-    map.on('moveend', applyFiltersToAllTiles);
-    map.on('zoomend', applyFiltersToAllTiles);
+      tiles.on('tileloadstart', event => {
+        if (!event || !event.tile) return;
+        ensureTileHasCurrentFilter(event.tile);
+        applyFilterToTileContainers();
+      });
 
-    const markersLayer = L.layerGroup().addTo(map);
+      tiles.on('tileload', event => {
+        if (!event || !event.tile) return;
+        ensureTileHasCurrentFilter(event.tile);
+        applyFilterToTileContainers();
+      });
+
+      tiles.on('load', () => {
+        usingOfflineTiles = false;
+        hideMapStatus();
+        applyFiltersToAllTiles();
+        observeTileContainer(tiles);
+      });
+
+      tiles.on('tileerror', () => {
+        activateOfflineTiles('Map tiles unavailable. Showing offline placeholder basemap.');
+      });
+
+      tiles.addTo(map);
+      observeTileContainer(tiles);
+      map.setView(mapCenterLatLng || [MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon], 10);
+      applyFiltersToAllTiles();
+
+      map.on('moveend', applyFiltersToAllTiles);
+      map.on('zoomend', applyFiltersToAllTiles);
+
+      markersLayer = L.layerGroup().addTo(map);
+
+      if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
+        activateOfflineTiles('Offline mode detected. Using placeholder basemap.');
+      }
+    } else if (mapContainer) {
+      setMapPlaceholder('Leaflet assets are unavailable. Data will continue to refresh without a live map.');
+    }
+
+    if (typeof window !== 'undefined') {
+      window.applyFiltersToAllTiles = applyFiltersToAllTiles;
+    }
 
     let legendContainer = null;
     let legendToggleButton = null;
@@ -961,82 +1190,98 @@ var(--fg); }
       applyFilter();
     }
 
-    const legend = L.control({ position: 'bottomright' });
-    legend.onAdd = function () {
-      const div = L.DomUtil.create('div', 'legend');
-      div.id = 'mapLegend';
-      div.setAttribute('role', 'region');
-      div.setAttribute('aria-label', 'Map legend');
-      legendContainer = div;
+    if (map && hasLeaflet) {
+      const legend = L.control({ position: 'bottomright' });
+      legend.onAdd = function () {
+        const div = L.DomUtil.create('div', 'legend');
+        div.id = 'mapLegend';
+        div.setAttribute('role', 'region');
+        div.setAttribute('aria-label', 'Map legend');
+        legendContainer = div;
 
-      const header = L.DomUtil.create('div', 'legend-header', div);
-      const title = L.DomUtil.create('span', 'legend-title', header);
-      title.textContent = 'Legend';
+        const header = L.DomUtil.create('div', 'legend-header', div);
+        const title = L.DomUtil.create('span', 'legend-title', header);
+        title.textContent = 'Legend';
 
-      const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
-      legendRoleButtons.clear();
-      for (const [role, color] of Object.entries(roleColors)) {
-        const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
-        item.type = 'button';
-        item.setAttribute('aria-pressed', 'false');
-        item.dataset.role = role;
-        const swatch = L.DomUtil.create('span', 'legend-swatch', item);
-        swatch.style.background = color;
-        swatch.setAttribute('aria-hidden', 'true');
-        const label = L.DomUtil.create('span', 'legend-label', item);
-        label.textContent = role;
-        item.addEventListener('click', event => {
+        const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
+        legendRoleButtons.clear();
+        for (const [role, color] of Object.entries(roleColors)) {
+          const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
+          item.type = 'button';
+          item.setAttribute('aria-pressed', 'false');
+          item.dataset.role = role;
+          const swatch = L.DomUtil.create('span', 'legend-swatch', item);
+          swatch.style.background = color;
+          swatch.setAttribute('aria-hidden', 'true');
+          const label = L.DomUtil.create('span', 'legend-label', item);
+          label.textContent = role;
+          item.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const exclusive = event.metaKey || event.ctrlKey;
+            if (exclusive) {
+              activeRoleFilters.clear();
+              activeRoleFilters.add(role);
+              updateLegendRoleFiltersUI();
+              applyFilter();
+            } else {
+              toggleRoleFilter(role);
+            }
+          });
+          legendRoleButtons.set(role, item);
+        }
+        updateLegendRoleFiltersUI();
+
+        const toggle = L.DomUtil.create('div', 'legend-toggle', div);
+        const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
+        resetButton.type = 'button';
+        resetButton.textContent = 'Clear filters';
+        resetButton.addEventListener('click', event => {
           event.preventDefault();
           event.stopPropagation();
-          const exclusive = event.metaKey || event.ctrlKey;
-          if (exclusive) {
-            activeRoleFilters.clear();
-            activeRoleFilters.add(role);
-            updateLegendRoleFiltersUI();
-            applyFilter();
-          } else {
-            toggleRoleFilter(role);
-          }
+          activeRoleFilters.clear();
+          updateLegendRoleFiltersUI();
+          applyFilter();
         });
-        legendRoleButtons.set(role, item);
-      }
-      updateLegendRoleFiltersUI();
 
-      L.DomEvent.disableClickPropagation(div);
-      L.DomEvent.disableScrollPropagation(div);
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.disableScrollPropagation(div);
 
-      return div;
-    };
-    legend.addTo(map);
-    legendContainer = legend.getContainer();
+        return div;
+      };
+      legend.addTo(map);
+      legendContainer = legend.getContainer();
 
-    const legendToggleControl = L.control({ position: 'bottomright' });
-    legendToggleControl.onAdd = function () {
-      const container = L.DomUtil.create('div', 'leaflet-control legend-toggle');
-      const button = L.DomUtil.create('button', 'legend-toggle-button', container);
-      button.type = 'button';
-      button.textContent = 'Hide legend (filters)';
-      button.setAttribute('aria-pressed', 'true');
-      button.setAttribute('aria-label', 'Hide map legend');
-      button.setAttribute('aria-controls', 'mapLegend');
-      button.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        setLegendVisibility(!legendVisible);
+      legendToggleControl = L.control({ position: 'bottomright' });
+      legendToggleControl.onAdd = function () {
+        const container = L.DomUtil.create('div', 'leaflet-control legend-toggle');
+        const button = L.DomUtil.create('button', 'legend-toggle-button', container);
+        button.type = 'button';
+        button.textContent = 'Hide legend (filters)';
+        button.setAttribute('aria-pressed', 'true');
+        button.setAttribute('aria-label', 'Hide map legend');
+        button.setAttribute('aria-controls', 'mapLegend');
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          setLegendVisibility(!legendVisible);
+        });
+        legendToggleButton = button;
+        updateLegendToggleState();
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.disableScrollPropagation(container);
+        return container;
+      };
+      legendToggleControl.addTo(map);
+
+      const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
+      setLegendVisibility(!legendMediaQuery.matches);
+      legendMediaQuery.addEventListener('change', event => {
+        setLegendVisibility(!event.matches);
       });
-      legendToggleButton = button;
-      updateLegendToggleState();
-      L.DomEvent.disableClickPropagation(container);
-      L.DomEvent.disableScrollPropagation(container);
-      return container;
-    };
-    legendToggleControl.addTo(map);
-
-    const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
-    setLegendVisibility(!legendMediaQuery.matches);
-    legendMediaQuery.addEventListener('change', event => {
-      setLegendVisibility(!event.matches);
-    });
+    } else if (mapContainer && !hasLeaflet) {
+      setLegendVisibility(false);
+    }
 
       themeToggle.addEventListener('click', () => {
         const dark = document.body.classList.toggle('dark');
@@ -1409,6 +1654,32 @@ var(--fg); }
       return r.json();
     }
 
+    function toRadians(deg) {
+      return (deg * Math.PI) / 180;
+    }
+
+    function haversineDistanceKm(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = toRadians(lat2 - lat1);
+      const dLon = toRadians(lon2 - lon1);
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function distanceFromCenterKm(lat, lon) {
+      if (hasLeaflet && mapCenterLatLng) {
+        try {
+          return L.latLng(lat, lon).distanceTo(mapCenterLatLng) / 1000;
+        } catch (err) {
+          // fall through to haversine fallback
+        }
+      }
+      return haversineDistanceKm(lat, lon, MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
+    }
+
     function computeDistances(nodes) {
       for (const n of nodes) {
         const latRaw = n.latitude;
@@ -1423,7 +1694,7 @@ var(--fg); }
           n.distance_km = null;
           continue;
         }
-        n.distance_km = L.latLng(lat, lon).distanceTo(MAP_CENTER) / 1000;
+        n.distance_km = distanceFromCenterKm(lat, lon);
       }
     }
 
@@ -1457,6 +1728,9 @@ var(--fg); }
     }
 
     function renderMap(nodes, nowSec) {
+      if (!map || !markersLayer || !hasLeaflet) {
+        return;
+      }
       markersLayer.clearLayers();
       const pts = [];
       const nodesByRenderOrder = nodes
@@ -1499,7 +1773,7 @@ var(--fg); }
         marker.addTo(markersLayer);
         pts.push([lat, lon]);
       }
-      if (pts.length && fitBoundsEl.checked) {
+      if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
         const b = L.latLngBounds(pts);
         map.fitBounds(b.pad(0.2), { animate: false });
       }
