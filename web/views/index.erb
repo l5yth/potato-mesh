@@ -515,7 +515,9 @@ var(--fg); }
   </div>
 
   <div class="map-row">
-    <div id="chat" aria-label="Chat log"></div>
+    <% unless private_mode %>
+      <div id="chat" aria-label="Chat log"></div>
+    <% end %>
     <div id="map" role="region" aria-label="Nodes map"></div>
   </div>
 
@@ -560,6 +562,7 @@ var(--fg); }
   </footer>
 
   <script>
+    const PRIVATE_MODE = <%= private_mode ? "true" : "false" %>;
     const statusEl = document.getElementById('status');
     const fitBoundsEl = document.getElementById('fitBounds');
     const autoRefreshEl = document.getElementById('autoRefresh');
@@ -576,7 +579,7 @@ var(--fg); }
     const titleEl = document.querySelector('title');
     const headerEl = document.querySelector('h1');
     const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
-    const chatEl = document.getElementById('chat');
+    const chatEl = PRIVATE_MODE ? null : document.getElementById('chat');
     const refreshInfo = document.getElementById('refreshInfo');
     const baseTitle = document.title;
     const nodesTable = document.getElementById('nodes');
@@ -1541,11 +1544,15 @@ var(--fg); }
         const nodes = await fetchNodes();
         nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
-        const messages = await fetchMessages();
-        messages.forEach(message => {
-          if (message && message.node) applyNodeNameFallback(message.node);
-        });
-        renderChatLog(nodes, messages);
+        if (!PRIVATE_MODE) {
+          const messages = await fetchMessages();
+          messages.forEach(message => {
+            if (message && message.node) applyNodeNameFallback(message.node);
+          });
+          renderChatLog(nodes, messages);
+        } else {
+          renderChatLog(nodes, []);
+        }
         allNodes = nodes;
         applyFilter();
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();

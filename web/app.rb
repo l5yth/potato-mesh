@@ -97,6 +97,7 @@ MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
+PRIVATE_MODE = ENV["PRIVATE"] == "1"
 
 def sanitized_string(value)
   value.to_s.strip
@@ -308,16 +309,22 @@ def query_nodes(limit)
   db.results_as_hash = true
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
-  rows = db.execute <<~SQL, [min_last_heard, limit]
-                      SELECT node_id, short_name, long_name, hw_model, role, snr,
-                             battery_level, voltage, last_heard, first_heard,
-                             uptime_seconds, channel_utilization, air_util_tx,
-                             position_time, latitude, longitude, altitude
-                      FROM nodes
-                      WHERE last_heard >= ?
-                      ORDER BY last_heard DESC
-                      LIMIT ?
-                    SQL
+  conditions = ["last_heard >= ?"]
+  params = [min_last_heard]
+  if PRIVATE_MODE
+    conditions << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
+  end
+  sql = <<~SQL
+    SELECT node_id, short_name, long_name, hw_model, role, snr,
+           battery_level, voltage, last_heard, first_heard,
+           uptime_seconds, channel_utilization, air_util_tx,
+           position_time, latitude, longitude, altitude
+    FROM nodes
+    WHERE #{conditions.join(" AND ")}
+    ORDER BY last_heard DESC
+    LIMIT ?
+  SQL
+  rows = db.execute(sql, *(params + [limit]))
   rows.each do |r|
     r["role"] ||= "CLIENT"
     lh = r["last_heard"]&.to_i
@@ -459,6 +466,7 @@ end
 # Returns a JSON array of stored text messages including node metadata.
 get "/api/messages" do
   content_type :json
+  halt 404, { error: "not found" }.to_json if PRIVATE_MODE
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_messages(limit).to_json
 end
@@ -1273,5 +1281,6 @@ get "/" do
                 max_node_distance_km: MAX_NODE_DISTANCE_KM,
                 matrix_room: sanitized_matrix_room,
                 version: APP_VERSION,
+                private_mode: PRIVATE_MODE,
               }
 end

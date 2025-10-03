@@ -207,6 +207,25 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('<meta property="og:site_name" content="Spec Mesh Title" />')
       expect(last_response.body).to include('<meta name="twitter:image" content="http://example.org/potatomesh-logo.svg" />')
     end
+
+    context "when private mode is enabled" do
+      before do
+        stub_const("PRIVATE_MODE", true)
+      end
+
+      it "omits the chat log container" do
+        get "/"
+
+        expect(last_response).to be_ok
+        expect(last_response.body).not_to include('id="chat"')
+      end
+
+      it "marks the frontend script as private" do
+        get "/"
+
+        expect(last_response.body).to include("const PRIVATE_MODE = true")
+      end
+    end
   end
 
   describe "database initialization" do
@@ -1177,6 +1196,31 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
     end
+
+    context "when private mode is enabled" do
+      before do
+        stub_const("PRIVATE_MODE", true)
+      end
+
+      it "filters hidden placeholder clients from responses" do
+        import_nodes_fixture
+
+        with_db do |db|
+          ensure_unknown_node(db, "!1234abcd", nil, heard_time: reference_time.to_i)
+        end
+
+        get "/api/nodes"
+
+        expect(last_response).to be_ok
+
+        nodes = JSON.parse(last_response.body)
+        ids = nodes.map { |row| row["node_id"] }
+
+        expect(ids).not_to include("!1234abcd")
+        expect(nodes.map { |row| row["role"] }).not_to include("CLIENT_HIDDEN")
+        expect(nodes.size).to eq(nodes_fixture.size)
+      end
+    end
   end
 
   describe "GET /api/messages" do
@@ -1314,6 +1358,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
         messages = JSON.parse(last_response.body)
         expect(messages.size).to eq(1)
         expect(messages.first["from_id"]).to be_nil
+      end
+    end
+
+    context "when private mode is enabled" do
+      before do
+        stub_const("PRIVATE_MODE", true)
+      end
+
+      it "responds with 404 to hide chat history" do
+        get "/api/messages"
+
+        expect(last_response.status).to eq(404)
+        expect(JSON.parse(last_response.body)).to eq("error" => "not found")
       end
     end
   end
