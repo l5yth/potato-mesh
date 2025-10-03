@@ -44,66 +44,12 @@ Additional environment variables are optional:
 
 ## Docker Compose file
 
-Save the following as `docker-compose.yml` in the same directory as your `.env`
-file. The configuration defaults to host networking so that Linux hosts that
-cannot create bridge interfaces can still run PotatoMesh. Enable the optional
-`bridge` profile when you need classic port mapping (for example on Docker
-Desktop).
-
-```yaml
-services:
-  web:
-    image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
-    env_file: .env
-    volumes:
-      - potatomesh_data:/app/data
-      - potatomesh_logs:/app/logs
-    network_mode: host
-    restart: unless-stopped
-
-  ingestor:
-    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
-    env_file: .env
-    devices:
-      - "${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}"
-    volumes:
-      - potatomesh_data:/app/data
-      - potatomesh_logs:/app/logs
-    network_mode: host
-    restart: unless-stopped
-    depends_on:
-      - web
-
-  web-bridge:
-    image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
-    env_file: .env
-    volumes:
-      - potatomesh_data:/app/data
-      - potatomesh_logs:/app/logs
-    ports:
-      - "41447:41447"
-    profiles:
-      - bridge
-    restart: unless-stopped
-
-  ingestor-bridge:
-    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
-    env_file: .env
-    devices:
-      - "${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}"
-    volumes:
-      - potatomesh_data:/app/data
-      - potatomesh_logs:/app/logs
-    profiles:
-      - bridge
-    restart: unless-stopped
-    depends_on:
-      - web-bridge
-
-volumes:
-  potatomesh_data:
-  potatomesh_logs:
-```
+Use the `docker-compose.yml` file provided in the repository (or download the
+[raw file from GitHub](https://raw.githubusercontent.com/l5yth/potato-mesh/main/docker-compose.yml)).
+It already references the published GHCR images, defines persistent volumes for
+data and logs, and includes optional bridge-profile services for environments
+that require classic port mapping. Place this file in the same directory as
+your `.env` file so Compose can pick up both.
 
 ## Start the stack
 
