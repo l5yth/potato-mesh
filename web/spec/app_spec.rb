@@ -1004,6 +1004,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["to_id"]).to eq(receiver_id)
         expect(row["text"]).to be_nil
         expect(row["encrypted"]).to eq(encrypted_b64)
+
+        node_row = db.get_first_row(
+          "SELECT last_heard FROM nodes WHERE node_id = ?",
+          [sender_id],
+        )
+
+        expect(node_row["last_heard"]).to eq(reference_time.to_i)
       end
 
       get "/api/messages"
