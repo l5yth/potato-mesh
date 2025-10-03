@@ -150,13 +150,20 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   before do
     @original_token = ENV["API_TOKEN"]
+    @original_private = ENV["PRIVATE"]
     ENV["API_TOKEN"] = api_token
+    ENV.delete("PRIVATE")
     allow(Time).to receive(:now).and_return(reference_time)
     clear_database
   end
 
   after do
     ENV["API_TOKEN"] = @original_token
+    if @original_private.nil?
+      ENV.delete("PRIVATE")
+    else
+      ENV["PRIVATE"] = @original_private
+    end
   end
 
   describe "logging configuration" do
@@ -1315,6 +1322,55 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(messages.size).to eq(1)
         expect(messages.first["from_id"]).to be_nil
       end
+    end
+  end
+
+  context "when private mode is enabled" do
+    before do
+      ENV["PRIVATE"] = "1"
+    end
+
+    it "returns 404 for GET /api/messages" do
+      get "/api/messages"
+      expect(last_response.status).to eq(404)
+    end
+
+    it "returns 404 for POST /api/messages" do
+      post "/api/messages", {}.to_json, auth_headers
+      expect(last_response.status).to eq(404)
+    end
+
+    it "excludes hidden clients from the nodes API" do
+      now = reference_time.to_i
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!hidden", "hidn", "Hidden", "TBEAM", "CLIENT_HIDDEN", 0.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!visible", "vis", "Visible", "TBEAM", "CLIENT", 1.0, now, now],
+        )
+      end
+
+      get "/api/nodes?limit=10"
+
+      expect(last_response).to be_ok
+      nodes = JSON.parse(last_response.body)
+      ids = nodes.map { |node| node["node_id"] }
+      expect(ids).to include("!visible")
+      expect(ids).not_to include("!hidden")
+    end
+
+    it "removes the chat interface from the homepage" do
+      get "/"
+
+      expect(last_response).to be_ok
+      body = last_response.body
+      expect(body).not_to include('<div id="chat"')
+      expect(body).to include('const CHAT_ENABLED = false;')
+      expect(body).not_to include('Track nodes, messages, and coverage in real time.')
+      expect(body).to include('Track nodes and coverage in real time.')
     end
   end
 

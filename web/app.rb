@@ -98,6 +98,10 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
+def private_mode?
+  ENV["PRIVATE"] == "1"
+end
+
 def sanitized_string(value)
   value.to_s.strip
 end
@@ -204,7 +208,13 @@ def meta_description
     summary += " on #{channel} (#{frequency})."
   end
 
-  sentences = [summary, "Track nodes, messages, and coverage in real time."]
+  activity_sentence = if private_mode?
+    "Track nodes and coverage in real time."
+  else
+    "Track nodes, messages, and coverage in real time."
+  end
+
+  sentences = [summary, activity_sentence]
   if (distance = sanitized_max_distance_km)
     sentences << "Shows nodes within roughly #{formatted_distance_km(distance)} km of the map center."
   end
@@ -308,16 +318,25 @@ def query_nodes(limit)
   db.results_as_hash = true
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
-  rows = db.execute <<~SQL, [min_last_heard, limit]
-                      SELECT node_id, short_name, long_name, hw_model, role, snr,
-                             battery_level, voltage, last_heard, first_heard,
-                             uptime_seconds, channel_utilization, air_util_tx,
-                             position_time, latitude, longitude, altitude
-                      FROM nodes
-                      WHERE last_heard >= ?
-                      ORDER BY last_heard DESC
-                      LIMIT ?
-                    SQL
+  params = [min_last_heard]
+  sql = <<~SQL
+    SELECT node_id, short_name, long_name, hw_model, role, snr,
+           battery_level, voltage, last_heard, first_heard,
+           uptime_seconds, channel_utilization, air_util_tx,
+           position_time, latitude, longitude, altitude
+    FROM nodes
+    WHERE last_heard >= ?
+  SQL
+  if private_mode?
+    sql += "    AND (role IS NULL OR role <> 'CLIENT_HIDDEN')\n"
+  end
+  sql += <<~SQL
+    ORDER BY last_heard DESC
+    LIMIT ?
+  SQL
+  params << limit
+
+  rows = db.execute(sql, params)
   rows.each do |r|
     r["role"] ||= "CLIENT"
     lh = r["last_heard"]&.to_i
@@ -458,6 +477,7 @@ end
 #
 # Returns a JSON array of stored text messages including node metadata.
 get "/api/messages" do
+  halt 404 if private_mode?
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_messages(limit).to_json
@@ -1197,6 +1217,7 @@ end
 #
 # Accepts an array or object describing text messages and stores each entry.
 post "/api/messages" do
+  halt 404 if private_mode?
   require_token!
   content_type :json
   begin
@@ -1273,5 +1294,6 @@ get "/" do
                 max_node_distance_km: MAX_NODE_DISTANCE_KM,
                 matrix_room: sanitized_matrix_room,
                 version: APP_VERSION,
+                private_mode: private_mode?,
               }
 end
