@@ -1140,12 +1140,12 @@ def insert_message(db, m)
   if update_sender_last_heard
     with_busy_retry do
       db.execute <<~SQL, [rx_time, rx_time, from_id, rx_time]
-        UPDATE nodes
-           SET last_heard = ?,
-               first_heard = COALESCE(first_heard, ?)
-         WHERE node_id = ?
-           AND COALESCE(last_heard, 0) <= ?
-      SQL
+                   UPDATE nodes
+                      SET last_heard = ?,
+                          first_heard = COALESCE(first_heard, ?)
+                    WHERE node_id = ?
+                      AND COALESCE(last_heard, 0) <= ?
+                 SQL
     end
   end
 end
