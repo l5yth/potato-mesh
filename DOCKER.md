@@ -1,103 +1,139 @@
-# PotatoMesh Docker Setup
+# PotatoMesh Docker Guide
 
-## Quick Start
+PotatoMesh publishes ready-to-run container images to the GitHub Packages container
+registry (GHCR). You do not need to clone the repository to deploy them—Compose
+will pull the latest release images for you.
 
-```bash
-./configure.sh
-docker-compose up -d
-docker-compose logs -f
+## Prerequisites
+
+- Docker Engine 24+ or Docker Desktop with the Compose plugin
+- Access to `/dev/ttyACM*` (or equivalent) if you plan to attach a Meshtastic
+  device to the ingestor container
+- An API token that authorises the ingestor to post to your PotatoMesh instance
+
+## Images on GHCR
+
+| Service  | Image                                                             |
+|----------|-------------------------------------------------------------------|
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest`                |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest`           |
+
+Images are published for every tagged release. Replace `latest` with a
+specific version tag if you prefer pinned deployments.
+
+## Configure environment
+
+Create a `.env` file alongside your Compose file and populate the variables you
+need. At a minimum you must set `API_TOKEN` so the ingestor can authenticate
+against the web API.
+
+```env
+API_TOKEN=replace-with-a-strong-token
+SITE_NAME=My Meshtastic Network
+MESH_SERIAL=/dev/ttyACM0
 ```
 
-The default configuration attaches both services to the host network.  This
-avoids creating Docker bridge interfaces on platforms where that operation is
-blocked.  Access the dashboard at `http://127.0.0.1:41447` as soon as the
-containers are running.  On Docker Desktop (macOS/Windows) or when you prefer
-traditional bridged networking, start Compose with the `bridge` profile:
+Additional environment variables are optional:
 
-```bash
-COMPOSE_PROFILES=bridge docker-compose up -d
+- `DEFAULT_CHANNEL`, `DEFAULT_FREQUENCY`, `MAP_CENTER_LAT`, `MAP_CENTER_LON`,
+  `MAX_NODE_DISTANCE_KM`, and `MATRIX_ROOM` customise the UI.
+- `POTATOMESH_INSTANCE` (defaults to `http://web:41447`) lets the ingestor post
+  to a remote PotatoMesh instance if you do not run both services together.
+- `MESH_CHANNEL_INDEX`, `MESH_SNAPSHOT_SECS`, and `DEBUG` adjust ingestor
+  behaviour.
+
+## Docker Compose file
+
+Save the following as `docker-compose.yml` in the same directory as your `.env`
+file. The configuration defaults to host networking so that Linux hosts that
+cannot create bridge interfaces can still run PotatoMesh. Enable the optional
+`bridge` profile when you need classic port mapping (for example on Docker
+Desktop).
+
+```yaml
+services:
+  web:
+    image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+    env_file: .env
+    volumes:
+      - potatomesh_data:/app/data
+      - potatomesh_logs:/app/logs
+    network_mode: host
+    restart: unless-stopped
+
+  ingestor:
+    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+    env_file: .env
+    devices:
+      - "${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}"
+    volumes:
+      - potatomesh_data:/app/data
+      - potatomesh_logs:/app/logs
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - web
+
+  web-bridge:
+    image: ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+    env_file: .env
+    volumes:
+      - potatomesh_data:/app/data
+      - potatomesh_logs:/app/logs
+    ports:
+      - "41447:41447"
+    profiles:
+      - bridge
+    restart: unless-stopped
+
+  ingestor-bridge:
+    image: ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+    env_file: .env
+    devices:
+      - "${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}"
+    volumes:
+      - potatomesh_data:/app/data
+      - potatomesh_logs:/app/logs
+    profiles:
+      - bridge
+    restart: unless-stopped
+    depends_on:
+      - web-bridge
+
+volumes:
+  potatomesh_data:
+  potatomesh_logs:
 ```
 
-Access at `http://localhost:41447`
+## Start the stack
 
-## Configuration
-
-Edit `.env` file or run `./configure.sh` to set:
-
-- `API_TOKEN` - Required for ingestor authentication
-- `MESH_SERIAL` - Your Meshtastic device path (e.g., `/dev/ttyACM0`)
-- `SITE_NAME` - Your mesh network name
-- `MAP_CENTER_LAT/LON` - Map center coordinates
-
-## Device Setup
-
-**Find your device:**
+From the directory containing the Compose file:
 
 ```bash
-# Linux
-ls /dev/ttyACM* /dev/ttyUSB*
-
-# macOS
-ls /dev/cu.usbserial-*
-
-# Windows
-ls /dev/ttyS*
+docker compose up -d
 ```
 
-**Set permissions (Linux/macOS):**
+Docker automatically pulls the GHCR images when they are not present locally.
+The dashboard becomes available at `http://127.0.0.1:41447`. Use the bridge
+profile when you need to map the port explicitly:
 
 ```bash
-sudo chmod 666 /dev/ttyACM0
-# Or add user to dialout group
-sudo usermod -a -G dialout $USER
+COMPOSE_PROFILES=bridge docker compose up -d
 ```
 
-## Common Commands
+## Updating
 
 ```bash
-# Start services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
-
-# Stop and remove data
-docker-compose down -v
-
-# Update images
-docker-compose pull && docker-compose up -d
+docker compose pull
+docker compose up -d
 ```
 
 ## Troubleshooting
 
-**Device access issues:**
+- **Serial device permissions (Linux/macOS):** grant access with `sudo chmod 666
+  /dev/ttyACM0` or add your user to the `dialout` group.
+- **Port already in use:** identify the conflicting service with `sudo lsof -i
+  :41447`.
+- **Viewing logs:** `docker compose logs -f` tails output from both services.
 
-```bash
-# Check device exists and permissions
-ls -la /dev/ttyACM0
-
-# Fix permissions
-sudo chmod 666 /dev/ttyACM0
-```
-
-**Port conflicts:**
-
-```bash
-# Find what's using port 41447
-sudo lsof -i :41447
-```
-
-**Container issues:**
-
-```bash
-# Check logs
-docker-compose logs
-
-# Restart services
-docker-compose restart
-```
-
-For more Docker help, see [Docker Compose documentation](https://docs.docker.com/compose/).
+For general Docker support, consult the [Docker Compose documentation](https://docs.docker.com/compose/).
