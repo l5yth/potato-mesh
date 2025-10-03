@@ -26,6 +26,7 @@ Edit `.env` file or run `./configure.sh` to set:
 
 - `API_TOKEN` - Required for ingestor authentication
 - `MESH_SERIAL` - Your Meshtastic device path (e.g., `/dev/ttyACM0`)
+- `POTATOMESH_IMAGE_ARCH` - Docker image architecture (`linux-amd64`, `linux-arm64`, `linux-armv7` for Raspberry Pi OS 32-bit)
 - `SITE_NAME` - Your mesh network name
 - `MAP_CENTER_LAT/LON` - Map center coordinates
 

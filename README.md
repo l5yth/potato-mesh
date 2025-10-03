@@ -26,6 +26,8 @@ docker-compose up -d     # Start services
 docker-compose logs -f   # View logs
 ```
 
+> **ARM users:** set `POTATOMESH_IMAGE_ARCH=linux-armv7` in your `.env` file for Raspberry Pi OS (32-bit) or `linux-arm64` for 64-bit ARM boards before starting the stack.
+
 PotatoMesh uses host networking by default so it can run on restricted
 systems where Docker cannot create bridged interfaces. The web UI listens on
 `http://127.0.0.1:41447` immediately without explicit port mappings. If you
