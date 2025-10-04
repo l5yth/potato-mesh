@@ -1118,6 +1118,42 @@ def store_neighborinfo_packet(packet: dict, decoded: Mapping):
     rssi = _coerce_int(_first(packet, "rssi", "rx_rssi", "rxRssi", default=None))
     bitfield = _coerce_int(_first(decoded, "bitfield", default=None))
 
+    neighbors_payload = []
+    raw_neighbors = neighbor_section.get("neighbors") if isinstance(neighbor_section, Mapping) else None
+    if isinstance(raw_neighbors, (list, tuple)):
+        now = int(time.time())
+        for entry in raw_neighbors[:512]:
+            if not isinstance(entry, Mapping):
+                continue
+
+            neighbor_raw_id = _first(entry, "nodeId", "node_id", default=None)
+            neighbor_node_id = _canonical_node_id(neighbor_raw_id)
+            neighbor_num = _coerce_int(_first(entry, "nodeNum", "node_num", default=None))
+            if neighbor_num is None:
+                neighbor_num = _node_num_from_id(neighbor_node_id)
+
+            if neighbor_node_id is None and neighbor_num is None:
+                continue
+
+            neighbor_last_heard = _coerce_int(
+                _first(entry, "lastHeard", "last_heard", default=None)
+            )
+            if neighbor_last_heard is not None and neighbor_last_heard > now:
+                neighbor_last_heard = now
+
+            neighbor_rssi = _coerce_int(_first(entry, "rssi", default=None))
+            neighbor_snr = _coerce_float(_first(entry, "snr", default=None))
+
+            neighbor_payload = {
+                "node_id": neighbor_node_id,
+                "node_num": neighbor_num,
+                "last_heard": neighbor_last_heard,
+                "rssi": neighbor_rssi,
+                "snr": neighbor_snr,
+            }
+
+            neighbors_payload.append({k: v for k, v in neighbor_payload.items() if v is not None})
+
     payload = {
         "id": pkt_id,
         "rx_time": rx_time,
@@ -1134,6 +1170,9 @@ def store_neighborinfo_packet(packet: dict, decoded: Mapping):
         "rssi": rssi,
         "bitfield": bitfield,
     }
+
+    if neighbors_payload:
+        payload["neighbors"] = neighbors_payload
 
     payload = {key: value for key, value in payload.items() if value is not None}
 

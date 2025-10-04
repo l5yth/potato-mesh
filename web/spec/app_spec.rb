@@ -41,6 +41,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
       db.execute("DELETE FROM neighbors")
+      db.execute("DELETE FROM neighbor_peers")
     end
   end
 
@@ -1635,6 +1636,36 @@ RSpec.describe "Potato Mesh Sinatra app" do
             1,
           ],
         )
+        db.execute(
+          <<~SQL,
+            INSERT INTO neighbor_peers(neighbor_id,node_id,node_num,last_heard,last_heard_iso,rssi,snr)
+            VALUES (?,?,?,?,?,?,?)
+          SQL,
+          [
+            42,
+            "!8a7bc012",
+            2_323_365_906,
+            rx_time - 10,
+            Time.at(rx_time - 10).utc.iso8601,
+            -72,
+            11.8,
+          ],
+        )
+        db.execute(
+          <<~SQL,
+            INSERT INTO neighbor_peers(neighbor_id,node_id,node_num,last_heard,last_heard_iso,rssi,snr)
+            VALUES (?,?,?,?,?,?,?)
+          SQL,
+          [
+            42,
+            "!93ab10ff",
+            2_477_461_759,
+            rx_time - 30,
+            Time.at(rx_time - 30).utc.iso8601,
+            -81,
+            7.4,
+          ],
+        )
       end
 
       get "/api/neighbors", { "limit" => 10 }
@@ -1655,6 +1686,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(row["snr"]).to be_within(1e-6).of(4.75)
       expect(row["rssi"]).to eq(-71)
       expect(row["bitfield"]).to eq(1)
+      expect(row["neighbors"]).to be_a(Array)
+      expect(row["neighbors"].size).to eq(2)
+      first_peer = row["neighbors"].first
+      expect(first_peer["node_id"]).to eq("!8a7bc012")
+      expect(first_peer["node_num"]).to eq(2_323_365_906)
+      expect(first_peer["last_heard"]).to eq(rx_time - 10)
+      expect(first_peer["last_heard_iso"]).to eq(Time.at(rx_time - 10).utc.iso8601)
+      expect(first_peer["rssi"]).to eq(-72)
+      expect(first_peer["snr"]).to be_within(1e-6).of(11.8)
     end
   end
 
@@ -1673,6 +1713,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "snr" => 3.25,
         "rssi" => -95,
         "bitfield" => 1,
+        "neighbors" => [
+          {
+            "node_id" => 2_323_365_906,
+            "last_heard" => rx_time - 5,
+            "rssi" => -70,
+            "snr" => 9.1,
+          },
+          {
+            "node_id" => "!93ab10ff",
+            "last_heard" => rx_time - 25,
+            "rssi" => -88,
+          },
+        ],
       }
 
       post "/api/neighbors", payload.to_json, auth_headers
@@ -1712,6 +1765,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
         )
         expect(last_sent_row).not_to be_nil
         expect(last_sent_row["last_heard"]).to eq(rx_time)
+
+        peer_rows = db.execute(
+          "SELECT node_id,node_num,last_heard,last_heard_iso,rssi,snr FROM neighbor_peers WHERE neighbor_id = ? ORDER BY last_heard DESC",
+          [payload["id"]],
+        )
+        expect(peer_rows.size).to eq(2)
+
+        first_peer = peer_rows.first
+        expect(first_peer["node_id"]).to eq("!8a7bc012")
+        expect(first_peer["node_num"]).to eq(2_323_365_906)
+        expect(first_peer["last_heard"]).to eq(rx_time - 5)
+        expect(first_peer["last_heard_iso"]).to eq(Time.at(rx_time - 5).utc.iso8601)
+        expect(first_peer["rssi"]).to eq(-70)
+        expect(first_peer["snr"]).to be_within(1e-6).of(9.1)
+
+        second_peer = peer_rows.last
+        expect(second_peer["node_id"]).to eq("!93ab10ff")
+        expect(second_peer["last_heard"]).to eq(rx_time - 25)
+        expect(second_peer["rssi"]).to eq(-88)
+
+        neighbor_node = db.get_first_row(
+          "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
+          ["!8a7bc012"],
+        )
+        expect(neighbor_node).not_to be_nil
+        expect(neighbor_node["last_heard"]).to eq(rx_time - 5)
+        expect(neighbor_node["first_heard"]).to eq(rx_time - 5)
+
+        neighbor_two = db.get_first_row(
+          "SELECT last_heard FROM nodes WHERE node_id = ?",
+          ["!93ab10ff"],
+        )
+        expect(neighbor_two).not_to be_nil
+        expect(neighbor_two["last_heard"]).to eq(rx_time - 25)
       end
     end
 

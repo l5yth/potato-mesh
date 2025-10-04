@@ -322,8 +322,8 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  required = %w[nodes messages positions telemetry neighbors]
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors')").flatten
+  required = %w[nodes messages positions telemetry neighbors neighbor_peers]
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','neighbor_peers')").flatten
   (required - tables).empty?
 rescue SQLite3::Exception
   false
@@ -583,6 +583,56 @@ def query_neighbors(limit)
     r["rssi"] = coerce_integer(r["rssi"])
     r["bitfield"] = coerce_integer(r["bitfield"])
     r["snr"] = coerce_float(r["snr"])
+  end
+
+  neighbor_ids = rows.filter_map { |row| coerce_integer(row["id"]) }
+  neighbors_by_id = Hash.new { |hash, key| hash[key] = [] }
+
+  unless neighbor_ids.empty?
+    placeholders = Array.new(neighbor_ids.size, "?").join(",")
+    peer_sql = <<~SQL
+      SELECT neighbor_id, node_id, node_num, last_heard, last_heard_iso, rssi, snr
+        FROM neighbor_peers
+       WHERE neighbor_id IN (#{placeholders})
+       ORDER BY COALESCE(last_heard, 0) DESC, node_id ASC
+    SQL
+    peer_rows = db.execute(peer_sql, neighbor_ids)
+
+    peer_rows.each do |peer|
+      neighbor_id = coerce_integer(peer["neighbor_id"])
+      next unless neighbor_id
+
+      entry = {}
+
+      node_id = string_or_nil(peer["node_id"])
+      entry["node_id"] = node_id if node_id
+
+      node_num = coerce_integer(peer["node_num"])
+      entry["node_num"] = node_num if node_num
+
+      last_heard = coerce_integer(peer["last_heard"])
+      entry["last_heard"] = last_heard if last_heard
+
+      last_heard_iso = string_or_nil(peer["last_heard_iso"])
+      if last_heard_iso
+        entry["last_heard_iso"] = last_heard_iso
+      elsif last_heard
+        entry["last_heard_iso"] = Time.at(last_heard).utc.iso8601
+      end
+
+      rssi = coerce_integer(peer["rssi"])
+      entry["rssi"] = rssi if rssi
+
+      snr = coerce_float(peer["snr"])
+      entry["snr"] = snr if snr
+
+      neighbors_by_id[neighbor_id] << entry unless entry.empty?
+    end
+  end
+
+  rows.each do |row|
+    row_id = coerce_integer(row["id"])
+    row["neighbors"] = neighbors_by_id[row_id] || []
   end
   rows
 ensure
@@ -1564,6 +1614,65 @@ def insert_neighbor(db, payload)
     )
   end
 
+  neighbor_peers = []
+  raw_neighbors = payload["neighbors"] || payload["neighborinfo"]&.fetch("neighbors", nil)
+  if raw_neighbors.is_a?(Array)
+    raw_neighbors.first(512).each do |peer|
+      next unless peer.is_a?(Hash)
+
+      node_ref = peer["node_id"] || peer["nodeId"]
+      node_num_ref = peer["node_num"] || peer["nodeNum"]
+
+      peer_id = nil
+      peer_num = nil
+
+      parts = canonical_node_parts(node_ref, node_num_ref)
+      if parts
+        peer_id, peer_num, = parts
+      else
+        trimmed = string_or_nil(node_ref)
+        peer_id = normalize_node_id(db, trimmed) || trimmed if trimmed
+        peer_id = "!#{peer_id.delete_prefix("!").downcase}" if peer_id&.start_with?("!")
+        peer_num = coerce_integer(node_num_ref)
+      end
+
+      peer_id = nil if peer_id&.empty?
+      peer_num = nil if peer_num&.negative?
+      next unless peer_id || peer_num
+
+      last_heard = coerce_integer(peer["last_heard"] || peer["lastHeard"])
+      if last_heard && last_heard > now
+        last_heard = now
+      end
+
+      last_heard_iso = string_or_nil(peer["last_heard_iso"] || peer["lastHeardIso"])
+      last_heard_iso ||= Time.at(last_heard).utc.iso8601 if last_heard
+
+      rssi = coerce_integer(peer["rssi"])
+      snr = coerce_float(peer["snr"])
+
+      peer_entry = {}
+      peer_entry["node_id"] = peer_id if peer_id
+      peer_entry["node_num"] = peer_num if peer_num
+      peer_entry["last_heard"] = last_heard if last_heard
+      peer_entry["last_heard_iso"] = last_heard_iso if last_heard_iso
+      peer_entry["rssi"] = rssi if rssi
+      peer_entry["snr"] = snr if snr
+
+      neighbor_peers << peer_entry unless peer_entry.empty?
+
+      heard_time = last_heard || rx_time
+      ensure_unknown_node(db, peer_id || node_ref, peer_num, heard_time: heard_time)
+      touch_node_last_seen(
+        db,
+        peer_id || node_ref || peer_num,
+        peer_num,
+        rx_time: heard_time,
+        source: :neighbor_peer,
+      )
+    end
+  end
+
   row = [
     neighbor_id,
     rx_time,
@@ -1596,6 +1705,29 @@ def insert_neighbor(db, payload)
                    rssi=COALESCE(excluded.rssi,neighbors.rssi),
                    bitfield=COALESCE(excluded.bitfield,neighbors.bitfield)
                SQL
+  end
+
+  with_busy_retry do
+    db.transaction do
+      db.execute("DELETE FROM neighbor_peers WHERE neighbor_id = ?", [neighbor_id])
+      neighbor_peers.each do |peer|
+        db.execute(
+          <<~SQL,
+            INSERT INTO neighbor_peers(neighbor_id,node_id,node_num,last_heard,last_heard_iso,rssi,snr)
+            VALUES (?,?,?,?,?,?,?)
+          SQL
+          [
+            neighbor_id,
+            peer["node_id"],
+            peer["node_num"],
+            peer["last_heard"],
+            peer["last_heard_iso"],
+            peer["rssi"],
+            peer["snr"],
+          ],
+        )
+      end
+    end
   end
 end
 

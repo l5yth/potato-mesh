@@ -1101,6 +1101,26 @@ def test_store_packet_dict_handles_neighborinfo_packet(mesh_module, monkeypatch)
                 "nodeId": 2_660_618_080,
                 "lastSentById": 2_660_618_080,
                 "nodeBroadcastIntervalSecs": 3600,
+                "neighbors": [
+                    {
+                        "nodeId": 2_323_365_906,
+                        "rssi": -72,
+                        "snr": 11.8,
+                        "lastHeard": 1_758_621_390,
+                    },
+                    {
+                        "nodeId": 2_477_461_759,
+                        "rssi": -81,
+                        "snr": 7.4,
+                        "lastHeard": 1_758_621_373,
+                    },
+                    {
+                        "nodeId": 2_133_973_413,
+                        "rssi": -96,
+                        "snr": 1.9,
+                        "lastHeard": 1_758_620_715,
+                    },
+                ],
             },
         },
     }
@@ -1121,6 +1141,17 @@ def test_store_packet_dict_handles_neighborinfo_packet(mesh_module, monkeypatch)
     assert payload["snr"] == pytest.approx(3.5)
     assert payload["rssi"] == -80
     assert payload["bitfield"] == 1
+    assert "neighbors" in payload
+    neighbors = payload["neighbors"]
+    assert isinstance(neighbors, list)
+    assert len(neighbors) == 3
+    assert neighbors[0]["node_id"] == "!8a7bc012"
+    assert neighbors[0]["node_num"] == 2_323_365_906
+    assert neighbors[0]["last_heard"] == 1_758_621_390
+    assert neighbors[0]["rssi"] == -72
+    assert neighbors[0]["snr"] == pytest.approx(11.8)
+    assert neighbors[1]["node_id"] == "!93ab10ff"
+    assert neighbors[2]["node_id"] == "!7f31d9a5"
 
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module

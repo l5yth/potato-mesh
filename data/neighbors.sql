@@ -29,3 +29,18 @@ CREATE TABLE IF NOT EXISTS neighbors (
 
 CREATE INDEX IF NOT EXISTS idx_neighbors_rx_time ON neighbors(rx_time);
 CREATE INDEX IF NOT EXISTS idx_neighbors_node_id ON neighbors(node_id);
+
+CREATE TABLE IF NOT EXISTS neighbor_peers (
+    neighbor_id   INTEGER NOT NULL,
+    node_id       TEXT,
+    node_num      INTEGER,
+    last_heard    INTEGER,
+    last_heard_iso TEXT,
+    rssi          INTEGER,
+    snr           REAL,
+    PRIMARY KEY (neighbor_id, node_id, node_num),
+    FOREIGN KEY (neighbor_id) REFERENCES neighbors(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_neighbor_peers_neighbor_id ON neighbor_peers(neighbor_id);
+CREATE INDEX IF NOT EXISTS idx_neighbor_peers_node_id ON neighbor_peers(node_id);
