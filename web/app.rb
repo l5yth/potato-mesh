@@ -1124,7 +1124,7 @@ def insert_position(db, payload)
   )
 end
 
-def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
+def update_node_from_telemetry(db, node_id, node_num, _rx_time, metrics = {})
   num = coerce_integer(node_num)
   id = string_or_nil(node_id)
   if id&.start_with?("!")
@@ -1134,10 +1134,8 @@ def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   return unless id
 
   now = Time.now.to_i
-  rx = coerce_integer(rx_time) || now
-  rx = now if rx && rx > now
 
-  ensure_unknown_node(db, id, num, heard_time: rx)
+  ensure_unknown_node(db, id, num, heard_time: now)
 
   battery = coerce_float(metrics[:battery_level] || metrics["battery_level"])
   voltage = coerce_float(metrics[:voltage] || metrics["voltage"])
@@ -1145,32 +1143,42 @@ def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   air_util_tx = coerce_float(metrics[:air_util_tx] || metrics["air_util_tx"])
   uptime = coerce_integer(metrics[:uptime_seconds] || metrics["uptime_seconds"])
 
-  row = [
-    id,
-    num,
-    rx,
-    rx,
-    battery,
-    voltage,
-    channel_util,
-    air_util_tx,
-    uptime,
-  ]
+  assignments = []
+  params = []
+
+  if num
+    assignments << "num = ?"
+    params << num
+  end
+
+  assignments << "last_heard = ?"
+  params << now
+
+  assignments << "first_heard = COALESCE(first_heard, ?)"
+  params << now
+
+  metric_updates = {
+    "battery_level" => battery,
+    "voltage" => voltage,
+    "channel_utilization" => channel_util,
+    "air_util_tx" => air_util_tx,
+    "uptime_seconds" => uptime,
+  }
+
+  metric_updates.each do |column, value|
+    next if value.nil?
+
+    assignments << "#{column} = ?"
+    params << value
+  end
+
+  return if assignments.empty?
+
+  assignments_sql = assignments.join(", ")
+  params << id
 
   with_busy_retry do
-    db.execute <<~SQL, row
-                 INSERT INTO nodes(node_id,num,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds)
-                 VALUES (?,?,?,?,?,?,?,?,?)
-                 ON CONFLICT(node_id) DO UPDATE SET
-                   num=COALESCE(excluded.num,nodes.num),
-                   last_heard=MAX(COALESCE(nodes.last_heard,0),COALESCE(excluded.last_heard,0)),
-                   first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
-                   battery_level=COALESCE(excluded.battery_level,nodes.battery_level),
-                   voltage=COALESCE(excluded.voltage,nodes.voltage),
-                   channel_utilization=COALESCE(excluded.channel_utilization,nodes.channel_utilization),
-                   air_util_tx=COALESCE(excluded.air_util_tx,nodes.air_util_tx),
-                   uptime_seconds=COALESCE(excluded.uptime_seconds,nodes.uptime_seconds)
-               SQL
+    db.execute("UPDATE nodes SET #{assignments_sql} WHERE node_id = ?", params)
   end
 end
 

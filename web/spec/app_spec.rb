@@ -897,14 +897,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(metrics_node["channel_utilization"], payload[0]["device_metrics"]["channelUtilization"])
           expect_same_value(metrics_node["air_util_tx"], payload[0]["device_metrics"]["airUtilTx"])
           expect(metrics_node["uptime_seconds"]).to eq(payload[0]["device_metrics"]["uptimeSeconds"])
-          expect(metrics_node["last_heard"]).to eq(payload[0]["rx_time"])
-          expect(metrics_node["first_heard"]).to eq(payload[0]["rx_time"])
+          expect(metrics_node["last_heard"]).to eq(reference_time.to_i)
+          expect(metrics_node["first_heard"]).to eq(reference_time.to_i)
 
           env_node = db.get_first_row(
             "SELECT last_heard, battery_level, voltage FROM nodes WHERE node_id = ?",
             [payload[1]["node_id"]],
           )
-          expect(env_node["last_heard"]).to eq(payload[1]["rx_time"])
+          expect(env_node["last_heard"]).to eq(reference_time.to_i)
           expect(env_node["battery_level"]).to be_nil
           expect(env_node["voltage"]).to be_nil
 
@@ -914,7 +914,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           )
           expect_same_value(local_node["battery_level"], payload[2]["device_metrics"]["battery_level"])
           expect(local_node["uptime_seconds"]).to eq(payload[2]["device_metrics"]["uptime_seconds"])
-          expect(local_node["last_heard"]).to eq(payload[2]["rx_time"])
+          expect(local_node["last_heard"]).to eq(reference_time.to_i)
         end
       end
 
