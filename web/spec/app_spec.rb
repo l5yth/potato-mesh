@@ -39,6 +39,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM messages")
       db.execute("DELETE FROM nodes")
       db.execute("DELETE FROM positions")
+      db.execute("DELETE FROM telemetry")
     end
   end
 
@@ -143,6 +144,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
   let(:nodes_fixture) { JSON.parse(File.read(fixture_path("nodes.json"))) }
   let(:messages_fixture) { JSON.parse(File.read(fixture_path("messages.json"))) }
+  let(:telemetry_fixture) { JSON.parse(File.read(fixture_path("telemetry.json"))) }
   let(:reference_time) do
     latest = nodes_fixture.map { |node| node["last_heard"] }.compact.max
     Time.at((latest || Time.now.to_i) + 1000)
@@ -850,6 +852,94 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe "POST /api/telemetry" do
+      it "stores telemetry packets and updates node metrics" do
+        payload = telemetry_fixture
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          rows = db.execute(
+            "SELECT * FROM telemetry ORDER BY id",
+          )
+
+          expect(rows.size).to eq(payload.size)
+
+          first = rows.find { |row| row["id"] == payload[0]["id"] }
+          expect(first).not_to be_nil
+          expect(first["node_id"]).to eq(payload[0]["node_id"])
+          expect(first["rx_time"]).to eq(payload[0]["rx_time"])
+          expect_same_value(first["battery_level"], payload[0]["battery_level"])
+          expect_same_value(first["voltage"], payload[0].dig("device_metrics", "voltage"))
+          expect_same_value(first["channel_utilization"], payload[0].dig("device_metrics", "channelUtilization"))
+          expect_same_value(first["air_util_tx"], payload[0].dig("device_metrics", "airUtilTx"))
+          expect(first["uptime_seconds"]).to eq(payload[0].dig("device_metrics", "uptimeSeconds"))
+
+          environment_row = rows.find { |row| row["id"] == payload[1]["id"] }
+          expect(environment_row["temperature"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "temperature"))
+          expect(environment_row["relative_humidity"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "relativeHumidity"))
+          expect(environment_row["barometric_pressure"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "barometricPressure"))
+        end
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+
+          metrics_node = db.get_first_row(
+            "SELECT battery_level, voltage, channel_utilization, air_util_tx, uptime_seconds, last_heard, first_heard FROM nodes WHERE node_id = ?",
+            [payload[0]["node_id"]],
+          )
+          expect_same_value(metrics_node["battery_level"], payload[0]["battery_level"])
+          expect_same_value(metrics_node["voltage"], payload[0]["device_metrics"]["voltage"])
+          expect_same_value(metrics_node["channel_utilization"], payload[0]["device_metrics"]["channelUtilization"])
+          expect_same_value(metrics_node["air_util_tx"], payload[0]["device_metrics"]["airUtilTx"])
+          expect(metrics_node["uptime_seconds"]).to eq(payload[0]["device_metrics"]["uptimeSeconds"])
+          expect(metrics_node["last_heard"]).to eq(reference_time.to_i)
+          expect(metrics_node["first_heard"]).to eq(reference_time.to_i)
+
+          env_node = db.get_first_row(
+            "SELECT last_heard, battery_level, voltage FROM nodes WHERE node_id = ?",
+            [payload[1]["node_id"]],
+          )
+          expect(env_node["last_heard"]).to eq(reference_time.to_i)
+          expect(env_node["battery_level"]).to be_nil
+          expect(env_node["voltage"]).to be_nil
+
+          local_node = db.get_first_row(
+            "SELECT battery_level, uptime_seconds, last_heard FROM nodes WHERE node_id = ?",
+            [payload[2]["node_id"]],
+          )
+          expect_same_value(local_node["battery_level"], payload[2]["device_metrics"]["battery_level"])
+          expect(local_node["uptime_seconds"]).to eq(payload[2]["device_metrics"]["uptime_seconds"])
+          expect(local_node["last_heard"]).to eq(reference_time.to_i)
+        end
+      end
+
+      it "returns 400 when the payload is not valid JSON" do
+        post "/api/telemetry", "{", auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+      end
+
+      it "returns 400 when more than 1000 telemetry packets are provided" do
+        payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "too many telemetry packets")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM telemetry")
+          expect(count).to eq(0)
+        end
+      end
+    end
+
     it "returns 400 when more than 1000 messages are provided" do
       payload = Array.new(1001) { |i| { "packet_id" => i + 1 } }
 
@@ -1408,6 +1498,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["latitude"]).to eq(53.0)
       expect(entry["longitude"]).to eq(14.0)
       expect(entry["payload_b64"]).to eq("AQI=")
+    end
+  end
+
+  describe "GET /api/telemetry" do
+    it "returns stored telemetry ordered by receive time" do
+      post "/api/telemetry", telemetry_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/telemetry?limit=2"
+
+      expect(last_response).to be_ok
+      data = JSON.parse(last_response.body)
+      expect(data.length).to eq(2)
+
+      latest = telemetry_fixture.max_by { |entry| entry["rx_time"] }
+      second_latest = telemetry_fixture.sort_by { |entry| entry["rx_time"] }[-2]
+
+      first_entry = data.first
+      expect(first_entry["id"]).to eq(latest["id"])
+      expect(first_entry["node_id"]).to eq(latest["node_id"])
+      expect(first_entry["rx_time"]).to eq(latest["rx_time"])
+      expect(first_entry["telemetry_time"]).to eq(latest["telemetry_time"])
+      expect(first_entry["telemetry_time_iso"]).to eq(Time.at(latest["telemetry_time"]).utc.iso8601)
+      expect(first_entry).not_to have_key("device_metrics")
+      expect_same_value(first_entry["battery_level"], latest.dig("device_metrics", "battery_level") || latest.dig("device_metrics", "batteryLevel"))
+
+      second_entry = data.last
+      expect(second_entry["id"]).to eq(second_latest["id"])
+      expect(second_entry).not_to have_key("environment_metrics")
+      expect(second_entry["temperature"]).to be_within(1e-6).of(second_latest["environment_metrics"]["temperature"])
+      expect(second_entry["relative_humidity"]).to be_within(1e-6).of(second_latest["environment_metrics"]["relativeHumidity"])
+      expect(second_entry["barometric_pressure"]).to be_within(1e-6).of(second_latest["environment_metrics"]["barometricPressure"])
     end
   end
 end

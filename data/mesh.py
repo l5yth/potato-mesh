@@ -159,6 +159,7 @@ _POST_QUEUE_ACTIVE = False
 
 _MESSAGE_POST_PRIORITY = 0
 _POSITION_POST_PRIORITY = 10
+_TELEMETRY_POST_PRIORITY = 15
 _NODE_POST_PRIORITY = 20
 _DEFAULT_POST_PRIORITY = 50
 
@@ -859,7 +860,7 @@ def store_position_packet(packet: dict, decoded: Mapping):
 
     position_payload = {
         "id": pkt_id,
-        "node_id": node_id,
+        "node_id": node_id or raw_from,
         "node_num": node_num,
         "num": node_num,
         "from_id": node_id,
@@ -892,6 +893,160 @@ def store_position_packet(packet: dict, decoded: Mapping):
     if DEBUG:
         print(
             f"[debug] stored position for {node_id} lat={latitude!r} lon={longitude!r} rx_time={rx_time}"
+        )
+
+
+def store_telemetry_packet(packet: dict, decoded: Mapping):
+    """Handle ``TELEMETRY_APP`` packets and forward them to ``/api/telemetry``."""
+
+    telemetry_section = (
+        decoded.get("telemetry") if isinstance(decoded, Mapping) else None
+    )
+    if not isinstance(telemetry_section, Mapping):
+        return
+
+    pkt_id = _coerce_int(_first(packet, "id", "packet_id", "packetId", default=None))
+    if pkt_id is None:
+        return
+
+    raw_from = _first(packet, "fromId", "from_id", "from", default=None)
+    node_id = _canonical_node_id(raw_from)
+    node_num = _coerce_int(_first(decoded, "num", "node_num", default=None))
+    if node_num is None:
+        node_num = _node_num_from_id(node_id or raw_from)
+
+    to_id = _first(packet, "toId", "to_id", "to", default=None)
+
+    raw_rx_time = _first(packet, "rxTime", "rx_time", default=time.time())
+    try:
+        rx_time = int(raw_rx_time)
+    except (TypeError, ValueError):
+        rx_time = int(time.time())
+    rx_iso = _iso(rx_time)
+
+    telemetry_time = _coerce_int(_first(telemetry_section, "time", default=None))
+
+    channel = _coerce_int(_first(decoded, "channel", default=None))
+    if channel is None:
+        channel = _coerce_int(_first(packet, "channel", default=None))
+    if channel is None:
+        channel = 0
+
+    bitfield = _coerce_int(_first(decoded, "bitfield", default=None))
+    snr = _coerce_float(_first(packet, "snr", "rx_snr", "rxSnr", default=None))
+    rssi = _coerce_int(_first(packet, "rssi", "rx_rssi", "rxRssi", default=None))
+    hop_limit = _coerce_int(_first(packet, "hopLimit", "hop_limit", default=None))
+
+    portnum_raw = _first(decoded, "portnum", default=None)
+    portnum = str(portnum_raw) if portnum_raw is not None else None
+
+    payload_bytes = _extract_payload_bytes(decoded)
+    payload_b64 = (
+        base64.b64encode(payload_bytes).decode("ascii") if payload_bytes else None
+    )
+
+    device_metrics_section = telemetry_section.get(
+        "deviceMetrics"
+    ) or telemetry_section.get("device_metrics")
+    device_metrics = (
+        _node_to_dict(device_metrics_section)
+        if isinstance(device_metrics_section, Mapping)
+        else None
+    )
+
+    environment_section = telemetry_section.get(
+        "environmentMetrics"
+    ) or telemetry_section.get("environment_metrics")
+    environment_metrics = (
+        _node_to_dict(environment_section)
+        if isinstance(environment_section, Mapping)
+        else None
+    )
+
+    metrics_lookup = lambda mapping, *names: _first(mapping or {}, *names, default=None)
+
+    battery_level = _coerce_float(
+        metrics_lookup(device_metrics, "batteryLevel", "battery_level")
+    )
+    voltage = _coerce_float(metrics_lookup(device_metrics, "voltage"))
+    channel_utilization = _coerce_float(
+        metrics_lookup(device_metrics, "channelUtilization", "channel_utilization")
+    )
+    air_util_tx = _coerce_float(
+        metrics_lookup(device_metrics, "airUtilTx", "air_util_tx")
+    )
+    uptime_seconds = _coerce_int(
+        metrics_lookup(device_metrics, "uptimeSeconds", "uptime_seconds")
+    )
+
+    temperature = _coerce_float(
+        metrics_lookup(
+            environment_metrics,
+            "temperature",
+            "temperatureC",
+            "temperature_c",
+            "tempC",
+        )
+    )
+    relative_humidity = _coerce_float(
+        metrics_lookup(
+            environment_metrics,
+            "relativeHumidity",
+            "relative_humidity",
+            "humidity",
+        )
+    )
+    barometric_pressure = _coerce_float(
+        metrics_lookup(
+            environment_metrics,
+            "barometricPressure",
+            "barometric_pressure",
+            "pressure",
+        )
+    )
+
+    telemetry_payload = {
+        "id": pkt_id,
+        "node_id": node_id,
+        "node_num": node_num,
+        "from_id": node_id or raw_from,
+        "to_id": to_id,
+        "rx_time": rx_time,
+        "rx_iso": rx_iso,
+        "telemetry_time": telemetry_time,
+        "channel": channel,
+        "portnum": portnum,
+        "bitfield": bitfield,
+        "snr": snr,
+        "rssi": rssi,
+        "hop_limit": hop_limit,
+        "payload_b64": payload_b64,
+    }
+
+    if battery_level is not None:
+        telemetry_payload["battery_level"] = battery_level
+    if voltage is not None:
+        telemetry_payload["voltage"] = voltage
+    if channel_utilization is not None:
+        telemetry_payload["channel_utilization"] = channel_utilization
+    if air_util_tx is not None:
+        telemetry_payload["air_util_tx"] = air_util_tx
+    if uptime_seconds is not None:
+        telemetry_payload["uptime_seconds"] = uptime_seconds
+    if temperature is not None:
+        telemetry_payload["temperature"] = temperature
+    if relative_humidity is not None:
+        telemetry_payload["relative_humidity"] = relative_humidity
+    if barometric_pressure is not None:
+        telemetry_payload["barometric_pressure"] = barometric_pressure
+
+    _queue_post_json(
+        "/api/telemetry", telemetry_payload, priority=_TELEMETRY_POST_PRIORITY
+    )
+
+    if DEBUG:
+        print(
+            f"[debug] stored telemetry for {node_id!r} rx_time={rx_time} battery={battery_level!r}"
         )
 
 
@@ -1060,6 +1215,16 @@ def store_packet_dict(p: dict):
 
     portnum_raw = _first(dec, "portnum", default=None)
     portnum = str(portnum_raw).upper() if portnum_raw is not None else None
+    portnum_int = _coerce_int(portnum_raw)
+
+    telemetry_section = dec.get("telemetry") if isinstance(dec, Mapping) else None
+    if (
+        portnum == "TELEMETRY_APP"
+        or portnum_int == 65
+        or isinstance(telemetry_section, Mapping)
+    ):
+        store_telemetry_packet(p, dec)
+        return
 
     if portnum in {"5", "NODEINFO_APP"}:
         store_nodeinfo_packet(p, dec)

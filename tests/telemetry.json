@@ -1,0 +1,84 @@
+[
+  {
+    "id": 1256091342,
+    "node_id": "!9e95cf60",
+    "from_id": "!9e95cf60",
+    "to_id": "^all",
+    "rx_time": 1758024300,
+    "rx_iso": "2025-09-16T12:05:00Z",
+    "telemetry_time": 1758024300,
+    "channel": 0,
+    "portnum": "TELEMETRY_APP",
+    "battery_level": 101,
+    "bitfield": 1,
+    "payload_b64": "DTVr0mgSFQhlFQIrh0AdJb8YPyXYFSA9KJTPEg==",
+    "device_metrics": {
+      "batteryLevel": 101,
+      "voltage": 4.224,
+      "channelUtilization": 0.59666663,
+      "airUtilTx": 0.03908333,
+      "uptimeSeconds": 305044
+    },
+    "raw": {
+      "device_metrics": {
+        "battery_level": 101,
+        "voltage": 4.224,
+        "channel_utilization": 0.59666663,
+        "air_util_tx": 0.03908333,
+        "uptime_seconds": 305044
+      }
+    }
+  },
+  {
+    "id": 2817720548,
+    "node_id": "!2a2a2a2a",
+    "from_id": "!2a2a2a2a",
+    "to_id": "^all",
+    "rx_time": 1758024400,
+    "rx_iso": "2025-09-16T12:06:40Z",
+    "telemetry_time": 1758024390,
+    "channel": 0,
+    "portnum": "TELEMETRY_APP",
+    "bitfield": 1,
+    "environment_metrics": {
+      "temperature": 21.98,
+      "relativeHumidity": 39.475586,
+      "barometricPressure": 1017.8353
+    },
+    "raw": {
+      "environment_metrics": {
+        "temperature": 21.98,
+        "relative_humidity": 39.475586,
+        "barometric_pressure": 1017.8353
+      }
+    }
+  },
+  {
+    "id": 345678901,
+    "node_id": "!1234abcd",
+    "from_id": "!1234abcd",
+    "node_num": 305441741,
+    "to_id": "^all",
+    "rx_time": 1758024500,
+    "rx_iso": "2025-09-16T12:08:20Z",
+    "telemetry_time": 1758024450,
+    "channel": 1,
+    "portnum": "TELEMETRY_APP",
+    "payload_b64": "AAEC",
+    "device_metrics": {
+      "battery_level": 58.5,
+      "voltage": 3.92,
+      "channel_utilization": 0.284,
+      "air_util_tx": 0.051,
+      "uptime_seconds": 86400
+    },
+    "local_stats": {
+      "numPacketsTx": 1280,
+      "numPacketsRx": 1425,
+      "numClients": 6,
+      "numNodes": 18,
+      "freeHeap": 21344,
+      "heapLowWater": 19876
+    }
+  }
+]

@@ -177,6 +177,37 @@ def coerce_float(value)
   end
 end
 
+def normalize_json_value(value)
+  case value
+  when Hash
+    value.each_with_object({}) do |(key, val), memo|
+      memo[key.to_s] = normalize_json_value(val)
+    end
+  when Array
+    value.map { |element| normalize_json_value(element) }
+  else
+    value
+  end
+end
+
+def normalize_json_object(value)
+  case value
+  when Hash
+    normalize_json_value(value)
+  when String
+    trimmed = value.strip
+    return nil if trimmed.empty?
+    begin
+      parsed = JSON.parse(trimmed)
+    rescue JSON::ParserError
+      return nil
+    end
+    parsed.is_a?(Hash) ? normalize_json_value(parsed) : nil
+  else
+    nil
+  end
+end
+
 def sanitized_max_distance_km
   return nil unless defined?(MAX_NODE_DISTANCE_KM)
 
@@ -284,8 +315,8 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  required = %w[nodes messages positions]
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions')").flatten
+  required = %w[nodes messages positions telemetry]
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry')").flatten
   (required - tables).empty?
 rescue SQLite3::Exception
   false
@@ -299,7 +330,7 @@ end
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = open_database
-  %w[nodes messages positions].each do |schema|
+  %w[nodes messages positions telemetry].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
   end
@@ -473,6 +504,52 @@ ensure
   db&.close
 end
 
+def query_telemetry(limit)
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  rows = db.execute <<~SQL, [limit]
+                      SELECT id, node_id, node_num, from_id, to_id, rx_time, rx_iso,
+                             telemetry_time, channel, portnum, hop_limit, snr, rssi,
+                             bitfield, payload_b64, battery_level, voltage,
+                             channel_utilization, air_util_tx, uptime_seconds,
+                             temperature, relative_humidity, barometric_pressure
+                      FROM telemetry
+                      ORDER BY rx_time DESC
+                      LIMIT ?
+                    SQL
+  now = Time.now.to_i
+  rows.each do |r|
+    rx_time = coerce_integer(r["rx_time"])
+    r["rx_time"] = rx_time if rx_time
+    r["rx_iso"] = Time.at(rx_time).utc.iso8601 if rx_time && string_or_nil(r["rx_iso"]).nil?
+
+    node_num = coerce_integer(r["node_num"])
+    r["node_num"] = node_num if node_num
+
+    telemetry_time = coerce_integer(r["telemetry_time"])
+    telemetry_time = nil if telemetry_time && telemetry_time > now
+    r["telemetry_time"] = telemetry_time
+    r["telemetry_time_iso"] = Time.at(telemetry_time).utc.iso8601 if telemetry_time
+
+    r["channel"] = coerce_integer(r["channel"])
+    r["hop_limit"] = coerce_integer(r["hop_limit"])
+    r["rssi"] = coerce_integer(r["rssi"])
+    r["bitfield"] = coerce_integer(r["bitfield"])
+    r["snr"] = coerce_float(r["snr"])
+    r["battery_level"] = coerce_float(r["battery_level"])
+    r["voltage"] = coerce_float(r["voltage"])
+    r["channel_utilization"] = coerce_float(r["channel_utilization"])
+    r["air_util_tx"] = coerce_float(r["air_util_tx"])
+    r["uptime_seconds"] = coerce_integer(r["uptime_seconds"])
+    r["temperature"] = coerce_float(r["temperature"])
+    r["relative_humidity"] = coerce_float(r["relative_humidity"])
+    r["barometric_pressure"] = coerce_float(r["barometric_pressure"])
+  end
+  rows
+ensure
+  db&.close
+end
+
 # GET /api/messages
 #
 # Returns a JSON array of stored text messages including node metadata.
@@ -490,6 +567,15 @@ get "/api/positions" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_positions(limit).to_json
+end
+
+# GET /api/telemetry
+#
+# Returns a JSON array of recorded telemetry packets.
+get "/api/telemetry" do
+  content_type :json
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_telemetry(limit).to_json
 end
 
 # Determine the numeric node reference for a canonical node identifier.
@@ -1037,6 +1123,228 @@ def insert_position(db, payload)
   )
 end
 
+def update_node_from_telemetry(db, node_id, node_num, _rx_time, metrics = {})
+  num = coerce_integer(node_num)
+  id = string_or_nil(node_id)
+  if id&.start_with?("!")
+    id = "!#{id.delete_prefix("!").downcase}"
+  end
+  id ||= format("!%08x", num & 0xFFFFFFFF) if num
+  return unless id
+
+  now = Time.now.to_i
+
+  ensure_unknown_node(db, id, num, heard_time: now)
+
+  battery = coerce_float(metrics[:battery_level] || metrics["battery_level"])
+  voltage = coerce_float(metrics[:voltage] || metrics["voltage"])
+  channel_util = coerce_float(metrics[:channel_utilization] || metrics["channel_utilization"])
+  air_util_tx = coerce_float(metrics[:air_util_tx] || metrics["air_util_tx"])
+  uptime = coerce_integer(metrics[:uptime_seconds] || metrics["uptime_seconds"])
+
+  assignments = []
+  params = []
+
+  if num
+    assignments << "num = ?"
+    params << num
+  end
+
+  assignments << "last_heard = ?"
+  params << now
+
+  assignments << "first_heard = COALESCE(first_heard, ?)"
+  params << now
+
+  metric_updates = {
+    "battery_level" => battery,
+    "voltage" => voltage,
+    "channel_utilization" => channel_util,
+    "air_util_tx" => air_util_tx,
+    "uptime_seconds" => uptime,
+  }
+
+  metric_updates.each do |column, value|
+    next if value.nil?
+
+    assignments << "#{column} = ?"
+    params << value
+  end
+
+  return if assignments.empty?
+
+  assignments_sql = assignments.join(", ")
+  params << id
+
+  with_busy_retry do
+    db.execute("UPDATE nodes SET #{assignments_sql} WHERE node_id = ?", params)
+  end
+end
+
+def insert_telemetry(db, payload)
+  return unless payload.is_a?(Hash)
+
+  telemetry_id = coerce_integer(payload["id"] || payload["packet_id"])
+  return unless telemetry_id
+
+  now = Time.now.to_i
+  rx_time = coerce_integer(payload["rx_time"])
+  rx_time = now if rx_time.nil? || rx_time > now
+  rx_iso = string_or_nil(payload["rx_iso"])
+  rx_iso ||= Time.at(rx_time).utc.iso8601
+
+  raw_node_id = payload["node_id"] || payload["from_id"] || payload["from"]
+  node_id = string_or_nil(raw_node_id)
+  node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
+  raw_node_num = coerce_integer(payload["node_num"]) || coerce_integer(payload["num"])
+
+  payload_for_num = payload.dup
+  payload_for_num["num"] ||= raw_node_num if raw_node_num
+  node_num = resolve_node_num(node_id, payload_for_num)
+  node_num ||= raw_node_num
+
+  canonical = normalize_node_id(db, node_id || node_num)
+  node_id = canonical if canonical
+
+  from_id = string_or_nil(payload["from_id"]) || node_id
+  to_id = string_or_nil(payload["to_id"] || payload["to"])
+
+  telemetry_time = coerce_integer(payload["telemetry_time"] || payload["time"] || payload.dig("telemetry", "time"))
+  telemetry_time = nil if telemetry_time && telemetry_time > now
+
+  channel = coerce_integer(payload["channel"])
+  portnum = string_or_nil(payload["portnum"])
+  hop_limit = coerce_integer(payload["hop_limit"] || payload["hopLimit"])
+  snr = coerce_float(payload["snr"])
+  rssi = coerce_integer(payload["rssi"])
+  bitfield = coerce_integer(payload["bitfield"])
+  payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
+
+  telemetry_section = normalize_json_object(payload["telemetry"])
+  device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])
+  device_metrics ||= normalize_json_object(telemetry_section["deviceMetrics"]) if telemetry_section&.key?("deviceMetrics")
+  environment_metrics = normalize_json_object(payload["environment_metrics"] || payload["environmentMetrics"])
+  environment_metrics ||= normalize_json_object(telemetry_section["environmentMetrics"]) if telemetry_section&.key?("environmentMetrics")
+
+  fetch_metric = lambda do |map, *names|
+    next nil unless map.is_a?(Hash)
+    names.each do |name|
+      next unless name
+      key = name.to_s
+      return map[key] if map.key?(key)
+    end
+    nil
+  end
+
+  battery_level = payload.key?("battery_level") ? payload["battery_level"] : nil
+  battery_level = coerce_float(battery_level)
+  battery_level ||= coerce_float(fetch_metric.call(device_metrics, :battery_level, :batteryLevel))
+
+  voltage = payload.key?("voltage") ? payload["voltage"] : nil
+  voltage = coerce_float(voltage)
+  voltage ||= coerce_float(fetch_metric.call(device_metrics, :voltage))
+
+  channel_utilization = payload.key?("channel_utilization") ? payload["channel_utilization"] : nil
+  channel_utilization ||= payload["channelUtilization"] if payload.key?("channelUtilization")
+  channel_utilization = coerce_float(channel_utilization)
+  channel_utilization ||= coerce_float(fetch_metric.call(device_metrics, :channel_utilization, :channelUtilization))
+
+  air_util_tx = payload.key?("air_util_tx") ? payload["air_util_tx"] : nil
+  air_util_tx ||= payload["airUtilTx"] if payload.key?("airUtilTx")
+  air_util_tx = coerce_float(air_util_tx)
+  air_util_tx ||= coerce_float(fetch_metric.call(device_metrics, :air_util_tx, :airUtilTx))
+
+  uptime_seconds = payload.key?("uptime_seconds") ? payload["uptime_seconds"] : nil
+  uptime_seconds ||= payload["uptimeSeconds"] if payload.key?("uptimeSeconds")
+  uptime_seconds = coerce_integer(uptime_seconds)
+  uptime_seconds ||= coerce_integer(fetch_metric.call(device_metrics, :uptime_seconds, :uptimeSeconds))
+
+  temperature = payload.key?("temperature") ? payload["temperature"] : nil
+  temperature = coerce_float(temperature)
+  temperature ||= coerce_float(fetch_metric.call(environment_metrics, :temperature, :temperatureC, :temperature_c, :tempC))
+
+  relative_humidity = payload.key?("relative_humidity") ? payload["relative_humidity"] : nil
+  relative_humidity ||= payload["relativeHumidity"] if payload.key?("relativeHumidity")
+  relative_humidity ||= payload["humidity"] if payload.key?("humidity")
+  relative_humidity = coerce_float(relative_humidity)
+  relative_humidity ||= coerce_float(fetch_metric.call(environment_metrics, :relative_humidity, :relativeHumidity, :humidity))
+
+  barometric_pressure = payload.key?("barometric_pressure") ? payload["barometric_pressure"] : nil
+  barometric_pressure ||= payload["barometricPressure"] if payload.key?("barometricPressure")
+  barometric_pressure ||= payload["pressure"] if payload.key?("pressure")
+  barometric_pressure = coerce_float(barometric_pressure)
+  barometric_pressure ||= coerce_float(fetch_metric.call(environment_metrics, :barometric_pressure, :barometricPressure, :pressure))
+
+  row = [
+    telemetry_id,
+    node_id,
+    node_num,
+    from_id,
+    to_id,
+    rx_time,
+    rx_iso,
+    telemetry_time,
+    channel,
+    portnum,
+    hop_limit,
+    snr,
+    rssi,
+    bitfield,
+    payload_b64,
+    battery_level,
+    voltage,
+    channel_utilization,
+    air_util_tx,
+    uptime_seconds,
+    temperature,
+    relative_humidity,
+    barometric_pressure,
+  ]
+
+  with_busy_retry do
+    db.execute <<~SQL, row
+                 INSERT INTO telemetry(id,node_id,node_num,from_id,to_id,rx_time,rx_iso,telemetry_time,channel,portnum,hop_limit,snr,rssi,bitfield,payload_b64,
+                                       battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   node_id=COALESCE(excluded.node_id,telemetry.node_id),
+                   node_num=COALESCE(excluded.node_num,telemetry.node_num),
+                   from_id=COALESCE(excluded.from_id,telemetry.from_id),
+                   to_id=COALESCE(excluded.to_id,telemetry.to_id),
+                   rx_time=excluded.rx_time,
+                   rx_iso=excluded.rx_iso,
+                   telemetry_time=COALESCE(excluded.telemetry_time,telemetry.telemetry_time),
+                   channel=COALESCE(excluded.channel,telemetry.channel),
+                   portnum=COALESCE(excluded.portnum,telemetry.portnum),
+                   hop_limit=COALESCE(excluded.hop_limit,telemetry.hop_limit),
+                   snr=COALESCE(excluded.snr,telemetry.snr),
+                   rssi=COALESCE(excluded.rssi,telemetry.rssi),
+                   bitfield=COALESCE(excluded.bitfield,telemetry.bitfield),
+                   payload_b64=COALESCE(excluded.payload_b64,telemetry.payload_b64),
+                   battery_level=COALESCE(excluded.battery_level,telemetry.battery_level),
+                   voltage=COALESCE(excluded.voltage,telemetry.voltage),
+                   channel_utilization=COALESCE(excluded.channel_utilization,telemetry.channel_utilization),
+                   air_util_tx=COALESCE(excluded.air_util_tx,telemetry.air_util_tx),
+                   uptime_seconds=COALESCE(excluded.uptime_seconds,telemetry.uptime_seconds),
+                   temperature=COALESCE(excluded.temperature,telemetry.temperature),
+                   relative_humidity=COALESCE(excluded.relative_humidity,telemetry.relative_humidity),
+                   barometric_pressure=COALESCE(excluded.barometric_pressure,telemetry.barometric_pressure)
+               SQL
+  end
+
+  update_node_from_telemetry(
+    db,
+    node_id || from_id,
+    node_num,
+    rx_time,
+    battery_level: battery_level,
+    voltage: voltage,
+    channel_utilization: channel_utilization,
+    air_util_tx: air_util_tx,
+    uptime_seconds: uptime_seconds,
+  )
+end
+
 # Insert a text message if it does not already exist.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -1252,6 +1560,28 @@ post "/api/positions" do
   db = open_database
   positions.each do |pos|
     insert_position(db, pos)
+  end
+  { status: "ok" }.to_json
+ensure
+  db&.close
+end
+
+# POST /api/telemetry
+#
+# Accepts an array or object describing telemetry packets and stores each entry.
+post "/api/telemetry" do
+  require_token!
+  content_type :json
+  begin
+    data = JSON.parse(read_json_body)
+  rescue JSON::ParserError
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+  telemetry_packets = data.is_a?(Array) ? data : [data]
+  halt 400, { error: "too many telemetry packets" }.to_json if telemetry_packets.size > 1000
+  db = open_database
+  telemetry_packets.each do |packet|
+    insert_telemetry(db, packet)
   end
   { status: "ok" }.to_json
 ensure
