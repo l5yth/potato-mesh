@@ -979,6 +979,107 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 1_256_091_342,
+        "rxTime": 1_758_024_300,
+        "fromId": "!9e95cf60",
+        "toId": "^all",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "bitfield": 1,
+            "telemetry": {
+                "time": 1_758_024_300,
+                "deviceMetrics": {
+                    "batteryLevel": 101,
+                    "voltage": 4.224,
+                    "channelUtilization": 0.59666663,
+                    "airUtilTx": 0.03908333,
+                    "uptimeSeconds": 305044,
+                },
+                "localStats": {
+                    "numPacketsTx": 1280,
+                    "numPacketsRx": 1425,
+                },
+            },
+            "payload": {
+                "__bytes_b64__": "DTVr0mgSFQhlFQIrh0AdJb8YPyXYFSA9KJTPEg==",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/telemetry"
+    assert priority == mesh._TELEMETRY_POST_PRIORITY
+    assert payload["id"] == 1_256_091_342
+    assert payload["node_id"] == "!9e95cf60"
+    assert payload["from_id"] == "!9e95cf60"
+    assert payload["rx_time"] == 1_758_024_300
+    assert payload["telemetry_time"] == 1_758_024_300
+    assert payload["channel"] == 0
+    assert payload["bitfield"] == 1
+    assert payload["payload_b64"] == "DTVr0mgSFQhlFQIrh0AdJb8YPyXYFSA9KJTPEg=="
+    assert payload["device_metrics"]["batteryLevel"] == 101
+    assert payload["local_stats"]["numPacketsTx"] == 1280
+    assert payload["battery_level"] == pytest.approx(101.0)
+    assert payload["voltage"] == pytest.approx(4.224)
+    assert payload["channel_utilization"] == pytest.approx(0.59666663)
+    assert payload["air_util_tx"] == pytest.approx(0.03908333)
+    assert payload["uptime_seconds"] == 305044
+
+
+def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 2_817_720_548,
+        "rxTime": 1_758_024_400,
+        "from": 3_698_627_780,
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_758_024_390,
+                "environmentMetrics": {
+                    "temperature": 21.98,
+                    "relativeHumidity": 39.475586,
+                    "barometricPressure": 1017.8353,
+                },
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/telemetry"
+    assert payload["id"] == 2_817_720_548
+    assert payload["node_id"] == "!dc7494c4"
+    assert payload["from_id"] == "!dc7494c4"
+    assert payload["telemetry_time"] == 1_758_024_390
+    assert payload["environment_metrics"]["temperature"] == pytest.approx(21.98)
+    assert payload["temperature"] == pytest.approx(21.98)
+    assert payload["relative_humidity"] == pytest.approx(39.475586)
+    assert payload["barometric_pressure"] == pytest.approx(1017.8353)
+
+
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
     mesh._clear_post_queue()
