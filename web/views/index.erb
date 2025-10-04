@@ -564,7 +564,9 @@ var(--fg); }
   </div>
 
   <div class="map-row">
-    <div id="chat" aria-label="Chat log"></div>
+    <% unless private_mode %>
+      <div id="chat" aria-label="Chat log"></div>
+    <% end %>
     <div id="map" role="region" aria-label="Nodes map"></div>
   </div>
 
@@ -658,6 +660,7 @@ var(--fg); }
     const CHAT_LIMIT = 1000;
     const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
     const REFRESH_MS = <%= refresh_interval_seconds * 1000 %>;
+    const CHAT_ENABLED = <%= private_mode ? "false" : "true" %>;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
     let refreshTimer = null;
@@ -1206,6 +1209,7 @@ var(--fg); }
         const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
         legendRoleButtons.clear();
         for (const [role, color] of Object.entries(roleColors)) {
+          if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
           const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
           item.type = 'button';
           item.setAttribute('aria-pressed', 'false');
@@ -1526,7 +1530,7 @@ var(--fg); }
     }
 
     function renderChatLog(nodes, messages) {
-      if (!chatEl) return;
+      if (!CHAT_ENABLED || !chatEl) return;
       const entries = [];
       for (const n of nodes || []) {
         entries.push({ type: 'node', ts: n.first_heard ?? 0, item: n });
@@ -1649,6 +1653,7 @@ var(--fg); }
     }
 
     async function fetchMessages(limit = NODE_LIMIT) {
+      if (!CHAT_ENABLED) return [];
       const r = await fetch(`/api/messages?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
@@ -1815,10 +1820,13 @@ var(--fg); }
         const nodes = await fetchNodes();
         nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
-        const messages = await fetchMessages();
-        messages.forEach(message => {
-          if (message && message.node) applyNodeNameFallback(message.node);
-        });
+        let messages = [];
+        if (CHAT_ENABLED) {
+          messages = await fetchMessages();
+          messages.forEach(message => {
+            if (message && message.node) applyNodeNameFallback(message.node);
+          });
+        }
         renderChatLog(nodes, messages);
         allNodes = nodes;
         applyFilter();

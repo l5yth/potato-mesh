@@ -55,6 +55,7 @@ The web app can be configured with environment variables (defaults shown):
 * `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `52.502889` / `13.404194`)
 * `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
 * `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)
+* `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled
@@ -72,10 +73,10 @@ The web app contains an API:
 
 * GET `/api/nodes?limit=100` - returns the latest 100 nodes reported to the app
 * GET `/api/positions?limit=100` - returns the latest 100 position data
-* GET `/api/messages?limit=100` - returns the latest 100 messages
+* GET `/api/messages?limit=100` - returns the latest 100 messages (disabled when `PRIVATE=1`)
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/positions` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
-* POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
+* POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`; disabled when `PRIVATE=1`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
