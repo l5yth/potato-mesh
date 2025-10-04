@@ -332,7 +332,8 @@ def upsert_node(node_id, n):
     if DEBUG:
         user = _get(ndict, "user") or {}
         short = _get(user, "shortName")
-        _debug_log(f"upserted node {node_id} shortName={short!r}")
+        long = _get(user, "longName")
+        _debug_log(f"upserted node {node_id} shortName={short!r} longName={long!r}")
 
 
 # --- Message logging via PubSub -----------------------------------------------
@@ -898,9 +899,7 @@ def store_position_packet(packet: dict, decoded: Mapping):
     )
 
     if DEBUG:
-        _debug_log(
-            f"stored position for {node_id} lat={latitude!r} lon={longitude!r} rx_time={rx_time}"
-        )
+        _debug_log(f"stored position for {node_id} lat={latitude!r} lon={longitude!r}")
 
 
 def store_telemetry_packet(packet: dict, decoded: Mapping):
@@ -1053,7 +1052,7 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
 
     if DEBUG:
         _debug_log(
-            f"stored telemetry for {node_id!r} rx_time={rx_time} battery={battery_level!r}"
+            f"stored telemetry for {node_id!r} battery={battery_level!r} voltage={voltage!r}"
         )
 
 
@@ -1204,7 +1203,12 @@ def store_nodeinfo_packet(packet: dict, decoded: Mapping):
         short = None
         if isinstance(user_dict, Mapping):
             short = user_dict.get("shortName")
-        _debug_log(f"stored nodeinfo for {node_id} shortName={short!r}")
+            long = user_dict.get("longName")
+        else:
+            long = None
+        _debug_log(
+            f"stored nodeinfo for {node_id} shortName={short!r} longName={long!r}"
+        )
 
 
 def store_packet_dict(p: dict):
