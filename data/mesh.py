@@ -1298,8 +1298,14 @@ def store_packet_dict(p: dict):
     _queue_post_json("/api/messages", msg, priority=_MESSAGE_POST_PRIORITY)
 
     if DEBUG:
+        from_label = _canonical_node_id(from_id) or from_id
+        to_label = _canonical_node_id(to_id) or to_id
+        if text is None and encrypted:
+            payload = "Encrypted"
+        else:
+            payload = text
         _debug_log(
-            f"stored message from {from_id!r} to {to_id!r} ch={ch} text={text!r}"
+            f"stored message from {from_label!r} to {to_label!r} ch={ch} text={payload!r}"
         )
 
 
