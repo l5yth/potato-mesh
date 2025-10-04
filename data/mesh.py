@@ -53,6 +53,16 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 _DEFAULT_TCP_PORT = 4403
 
 
+def _debug_log(message: str):
+    """Print ``message`` with a UTC timestamp when ``DEBUG`` is enabled."""
+
+    if not DEBUG:
+        return
+
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    print(f"[{timestamp}] [debug] {message}")
+
+
 # Reconnect configuration: retry delays are adjustable via environment
 # variables to ease testing while keeping sensible defaults in production.
 _RECONNECT_INITIAL_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_INITIAL", "5"))
@@ -139,14 +149,12 @@ def _create_serial_interface(port: str):
 
     port_value = (port or "").strip()
     if port_value.lower() in {"", "mock", "none", "null", "disabled"}:
-        if DEBUG:
-            print(f"[debug] using dummy serial interface for port={port_value!r}")
+        _debug_log(f"using dummy serial interface for port={port_value!r}")
         return _DummySerialInterface()
     network_target = _parse_network_target(port_value)
     if network_target:
         host, tcp_port = network_target
-        if DEBUG:
-            print("[debug] using TCP interface for host=" f"{host!r} port={tcp_port!r}")
+        _debug_log(f"using TCP interface for host={host!r} port={tcp_port!r}")
         return TCPInterface(hostname=host, portNumber=tcp_port)
     return SerialInterface(devPath=port_value)
 
@@ -211,8 +219,7 @@ def _post_json(path: str, payload: dict):
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
     except Exception as e:
-        if DEBUG:
-            print(f"[warn] POST {url} failed: {e}")
+        _debug_log(f"[warn] POST {url} failed: {e}")
 
 
 def _enqueue_post_json(path: str, payload: dict, priority: int):
@@ -325,7 +332,7 @@ def upsert_node(node_id, n):
     if DEBUG:
         user = _get(ndict, "user") or {}
         short = _get(user, "shortName")
-        print(f"[debug] upserted node {node_id} shortName={short!r}")
+        _debug_log(f"upserted node {node_id} shortName={short!r}")
 
 
 # --- Message logging via PubSub -----------------------------------------------
@@ -891,8 +898,8 @@ def store_position_packet(packet: dict, decoded: Mapping):
     )
 
     if DEBUG:
-        print(
-            f"[debug] stored position for {node_id} lat={latitude!r} lon={longitude!r} rx_time={rx_time}"
+        _debug_log(
+            f"stored position for {node_id} lat={latitude!r} lon={longitude!r} rx_time={rx_time}"
         )
 
 
@@ -1045,8 +1052,8 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
     )
 
     if DEBUG:
-        print(
-            f"[debug] stored telemetry for {node_id!r} rx_time={rx_time} battery={battery_level!r}"
+        _debug_log(
+            f"stored telemetry for {node_id!r} rx_time={rx_time} battery={battery_level!r}"
         )
 
 
@@ -1197,7 +1204,7 @@ def store_nodeinfo_packet(packet: dict, decoded: Mapping):
         short = None
         if isinstance(user_dict, Mapping):
             short = user_dict.get("shortName")
-        print(f"[debug] stored nodeinfo for {node_id} shortName={short!r}")
+        _debug_log(f"stored nodeinfo for {node_id} shortName={short!r}")
 
 
 def store_packet_dict(p: dict):
@@ -1267,7 +1274,7 @@ def store_packet_dict(p: dict):
             raw = json.dumps(p, default=str)
         except Exception:
             raw = str(p)
-        print(f"[debug] packet missing from_id: {raw}")
+        _debug_log(f"packet missing from_id: {raw}")
 
     # link metrics
     snr = _first(p, "snr", "rx_snr", "rxSnr", default=None)
@@ -1291,8 +1298,8 @@ def store_packet_dict(p: dict):
     _queue_post_json("/api/messages", msg, priority=_MESSAGE_POST_PRIORITY)
 
     if DEBUG:
-        print(
-            f"[debug] stored message from {from_id!r} to {to_id!r} ch={ch} text={text!r}"
+        _debug_log(
+            f"stored message from {from_id!r} to {to_id!r} ch={ch} text={text!r}"
         )
 
 
@@ -1328,8 +1335,7 @@ def _subscribe_receive_topics() -> list[str]:
             pub.subscribe(on_receive, topic)
             subscribed.append(topic)
         except Exception as exc:  # pragma: no cover - pub may raise in prod only
-            if DEBUG:
-                print(f"[debug] failed to subscribe to {topic!r}: {exc}")
+            _debug_log(f"failed to subscribe to {topic!r}: {exc}")
     return subscribed
 
 
@@ -1385,7 +1391,7 @@ def main():
     # Subscribe to PubSub topics (reliable in current meshtastic)
     subscribed = _subscribe_receive_topics()
     if DEBUG and subscribed:
-        print(f"[debug] subscribed to receive topics: {', '.join(subscribed)}")
+        _debug_log(f"subscribed to receive topics: {', '.join(subscribed)}")
 
     def _close_interface(iface_obj):
         if iface_obj is None:
@@ -1399,6 +1405,7 @@ def main():
     retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
 
     stop = threading.Event()
+    initial_snapshot_sent = False
 
     def handle_sig(*_):
         """Stop the daemon when a termination signal is received."""
@@ -1417,6 +1424,7 @@ def main():
             try:
                 iface = _create_serial_interface(PORT)
                 retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
+                initial_snapshot_sent = False
             except Exception as exc:
                 print(f"[warn] failed to create mesh interface: {exc}")
                 stop.wait(retry_delay)
@@ -1431,35 +1439,38 @@ def main():
                     )
                 continue
 
-        try:
-            nodes = getattr(iface, "nodes", {}) or {}
-            node_items = _node_items_snapshot(nodes)
-            if node_items is None:
-                if DEBUG:
-                    print(
-                        "[debug] skipping node snapshot; nodes changed during iteration"
+        if not initial_snapshot_sent:
+            try:
+                nodes = getattr(iface, "nodes", {}) or {}
+                node_items = _node_items_snapshot(nodes)
+                if node_items is None:
+                    _debug_log(
+                        "skipping node snapshot; nodes changed during iteration"
                     )
-            else:
-                for node_id, n in node_items:
-                    try:
-                        upsert_node(node_id, n)
-                    except Exception as e:
-                        print(
-                            f"[warn] failed to update node snapshot for {node_id}: {e}"
-                        )
-                        if DEBUG:
-                            print(f"[debug] node object: {n!r}")
-        except Exception as e:
-            print(f"[warn] failed to update node snapshot: {e}")
-            _close_interface(iface)
-            iface = None
-            stop.wait(retry_delay)
-            if _RECONNECT_MAX_DELAY_SECS > 0:
-                retry_delay = min(
-                    retry_delay * 2 if retry_delay else _RECONNECT_INITIAL_DELAY_SECS,
-                    _RECONNECT_MAX_DELAY_SECS,
-                )
-            continue
+                else:
+                    for node_id, n in node_items:
+                        try:
+                            upsert_node(node_id, n)
+                        except Exception as e:
+                            print(
+                                f"[warn] failed to update node snapshot for {node_id}: {e}"
+                            )
+                            if DEBUG:
+                                _debug_log(f"node object: {n!r}")
+                    initial_snapshot_sent = True
+            except Exception as e:
+                print(f"[warn] failed to update node snapshot: {e}")
+                _close_interface(iface)
+                iface = None
+                stop.wait(retry_delay)
+                if _RECONNECT_MAX_DELAY_SECS > 0:
+                    retry_delay = min(
+                        retry_delay * 2
+                        if retry_delay
+                        else _RECONNECT_INITIAL_DELAY_SECS,
+                        _RECONNECT_MAX_DELAY_SECS,
+                    )
+                continue
 
         retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
         stop.wait(SNAPSHOT_SECS)
