@@ -333,9 +333,7 @@ def upsert_node(node_id, n):
         user = _get(ndict, "user") or {}
         short = _get(user, "shortName")
         long = _get(user, "longName")
-        _debug_log(
-            f"upserted node {node_id} shortName={short!r} longName={long!r}"
-        )
+        _debug_log(f"upserted node {node_id} shortName={short!r} longName={long!r}")
 
 
 # --- Message logging via PubSub -----------------------------------------------
@@ -901,9 +899,7 @@ def store_position_packet(packet: dict, decoded: Mapping):
     )
 
     if DEBUG:
-        _debug_log(
-            f"stored position for {node_id} lat={latitude!r} lon={longitude!r}"
-        )
+        _debug_log(f"stored position for {node_id} lat={latitude!r} lon={longitude!r}")
 
 
 def store_telemetry_packet(packet: dict, decoded: Mapping):
