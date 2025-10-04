@@ -1484,7 +1484,6 @@ def insert_message(db, m)
       end
     end
   end
-
 end
 
 # Resolve a node reference to the canonical node ID when possible.
