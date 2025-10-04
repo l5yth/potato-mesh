@@ -1353,6 +1353,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
         node_aliases[num.to_s] ||= canonical
       end
 
+      latest_rx_by_node = {}
+      messages_fixture.each do |message|
+        rx_time = message["rx_time"]
+        next unless rx_time
+
+        canonical = nil
+        from_id = message["from_id"]
+
+        if from_id.is_a?(String)
+          trimmed = from_id.strip
+          unless trimmed.empty?
+            if trimmed.match?(/\A[0-9]+\z/)
+              canonical = node_aliases[trimmed] || trimmed
+            else
+              canonical = trimmed
+            end
+          end
+        end
+
+        canonical ||= message.dig("node", "node_id")
+
+        if canonical.nil?
+          num = message.dig("node", "num")
+          canonical = node_aliases[num.to_s] if num
+        end
+
+        next unless canonical
+
+        existing = latest_rx_by_node[canonical]
+        latest_rx_by_node[canonical] = [existing, rx_time].compact.max
+      end
+
       messages_fixture.each do |message|
         expected = message.reject { |key, _| key == "node" }
         actual_row = actual_by_id.fetch(message["id"])
@@ -1405,7 +1437,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(node_actual["snr"], node_expected["snr"])
           expect_same_value(node_actual["battery_level"], node_expected["battery_level"])
           expect_same_value(node_actual["voltage"], node_expected["voltage"])
-          expect(node_actual["last_heard"]).to eq(node_expected["last_heard"])
+          expected_last_heard = node_expected["last_heard"]
+          latest_rx = latest_rx_by_node[node_expected["node_id"]]
+          if latest_rx
+            expected_last_heard = [expected_last_heard, latest_rx].compact.max
+          end
+          expect(node_actual["last_heard"]).to eq(expected_last_heard)
           expect(node_actual["first_heard"]).to eq(node_expected["first_heard"])
           expect_same_value(node_actual["latitude"], node_expected["latitude"])
           expect_same_value(node_actual["longitude"], node_expected["longitude"])

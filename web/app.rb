@@ -741,10 +741,22 @@ def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil)
   timestamp = coerce_integer(rx_time)
   return unless timestamp
 
-  parts = canonical_node_parts(node_ref, fallback_num)
-  return unless parts
+  node_id = nil
 
-  node_id, = parts
+  parts = canonical_node_parts(node_ref, fallback_num)
+  node_id, = parts if parts
+
+  unless node_id
+    trimmed = string_or_nil(node_ref)
+    if trimmed
+      node_id = normalize_node_id(db, trimmed) || trimmed
+    elsif fallback_num
+      fallback_parts = canonical_node_parts(fallback_num, nil)
+      node_id, = fallback_parts if fallback_parts
+    end
+  end
+
+  return unless node_id
 
   with_busy_retry do
     db.execute <<~SQL, [timestamp, timestamp, timestamp, node_id]
