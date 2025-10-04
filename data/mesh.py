@@ -1444,9 +1444,7 @@ def main():
                 nodes = getattr(iface, "nodes", {}) or {}
                 node_items = _node_items_snapshot(nodes)
                 if node_items is None:
-                    _debug_log(
-                        "skipping node snapshot; nodes changed during iteration"
-                    )
+                    _debug_log("skipping node snapshot; nodes changed during iteration")
                 else:
                     processed_snapshot_item = False
                     for node_id, n in node_items:
@@ -1468,9 +1466,11 @@ def main():
                 stop.wait(retry_delay)
                 if _RECONNECT_MAX_DELAY_SECS > 0:
                     retry_delay = min(
-                        retry_delay * 2
-                        if retry_delay
-                        else _RECONNECT_INITIAL_DELAY_SECS,
+                        (
+                            retry_delay * 2
+                            if retry_delay
+                            else _RECONNECT_INITIAL_DELAY_SECS
+                        ),
                         _RECONNECT_MAX_DELAY_SECS,
                     )
                 continue
