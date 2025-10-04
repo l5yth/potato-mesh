@@ -1448,7 +1448,9 @@ def main():
                         "skipping node snapshot; nodes changed during iteration"
                     )
                 else:
+                    processed_snapshot_item = False
                     for node_id, n in node_items:
+                        processed_snapshot_item = True
                         try:
                             upsert_node(node_id, n)
                         except Exception as e:
@@ -1457,7 +1459,8 @@ def main():
                             )
                             if DEBUG:
                                 _debug_log(f"node object: {n!r}")
-                    initial_snapshot_sent = True
+                    if processed_snapshot_item:
+                        initial_snapshot_sent = True
             except Exception as e:
                 print(f"[warn] failed to update node snapshot: {e}")
                 _close_interface(iface)
