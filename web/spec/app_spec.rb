@@ -850,7 +850,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(count).to eq(0)
         end
       end
-      end
+    end
 
     describe "POST /api/telemetry" do
       it "stores telemetry packets and updates node metrics" do

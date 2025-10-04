@@ -544,7 +544,6 @@ def query_telemetry(limit)
     r["temperature"] = coerce_float(r["temperature"])
     r["relative_humidity"] = coerce_float(r["relative_humidity"])
     r["barometric_pressure"] = coerce_float(r["barometric_pressure"])
-
   end
   rows
 ensure
