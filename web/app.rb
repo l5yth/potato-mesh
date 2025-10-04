@@ -731,6 +731,34 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
   inserted
 end
 
+# Ensure the node's last_seen timestamp reflects the provided receive time.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param node_ref [Object] raw identifier used to resolve the node.
+# @param fallback_num [Object] optional numeric identifier.
+# @param rx_time [Object] receive timestamp that should update the node.
+def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil)
+  timestamp = coerce_integer(rx_time)
+  return unless timestamp
+
+  parts = canonical_node_parts(node_ref, fallback_num)
+  return unless parts
+
+  node_id, = parts
+
+  with_busy_retry do
+    db.execute <<~SQL, [timestamp, timestamp, timestamp, node_id]
+                 UPDATE nodes
+                    SET last_heard = CASE
+                      WHEN COALESCE(last_heard, 0) >= ? THEN last_heard
+                      ELSE ?
+                    END,
+                        first_heard = COALESCE(first_heard, ?)
+                  WHERE node_id = ?
+               SQL
+  end
+end
+
 # Insert or update a node row with the most recent metrics.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -974,6 +1002,7 @@ def insert_position(db, payload)
   node_id = canonical if canonical
 
   ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
+  touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time)
 
   to_id = string_or_nil(payload["to_id"] || payload["to"])
 
@@ -1123,7 +1152,7 @@ def insert_position(db, payload)
   )
 end
 
-def update_node_from_telemetry(db, node_id, node_num, _rx_time, metrics = {})
+def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   num = coerce_integer(node_num)
   id = string_or_nil(node_id)
   if id&.start_with?("!")
@@ -1132,9 +1161,8 @@ def update_node_from_telemetry(db, node_id, node_num, _rx_time, metrics = {})
   id ||= format("!%08x", num & 0xFFFFFFFF) if num
   return unless id
 
-  now = Time.now.to_i
-
-  ensure_unknown_node(db, id, num, heard_time: now)
+  ensure_unknown_node(db, id, num, heard_time: rx_time)
+  touch_node_last_seen(db, id, num, rx_time: rx_time)
 
   battery = coerce_float(metrics[:battery_level] || metrics["battery_level"])
   voltage = coerce_float(metrics[:voltage] || metrics["voltage"])
@@ -1149,12 +1177,6 @@ def update_node_from_telemetry(db, node_id, node_num, _rx_time, metrics = {})
     assignments << "num = ?"
     params << num
   end
-
-  assignments << "last_heard = ?"
-  params << now
-
-  assignments << "first_heard = COALESCE(first_heard, ?)"
-  params << now
 
   metric_updates = {
     "battery_level" => battery,
@@ -1391,9 +1413,7 @@ def insert_message(db, m)
   encrypted = string_or_nil(m["encrypted"])
 
   ensure_unknown_node(db, from_id || raw_from_id, m["from_num"], heard_time: rx_time)
-
-  update_sender_last_heard =
-    encrypted && !encrypted.strip.empty? && from_id && rx_time
+  touch_node_last_seen(db, from_id || raw_from_id || m["from_num"], m["from_num"], rx_time: rx_time)
 
   row = [
     msg_id,
@@ -1465,17 +1485,6 @@ def insert_message(db, m)
     end
   end
 
-  if update_sender_last_heard
-    with_busy_retry do
-      db.execute <<~SQL, [rx_time, rx_time, from_id, rx_time]
-                   UPDATE nodes
-                      SET last_heard = ?,
-                          first_heard = COALESCE(first_heard, ?)
-                    WHERE node_id = ?
-                      AND COALESCE(last_heard, 0) <= ?
-                 SQL
-    end
-  end
 end
 
 # Resolve a node reference to the canonical node ID when possible.

@@ -897,14 +897,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(metrics_node["channel_utilization"], payload[0]["device_metrics"]["channelUtilization"])
           expect_same_value(metrics_node["air_util_tx"], payload[0]["device_metrics"]["airUtilTx"])
           expect(metrics_node["uptime_seconds"]).to eq(payload[0]["device_metrics"]["uptimeSeconds"])
-          expect(metrics_node["last_heard"]).to eq(reference_time.to_i)
-          expect(metrics_node["first_heard"]).to eq(reference_time.to_i)
+          expect(metrics_node["last_heard"]).to eq(payload[0]["rx_time"])
+          expect(metrics_node["first_heard"]).to eq(payload[0]["rx_time"])
 
           env_node = db.get_first_row(
             "SELECT last_heard, battery_level, voltage FROM nodes WHERE node_id = ?",
             [payload[1]["node_id"]],
           )
-          expect(env_node["last_heard"]).to eq(reference_time.to_i)
+          expect(env_node["last_heard"]).to eq(payload[1]["rx_time"])
           expect(env_node["battery_level"]).to be_nil
           expect(env_node["voltage"]).to be_nil
 
@@ -914,7 +914,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           )
           expect_same_value(local_node["battery_level"], payload[2]["device_metrics"]["battery_level"])
           expect(local_node["uptime_seconds"]).to eq(payload[2]["device_metrics"]["uptime_seconds"])
-          expect(local_node["last_heard"]).to eq(reference_time.to_i)
+          expect(local_node["last_heard"]).to eq(payload[2]["rx_time"])
         end
       end
 
@@ -1107,7 +1107,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [sender_id],
         )
 
-        expect(node_row["last_heard"]).to eq(reference_time.to_i)
+        expect(node_row["last_heard"]).to eq(payload["rx_time"])
       end
 
       get "/api/messages"
@@ -1116,6 +1116,44 @@ RSpec.describe "Potato Mesh Sinatra app" do
       messages = JSON.parse(last_response.body)
       expect(messages).to be_an(Array)
       expect(messages).to be_empty
+    end
+
+    it "updates node last_heard for plaintext messages" do
+      node_id = "!plainmsg01"
+      initial_first = reference_time.to_i - 600
+      initial_last = reference_time.to_i - 300
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard) VALUES (?,?,?)",
+          [node_id, initial_last, initial_first],
+        )
+      end
+
+      rx_time = reference_time.to_i - 120
+      payload = {
+        "packet_id" => 888_001,
+        "rx_time" => rx_time,
+        "rx_iso" => Time.at(rx_time).utc.iso8601,
+        "from_id" => node_id,
+        "text" => "plaintext update",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row["last_heard"]).to eq(rx_time)
+        expect(row["first_heard"]).to eq(initial_first)
+      end
     end
 
     it "stores messages containing SQL control characters without executing them" do
