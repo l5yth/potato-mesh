@@ -1465,13 +1465,23 @@ def insert_neighbor(db, payload)
   raw_from_id = payload["from"] if raw_from_id.nil? || raw_from_id.to_s.strip.empty?
   from_num = coerce_integer(payload["from_num"] || payload["num"])
 
+  canonical_from_id = nil
+  from_parts = canonical_node_parts(raw_from_id, from_num)
+  if from_parts
+    canonical_from_id, canonical_from_num, = from_parts
+    from_num ||= canonical_from_num
+  else
+    canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
+  end
+
   trimmed_from_id = string_or_nil(raw_from_id)
-  canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
   from_id = trimmed_from_id
   if canonical_from_id
     if from_id.nil? || from_id.match?(/\A[0-9]+\z/)
       from_id = canonical_from_id
     elsif from_id.start_with?("!") && from_id.casecmp(canonical_from_id) != 0
+      from_id = canonical_from_id
+    elsif from_parts
       from_id = canonical_from_id
     end
   end
