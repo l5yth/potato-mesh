@@ -167,6 +167,7 @@ _POST_QUEUE_ACTIVE = False
 
 _MESSAGE_POST_PRIORITY = 0
 _POSITION_POST_PRIORITY = 10
+_NEIGHBOR_POST_PRIORITY = 12
 _TELEMETRY_POST_PRIORITY = 15
 _NODE_POST_PRIORITY = 20
 _DEFAULT_POST_PRIORITY = 50
@@ -176,6 +177,7 @@ _RECEIVE_TOPICS = (
     "meshtastic.receive.text",
     "meshtastic.receive.position",
     "meshtastic.receive.POSITION_APP",
+    "meshtastic.receive.NEIGHBORINFO_APP",
     "meshtastic.receive.user",
     "meshtastic.receive.NODEINFO_APP",
 )
@@ -1056,6 +1058,95 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
         )
 
 
+def store_neighborinfo_packet(packet: dict, decoded: Mapping):
+    """Handle ``NEIGHBORINFO_APP`` packets and forward them to ``/api/neighbors``."""
+
+    neighbor_section = (
+        decoded.get("neighborinfo") if isinstance(decoded, Mapping) else None
+    )
+    if not isinstance(neighbor_section, Mapping):
+        return
+
+    pkt_id = _coerce_int(_first(packet, "id", "packet_id", "packetId", default=None))
+    if pkt_id is None:
+        return
+
+    raw_from = _first(packet, "fromId", "from_id", "from", default=None)
+    from_id = _canonical_node_id(raw_from)
+    from_num = _coerce_int(_first(decoded, "num", "node_num", default=None))
+    if from_num is None:
+        from_num = _node_num_from_id(from_id or raw_from)
+
+    raw_to = _first(packet, "toId", "to_id", "to", default=None)
+    to_id = _canonical_node_id(raw_to) or raw_to
+
+    raw_rx_time = _first(packet, "rxTime", "rx_time", default=time.time())
+    try:
+        rx_time = int(raw_rx_time)
+    except (TypeError, ValueError):
+        rx_time = int(time.time())
+    rx_iso = _iso(rx_time)
+
+    node_id = _canonical_node_id(
+        _first(neighbor_section, "nodeId", "node_id", default=None)
+    )
+    if node_id is None:
+        node_id = _canonical_node_id(raw_from)
+    node_num = _coerce_int(
+        _first(neighbor_section, "nodeNum", "node_num", default=None)
+    )
+    if node_num is None:
+        node_num = _node_num_from_id(node_id)
+
+    interval_secs = _coerce_int(
+        _first(
+            neighbor_section,
+            "nodeBroadcastIntervalSecs",
+            "node_broadcast_interval_secs",
+            default=None,
+        )
+    )
+
+    last_sent_by = _canonical_node_id(
+        _first(neighbor_section, "lastSentById", "last_sent_by_id", default=None)
+    )
+    if last_sent_by is None:
+        last_sent_by = node_id or _canonical_node_id(raw_from)
+
+    hop_limit = _coerce_int(_first(packet, "hopLimit", "hop_limit", default=None))
+    snr = _coerce_float(_first(packet, "snr", "rx_snr", "rxSnr", default=None))
+    rssi = _coerce_int(_first(packet, "rssi", "rx_rssi", "rxRssi", default=None))
+    bitfield = _coerce_int(_first(decoded, "bitfield", default=None))
+
+    payload = {
+        "id": pkt_id,
+        "rx_time": rx_time,
+        "rx_iso": rx_iso,
+        "from_id": from_id or raw_from,
+        "to_id": to_id,
+        "from_num": from_num,
+        "node_id": node_id,
+        "node_num": node_num,
+        "last_sent_by_id": last_sent_by,
+        "node_broadcast_interval_secs": interval_secs,
+        "hop_limit": hop_limit,
+        "snr": snr,
+        "rssi": rssi,
+        "bitfield": bitfield,
+    }
+
+    payload = {key: value for key, value in payload.items() if value is not None}
+
+    _queue_post_json(
+        "/api/neighbors", payload, priority=_NEIGHBOR_POST_PRIORITY
+    )
+
+    if DEBUG:
+        _debug_log(
+            f"stored neighborinfo for {node_id or from_id!r} interval={interval_secs!r}"
+        )
+
+
 def store_nodeinfo_packet(packet: dict, decoded: Mapping):
     """Handle ``NODEINFO_APP`` packets and forward them to ``/api/nodes``."""
 
@@ -1227,6 +1318,15 @@ def store_packet_dict(p: dict):
     portnum_raw = _first(dec, "portnum", default=None)
     portnum = str(portnum_raw).upper() if portnum_raw is not None else None
     portnum_int = _coerce_int(portnum_raw)
+
+    neighbor_section = dec.get("neighborinfo") if isinstance(dec, Mapping) else None
+    if (
+        portnum == "NEIGHBORINFO_APP"
+        or (portnum_int == 66)
+        or isinstance(neighbor_section, Mapping)
+    ):
+        store_neighborinfo_packet(p, dec)
+        return
 
     telemetry_section = dec.get("telemetry") if isinstance(dec, Mapping) else None
     if (

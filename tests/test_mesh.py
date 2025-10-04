@@ -1077,6 +1077,51 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["barometric_pressure"] == pytest.approx(1017.8353)
 
 
+def test_store_packet_dict_handles_neighborinfo_packet(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 1_830_614_752,
+        "rxTime": 1_758_621_435,
+        "from": 2_660_618_080,
+        "to": 1,
+        "hopLimit": 7,
+        "snr": 3.5,
+        "rssi": -80,
+        "decoded": {
+            "portnum": "NEIGHBORINFO_APP",
+            "bitfield": 1,
+            "neighborinfo": {
+                "nodeId": 2_660_618_080,
+                "lastSentById": 2_660_618_080,
+                "nodeBroadcastIntervalSecs": 3600,
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/neighbors"
+    assert priority == mesh._NEIGHBOR_POST_PRIORITY
+    assert payload["id"] == 1_830_614_752
+    assert payload["rx_time"] == 1_758_621_435
+    assert payload["from_id"] == "!9e95cf60"
+    assert payload["node_id"] == "!9e95cf60"
+    assert payload["last_sent_by_id"] == "!9e95cf60"
+    assert payload["node_broadcast_interval_secs"] == 3600
+    assert payload["hop_limit"] == 7
+    assert payload["snr"] == pytest.approx(3.5)
+    assert payload["rssi"] == -80
+    assert payload["bitfield"] == 1
+
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
     mesh._clear_post_queue()

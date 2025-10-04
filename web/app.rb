@@ -322,8 +322,8 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  required = %w[nodes messages positions telemetry]
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry')").flatten
+  required = %w[nodes messages positions telemetry neighbors]
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors')").flatten
   (required - tables).empty?
 rescue SQLite3::Exception
   false
@@ -337,7 +337,7 @@ end
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = open_database
-  %w[nodes messages positions telemetry].each do |schema|
+  %w[nodes messages positions telemetry neighbors].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
   end
@@ -557,6 +557,38 @@ ensure
   db&.close
 end
 
+# Retrieve recent neighbor broadcasts ordered by receive time.
+#
+# @param limit [Integer] maximum number of rows returned.
+# @return [Array<Hash>] collection of neighbor broadcast records formatted for
+#   the API.
+def query_neighbors(limit)
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  rows = db.execute <<~SQL, [limit]
+                      SELECT id, rx_time, rx_iso, from_id, to_id, node_id,
+                             last_sent_by_id, node_broadcast_interval_secs,
+                             hop_limit, snr, rssi, bitfield
+                      FROM neighbors
+                      ORDER BY rx_time DESC
+                      LIMIT ?
+                    SQL
+  rows.each do |r|
+    rx_time = coerce_integer(r["rx_time"])
+    r["rx_time"] = rx_time if rx_time
+    r["rx_iso"] = Time.at(rx_time).utc.iso8601 if rx_time && string_or_nil(r["rx_iso"]).nil?
+
+    r["node_broadcast_interval_secs"] = coerce_integer(r["node_broadcast_interval_secs"])
+    r["hop_limit"] = coerce_integer(r["hop_limit"])
+    r["rssi"] = coerce_integer(r["rssi"])
+    r["bitfield"] = coerce_integer(r["bitfield"])
+    r["snr"] = coerce_float(r["snr"])
+  end
+  rows
+ensure
+  db&.close
+end
+
 # GET /api/messages
 #
 # Returns a JSON array of stored text messages including node metadata.
@@ -583,6 +615,15 @@ get "/api/telemetry" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_telemetry(limit).to_json
+end
+
+# GET /api/neighbors
+#
+# Returns a JSON array of recorded neighbor broadcasts.
+get "/api/neighbors" do
+  content_type :json
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_neighbors(limit).to_json
 end
 
 # Determine the numeric node reference for a canonical node identifier.
@@ -1404,6 +1445,150 @@ def insert_telemetry(db, payload)
   )
 end
 
+# Insert a neighbor broadcast if it does not already exist.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param payload [Hash] neighbor broadcast payload provided by the data daemon.
+def insert_neighbor(db, payload)
+  return unless payload.is_a?(Hash)
+
+  neighbor_id = coerce_integer(payload["id"] || payload["packet_id"])
+  return unless neighbor_id
+
+  now = Time.now.to_i
+  rx_time = coerce_integer(payload["rx_time"])
+  rx_time = now if rx_time.nil? || rx_time > now
+  rx_iso = string_or_nil(payload["rx_iso"])
+  rx_iso ||= Time.at(rx_time).utc.iso8601
+
+  raw_from_id = payload["from_id"]
+  raw_from_id = payload["from"] if raw_from_id.nil? || raw_from_id.to_s.strip.empty?
+  from_num = coerce_integer(payload["from_num"] || payload["num"])
+
+  trimmed_from_id = string_or_nil(raw_from_id)
+  canonical_from_id = string_or_nil(normalize_node_id(db, raw_from_id))
+  from_id = trimmed_from_id
+  if canonical_from_id
+    if from_id.nil? || from_id.match?(/\A[0-9]+\z/)
+      from_id = canonical_from_id
+    elsif from_id.start_with?("!") && from_id.casecmp(canonical_from_id) != 0
+      from_id = canonical_from_id
+    end
+  end
+  from_id = "!#{from_id.delete_prefix("!").downcase}" if from_id&.start_with?("!")
+
+  raw_to_id = payload["to_id"]
+  raw_to_id = payload["to"] if raw_to_id.nil? || raw_to_id.to_s.strip.empty?
+  trimmed_to_id = string_or_nil(raw_to_id)
+  canonical_to_id = string_or_nil(normalize_node_id(db, raw_to_id))
+  to_id = trimmed_to_id
+  if canonical_to_id
+    if to_id.nil? || to_id.match?(/\A[0-9]+\z/)
+      to_id = canonical_to_id
+    elsif to_id.start_with?("!") && to_id.casecmp(canonical_to_id) != 0
+      to_id = canonical_to_id
+    end
+  end
+  to_id = "!#{to_id.delete_prefix("!").downcase}" if to_id&.start_with?("!")
+
+  node_ref = payload["node_id"] || payload["nodeId"]
+  node_num_ref = payload["node_num"] || payload["nodeNum"]
+  node_id = nil
+  node_num = nil
+  parts = canonical_node_parts(node_ref, node_num_ref)
+  if parts
+    node_id, node_num, = parts
+  else
+    trimmed_node = string_or_nil(node_ref)
+    node_id = normalize_node_id(db, trimmed_node) || trimmed_node if trimmed_node
+    node_num = coerce_integer(node_num_ref)
+  end
+  node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
+
+  last_sent_raw = payload["last_sent_by_id"] || payload["lastSentById"]
+  last_sent_parts = canonical_node_parts(last_sent_raw, nil)
+  if last_sent_parts
+    last_sent_by_id, = last_sent_parts
+  else
+    trimmed_last = string_or_nil(last_sent_raw)
+    last_sent_by_id = normalize_node_id(db, trimmed_last) || trimmed_last if trimmed_last
+  end
+  last_sent_by_id = "!#{last_sent_by_id.delete_prefix("!").downcase}" if last_sent_by_id&.start_with?("!")
+
+  interval_secs = coerce_integer(
+    payload["node_broadcast_interval_secs"] || payload["nodeBroadcastIntervalSecs"],
+  )
+  hop_limit = coerce_integer(payload["hop_limit"] || payload["hopLimit"])
+  snr = coerce_float(payload["snr"])
+  rssi = coerce_integer(payload["rssi"])
+  bitfield = coerce_integer(payload["bitfield"])
+
+  ensure_unknown_node(db, from_id || raw_from_id, from_num, heard_time: rx_time)
+  touch_node_last_seen(
+    db,
+    from_id || raw_from_id || from_num,
+    from_num,
+    rx_time: rx_time,
+    source: :neighbor_info,
+  )
+
+  if node_id
+    ensure_unknown_node(db, node_id, node_num, heard_time: rx_time)
+    touch_node_last_seen(
+      db,
+      node_id,
+      node_num,
+      rx_time: rx_time,
+      source: :neighbor_info,
+    )
+  end
+
+  if last_sent_by_id && last_sent_by_id != node_id
+    ensure_unknown_node(db, last_sent_by_id, nil, heard_time: rx_time)
+    touch_node_last_seen(
+      db,
+      last_sent_by_id,
+      nil,
+      rx_time: rx_time,
+      source: :neighbor_info,
+    )
+  end
+
+  row = [
+    neighbor_id,
+    rx_time,
+    rx_iso,
+    from_id,
+    to_id,
+    node_id,
+    last_sent_by_id,
+    interval_secs,
+    hop_limit,
+    snr,
+    rssi,
+    bitfield,
+  ]
+
+  with_busy_retry do
+    db.execute <<~SQL, row
+                 INSERT INTO neighbors(id,rx_time,rx_iso,from_id,to_id,node_id,last_sent_by_id,node_broadcast_interval_secs,hop_limit,snr,rssi,bitfield)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   rx_time=excluded.rx_time,
+                   rx_iso=excluded.rx_iso,
+                   from_id=COALESCE(excluded.from_id,neighbors.from_id),
+                   to_id=COALESCE(excluded.to_id,neighbors.to_id),
+                   node_id=COALESCE(excluded.node_id,neighbors.node_id),
+                   last_sent_by_id=COALESCE(excluded.last_sent_by_id,neighbors.last_sent_by_id),
+                   node_broadcast_interval_secs=COALESCE(excluded.node_broadcast_interval_secs,neighbors.node_broadcast_interval_secs),
+                   hop_limit=COALESCE(excluded.hop_limit,neighbors.hop_limit),
+                   snr=COALESCE(excluded.snr,neighbors.snr),
+                   rssi=COALESCE(excluded.rssi,neighbors.rssi),
+                   bitfield=COALESCE(excluded.bitfield,neighbors.bitfield)
+               SQL
+  end
+end
+
 # Insert a text message if it does not already exist.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -1633,6 +1818,29 @@ post "/api/telemetry" do
   db = open_database
   telemetry_packets.each do |packet|
     insert_telemetry(db, packet)
+  end
+  { status: "ok" }.to_json
+ensure
+  db&.close
+end
+
+# POST /api/neighbors
+#
+# Accepts an array or object describing neighbor broadcasts and stores each
+# entry.
+post "/api/neighbors" do
+  require_token!
+  content_type :json
+  begin
+    data = JSON.parse(read_json_body)
+  rescue JSON::ParserError
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+  neighbors = data.is_a?(Array) ? data : [data]
+  halt 400, { error: "too many neighbor packets" }.to_json if neighbors.size > 1000
+  db = open_database
+  neighbors.each do |packet|
+    insert_neighbor(db, packet)
   end
   { status: "ok" }.to_json
 ensure

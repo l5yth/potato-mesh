@@ -40,6 +40,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM nodes")
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
+      db.execute("DELETE FROM neighbors")
     end
   end
 
@@ -1605,6 +1606,134 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(second_entry["temperature"]).to be_within(1e-6).of(second_latest["environment_metrics"]["temperature"])
       expect(second_entry["relative_humidity"]).to be_within(1e-6).of(second_latest["environment_metrics"]["relativeHumidity"])
       expect(second_entry["barometric_pressure"]).to be_within(1e-6).of(second_latest["environment_metrics"]["barometricPressure"])
+    end
+  end
+
+  describe "GET /api/neighbors" do
+    it "returns neighbor broadcasts" do
+      rx_time = reference_time.to_i - 60
+      rx_iso = Time.at(rx_time).utc.iso8601
+
+      with_db do |db|
+        db.execute(
+          <<~SQL,
+            INSERT INTO neighbors(id,rx_time,rx_iso,from_id,to_id,node_id,last_sent_by_id,node_broadcast_interval_secs,hop_limit,snr,rssi,bitfield)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+          SQL
+          [
+            42,
+            rx_time,
+            rx_iso,
+            "!11223344",
+            "!aabbccdd",
+            "!11223344",
+            "!11223344",
+            1800,
+            5,
+            4.75,
+            -71,
+            1,
+          ],
+        )
+      end
+
+      get "/api/neighbors", { "limit" => 10 }
+
+      expect(last_response).to be_ok
+      data = JSON.parse(last_response.body)
+      expect(data).to be_a(Array)
+      expect(data.size).to eq(1)
+
+      row = data.first
+      expect(row["id"]).to eq(42)
+      expect(row["rx_time"]).to eq(rx_time)
+      expect(row["rx_iso"]).to eq(rx_iso)
+      expect(row["from_id"]).to eq("!11223344")
+      expect(row["node_id"]).to eq("!11223344")
+      expect(row["node_broadcast_interval_secs"]).to eq(1800)
+      expect(row["hop_limit"]).to eq(5)
+      expect(row["snr"]).to be_within(1e-6).of(4.75)
+      expect(row["rssi"]).to eq(-71)
+      expect(row["bitfield"]).to eq(1)
+    end
+  end
+
+  describe "POST /api/neighbors" do
+    it "stores neighbor broadcasts and touches related nodes" do
+      rx_time = reference_time.to_i - 90
+      payload = {
+        "id" => 314_159,
+        "rx_time" => rx_time,
+        "from_id" => 287_454_020,
+        "to_id" => "^all",
+        "node_id" => 287_454_020,
+        "last_sent_by_id" => "!FEEDFACE",
+        "node_broadcast_interval_secs" => 3600,
+        "hop_limit" => 7,
+        "snr" => 3.25,
+        "rssi" => -95,
+        "bitfield" => 1,
+      }
+
+      post "/api/neighbors", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT * FROM neighbors WHERE id = ?",
+          [payload["id"]],
+        )
+
+        expect(row["from_id"]).to eq("!11223344")
+        expect(row["to_id"]).to eq("^all")
+        expect(row["node_id"]).to eq("!11223344")
+        expect(row["last_sent_by_id"]).to eq("!feedface")
+        expect(row["node_broadcast_interval_secs"]).to eq(3600)
+        expect(row["hop_limit"]).to eq(7)
+        expect_same_value(row["snr"], 3.25)
+        expect(row["rssi"]).to eq(-95)
+        expect(row["bitfield"]).to eq(1)
+
+        node_row = db.get_first_row(
+          "SELECT last_heard, first_heard, role FROM nodes WHERE node_id = ?",
+          ["!11223344"],
+        )
+        expect(node_row).not_to be_nil
+        expect(node_row["last_heard"]).to eq(rx_time)
+        expect(node_row["first_heard"]).to eq(rx_time)
+        expect(node_row["role"]).to eq("CLIENT_HIDDEN")
+
+        last_sent_row = db.get_first_row(
+          "SELECT last_heard FROM nodes WHERE node_id = ?",
+          ["!feedface"],
+        )
+        expect(last_sent_row).not_to be_nil
+        expect(last_sent_row["last_heard"]).to eq(rx_time)
+      end
+    end
+
+    it "returns 400 when too many neighbor packets are provided" do
+      payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
+
+      post "/api/neighbors", payload.to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "too many neighbor packets")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM neighbors")
+        expect(count).to eq(0)
+      end
+    end
+
+    it "returns 400 when the payload is not valid JSON" do
+      post "/api/neighbors", "{", auth_headers
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
     end
   end
 end
