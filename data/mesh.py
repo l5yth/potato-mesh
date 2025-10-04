@@ -899,7 +899,9 @@ def store_position_packet(packet: dict, decoded: Mapping):
 def store_telemetry_packet(packet: dict, decoded: Mapping):
     """Handle ``TELEMETRY_APP`` packets and forward them to ``/api/telemetry``."""
 
-    telemetry_section = decoded.get("telemetry") if isinstance(decoded, Mapping) else None
+    telemetry_section = (
+        decoded.get("telemetry") if isinstance(decoded, Mapping) else None
+    )
     if not isinstance(telemetry_section, Mapping):
         return
 
@@ -943,14 +945,18 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
         base64.b64encode(payload_bytes).decode("ascii") if payload_bytes else None
     )
 
-    device_metrics_section = telemetry_section.get("deviceMetrics") or telemetry_section.get("device_metrics")
+    device_metrics_section = telemetry_section.get(
+        "deviceMetrics"
+    ) or telemetry_section.get("device_metrics")
     device_metrics = (
         _node_to_dict(device_metrics_section)
         if isinstance(device_metrics_section, Mapping)
         else None
     )
 
-    environment_section = telemetry_section.get("environmentMetrics") or telemetry_section.get("environment_metrics")
+    environment_section = telemetry_section.get(
+        "environmentMetrics"
+    ) or telemetry_section.get("environment_metrics")
     environment_metrics = (
         _node_to_dict(environment_section)
         if isinstance(environment_section, Mapping)
@@ -959,12 +965,16 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
 
     metrics_lookup = lambda mapping, *names: _first(mapping or {}, *names, default=None)
 
-    battery_level = _coerce_float(metrics_lookup(device_metrics, "batteryLevel", "battery_level"))
+    battery_level = _coerce_float(
+        metrics_lookup(device_metrics, "batteryLevel", "battery_level")
+    )
     voltage = _coerce_float(metrics_lookup(device_metrics, "voltage"))
     channel_utilization = _coerce_float(
         metrics_lookup(device_metrics, "channelUtilization", "channel_utilization")
     )
-    air_util_tx = _coerce_float(metrics_lookup(device_metrics, "airUtilTx", "air_util_tx"))
+    air_util_tx = _coerce_float(
+        metrics_lookup(device_metrics, "airUtilTx", "air_util_tx")
+    )
     uptime_seconds = _coerce_int(
         metrics_lookup(device_metrics, "uptimeSeconds", "uptime_seconds")
     )
