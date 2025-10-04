@@ -98,6 +98,13 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
+def debug_log(message)
+  return unless DEBUG
+
+  logger = settings.logger if respond_to?(:settings)
+  logger&.debug(message)
+end
+
 def private_mode?
   ENV["PRIVATE"] == "1"
 end
@@ -728,6 +735,13 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
     inserted = db.changes.positive?
   end
 
+  if inserted
+    debug_log(
+      "ensure_unknown_node created hidden node_id=#{node_id} from=#{node_ref.inspect} " \
+      "fallback=#{fallback_num.inspect} heard_time=#{heard_time.inspect}"
+    )
+  end
+
   inserted
 end
 
@@ -737,7 +751,7 @@ end
 # @param node_ref [Object] raw identifier used to resolve the node.
 # @param fallback_num [Object] optional numeric identifier.
 # @param rx_time [Object] receive timestamp that should update the node.
-def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil)
+def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil, source: nil)
   timestamp = coerce_integer(rx_time)
   return unless timestamp
 
@@ -758,6 +772,7 @@ def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil)
 
   return unless node_id
 
+  updated = false
   with_busy_retry do
     db.execute <<~SQL, [timestamp, timestamp, timestamp, node_id]
                  UPDATE nodes
@@ -768,7 +783,17 @@ def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil)
                         first_heard = COALESCE(first_heard, ?)
                   WHERE node_id = ?
                SQL
+    updated ||= db.changes.positive?
   end
+
+  if updated
+    debug_log(
+      "touch_node_last_seen updated last_heard node_id=#{node_id} timestamp=#{timestamp} " \
+      "source=#{(source || :unknown).inspect}"
+    )
+  end
+
+  updated
 end
 
 # Insert or update a node row with the most recent metrics.
@@ -1014,7 +1039,7 @@ def insert_position(db, payload)
   node_id = canonical if canonical
 
   ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
-  touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time)
+  touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :position)
 
   to_id = string_or_nil(payload["to_id"] || payload["to"])
 
@@ -1174,7 +1199,7 @@ def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   return unless id
 
   ensure_unknown_node(db, id, num, heard_time: rx_time)
-  touch_node_last_seen(db, id, num, rx_time: rx_time)
+  touch_node_last_seen(db, id, num, rx_time: rx_time, source: :telemetry)
 
   battery = coerce_float(metrics[:battery_level] || metrics["battery_level"])
   voltage = coerce_float(metrics[:voltage] || metrics["voltage"])
@@ -1425,7 +1450,13 @@ def insert_message(db, m)
   encrypted = string_or_nil(m["encrypted"])
 
   ensure_unknown_node(db, from_id || raw_from_id, m["from_num"], heard_time: rx_time)
-  touch_node_last_seen(db, from_id || raw_from_id || m["from_num"], m["from_num"], rx_time: rx_time)
+  touch_node_last_seen(
+    db,
+    from_id || raw_from_id || m["from_num"],
+    m["from_num"],
+    rx_time: rx_time,
+    source: :message,
+  )
 
   row = [
     msg_id,
