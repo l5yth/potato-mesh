@@ -208,30 +208,6 @@ def normalize_json_object(value)
   end
 end
 
-def json_blob(value)
-  return nil if value.nil?
-  if value.is_a?(String)
-    trimmed = value.strip
-    return nil if trimmed.empty?
-    return trimmed
-  end
-
-  JSON.generate(value)
-rescue JSON::GeneratorError
-  value.to_s
-end
-
-def parse_json_text(value)
-  return nil unless value.is_a?(String)
-
-  trimmed = value.strip
-  return nil if trimmed.empty?
-
-  JSON.parse(trimmed)
-rescue JSON::ParserError
-  nil
-end
-
 def sanitized_max_distance_km
   return nil unless defined?(MAX_NODE_DISTANCE_KM)
 
@@ -536,9 +512,7 @@ def query_telemetry(limit)
                              telemetry_time, channel, portnum, hop_limit, snr, rssi,
                              bitfield, payload_b64, battery_level, voltage,
                              channel_utilization, air_util_tx, uptime_seconds,
-                             temperature, relative_humidity, barometric_pressure,
-                             device_metrics_json, environment_metrics_json,
-                             local_stats_json, raw_json, telemetry_json
+                             temperature, relative_humidity, barometric_pressure
                       FROM telemetry
                       ORDER BY rx_time DESC
                       LIMIT ?
@@ -571,11 +545,6 @@ def query_telemetry(limit)
     r["relative_humidity"] = coerce_float(r["relative_humidity"])
     r["barometric_pressure"] = coerce_float(r["barometric_pressure"])
 
-    r["device_metrics"] = parse_json_text(r.delete("device_metrics_json"))
-    r["environment_metrics"] = parse_json_text(r.delete("environment_metrics_json"))
-    r["local_stats"] = parse_json_text(r.delete("local_stats_json"))
-    r["raw"] = parse_json_text(r.delete("raw_json"))
-    r["telemetry"] = parse_json_text(r.delete("telemetry_json"))
   end
   rows
 ensure
@@ -1249,10 +1218,6 @@ def insert_telemetry(db, payload)
   device_metrics ||= normalize_json_object(telemetry_section["deviceMetrics"]) if telemetry_section&.key?("deviceMetrics")
   environment_metrics = normalize_json_object(payload["environment_metrics"] || payload["environmentMetrics"])
   environment_metrics ||= normalize_json_object(telemetry_section["environmentMetrics"]) if telemetry_section&.key?("environmentMetrics")
-  local_stats = normalize_json_object(payload["local_stats"] || payload["localStats"])
-  local_stats ||= normalize_json_object(telemetry_section["localStats"]) if telemetry_section&.key?("localStats")
-  raw_section = normalize_json_object(payload["raw"])
-  raw_section ||= normalize_json_object(telemetry_section["raw"]) if telemetry_section&.key?("raw")
 
   fetch_metric = lambda do |map, *names|
     next nil unless map.is_a?(Hash)
@@ -1327,19 +1292,13 @@ def insert_telemetry(db, payload)
     temperature,
     relative_humidity,
     barometric_pressure,
-    json_blob(device_metrics),
-    json_blob(environment_metrics),
-    json_blob(local_stats),
-    json_blob(raw_section),
-    json_blob(telemetry_section),
   ]
 
   with_busy_retry do
     db.execute <<~SQL, row
                  INSERT INTO telemetry(id,node_id,node_num,from_id,to_id,rx_time,rx_iso,telemetry_time,channel,portnum,hop_limit,snr,rssi,bitfield,payload_b64,
-                                       battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,
-                                       device_metrics_json,environment_metrics_json,local_stats_json,raw_json,telemetry_json)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                       battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(id) DO UPDATE SET
                    node_id=COALESCE(excluded.node_id,telemetry.node_id),
                    node_num=COALESCE(excluded.node_num,telemetry.node_num),
@@ -1362,12 +1321,7 @@ def insert_telemetry(db, payload)
                    uptime_seconds=COALESCE(excluded.uptime_seconds,telemetry.uptime_seconds),
                    temperature=COALESCE(excluded.temperature,telemetry.temperature),
                    relative_humidity=COALESCE(excluded.relative_humidity,telemetry.relative_humidity),
-                   barometric_pressure=COALESCE(excluded.barometric_pressure,telemetry.barometric_pressure),
-                   device_metrics_json=COALESCE(excluded.device_metrics_json,telemetry.device_metrics_json),
-                   environment_metrics_json=COALESCE(excluded.environment_metrics_json,telemetry.environment_metrics_json),
-                   local_stats_json=COALESCE(excluded.local_stats_json,telemetry.local_stats_json),
-                   raw_json=COALESCE(excluded.raw_json,telemetry.raw_json),
-                   telemetry_json=COALESCE(excluded.telemetry_json,telemetry.telemetry_json)
+                   barometric_pressure=COALESCE(excluded.barometric_pressure,telemetry.barometric_pressure)
                SQL
   end
 

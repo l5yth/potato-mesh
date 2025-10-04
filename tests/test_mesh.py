@@ -1030,8 +1030,6 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     assert payload["channel"] == 0
     assert payload["bitfield"] == 1
     assert payload["payload_b64"] == "DTVr0mgSFQhlFQIrh0AdJb8YPyXYFSA9KJTPEg=="
-    assert payload["device_metrics"]["batteryLevel"] == 101
-    assert payload["local_stats"]["numPacketsTx"] == 1280
     assert payload["battery_level"] == pytest.approx(101.0)
     assert payload["voltage"] == pytest.approx(4.224)
     assert payload["channel_utilization"] == pytest.approx(0.59666663)
@@ -1074,7 +1072,6 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["node_id"] == "!dc7494c4"
     assert payload["from_id"] == "!dc7494c4"
     assert payload["telemetry_time"] == 1_758_024_390
-    assert payload["environment_metrics"]["temperature"] == pytest.approx(21.98)
     assert payload["temperature"] == pytest.approx(21.98)
     assert payload["relative_humidity"] == pytest.approx(39.475586)
     assert payload["barometric_pressure"] == pytest.approx(1017.8353)

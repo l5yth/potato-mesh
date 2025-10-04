@@ -874,22 +874,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(first["node_id"]).to eq(payload[0]["node_id"])
           expect(first["rx_time"]).to eq(payload[0]["rx_time"])
           expect_same_value(first["battery_level"], payload[0]["battery_level"])
-          expect_same_value(first["voltage"], payload[0]["device_metrics"]["voltage"])
-          expect_same_value(first["channel_utilization"], payload[0]["device_metrics"]["channelUtilization"])
-          expect_same_value(first["air_util_tx"], payload[0]["device_metrics"]["airUtilTx"])
-          expect(first["uptime_seconds"]).to eq(payload[0]["device_metrics"]["uptimeSeconds"])
-
-          metrics = JSON.parse(first["device_metrics_json"])
-          expect(metrics["batteryLevel"]).to eq(payload[0]["device_metrics"]["batteryLevel"])
+          expect_same_value(first["voltage"], payload[0].dig("device_metrics", "voltage"))
+          expect_same_value(first["channel_utilization"], payload[0].dig("device_metrics", "channelUtilization"))
+          expect_same_value(first["air_util_tx"], payload[0].dig("device_metrics", "airUtilTx"))
+          expect(first["uptime_seconds"]).to eq(payload[0].dig("device_metrics", "uptimeSeconds"))
 
           environment_row = rows.find { |row| row["id"] == payload[1]["id"] }
-          expect(environment_row["temperature"]).to be_within(1e-6).of(payload[1]["environment_metrics"]["temperature"])
-          expect(environment_row["relative_humidity"]).to be_within(1e-6).of(payload[1]["environment_metrics"]["relativeHumidity"])
-          expect(environment_row["barometric_pressure"]).to be_within(1e-6).of(payload[1]["environment_metrics"]["barometricPressure"])
-
-          local_row = rows.find { |row| row["id"] == payload[2]["id"] }
-          expect(local_row["local_stats_json"]).not_to be_nil
-          expect(JSON.parse(local_row["local_stats_json"])["numPacketsTx"]).to eq(payload[2]["local_stats"]["numPacketsTx"])
+          expect(environment_row["temperature"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "temperature"))
+          expect(environment_row["relative_humidity"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "relativeHumidity"))
+          expect(environment_row["barometric_pressure"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "barometricPressure"))
         end
 
         with_db(readonly: true) do |db|
@@ -1528,13 +1521,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(first_entry["rx_time"]).to eq(latest["rx_time"])
       expect(first_entry["telemetry_time"]).to eq(latest["telemetry_time"])
       expect(first_entry["telemetry_time_iso"]).to eq(Time.at(latest["telemetry_time"]).utc.iso8601)
-      expect(first_entry["device_metrics"]).to be_a(Hash)
-      expect(first_entry["device_metrics"].keys).not_to be_empty
-      expect_same_value(first_entry["battery_level"], latest["device_metrics"]["battery_level"] || latest["device_metrics"]["batteryLevel"])
+      expect(first_entry).not_to have_key("device_metrics")
+      expect_same_value(first_entry["battery_level"], latest.dig("device_metrics", "battery_level") || latest.dig("device_metrics", "batteryLevel"))
 
       second_entry = data.last
       expect(second_entry["id"]).to eq(second_latest["id"])
-      expect(second_entry["environment_metrics"]).to be_a(Hash)
+      expect(second_entry).not_to have_key("environment_metrics")
       expect(second_entry["temperature"]).to be_within(1e-6).of(second_latest["environment_metrics"]["temperature"])
       expect(second_entry["relative_humidity"]).to be_within(1e-6).of(second_latest["environment_metrics"]["relativeHumidity"])
       expect(second_entry["barometric_pressure"]).to be_within(1e-6).of(second_latest["environment_metrics"]["barometricPressure"])

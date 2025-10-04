@@ -35,12 +35,7 @@ CREATE TABLE IF NOT EXISTS telemetry (
     uptime_seconds          INTEGER,
     temperature             REAL,
     relative_humidity       REAL,
-    barometric_pressure     REAL,
-    device_metrics_json     TEXT,
-    environment_metrics_json TEXT,
-    local_stats_json        TEXT,
-    raw_json                TEXT,
-    telemetry_json          TEXT
+    barometric_pressure     REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_rx_time ON telemetry(rx_time);

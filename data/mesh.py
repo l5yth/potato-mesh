@@ -957,18 +957,6 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
         else None
     )
 
-    local_stats_section = telemetry_section.get("localStats") or telemetry_section.get("local_stats")
-    local_stats = (
-        _node_to_dict(local_stats_section)
-        if isinstance(local_stats_section, Mapping)
-        else None
-    )
-
-    raw_section = telemetry_section.get("raw")
-    raw_dict = _node_to_dict(raw_section) if isinstance(raw_section, Mapping) else None
-
-    telemetry_dict = _node_to_dict(telemetry_section)
-
     metrics_lookup = lambda mapping, *names: _first(mapping or {}, *names, default=None)
 
     battery_level = _coerce_float(metrics_lookup(device_metrics, "batteryLevel", "battery_level"))
@@ -1024,17 +1012,6 @@ def store_telemetry_packet(packet: dict, decoded: Mapping):
         "hop_limit": hop_limit,
         "payload_b64": payload_b64,
     }
-
-    if telemetry_dict:
-        telemetry_payload["telemetry"] = telemetry_dict
-    if device_metrics:
-        telemetry_payload["device_metrics"] = device_metrics
-    if environment_metrics:
-        telemetry_payload["environment_metrics"] = environment_metrics
-    if local_stats:
-        telemetry_payload["local_stats"] = local_stats
-    if raw_dict:
-        telemetry_payload["raw"] = raw_dict
 
     if battery_level is not None:
         telemetry_payload["battery_level"] = battery_level
