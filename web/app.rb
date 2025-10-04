@@ -737,8 +737,8 @@ def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
 
   if inserted
     debug_log(
-      "ensure_unknown_node created hidden node_id=#{node_id} from=#{node_ref.inspect} "
-      "fallback=#{fallback_num.inspect} heard_time=#{heard_time.inspect}",
+      "ensure_unknown_node created hidden node_id=#{node_id} from=#{node_ref.inspect} " \
+      "fallback=#{fallback_num.inspect} heard_time=#{heard_time.inspect}"
     )
   end
 
@@ -788,8 +788,8 @@ def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil, source:
 
   if updated
     debug_log(
-      "touch_node_last_seen updated last_heard node_id=#{node_id} timestamp=#{timestamp} "
-      "source=#{(source || :unknown).inspect}",
+      "touch_node_last_seen updated last_heard node_id=#{node_id} timestamp=#{timestamp} " \
+      "source=#{(source || :unknown).inspect}"
     )
   end
 
