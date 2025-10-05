@@ -1580,17 +1580,20 @@ var(--fg); }
       if (roleValue !== '—') {
         lines.push(`Role: ${escapeHtml(roleValue)}`);
       }
+      let neighborLineHtml = '';
       const neighborNodes = getNeighborNodesFor(info.nodeId);
-      const neighborParts = neighborNodes
-        .map(node => renderShortHtml(
-          node && (node.short_name ?? node.shortName),
-          node && node.role,
-          node && (node.long_name ?? node.longName),
-          node
-        ))
-        .filter(html => html && html.length);
-      if (neighborParts.length) {
-        lines.push(`Neighbors: ${neighborParts.join(' ')}`);
+      if (neighborNodes.length) {
+        const neighborParts = neighborNodes
+          .map(node => renderShortHtml(
+            node && (node.short_name ?? node.shortName),
+            node && node.role,
+            node && (node.long_name ?? node.longName),
+            node
+          ))
+          .filter(html => html && html.length);
+        if (neighborParts.length) {
+          neighborLineHtml = `Neighbors: ${neighborParts.join(' ')}`;
+        }
       }
       const modelValue = fmtHw(info.hwModel);
       if (modelValue) {
@@ -1604,6 +1607,9 @@ var(--fg); }
       appendTelemetryLine(lines, 'Temperature', info.temperature, fmtTemperature);
       appendTelemetryLine(lines, 'Humidity', info.humidity, fmtHumidity);
       appendTelemetryLine(lines, 'Pressure', info.pressure, fmtPressure);
+      if (neighborLineHtml) {
+        lines.push(neighborLineHtml);
+      }
       shortInfoContent.innerHTML = lines.join('<br/>');
       shortInfoAnchor = target;
       shortInfoOverlay.hidden = false;
@@ -2111,6 +2117,20 @@ var(--fg); }
         }
         if (n.uptime_seconds) {
           lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
+        }
+        const mapNeighborNodes = getNeighborNodesFor(n.node_id ?? n.nodeId ?? '');
+        if (mapNeighborNodes.length) {
+          const neighborParts = mapNeighborNodes
+            .map(node => renderShortHtml(
+              node && (node.short_name ?? node.shortName),
+              node && node.role,
+              node && (node.long_name ?? node.longName),
+              node
+            ))
+            .filter(html => html && html.length);
+          if (neighborParts.length) {
+            lines.push(`Neighbors: ${neighborParts.join(' ')}`);
+          }
         }
         marker.bindPopup(lines.join('<br/>'));
         marker.addTo(markersLayer);
