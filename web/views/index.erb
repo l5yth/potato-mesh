@@ -1825,6 +1825,18 @@ var(--fg); }
       return Number.isFinite(num) ? num : null;
     }
 
+    function resolveTimestampSeconds(numeric, isoString) {
+      const parsedNumeric = toFiniteNumber(numeric);
+      if (parsedNumeric != null) return parsedNumeric;
+      if (typeof isoString === 'string' && isoString.length) {
+        const parsedIso = Date.parse(isoString);
+        if (Number.isFinite(parsedIso)) {
+          return parsedIso / 1000;
+        }
+      }
+      return null;
+    }
+
     function mergePositionsIntoNodes(nodes, positions) {
       if (!Array.isArray(nodes) || !Array.isArray(positions) || nodes.length === 0) return;
 
@@ -1848,6 +1860,14 @@ var(--fg); }
         const lat = toFiniteNumber(pos.latitude);
         const lon = toFiniteNumber(pos.longitude);
         if (lat == null || lon == null) continue;
+
+        const currentTimestamp = resolveTimestampSeconds(node.position_time, node.pos_time_iso);
+        const incomingTimestamp = resolveTimestampSeconds(pos.position_time, pos.position_time_iso);
+        if (currentTimestamp != null) {
+          if (incomingTimestamp == null || incomingTimestamp <= currentTimestamp) {
+            continue;
+          }
+        }
 
         updated.add(nodeId);
         node.latitude = lat;
