@@ -26,6 +26,7 @@ import base64
 import dataclasses
 import glob
 import heapq
+import inspect
 import ipaddress
 import itertools
 import json
@@ -98,6 +99,29 @@ def _debug_log(message: str):
 # variables to ease testing while keeping sensible defaults in production.
 _RECONNECT_INITIAL_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_INITIAL", "5"))
 _RECONNECT_MAX_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_MAX", "60"))
+_CLOSE_TIMEOUT_SECS = float(os.environ.get("MESH_CLOSE_TIMEOUT", "5"))
+
+
+def _event_wait_allows_default_timeout() -> bool:
+    """Return ``True`` when :func:`threading.Event.wait` accepts no timeout."""
+
+    try:
+        wait_signature = inspect.signature(threading.Event.wait)
+    except (TypeError, ValueError):  # pragma: no cover - built-ins without inspect
+        return True
+
+    parameters = list(wait_signature.parameters.values())
+    if len(parameters) <= 1:
+        return True
+
+    timeout_parameter = parameters[1]
+    if timeout_parameter.kind in (
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    ):
+        return True
+
+    return timeout_parameter.default is not inspect._empty
 
 
 class _DummySerialInterface:
@@ -1612,10 +1636,28 @@ def main():
     def _close_interface(iface_obj):
         if iface_obj is None:
             return
-        try:
-            iface_obj.close()
-        except Exception:
-            pass
+
+        def _do_close():
+            try:
+                iface_obj.close()
+            except Exception as exc:
+                if DEBUG:
+                    _debug_log(f"error while closing mesh interface: {exc}")
+
+        if _CLOSE_TIMEOUT_SECS <= 0 or not _event_wait_allows_default_timeout():
+            _do_close()
+            return
+
+        close_thread = threading.Thread(
+            target=_do_close, name="mesh-close", daemon=True
+        )
+        close_thread.start()
+        close_thread.join(_CLOSE_TIMEOUT_SECS)
+        if close_thread.is_alive():
+            print(
+                "[warn] mesh interface did not close within "
+                f"{_CLOSE_TIMEOUT_SECS:g}s; continuing shutdown"
+            )
 
     iface = None
     resolved_target = None
@@ -1630,10 +1672,13 @@ def main():
         stop.set()
 
     def handle_sigint(signum, frame):
-        """Handle ``SIGINT`` by stopping and propagating ``KeyboardInterrupt``."""
+        """Handle ``SIGINT`` by requesting shutdown and escalating on repeat."""
+
+        if stop.is_set():
+            signal.default_int_handler(signum, frame)
+            return
 
         stop.set()
-        signal.default_int_handler(signum, frame)
 
     signal.signal(signal.SIGINT, handle_sigint)
     signal.signal(signal.SIGTERM, handle_sigterm)
