@@ -48,9 +48,21 @@ def mesh_module(monkeypatch):
 
     tcp_interface_mod.TCPInterface = DummyTCPInterface
 
+    ble_interface_mod = types.ModuleType("meshtastic.ble_interface")
+
+    class DummyBLEInterface:
+        def __init__(self, *_, **__):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    ble_interface_mod.BLEInterface = DummyBLEInterface
+
     meshtastic_mod = types.ModuleType("meshtastic")
     meshtastic_mod.serial_interface = serial_interface_mod
     meshtastic_mod.tcp_interface = tcp_interface_mod
+    meshtastic_mod.ble_interface = ble_interface_mod
     if real_protobuf is not None:
         meshtastic_mod.protobuf = real_protobuf
 
@@ -59,6 +71,7 @@ def mesh_module(monkeypatch):
         sys.modules, "meshtastic.serial_interface", serial_interface_mod
     )
     monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
+    monkeypatch.setitem(sys.modules, "meshtastic.ble_interface", ble_interface_mod)
     if real_protobuf is not None:
         monkeypatch.setitem(sys.modules, "meshtastic.protobuf", real_protobuf)
 
@@ -144,8 +157,9 @@ def test_snapshot_interval_defaults_to_60_seconds(mesh_module):
 def test_create_serial_interface_allows_mock(mesh_module, value):
     mesh = mesh_module
 
-    iface = mesh._create_serial_interface(value)
+    iface, resolved = mesh._create_serial_interface(value)
 
+    assert resolved == "mock"
     assert isinstance(iface.nodes, dict)
     iface.close()
 
@@ -161,9 +175,10 @@ def test_create_serial_interface_uses_serial_module(mesh_module, monkeypatch):
 
     monkeypatch.setattr(mesh, "SerialInterface", fake_interface)
 
-    iface = mesh._create_serial_interface("/dev/ttyTEST")
+    iface, resolved = mesh._create_serial_interface("/dev/ttyTEST")
 
     assert created["devPath"] == "/dev/ttyTEST"
+    assert resolved == "/dev/ttyTEST"
     assert iface.nodes == {"!foo": sentinel}
 
 
@@ -178,9 +193,10 @@ def test_create_serial_interface_uses_tcp_for_ip(mesh_module, monkeypatch):
 
     monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
 
-    iface = mesh._create_serial_interface("192.168.1.25:4500")
+    iface, resolved = mesh._create_serial_interface("192.168.1.25:4500")
 
     assert created == {"hostname": "192.168.1.25", "portNumber": 4500}
+    assert resolved == "tcp://192.168.1.25:4500"
     assert iface.nodes == {}
 
 
@@ -195,10 +211,11 @@ def test_create_serial_interface_defaults_tcp_port(mesh_module, monkeypatch):
 
     monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
 
-    mesh._create_serial_interface("tcp://10.20.30.40")
+    _, resolved = mesh._create_serial_interface("tcp://10.20.30.40")
 
     assert created["hostname"] == "10.20.30.40"
     assert created["portNumber"] == mesh._DEFAULT_TCP_PORT
+    assert resolved == "tcp://10.20.30.40:4403"
 
 
 def test_create_serial_interface_plain_ip(mesh_module, monkeypatch):
@@ -212,10 +229,67 @@ def test_create_serial_interface_plain_ip(mesh_module, monkeypatch):
 
     monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
 
-    mesh._create_serial_interface(" 192.168.50.10 ")
+    _, resolved = mesh._create_serial_interface(" 192.168.50.10 ")
 
     assert created["hostname"] == "192.168.50.10"
     assert created["portNumber"] == mesh._DEFAULT_TCP_PORT
+    assert resolved == "tcp://192.168.50.10:4403"
+
+
+def test_create_serial_interface_ble(mesh_module, monkeypatch):
+    mesh = mesh_module
+    created = {}
+
+    def fake_ble_interface(*, address=None, **_):
+        created["address"] = address
+        return SimpleNamespace(nodes={}, close=lambda: None)
+
+    monkeypatch.setattr(mesh, "BLEInterface", fake_ble_interface)
+
+    iface, resolved = mesh._create_serial_interface("ed:4d:9e:95:cf:60")
+
+    assert created["address"] == "ED:4D:9E:95:CF:60"
+    assert resolved == "ED:4D:9E:95:CF:60"
+    assert iface.nodes == {}
+
+
+def test_create_default_interface_falls_back_to_tcp(mesh_module, monkeypatch):
+    mesh = mesh_module
+    attempts = []
+
+    def fake_targets():
+        return ["/dev/ttyFAIL"]
+
+    def fake_create(port):
+        attempts.append(port)
+        if port.startswith("/dev/tty"):
+            raise RuntimeError("missing serial device")
+        return SimpleNamespace(nodes={}, close=lambda: None), "tcp://127.0.0.1:4403"
+
+    monkeypatch.setattr(mesh, "_default_serial_targets", fake_targets)
+    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
+
+    iface, resolved = mesh._create_default_interface()
+
+    assert attempts == ["/dev/ttyFAIL", mesh._DEFAULT_TCP_TARGET]
+    assert resolved == "tcp://127.0.0.1:4403"
+    assert iface.nodes == {}
+
+
+def test_create_default_interface_raises_when_unavailable(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "_default_serial_targets", lambda: ["/dev/ttyFAIL"])
+
+    def always_fail(port):
+        raise RuntimeError(f"boom for {port}")
+
+    monkeypatch.setattr(mesh, "_create_serial_interface", always_fail)
+
+    with pytest.raises(mesh.NoAvailableMeshInterface) as exc_info:
+        mesh._create_default_interface()
+
+    assert "/dev/ttyFAIL" in str(exc_info.value)
 
 
 def test_node_to_dict_handles_nested_structures(mesh_module):
@@ -863,8 +937,9 @@ def test_main_retries_interface_creation(mesh_module, monkeypatch):
         attempts.append(port)
         if len(attempts) < 3:
             raise RuntimeError("boom")
-        return iface
+        return iface, port
 
+    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
@@ -918,13 +993,14 @@ def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch)
 
         interface = FlakyInterface(fail_first)
         interfaces.append(interface)
-        return interface
+        return interface, port
 
     upsert_calls = []
 
     def record_upsert(node_id, node):
         upsert_calls.append(node_id)
 
+    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh, "upsert_node", record_upsert)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
@@ -938,6 +1014,22 @@ def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch)
     assert len(interfaces) >= 2
     assert interfaces[0].closed is True
     assert upsert_calls == ["!node"]
+
+
+def test_main_exits_when_defaults_unavailable(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    def fail_default():
+        raise mesh.NoAvailableMeshInterface("no interface available")
+
+    monkeypatch.setattr(mesh, "PORT", None)
+    monkeypatch.setattr(mesh, "_create_default_interface", fail_default)
+    monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        mesh.main()
+
+    assert exc_info.value.code == 1
 
 
 def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):

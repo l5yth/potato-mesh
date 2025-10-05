@@ -24,12 +24,23 @@ entry point that performs these synchronisation tasks.
 
 import base64
 import dataclasses
+import glob
 import heapq
 import ipaddress
 import itertools
-import json, os, time, threading, signal, urllib.request, urllib.error, urllib.parse
+import json
 import math
+import os
+import re
+import signal
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Mapping
+from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.tcp_interface import TCPInterface
@@ -38,8 +49,16 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
 from google.protobuf.message import DecodeError
 
+if TYPE_CHECKING:  # pragma: no cover - import only used for type checking
+    from meshtastic.ble_interface import BLEInterface as _BLEInterface
+
+# Exposed for tests and backward compatibility; resolved lazily in
+# :func:`_load_ble_interface` so importing this module does not require the BLE
+# extras to be installed.
+BLEInterface = None
+
 # --- Config (env overrides) ---------------------------------------------------
-PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
+PORT = os.environ.get("MESH_SERIAL")
 SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "60"))
 CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 DEBUG = os.environ.get("DEBUG") == "1"
@@ -51,6 +70,18 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
 _DEFAULT_TCP_PORT = 4403
+_DEFAULT_TCP_TARGET = "http://127.0.0.1"
+
+_DEFAULT_SERIAL_PATTERNS = (
+    "/dev/ttyACM*",
+    "/dev/ttyUSB*",
+    "/dev/tty.usbmodem*",
+    "/dev/tty.usbserial*",
+    "/dev/cu.usbmodem*",
+    "/dev/cu.usbserial*",
+)
+
+_BLE_ADDRESS_RE = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 
 
 def _debug_log(message: str):
@@ -84,6 +115,19 @@ class _DummySerialInterface:
     def close(self):
         """Mirror the real interface API."""
         pass
+
+
+def _parse_ble_target(value: str) -> str | None:
+    """Return an uppercase BLE MAC address when ``value`` matches the format."""
+
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if _BLE_ADDRESS_RE.fullmatch(value):
+        return value.upper()
+    return None
 
 
 def _parse_network_target(value: str) -> tuple[str, int] | None:
@@ -138,8 +182,27 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
     return _validated_result(value, None)
 
 
-def _create_serial_interface(port: str):
-    """Return an appropriate serial interface for ``port``.
+@lru_cache(maxsize=1)
+def _load_ble_interface():
+    """Return :class:`meshtastic.ble_interface.BLEInterface` when available."""
+
+    global BLEInterface
+    if BLEInterface is not None:
+        return BLEInterface
+
+    try:
+        from meshtastic.ble_interface import BLEInterface as _resolved_interface
+    except ImportError as exc:  # pragma: no cover - exercised in non-BLE envs
+        raise RuntimeError(
+            "BLE interface requested but the Meshtastic BLE dependencies are not installed. "
+            "Install the 'meshtastic[ble]' extra to enable BLE support."
+        ) from exc
+    BLEInterface = _resolved_interface
+    return _resolved_interface
+
+
+def _create_serial_interface(port: str) -> tuple[object, str]:
+    """Return an appropriate mesh interface for ``port``.
 
     Passing ``mock`` (case-insensitive) or an empty value skips hardware access
     and returns :class:`_DummySerialInterface`.  This makes it possible to run
@@ -150,13 +213,63 @@ def _create_serial_interface(port: str):
     port_value = (port or "").strip()
     if port_value.lower() in {"", "mock", "none", "null", "disabled"}:
         _debug_log(f"using dummy serial interface for port={port_value!r}")
-        return _DummySerialInterface()
+        return _DummySerialInterface(), "mock"
+    ble_target = _parse_ble_target(port_value)
+    if ble_target:
+        _debug_log(f"using BLE interface for address={ble_target}")
+        return _load_ble_interface()(address=ble_target), ble_target
     network_target = _parse_network_target(port_value)
     if network_target:
         host, tcp_port = network_target
         _debug_log(f"using TCP interface for host={host!r} port={tcp_port!r}")
-        return TCPInterface(hostname=host, portNumber=tcp_port)
-    return SerialInterface(devPath=port_value)
+        return (
+            TCPInterface(hostname=host, portNumber=tcp_port),
+            f"tcp://{host}:{tcp_port}",
+        )
+    _debug_log(f"using serial interface for port={port_value!r}")
+    return SerialInterface(devPath=port_value), port_value
+
+
+class NoAvailableMeshInterface(RuntimeError):
+    """Raised when no default mesh interface can be created."""
+
+
+def _default_serial_targets() -> list[str]:
+    """Return a list of candidate serial device paths for auto-discovery."""
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for pattern in _DEFAULT_SERIAL_PATTERNS:
+        for path in sorted(glob.glob(pattern)):
+            if path not in seen:
+                candidates.append(path)
+                seen.add(path)
+    if "/dev/ttyACM0" not in seen:
+        candidates.append("/dev/ttyACM0")
+    return candidates
+
+
+def _create_default_interface() -> tuple[object, str]:
+    """Attempt to create the default mesh interface, raising on failure."""
+
+    errors: list[tuple[str, Exception]] = []
+    for candidate in _default_serial_targets():
+        try:
+            return _create_serial_interface(candidate)
+        except Exception as exc:  # pragma: no cover - hardware dependent
+            errors.append((candidate, exc))
+            _debug_log(f"failed to open serial candidate {candidate!r}: {exc}")
+    try:
+        return _create_serial_interface(_DEFAULT_TCP_TARGET)
+    except Exception as exc:  # pragma: no cover - network dependent
+        errors.append((_DEFAULT_TCP_TARGET, exc))
+        _debug_log(f"failed to open TCP fallback {_DEFAULT_TCP_TARGET!r}: {exc}")
+    if errors:
+        summary = "; ".join(f"{target}: {error}" for target, error in errors)
+        raise NoAvailableMeshInterface(
+            f"no mesh interface available ({summary})"
+        ) from errors[-1][1]
+    raise NoAvailableMeshInterface("no mesh interface available")
 
 
 # --- POST queue ----------------------------------------------------------------
@@ -1502,83 +1615,118 @@ def main():
             pass
 
     iface = None
+    resolved_target = None
     retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
 
     stop = threading.Event()
     initial_snapshot_sent = False
 
-    def handle_sig(*_):
+    def handle_sigterm(*_):
         """Stop the daemon when a termination signal is received."""
 
         stop.set()
 
-    signal.signal(signal.SIGINT, handle_sig)
-    signal.signal(signal.SIGTERM, handle_sig)
+    def handle_sigint(signum, frame):
+        """Handle ``SIGINT`` by stopping and propagating ``KeyboardInterrupt``."""
+
+        stop.set()
+        signal.default_int_handler(signum, frame)
+
+    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     target = INSTANCE or "(no POTATOMESH_INSTANCE)"
+    configured_port = PORT
+    active_candidate = configured_port
+    announced_target = False
     print(
-        f"Mesh daemon: nodes+messages → {target} | port={PORT} | channel={CHANNEL_INDEX}"
+        f"Mesh daemon: nodes+messages → {target} | port={configured_port or 'auto'} | channel={CHANNEL_INDEX}"
     )
-    while not stop.is_set():
-        if iface is None:
-            try:
-                iface = _create_serial_interface(PORT)
-                retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
-                initial_snapshot_sent = False
-            except Exception as exc:
-                print(f"[warn] failed to create mesh interface: {exc}")
-                stop.wait(retry_delay)
-                if _RECONNECT_MAX_DELAY_SECS > 0:
-                    retry_delay = min(
-                        (
-                            retry_delay * 2
-                            if retry_delay
-                            else _RECONNECT_INITIAL_DELAY_SECS
-                        ),
-                        _RECONNECT_MAX_DELAY_SECS,
+    try:
+        while not stop.is_set():
+            if iface is None:
+                try:
+                    if active_candidate:
+                        iface, resolved_target = _create_serial_interface(
+                            active_candidate
+                        )
+                    else:
+                        iface, resolved_target = _create_default_interface()
+                        active_candidate = resolved_target
+                    retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
+                    initial_snapshot_sent = False
+                    if not announced_target and resolved_target:
+                        print(f"[info] using mesh interface: {resolved_target}")
+                        announced_target = True
+                except NoAvailableMeshInterface as exc:
+                    print(f"[error] {exc}")
+                    _close_interface(iface)
+                    raise SystemExit(1) from exc
+                except Exception as exc:
+                    candidate_desc = active_candidate or "auto"
+                    print(
+                        f"[warn] failed to create mesh interface ({candidate_desc}): {exc}"
                     )
-                continue
+                    if configured_port is None:
+                        active_candidate = None
+                        announced_target = False
+                    stop.wait(retry_delay)
+                    if _RECONNECT_MAX_DELAY_SECS > 0:
+                        retry_delay = min(
+                            (
+                                retry_delay * 2
+                                if retry_delay
+                                else _RECONNECT_INITIAL_DELAY_SECS
+                            ),
+                            _RECONNECT_MAX_DELAY_SECS,
+                        )
+                    continue
 
-        if not initial_snapshot_sent:
-            try:
-                nodes = getattr(iface, "nodes", {}) or {}
-                node_items = _node_items_snapshot(nodes)
-                if node_items is None:
-                    _debug_log("skipping node snapshot; nodes changed during iteration")
-                else:
-                    processed_snapshot_item = False
-                    for node_id, n in node_items:
-                        processed_snapshot_item = True
-                        try:
-                            upsert_node(node_id, n)
-                        except Exception as e:
-                            print(
-                                f"[warn] failed to update node snapshot for {node_id}: {e}"
-                            )
-                            if DEBUG:
-                                _debug_log(f"node object: {n!r}")
-                    if processed_snapshot_item:
-                        initial_snapshot_sent = True
-            except Exception as e:
-                print(f"[warn] failed to update node snapshot: {e}")
-                _close_interface(iface)
-                iface = None
-                stop.wait(retry_delay)
-                if _RECONNECT_MAX_DELAY_SECS > 0:
-                    retry_delay = min(
-                        (
-                            retry_delay * 2
-                            if retry_delay
-                            else _RECONNECT_INITIAL_DELAY_SECS
-                        ),
-                        _RECONNECT_MAX_DELAY_SECS,
-                    )
-                continue
+            if not initial_snapshot_sent:
+                try:
+                    nodes = getattr(iface, "nodes", {}) or {}
+                    node_items = _node_items_snapshot(nodes)
+                    if node_items is None:
+                        _debug_log(
+                            "skipping node snapshot; nodes changed during iteration"
+                        )
+                    else:
+                        processed_snapshot_item = False
+                        for node_id, n in node_items:
+                            processed_snapshot_item = True
+                            try:
+                                upsert_node(node_id, n)
+                            except Exception as e:
+                                print(
+                                    f"[warn] failed to update node snapshot for {node_id}: {e}"
+                                )
+                                if DEBUG:
+                                    _debug_log(f"node object: {n!r}")
+                        if processed_snapshot_item:
+                            initial_snapshot_sent = True
+                except Exception as e:
+                    print(f"[warn] failed to update node snapshot: {e}")
+                    _close_interface(iface)
+                    iface = None
+                    stop.wait(retry_delay)
+                    if _RECONNECT_MAX_DELAY_SECS > 0:
+                        retry_delay = min(
+                            (
+                                retry_delay * 2
+                                if retry_delay
+                                else _RECONNECT_INITIAL_DELAY_SECS
+                            ),
+                            _RECONNECT_MAX_DELAY_SECS,
+                        )
+                    continue
 
-        retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
-        stop.wait(SNAPSHOT_SECS)
-
-    _close_interface(iface)
+            retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
+            stop.wait(SNAPSHOT_SECS)
+    except KeyboardInterrupt:
+        _debug_log("received KeyboardInterrupt; shutting down")
+        stop.set()
+    finally:
+        _close_interface(iface)
 
 
 if __name__ == "__main__":
