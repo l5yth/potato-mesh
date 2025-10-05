@@ -694,6 +694,7 @@ var(--fg); }
     };
     let allNodes = [];
     let allNeighbors = [];
+    let nodesById = new Map();
     let shortInfoAnchor = null;
     let lastChatDate;
     const NODE_LIMIT = 1000;
@@ -1472,6 +1473,43 @@ var(--fg); }
       return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
     }
 
+    function rebuildNodeIndex(nodes) {
+      nodesById = new Map();
+      if (!Array.isArray(nodes)) return;
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object') continue;
+        const nodeId = typeof node.node_id === 'string'
+          ? node.node_id
+          : (typeof node.nodeId === 'string' ? node.nodeId : null);
+        if (!nodeId) continue;
+        nodesById.set(nodeId, node);
+      }
+    }
+
+    function getNeighborNodesFor(nodeId) {
+      if (typeof nodeId !== 'string' || nodeId.length === 0) return [];
+      const seen = new Set();
+      const neighbors = [];
+      if (!Array.isArray(allNeighbors) || allNeighbors.length === 0) return neighbors;
+      for (const entry of allNeighbors) {
+        if (!entry || typeof entry !== 'object') continue;
+        const sourceId = typeof entry.node_id === 'string' ? entry.node_id : null;
+        if (sourceId !== nodeId) continue;
+        const neighborId = typeof entry.neighbor_id === 'string' ? entry.neighbor_id : null;
+        if (!neighborId || seen.has(neighborId)) continue;
+        seen.add(neighborId);
+        const neighborNode = nodesById.get(neighborId);
+        if (neighborNode) {
+          neighbors.push(neighborNode);
+          continue;
+        }
+        const placeholder = { node_id: neighborId };
+        applyNodeNameFallback(placeholder);
+        neighbors.push(placeholder);
+      }
+      return neighbors;
+    }
+
     function formatShortInfoUptime(value) {
       if (value == null || value === '') return '';
       const num = Number(value);
@@ -1542,6 +1580,21 @@ var(--fg); }
       if (roleValue !== '—') {
         lines.push(`Role: ${escapeHtml(roleValue)}`);
       }
+      let neighborLineHtml = '';
+      const neighborNodes = getNeighborNodesFor(info.nodeId);
+      if (neighborNodes.length) {
+        const neighborParts = neighborNodes
+          .map(node => renderShortHtml(
+            node && (node.short_name ?? node.shortName),
+            node && node.role,
+            node && (node.long_name ?? node.longName),
+            node
+          ))
+          .filter(html => html && html.length);
+        if (neighborParts.length) {
+          neighborLineHtml = `Neighbors: ${neighborParts.join(' ')}`;
+        }
+      }
       const modelValue = fmtHw(info.hwModel);
       if (modelValue) {
         lines.push(`Model: ${escapeHtml(modelValue)}`);
@@ -1554,6 +1607,9 @@ var(--fg); }
       appendTelemetryLine(lines, 'Temperature', info.temperature, fmtTemperature);
       appendTelemetryLine(lines, 'Humidity', info.humidity, fmtHumidity);
       appendTelemetryLine(lines, 'Pressure', info.pressure, fmtPressure);
+      if (neighborLineHtml) {
+        lines.push(neighborLineHtml);
+      }
       shortInfoContent.innerHTML = lines.join('<br/>');
       shortInfoAnchor = target;
       shortInfoOverlay.hidden = false;
@@ -2062,6 +2118,20 @@ var(--fg); }
         if (n.uptime_seconds) {
           lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
         }
+        const mapNeighborNodes = getNeighborNodesFor(n.node_id ?? n.nodeId ?? '');
+        if (mapNeighborNodes.length) {
+          const neighborParts = mapNeighborNodes
+            .map(node => renderShortHtml(
+              node && (node.short_name ?? node.shortName),
+              node && node.role,
+              node && (node.long_name ?? node.longName),
+              node
+            ))
+            .filter(html => html && html.length);
+          if (neighborParts.length) {
+            lines.push(`Neighbors: ${neighborParts.join(' ')}`);
+          }
+        }
         marker.bindPopup(lines.join('<br/>'));
         marker.addTo(markersLayer);
         pts.push([lat, lon]);
@@ -2154,6 +2224,7 @@ var(--fg); }
         }
         renderChatLog(nodes, messages);
         allNodes = nodes;
+        rebuildNodeIndex(allNodes);
         allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
         applyFilter();
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
