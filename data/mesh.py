@@ -1231,9 +1231,7 @@ def store_neighborinfo_packet(packet: dict, decoded: Mapping):
     if node_id is None:
         return
 
-    node_num = _coerce_int(
-        _first(neighbor_section, "nodeId", "node_id", default=None)
-    )
+    node_num = _coerce_int(_first(neighbor_section, "nodeId", "node_id", default=None))
     if node_num is None:
         node_num = _node_num_from_id(node_id)
 
@@ -1254,9 +1252,7 @@ def store_neighborinfo_packet(packet: dict, decoded: Mapping):
         neighbor_id = _canonical_node_id(neighbor_ref)
         if neighbor_id is None:
             continue
-        neighbor_num = _coerce_int(
-            _first(entry, "nodeId", "node_id", default=None)
-        )
+        neighbor_num = _coerce_int(_first(entry, "nodeId", "node_id", default=None))
         if neighbor_num is None:
             neighbor_num = _node_num_from_id(neighbor_id)
         snr = _coerce_float(_first(entry, "snr", default=None))
@@ -1292,9 +1288,7 @@ def store_neighborinfo_packet(packet: dict, decoded: Mapping):
     if last_sent_by is not None:
         payload["last_sent_by_id"] = last_sent_by
 
-    _queue_post_json(
-        "/api/neighbors", payload, priority=_NEIGHBOR_POST_PRIORITY
-    )
+    _queue_post_json("/api/neighbors", payload, priority=_NEIGHBOR_POST_PRIORITY)
 
     if DEBUG:
         _debug_log(
