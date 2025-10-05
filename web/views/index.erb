@@ -694,6 +694,7 @@ var(--fg); }
     };
     let allNodes = [];
     let allNeighbors = [];
+    let nodesById = new Map();
     let shortInfoAnchor = null;
     let lastChatDate;
     const NODE_LIMIT = 1000;
@@ -1472,6 +1473,43 @@ var(--fg); }
       return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
     }
 
+    function rebuildNodeIndex(nodes) {
+      nodesById = new Map();
+      if (!Array.isArray(nodes)) return;
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object') continue;
+        const nodeId = typeof node.node_id === 'string'
+          ? node.node_id
+          : (typeof node.nodeId === 'string' ? node.nodeId : null);
+        if (!nodeId) continue;
+        nodesById.set(nodeId, node);
+      }
+    }
+
+    function getNeighborNodesFor(nodeId) {
+      if (typeof nodeId !== 'string' || nodeId.length === 0) return [];
+      const seen = new Set();
+      const neighbors = [];
+      if (!Array.isArray(allNeighbors) || allNeighbors.length === 0) return neighbors;
+      for (const entry of allNeighbors) {
+        if (!entry || typeof entry !== 'object') continue;
+        const sourceId = typeof entry.node_id === 'string' ? entry.node_id : null;
+        if (sourceId !== nodeId) continue;
+        const neighborId = typeof entry.neighbor_id === 'string' ? entry.neighbor_id : null;
+        if (!neighborId || seen.has(neighborId)) continue;
+        seen.add(neighborId);
+        const neighborNode = nodesById.get(neighborId);
+        if (neighborNode) {
+          neighbors.push(neighborNode);
+          continue;
+        }
+        const placeholder = { node_id: neighborId };
+        applyNodeNameFallback(placeholder);
+        neighbors.push(placeholder);
+      }
+      return neighbors;
+    }
+
     function formatShortInfoUptime(value) {
       if (value == null || value === '') return '';
       const num = Number(value);
@@ -1541,6 +1579,18 @@ var(--fg); }
       const roleValue = shortInfoValueOrDash(info.role || 'CLIENT');
       if (roleValue !== '—') {
         lines.push(`Role: ${escapeHtml(roleValue)}`);
+      }
+      const neighborNodes = getNeighborNodesFor(info.nodeId);
+      const neighborParts = neighborNodes
+        .map(node => renderShortHtml(
+          node && (node.short_name ?? node.shortName),
+          node && node.role,
+          node && (node.long_name ?? node.longName),
+          node
+        ))
+        .filter(html => html && html.length);
+      if (neighborParts.length) {
+        lines.push(`Neighbors: ${neighborParts.join(' ')}`);
       }
       const modelValue = fmtHw(info.hwModel);
       if (modelValue) {
@@ -2154,6 +2204,7 @@ var(--fg); }
         }
         renderChatLog(nodes, messages);
         allNodes = nodes;
+        rebuildNodeIndex(allNodes);
         allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
         applyFilter();
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
