@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   uptime_seconds     INTEGER,
   position_time      INTEGER,
   location_source    TEXT,
+  precision_bits     INTEGER,
   latitude           REAL,
   longitude          REAL,
   altitude           REAL

@@ -18,7 +18,9 @@
     "longitude": 13.4479872,
     "altitude": 0.0,
     "last_seen_iso": "2025-09-16T12:05:30Z",
-    "pos_time_iso": "2025-09-16T12:05:30Z"
+    "pos_time_iso": "2025-09-16T12:05:30Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!d1edc388",
@@ -38,7 +40,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T12:05:07Z"
+    "last_seen_iso": "2025-09-16T12:05:07Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6eec6364",
@@ -59,7 +63,9 @@
     "longitude": 13.5520256,
     "altitude": 51.0,
     "last_seen_iso": "2025-09-16T12:05:05Z",
-    "pos_time_iso": "2025-09-16T12:05:05Z"
+    "pos_time_iso": "2025-09-16T12:05:05Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 12
   },
   {
     "node_id": "!33602324",
@@ -80,7 +86,9 @@
     "longitude": 13.4479872,
     "altitude": 19.0,
     "last_seen_iso": "2025-09-16T12:02:50Z",
-    "pos_time_iso": "2025-09-16T12:02:50Z"
+    "pos_time_iso": "2025-09-16T12:02:50Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 13
   },
   {
     "node_id": "!ef6a21c5",
@@ -101,7 +109,9 @@
     "longitude": 13.500416,
     "altitude": 33.0,
     "last_seen_iso": "2025-09-16T12:00:31Z",
-    "pos_time_iso": "2025-09-16T12:00:31Z"
+    "pos_time_iso": "2025-09-16T12:00:31Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 14
   },
   {
     "node_id": "!ea24e0b4",
@@ -122,7 +132,9 @@
     "longitude": 13.4815744,
     "altitude": 61.0,
     "last_seen_iso": "2025-09-16T12:00:17Z",
-    "pos_time_iso": "2025-09-16T10:54:13Z"
+    "pos_time_iso": "2025-09-16T10:54:13Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!9ee71430",
@@ -143,7 +155,9 @@
     "longitude": 13.500416,
     "altitude": 67.0,
     "last_seen_iso": "2025-09-16T11:58:03Z",
-    "pos_time_iso": "2025-09-16T11:58:03Z"
+    "pos_time_iso": "2025-09-16T11:58:03Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 11
   },
   {
     "node_id": "!a2ebd35c",
@@ -164,7 +178,9 @@
     "longitude": 13.3857503,
     "altitude": 56.0,
     "last_seen_iso": "2025-09-16T11:57:50Z",
-    "pos_time_iso": "2025-09-16T11:57:50Z"
+    "pos_time_iso": "2025-09-16T11:57:50Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!0c63e027",
@@ -185,7 +201,9 @@
     "longitude": 13.500416,
     "altitude": 21.0,
     "last_seen_iso": "2025-09-16T11:56:53Z",
-    "pos_time_iso": "2025-09-16T11:56:53Z"
+    "pos_time_iso": "2025-09-16T11:56:53Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!bcf10936",
@@ -206,7 +224,9 @@
     "longitude": 13.43488,
     "altitude": 57.0,
     "last_seen_iso": "2025-09-16T11:55:35Z",
-    "pos_time_iso": "2025-09-16T11:55:35Z"
+    "pos_time_iso": "2025-09-16T11:55:35Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!433e67e8",
@@ -227,7 +247,9 @@
     "longitude": 13.5520256,
     "altitude": 30.0,
     "last_seen_iso": "2025-09-16T11:53:19Z",
-    "pos_time_iso": "2025-09-16T11:53:19Z"
+    "pos_time_iso": "2025-09-16T11:53:19Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 10
   },
   {
     "node_id": "!9eeb25ec",
@@ -248,7 +270,9 @@
     "longitude": 13.3955584,
     "altitude": 52.0,
     "last_seen_iso": "2025-09-16T11:52:32Z",
-    "pos_time_iso": "2025-09-16T11:52:32Z"
+    "pos_time_iso": "2025-09-16T11:52:32Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 11
   },
   {
     "node_id": "!4ed36bd0",
@@ -269,11 +293,13 @@
     "longitude": 13.4479872,
     "altitude": 64.0,
     "last_seen_iso": "2025-09-16T11:52:06Z",
-    "pos_time_iso": "2025-09-16T11:52:06Z"
+    "pos_time_iso": "2025-09-16T11:52:06Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 12
   },
   {
     "node_id": "!da63e474",
-    "short_name": "🐧",
+    "short_name": "\ud83d\udc27",
     "long_name": "belug.de 868MHz",
     "hw_model": "LILYGO_TBEAM_S3_CORE",
     "role": "CLIENT_MUTE",
@@ -290,7 +316,9 @@
     "longitude": 13.35849,
     "altitude": null,
     "last_seen_iso": "2025-09-16T11:48:32Z",
-    "pos_time_iso": "2025-09-16T11:48:32Z"
+    "pos_time_iso": "2025-09-16T11:48:32Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!849c4c24",
@@ -311,7 +339,9 @@
     "longitude": 13.5462912,
     "altitude": 60.0,
     "last_seen_iso": "2025-09-16T11:45:50Z",
-    "pos_time_iso": "2025-09-16T10:04:18Z"
+    "pos_time_iso": "2025-09-16T10:04:18Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 14
   },
   {
     "node_id": "!bba83318",
@@ -332,7 +362,9 @@
     "longitude": 13.5593984,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-16T11:41:02Z",
-    "pos_time_iso": "2025-09-16T11:41:02Z"
+    "pos_time_iso": "2025-09-16T11:41:02Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!6aac99f2",
@@ -352,7 +384,9 @@
     "latitude": 52.529706,
     "longitude": 13.426035,
     "altitude": 58.0,
-    "last_seen_iso": "2025-09-16T11:40:27Z"
+    "last_seen_iso": "2025-09-16T11:40:27Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!aafba2a5",
@@ -373,7 +407,9 @@
     "longitude": 13.39392,
     "altitude": 55.0,
     "last_seen_iso": "2025-09-16T11:40:06Z",
-    "pos_time_iso": "2025-09-16T11:40:06Z"
+    "pos_time_iso": "2025-09-16T11:40:06Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 12
   },
   {
     "node_id": "!970588c4",
@@ -393,7 +429,9 @@
     "latitude": 52.4729555,
     "longitude": 13.3166989,
     "altitude": 50.0,
-    "last_seen_iso": "2025-09-16T11:39:56Z"
+    "last_seen_iso": "2025-09-16T11:39:56Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!a0cb1608",
@@ -413,7 +451,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:38:33Z"
+    "last_seen_iso": "2025-09-16T11:38:33Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!194a7351",
@@ -434,7 +474,9 @@
     "longitude": 13.500416,
     "altitude": 39.0,
     "last_seen_iso": "2025-09-16T11:38:28Z",
-    "pos_time_iso": "2025-09-16T05:38:55Z"
+    "pos_time_iso": "2025-09-16T05:38:55Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!433ad740",
@@ -455,7 +497,9 @@
     "longitude": 13.3255168,
     "altitude": 34.0,
     "last_seen_iso": "2025-09-16T11:38:24Z",
-    "pos_time_iso": "2025-09-16T11:38:24Z"
+    "pos_time_iso": "2025-09-16T11:38:24Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 11
   },
   {
     "node_id": "!da621dbc",
@@ -476,7 +520,9 @@
     "longitude": 13.3332992,
     "altitude": 45.0,
     "last_seen_iso": "2025-09-16T11:38:18Z",
-    "pos_time_iso": "2025-09-16T11:38:18Z"
+    "pos_time_iso": "2025-09-16T11:38:18Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!14f7692b",
@@ -496,7 +542,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:37:16Z"
+    "last_seen_iso": "2025-09-16T11:37:16Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!7c5b0920",
@@ -517,7 +565,9 @@
     "longitude": 13.24061,
     "altitude": 160.0,
     "last_seen_iso": "2025-09-16T11:34:20Z",
-    "pos_time_iso": "2025-09-15T14:34:26Z"
+    "pos_time_iso": "2025-09-15T14:34:26Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!43b6e530",
@@ -538,7 +588,9 @@
     "longitude": 13.3669095,
     "altitude": 0.0,
     "last_seen_iso": "2025-09-16T11:33:30Z",
-    "pos_time_iso": "2025-09-16T11:33:30Z"
+    "pos_time_iso": "2025-09-16T11:33:30Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 10
   },
   {
     "node_id": "!e50b45d8",
@@ -558,7 +610,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:31:30Z"
+    "last_seen_iso": "2025-09-16T11:31:30Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!db2b13fc",
@@ -578,7 +632,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:30:44Z"
+    "last_seen_iso": "2025-09-16T11:30:44Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9ea0c780",
@@ -599,7 +655,9 @@
     "longitude": 13.484032,
     "altitude": 66.0,
     "last_seen_iso": "2025-09-16T11:30:19Z",
-    "pos_time_iso": "2025-09-16T06:40:11Z"
+    "pos_time_iso": "2025-09-16T06:40:11Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!44968f61",
@@ -620,7 +678,9 @@
     "longitude": 13.500416,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-16T11:29:27Z",
-    "pos_time_iso": "2025-09-12T17:41:29Z"
+    "pos_time_iso": "2025-09-12T17:41:29Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 14
   },
   {
     "node_id": "!9ea1bea4",
@@ -640,7 +700,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:27:01Z"
+    "last_seen_iso": "2025-09-16T11:27:01Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!fa6baed0",
@@ -661,7 +723,9 @@
     "longitude": 13.3341184,
     "altitude": 65.0,
     "last_seen_iso": "2025-09-16T11:26:26Z",
-    "pos_time_iso": "2025-09-16T11:26:26Z"
+    "pos_time_iso": "2025-09-16T11:26:26Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 11
   },
   {
     "node_id": "!a0cc1800",
@@ -681,7 +745,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:26:06Z"
+    "last_seen_iso": "2025-09-16T11:26:06Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!d42e18e8",
@@ -701,12 +767,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:24:25Z"
+    "last_seen_iso": "2025-09-16T11:24:25Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!f9b0938c",
     "short_name": "Ed-1",
-    "long_name": "Y35RO Plänterwald ",
+    "long_name": "Y35RO Pl\u00e4nterwald ",
     "hw_model": "TLORA_V2_1_1P6",
     "role": "CLIENT",
     "snr": 11.25,
@@ -722,7 +790,9 @@
     "longitude": 13.4479872,
     "altitude": 36.0,
     "last_seen_iso": "2025-09-16T11:24:00Z",
-    "pos_time_iso": "2025-09-16T11:24:00Z"
+    "pos_time_iso": "2025-09-16T11:24:00Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 14
   },
   {
     "node_id": "!db29aa78",
@@ -743,7 +813,9 @@
     "longitude": 13.3431296,
     "altitude": null,
     "last_seen_iso": "2025-09-16T11:21:37Z",
-    "pos_time_iso": "2025-09-16T11:21:37Z"
+    "pos_time_iso": "2025-09-16T11:21:37Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!16ced364",
@@ -763,7 +835,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:21:16Z"
+    "last_seen_iso": "2025-09-16T11:21:16Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!c0c32348",
@@ -784,7 +858,9 @@
     "longitude": 13.4873088,
     "altitude": 365.0,
     "last_seen_iso": "2025-09-16T11:20:24Z",
-    "pos_time_iso": "2025-09-16T11:20:24Z"
+    "pos_time_iso": "2025-09-16T11:20:24Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!abbdf3f7",
@@ -805,12 +881,14 @@
     "longitude": 13.500416,
     "altitude": 39.0,
     "last_seen_iso": "2025-09-16T11:20:08Z",
-    "pos_time_iso": "2025-09-16T11:20:08Z"
+    "pos_time_iso": "2025-09-16T11:20:08Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!b03d89fc",
     "short_name": "SEAo",
-    "long_name": "DMSEA Oberschöneweide",
+    "long_name": "DMSEA Obersch\u00f6neweide",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
     "snr": 11.5,
@@ -826,7 +904,9 @@
     "longitude": 13.5175972,
     "altitude": null,
     "last_seen_iso": "2025-09-16T11:17:11Z",
-    "pos_time_iso": "2025-09-16T11:06:41Z"
+    "pos_time_iso": "2025-09-16T11:06:41Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!4eb3bc8d",
@@ -847,7 +927,9 @@
     "longitude": 13.3431296,
     "altitude": 25.0,
     "last_seen_iso": "2025-09-16T11:13:55Z",
-    "pos_time_iso": "2025-09-16T11:13:55Z"
+    "pos_time_iso": "2025-09-16T11:13:55Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 10
   },
   {
     "node_id": "!5d9c7329",
@@ -868,7 +950,9 @@
     "longitude": 13.5138746,
     "altitude": 48.0,
     "last_seen_iso": "2025-09-16T11:12:47Z",
-    "pos_time_iso": "2025-09-16T11:12:47Z"
+    "pos_time_iso": "2025-09-16T11:12:47Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 11
   },
   {
     "node_id": "!0910c922",
@@ -888,7 +972,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T11:09:03Z"
+    "last_seen_iso": "2025-09-16T11:09:03Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!db2b2418",
@@ -909,12 +995,14 @@
     "longitude": 13.500416,
     "altitude": 46.0,
     "last_seen_iso": "2025-09-16T11:09:00Z",
-    "pos_time_iso": "2025-09-16T11:09:00Z"
+    "pos_time_iso": "2025-09-16T11:09:00Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!b03c97a4",
     "short_name": "BLN1",
-    "long_name": "BLNo1 Fhain Süd ",
+    "long_name": "BLNo1 Fhain S\u00fcd ",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
     "snr": 12.0,
@@ -930,7 +1018,9 @@
     "longitude": 13.4561792,
     "altitude": 38.0,
     "last_seen_iso": "2025-09-16T11:07:23Z",
-    "pos_time_iso": "2025-09-16T11:07:23Z"
+    "pos_time_iso": "2025-09-16T11:07:23Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 14
   },
   {
     "node_id": "!5bcdae60",
@@ -951,7 +1041,9 @@
     "longitude": 13.4479872,
     "altitude": 53.0,
     "last_seen_iso": "2025-09-16T11:06:48Z",
-    "pos_time_iso": "2025-09-16T11:06:48Z"
+    "pos_time_iso": "2025-09-16T11:06:48Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!b03d7b74",
@@ -972,7 +1064,9 @@
     "longitude": 13.3029888,
     "altitude": 0.0,
     "last_seen_iso": "2025-09-16T11:05:06Z",
-    "pos_time_iso": "2025-09-16T09:58:12Z"
+    "pos_time_iso": "2025-09-16T09:58:12Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 11
   },
   {
     "node_id": "!a2ed9ab0",
@@ -993,7 +1087,9 @@
     "longitude": 13.3771264,
     "altitude": 82.0,
     "last_seen_iso": "2025-09-16T11:01:31Z",
-    "pos_time_iso": "2025-09-16T11:01:31Z"
+    "pos_time_iso": "2025-09-16T11:01:31Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 12
   },
   {
     "node_id": "!f6b3f9bf",
@@ -1014,7 +1110,9 @@
     "longitude": 13.3431296,
     "altitude": 10.0,
     "last_seen_iso": "2025-09-16T10:53:57Z",
-    "pos_time_iso": "2025-09-16T10:53:57Z"
+    "pos_time_iso": "2025-09-16T10:53:57Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 13
   },
   {
     "node_id": "!92476202",
@@ -1034,7 +1132,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T10:44:44Z"
+    "last_seen_iso": "2025-09-16T10:44:44Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!43b6f328",
@@ -1055,7 +1155,9 @@
     "longitude": 13.3774764,
     "altitude": 51.0,
     "last_seen_iso": "2025-09-16T10:36:03Z",
-    "pos_time_iso": "2025-09-16T10:36:03Z"
+    "pos_time_iso": "2025-09-16T10:36:03Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!c0c321b4",
@@ -1075,7 +1177,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T10:34:28Z"
+    "last_seen_iso": "2025-09-16T10:34:28Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!4359d8f8",
@@ -1096,12 +1200,14 @@
     "longitude": 13.47092,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-16T10:29:54Z",
-    "pos_time_iso": "2025-09-15T21:36:48Z"
+    "pos_time_iso": "2025-09-15T21:36:48Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!45a351b8",
     "short_name": "DLS",
-    "long_name": "NDB Luebars 📡 Replacement",
+    "long_name": "NDB Luebars \ud83d\udce1 Replacement",
     "hw_model": "HELTEC_VISION_MASTER_T190",
     "role": "CLIENT",
     "snr": 10.75,
@@ -1116,12 +1222,14 @@
     "latitude": 52.6139,
     "longitude": 13.3636,
     "altitude": 70.0,
-    "last_seen_iso": "2025-09-16T10:25:39Z"
+    "last_seen_iso": "2025-09-16T10:25:39Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!7a6d877c",
     "short_name": "877c",
-    "long_name": "【ツ】 877c",
+    "long_name": "\u3010\u30c4\u3011 877c",
     "hw_model": "TBEAM",
     "role": "CLIENT",
     "snr": 11.0,
@@ -1136,7 +1244,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T10:24:16Z"
+    "last_seen_iso": "2025-09-16T10:24:16Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!177cfa26",
@@ -1157,7 +1267,9 @@
     "longitude": 13.5000622,
     "altitude": 61.0,
     "last_seen_iso": "2025-09-16T10:15:22Z",
-    "pos_time_iso": "2025-09-16T05:25:20Z"
+    "pos_time_iso": "2025-09-16T05:25:20Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 10
   },
   {
     "node_id": "!90a0ecac",
@@ -1177,12 +1289,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T10:06:57Z"
+    "last_seen_iso": "2025-09-16T10:06:57Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!45edbd08",
     "short_name": "SOL1",
-    "long_name": "SOL1-Karow☀️",
+    "long_name": "SOL1-Karow\u2600\ufe0f",
     "hw_model": "RAK4631",
     "role": "CLIENT",
     "snr": 10.75,
@@ -1197,7 +1311,9 @@
     "latitude": 52.6241792,
     "longitude": 13.481984,
     "altitude": 62.0,
-    "last_seen_iso": "2025-09-16T09:58:00Z"
+    "last_seen_iso": "2025-09-16T09:58:00Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!b03ceb58",
@@ -1218,7 +1334,9 @@
     "longitude": 13.420156,
     "altitude": 57.0,
     "last_seen_iso": "2025-09-16T09:51:02Z",
-    "pos_time_iso": "2025-09-16T09:51:02Z"
+    "pos_time_iso": "2025-09-16T09:51:02Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!43561304",
@@ -1238,7 +1356,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:47:48Z"
+    "last_seen_iso": "2025-09-16T09:47:48Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!068e1ebc",
@@ -1259,7 +1379,9 @@
     "longitude": 13.40785,
     "altitude": 122.0,
     "last_seen_iso": "2025-09-16T09:46:35Z",
-    "pos_time_iso": "2025-09-16T09:46:20Z"
+    "pos_time_iso": "2025-09-16T09:46:20Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!9c93a2df",
@@ -1279,7 +1401,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:44:30Z"
+    "last_seen_iso": "2025-09-16T09:44:30Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!fa6bb504",
@@ -1299,12 +1423,14 @@
     "latitude": 52.5254656,
     "longitude": 13.3251072,
     "altitude": 82.0,
-    "last_seen_iso": "2025-09-16T09:41:52Z"
+    "last_seen_iso": "2025-09-16T09:41:52Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!d224b9ee",
     "short_name": "b2",
-    "long_name": "Bobby 👾",
+    "long_name": "Bobby \ud83d\udc7e",
     "hw_model": "RAK4631",
     "role": "CLIENT_MUTE",
     "snr": 10.75,
@@ -1319,12 +1445,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:36:48Z"
+    "last_seen_iso": "2025-09-16T09:36:48Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!01bb88db",
     "short_name": "GSBM",
-    "long_name": "Gedenkstätte Berliner Mauer",
+    "long_name": "Gedenkst\u00e4tte Berliner Mauer",
     "hw_model": "HELTEC_MESH_NODE_T114",
     "role": "CLIENT",
     "snr": 10.5,
@@ -1339,7 +1467,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:36:06Z"
+    "last_seen_iso": "2025-09-16T09:36:06Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!da635e24",
@@ -1360,7 +1490,9 @@
     "longitude": 13.4996,
     "altitude": null,
     "last_seen_iso": "2025-09-16T09:35:44Z",
-    "pos_time_iso": "2025-09-15T07:27:03Z"
+    "pos_time_iso": "2025-09-15T07:27:03Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!102cb4b8",
@@ -1380,7 +1512,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:34:18Z"
+    "last_seen_iso": "2025-09-16T09:34:18Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6c73bf84",
@@ -1400,7 +1534,9 @@
     "latitude": 52.559872,
     "longitude": 13.2907008,
     "altitude": 35.0,
-    "last_seen_iso": "2025-09-16T09:25:37Z"
+    "last_seen_iso": "2025-09-16T09:25:37Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!459d6743",
@@ -1420,7 +1556,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:21:11Z"
+    "last_seen_iso": "2025-09-16T09:21:11Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!ba653ae8",
@@ -1441,7 +1579,9 @@
     "longitude": 13.631488,
     "altitude": 70.0,
     "last_seen_iso": "2025-09-16T09:19:32Z",
-    "pos_time_iso": "2025-09-16T09:19:18Z"
+    "pos_time_iso": "2025-09-16T09:19:18Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!b03bd350",
@@ -1461,7 +1601,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:17:11Z"
+    "last_seen_iso": "2025-09-16T09:17:11Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!fe794c32",
@@ -1481,7 +1623,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:13:14Z"
+    "last_seen_iso": "2025-09-16T09:13:14Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!e138f77e",
@@ -1501,7 +1645,9 @@
     "latitude": 52.6123008,
     "longitude": 13.3955584,
     "altitude": 45.0,
-    "last_seen_iso": "2025-09-16T09:09:58Z"
+    "last_seen_iso": "2025-09-16T09:09:58Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!ca6804d1",
@@ -1521,7 +1667,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T09:04:54Z"
+    "last_seen_iso": "2025-09-16T09:04:54Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9eecf3c0",
@@ -1541,7 +1689,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T08:55:35Z"
+    "last_seen_iso": "2025-09-16T08:55:35Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!3addea0f",
@@ -1561,7 +1711,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T08:51:31Z"
+    "last_seen_iso": "2025-09-16T08:51:31Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!db2b23f4",
@@ -1582,7 +1734,9 @@
     "longitude": 13.500416,
     "altitude": 41.0,
     "last_seen_iso": "2025-09-16T08:45:46Z",
-    "pos_time_iso": "2025-09-16T08:45:32Z"
+    "pos_time_iso": "2025-09-16T08:45:32Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 11
   },
   {
     "node_id": "!f1f67380",
@@ -1602,7 +1756,9 @@
     "latitude": 52.5156352,
     "longitude": 13.3251072,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T08:36:22Z"
+    "last_seen_iso": "2025-09-16T08:36:22Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!3dd7fd1e",
@@ -1622,7 +1778,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T08:31:50Z"
+    "last_seen_iso": "2025-09-16T08:31:50Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6e11aaed",
@@ -1643,7 +1801,9 @@
     "longitude": 13.4545408,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-16T08:25:26Z",
-    "pos_time_iso": "2025-09-16T08:25:05Z"
+    "pos_time_iso": "2025-09-16T08:25:05Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 14
   },
   {
     "node_id": "!6c73edec",
@@ -1664,7 +1824,9 @@
     "longitude": 13.4295552,
     "altitude": 139.0,
     "last_seen_iso": "2025-09-16T08:21:48Z",
-    "pos_time_iso": "2025-09-16T08:21:48Z"
+    "pos_time_iso": "2025-09-16T08:21:48Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!ba60638c",
@@ -1685,12 +1847,14 @@
     "longitude": 13.6052736,
     "altitude": 57.0,
     "last_seen_iso": "2025-09-16T08:18:35Z",
-    "pos_time_iso": "2025-09-16T08:18:35Z"
+    "pos_time_iso": "2025-09-16T08:18:35Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 11
   },
   {
     "node_id": "!90520695",
     "short_name": "FuLo",
-    "long_name": "Funklochfüller",
+    "long_name": "Funklochf\u00fcller",
     "hw_model": "HELTEC_MESH_NODE_T114",
     "role": "CLIENT",
     "snr": 10.75,
@@ -1706,7 +1870,9 @@
     "longitude": 13.500416,
     "altitude": 37.0,
     "last_seen_iso": "2025-09-16T08:16:32Z",
-    "pos_time_iso": "2025-09-16T08:16:32Z"
+    "pos_time_iso": "2025-09-16T08:16:32Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!a0cc1394",
@@ -1727,7 +1893,9 @@
     "longitude": 13.3431296,
     "altitude": 45.0,
     "last_seen_iso": "2025-09-16T08:16:09Z",
-    "pos_time_iso": "2025-09-16T08:16:09Z"
+    "pos_time_iso": "2025-09-16T08:16:09Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!dc6e4013",
@@ -1748,7 +1916,9 @@
     "longitude": 13.3223541,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-16T08:08:05Z",
-    "pos_time_iso": "2025-09-16T08:07:52Z"
+    "pos_time_iso": "2025-09-16T08:07:52Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!5d823fb1",
@@ -1768,7 +1938,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T08:02:21Z"
+    "last_seen_iso": "2025-09-16T08:02:21Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!8d36a17d",
@@ -1789,7 +1961,9 @@
     "longitude": 13.3726208,
     "altitude": 42.0,
     "last_seen_iso": "2025-09-16T07:49:33Z",
-    "pos_time_iso": "2025-09-16T07:49:33Z"
+    "pos_time_iso": "2025-09-16T07:49:33Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 11
   },
   {
     "node_id": "!1d60dd3c",
@@ -1809,7 +1983,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T07:32:03Z"
+    "last_seen_iso": "2025-09-16T07:32:03Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!b03ca90c",
@@ -1829,7 +2005,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T07:28:21Z"
+    "last_seen_iso": "2025-09-16T07:28:21Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9ea0bcbc",
@@ -1849,11 +2027,13 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T07:16:43Z"
+    "last_seen_iso": "2025-09-16T07:16:43Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6c740610",
-    "short_name": "🦄",
+    "short_name": "\ud83e\udd84",
     "long_name": "IDDQD 10435",
     "hw_model": "TBEAM",
     "role": "CLIENT",
@@ -1870,11 +2050,13 @@
     "longitude": 13.41,
     "altitude": null,
     "last_seen_iso": "2025-09-16T07:08:01Z",
-    "pos_time_iso": "2025-09-16T05:31:57Z"
+    "pos_time_iso": "2025-09-16T05:31:57Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!a6683ea5",
-    "short_name": "🏞",
+    "short_name": "\ud83c\udfde",
     "long_name": "sitnchill",
     "hw_model": "RAK4631",
     "role": "CLIENT",
@@ -1890,7 +2072,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T06:31:31Z"
+    "last_seen_iso": "2025-09-16T06:31:31Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!b6428bf9",
@@ -1910,7 +2094,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T06:21:29Z"
+    "last_seen_iso": "2025-09-16T06:21:29Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!ed6a8dc9",
@@ -1931,7 +2117,9 @@
     "longitude": 13.3955584,
     "altitude": 77.0,
     "last_seen_iso": "2025-09-16T05:52:26Z",
-    "pos_time_iso": "2025-09-16T05:52:26Z"
+    "pos_time_iso": "2025-09-16T05:52:26Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 13
   },
   {
     "node_id": "!02788f81",
@@ -1951,7 +2139,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T05:47:12Z"
+    "last_seen_iso": "2025-09-16T05:47:12Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!849a8ba4",
@@ -1971,7 +2161,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T05:43:23Z"
+    "last_seen_iso": "2025-09-16T05:43:23Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!af51a025",
@@ -1991,11 +2183,13 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T05:41:38Z"
+    "last_seen_iso": "2025-09-16T05:41:38Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!849a8b90",
-    "short_name": "📶",
+    "short_name": "\ud83d\udcf6",
     "long_name": "bert",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
@@ -2012,7 +2206,9 @@
     "longitude": 13.4479872,
     "altitude": 48.0,
     "last_seen_iso": "2025-09-16T05:39:25Z",
-    "pos_time_iso": "2025-09-16T05:39:25Z"
+    "pos_time_iso": "2025-09-16T05:39:25Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!e80cda12",
@@ -2033,7 +2229,9 @@
     "longitude": 13.3700968,
     "altitude": -39.0,
     "last_seen_iso": "2025-09-16T05:22:18Z",
-    "pos_time_iso": "2025-09-16T05:22:07Z"
+    "pos_time_iso": "2025-09-16T05:22:07Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!a0cc2af8",
@@ -2054,7 +2252,9 @@
     "longitude": 13.500416,
     "altitude": 61.0,
     "last_seen_iso": "2025-09-16T05:14:02Z",
-    "pos_time_iso": "2025-09-16T05:13:51Z"
+    "pos_time_iso": "2025-09-16T05:13:51Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!18de8f57",
@@ -2074,12 +2274,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T05:12:10Z"
+    "last_seen_iso": "2025-09-16T05:12:10Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!2b292b2c",
-    "short_name": "RüP",
-    "long_name": "Rüdesheimer Platz",
+    "short_name": "R\u00fcP",
+    "long_name": "R\u00fcdesheimer Platz",
     "hw_model": "RAK4631",
     "role": "CLIENT",
     "snr": 10.75,
@@ -2095,7 +2297,9 @@
     "longitude": 13.3152098,
     "altitude": 61.0,
     "last_seen_iso": "2025-09-16T05:11:08Z",
-    "pos_time_iso": "2025-09-16T05:11:08Z"
+    "pos_time_iso": "2025-09-16T05:11:08Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 11
   },
   {
     "node_id": "!b1fa2b07",
@@ -2116,7 +2320,9 @@
     "longitude": 13.5512064,
     "altitude": 68.0,
     "last_seen_iso": "2025-09-16T04:57:12Z",
-    "pos_time_iso": "2025-09-16T04:57:10Z"
+    "pos_time_iso": "2025-09-16T04:57:10Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 12
   },
   {
     "node_id": "!9eecb2fc",
@@ -2137,7 +2343,9 @@
     "longitude": 13.4660096,
     "altitude": 43.0,
     "last_seen_iso": "2025-09-16T04:49:28Z",
-    "pos_time_iso": "2025-09-16T04:49:17Z"
+    "pos_time_iso": "2025-09-16T04:49:17Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!9c56b631",
@@ -2157,7 +2365,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T04:36:07Z"
+    "last_seen_iso": "2025-09-16T04:36:07Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6c7311ec",
@@ -2177,12 +2387,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T04:35:50Z"
+    "last_seen_iso": "2025-09-16T04:35:50Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!25c2e7dc",
     "short_name": "e7dc",
-    "long_name": "Julia Kløckchain",
+    "long_name": "Julia Kl\u00f8ckchain",
     "hw_model": "TLORA_V2_1_1P6",
     "role": "CLIENT",
     "snr": 11.0,
@@ -2198,12 +2410,14 @@
     "longitude": 13.4479872,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-16T04:14:50Z",
-    "pos_time_iso": "2025-09-16T04:14:50Z"
+    "pos_time_iso": "2025-09-16T04:14:50Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 11
   },
   {
     "node_id": "!a0cc6904",
-    "short_name": "Kdû",
-    "long_name": "Khazad-dûm",
+    "short_name": "Kd\u00fb",
+    "long_name": "Khazad-d\u00fbm",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
     "snr": 11.5,
@@ -2219,7 +2433,9 @@
     "longitude": 13.500416,
     "altitude": 57.0,
     "last_seen_iso": "2025-09-16T03:20:40Z",
-    "pos_time_iso": "2025-09-16T01:45:58Z"
+    "pos_time_iso": "2025-09-16T01:45:58Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 12
   },
   {
     "node_id": "!9e17349d",
@@ -2239,7 +2455,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T03:00:56Z"
+    "last_seen_iso": "2025-09-16T03:00:56Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!d2545511",
@@ -2260,7 +2478,9 @@
     "longitude": 13.4610944,
     "altitude": 67.0,
     "last_seen_iso": "2025-09-16T02:29:59Z",
-    "pos_time_iso": "2025-09-16T02:29:59Z"
+    "pos_time_iso": "2025-09-16T02:29:59Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 14
   },
   {
     "node_id": "!9ee70ed0",
@@ -2281,7 +2501,9 @@
     "longitude": 13.5069696,
     "altitude": 0.0,
     "last_seen_iso": "2025-09-16T02:03:39Z",
-    "pos_time_iso": "2025-09-15T20:34:12Z"
+    "pos_time_iso": "2025-09-15T20:34:12Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!849c3d08",
@@ -2301,12 +2523,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T01:45:52Z"
+    "last_seen_iso": "2025-09-16T01:45:52Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9eecf808",
     "short_name": "F0oz",
-    "long_name": "(ㆆ_ㆆ)   F0oz",
+    "long_name": "(\u3186_\u3186)   F0oz",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
     "snr": 10.75,
@@ -2321,7 +2545,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-16T00:45:21Z"
+    "last_seen_iso": "2025-09-16T00:45:21Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!a2e17674",
@@ -2342,7 +2568,9 @@
     "longitude": 13.6291073,
     "altitude": 60.0,
     "last_seen_iso": "2025-09-16T00:33:29Z",
-    "pos_time_iso": "2025-09-16T00:33:29Z"
+    "pos_time_iso": "2025-09-16T00:33:29Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!da627d58",
@@ -2363,7 +2591,9 @@
     "longitude": 13.3275648,
     "altitude": 34.0,
     "last_seen_iso": "2025-09-15T23:45:39Z",
-    "pos_time_iso": "2025-09-15T21:41:46Z"
+    "pos_time_iso": "2025-09-15T21:41:46Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!c0c30b10",
@@ -2383,7 +2613,9 @@
     "latitude": 52.4550144,
     "longitude": 13.3431296,
     "altitude": 59.0,
-    "last_seen_iso": "2025-09-15T23:42:58Z"
+    "last_seen_iso": "2025-09-15T23:42:58Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!849b8194",
@@ -2403,7 +2635,9 @@
     "latitude": 52.5074432,
     "longitude": 13.3431296,
     "altitude": 70.0,
-    "last_seen_iso": "2025-09-15T22:24:25Z"
+    "last_seen_iso": "2025-09-15T22:24:25Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!db898113",
@@ -2424,12 +2658,14 @@
     "longitude": 13.3955584,
     "altitude": 49.0,
     "last_seen_iso": "2025-09-15T22:07:59Z",
-    "pos_time_iso": "2025-09-15T22:07:59Z"
+    "pos_time_iso": "2025-09-15T22:07:59Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 12
   },
   {
     "node_id": "!9ee70320",
     "short_name": "NS-N",
-    "long_name": "Klub Łączności ODRA baza \"N\"📡",
+    "long_name": "Klub \u0141\u0105czno\u015bci ODRA baza \"N\"\ud83d\udce1",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
     "snr": -14.0,
@@ -2444,7 +2680,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T22:07:42Z"
+    "last_seen_iso": "2025-09-15T22:07:42Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!e00cea30",
@@ -2465,7 +2703,9 @@
     "longitude": 13.6577024,
     "altitude": 64.0,
     "last_seen_iso": "2025-09-15T21:30:39Z",
-    "pos_time_iso": "2025-09-15T21:30:39Z"
+    "pos_time_iso": "2025-09-15T21:30:39Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 14
   },
   {
     "node_id": "!88071b58",
@@ -2485,7 +2725,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T20:58:12Z"
+    "last_seen_iso": "2025-09-15T20:58:12Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!3269942c",
@@ -2505,7 +2747,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T20:46:11Z"
+    "last_seen_iso": "2025-09-15T20:46:11Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!bb8a1ac6",
@@ -2526,7 +2770,9 @@
     "longitude": 13.4645596,
     "altitude": 40.0,
     "last_seen_iso": "2025-09-15T20:10:29Z",
-    "pos_time_iso": "2025-09-15T20:10:29Z"
+    "pos_time_iso": "2025-09-15T20:10:29Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 12
   },
   {
     "node_id": "!849b7154",
@@ -2546,12 +2792,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T20:10:22Z"
+    "last_seen_iso": "2025-09-15T20:10:22Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!bb9f80ca",
     "short_name": "b1",
-    "long_name": "Bobby 🔌",
+    "long_name": "Bobby \ud83d\udd0c",
     "hw_model": "RAK4631",
     "role": "CLIENT",
     "snr": 11.75,
@@ -2566,7 +2814,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T19:56:20Z"
+    "last_seen_iso": "2025-09-15T19:56:20Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!da9d5a98",
@@ -2586,7 +2836,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T19:35:00Z"
+    "last_seen_iso": "2025-09-15T19:35:00Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!433ecff8",
@@ -2606,7 +2858,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T19:30:14Z"
+    "last_seen_iso": "2025-09-15T19:30:14Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6cf821fb",
@@ -2627,7 +2881,9 @@
     "longitude": 13.4479872,
     "altitude": 51.0,
     "last_seen_iso": "2025-09-15T19:13:05Z",
-    "pos_time_iso": "2025-09-15T18:59:39Z"
+    "pos_time_iso": "2025-09-15T18:59:39Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!7f7d7914",
@@ -2647,7 +2903,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T19:04:25Z"
+    "last_seen_iso": "2025-09-15T19:04:25Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!03b9ca11",
@@ -2667,7 +2925,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T17:34:19Z"
+    "last_seen_iso": "2025-09-15T17:34:19Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!28978f94",
@@ -2688,7 +2948,9 @@
     "longitude": 13.500416,
     "altitude": 115.0,
     "last_seen_iso": "2025-09-15T16:19:58Z",
-    "pos_time_iso": "2025-09-15T16:18:22Z"
+    "pos_time_iso": "2025-09-15T16:18:22Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 10
   },
   {
     "node_id": "!9d3dba8a",
@@ -2708,11 +2970,13 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T15:41:06Z"
+    "last_seen_iso": "2025-09-15T15:41:06Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!a3deea53",
-    "short_name": "🐸",
+    "short_name": "\ud83d\udc38",
     "long_name": "green",
     "hw_model": "TRACKER_T1000_E",
     "role": "CLIENT_MUTE",
@@ -2728,7 +2992,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T15:16:59Z"
+    "last_seen_iso": "2025-09-15T15:16:59Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!2f945044",
@@ -2749,7 +3015,9 @@
     "longitude": 13.3906432,
     "altitude": 50.0,
     "last_seen_iso": "2025-09-15T15:07:07Z",
-    "pos_time_iso": "2025-09-15T14:46:23Z"
+    "pos_time_iso": "2025-09-15T14:46:23Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!c5abeec2",
@@ -2770,7 +3038,9 @@
     "longitude": 13.5135232,
     "altitude": 35.0,
     "last_seen_iso": "2025-09-15T14:00:55Z",
-    "pos_time_iso": "2025-09-15T14:00:53Z"
+    "pos_time_iso": "2025-09-15T14:00:53Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 14
   },
   {
     "node_id": "!28978dd4",
@@ -2790,7 +3060,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T13:07:32Z"
+    "last_seen_iso": "2025-09-15T13:07:32Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!1551a9dc",
@@ -2811,7 +3083,9 @@
     "longitude": 13.500416,
     "altitude": 31.0,
     "last_seen_iso": "2025-09-15T12:28:25Z",
-    "pos_time_iso": "2025-09-15T12:28:22Z"
+    "pos_time_iso": "2025-09-15T12:28:22Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 11
   },
   {
     "node_id": "!c0c309ec",
@@ -2831,7 +3105,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T12:23:39Z"
+    "last_seen_iso": "2025-09-15T12:23:39Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!64e2ecc2",
@@ -2851,7 +3127,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T11:45:16Z"
+    "last_seen_iso": "2025-09-15T11:45:16Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9ee71c38",
@@ -2871,11 +3149,13 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T11:14:59Z"
+    "last_seen_iso": "2025-09-15T11:14:59Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!da73ea58",
-    "short_name": "🏡",
+    "short_name": "\ud83c\udfe1",
     "long_name": "dmho-ho",
     "hw_model": "SEEED_XIAO_S3",
     "role": "CLIENT",
@@ -2891,7 +3171,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T11:09:41Z"
+    "last_seen_iso": "2025-09-15T11:09:41Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!6c6964f4",
@@ -2912,7 +3194,9 @@
     "longitude": 13.6511488,
     "altitude": 76.0,
     "last_seen_iso": "2025-09-15T07:55:59Z",
-    "pos_time_iso": "2025-09-15T07:45:46Z"
+    "pos_time_iso": "2025-09-15T07:45:46Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 11
   },
   {
     "node_id": "!9eecf544",
@@ -2932,7 +3216,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-15T07:22:33Z"
+    "last_seen_iso": "2025-09-15T07:22:33Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!2b1f7a6f",
@@ -2953,7 +3239,9 @@
     "longitude": 13.4283264,
     "altitude": 26.0,
     "last_seen_iso": "2025-09-15T05:03:08Z",
-    "pos_time_iso": "2025-09-15T05:02:47Z"
+    "pos_time_iso": "2025-09-15T05:02:47Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!433b36c4",
@@ -2974,7 +3262,9 @@
     "longitude": 13.3955584,
     "altitude": 51.0,
     "last_seen_iso": "2025-09-14T22:51:45Z",
-    "pos_time_iso": "2025-09-14T22:51:45Z"
+    "pos_time_iso": "2025-09-14T22:51:45Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 14
   },
   {
     "node_id": "!433ef3e8",
@@ -2994,7 +3284,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T22:34:26Z"
+    "last_seen_iso": "2025-09-14T22:34:26Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!2d070d01",
@@ -3014,12 +3306,14 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T22:12:05Z"
+    "last_seen_iso": "2025-09-14T22:12:05Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9ea12df0",
     "short_name": "Ed-2",
-    "long_name": "Plänti-2",
+    "long_name": "Pl\u00e4nti-2",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
     "snr": 11.0,
@@ -3034,7 +3328,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T21:55:51Z"
+    "last_seen_iso": "2025-09-14T21:55:51Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!dc7494c4",
@@ -3055,7 +3351,9 @@
     "longitude": 13.3955584,
     "altitude": 98.0,
     "last_seen_iso": "2025-09-14T21:43:35Z",
-    "pos_time_iso": "2025-09-14T21:43:35Z"
+    "pos_time_iso": "2025-09-14T21:43:35Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!435b0714",
@@ -3076,7 +3374,9 @@
     "longitude": 13.3955584,
     "altitude": 6.0,
     "last_seen_iso": "2025-09-14T20:11:21Z",
-    "pos_time_iso": "2025-09-14T20:11:01Z"
+    "pos_time_iso": "2025-09-14T20:11:01Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 14
   },
   {
     "node_id": "!fa6a3d6c",
@@ -3097,7 +3397,9 @@
     "longitude": 13.323267,
     "altitude": 20.0,
     "last_seen_iso": "2025-09-14T19:24:49Z",
-    "pos_time_iso": "2025-09-14T19:24:28Z"
+    "pos_time_iso": "2025-09-14T19:24:28Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!78299711",
@@ -3117,7 +3419,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T17:46:50Z"
+    "last_seen_iso": "2025-09-14T17:46:50Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!7a6bf888",
@@ -3137,7 +3441,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T16:07:26Z"
+    "last_seen_iso": "2025-09-14T16:07:26Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!2fbb1f99",
@@ -3157,7 +3463,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T15:32:22Z"
+    "last_seen_iso": "2025-09-14T15:32:22Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!b03c9678",
@@ -3177,7 +3485,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T15:05:51Z"
+    "last_seen_iso": "2025-09-14T15:05:51Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!43b7c694",
@@ -3198,7 +3508,9 @@
     "longitude": 13.4852833,
     "altitude": null,
     "last_seen_iso": "2025-09-14T14:34:20Z",
-    "pos_time_iso": "2025-09-14T14:34:20Z"
+    "pos_time_iso": "2025-09-14T14:34:20Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 10
   },
   {
     "node_id": "!2448d855",
@@ -3219,12 +3531,14 @@
     "longitude": 13.4709248,
     "altitude": 37.0,
     "last_seen_iso": "2025-09-14T14:29:00Z",
-    "pos_time_iso": "2025-09-14T14:29:00Z"
+    "pos_time_iso": "2025-09-14T14:29:00Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 11
   },
   {
     "node_id": "!6d022fe7",
     "short_name": "ACAB",
-    "long_name": "Køpi Bleibt!!",
+    "long_name": "K\u00f8pi Bleibt!!",
     "hw_model": "RAK4631",
     "role": "CLIENT",
     "snr": -13.5,
@@ -3239,7 +3553,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T14:23:30Z"
+    "last_seen_iso": "2025-09-14T14:23:30Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!abf83f48",
@@ -3259,7 +3575,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T11:12:24Z"
+    "last_seen_iso": "2025-09-14T11:12:24Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!bfbdc5ca",
@@ -3279,7 +3597,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T10:40:33Z"
+    "last_seen_iso": "2025-09-14T10:40:33Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!ba6a8d40",
@@ -3299,7 +3619,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T09:25:40Z"
+    "last_seen_iso": "2025-09-14T09:25:40Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!b03d9170",
@@ -3319,7 +3641,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-14T06:12:04Z"
+    "last_seen_iso": "2025-09-14T06:12:04Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!ba0cae50",
@@ -3340,7 +3664,9 @@
     "longitude": 13.6577024,
     "altitude": 72.0,
     "last_seen_iso": "2025-09-14T02:16:53Z",
-    "pos_time_iso": "2025-09-14T02:11:38Z"
+    "pos_time_iso": "2025-09-14T02:11:38Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 12
   },
   {
     "node_id": "!1bf8ed79",
@@ -3361,11 +3687,13 @@
     "longitude": 13.320192,
     "altitude": 41.0,
     "last_seen_iso": "2025-09-14T02:12:43Z",
-    "pos_time_iso": "2025-09-13T19:30:26Z"
+    "pos_time_iso": "2025-09-13T19:30:26Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 13
   },
   {
     "node_id": "!9ee71b3c",
-    "short_name": "🐸",
+    "short_name": "\ud83d\udc38",
     "long_name": "spuck",
     "hw_model": "HELTEC_V3",
     "role": "CLIENT",
@@ -3381,7 +3709,9 @@
     "latitude": 52.5074432,
     "longitude": 13.500416,
     "altitude": 49.0,
-    "last_seen_iso": "2025-09-14T02:11:02Z"
+    "last_seen_iso": "2025-09-14T02:11:02Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!9ea1af60",
@@ -3402,7 +3732,9 @@
     "longitude": 13.451264,
     "altitude": 36.0,
     "last_seen_iso": "2025-09-14T01:48:27Z",
-    "pos_time_iso": "2025-09-14T01:55:53Z"
+    "pos_time_iso": "2025-09-14T01:55:53Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 10
   },
   {
     "node_id": "!c8b928d6",
@@ -3422,7 +3754,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-13T23:08:27Z"
+    "last_seen_iso": "2025-09-13T23:08:27Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!f9b262d4",
@@ -3443,7 +3777,9 @@
     "longitude": 13.76256,
     "altitude": 0.0,
     "last_seen_iso": "2025-09-13T20:42:10Z",
-    "pos_time_iso": "2025-09-13T20:42:13Z"
+    "pos_time_iso": "2025-09-13T20:42:13Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 12
   },
   {
     "node_id": "!2f91531c",
@@ -3463,7 +3799,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-13T18:03:25Z"
+    "last_seen_iso": "2025-09-13T18:03:25Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!433af570",
@@ -3483,7 +3821,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-13T17:04:37Z"
+    "last_seen_iso": "2025-09-13T17:04:37Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!99bc90a8",
@@ -3503,7 +3843,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-13T16:30:32Z"
+    "last_seen_iso": "2025-09-13T16:30:32Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!5b835c1c",
@@ -3524,7 +3866,9 @@
     "longitude": 13.3431296,
     "altitude": 36.0,
     "last_seen_iso": "2025-09-13T15:14:52Z",
-    "pos_time_iso": "2025-09-13T15:29:15Z"
+    "pos_time_iso": "2025-09-13T15:29:15Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 11
   },
   {
     "node_id": "!f840cb2d",
@@ -3545,11 +3889,13 @@
     "longitude": 13.3955584,
     "altitude": -6.0,
     "last_seen_iso": "2025-09-13T12:48:15Z",
-    "pos_time_iso": "2025-09-13T12:47:58Z"
+    "pos_time_iso": "2025-09-13T12:47:58Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 12
   },
   {
     "node_id": "!336019dc",
-    "short_name": "🥚",
+    "short_name": "\ud83e\udd5a",
     "long_name": "Meshtastic 19dc",
     "hw_model": "LILYGO_TBEAM_S3_CORE",
     "role": "CLIENT",
@@ -3566,7 +3912,9 @@
     "longitude": 13.3502437,
     "altitude": 38.0,
     "last_seen_iso": "2025-09-13T12:41:57Z",
-    "pos_time_iso": "2025-09-13T20:46:47Z"
+    "pos_time_iso": "2025-09-13T20:46:47Z",
+    "location_source": "LOC_FIXTURE_2",
+    "precision_bits": 13
   },
   {
     "node_id": "!17f58f25",
@@ -3586,7 +3934,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-13T12:25:59Z"
+    "last_seen_iso": "2025-09-13T12:25:59Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!b5954cf7",
@@ -3607,12 +3957,14 @@
     "longitude": 13.2907008,
     "altitude": 34.0,
     "last_seen_iso": "2025-09-13T12:08:17Z",
-    "pos_time_iso": "2025-09-13T12:08:11Z"
+    "pos_time_iso": "2025-09-13T12:08:11Z",
+    "location_source": "LOC_FIXTURE_1",
+    "precision_bits": 10
   },
   {
     "node_id": "!ee59338a",
     "short_name": "pizi",
-    "long_name": "Pitztaler Straße Panketal",
+    "long_name": "Pitztaler Stra\u00dfe Panketal",
     "hw_model": "SEEED_SOLAR_NODE",
     "role": "CLIENT",
     "snr": -1.25,
@@ -3627,7 +3979,9 @@
     "latitude": null,
     "longitude": null,
     "altitude": null,
-    "last_seen_iso": "2025-09-13T12:07:26Z"
+    "last_seen_iso": "2025-09-13T12:07:26Z",
+    "location_source": null,
+    "precision_bits": null
   },
   {
     "node_id": "!db2b4f3c",
@@ -3648,6 +4002,8 @@
     "longitude": 13.5241728,
     "altitude": 76.0,
     "last_seen_iso": "2025-09-13T10:25:15Z",
-    "pos_time_iso": "2025-09-13T06:10:46Z"
+    "pos_time_iso": "2025-09-13T06:10:46Z",
+    "location_source": "LOC_FIXTURE_0",
+    "precision_bits": 12
   }
 ]
