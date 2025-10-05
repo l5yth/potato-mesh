@@ -348,6 +348,20 @@ end
 
 init_db unless db_schema_present?
 
+def ensure_schema_upgrades
+  db = open_database
+  node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }
+  unless node_columns.include?("precision_bits")
+    db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
+  end
+rescue SQLite3::SQLException => e
+  warn "[warn] failed to apply schema upgrade: #{e.message}"
+ensure
+  db&.close
+end
+
+ensure_schema_upgrades
+
 # Retrieve recently heard nodes ordered by their last contact time.
 #
 # @param limit [Integer] maximum number of rows returned.
@@ -362,7 +376,8 @@ def query_nodes(limit)
     SELECT node_id, short_name, long_name, hw_model, role, snr,
            battery_level, voltage, last_heard, first_heard,
            uptime_seconds, channel_utilization, air_util_tx,
-           position_time, latitude, longitude, altitude
+           position_time, location_source, precision_bits,
+           latitude, longitude, altitude
     FROM nodes
     WHERE last_heard >= ?
   SQL
@@ -386,6 +401,8 @@ def query_nodes(limit)
     r["position_time"] = pt
     r["last_seen_iso"] = Time.at(lh).utc.iso8601 if lh
     r["pos_time_iso"] = Time.at(pt).utc.iso8601 if pt
+    pb = r["precision_bits"]
+    r["precision_bits"] = pb.to_i if pb
   end
   rows
 ensure
@@ -506,6 +523,8 @@ def query_positions(limit)
     end
     pt_val = r["position_time"]
     r["position_time_iso"] = Time.at(pt_val).utc.iso8601 if pt_val
+    pb = r["precision_bits"]
+    r["precision_bits"] = pb.to_i if pb
   end
   rows
 ensure
@@ -874,6 +893,11 @@ def upsert_node(db, node_id, n)
     met["uptimeSeconds"],
     pt,
     pos["locationSource"],
+    coerce_integer(
+      pos["precisionBits"] ||
+      pos["precision_bits"] ||
+      pos.dig("raw", "precision_bits"),
+    ),
     pos["latitude"],
     pos["longitude"],
     pos["altitude"],
@@ -882,8 +906,8 @@ def upsert_node(db, node_id, n)
     db.execute <<~SQL, row
                  INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                    hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                   position_time,location_source,latitude,longitude,altitude)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   position_time,location_source,precision_bits,latitude,longitude,altitude)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(node_id) DO UPDATE SET
                    num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                    hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
@@ -891,7 +915,7 @@ def upsert_node(db, node_id, n)
                    first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                    battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                    air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
-                   location_source=excluded.location_source, latitude=excluded.latitude, longitude=excluded.longitude,
+                   location_source=excluded.location_source, precision_bits=excluded.precision_bits, latitude=excluded.latitude, longitude=excluded.longitude,
                    altitude=excluded.altitude
                  WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                SQL
@@ -963,8 +987,9 @@ end
 # @param latitude [Float, nil] reported latitude.
 # @param longitude [Float, nil] reported longitude.
 # @param altitude [Float, nil] reported altitude.
+# @param precision_bits [Integer, nil] precision estimate provided by the device.
 # @param snr [Float, nil] link SNR for the packet.
-def update_node_from_position(db, node_id, node_num, rx_time, position_time, location_source, latitude, longitude, altitude, snr)
+def update_node_from_position(db, node_id, node_num, rx_time, position_time, location_source, precision_bits, latitude, longitude, altitude, snr)
   num = coerce_integer(node_num)
   id = string_or_nil(node_id)
   if id&.start_with?("!")
@@ -985,6 +1010,7 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
   lat = coerce_float(latitude)
   lon = coerce_float(longitude)
   alt = coerce_float(altitude)
+  precision = coerce_integer(precision_bits)
   snr_val = coerce_float(snr)
 
   row = [
@@ -994,6 +1020,7 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
     last_heard,
     pos_time,
     loc,
+    precision,
     lat,
     lon,
     alt,
@@ -1001,8 +1028,8 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
   ]
   with_busy_retry do
     db.execute <<~SQL, row
-                 INSERT INTO nodes(node_id,num,last_heard,first_heard,position_time,location_source,latitude,longitude,altitude,snr)
-                 VALUES (?,?,?,?,?,?,?,?,?,?)
+                 INSERT INTO nodes(node_id,num,last_heard,first_heard,position_time,location_source,precision_bits,latitude,longitude,altitude,snr)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(node_id) DO UPDATE SET
                    num=COALESCE(excluded.num,nodes.num),
                    snr=COALESCE(excluded.snr,nodes.snr),
@@ -1018,6 +1045,12 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
                           AND excluded.location_source IS NOT NULL
                        THEN excluded.location_source
                      ELSE nodes.location_source
+                   END,
+                   precision_bits=CASE
+                     WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                          AND excluded.precision_bits IS NOT NULL
+                       THEN excluded.precision_bits
+                     ELSE nodes.precision_bits
                    END,
                    latitude=CASE
                      WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
@@ -1212,6 +1245,7 @@ def insert_position(db, payload)
     rx_time,
     position_time,
     location_source,
+    precision_bits,
     lat,
     lon,
     alt,

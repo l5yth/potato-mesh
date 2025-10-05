@@ -77,6 +77,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "latitude" => node["latitude"],
       "longitude" => node["longitude"],
       "altitude" => node["altitude"],
+      "locationSource" => node["location_source"],
+      "precisionBits" => node["precision_bits"],
     )
     payload["position"] = position unless position.empty?
 
@@ -104,6 +106,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "channel_utilization" => node["channel_utilization"],
       "air_util_tx" => node["air_util_tx"],
       "position_time" => node["position_time"],
+      "location_source" => node["location_source"],
+      "precision_bits" => node["precision_bits"],
       "latitude" => node["latitude"],
       "longitude" => node["longitude"],
       "altitude" => node["altitude"],
@@ -717,7 +721,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         with_db(readonly: true) do |db|
           db.results_as_hash = true
           node_row = db.get_first_row(
-            "SELECT last_heard, position_time, latitude, longitude, altitude, location_source, snr FROM nodes WHERE node_id = ?",
+            "SELECT last_heard, position_time, latitude, longitude, altitude, location_source, precision_bits, snr FROM nodes WHERE node_id = ?",
             [node_id],
           )
           expect(node_row["last_heard"]).to eq(rx_time)
@@ -726,6 +730,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(node_row["longitude"], 13.4)
           expect_same_value(node_row["altitude"], 42.0)
           expect(node_row["location_source"]).to eq("LOC_INTERNAL")
+          expect(node_row["precision_bits"]).to eq(15)
           expect_same_value(node_row["snr"], -8.5)
         end
       end
@@ -1405,6 +1410,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect_same_value(actual_row["channel_utilization"], expected["channel_utilization"])
         expect_same_value(actual_row["air_util_tx"], expected["air_util_tx"])
         expect_same_value(actual_row["position_time"], expected["position_time"])
+        expect(actual_row["location_source"]).to eq(expected["location_source"])
+        expect_same_value(actual_row["precision_bits"], expected["precision_bits"])
         expect_same_value(actual_row["latitude"], expected["latitude"])
         expect_same_value(actual_row["longitude"], expected["longitude"])
         expect_same_value(actual_row["altitude"], expected["altitude"])
@@ -1664,6 +1671,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "position_time" => rx_time - 5,
           "latitude" => 52.0 + idx,
           "longitude" => 13.0 + idx,
+          "location_source" => "LOC_TEST",
+          "precision_bits" => 7 + idx,
           "payload_b64" => "AQI=",
         }
         post "/api/positions", payload.to_json, auth_headers
@@ -1684,6 +1693,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["position_time_iso"]).to eq(Time.at(rx_times.last - 5).utc.iso8601)
       expect(entry["latitude"]).to eq(53.0)
       expect(entry["longitude"]).to eq(14.0)
+      expect(entry["location_source"]).to eq("LOC_TEST")
+      expect(entry["precision_bits"]).to eq(8)
       expect(entry["payload_b64"]).to eq("AQI=")
     end
   end

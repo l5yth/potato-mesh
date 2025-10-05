@@ -1813,10 +1813,66 @@ var(--fg); }
       return r.json();
     }
 
+    async function fetchPositions(limit = NODE_LIMIT) {
+      const r = await fetch(`/api/positions?limit=${limit}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
     function toFiniteNumber(value) {
       if (value == null || value === '') return null;
       const num = typeof value === 'number' ? value : Number(value);
       return Number.isFinite(num) ? num : null;
+    }
+
+    function mergePositionsIntoNodes(nodes, positions) {
+      if (!Array.isArray(nodes) || !Array.isArray(positions) || nodes.length === 0) return;
+
+      const nodesById = new Map();
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object') continue;
+        const key = typeof node.node_id === 'string' ? node.node_id : null;
+        if (key) nodesById.set(key, node);
+      }
+
+      if (nodesById.size === 0) return;
+
+      const updated = new Set();
+      for (const pos of positions) {
+        if (!pos || typeof pos !== 'object') continue;
+        const nodeId = typeof pos.node_id === 'string' ? pos.node_id : null;
+        if (!nodeId || updated.has(nodeId)) continue;
+        const node = nodesById.get(nodeId);
+        if (!node) continue;
+
+        const lat = toFiniteNumber(pos.latitude);
+        const lon = toFiniteNumber(pos.longitude);
+        if (lat == null || lon == null) continue;
+
+        updated.add(nodeId);
+        node.latitude = lat;
+        node.longitude = lon;
+
+        const alt = toFiniteNumber(pos.altitude);
+        if (alt != null) node.altitude = alt;
+
+        const posTime = toFiniteNumber(pos.position_time);
+        if (posTime != null) {
+          node.position_time = posTime;
+          node.pos_time_iso = typeof pos.position_time_iso === 'string' && pos.position_time_iso.length
+            ? pos.position_time_iso
+            : new Date(posTime * 1000).toISOString();
+        } else if (typeof pos.position_time_iso === 'string' && pos.position_time_iso.length) {
+          node.pos_time_iso = pos.position_time_iso;
+        }
+
+        if (pos.location_source != null && pos.location_source !== '') {
+          node.location_source = pos.location_source;
+        }
+
+        const precision = toFiniteNumber(pos.precision_bits);
+        if (precision != null) node.precision_bits = precision;
+      }
     }
 
     function buildTelemetryIndex(entries) {
@@ -2115,6 +2171,12 @@ var(--fg); }
         if (n.pos_time_iso) {
           lines.push(`Last Position: ${timeAgo(n.position_time, nowSec)}`);
         }
+        if (n.location_source) {
+          lines.push(`Position Source: ${n.location_source}`);
+        }
+        if (n.precision_bits != null && n.precision_bits !== '') {
+          lines.push(`Position Precision Bits: ${n.precision_bits}`);
+        }
         if (n.uptime_seconds) {
           lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
         }
@@ -2208,13 +2270,19 @@ var(--fg); }
           console.warn('telemetry refresh failed; continuing without telemetry', err);
           return [];
         });
-        const [nodes, neighborTuples, messages, telemetryEntries] = await Promise.all([
+        const positionsPromise = fetchPositions().catch(err => {
+          console.warn('position refresh failed; continuing without updates', err);
+          return [];
+        });
+        const [nodes, positions, neighborTuples, messages, telemetryEntries] = await Promise.all([
           fetchNodes(),
+          positionsPromise,
           neighborPromise,
           fetchMessages(),
           telemetryPromise,
         ]);
         nodes.forEach(applyNodeNameFallback);
+        mergePositionsIntoNodes(nodes, positions);
         computeDistances(nodes);
         mergeTelemetryIntoNodes(nodes, telemetryEntries);
         if (Array.isArray(messages)) {
