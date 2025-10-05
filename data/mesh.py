@@ -222,7 +222,10 @@ def _create_serial_interface(port: str) -> tuple[object, str]:
     if network_target:
         host, tcp_port = network_target
         _debug_log(f"using TCP interface for host={host!r} port={tcp_port!r}")
-        return TCPInterface(hostname=host, portNumber=tcp_port), f"tcp://{host}:{tcp_port}"
+        return (
+            TCPInterface(hostname=host, portNumber=tcp_port),
+            f"tcp://{host}:{tcp_port}",
+        )
     _debug_log(f"using serial interface for port={port_value!r}")
     return SerialInterface(devPath=port_value), port_value
 
@@ -260,9 +263,7 @@ def _create_default_interface() -> tuple[object, str]:
         return _create_serial_interface(_DEFAULT_TCP_TARGET)
     except Exception as exc:  # pragma: no cover - network dependent
         errors.append((_DEFAULT_TCP_TARGET, exc))
-        _debug_log(
-            f"failed to open TCP fallback {_DEFAULT_TCP_TARGET!r}: {exc}"
-        )
+        _debug_log(f"failed to open TCP fallback {_DEFAULT_TCP_TARGET!r}: {exc}")
     if errors:
         summary = "; ".join(f"{target}: {error}" for target, error in errors)
         raise NoAvailableMeshInterface(
@@ -1646,7 +1647,9 @@ def main():
             if iface is None:
                 try:
                     if active_candidate:
-                        iface, resolved_target = _create_serial_interface(active_candidate)
+                        iface, resolved_target = _create_serial_interface(
+                            active_candidate
+                        )
                     else:
                         iface, resolved_target = _create_default_interface()
                         active_candidate = resolved_target
@@ -1684,7 +1687,9 @@ def main():
                     nodes = getattr(iface, "nodes", {}) or {}
                     node_items = _node_items_snapshot(nodes)
                     if node_items is None:
-                        _debug_log("skipping node snapshot; nodes changed during iteration")
+                        _debug_log(
+                            "skipping node snapshot; nodes changed during iteration"
+                        )
                     else:
                         processed_snapshot_item = False
                         for node_id, n in node_items:
