@@ -351,14 +351,14 @@ var(--fg); }
     .info-details dd { margin: 4px 0 0; }
     .info-details dd a { color: inherit; word-break: break-word; }
     @media (max-width: 1280px) {
-      #nodes th:nth-child(12),
-      #nodes td:nth-child(12),
-      #nodes th:nth-child(13),
-      #nodes td:nth-child(13),
-      #nodes th:nth-child(14),
-      #nodes td:nth-child(14),
       #nodes th:nth-child(15),
-      #nodes td:nth-child(15) {
+      #nodes td:nth-child(15),
+      #nodes th:nth-child(16),
+      #nodes td:nth-child(16),
+      #nodes th:nth-child(17),
+      #nodes td:nth-child(17),
+      #nodes th:nth-child(18),
+      #nodes td:nth-child(18) {
         display: none;
       }
     }
@@ -383,14 +383,14 @@ var(--fg); }
       #nodes td:nth-child(6),
       #nodes th:nth-child(9),
       #nodes td:nth-child(9),
-      #nodes th:nth-child(12),
-      #nodes td:nth-child(12),
-      #nodes th:nth-child(13),
-      #nodes td:nth-child(13),
-      #nodes th:nth-child(14),
-      #nodes td:nth-child(14),
       #nodes th:nth-child(15),
-      #nodes td:nth-child(15) {
+      #nodes td:nth-child(15),
+      #nodes th:nth-child(16),
+      #nodes td:nth-child(16),
+      #nodes th:nth-child(17),
+      #nodes td:nth-child(17),
+      #nodes th:nth-child(18),
+      #nodes td:nth-child(18) {
         display: none;
       }
       .legend { max-width: min(240px, 80vw); }
@@ -616,6 +616,9 @@ var(--fg); }
         <th><button type="button" class="sort-button" data-sort-key="uptime_seconds" data-sort-label="Uptime">Uptime <span class="sort-indicator" aria-hidden="true"></span></button></th>
         <th><button type="button" class="sort-button" data-sort-key="channel_utilization" data-sort-label="Channel Utilization">Channel Util <span class="sort-indicator" aria-hidden="true"></span></button></th>
         <th><button type="button" class="sort-button" data-sort-key="air_util_tx" data-sort-label="Air Utilization (Tx)">Air Util Tx <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="temperature" data-sort-label="Temperature">Temperature <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="relative_humidity" data-sort-label="Humidity">Humidity <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th><button type="button" class="sort-button" data-sort-key="barometric_pressure" data-sort-label="Barometric Pressure">Pressure <span class="sort-indicator" aria-hidden="true"></span></button></th>
         <th><button type="button" class="sort-button" data-sort-key="latitude" data-sort-label="Latitude">Latitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
         <th><button type="button" class="sort-button" data-sort-key="longitude" data-sort-label="Longitude">Longitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
         <th><button type="button" class="sort-button" data-sort-key="altitude" data-sort-label="Altitude">Altitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
@@ -677,6 +680,9 @@ var(--fg); }
       uptime_seconds: { getValue: n => n.uptime_seconds, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
       channel_utilization: { getValue: n => n.channel_utilization, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
       air_util_tx: { getValue: n => n.air_util_tx, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      temperature: { getValue: n => n.temperature, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      relative_humidity: { getValue: n => n.relative_humidity, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
+      barometric_pressure: { getValue: n => n.barometric_pressure, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
       latitude: { getValue: n => n.latitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
       longitude: { getValue: n => n.longitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
       altitude: { getValue: n => n.altitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
@@ -1451,6 +1457,10 @@ var(--fg); }
           uptime: nodeData.uptime_seconds ?? nodeData.uptime ?? null,
           channel: nodeData.channel_utilization ?? nodeData.channel ?? null,
           airUtil: nodeData.air_util_tx ?? nodeData.airUtil ?? null,
+          temperature: nodeData.temperature ?? nodeData.temp ?? null,
+          humidity: nodeData.relative_humidity ?? nodeData.relativeHumidity ?? nodeData.humidity ?? null,
+          pressure: nodeData.barometric_pressure ?? nodeData.barometricPressure ?? nodeData.pressure ?? null,
+          telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
         };
         infoAttr = ` data-node-info="${escapeHtml(JSON.stringify(info))}"`;
       }
@@ -1471,6 +1481,14 @@ var(--fg); }
 
     function shortInfoValueOrDash(value) {
       return value != null && value !== '' ? String(value) : '—';
+    }
+
+    function appendTelemetryLine(lines, label, rawValue, formatter) {
+      if (!Array.isArray(lines)) return;
+      if (rawValue == null || rawValue === '') return;
+      const formatted = formatter ? formatter(rawValue) : rawValue;
+      if (formatted == null || formatted === '') return;
+      lines.push(`${escapeHtml(label)}: ${escapeHtml(String(formatted))}`);
     }
 
     function closeShortInfoOverlay() {
@@ -1505,9 +1523,14 @@ var(--fg); }
       if (!shortInfoOverlay || !shortInfoContent || !info) return;
       const lines = [];
       const longNameValue = shortInfoValueOrDash(info.longName ?? '');
-      lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
+      if (longNameValue !== '—') {
+        lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
+      }
       const shortParts = [];
-      shortParts.push(renderShortHtml(info.shortName, info.role, info.longName));
+      const shortHtml = renderShortHtml(info.shortName, info.role, info.longName);
+      if (shortHtml) {
+        shortParts.push(shortHtml);
+      }
       const nodeIdValue = shortInfoValueOrDash(info.nodeId ?? '');
       if (nodeIdValue !== '—') {
         shortParts.push(`<span class="mono">${escapeHtml(nodeIdValue)}</span>`);
@@ -1515,13 +1538,22 @@ var(--fg); }
       if (shortParts.length) {
         lines.push(shortParts.join(' '));
       }
-      lines.push(`Role: ${escapeHtml(shortInfoValueOrDash(info.role || 'CLIENT'))}`);
-      lines.push(`Model: ${escapeHtml(shortInfoValueOrDash(fmtHw(info.hwModel)))}`);
-      lines.push(`Battery: ${escapeHtml(shortInfoValueOrDash(fmtAlt(info.battery, '%')))}`);
-      lines.push(`Voltage: ${escapeHtml(shortInfoValueOrDash(fmtAlt(info.voltage, 'V')))}`);
-      lines.push(`Uptime: ${escapeHtml(shortInfoValueOrDash(formatShortInfoUptime(info.uptime)))}`);
-      lines.push(`Channel Util: ${escapeHtml(shortInfoValueOrDash(fmtTx(info.channel)))}`);
-      lines.push(`Air Util Tx: ${escapeHtml(shortInfoValueOrDash(fmtTx(info.airUtil)))}`);
+      const roleValue = shortInfoValueOrDash(info.role || 'CLIENT');
+      if (roleValue !== '—') {
+        lines.push(`Role: ${escapeHtml(roleValue)}`);
+      }
+      const modelValue = fmtHw(info.hwModel);
+      if (modelValue) {
+        lines.push(`Model: ${escapeHtml(modelValue)}`);
+      }
+      appendTelemetryLine(lines, 'Battery', info.battery, value => fmtAlt(value, '%'));
+      appendTelemetryLine(lines, 'Voltage', info.voltage, value => fmtAlt(value, 'V'));
+      appendTelemetryLine(lines, 'Uptime', info.uptime, formatShortInfoUptime);
+      appendTelemetryLine(lines, 'Channel Util', info.channel, fmtTx);
+      appendTelemetryLine(lines, 'Air Util Tx', info.airUtil, fmtTx);
+      appendTelemetryLine(lines, 'Temperature', info.temperature, fmtTemperature);
+      appendTelemetryLine(lines, 'Humidity', info.humidity, fmtHumidity);
+      appendTelemetryLine(lines, 'Pressure', info.pressure, fmtPressure);
       shortInfoContent.innerHTML = lines.join('<br/>');
       shortInfoAnchor = target;
       shortInfoOverlay.hidden = false;
@@ -1642,6 +1674,24 @@ var(--fg); }
       return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
     }
 
+    function fmtTemperature(v) {
+      if (v == null || v === '') return "";
+      const n = Number(v);
+      return Number.isFinite(n) ? `${n.toFixed(1)}°C` : "";
+    }
+
+    function fmtHumidity(v) {
+      if (v == null || v === '') return "";
+      const n = Number(v);
+      return Number.isFinite(n) ? `${n.toFixed(1)}%` : "";
+    }
+
+    function fmtPressure(v) {
+      if (v == null || v === '') return "";
+      const n = Number(v);
+      return Number.isFinite(n) ? `${n.toFixed(1)} hPa` : "";
+    }
+
     function normalizeNodeNameValue(value) {
       if (value == null) return '';
       const str = String(value).trim();
@@ -1699,6 +1749,88 @@ var(--fg); }
       const r = await fetch(`/api/neighbors?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
+    }
+
+    async function fetchTelemetry(limit = NODE_LIMIT) {
+      const r = await fetch(`/api/telemetry?limit=${limit}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
+    function toFiniteNumber(value) {
+      if (value == null || value === '') return null;
+      const num = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function buildTelemetryIndex(entries) {
+      const byNodeId = new Map();
+      const byNodeNum = new Map();
+      if (!Array.isArray(entries)) {
+        return { byNodeId, byNodeNum };
+      }
+      for (const entry of entries) {
+        if (!entry || typeof entry !== 'object') continue;
+        const nodeId = typeof entry.node_id === 'string' ? entry.node_id : (typeof entry.nodeId === 'string' ? entry.nodeId : null);
+        const nodeNumRaw = entry.node_num ?? entry.nodeNum;
+        const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+        const rxTime = toFiniteNumber(entry.rx_time ?? entry.rxTime);
+        const telemetryTime = toFiniteNumber(entry.telemetry_time ?? entry.telemetryTime);
+        const timestamp = rxTime != null ? rxTime : telemetryTime != null ? telemetryTime : Number.NEGATIVE_INFINITY;
+        if (nodeId) {
+          const existing = byNodeId.get(nodeId);
+          if (!existing || timestamp > existing.timestamp) {
+            byNodeId.set(nodeId, { entry, timestamp });
+          }
+        }
+        if (Number.isFinite(nodeNum)) {
+          const existing = byNodeNum.get(nodeNum);
+          if (!existing || timestamp > existing.timestamp) {
+            byNodeNum.set(nodeNum, { entry, timestamp });
+          }
+        }
+      }
+      return { byNodeId, byNodeNum };
+    }
+
+    function mergeTelemetryIntoNodes(nodes, telemetryEntries) {
+      if (!Array.isArray(nodes) || !nodes.length) return;
+      const { byNodeId, byNodeNum } = buildTelemetryIndex(telemetryEntries);
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object') continue;
+        const nodeId = typeof node.node_id === 'string' ? node.node_id : (typeof node.nodeId === 'string' ? node.nodeId : null);
+        const nodeNumRaw = node.num ?? node.node_num ?? node.nodeNum;
+        const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+        let telemetryEntry = null;
+        if (nodeId && byNodeId.has(nodeId)) {
+          telemetryEntry = byNodeId.get(nodeId).entry;
+        } else if (Number.isFinite(nodeNum) && byNodeNum.has(nodeNum)) {
+          telemetryEntry = byNodeNum.get(nodeNum).entry;
+        }
+        if (!telemetryEntry || typeof telemetryEntry !== 'object') continue;
+        const metrics = {
+          battery_level: toFiniteNumber(telemetryEntry.battery_level ?? telemetryEntry.batteryLevel),
+          voltage: toFiniteNumber(telemetryEntry.voltage),
+          uptime_seconds: toFiniteNumber(telemetryEntry.uptime_seconds ?? telemetryEntry.uptimeSeconds),
+          channel_utilization: toFiniteNumber(telemetryEntry.channel_utilization ?? telemetryEntry.channelUtilization),
+          air_util_tx: toFiniteNumber(telemetryEntry.air_util_tx ?? telemetryEntry.airUtilTx),
+          temperature: toFiniteNumber(telemetryEntry.temperature),
+          relative_humidity: toFiniteNumber(telemetryEntry.relative_humidity ?? telemetryEntry.relativeHumidity),
+          barometric_pressure: toFiniteNumber(telemetryEntry.barometric_pressure ?? telemetryEntry.barometricPressure),
+        };
+        for (const [key, value] of Object.entries(metrics)) {
+          if (value == null) continue;
+          node[key] = value;
+        }
+        const telemetryTime = toFiniteNumber(telemetryEntry.telemetry_time ?? telemetryEntry.telemetryTime);
+        if (telemetryTime != null) {
+          node.telemetry_time = telemetryTime;
+        }
+        const rxTime = toFiniteNumber(telemetryEntry.rx_time ?? telemetryEntry.rxTime);
+        if (rxTime != null) {
+          node.telemetry_rx_time = rxTime;
+        }
+      }
     }
 
     function toRadians(deg) {
@@ -1762,6 +1894,9 @@ var(--fg); }
           <td>${timeHum(n.uptime_seconds)}</td>
           <td>${fmtTx(n.channel_utilization)}</td>
           <td>${fmtTx(n.air_util_tx)}</td>
+          <td>${fmtTemperature(n.temperature)}</td>
+          <td>${fmtHumidity(n.relative_humidity)}</td>
+          <td>${fmtPressure(n.barometric_pressure)}</td>
           <td>${fmtCoords(n.latitude)}</td>
           <td>${fmtCoords(n.longitude)}</td>
           <td>${fmtAlt(n.altitude, "m")}</td>
@@ -1891,16 +2026,42 @@ var(--fg); }
           fillOpacity: 0.7,
           opacity: 0.7
         });
-        const lines = [
-          `<b>${n.long_name || ''}</b>`,
-          `${renderShortHtml(n.short_name, n.role, n.long_name, n)} <span class="mono">${n.node_id || ''}</span>`,
-          n.hw_model ? `Model: ${fmtHw(n.hw_model)}` : null,
-          `Role: ${n.role || 'CLIENT'}`,
-          (n.battery_level != null ? `Battery: ${fmtAlt(n.battery_level, "%")}, ${fmtAlt(n.voltage, "V")}` : null),
-          (n.last_heard ? `Last seen: ${timeAgo(n.last_heard, nowSec)}` : null),
-          (n.pos_time_iso ? `Last Position: ${timeAgo(n.position_time, nowSec)}` : null),
-          (n.uptime_seconds ? `Uptime: ${timeHum(n.uptime_seconds)}` : null),
-        ].filter(Boolean);
+        const lines = [];
+        lines.push(`<b>${n.long_name || ''}</b>`);
+        lines.push(`${renderShortHtml(n.short_name, n.role, n.long_name, n)} <span class="mono">${n.node_id || ''}</span>`);
+        if (n.hw_model) {
+          lines.push(`Model: ${fmtHw(n.hw_model)}`);
+        }
+        lines.push(`Role: ${n.role || 'CLIENT'}`);
+        const batteryParts = [];
+        const batteryText = fmtAlt(n.battery_level, "%");
+        if (batteryText) batteryParts.push(batteryText);
+        const voltageText = fmtAlt(n.voltage, "V");
+        if (voltageText) batteryParts.push(voltageText);
+        if (batteryParts.length) {
+          lines.push(`Battery: ${batteryParts.join(', ')}`);
+        }
+        const tempText = fmtTemperature(n.temperature);
+        if (tempText) {
+          lines.push(`Temperature: ${tempText}`);
+        }
+        const humidityText = fmtHumidity(n.relative_humidity);
+        if (humidityText) {
+          lines.push(`Humidity: ${humidityText}`);
+        }
+        const pressureText = fmtPressure(n.barometric_pressure);
+        if (pressureText) {
+          lines.push(`Pressure: ${pressureText}`);
+        }
+        if (n.last_heard) {
+          lines.push(`Last seen: ${timeAgo(n.last_heard, nowSec)}`);
+        }
+        if (n.pos_time_iso) {
+          lines.push(`Last Position: ${timeAgo(n.position_time, nowSec)}`);
+        }
+        if (n.uptime_seconds) {
+          lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
+        }
         marker.bindPopup(lines.join('<br/>'));
         marker.addTo(markersLayer);
         pts.push([lat, lon]);
@@ -1973,13 +2134,19 @@ var(--fg); }
           console.warn('neighbor refresh failed; continuing without connections', err);
           return [];
         });
-        const [nodes, neighborTuples, messages] = await Promise.all([
+        const telemetryPromise = fetchTelemetry().catch(err => {
+          console.warn('telemetry refresh failed; continuing without telemetry', err);
+          return [];
+        });
+        const [nodes, neighborTuples, messages, telemetryEntries] = await Promise.all([
           fetchNodes(),
           neighborPromise,
-          fetchMessages()
+          fetchMessages(),
+          telemetryPromise,
         ]);
         nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
+        mergeTelemetryIntoNodes(nodes, telemetryEntries);
         if (Array.isArray(messages)) {
           messages.forEach(message => {
             if (message && message.node) applyNodeNameFallback(message.node);
