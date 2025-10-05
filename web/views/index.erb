@@ -1994,6 +1994,8 @@ var(--fg); }
       const frag = document.createDocumentFragment();
       for (const n of nodes) {
         const tr = document.createElement('tr');
+        const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
+        const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
         tr.innerHTML = `
           <td class="mono">${n.node_id || ""}</td>
           <td>${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
@@ -2012,7 +2014,7 @@ var(--fg); }
           <td>${fmtCoords(n.latitude)}</td>
           <td>${fmtCoords(n.longitude)}</td>
           <td>${fmtAlt(n.altitude, "m")}</td>
-          <td class="mono">${n.pos_time_iso ? `${timeAgo(n.position_time, nowSec)}` : ""}</td>`;
+          <td class="mono">${lastPositionCell}</td>`;
         frag.appendChild(tr);
       }
       tb.replaceChildren(frag);
@@ -2168,14 +2170,9 @@ var(--fg); }
         if (n.last_heard) {
           lines.push(`Last seen: ${timeAgo(n.last_heard, nowSec)}`);
         }
-        if (n.pos_time_iso) {
-          lines.push(`Last Position: ${timeAgo(n.position_time, nowSec)}`);
-        }
-        if (n.location_source) {
-          lines.push(`Position Source: ${n.location_source}`);
-        }
-        if (n.precision_bits != null && n.precision_bits !== '') {
-          lines.push(`Position Precision Bits: ${n.precision_bits}`);
+        const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
+        if (lastPositionTime != null) {
+          lines.push(`Last Position: ${timeAgo(lastPositionTime, nowSec)}`);
         }
         if (n.uptime_seconds) {
           lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
