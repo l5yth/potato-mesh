@@ -259,6 +259,35 @@ var(--fg); }
     .auto-refresh-toggle { display: inline-flex; align-items: center; gap: 6px; }
     .controls { display: flex; gap: 8px; align-items: center; }
     .controls label { display: inline-flex; align-items: center; gap: 6px; }
+    .controls .filter-input { display: inline-flex; align-items: center; flex: 1 1 260px; position: relative; }
+    .filter-input input[type="text"] { flex: 1 1 auto; width: 100%; padding-right: 28px; }
+    .filter-clear {
+      position: absolute;
+      right: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1;
+      border-radius: 50%;
+      cursor: pointer;
+      padding: 0;
+    }
+    .filter-clear:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+    body.dark .filter-clear:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .filter-clear:focus-visible {
+      outline: 2px solid #4a90e2;
+      outline-offset: 2px;
+    }
     button { padding: 6px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; color: var(--fg); }
     button:hover { background: #f6f6f6; }
     .sort-button { padding: 0; border: none; background: none; color: inherit; font: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
@@ -339,7 +368,7 @@ var(--fg); }
       .site-title img { width: 44px; height: 44px; }
       .map-row { flex-direction: column; }
       .controls { order: 2; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; width: 100%; gap: 12px; }
-      .controls input[type="text"] { width: 100%; }
+      .controls .filter-input { width: 100%; }
       .controls button { justify-self: end; }
       .meta-info { order: 1; width: 100%; }
       .refresh-row { grid-template-columns: 1fr; row-gap: 8px; }
@@ -533,7 +562,10 @@ var(--fg); }
     </div>
     <div class="controls">
       <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
-      <input type="text" id="filterInput" placeholder="Filter nodes" />
+      <div class="filter-input">
+        <input type="text" id="filterInput" placeholder="Filter nodes" />
+        <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
+      </div>
       <button id="themeToggle" type="button" aria-label="Toggle dark mode">🌙</button>
       <button id="infoBtn" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information">ℹ️ Info</button>
     </div>
@@ -616,6 +648,7 @@ var(--fg); }
     const autoRefreshEl = document.getElementById('autoRefresh');
     const refreshBtn = document.getElementById('refreshBtn');
     const filterInput = document.getElementById('filterInput');
+    const filterClearButton = document.getElementById('filterClear');
     const themeToggle = document.getElementById('themeToggle');
     const infoBtn = document.getElementById('infoBtn');
     const infoOverlay = document.getElementById('infoOverlay');
@@ -1797,7 +1830,14 @@ var(--fg); }
       return activeRoleFilters.has(roleKey);
     }
 
+    function updateFilterClearVisibility() {
+      if (!filterInput || !filterClearButton) return;
+      const hasValue = filterInput.value && filterInput.value.length > 0;
+      filterClearButton.hidden = !hasValue;
+    }
+
     function applyFilter() {
+      updateFilterClearVisibility();
       const rawQuery = filterInput ? filterInput.value : '';
       const q = rawQuery.trim().toLowerCase();
       const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n));
@@ -1811,7 +1851,25 @@ var(--fg); }
     }
 
     if (filterInput) {
-      filterInput.addEventListener('input', applyFilter);
+      filterInput.addEventListener('input', () => {
+        updateFilterClearVisibility();
+        applyFilter();
+      });
+      updateFilterClearVisibility();
+    }
+
+    if (filterClearButton) {
+      filterClearButton.addEventListener('click', () => {
+        if (!filterInput) return;
+        if (filterInput.value.length === 0) {
+          filterInput.focus();
+          return;
+        }
+        filterInput.value = '';
+        updateFilterClearVisibility();
+        applyFilter();
+        filterInput.focus();
+      });
     }
 
     async function refresh() {
