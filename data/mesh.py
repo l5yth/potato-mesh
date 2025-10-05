@@ -1592,13 +1592,19 @@ def main():
     stop = threading.Event()
     initial_snapshot_sent = False
 
-    def handle_sig(*_):
+    def handle_sigterm(*_):
         """Stop the daemon when a termination signal is received."""
 
         stop.set()
 
-    signal.signal(signal.SIGINT, handle_sig)
-    signal.signal(signal.SIGTERM, handle_sig)
+    def handle_sigint(signum, frame):
+        """Handle ``SIGINT`` by stopping and propagating ``KeyboardInterrupt``."""
+
+        stop.set()
+        signal.default_int_handler(signum, frame)
+
+    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGTERM, handle_sigterm)
 
     target = INSTANCE or "(no POTATOMESH_INSTANCE)"
     configured_port = PORT
@@ -1607,83 +1613,87 @@ def main():
     print(
         f"Mesh daemon: nodes+messages → {target} | port={configured_port or 'auto'} | channel={CHANNEL_INDEX}"
     )
-    while not stop.is_set():
-        if iface is None:
-            try:
-                if active_candidate:
-                    iface, resolved_target = _create_serial_interface(active_candidate)
-                else:
-                    iface, resolved_target = _create_default_interface()
-                    active_candidate = resolved_target
-                retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
-                initial_snapshot_sent = False
-                if not announced_target and resolved_target:
-                    print(f"[info] using mesh interface: {resolved_target}")
-                    announced_target = True
-            except NoAvailableMeshInterface as exc:
-                print(f"[error] {exc}")
-                _close_interface(iface)
-                raise SystemExit(1) from exc
-            except Exception as exc:
-                candidate_desc = active_candidate or "auto"
-                print(
-                    f"[warn] failed to create mesh interface ({candidate_desc}): {exc}"
-                )
-                if configured_port is None:
-                    active_candidate = None
-                    announced_target = False
-                stop.wait(retry_delay)
-                if _RECONNECT_MAX_DELAY_SECS > 0:
-                    retry_delay = min(
-                        (
-                            retry_delay * 2
-                            if retry_delay
-                            else _RECONNECT_INITIAL_DELAY_SECS
-                        ),
-                        _RECONNECT_MAX_DELAY_SECS,
+    try:
+        while not stop.is_set():
+            if iface is None:
+                try:
+                    if active_candidate:
+                        iface, resolved_target = _create_serial_interface(active_candidate)
+                    else:
+                        iface, resolved_target = _create_default_interface()
+                        active_candidate = resolved_target
+                    retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
+                    initial_snapshot_sent = False
+                    if not announced_target and resolved_target:
+                        print(f"[info] using mesh interface: {resolved_target}")
+                        announced_target = True
+                except NoAvailableMeshInterface as exc:
+                    print(f"[error] {exc}")
+                    _close_interface(iface)
+                    raise SystemExit(1) from exc
+                except Exception as exc:
+                    candidate_desc = active_candidate or "auto"
+                    print(
+                        f"[warn] failed to create mesh interface ({candidate_desc}): {exc}"
                     )
-                continue
+                    if configured_port is None:
+                        active_candidate = None
+                        announced_target = False
+                    stop.wait(retry_delay)
+                    if _RECONNECT_MAX_DELAY_SECS > 0:
+                        retry_delay = min(
+                            (
+                                retry_delay * 2
+                                if retry_delay
+                                else _RECONNECT_INITIAL_DELAY_SECS
+                            ),
+                            _RECONNECT_MAX_DELAY_SECS,
+                        )
+                    continue
 
-        if not initial_snapshot_sent:
-            try:
-                nodes = getattr(iface, "nodes", {}) or {}
-                node_items = _node_items_snapshot(nodes)
-                if node_items is None:
-                    _debug_log("skipping node snapshot; nodes changed during iteration")
-                else:
-                    processed_snapshot_item = False
-                    for node_id, n in node_items:
-                        processed_snapshot_item = True
-                        try:
-                            upsert_node(node_id, n)
-                        except Exception as e:
-                            print(
-                                f"[warn] failed to update node snapshot for {node_id}: {e}"
-                            )
-                            if DEBUG:
-                                _debug_log(f"node object: {n!r}")
-                    if processed_snapshot_item:
-                        initial_snapshot_sent = True
-            except Exception as e:
-                print(f"[warn] failed to update node snapshot: {e}")
-                _close_interface(iface)
-                iface = None
-                stop.wait(retry_delay)
-                if _RECONNECT_MAX_DELAY_SECS > 0:
-                    retry_delay = min(
-                        (
-                            retry_delay * 2
-                            if retry_delay
-                            else _RECONNECT_INITIAL_DELAY_SECS
-                        ),
-                        _RECONNECT_MAX_DELAY_SECS,
-                    )
-                continue
+            if not initial_snapshot_sent:
+                try:
+                    nodes = getattr(iface, "nodes", {}) or {}
+                    node_items = _node_items_snapshot(nodes)
+                    if node_items is None:
+                        _debug_log("skipping node snapshot; nodes changed during iteration")
+                    else:
+                        processed_snapshot_item = False
+                        for node_id, n in node_items:
+                            processed_snapshot_item = True
+                            try:
+                                upsert_node(node_id, n)
+                            except Exception as e:
+                                print(
+                                    f"[warn] failed to update node snapshot for {node_id}: {e}"
+                                )
+                                if DEBUG:
+                                    _debug_log(f"node object: {n!r}")
+                        if processed_snapshot_item:
+                            initial_snapshot_sent = True
+                except Exception as e:
+                    print(f"[warn] failed to update node snapshot: {e}")
+                    _close_interface(iface)
+                    iface = None
+                    stop.wait(retry_delay)
+                    if _RECONNECT_MAX_DELAY_SECS > 0:
+                        retry_delay = min(
+                            (
+                                retry_delay * 2
+                                if retry_delay
+                                else _RECONNECT_INITIAL_DELAY_SECS
+                            ),
+                            _RECONNECT_MAX_DELAY_SECS,
+                        )
+                    continue
 
-        retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
-        stop.wait(SNAPSHOT_SECS)
-
-    _close_interface(iface)
+            retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
+            stop.wait(SNAPSHOT_SECS)
+    except KeyboardInterrupt:
+        _debug_log("received KeyboardInterrupt; shutting down")
+        stop.set()
+    finally:
+        _close_interface(iface)
 
 
 if __name__ == "__main__":
