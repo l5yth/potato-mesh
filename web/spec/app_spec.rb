@@ -933,6 +933,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           count = db.get_first_value("SELECT COUNT(*) FROM neighbors")
           expect(count).to eq(0)
 
+          db.results_as_hash = true
           row = db.get_first_row(
             "SELECT node_id, last_heard FROM nodes WHERE node_id = ?",
             ["!cafebabe"],

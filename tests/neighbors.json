@@ -1,0 +1,20 @@
+[
+  {
+    "node_id": "!7c5b0920",
+    "rx_time": 1758884186,
+    "node_broadcast_interval_secs": 1800,
+    "last_sent_by": "!9e99f8c0",
+    "neighbors": [
+      { "node_id": "!2b22accc", "snr": -6.5, "rx_time": 1758884106 },
+      { "node_id": "!43ba26d0", "snr": -5.0, "rx_time": 1758884120 },
+      { "node_id": "!69ba6f71", "snr": -13.0, "rx_time": 1758884135 },
+      { "node_id": "!fa848384", "snr": -14.75, "rx_time": 1758884150 },
+      { "node_id": "!da6a35b4", "snr": -6.5, "rx_time": 1758884165 }
+    ]
+  },
+  {
+    "node_id": "!cafebabe",
+    "rx_time": 1758883200,
+    "neighbors": []
+  }
+]
