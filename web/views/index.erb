@@ -1911,9 +1911,13 @@ var(--fg); }
     async function refresh() {
       try {
         statusEl.textContent = 'refreshing…';
+        const neighborPromise = fetchNeighbors().catch(err => {
+          console.warn('neighbor refresh failed; continuing without connections', err);
+          return [];
+        });
         const [nodes, neighborTuples, messages] = await Promise.all([
           fetchNodes(),
-          fetchNeighbors(),
+          neighborPromise,
           fetchMessages()
         ]);
         nodes.forEach(applyNodeNameFallback);
