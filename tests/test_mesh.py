@@ -368,6 +368,72 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     assert payload["raw"]["time"] == 1_758_624_189
 
 
+def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 2_049_886_869,
+        "rxTime": 1_758_884_186,
+        "fromId": "!7c5b0920",
+        "rxSnr": 11.0,
+        "rxRssi": -74,
+        "hopLimit": 5,
+        "hopStart": 7,
+        "relayNode": 39,
+        "transportMechanism": "TRANSPORT_LORA",
+        "decoded": {
+            "portnum": "NEIGHBORINFO_APP",
+            "neighborinfo": {
+                "nodeId": 2_086_340_896,
+                "lastSentById": 2_660_618_080,
+                "nodeBroadcastIntervalSecs": 1_800,
+                "neighbors": [
+                    {"nodeId": 724_118_316, "snr": -6.5},
+                    {"nodeId": 1_136_059_696, "snr": -5.0},
+                    {"nodeId": 1_773_493_265, "snr": -13.0},
+                    {"nodeId": 4_201_362_692, "snr": -14.75},
+                    {"nodeId": 3_664_074_452, "snr": -6.5},
+                ],
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST to be triggered for neighbor info"
+    path, payload, priority = captured[0]
+    assert path == "/api/neighbors"
+    assert priority == mesh._NEIGHBOR_POST_PRIORITY
+    assert payload["node_id"] == "!7c5b0920"
+    assert payload["node_num"] == int("7c5b0920", 16)
+    assert payload["last_sent_by_id"] == "!9e95cf60"
+    assert payload["node_broadcast_interval_secs"] == 1_800
+    assert payload["rx_time"] == 1_758_884_186
+    assert payload["rx_iso"] == mesh._iso(1_758_884_186)
+    assert payload["rx_snr"] == pytest.approx(11.0)
+    assert payload["rx_rssi"] == -74
+    assert payload["hop_limit"] == 5
+    assert payload["hop_start"] == 7
+    assert payload["relay_node"] == 39
+    assert payload["transport_mechanism"] == "TRANSPORT_LORA"
+    assert payload["neighbors"]
+    assert [n["neighbor_id"] for n in payload["neighbors"]] == [
+        "!2b292b2c",
+        "!43b6e530",
+        "!69b55c11",
+        "!fa6bb504",
+        "!da6556d4",
+    ]
+    assert payload["neighbors"][0]["snr"] == pytest.approx(-6.5)
+    assert all(n["rx_time"] == 1_758_884_186 for n in payload["neighbors"])
+
+
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []

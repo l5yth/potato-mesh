@@ -167,6 +167,7 @@ _POST_QUEUE_ACTIVE = False
 
 _MESSAGE_POST_PRIORITY = 0
 _POSITION_POST_PRIORITY = 10
+_NEIGHBOR_POST_PRIORITY = 12
 _TELEMETRY_POST_PRIORITY = 15
 _NODE_POST_PRIORITY = 20
 _DEFAULT_POST_PRIORITY = 50
@@ -178,6 +179,7 @@ _RECEIVE_TOPICS = (
     "meshtastic.receive.POSITION_APP",
     "meshtastic.receive.user",
     "meshtastic.receive.NODEINFO_APP",
+    "meshtastic.receive.NEIGHBORINFO_APP",
 )
 
 
@@ -902,6 +904,111 @@ def store_position_packet(packet: dict, decoded: Mapping):
         _debug_log(f"stored position for {node_id} lat={latitude!r} lon={longitude!r}")
 
 
+def store_neighborinfo_packet(packet: dict, decoded: Mapping):
+    """Handle ``NEIGHBORINFO_APP`` packets and forward them to ``/api/neighbors``."""
+
+    if not isinstance(decoded, Mapping):
+        return
+
+    neighbor_section = decoded.get("neighborinfo")
+    if not isinstance(neighbor_section, Mapping):
+        return
+
+    node_ref = neighbor_section.get("nodeId") or neighbor_section.get("node_id")
+    if node_ref is None:
+        node_ref = _first(packet, "fromId", "from_id", "from", default=None)
+    node_id = _canonical_node_id(node_ref)
+    if node_id is None:
+        return
+
+    node_num = _node_num_from_id(node_id)
+
+    last_sent_raw = _first(
+        neighbor_section,
+        "lastSentById",
+        "last_sent_by_id",
+        default=None,
+    )
+    last_sent_by_id = _canonical_node_id(last_sent_raw)
+
+    interval_secs = _coerce_int(
+        _first(
+            neighbor_section,
+            "nodeBroadcastIntervalSecs",
+            "node_broadcast_interval_secs",
+            default=None,
+        )
+    )
+
+    rx_time = _coerce_int(_first(packet, "rxTime", "rx_time", default=time.time()))
+    if rx_time is None:
+        rx_time = int(time.time())
+    rx_iso = _iso(rx_time)
+
+    rx_snr = _coerce_float(_first(packet, "rxSnr", "rx_snr", "snr", default=None))
+    rx_rssi = _coerce_int(_first(packet, "rxRssi", "rx_rssi", "rssi", default=None))
+    hop_limit = _coerce_int(_first(packet, "hopLimit", "hop_limit", default=None))
+    hop_start = _coerce_int(_first(packet, "hopStart", "hop_start", default=None))
+    relay_node = _coerce_int(_first(packet, "relayNode", "relay_node", default=None))
+
+    transport_raw = _first(
+        packet,
+        "transportMechanism",
+        "transport_mechanism",
+        default=None,
+    )
+    if transport_raw in {None, ""}:
+        transport_mechanism = None
+    else:
+        transport_mechanism = str(transport_raw).strip()
+
+    neighbors_payload: list[dict[str, object | None]] = []
+    raw_neighbors = neighbor_section.get("neighbors")
+    if isinstance(raw_neighbors, list):
+        for entry in raw_neighbors[:256]:
+            if not isinstance(entry, Mapping):
+                continue
+            neighbor_ref = (
+                entry.get("neighbor_id")
+                or entry.get("neighborId")
+                or entry.get("nodeId")
+                or entry.get("node_id")
+            )
+            neighbor_id = _canonical_node_id(neighbor_ref)
+            if neighbor_id is None:
+                continue
+            snr = _coerce_float(entry.get("snr"))
+            neighbors_payload.append(
+                {"neighbor_id": neighbor_id, "snr": snr, "rx_time": rx_time}
+            )
+
+    payload = {
+        "node_id": node_id,
+        "node_num": node_num,
+        "last_sent_by_id": last_sent_by_id,
+        "node_broadcast_interval_secs": interval_secs,
+        "rx_time": rx_time,
+        "rx_iso": rx_iso,
+        "rx_snr": rx_snr,
+        "rx_rssi": rx_rssi,
+        "hop_limit": hop_limit,
+        "hop_start": hop_start,
+        "relay_node": relay_node,
+        "transport_mechanism": transport_mechanism,
+        "neighbors": neighbors_payload,
+    }
+
+    _queue_post_json(
+        "/api/neighbors", payload, priority=_NEIGHBOR_POST_PRIORITY
+    )
+
+    if DEBUG:
+        _debug_log(
+            "stored neighborinfo for "
+            f"{node_id} neighbors={len(neighbors_payload)} interval={interval_secs!r}"
+        )
+
+
 def store_telemetry_packet(packet: dict, decoded: Mapping):
     """Handle ``TELEMETRY_APP`` packets and forward them to ``/api/telemetry``."""
 
@@ -1243,6 +1350,11 @@ def store_packet_dict(p: dict):
 
     if portnum in {"4", "POSITION_APP"}:
         store_position_packet(p, dec)
+        return
+
+    neighbor_section = dec.get("neighborinfo") if isinstance(dec, Mapping) else None
+    if portnum == "NEIGHBORINFO_APP" or isinstance(neighbor_section, Mapping):
+        store_neighborinfo_packet(p, dec)
         return
 
     text = _first(dec, "payload.text", "text", default=None)

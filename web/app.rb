@@ -322,8 +322,9 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  required = %w[nodes messages positions telemetry]
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry')").flatten
+  required = %w[nodes messages positions telemetry neighbor_snapshots neighbor_links]
+  placeholders = required.map { |name| "'#{name}'" }.join(",")
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN (#{placeholders})").flatten
   (required - tables).empty?
 rescue SQLite3::Exception
   false
@@ -337,7 +338,7 @@ end
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = open_database
-  %w[nodes messages positions telemetry].each do |schema|
+  %w[nodes messages positions telemetry neighbors].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
   end
@@ -557,6 +558,90 @@ ensure
   db&.close
 end
 
+def query_neighbors(limit)
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  rows = db.execute <<~SQL, [limit]
+                      SELECT node_id,
+                             last_sent_by_id,
+                             broadcast_interval_secs AS node_broadcast_interval_secs,
+                             rx_time,
+                             rx_iso,
+                             rx_snr,
+                             rx_rssi,
+                             hop_limit,
+                             hop_start,
+                             relay_node,
+                             transport_mechanism
+                      FROM neighbor_snapshots
+                      ORDER BY rx_time DESC
+                      LIMIT ?
+                    SQL
+  node_ids = rows.map { |r| string_or_nil(r["node_id"]) }.compact
+  neighbors_map = Hash.new { |h, k| h[k] = [] }
+  unless node_ids.empty?
+    placeholders = (Array.new(node_ids.size, "?")).join(",")
+    neighbor_rows = db.execute(
+      <<~SQL, node_ids
+        SELECT node_id, neighbor_id, snr, rx_time
+        FROM neighbor_links
+        WHERE node_id IN (#{placeholders})
+        ORDER BY node_id, COALESCE(snr, -9999) DESC, neighbor_id
+      SQL
+    )
+    neighbor_rows.each do |row|
+      source = row.is_a?(Hash) ? row["node_id"] : row[0]
+      neighbors_map[string_or_nil(source)] << row
+    end
+  end
+
+  now = Time.now.to_i
+  rows.each do |row|
+    node_id = string_or_nil(row["node_id"])
+    row["node_id"] = node_id if node_id
+    row["last_sent_by_id"] = string_or_nil(row["last_sent_by_id"])
+    row["transport_mechanism"] = string_or_nil(row["transport_mechanism"])
+
+    interval = coerce_integer(row["node_broadcast_interval_secs"])
+    row["node_broadcast_interval_secs"] = interval if interval
+
+    rx_time = coerce_integer(row["rx_time"])
+    if rx_time
+      rx_time = now if rx_time > now
+      row["rx_time"] = rx_time
+      row["rx_iso"] = Time.at(rx_time).utc.iso8601
+    else
+      row["rx_time"] = nil
+      row["rx_iso"] = nil
+    end
+
+    row["rx_snr"] = coerce_float(row["rx_snr"])
+    row["rx_rssi"] = coerce_integer(row["rx_rssi"])
+    row["hop_limit"] = coerce_integer(row["hop_limit"])
+    row["hop_start"] = coerce_integer(row["hop_start"])
+    row["relay_node"] = coerce_integer(row["relay_node"])
+
+    neighbor_rows = neighbors_map[node_id] || []
+    row["neighbors"] = neighbor_rows.map do |neighbor|
+      neighbor_id = string_or_nil(neighbor.is_a?(Hash) ? neighbor["neighbor_id"] : neighbor[1])
+      snr_value = neighbor.is_a?(Hash) ? neighbor["snr"] : neighbor[2]
+      rx_neighbor_time = neighbor.is_a?(Hash) ? neighbor["rx_time"] : neighbor[3]
+      rx_neighbor_time = coerce_integer(rx_neighbor_time)
+      rx_neighbor_time = now if rx_neighbor_time && rx_neighbor_time > now
+      entry = { "neighbor_id" => neighbor_id }
+      entry["snr"] = coerce_float(snr_value) unless snr_value.nil?
+      if rx_neighbor_time
+        entry["rx_time"] = rx_neighbor_time
+        entry["rx_iso"] = Time.at(rx_neighbor_time).utc.iso8601
+      end
+      entry
+    end
+  end
+  rows
+ensure
+  db&.close
+end
+
 # GET /api/messages
 #
 # Returns a JSON array of stored text messages including node metadata.
@@ -583,6 +668,15 @@ get "/api/telemetry" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_telemetry(limit).to_json
+end
+
+# GET /api/neighbors
+#
+# Returns a JSON array of the most recent neighbor broadcasts per node.
+get "/api/neighbors" do
+  content_type :json
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_neighbors(limit).to_json
 end
 
 # Determine the numeric node reference for a canonical node identifier.
@@ -1404,6 +1498,128 @@ def insert_telemetry(db, payload)
   )
 end
 
+def insert_neighbor_snapshot(db, payload)
+  return unless payload.is_a?(Hash)
+
+  normalized = normalize_json_object(payload)
+
+  raw_node_ref =
+    normalized["node_id"] || normalized["nodeId"] || normalized["from_id"] || normalized["fromId"]
+  fallback_num = normalized["node_num"] || normalized["num"]
+
+  parts = canonical_node_parts(raw_node_ref, fallback_num)
+  if parts.nil?
+    alternative = normalized["from_id"] || normalized["fromId"]
+    parts = canonical_node_parts(alternative, fallback_num)
+  end
+  return unless parts
+
+  node_id, node_num = parts[0], parts[1]
+  node_num ||= coerce_integer(fallback_num)
+
+  now = Time.now.to_i
+  rx_time = coerce_integer(normalized["rx_time"])
+  rx_time = now if rx_time.nil? || rx_time > now
+  rx_iso = string_or_nil(normalized["rx_iso"])
+  rx_iso ||= Time.at(rx_time).utc.iso8601
+
+  raw_last_sent = normalized["last_sent_by_id"] || normalized["lastSentById"]
+  last_sent_parts = canonical_node_parts(raw_last_sent, nil)
+  last_sent_by_id = last_sent_parts ? last_sent_parts[0] : string_or_nil(raw_last_sent)
+
+  broadcast_interval = coerce_integer(
+    normalized["node_broadcast_interval_secs"] ||
+      normalized["broadcast_interval_secs"] ||
+      normalized["nodeBroadcastIntervalSecs"],
+  )
+
+  rx_snr = coerce_float(normalized["rx_snr"] || normalized["rxSnr"])
+  rx_rssi = coerce_integer(normalized["rx_rssi"] || normalized["rxRssi"])
+  hop_limit = coerce_integer(normalized["hop_limit"] || normalized["hopLimit"])
+  hop_start = coerce_integer(normalized["hop_start"] || normalized["hopStart"])
+  relay_node = coerce_integer(normalized["relay_node"] || normalized["relayNode"])
+  transport_mechanism = string_or_nil(
+    normalized["transport_mechanism"] || normalized["transportMechanism"],
+  )
+
+  neighbor_rows = []
+  neighbors_payload = normalized["neighbors"]
+  if neighbors_payload.is_a?(Array)
+    seen = {}
+    neighbors_payload.first(512).each do |entry|
+      next unless entry.is_a?(Hash)
+      neighbor_ref = entry["neighbor_id"] || entry["neighborId"] || entry["node_id"] || entry["nodeId"]
+      neighbor_num = entry["neighbor_num"] || entry["num"]
+      neighbor_parts = canonical_node_parts(neighbor_ref, neighbor_num)
+      neighbor_id = neighbor_parts ? neighbor_parts[0] : string_or_nil(neighbor_ref)
+      next unless neighbor_id
+      next if seen[neighbor_id]
+      seen[neighbor_id] = true
+
+      neighbor_rx_time = coerce_integer(entry["rx_time"]) || rx_time
+      neighbor_rx_time = now if neighbor_rx_time && neighbor_rx_time > now
+      neighbor_snr = coerce_float(entry["snr"])
+
+      neighbor_rows << [neighbor_id, neighbor_snr, neighbor_rx_time]
+    end
+  end
+
+  with_busy_retry do
+    db.transaction do
+      db.execute <<~SQL, [
+        node_id,
+        last_sent_by_id,
+        broadcast_interval,
+        rx_time,
+        rx_iso,
+        rx_snr,
+        rx_rssi,
+        hop_limit,
+        hop_start,
+        relay_node,
+        transport_mechanism,
+      ]
+        INSERT INTO neighbor_snapshots(
+          node_id,
+          last_sent_by_id,
+          broadcast_interval_secs,
+          rx_time,
+          rx_iso,
+          rx_snr,
+          rx_rssi,
+          hop_limit,
+          hop_start,
+          relay_node,
+          transport_mechanism
+        )
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(node_id) DO UPDATE SET
+          last_sent_by_id=excluded.last_sent_by_id,
+          broadcast_interval_secs=excluded.broadcast_interval_secs,
+          rx_time=excluded.rx_time,
+          rx_iso=excluded.rx_iso,
+          rx_snr=excluded.rx_snr,
+          rx_rssi=excluded.rx_rssi,
+          hop_limit=excluded.hop_limit,
+          hop_start=excluded.hop_start,
+          relay_node=excluded.relay_node,
+          transport_mechanism=excluded.transport_mechanism
+      SQL
+
+      db.execute("DELETE FROM neighbor_links WHERE node_id = ?", [node_id])
+      neighbor_rows.each do |neighbor_id, neighbor_snr, neighbor_rx_time|
+        db.execute <<~SQL, [node_id, neighbor_id, neighbor_snr, neighbor_rx_time]
+          INSERT INTO neighbor_links(node_id, neighbor_id, snr, rx_time)
+          VALUES (?,?,?,?)
+        SQL
+      end
+    end
+  end
+
+  ensure_unknown_node(db, node_id, node_num, heard_time: rx_time)
+  touch_node_last_seen(db, node_id, node_num, rx_time: rx_time, source: :neighborinfo)
+end
+
 # Insert a text message if it does not already exist.
 #
 # @param db [SQLite3::Database] open database handle.
@@ -1633,6 +1849,28 @@ post "/api/telemetry" do
   db = open_database
   telemetry_packets.each do |packet|
     insert_telemetry(db, packet)
+  end
+  { status: "ok" }.to_json
+ensure
+  db&.close
+end
+
+# POST /api/neighbors
+#
+# Accepts neighbor broadcast snapshots and stores them.
+post "/api/neighbors" do
+  require_token!
+  content_type :json
+  begin
+    data = JSON.parse(read_json_body)
+  rescue JSON::ParserError
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+  snapshots = data.is_a?(Array) ? data : [data]
+  halt 400, { error: "too many neighbor snapshots" }.to_json if snapshots.size > 1000
+  db = open_database
+  snapshots.each do |snapshot|
+    insert_neighbor_snapshot(db, snapshot)
   end
   { status: "ok" }.to_json
 ensure
