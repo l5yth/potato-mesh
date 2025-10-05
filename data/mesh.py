@@ -39,14 +39,23 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from functools import lru_cache
+from typing import TYPE_CHECKING
 
-from meshtastic.ble_interface import BLEInterface
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import Message as ProtoMessage
 from google.protobuf.message import DecodeError
+
+if TYPE_CHECKING:  # pragma: no cover - import only used for type checking
+    from meshtastic.ble_interface import BLEInterface as _BLEInterface
+
+# Exposed for tests and backward compatibility; resolved lazily in
+# :func:`_load_ble_interface` so importing this module does not require the BLE
+# extras to be installed.
+BLEInterface = None
 
 # --- Config (env overrides) ---------------------------------------------------
 PORT = os.environ.get("MESH_SERIAL")
@@ -173,6 +182,25 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
     return _validated_result(value, None)
 
 
+@lru_cache(maxsize=1)
+def _load_ble_interface():
+    """Return :class:`meshtastic.ble_interface.BLEInterface` when available."""
+
+    global BLEInterface
+    if BLEInterface is not None:
+        return BLEInterface
+
+    try:
+        from meshtastic.ble_interface import BLEInterface as _resolved_interface
+    except ImportError as exc:  # pragma: no cover - exercised in non-BLE envs
+        raise RuntimeError(
+            "BLE interface requested but the Meshtastic BLE dependencies are not installed. "
+            "Install the 'meshtastic[ble]' extra to enable BLE support."
+        ) from exc
+    BLEInterface = _resolved_interface
+    return _resolved_interface
+
+
 def _create_serial_interface(port: str) -> tuple[object, str]:
     """Return an appropriate mesh interface for ``port``.
 
@@ -189,7 +217,7 @@ def _create_serial_interface(port: str) -> tuple[object, str]:
     ble_target = _parse_ble_target(port_value)
     if ble_target:
         _debug_log(f"using BLE interface for address={ble_target}")
-        return BLEInterface(address=ble_target), ble_target
+        return _load_ble_interface()(address=ble_target), ble_target
     network_target = _parse_network_target(port_value)
     if network_target:
         host, tcp_port = network_target
