@@ -24,13 +24,23 @@ entry point that performs these synchronisation tasks.
 
 import base64
 import dataclasses
+import glob
 import heapq
 import ipaddress
 import itertools
-import json, os, time, threading, signal, urllib.request, urllib.error, urllib.parse
+import json
 import math
+import os
+import re
+import signal
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Mapping
 
+from meshtastic.ble_interface import BLEInterface
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.tcp_interface import TCPInterface
 from pubsub import pub
@@ -39,7 +49,7 @@ from google.protobuf.message import Message as ProtoMessage
 from google.protobuf.message import DecodeError
 
 # --- Config (env overrides) ---------------------------------------------------
-PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
+PORT = os.environ.get("MESH_SERIAL")
 SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "60"))
 CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 DEBUG = os.environ.get("DEBUG") == "1"
@@ -51,6 +61,18 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 
 
 _DEFAULT_TCP_PORT = 4403
+_DEFAULT_TCP_TARGET = "http://127.0.0.1"
+
+_DEFAULT_SERIAL_PATTERNS = (
+    "/dev/ttyACM*",
+    "/dev/ttyUSB*",
+    "/dev/tty.usbmodem*",
+    "/dev/tty.usbserial*",
+    "/dev/cu.usbmodem*",
+    "/dev/cu.usbserial*",
+)
+
+_BLE_ADDRESS_RE = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 
 
 def _debug_log(message: str):
@@ -84,6 +106,19 @@ class _DummySerialInterface:
     def close(self):
         """Mirror the real interface API."""
         pass
+
+
+def _parse_ble_target(value: str) -> str | None:
+    """Return an uppercase BLE MAC address when ``value`` matches the format."""
+
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if _BLE_ADDRESS_RE.fullmatch(value):
+        return value.upper()
+    return None
 
 
 def _parse_network_target(value: str) -> tuple[str, int] | None:
@@ -138,8 +173,8 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
     return _validated_result(value, None)
 
 
-def _create_serial_interface(port: str):
-    """Return an appropriate serial interface for ``port``.
+def _create_serial_interface(port: str) -> tuple[object, str]:
+    """Return an appropriate mesh interface for ``port``.
 
     Passing ``mock`` (case-insensitive) or an empty value skips hardware access
     and returns :class:`_DummySerialInterface`.  This makes it possible to run
@@ -150,13 +185,62 @@ def _create_serial_interface(port: str):
     port_value = (port or "").strip()
     if port_value.lower() in {"", "mock", "none", "null", "disabled"}:
         _debug_log(f"using dummy serial interface for port={port_value!r}")
-        return _DummySerialInterface()
+        return _DummySerialInterface(), "mock"
+    ble_target = _parse_ble_target(port_value)
+    if ble_target:
+        _debug_log(f"using BLE interface for address={ble_target}")
+        return BLEInterface(address=ble_target), ble_target
     network_target = _parse_network_target(port_value)
     if network_target:
         host, tcp_port = network_target
         _debug_log(f"using TCP interface for host={host!r} port={tcp_port!r}")
-        return TCPInterface(hostname=host, portNumber=tcp_port)
-    return SerialInterface(devPath=port_value)
+        return TCPInterface(hostname=host, portNumber=tcp_port), f"tcp://{host}:{tcp_port}"
+    _debug_log(f"using serial interface for port={port_value!r}")
+    return SerialInterface(devPath=port_value), port_value
+
+
+class NoAvailableMeshInterface(RuntimeError):
+    """Raised when no default mesh interface can be created."""
+
+
+def _default_serial_targets() -> list[str]:
+    """Return a list of candidate serial device paths for auto-discovery."""
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for pattern in _DEFAULT_SERIAL_PATTERNS:
+        for path in sorted(glob.glob(pattern)):
+            if path not in seen:
+                candidates.append(path)
+                seen.add(path)
+    if "/dev/ttyACM0" not in seen:
+        candidates.append("/dev/ttyACM0")
+    return candidates
+
+
+def _create_default_interface() -> tuple[object, str]:
+    """Attempt to create the default mesh interface, raising on failure."""
+
+    errors: list[tuple[str, Exception]] = []
+    for candidate in _default_serial_targets():
+        try:
+            return _create_serial_interface(candidate)
+        except Exception as exc:  # pragma: no cover - hardware dependent
+            errors.append((candidate, exc))
+            _debug_log(f"failed to open serial candidate {candidate!r}: {exc}")
+    try:
+        return _create_serial_interface(_DEFAULT_TCP_TARGET)
+    except Exception as exc:  # pragma: no cover - network dependent
+        errors.append((_DEFAULT_TCP_TARGET, exc))
+        _debug_log(
+            f"failed to open TCP fallback {_DEFAULT_TCP_TARGET!r}: {exc}"
+        )
+    if errors:
+        summary = "; ".join(f"{target}: {error}" for target, error in errors)
+        raise NoAvailableMeshInterface(
+            f"no mesh interface available ({summary})"
+        ) from errors[-1][1]
+    raise NoAvailableMeshInterface("no mesh interface available")
 
 
 # --- POST queue ----------------------------------------------------------------
@@ -1502,6 +1586,7 @@ def main():
             pass
 
     iface = None
+    resolved_target = None
     retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
 
     stop = threading.Event()
@@ -1516,17 +1601,37 @@ def main():
     signal.signal(signal.SIGTERM, handle_sig)
 
     target = INSTANCE or "(no POTATOMESH_INSTANCE)"
+    configured_port = PORT
+    active_candidate = configured_port
+    announced_target = False
     print(
-        f"Mesh daemon: nodes+messages → {target} | port={PORT} | channel={CHANNEL_INDEX}"
+        f"Mesh daemon: nodes+messages → {target} | port={configured_port or 'auto'} | channel={CHANNEL_INDEX}"
     )
     while not stop.is_set():
         if iface is None:
             try:
-                iface = _create_serial_interface(PORT)
+                if active_candidate:
+                    iface, resolved_target = _create_serial_interface(active_candidate)
+                else:
+                    iface, resolved_target = _create_default_interface()
+                    active_candidate = resolved_target
                 retry_delay = max(0.0, _RECONNECT_INITIAL_DELAY_SECS)
                 initial_snapshot_sent = False
+                if not announced_target and resolved_target:
+                    print(f"[info] using mesh interface: {resolved_target}")
+                    announced_target = True
+            except NoAvailableMeshInterface as exc:
+                print(f"[error] {exc}")
+                _close_interface(iface)
+                raise SystemExit(1) from exc
             except Exception as exc:
-                print(f"[warn] failed to create mesh interface: {exc}")
+                candidate_desc = active_candidate or "auto"
+                print(
+                    f"[warn] failed to create mesh interface ({candidate_desc}): {exc}"
+                )
+                if configured_port is None:
+                    active_candidate = None
+                    announced_target = False
                 stop.wait(retry_delay)
                 if _RECONNECT_MAX_DELAY_SECS > 0:
                     retry_delay = min(
