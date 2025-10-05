@@ -167,6 +167,7 @@ _POST_QUEUE_ACTIVE = False
 
 _MESSAGE_POST_PRIORITY = 0
 _POSITION_POST_PRIORITY = 10
+_NEIGHBOR_POST_PRIORITY = 12
 _TELEMETRY_POST_PRIORITY = 15
 _NODE_POST_PRIORITY = 20
 _DEFAULT_POST_PRIORITY = 50
@@ -1211,6 +1212,96 @@ def store_nodeinfo_packet(packet: dict, decoded: Mapping):
         )
 
 
+def store_neighborinfo_packet(packet: dict, decoded: Mapping):
+    """Handle ``NEIGHBORINFO_APP`` packets for mesh health broadcasts."""
+
+    neighbor_section = (
+        decoded.get("neighborinfo") if isinstance(decoded, Mapping) else None
+    )
+    if not isinstance(neighbor_section, Mapping):
+        return
+
+    node_ref = _first(
+        neighbor_section,
+        "nodeId",
+        "node_id",
+        default=_first(packet, "fromId", "from_id", "from", default=None),
+    )
+    node_id = _canonical_node_id(node_ref)
+    if node_id is None:
+        return
+
+    node_num = _coerce_int(
+        _first(neighbor_section, "nodeId", "node_id", default=None)
+    )
+    if node_num is None:
+        node_num = _node_num_from_id(node_id)
+
+    rx_time = _coerce_int(_first(packet, "rxTime", "rx_time", default=time.time()))
+    if rx_time is None:
+        rx_time = int(time.time())
+
+    neighbors_payload = neighbor_section.get("neighbors")
+    neighbors_iterable = (
+        neighbors_payload if isinstance(neighbors_payload, list) else []
+    )
+
+    neighbor_entries: list[dict] = []
+    for entry in neighbors_iterable:
+        if not isinstance(entry, Mapping):
+            continue
+        neighbor_ref = _first(entry, "nodeId", "node_id", default=None)
+        neighbor_id = _canonical_node_id(neighbor_ref)
+        if neighbor_id is None:
+            continue
+        neighbor_num = _coerce_int(
+            _first(entry, "nodeId", "node_id", default=None)
+        )
+        if neighbor_num is None:
+            neighbor_num = _node_num_from_id(neighbor_id)
+        snr = _coerce_float(_first(entry, "snr", default=None))
+        entry_rx_time = _coerce_int(_first(entry, "rxTime", "rx_time", default=None))
+        if entry_rx_time is None:
+            entry_rx_time = rx_time
+        neighbor_entries.append(
+            {
+                "neighbor_id": neighbor_id,
+                "neighbor_num": neighbor_num,
+                "snr": snr,
+                "rx_time": entry_rx_time,
+            }
+        )
+
+    payload: dict[str, object] = {
+        "node_id": node_id,
+        "node_num": node_num,
+        "rx_time": rx_time,
+    }
+    if neighbor_entries:
+        payload["neighbors"] = neighbor_entries
+
+    broadcast_interval = _coerce_int(
+        _first(neighbor_section, "nodeBroadcastIntervalSecs", default=None)
+    )
+    if broadcast_interval is not None:
+        payload["node_broadcast_interval_secs"] = broadcast_interval
+
+    last_sent_by = _canonical_node_id(
+        _first(neighbor_section, "lastSentById", "last_sent_by_id", default=None)
+    )
+    if last_sent_by is not None:
+        payload["last_sent_by_id"] = last_sent_by
+
+    _queue_post_json(
+        "/api/neighbors", payload, priority=_NEIGHBOR_POST_PRIORITY
+    )
+
+    if DEBUG:
+        _debug_log(
+            f"stored neighborinfo for {node_id} neighbors={len(neighbor_entries)}"
+        )
+
+
 def store_packet_dict(p: dict):
     """Persist packets extracted from a decoded payload.
 
@@ -1243,6 +1334,11 @@ def store_packet_dict(p: dict):
 
     if portnum in {"4", "POSITION_APP"}:
         store_position_packet(p, dec)
+        return
+
+    neighborinfo_section = dec.get("neighborinfo") if isinstance(dec, Mapping) else None
+    if portnum == "NEIGHBORINFO_APP" or isinstance(neighborinfo_section, Mapping):
+        store_neighborinfo_packet(p, dec)
         return
 
     text = _first(dec, "payload.text", "text", default=None)

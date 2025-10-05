@@ -368,6 +368,58 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     assert payload["raw"]["time"] == 1_758_624_189
 
 
+def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 2049886869,
+        "rxTime": 1_758_884_186,
+        "fromId": "!7c5b0920",
+        "decoded": {
+            "portnum": "NEIGHBORINFO_APP",
+            "neighborinfo": {
+                "nodeId": 0x7C5B0920,
+                "lastSentById": 0x9E3AA2F0,
+                "nodeBroadcastIntervalSecs": 1800,
+                "neighbors": [
+                    {"nodeId": 0x2B2A4D51, "snr": -6.5},
+                    {"nodeId": 0x437FE3E0, "snr": -2.75, "rxTime": 1_758_884_150},
+                    {"nodeId": "!0badc0de", "snr": None},
+                ],
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST to be triggered for neighbor info"
+    path, payload, priority = captured[0]
+    assert path == "/api/neighbors"
+    assert priority == mesh._NEIGHBOR_POST_PRIORITY
+    assert payload["node_id"] == "!7c5b0920"
+    assert payload["node_num"] == 0x7C5B0920
+    assert payload["rx_time"] == 1_758_884_186
+    assert payload["node_broadcast_interval_secs"] == 1800
+    assert payload["last_sent_by_id"] == "!9e3aa2f0"
+    neighbors = payload["neighbors"]
+    assert len(neighbors) == 3
+    assert neighbors[0]["neighbor_id"] == "!2b2a4d51"
+    assert neighbors[0]["neighbor_num"] == 0x2B2A4D51
+    assert neighbors[0]["rx_time"] == 1_758_884_186
+    assert neighbors[0]["snr"] == pytest.approx(-6.5)
+    assert neighbors[1]["neighbor_id"] == "!437fe3e0"
+    assert neighbors[1]["rx_time"] == 1_758_884_150
+    assert neighbors[1]["snr"] == pytest.approx(-2.75)
+    assert neighbors[2]["neighbor_id"] == "!0badc0de"
+    assert neighbors[2]["neighbor_num"] == 0x0BAD_C0DE
+
+
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []

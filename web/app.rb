@@ -293,6 +293,7 @@ end
 def open_database(readonly: false)
   SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
     db.busy_timeout = DB_BUSY_TIMEOUT_MS
+    db.execute("PRAGMA foreign_keys = ON")
   end
 end
 
@@ -322,8 +323,8 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  required = %w[nodes messages positions telemetry]
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry')").flatten
+  required = %w[nodes messages positions telemetry neighbors]
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors')").flatten
   (required - tables).empty?
 rescue SQLite3::Exception
   false
@@ -337,7 +338,7 @@ end
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = open_database
-  %w[nodes messages positions telemetry].each do |schema|
+  %w[nodes messages positions telemetry neighbors].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
   end
@@ -511,6 +512,26 @@ ensure
   db&.close
 end
 
+def query_neighbors(limit)
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  rows = db.execute <<~SQL, [limit]
+                      SELECT node_id, neighbor_id, snr, rx_time
+                      FROM neighbors
+                      ORDER BY rx_time DESC
+                      LIMIT ?
+                    SQL
+  rows.each do |r|
+    rx_time = coerce_integer(r["rx_time"])
+    r["rx_time"] = rx_time if rx_time
+    r["rx_iso"] = Time.at(rx_time).utc.iso8601 if rx_time
+    r["snr"] = coerce_float(r["snr"])
+  end
+  rows
+ensure
+  db&.close
+end
+
 def query_telemetry(limit)
   db = open_database(readonly: true)
   db.results_as_hash = true
@@ -574,6 +595,15 @@ get "/api/positions" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_positions(limit).to_json
+end
+
+# GET /api/neighbors
+#
+# Returns the most recent neighbor tuples describing mesh health.
+get "/api/neighbors" do
+  content_type :json
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_neighbors(limit).to_json
 end
 
 # GET /api/telemetry
@@ -1189,6 +1219,99 @@ def insert_position(db, payload)
   )
 end
 
+def insert_neighbors(db, payload)
+  return unless payload.is_a?(Hash)
+
+  now = Time.now.to_i
+  rx_time = coerce_integer(payload["rx_time"])
+  rx_time = now if rx_time.nil? || rx_time > now
+
+  raw_node_id = payload["node_id"] || payload["node"] || payload["from_id"]
+  raw_node_num = coerce_integer(payload["node_num"]) || coerce_integer(payload["num"])
+
+  canonical_parts = canonical_node_parts(raw_node_id, raw_node_num)
+  if canonical_parts
+    node_id, node_num, = canonical_parts
+  else
+    node_id = string_or_nil(raw_node_id)
+    canonical = normalize_node_id(db, node_id || raw_node_num)
+    node_id = canonical if canonical
+    if node_id&.start_with?("!") && raw_node_num.nil?
+      begin
+        node_num = Integer(node_id.delete_prefix("!"), 16)
+      rescue ArgumentError
+        node_num = nil
+      end
+    else
+      node_num = raw_node_num
+    end
+  end
+
+  return unless node_id
+
+  node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id.start_with?("!")
+
+  ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
+  touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo)
+
+  neighbor_entries = []
+  neighbors_payload = payload["neighbors"]
+  neighbors_list = neighbors_payload.is_a?(Array) ? neighbors_payload : []
+
+  neighbors_list.each do |neighbor|
+    next unless neighbor.is_a?(Hash)
+
+    neighbor_ref = neighbor["neighbor_id"] || neighbor["node_id"] || neighbor["nodeId"] || neighbor["id"]
+    neighbor_num = coerce_integer(
+      neighbor["neighbor_num"] || neighbor["node_num"] || neighbor["nodeId"] || neighbor["id"],
+    )
+
+    canonical_neighbor = canonical_node_parts(neighbor_ref, neighbor_num)
+    if canonical_neighbor
+      neighbor_id, neighbor_num, = canonical_neighbor
+    else
+      neighbor_id = string_or_nil(neighbor_ref)
+      canonical_neighbor_id = normalize_node_id(db, neighbor_id || neighbor_num)
+      neighbor_id = canonical_neighbor_id if canonical_neighbor_id
+      if neighbor_id&.start_with?("!") && neighbor_num.nil?
+        begin
+          neighbor_num = Integer(neighbor_id.delete_prefix("!"), 16)
+        rescue ArgumentError
+          neighbor_num = nil
+        end
+      end
+    end
+
+    next unless neighbor_id
+
+    neighbor_id = "!#{neighbor_id.delete_prefix("!").downcase}" if neighbor_id.start_with?("!")
+
+    entry_rx_time = coerce_integer(neighbor["rx_time"]) || rx_time
+    entry_rx_time = now if entry_rx_time && entry_rx_time > now
+    snr = coerce_float(neighbor["snr"])
+
+    ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time)
+    touch_node_last_seen(db, neighbor_id || neighbor_num, neighbor_num, rx_time: entry_rx_time, source: :neighborinfo)
+
+    neighbor_entries << [neighbor_id, snr, entry_rx_time]
+  end
+
+  with_busy_retry do
+    db.transaction do
+      db.execute("DELETE FROM neighbors WHERE node_id = ?", [node_id])
+      neighbor_entries.each do |neighbor_id, snr, heard_time|
+        db.execute(
+          <<~SQL,
+            INSERT OR REPLACE INTO neighbors(node_id, neighbor_id, snr, rx_time)
+            VALUES (?, ?, ?, ?)
+          SQL
+          [node_id, neighbor_id, snr, heard_time],
+        )
+      end
+    end
+  end
+end
+
 def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   num = coerce_integer(node_num)
   id = string_or_nil(node_id)
@@ -1611,6 +1734,28 @@ post "/api/positions" do
   db = open_database
   positions.each do |pos|
     insert_position(db, pos)
+  end
+  { status: "ok" }.to_json
+ensure
+  db&.close
+end
+
+# POST /api/neighbors
+#
+# Accepts an array or object describing neighbor tuples and stores each entry.
+post "/api/neighbors" do
+  require_token!
+  content_type :json
+  begin
+    data = JSON.parse(read_json_body)
+  rescue JSON::ParserError
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+  neighbor_payloads = data.is_a?(Array) ? data : [data]
+  halt 400, { error: "too many neighbor packets" }.to_json if neighbor_payloads.size > 1000
+  db = open_database
+  neighbor_payloads.each do |packet|
+    insert_neighbors(db, packet)
   end
   { status: "ok" }.to_json
 ensure

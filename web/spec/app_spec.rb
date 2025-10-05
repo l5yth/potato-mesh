@@ -29,6 +29,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   def with_db(readonly: false)
     db = SQLite3::Database.new(DB_PATH, readonly: readonly)
+    db.busy_timeout = DB_BUSY_TIMEOUT_MS
+    db.execute("PRAGMA foreign_keys = ON")
     yield db
   ensure
     db&.close
@@ -36,6 +38,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   def clear_database
     with_db do |db|
+      db.execute("DELETE FROM neighbors")
       db.execute("DELETE FROM messages")
       db.execute("DELETE FROM nodes")
       db.execute("DELETE FROM positions")
@@ -847,6 +850,114 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db(readonly: true) do |db|
           count = db.get_first_value("SELECT COUNT(*) FROM positions")
+          expect(count).to eq(0)
+        end
+      end
+    end
+
+    describe "POST /api/neighbors" do
+      it "stores neighbor tuples and updates node metadata" do
+        rx_time = reference_time.to_i - 120
+        neighbor_rx_time = rx_time - 30
+        payload = {
+          "node_id" => "!abc123ef",
+          "node_num" => 0xabc123ef,
+          "rx_time" => rx_time,
+          "neighbors" => [
+            { "node_id" => "!00ff0011", "snr" => -7.5 },
+            { "node_id" => 0x11223344, "snr" => 3.25, "rx_time" => neighbor_rx_time },
+          ],
+        }
+
+        post "/api/neighbors", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          rows = db.execute(
+            "SELECT node_id, neighbor_id, snr, rx_time FROM neighbors ORDER BY neighbor_id",
+          )
+
+          expect(rows.size).to eq(2)
+          expect(rows[0]["node_id"]).to eq("!abc123ef")
+          expect(rows[0]["neighbor_id"]).to eq("!00ff0011")
+          expect_same_value(rows[0]["snr"], -7.5)
+          expect(rows[0]["rx_time"]).to eq(rx_time)
+
+          expect(rows[1]["node_id"]).to eq("!abc123ef")
+          expect(rows[1]["neighbor_id"]).to eq("!11223344")
+          expect_same_value(rows[1]["snr"], 3.25)
+          expect(rows[1]["rx_time"]).to eq(neighbor_rx_time)
+        end
+
+        get "/api/neighbors"
+
+        expect(last_response).to be_ok
+        neighbors = JSON.parse(last_response.body)
+        expect(neighbors.map { |row| row["neighbor_id"] }).to contain_exactly("!00ff0011", "!11223344")
+        expect(neighbors.first).to include("node_id" => "!abc123ef")
+        expect(neighbors.first["rx_iso"]).to be_a(String)
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          node_rows = db.execute(
+            "SELECT node_id, last_heard FROM nodes ORDER BY node_id",
+          )
+
+          expect(node_rows.size).to eq(3)
+          origin = node_rows.find { |row| row["node_id"] == "!abc123ef" }
+          expect(origin["last_heard"]).to eq(rx_time)
+          neighbor_one = node_rows.find { |row| row["node_id"] == "!00ff0011" }
+          expect(neighbor_one["last_heard"]).to eq(rx_time)
+          neighbor_two = node_rows.find { |row| row["node_id"] == "!11223344" }
+          expect(neighbor_two["last_heard"]).to eq(neighbor_rx_time)
+        end
+      end
+
+      it "handles broadcasts with no neighbors" do
+        rx_time = reference_time.to_i - 60
+        payload = {
+          "node_id" => "!cafebabe",
+          "rx_time" => rx_time,
+          "neighbors" => [],
+        }
+
+        post "/api/neighbors", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM neighbors")
+          expect(count).to eq(0)
+
+          row = db.get_first_row(
+            "SELECT node_id, last_heard FROM nodes WHERE node_id = ?",
+            ["!cafebabe"],
+          )
+          expect(row).not_to be_nil
+          expect(row["last_heard"]).to eq(rx_time)
+        end
+
+        get "/api/neighbors"
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to be_empty
+      end
+
+      it "returns 400 when more than 1000 neighbor packets are provided" do
+        payload = Array.new(1001) do |i|
+          { "node_id" => format("!%08x", i), "rx_time" => reference_time.to_i - i }
+        end
+
+        post "/api/neighbors", payload.to_json, auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "too many neighbor packets")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM neighbors")
           expect(count).to eq(0)
         end
       end
