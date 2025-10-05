@@ -1302,9 +1302,9 @@ def insert_neighbors(db, payload)
       neighbor_entries.each do |neighbor_id, snr, heard_time|
         db.execute(
           <<~SQL,
-            INSERT OR REPLACE INTO neighbors(node_id, neighbor_id, snr, rx_time)
-            VALUES (?, ?, ?, ?)
-          SQL
+          INSERT OR REPLACE INTO neighbors(node_id, neighbor_id, snr, rx_time)
+          VALUES (?, ?, ?, ?)
+        SQL
           [node_id, neighbor_id, snr, heard_time],
         )
       end
