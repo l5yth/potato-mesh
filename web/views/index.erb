@@ -654,6 +654,7 @@ var(--fg); }
       direction: tableSorters.last_heard ? tableSorters.last_heard.defaultDirection : 'desc'
     };
     let allNodes = [];
+    let allNeighbors = [];
     let shortInfoAnchor = null;
     let lastChatDate;
     const NODE_LIMIT = 1000;
@@ -790,6 +791,7 @@ var(--fg); }
     let offlineTiles = null;
     let usingOfflineTiles = false;
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
+    let neighborLinesLayer = null;
     let markersLayer = null;
     let tileDomObserver = null;
 
@@ -1122,6 +1124,7 @@ var(--fg); }
       map.on('moveend', applyFiltersToAllTiles);
       map.on('zoomend', applyFiltersToAllTiles);
 
+      neighborLinesLayer = L.layerGroup().addTo(map);
       markersLayer = L.layerGroup().addTo(map);
 
       if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
@@ -1659,6 +1662,12 @@ var(--fg); }
       return r.json();
     }
 
+    async function fetchNeighbors(limit = NODE_LIMIT) {
+      const r = await fetch(`/api/neighbors?limit=${limit}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }
+
     function toRadians(deg) {
       return (deg * Math.PI) / 180;
     }
@@ -1736,8 +1745,93 @@ var(--fg); }
       if (!map || !markersLayer || !hasLeaflet) {
         return;
       }
+      if (neighborLinesLayer) {
+        neighborLinesLayer.clearLayers();
+      }
       markersLayer.clearLayers();
       const pts = [];
+      const nodesById = new Map();
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object') continue;
+        const nodeId = node.node_id;
+        if (typeof nodeId !== 'string' || nodeId.length === 0) continue;
+        nodesById.set(nodeId, node);
+      }
+
+      if (neighborLinesLayer && Array.isArray(allNeighbors) && allNeighbors.length) {
+        const neighborSegments = [];
+        const seenDirections = new Set();
+        for (const entry of allNeighbors) {
+          if (!entry || typeof entry !== 'object') continue;
+          const sourceId = typeof entry.node_id === 'string' ? entry.node_id : null;
+          const targetId = typeof entry.neighbor_id === 'string' ? entry.neighbor_id : null;
+          if (!sourceId || !targetId) continue;
+          const directionKey = `${sourceId}→${targetId}`;
+          if (seenDirections.has(directionKey)) continue;
+          seenDirections.add(directionKey);
+
+          const sourceNode = nodesById.get(sourceId);
+          const targetNode = nodesById.get(targetId);
+          if (!sourceNode || !targetNode) continue;
+
+          const srcLatRaw = sourceNode.latitude;
+          const srcLonRaw = sourceNode.longitude;
+          const tgtLatRaw = targetNode.latitude;
+          const tgtLonRaw = targetNode.longitude;
+          if (
+            srcLatRaw == null || srcLatRaw === '' || srcLonRaw == null || srcLonRaw === '' ||
+            tgtLatRaw == null || tgtLatRaw === '' || tgtLonRaw == null || tgtLonRaw === ''
+          ) {
+            continue;
+          }
+          const srcLat = Number(srcLatRaw);
+          const srcLon = Number(srcLonRaw);
+          const tgtLat = Number(tgtLatRaw);
+          const tgtLon = Number(tgtLonRaw);
+          if (!Number.isFinite(srcLat) || !Number.isFinite(srcLon) || !Number.isFinite(tgtLat) || !Number.isFinite(tgtLon)) {
+            continue;
+          }
+          if (sourceNode.distance_km != null && sourceNode.distance_km > MAX_NODE_DISTANCE_KM) continue;
+          if (targetNode.distance_km != null && targetNode.distance_km > MAX_NODE_DISTANCE_KM) continue;
+
+          const priority = getRoleRenderPriority(sourceNode.role);
+          const rxTimeRaw = entry.rx_time;
+          let rxTime = 0;
+          if (typeof rxTimeRaw === 'number' && Number.isFinite(rxTimeRaw)) {
+            rxTime = rxTimeRaw;
+          } else if (typeof rxTimeRaw === 'string') {
+            const parsed = Number(rxTimeRaw);
+            rxTime = Number.isFinite(parsed) ? parsed : 0;
+          }
+
+          neighborSegments.push({
+            latlngs: [[srcLat, srcLon], [tgtLat, tgtLon]],
+            color: getRoleColor(sourceNode.role),
+            priority,
+            rxTime,
+            sourceId,
+            targetId
+          });
+        }
+
+        neighborSegments
+          .sort((a, b) => {
+            if (a.priority !== b.priority) return a.priority - b.priority;
+            if (a.rxTime !== b.rxTime) return b.rxTime - a.rxTime;
+            if (a.sourceId !== b.sourceId) return a.sourceId < b.sourceId ? -1 : 1;
+            if (a.targetId !== b.targetId) return a.targetId < b.targetId ? -1 : 1;
+            return 0;
+          })
+          .forEach(segment => {
+            L.polyline(segment.latlngs, {
+              color: segment.color,
+              weight: 2,
+              opacity: 0.6,
+              className: 'neighbor-connection-line'
+            }).addTo(neighborLinesLayer);
+          });
+      }
+
       const nodesByRenderOrder = nodes
         .map((node, index) => ({ node, index }))
         .sort((a, b) => {
@@ -1817,18 +1911,21 @@ var(--fg); }
     async function refresh() {
       try {
         statusEl.textContent = 'refreshing…';
-        const nodes = await fetchNodes();
+        const [nodes, neighborTuples, messages] = await Promise.all([
+          fetchNodes(),
+          fetchNeighbors(),
+          fetchMessages()
+        ]);
         nodes.forEach(applyNodeNameFallback);
         computeDistances(nodes);
-        let messages = [];
-        if (CHAT_ENABLED) {
-          messages = await fetchMessages();
+        if (Array.isArray(messages)) {
           messages.forEach(message => {
             if (message && message.node) applyNodeNameFallback(message.node);
           });
         }
         renderChatLog(nodes, messages);
         allNodes = nodes;
+        allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
         applyFilter();
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
       } catch (e) {
