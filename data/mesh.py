@@ -165,20 +165,23 @@ _POST_QUEUE = []
 _POST_QUEUE_COUNTER = itertools.count()
 _POST_QUEUE_ACTIVE = False
 
-_MESSAGE_POST_PRIORITY = 0
-_POSITION_POST_PRIORITY = 10
-_NEIGHBOR_POST_PRIORITY = 12
-_TELEMETRY_POST_PRIORITY = 15
-_NODE_POST_PRIORITY = 20
-_DEFAULT_POST_PRIORITY = 50
+_MESSAGE_POST_PRIORITY = 10
+_NEIGHBOR_POST_PRIORITY = 20
+_POSITION_POST_PRIORITY = 30
+_TELEMETRY_POST_PRIORITY = 40
+_NODE_POST_PRIORITY = 50
+_DEFAULT_POST_PRIORITY = 90
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
     "meshtastic.receive.text",
     "meshtastic.receive.position",
-    "meshtastic.receive.POSITION_APP",
     "meshtastic.receive.user",
+    "meshtastic.receive.POSITION_APP",
     "meshtastic.receive.NODEINFO_APP",
+    "meshtastic.receive.NEIGHBORINFO_APP",
+    "meshtastic.receive.TEXT_MESSAGE_APP",
+    "meshtastic.receive.TELEMETRY_APP",
 )
 
 
