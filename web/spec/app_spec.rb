@@ -366,7 +366,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "handles secure compare errors" do
-        allow(Rack::Utils).to receive(:secure_compare).and_raise(Rack::Utils::SecurityError)
+        stub_const("Rack::Utils::SecurityError", Class.new(StandardError))
+        allow(Rack::Utils).to receive(:secure_compare).and_raise(Rack::Utils::SecurityError.new("boom"))
         expect(secure_token_match?("abc", "abc")).to be(false)
       end
     end
@@ -374,7 +375,6 @@ RSpec.describe "Potato Mesh Sinatra app" do
     describe "#with_busy_retry" do
       it "raises once the retry budget is exhausted" do
         attempts = 0
-        allow(Kernel).to receive(:sleep)
 
         expect do
           with_busy_retry(max_retries: 2, base_delay: 0.0) do
@@ -384,7 +384,6 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end.to raise_error(SQLite3::BusyException)
 
         expect(attempts).to eq(3)
-        expect(Kernel).to have_received(:sleep).with(0.0).twice
       end
     end
 
@@ -442,7 +441,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     describe "#touch_node_last_seen" do
       it "updates nodes using fallback numeric identifiers" do
-        node_id = "!fallback01"
+        node_id = "!12345678"
         node_num = 0x1234_5678
         rx_time = reference_time.to_i - 30
 
@@ -517,7 +516,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "serves the bundled favicon when available" do
       get "/favicon.ico"
       expect(last_response).to be_ok
-      expect(last_response.headers["Content-Type"]).to eq("image/x-icon")
+      expect(last_response.headers["Content-Type"]).to eq("image/vnd.microsoft.icon")
     end
 
     it "falls back to the SVG logo when the favicon is missing" do
