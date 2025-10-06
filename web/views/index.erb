@@ -1687,13 +1687,24 @@ var(--fg); }
     function openNeighborOverlay(target, segment) {
       if (!shortInfoOverlay || !shortInfoContent || !segment) return;
       const nodeName = shortInfoValueOrDash(segment.sourceDisplayName || segment.sourceId || '');
-      const neighborName = shortInfoValueOrDash(segment.targetDisplayName || segment.targetId || '');
       const snrText = shortInfoValueOrDash(formatSnrDisplay(segment.snr));
-      const sourceIdHtml = segment.sourceId ? ` <span class="mono">${escapeHtml(segment.sourceId)}</span>` : '';
-      const targetIdHtml = segment.targetId ? ` <span class="mono">${escapeHtml(segment.targetId)}</span>` : '';
+      const sourceShortHtml = renderShortHtml(
+        segment.sourceShortName,
+        segment.sourceRole,
+        segment.sourceDisplayName
+      );
+      const targetShortHtml = renderShortHtml(
+        segment.targetShortName,
+        segment.targetRole,
+        segment.targetDisplayName
+      );
+      const sourceIdText = shortInfoValueOrDash(segment.sourceId || '');
+      const neighborFullName = shortInfoValueOrDash(segment.targetDisplayName || segment.targetId || '');
       const lines = [];
-      lines.push(`<strong>${escapeHtml(nodeName)}</strong>${sourceIdHtml}`);
-      lines.push(`Neighbor: ${escapeHtml(neighborName)}${targetIdHtml}`);
+      lines.push(`<strong>${escapeHtml(nodeName)}</strong>`);
+      lines.push(`${sourceShortHtml} <span class="mono">${escapeHtml(sourceIdText)}</span>`);
+      const neighborLine = `${targetShortHtml} [${escapeHtml(neighborFullName)}]`;
+      lines.push(neighborLine);
       lines.push(`SNR: ${escapeHtml(snrText)}`);
       shortInfoContent.innerHTML = lines.join('<br/>');
       shortInfoAnchor = target;
@@ -2210,6 +2221,8 @@ var(--fg); }
           const snrValue = toFiniteNumber(entry.snr);
           const sourceDisplayName = getNodeDisplayNameForOverlay(sourceNode);
           const targetDisplayName = getNodeDisplayNameForOverlay(targetNode);
+          const sourceShortName = normalizeNodeNameValue(sourceNode.short_name ?? sourceNode.shortName);
+          const targetShortName = normalizeNodeNameValue(targetNode.short_name ?? targetNode.shortName);
 
           neighborSegments.push({
             latlngs: [[srcLat, srcLon], [tgtLat, tgtLon]],
@@ -2220,7 +2233,11 @@ var(--fg); }
             targetId,
             snr: snrValue,
             sourceDisplayName,
-            targetDisplayName
+            targetDisplayName,
+            sourceShortName,
+            sourceRole: sourceNode.role,
+            targetShortName,
+            targetRole: targetNode.role
           });
         }
 
