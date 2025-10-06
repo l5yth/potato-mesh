@@ -385,6 +385,8 @@ var(--fg); }
       #nodes td:nth-child(6),
       #nodes th:nth-child(9),
       #nodes td:nth-child(9),
+      #nodes th:nth-child(11),
+      #nodes td:nth-child(11),
       #nodes th:nth-child(13),
       #nodes td:nth-child(13),
       #nodes th:nth-child(14),
@@ -838,6 +840,8 @@ var(--fg); }
     let usingOfflineTiles = false;
     const MAX_NODE_DISTANCE_KM = <%= max_node_distance_km %>;
     let neighborLinesLayer = null;
+    let neighborLinesVisible = true;
+    let neighborLinesToggleButton = null;
     let markersLayer = null;
     let tileDomObserver = null;
 
@@ -1214,6 +1218,27 @@ var(--fg); }
       updateLegendToggleState();
     }
 
+    function updateNeighborLinesToggleState() {
+      if (!neighborLinesToggleButton) return;
+      const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
+      neighborLinesToggleButton.textContent = label;
+      neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
+      neighborLinesToggleButton.setAttribute('aria-label', label);
+    }
+
+    function setNeighborLinesVisibility(visible) {
+      neighborLinesVisible = Boolean(visible);
+      if (neighborLinesLayer && map) {
+        const hasLayer = map.hasLayer(neighborLinesLayer);
+        if (neighborLinesVisible && !hasLayer) {
+          neighborLinesLayer.addTo(map);
+        } else if (!neighborLinesVisible && hasLayer) {
+          map.removeLayer(neighborLinesLayer);
+        }
+      }
+      updateNeighborLinesToggleState();
+    }
+
     function updateLegendRoleFiltersUI() {
       const hasFilters = activeRoleFilters.size > 0;
       legendRoleButtons.forEach((button, role) => {
@@ -1256,12 +1281,12 @@ var(--fg); }
         title.textContent = 'Legend';
 
         const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
-        legendRoleButtons.clear();
-        for (const [role, color] of Object.entries(roleColors)) {
-          if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
-          const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
-          item.type = 'button';
-          item.setAttribute('aria-pressed', 'false');
+      legendRoleButtons.clear();
+      for (const [role, color] of Object.entries(roleColors)) {
+        if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
+        const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
+        item.type = 'button';
+        item.setAttribute('aria-pressed', 'false');
           item.dataset.role = role;
           const swatch = L.DomUtil.create('span', 'legend-swatch', item);
           swatch.style.background = color;
@@ -1286,6 +1311,15 @@ var(--fg); }
         updateLegendRoleFiltersUI();
 
         const toggle = L.DomUtil.create('div', 'legend-toggle', div);
+        neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', toggle);
+        neighborLinesToggleButton.type = 'button';
+        neighborLinesToggleButton.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          setNeighborLinesVisibility(!neighborLinesVisible);
+        });
+        updateNeighborLinesToggleState();
+
         const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
         resetButton.type = 'button';
         resetButton.textContent = 'Clear filters';
