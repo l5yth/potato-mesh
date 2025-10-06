@@ -27,12 +27,19 @@ require "rack/utils"
 require "open3"
 require "time"
 
+# Path to the SQLite database used by the web application.
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
+# Default timeout applied to SQLite ``busy`` responses in milliseconds.
 DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
+# Maximum number of SQLite ``busy`` retries before failing the request.
 DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
+# Base delay in seconds between SQLite ``busy`` retries.
 DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
+# Convenience constant used when filtering stale records.
 WEEK_SECONDS = 7 * 24 * 60 * 60
+# Default request body size allowed for JSON uploads.
 DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
+# Maximum request body size for JSON uploads, configurable via ``MAX_JSON_BODY_BYTES``.
 MAX_JSON_BODY_BYTES = begin
     raw = ENV.fetch("MAX_JSON_BODY_BYTES", DEFAULT_MAX_JSON_BODY_BYTES.to_s)
     value = Integer(raw, 10)
@@ -40,8 +47,14 @@ MAX_JSON_BODY_BYTES = begin
   rescue ArgumentError
     DEFAULT_MAX_JSON_BODY_BYTES
   end
+# Fallback version string used when Git metadata is unavailable.
 VERSION_FALLBACK = "v0.3.0"
 
+# Fetch a configuration string from environment variables.
+#
+# @param key [String] name of the environment variable to read.
+# @param default [String] fallback value returned when the variable is unset or blank.
+# @return [String] sanitized configuration value.
 def fetch_config_string(key, default)
   value = ENV[key]
   return default if value.nil?
@@ -50,6 +63,10 @@ def fetch_config_string(key, default)
   trimmed.empty? ? default : trimmed
 end
 
+# Determine the current application version using ``git describe`` when
+# available.
+#
+# @return [String] semantic version string for display in the footer.
 def determine_app_version
   repo_root = File.expand_path("..", __dir__)
   git_dir = File.join(repo_root, ".git")
@@ -98,6 +115,10 @@ MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
 
+# Log a debug message when the ``DEBUG`` environment variable is enabled.
+#
+# @param message [String] text written to the configured logger.
+# @return [void]
 def debug_log(message)
   return unless DEBUG
 
@@ -105,31 +126,54 @@ def debug_log(message)
   logger&.debug(message)
 end
 
+# Indicates whether the instance should hide sensitive details from visitors.
+#
+# @return [Boolean] true when the ``PRIVATE`` flag is set.
 def private_mode?
   ENV["PRIVATE"] == "1"
 end
 
+# Convert arbitrary values into trimmed strings.
+#
+# @param value [Object] input value converted using ``to_s``.
+# @return [String] trimmed representation of ``value``.
 def sanitized_string(value)
   value.to_s.strip
 end
 
+# Return the configured site name stripped of leading and trailing whitespace.
+#
+# @return [String] sanitized site name used throughout the UI.
 def sanitized_site_name
   sanitized_string(SITE_NAME)
 end
 
+# Return the configured default channel label.
+#
+# @return [String] sanitized channel label for the UI.
 def sanitized_default_channel
   sanitized_string(DEFAULT_CHANNEL)
 end
 
+# Return the configured default frequency label.
+#
+# @return [String] sanitized frequency string.
 def sanitized_default_frequency
   sanitized_string(DEFAULT_FREQUENCY)
 end
 
+# Return the configured Matrix room when present.
+#
+# @return [String, nil] Matrix room identifier or nil when blank.
 def sanitized_matrix_room
   value = sanitized_string(MATRIX_ROOM)
   value.empty? ? nil : value
 end
 
+# Coerce arbitrary values into strings or nil when blank.
+#
+# @param value [Object] raw value to normalize.
+# @return [String, nil] string when present or nil for empty inputs.
 def string_or_nil(value)
   return nil if value.nil?
 
@@ -138,6 +182,10 @@ def string_or_nil(value)
   trimmed.empty? ? nil : trimmed
 end
 
+# Convert values into integers while tolerating hexadecimal and float inputs.
+#
+# @param value [Object] input converted to an integer when possible.
+# @return [Integer, nil] integer representation or nil when conversion fails.
 def coerce_integer(value)
   case value
   when Integer
@@ -162,6 +210,10 @@ def coerce_integer(value)
   end
 end
 
+# Convert values into floats while rejecting non-finite numbers.
+#
+# @param value [Object] input converted to a float when possible.
+# @return [Float, nil] floating-point representation or nil when conversion fails.
 def coerce_float(value)
   case value
   when Float
@@ -184,6 +236,10 @@ def coerce_float(value)
   end
 end
 
+# Recursively normalize JSON values to ensure keys are strings.
+#
+# @param value [Object] array, hash, or scalar value parsed from JSON.
+# @return [Object] normalized representation with string keys for hashes.
 def normalize_json_value(value)
   case value
   when Hash
@@ -197,6 +253,10 @@ def normalize_json_value(value)
   end
 end
 
+# Parse user-supplied JSON payloads into normalized hashes.
+#
+# @param value [Object] JSON string or hash-like object.
+# @return [Hash, nil] normalized hash or nil when parsing fails.
 def normalize_json_object(value)
   case value
   when Hash
@@ -215,6 +275,9 @@ def normalize_json_object(value)
   end
 end
 
+# Return the configured maximum node distance when valid.
+#
+# @return [Float, nil] positive distance in kilometres or nil when invalid.
 def sanitized_max_distance_km
   return nil unless defined?(MAX_NODE_DISTANCE_KM)
 
@@ -225,10 +288,17 @@ def sanitized_max_distance_km
   distance
 end
 
+# Format a distance in kilometres for display.
+#
+# @param distance [Numeric] value expressed in kilometres.
+# @return [String] distance formatted with a single decimal place.
 def formatted_distance_km(distance)
   format("%.1f", distance).sub(/\.0\z/, "")
 end
 
+# Compose the meta description used by the landing page.
+#
+# @return [String] readable sentence summarising the instance.
 def meta_description
   site = sanitized_site_name
   channel = sanitized_default_channel
@@ -261,6 +331,9 @@ def meta_description
   sentences.join(" ")
 end
 
+# Return the metadata used to populate the HTML head section.
+#
+# @return [Hash] hash containing ``:title``, ``:name``, and ``:description`` keys.
 def meta_configuration
   site = sanitized_site_name
   {
@@ -271,6 +344,9 @@ def meta_configuration
 end
 
 class << Sinatra::Application
+  # Configure the logger level based on the ``DEBUG`` flag.
+  #
+  # @return [void]
   def apply_logger_level!
     logger = settings.logger
     return unless logger
@@ -348,6 +424,10 @@ end
 
 init_db unless db_schema_present?
 
+# Apply opportunistic schema upgrades without forcing a separate migration
+# process for existing deployments.
+#
+# @return [void]
 def ensure_schema_upgrades
   db = open_database
   node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }

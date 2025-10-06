@@ -77,24 +77,53 @@ var(--fg); }
 </style>
 <script>
     (function () {
+      /**
+       * Number of seconds the theme cookie remains valid.
+       * @type {number}
+       */
       var THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 
+      /**
+       * Read a cookie value by name, accounting for characters that need escaping.
+       *
+       * @param {string} name Cookie key to retrieve.
+       * @returns {string|null} Decoded cookie value or null when missing.
+       */
       function getCookie(name) {
-        const m = document.cookie.match(new RegExp('(?:^|; )' +
-  name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-        return m ? decodeURIComponent(m[1]) : null;
+        var matcher = new RegExp(
+          '(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)',
+        );
+        var match = document.cookie.match(matcher);
+        return match ? decodeURIComponent(match[1]) : null;
       }
+
+      /**
+       * Persist a cookie value while merging caller provided attributes.
+       *
+       * @param {string} name Cookie key to set.
+       * @param {string} value Raw value stored in the cookie jar.
+       * @param {Object<string, *>} [opts] Optional cookie attributes.
+       * @returns {void}
+       */
       function setCookie(name, value, opts) {
-        opts = Object.assign({ path: '/', 'max-age': THEME_COOKIE_MAX_AGE, SameSite:
-  'Lax' }, opts || {});
-        let updated = encodeURIComponent(name) + '=' +
-  encodeURIComponent(value);
-        for (const k in opts) {
-          updated += '; ' + k + (opts[k] === true ? '' : '=' + opts[k]);
+        var options = Object.assign(
+          { path: '/', 'max-age': THEME_COOKIE_MAX_AGE, SameSite: 'Lax' },
+          opts || {},
+        );
+        var updated = encodeURIComponent(name) + '=' + encodeURIComponent(value);
+        for (var k in options) {
+          if (!Object.prototype.hasOwnProperty.call(options, k)) continue;
+          updated += '; ' + k + (options[k] === true ? '' : '=' + options[k]);
         }
         document.cookie = updated;
       }
 
+      /**
+       * Store the user's preferred theme for the next visit.
+       *
+       * @param {string} value Theme identifier, either ``dark`` or ``light``.
+       * @returns {void}
+       */
       function persistTheme(value) {
         setCookie('theme', value, { 'max-age': THEME_COOKIE_MAX_AGE });
       }
@@ -108,18 +137,30 @@ var(--fg); }
       document.addEventListener('DOMContentLoaded', function () {
         if (theme === 'dark') {
           document.body.classList.add('dark');
-      } else {
-        document.body.classList.remove('dark');
-      }
-      var btn = document.getElementById('themeToggle');
-      if (btn) btn.textContent = document.body.classList.contains('dark') ?
-'☀️' : '🌙';
-      if (typeof window.applyFiltersToAllTiles === 'function') {
-        window.applyFiltersToAllTiles();
-      }
-    });
+        } else {
+          document.body.classList.remove('dark');
+        }
 
-      window.__themeCookie = { getCookie, setCookie, persistTheme, maxAge: THEME_COOKIE_MAX_AGE };
+        var btn = document.getElementById('themeToggle');
+        if (btn) {
+          btn.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+        }
+
+        if (typeof window.applyFiltersToAllTiles === 'function') {
+          window.applyFiltersToAllTiles();
+        }
+      });
+
+      /**
+       * Expose helpers for integration tests and the theme toggle button.
+       * @type {{getCookie: Function, setCookie: Function, persistTheme: Function, maxAge: number}}
+       */
+      window.__themeCookie = {
+        getCookie: getCookie,
+        setCookie: setCookie,
+        persistTheme: persistTheme,
+        maxAge: THEME_COOKIE_MAX_AGE,
+      };
     })();
   </script>
 <meta name="color-scheme" content="dark light">
@@ -470,58 +511,123 @@ var(--fg); }
     }
   </style>
   <script>
-    (function(){
-      function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++)h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19;return function(){h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);return (h^h>>>16)>>>0;};}
-      function mulberry32(a){return function(){var t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;}}
-      function genBackground(theme){
+    (function () {
+      /**
+       * Hash the provided string into a deterministic 32-bit seed.
+       *
+       * @param {string} str Input string used to generate the seed.
+       * @returns {Function} Function that returns the hashed seed on invocation.
+       */
+      function xmur3(str) {
+        var h = 1779033703 ^ str.length;
+        for (var i = 0; i < str.length; i += 1) {
+          h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+          h = (h << 13) | (h >>> 19);
+        }
+        return function () {
+          h = Math.imul(h ^ (h >>> 16), 2246822507);
+          h = Math.imul(h ^ (h >>> 13), 3266489909);
+          return (h ^ (h >>> 16)) >>> 0;
+        };
+      }
+
+      /**
+       * Create a deterministic pseudo-random number generator from a seed.
+       *
+       * @param {number} seed Numeric seed value.
+       * @returns {Function} Function returning floats in the ``[0, 1)`` range.
+       */
+      function mulberry32(seed) {
+        var a = seed >>> 0;
+        return function () {
+          a = (a + 0x6d2b79f5) >>> 0;
+          var t = Math.imul(a ^ (a >>> 15), a | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      /**
+       * Paint a deterministic canvas background based on the active theme.
+       *
+       * @param {string} theme Theme identifier, either ``dark`` or ``light``.
+       * @returns {void}
+       */
+      function genBackground(theme) {
         var seedInput = location.hostname + '::' + theme;
         var seed = xmur3(seedInput)();
         var rnd = mulberry32(seed);
-        var w = 1400, h = 900;
-        var c = document.createElement('canvas'); c.width=w; c.height=h;
-        var ctx = c.getContext('2d');
-        if(theme==='dark'){
-          var g = ctx.createLinearGradient(0,0,w,h);
-          g.addColorStop(0, '#0b1119');
-          g.addColorStop(1, '#121b27');
-          ctx.fillStyle = g; ctx.fillRect(0,0,w,h);
+        var width = 1400;
+        var height = 900;
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext('2d');
+
+        if (theme === 'dark') {
+          var gradient = ctx.createLinearGradient(0, 0, width, height);
+          gradient.addColorStop(0, '#0b1119');
+          gradient.addColorStop(1, '#121b27');
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, width, height);
         } else {
-          var g2 = ctx.createLinearGradient(0,0,w,h);
-          g2.addColorStop(0, '#efe8d9'); g2.addColorStop(1, '#dfe5ec');
-          ctx.fillStyle = g2; ctx.fillRect(0,0,w,h);
+          var gradientLight = ctx.createLinearGradient(0, 0, width, height);
+          gradientLight.addColorStop(0, '#efe8d9');
+          gradientLight.addColorStop(1, '#dfe5ec');
+          ctx.fillStyle = gradientLight;
+          ctx.fillRect(0, 0, width, height);
         }
-        ctx.globalAlpha = (theme==='dark') ? 0.05 : 0.06;
-        for(var i=0;i<14000;i++){
-          var x = Math.floor(rnd()*w), y = Math.floor(rnd()*h);
-          var s = Math.floor(rnd()*2)+1;
-          ctx.fillStyle = (theme==='dark') ? '#ffffff' : '#000000';
-          ctx.fillRect(x,y,s,s);
+
+        ctx.globalAlpha = theme === 'dark' ? 0.05 : 0.06;
+        for (var i = 0; i < 14000; i += 1) {
+          var x = Math.floor(rnd() * width);
+          var y = Math.floor(rnd() * height);
+          var size = Math.floor(rnd() * 2) + 1;
+          ctx.fillStyle = theme === 'dark' ? '#ffffff' : '#000000';
+          ctx.fillRect(x, y, size, size);
         }
-        var rad = ctx.createRadialGradient(w*0.5,h*0.5,Math.min(w,h)*0.2, w*0.5,h*0.5,Math.max(w,h)*0.7);
-        if(theme==='dark'){
-          rad.addColorStop(0,'rgba(0,0,0,0)');
-          rad.addColorStop(1,'rgba(0,0,0,0.20)');
+
+        var radial = ctx.createRadialGradient(
+          width * 0.5,
+          height * 0.5,
+          Math.min(width, height) * 0.2,
+          width * 0.5,
+          height * 0.5,
+          Math.max(width, height) * 0.7,
+        );
+        if (theme === 'dark') {
+          radial.addColorStop(0, 'rgba(0,0,0,0)');
+          radial.addColorStop(1, 'rgba(0,0,0,0.20)');
         } else {
-          rad.addColorStop(0,'rgba(255,255,255,0)');
-          rad.addColorStop(1,'rgba(255,255,255,0.22)');
+          radial.addColorStop(0, 'rgba(255,255,255,0)');
+          radial.addColorStop(1, 'rgba(255,255,255,0.22)');
         }
-        ctx.globalAlpha = 1; ctx.fillStyle = rad; ctx.fillRect(0,0,w,h);
-        var url = c.toDataURL('image/png');
-        document.documentElement.style.setProperty('--bg-image', 'url('+url+')');
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = radial;
+        ctx.fillRect(0, 0, width, height);
+
+        var url = canvas.toDataURL('image/png');
+        document.documentElement.style.setProperty('--bg-image', 'url(' + url + ')');
       }
-      function currentTheme(){
+
+      /**
+       * Determine the current theme class applied to the document body.
+       *
+       * @returns {string} ``dark`` when the class is present, otherwise ``light``.
+       */
+      function currentTheme() {
         return document.body.classList.contains('dark') ? 'dark' : 'light';
       }
-      document.addEventListener('DOMContentLoaded', function(){
+
+      document.addEventListener('DOMContentLoaded', function () {
         genBackground(currentTheme());
       });
-      window.addEventListener('themechange', function(e){
-        var theme = e.detail && e.detail.theme || currentTheme();
+
+      window.addEventListener('themechange', function (event) {
+        var theme = (event.detail && event.detail.theme) || currentTheme();
         genBackground(theme);
       });
-      var obs = new MutationObserver(function(){ genBackground(currentTheme());});
-      obs.observe(document.documentElement, { attributes:true, attributeFilter:['class'] });
-      window.__regenBackground = genBackground;
     })();
   </script>
   <style>
@@ -676,6 +782,14 @@ var(--fg); }
     const baseTitle = document.title;
     const nodesTable = document.getElementById('nodes');
     const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
+    /**
+     * Column sorter configuration for the node table.
+     *
+     * Each entry provides a value extractor, comparator, and optional
+     * presence checker used to sort the rendered rows.
+     *
+     * @type {Record<string, {getValue: Function, compare: Function, hasValue?: Function, defaultDirection: 'asc' | 'desc'}>}
+     */
     const tableSorters = {
       node_id: { getValue: n => n.node_id, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
       short_name: { getValue: n => n.short_name, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
@@ -696,14 +810,23 @@ var(--fg); }
       altitude: { getValue: n => n.altitude, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
       position_time: { getValue: n => n.position_time, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' }
     };
+    /**
+     * Current table sorting state shared between refreshes.
+     * @type {{key: string, direction: 'asc' | 'desc'}}
+     */
     let sortState = {
       key: 'last_heard',
       direction: tableSorters.last_heard ? tableSorters.last_heard.defaultDirection : 'desc'
     };
+    /** @type {Array<Object>} */
     let allNodes = [];
+    /** @type {Array<Object>} */
     let allNeighbors = [];
+    /** @type {Map<string, Object>} */
     let nodesById = new Map();
+    /** @type {HTMLElement|null} */
     let shortInfoAnchor = null;
+    /** @type {string|undefined} */
     let lastChatDate;
     const NODE_LIMIT = 1000;
     const CHAT_LIMIT = 1000;
@@ -712,19 +835,39 @@ var(--fg); }
     const CHAT_ENABLED = <%= private_mode ? "false" : "true" %>;
     refreshInfo.textContent = `<%= default_channel %> (<%= default_frequency %>) — active nodes: …`;
 
+    /** @type {ReturnType<typeof setTimeout>|null} */
     let refreshTimer = null;
 
+    /**
+     * Determine whether the provided value contains a non-empty string.
+     *
+     * @param {*} value Candidate value extracted from a node record.
+     * @returns {boolean} True when the value is a non-empty string.
+     */
     function hasStringValue(value) {
       if (value == null) return false;
       return String(value).trim().length > 0;
     }
 
+    /**
+     * Determine whether the provided value can be interpreted as a finite number.
+     *
+     * @param {*} value Candidate value extracted from a node record.
+     * @returns {boolean} True when the value parses to a finite number.
+     */
     function hasNumberValue(value) {
       if (value == null || value === '') return false;
       const num = typeof value === 'number' ? value : Number(value);
       return Number.isFinite(num);
     }
 
+    /**
+     * Locale-aware comparator for string table values.
+     *
+     * @param {*} a First value.
+     * @param {*} b Second value.
+     * @returns {number} Comparator result compatible with ``Array.prototype.sort``.
+     */
     function compareString(a, b) {
       const strA = (a == null ? '' : String(a)).trim();
       const strB = (b == null ? '' : String(b)).trim();
@@ -736,6 +879,13 @@ var(--fg); }
       return strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
     }
 
+    /**
+     * Comparator for numeric table values that tolerates string inputs.
+     *
+     * @param {*} a First value.
+     * @param {*} b Second value.
+     * @returns {number} Comparator result for ``Array.prototype.sort``.
+     */
     function compareNumber(a, b) {
       const numA = typeof a === 'number' ? a : Number(a);
       const numB = typeof b === 'number' ? b : Number(b);
@@ -750,6 +900,12 @@ var(--fg); }
       return 0;
     }
 
+    /**
+     * Sort a list of nodes using the active table sorter configuration.
+     *
+     * @param {Array<Object>} nodes Collection of node entries.
+     * @returns {Array<Object>} Sorted shallow copy of ``nodes``.
+     */
     function sortNodes(nodes) {
       if (!Array.isArray(nodes)) return [];
       const config = tableSorters[sortState.key];
@@ -773,6 +929,11 @@ var(--fg); }
       return arr;
     }
 
+    /**
+     * Synchronise the sort indicator icons and ARIA attributes in the table head.
+     *
+     * @returns {void}
+     */
     function updateSortIndicators() {
       if (!nodesTable || !sortButtons.length) return;
       nodesTable.querySelectorAll('thead th').forEach(th => th.removeAttribute('aria-sort'));
@@ -819,6 +980,11 @@ var(--fg); }
 
     updateSortIndicators();
 
+    /**
+     * Restart the auto-refresh timer according to the user's preferences.
+     *
+     * @returns {void}
+     */
     function restartAutoRefresh() {
       if (refreshTimer) {
         clearInterval(refreshTimer);
@@ -875,6 +1041,11 @@ var(--fg); }
     const activeRoleFilters = new Set();
     const legendRoleButtons = new Map();
 
+    /**
+     * Lazily create the floating map status element used for progress messages.
+     *
+     * @returns {HTMLElement|null} Status element attached to the map container.
+     */
     function ensureMapStatusElement() {
       if (!mapContainer) return null;
       if (mapStatusEl && mapStatusEl.parentElement === mapContainer) {
@@ -887,6 +1058,12 @@ var(--fg); }
       return mapStatusEl;
     }
 
+    /**
+     * Display a short-lived status message overlay on the map.
+     *
+     * @param {string} message Human readable description of the current state.
+     * @returns {void}
+     */
     function showMapStatus(message) {
       if (!mapContainer) return;
       const el = ensureMapStatusElement();
@@ -899,12 +1076,23 @@ var(--fg); }
       }
     }
 
+    /**
+     * Hide the map status banner without removing the element from the DOM.
+     *
+     * @returns {void}
+     */
     function hideMapStatus() {
       if (mapStatusEl) {
         mapStatusEl.hidden = true;
       }
     }
 
+    /**
+     * Replace the map tiles with a textual placeholder message.
+     *
+     * @param {string} message Explanation rendered below the placeholder heading.
+     * @returns {void}
+     */
     function setMapPlaceholder(message) {
       if (!mapContainer) return;
       mapContainer.dataset.mapStatus = 'placeholder';
@@ -915,12 +1103,24 @@ var(--fg); }
       mapContainer.appendChild(placeholder);
     }
 
+    /**
+     * Normalise role strings so lookups remain consistent.
+     *
+     * @param {*} role Raw role value from the API.
+     * @returns {string} Uppercase role identifier with a fallback of ``CLIENT``.
+     */
     function normalizeRole(role) {
       if (role == null) return 'CLIENT';
       const str = String(role).trim();
       return str.length ? str : 'CLIENT';
     }
 
+    /**
+     * Resolve the canonical role key used for colour lookup tables.
+     *
+     * @param {*} role Raw role value from the API.
+     * @returns {string} Canonical role identifier.
+     */
     function getRoleKey(role) {
       const normalized = normalizeRole(role);
       if (roleColors[normalized]) return normalized;
@@ -929,11 +1129,23 @@ var(--fg); }
       return normalized;
     }
 
+    /**
+     * Determine the colour assigned to a role for legend badges.
+     *
+     * @param {*} role Raw role value.
+     * @returns {string} CSS colour string.
+     */
     function getRoleColor(role) {
       const key = getRoleKey(role);
       return roleColors[key] || roleColors.CLIENT || '#3388ff';
     }
 
+    /**
+     * Determine the render priority that decides marker stacking order.
+     *
+     * @param {*} role Raw role value.
+     * @returns {number} Higher numbers render above lower ones.
+     */
     function getRoleRenderPriority(role) {
       const key = getRoleKey(role);
       const priority = roleRenderOrder[key];
@@ -949,10 +1161,22 @@ var(--fg); }
       mapCenterLatLng = L.latLng(MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
     }
 
+    /**
+     * Return the CSS filter applied to Leaflet tiles for the active theme.
+     *
+     * @returns {string} CSS filter expression.
+     */
     function resolveTileFilter() {
       return document.body.classList.contains('dark') ? TILE_FILTER_DARK : TILE_FILTER_LIGHT;
     }
 
+    /**
+     * Apply the configured filter to an individual Leaflet tile element.
+     *
+     * @param {HTMLElement} tile Tile image element.
+     * @param {string} filterValue CSS filter expression.
+     * @returns {void}
+     */
     function applyFilterToTileElement(tile, filterValue) {
       if (!tile || usingOfflineTiles) return;
       if (tile.classList && !tile.classList.contains('map-tiles')) {
@@ -965,12 +1189,23 @@ var(--fg); }
       }
     }
 
+    /**
+     * Return the Leaflet DOM container that currently owns map tiles.
+     *
+     * @returns {HTMLElement|null} Tile layer container element.
+     */
     function getActiveTileLayerContainer() {
       if (!map) return null;
       const layer = usingOfflineTiles ? offlineTiles : tiles;
       return layer && typeof layer.getContainer === 'function' ? layer.getContainer() : null;
     }
 
+    /**
+     * Apply a CSS filter to all currently mounted Leaflet tile elements.
+     *
+     * @param {string} filterValue CSS filter expression.
+     * @returns {void}
+     */
     function applyFilterToTileContainers(filterValue) {
       if (!map) return;
       const value = filterValue || resolveTileFilter();
@@ -986,12 +1221,23 @@ var(--fg); }
       }
     }
 
+    /**
+     * Ensure a tile element reflects the active theme filter.
+     *
+     * @param {HTMLElement} tile Tile element managed by Leaflet.
+     * @returns {void}
+     */
     function ensureTileHasCurrentFilter(tile) {
       if (!map || usingOfflineTiles) return;
       const filterValue = resolveTileFilter();
       applyFilterToTileElement(tile, filterValue);
     }
 
+    /**
+     * Synchronise all existing tiles with the current theme filter.
+     *
+     * @returns {void}
+     */
     function applyFiltersToAllTiles() {
       if (!map) return;
       const filterValue = resolveTileFilter();
@@ -1003,15 +1249,34 @@ var(--fg); }
       applyFilterToTileContainers(filterValue);
     }
 
+    /**
+     * Convert a tile X coordinate to longitude degrees.
+     *
+     * @param {number} x Tile X index.
+     * @param {number} z Zoom level.
+     * @returns {number} Longitude in degrees.
+     */
     function tileToLon(x, z) {
       return (x / Math.pow(2, z)) * 360 - 180;
     }
 
+    /**
+     * Convert a tile Y coordinate to latitude degrees.
+     *
+     * @param {number} y Tile Y index.
+     * @param {number} z Zoom level.
+     * @returns {number} Latitude in degrees.
+     */
     function tileToLat(y, z) {
       const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z);
       return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
     }
 
+    /**
+     * Create a minimal Leaflet tile layer that renders offline tiles from cache.
+     *
+     * @returns {L.GridLayer} Configured tile layer instance.
+     */
     function createOfflineTileLayer() {
       if (!hasLeaflet) return null;
       const offlineLayer = L.gridLayer({ className: 'map-tiles map-tiles-offline' });
@@ -1070,6 +1335,11 @@ var(--fg); }
       return offlineLayer;
     }
 
+    /**
+     * Disconnect and clear the MutationObserver tracking tile additions.
+     *
+     * @returns {void}
+     */
     function disconnectTileObserver() {
       if (tileDomObserver) {
         tileDomObserver.disconnect();
@@ -1077,6 +1347,12 @@ var(--fg); }
       }
     }
 
+    /**
+     * Observe a Leaflet tile container to reapply filters as new tiles load.
+     *
+     * @param {L.GridLayer} layer Leaflet layer whose container should be watched.
+     * @returns {void}
+     */
     function observeTileContainer(layer) {
       if (!map || typeof MutationObserver !== 'function') return;
       const targetLayer = layer || (usingOfflineTiles ? offlineTiles : tiles);
@@ -1106,6 +1382,12 @@ var(--fg); }
       targets.forEach(target => tileDomObserver.observe(target, { childList: true, subtree: true }));
     }
 
+    /**
+     * Enable the offline tile fallback and notify the user.
+     *
+     * @param {string} message Status text explaining the fallback.
+     * @returns {void}
+     */
     function activateOfflineTiles(message) {
       if (!hasLeaflet || !map) {
         if (mapContainer) {
@@ -1192,6 +1474,11 @@ var(--fg); }
     let legendToggleButton = null;
     let legendVisible = true;
 
+    /**
+     * Update the pressed state of the legend visibility toggle button.
+     *
+     * @returns {void}
+     */
     function updateLegendToggleState() {
       if (!legendToggleButton) return;
       const hasFilters = activeRoleFilters.size > 0;
@@ -1209,6 +1496,12 @@ var(--fg); }
       }
     }
 
+    /**
+     * Show or hide the map legend component.
+     *
+     * @param {boolean} visible Whether the legend should be displayed.
+     * @returns {void}
+     */
     function setLegendVisibility(visible) {
       legendVisible = visible;
       if (legendContainer) {
@@ -1218,6 +1511,11 @@ var(--fg); }
       updateLegendToggleState();
     }
 
+    /**
+     * Synchronise the neighbour line toggle button with the active state.
+     *
+     * @returns {void}
+     */
     function updateNeighborLinesToggleState() {
       if (!neighborLinesToggleButton) return;
       const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
@@ -1226,6 +1524,12 @@ var(--fg); }
       neighborLinesToggleButton.setAttribute('aria-label', label);
     }
 
+    /**
+     * Toggle the Leaflet layer that renders neighbour connection lines.
+     *
+     * @param {boolean} visible Whether to show the layer.
+     * @returns {void}
+     */
     function setNeighborLinesVisibility(visible) {
       neighborLinesVisible = Boolean(visible);
       if (neighborLinesLayer && map) {
@@ -1239,6 +1543,11 @@ var(--fg); }
       updateNeighborLinesToggleState();
     }
 
+    /**
+     * Refresh the legend buttons to reflect the active role filters.
+     *
+     * @returns {void}
+     */
     function updateLegendRoleFiltersUI() {
       const hasFilters = activeRoleFilters.size > 0;
       legendRoleButtons.forEach((button, role) => {
@@ -1256,6 +1565,12 @@ var(--fg); }
       updateLegendToggleState();
     }
 
+    /**
+     * Toggle the visibility filter for a given role.
+     *
+     * @param {string} role Role identifier.
+     * @returns {void}
+     */
     function toggleRoleFilter(role) {
       if (!role) return;
       if (activeRoleFilters.has(role)) {
@@ -1269,6 +1584,11 @@ var(--fg); }
 
     if (map && hasLeaflet) {
       const legend = L.control({ position: 'bottomright' });
+      /**
+       * Leaflet control factory that renders the legend UI.
+       *
+       * @returns {HTMLElement} Legend DOM element.
+       */
       legend.onAdd = function () {
         const div = L.DomUtil.create('div', 'legend');
         div.id = 'mapLegend';
@@ -1340,6 +1660,11 @@ var(--fg); }
       legendContainer = legend.getContainer();
 
       legendToggleControl = L.control({ position: 'bottomright' });
+      /**
+       * Leaflet control factory for the legend visibility toggle.
+       *
+       * @returns {HTMLElement} Toggle button element.
+       */
       legendToggleControl.onAdd = function () {
         const container = L.DomUtil.create('div', 'leaflet-control legend-toggle');
         const button = L.DomUtil.create('button', 'legend-toggle-button', container);
@@ -1387,6 +1712,11 @@ var(--fg); }
 
     let lastFocusBeforeInfo = null;
 
+    /**
+     * Display the modal overlay containing site information.
+     *
+     * @returns {void}
+     */
     function openInfoOverlay() {
       if (!infoOverlay || !infoDialog) return;
       lastFocusBeforeInfo = document.activeElement;
@@ -1395,6 +1725,11 @@ var(--fg); }
       infoDialog.focus();
     }
 
+    /**
+     * Hide the site information overlay and restore focus.
+     *
+     * @returns {void}
+     */
     function closeInfoOverlay() {
       if (!infoOverlay || !infoDialog) return;
       infoOverlay.hidden = true;
@@ -1475,6 +1810,12 @@ var(--fg); }
     });
 
     // --- Helpers ---
+    /**
+     * Escape a string for safe HTML insertion.
+     *
+     * @param {string} str Raw string.
+     * @returns {string} Escaped HTML string.
+     */
     function escapeHtml(str) {
       return String(str)
         .replace(/&/g, '&amp;')
@@ -1484,6 +1825,15 @@ var(--fg); }
         .replace(/'/g, '&#39;');
     }
 
+    /**
+     * Render a short name badge with role-based styling.
+     *
+     * @param {string} short Short node identifier.
+     * @param {string} role Node role string.
+     * @param {string} longName Full node name.
+     * @param {?Object} nodeData Optional node metadata attached to the badge.
+     * @returns {string} HTML snippet describing the badge.
+     */
     function renderShortHtml(short, role, longName, nodeData = null){
       const safeTitle = longName ? escapeHtml(String(longName)) : '';
       const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
@@ -1516,6 +1866,12 @@ var(--fg); }
       return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
     }
 
+    /**
+     * Populate the ``nodesById`` index for quick lookups.
+     *
+     * @param {Array<Object>} nodes Collection of node payloads.
+     * @returns {void}
+     */
     function rebuildNodeIndex(nodes) {
       nodesById = new Map();
       if (!Array.isArray(nodes)) return;
@@ -1529,6 +1885,12 @@ var(--fg); }
       }
     }
 
+    /**
+     * Return neighbour entries associated with a node.
+     *
+     * @param {string} nodeId Canonical node identifier.
+     * @returns {Array<Object>} Neighbour records sorted by SNR.
+     */
     function getNeighborNodesFor(nodeId) {
       if (typeof nodeId !== 'string' || nodeId.length === 0) return [];
       if (!Array.isArray(allNeighbors) || allNeighbors.length === 0) return [];
@@ -1568,6 +1930,12 @@ var(--fg); }
       return Array.from(neighborsById.values());
     }
 
+    /**
+     * Render HTML describing a neighbour relationship and SNR value.
+     *
+     * @param {Object} neighborEntry Neighbor payload.
+     * @returns {string} HTML snippet for map tooltips.
+     */
     function renderNeighborWithSnrHtml(neighborEntry) {
       if (!neighborEntry || !neighborEntry.node) return '';
       const node = neighborEntry.node;
@@ -1582,6 +1950,12 @@ var(--fg); }
       return `${shortHtml}<span class="neighbor-snr">(SNR ${escapeHtml(snrText)})</span>`;
     }
 
+    /**
+     * Format uptime values for the short-info overlay.
+     *
+     * @param {*} value Raw uptime value.
+     * @returns {string} Human readable uptime string.
+     */
     function formatShortInfoUptime(value) {
       if (value == null || value === '') return '';
       const num = Number(value);
@@ -1589,10 +1963,25 @@ var(--fg); }
       return num === 0 ? '0s' : timeHum(num);
     }
 
+    /**
+     * Format overlay values with an em dash fallback when blank.
+     *
+     * @param {*} value Candidate value.
+     * @returns {string} Formatted value or em dash.
+     */
     function shortInfoValueOrDash(value) {
       return value != null && value !== '' ? String(value) : '—';
     }
 
+    /**
+     * Append telemetry information to the short-info overlay payload.
+     *
+     * @param {Array<string>} lines Output accumulator.
+     * @param {string} label Field label.
+     * @param {*} rawValue Raw telemetry value.
+     * @param {Function} formatter Optional formatter callback.
+     * @returns {void}
+     */
     function appendTelemetryLine(lines, label, rawValue, formatter) {
       if (!Array.isArray(lines)) return;
       if (rawValue == null || rawValue === '') return;
@@ -1601,6 +1990,11 @@ var(--fg); }
       lines.push(`${escapeHtml(label)}: ${escapeHtml(String(formatted))}`);
     }
 
+    /**
+     * Hide the short-info overlay used for inline node details.
+     *
+     * @returns {void}
+     */
     function closeShortInfoOverlay() {
       if (!shortInfoOverlay) return;
       shortInfoOverlay.hidden = true;
@@ -1608,6 +2002,11 @@ var(--fg); }
       shortInfoAnchor = null;
     }
 
+    /**
+     * Position the short-info overlay near its anchor element.
+     *
+     * @returns {void}
+     */
     function positionShortInfoOverlay() {
       if (!shortInfoOverlay || shortInfoOverlay.hidden || !shortInfoAnchor) return;
       if (!document.body.contains(shortInfoAnchor)) {
@@ -1629,6 +2028,13 @@ var(--fg); }
       shortInfoOverlay.style.visibility = 'visible';
     }
 
+    /**
+     * Populate and display the short-info overlay for a node badge.
+     *
+     * @param {HTMLElement} target Anchor element that triggered the overlay.
+     * @param {Object} info Node payload displayed in the overlay.
+     * @returns {void}
+     */
     function openShortInfoOverlay(target, info) {
       if (!shortInfoOverlay || !shortInfoContent || !info) return;
       const lines = [];
@@ -1684,6 +2090,13 @@ var(--fg); }
       requestAnimationFrame(positionShortInfoOverlay);
     }
 
+    /**
+     * Display an overlay describing a neighbour link.
+     *
+     * @param {HTMLElement} target Anchor element for the overlay.
+     * @param {Object} segment GeoJSON segment describing the connection.
+     * @returns {void}
+     */
     function openNeighborOverlay(target, segment) {
       if (!shortInfoOverlay || !shortInfoContent || !segment) return;
       const nodeName = shortInfoValueOrDash(segment.sourceDisplayName || segment.sourceId || '');
@@ -1713,6 +2126,12 @@ var(--fg); }
       requestAnimationFrame(positionShortInfoOverlay);
     }
 
+    /**
+     * Create a chat log date divider when the day changes.
+     *
+     * @param {number} ts Unix timestamp in seconds.
+     * @returns {HTMLElement} Divider element.
+     */
     function maybeCreateDateDivider(ts) {
       if (!ts) return null;
       const d = new Date(ts * 1000);
@@ -1729,6 +2148,12 @@ var(--fg); }
       return null;
     }
 
+    /**
+     * Build a chat log entry describing a node join event.
+     *
+     * @param {Object} n Node payload.
+     * @returns {HTMLElement} Chat log element.
+     */
     function createNodeChatEntry(n) {
       const div = document.createElement('div');
       const ts = formatTime(new Date(n.first_heard * 1000));
@@ -1739,6 +2164,12 @@ var(--fg); }
       return div;
     }
 
+    /**
+     * Build a chat log entry for a text message.
+     *
+     * @param {Object} m Message payload.
+     * @returns {HTMLElement} Chat log element.
+     */
     function createMessageChatEntry(m) {
       const div = document.createElement('div');
       const ts = formatTime(new Date(m.rx_time * 1000));
@@ -1749,6 +2180,13 @@ var(--fg); }
       return div;
     }
 
+    /**
+     * Render the chat history panel with nodes and messages.
+     *
+     * @param {Array<Object>} nodes Collection of node payloads.
+     * @param {Array<Object>} messages Collection of message payloads.
+     * @returns {void}
+     */
     function renderChatLog(nodes, messages) {
       if (!CHAT_ENABLED || !chatEl) return;
       const entries = [];
@@ -1792,58 +2230,127 @@ var(--fg); }
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
+    /**
+     * Pad a numeric value with leading zeros.
+     *
+     * @param {number} n Numeric value.
+     * @returns {string} Padded string.
+     */
     function pad(n) { return String(n).padStart(2, "0"); }
 
+    /**
+     * Format a ``Date`` object as ``HH:MM``.
+     *
+     * @param {Date} d Date instance.
+     * @returns {string} Time string.
+     */
     function formatTime(d) {
       return pad(d.getHours()) + ":" +
             pad(d.getMinutes()) + ":" +
             pad(d.getSeconds());
     }
 
+    /**
+     * Format a ``Date`` object as ``YYYY-MM-DD``.
+     *
+     * @param {Date} d Date instance.
+     * @returns {string} Date string.
+     */
     function formatDate(d) {
       return d.getFullYear() + "-" +
             pad(d.getMonth() + 1) + "-" +
             pad(d.getDate());
     }
 
+    /**
+     * Format hardware model strings for display.
+     *
+     * @param {*} v Raw hardware model value.
+     * @returns {string} Sanitised string.
+     */
     function fmtHw(v) {
       return v && v !== "UNSET" ? String(v) : "";
     }
 
+    /**
+     * Format coordinate values with a configurable precision.
+     *
+     * @param {*} v Raw coordinate value.
+     * @param {number} [d=5] Decimal precision.
+     * @returns {string} Formatted coordinate string.
+     */
     function fmtCoords(v, d = 5) {
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? n.toFixed(d) : "";
     }
 
+    /**
+     * Format altitude values with units.
+     *
+     * @param {*} v Raw altitude value.
+     * @param {string} s Unit suffix.
+     * @returns {string} Altitude string.
+     */
     function fmtAlt(v, s) {
       return (v == null || v === '') ? "" : `${v}${s}`;
     }
 
+    /**
+     * Format transmission utilisation values as percentages.
+     *
+     * @param {*} v Raw utilisation value.
+     * @param {number} [d=3] Decimal precision.
+     * @returns {string} Percentage string.
+     */
     function fmtTx(v, d = 3) {
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
     }
 
+    /**
+     * Format temperature telemetry with a degree suffix.
+     *
+     * @param {*} v Raw temperature value.
+     * @returns {string} Temperature string.
+     */
     function fmtTemperature(v) {
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(1)}°C` : "";
     }
 
+    /**
+     * Format humidity telemetry as a percentage.
+     *
+     * @param {*} v Raw humidity value.
+     * @returns {string} Humidity string.
+     */
     function fmtHumidity(v) {
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(1)}%` : "";
     }
 
+    /**
+     * Format barometric pressure telemetry in hPa.
+     *
+     * @param {*} v Raw pressure value.
+     * @returns {string} Pressure string.
+     */
     function fmtPressure(v) {
       if (v == null || v === '') return "";
       const n = Number(v);
       return Number.isFinite(n) ? `${n.toFixed(1)} hPa` : "";
     }
 
+    /**
+     * Format SNR readings with a ``dB`` suffix.
+     *
+     * @param {*} value Raw SNR value.
+     * @returns {string} Formatted SNR string.
+     */
     function formatSnrDisplay(value) {
       if (value == null || value === '') return '';
       const n = Number(value);
@@ -1851,12 +2358,24 @@ var(--fg); }
       return `${n.toFixed(1)} dB`;
     }
 
+    /**
+     * Normalise node name fields by trimming whitespace.
+     *
+     * @param {*} value Raw name value.
+     * @returns {string} Sanitised name string.
+     */
     function normalizeNodeNameValue(value) {
       if (value == null) return '';
       const str = String(value).trim();
       return str.length ? str : '';
     }
 
+    /**
+     * Determine the preferred display name for overlay content.
+     *
+     * @param {Object} node Node payload.
+     * @returns {string} Friendly display name.
+     */
     function getNodeDisplayNameForOverlay(node) {
       if (!node || typeof node !== 'object') return '';
       return (
@@ -1866,6 +2385,12 @@ var(--fg); }
       );
     }
 
+    /**
+     * Populate missing node name fields with sensible defaults.
+     *
+     * @param {Object} node Node payload.
+     * @returns {Object} Updated node reference.
+     */
     function applyNodeNameFallback(node) {
       if (!node || typeof node !== 'object') return;
       const short = normalizeNodeNameValue(node.short_name ?? node.shortName);
@@ -1881,6 +2406,12 @@ var(--fg); }
       if ('longName' in node) node.longName = fallbackLong;
     }
 
+    /**
+     * Convert a duration in seconds into a human readable string.
+     *
+     * @param {number} unixSec Duration in seconds.
+     * @returns {string} Human readable representation.
+     */
     function timeHum(unixSec) {
       if (!unixSec) return "";
       if (unixSec < 0) return "0s";
@@ -1890,6 +2421,13 @@ var(--fg); }
       return `${Math.floor(unixSec/86400)}d ${Math.floor((unixSec%86400)/3600)}h`;
     }
 
+    /**
+     * Return a relative time string describing how long ago an event occurred.
+     *
+     * @param {number} unixSec Timestamp in seconds.
+     * @param {number} [nowSec] Reference timestamp.
+     * @returns {string} Human readable relative time.
+     */
     function timeAgo(unixSec, nowSec = Date.now()/1000) {
       if (!unixSec) return "";
       const diff = Math.floor(nowSec - Number(unixSec));
@@ -1900,12 +2438,24 @@ var(--fg); }
       return `${Math.floor(diff/86400)}d ${Math.floor((diff%86400)/3600)}h`;
     }
 
+    /**
+     * Fetch the latest nodes from the JSON API.
+     *
+     * @param {number} [limit=NODE_LIMIT] Maximum number of records.
+     * @returns {Promise<Array<Object>>} Parsed node payloads.
+     */
     async function fetchNodes(limit = NODE_LIMIT) {
       const r = await fetch(`/api/nodes?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }
 
+    /**
+     * Fetch recent messages from the JSON API.
+     *
+     * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+     * @returns {Promise<Array<Object>>} Parsed message payloads.
+     */
     async function fetchMessages(limit = NODE_LIMIT) {
       if (!CHAT_ENABLED) return [];
       const r = await fetch(`/api/messages?limit=${limit}`, { cache: 'no-store' });
@@ -1913,30 +2463,61 @@ var(--fg); }
       return r.json();
     }
 
+    /**
+     * Fetch neighbour information from the JSON API.
+     *
+     * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+     * @returns {Promise<Array<Object>>} Parsed neighbour payloads.
+     */
     async function fetchNeighbors(limit = NODE_LIMIT) {
       const r = await fetch(`/api/neighbors?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }
 
+    /**
+     * Fetch telemetry entries from the JSON API.
+     *
+     * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+     * @returns {Promise<Array<Object>>} Parsed telemetry payloads.
+     */
     async function fetchTelemetry(limit = NODE_LIMIT) {
       const r = await fetch(`/api/telemetry?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }
 
+    /**
+     * Fetch position packets from the JSON API.
+     *
+     * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+     * @returns {Promise<Array<Object>>} Parsed position payloads.
+     */
     async function fetchPositions(limit = NODE_LIMIT) {
       const r = await fetch(`/api/positions?limit=${limit}`, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }
 
+    /**
+     * Convert arbitrary values to finite numbers when possible.
+     *
+     * @param {*} value Raw value.
+     * @returns {number|null} Finite number or null when conversion fails.
+     */
     function toFiniteNumber(value) {
       if (value == null || value === '') return null;
       const num = typeof value === 'number' ? value : Number(value);
       return Number.isFinite(num) ? num : null;
     }
 
+    /**
+     * Determine the best-effort timestamp in seconds from numeric or ISO values.
+     *
+     * @param {*} numeric Numeric timestamp.
+     * @param {*} isoString ISO formatted timestamp.
+     * @returns {number|null} Timestamp in seconds.
+     */
     function resolveTimestampSeconds(numeric, isoString) {
       const parsedNumeric = toFiniteNumber(numeric);
       if (parsedNumeric != null) return parsedNumeric;
@@ -1949,6 +2530,13 @@ var(--fg); }
       return null;
     }
 
+    /**
+     * Merge recent position packets into the node list.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @param {Array<Object>} positions Position entries.
+     * @returns {Array<Object>} Updated node collection.
+     */
     function mergePositionsIntoNodes(nodes, positions) {
       if (!Array.isArray(nodes) || !Array.isArray(positions) || nodes.length === 0) return;
 
@@ -2007,6 +2595,12 @@ var(--fg); }
       }
     }
 
+    /**
+     * Build a lookup table of telemetry entries keyed by node identifier.
+     *
+     * @param {Array<Object>} entries Telemetry payloads.
+     * @returns {Map<string, Object>} Indexed telemetry data.
+     */
     function buildTelemetryIndex(entries) {
       const byNodeId = new Map();
       const byNodeNum = new Map();
@@ -2037,6 +2631,13 @@ var(--fg); }
       return { byNodeId, byNodeNum };
     }
 
+    /**
+     * Merge telemetry metrics into the node list.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @param {Array<Object>} telemetryEntries Telemetry data.
+     * @returns {Array<Object>} Updated node collection.
+     */
     function mergeTelemetryIntoNodes(nodes, telemetryEntries) {
       if (!Array.isArray(nodes) || !nodes.length) return;
       const { byNodeId, byNodeNum } = buildTelemetryIndex(telemetryEntries);
@@ -2077,10 +2678,25 @@ var(--fg); }
       }
     }
 
+    /**
+     * Convert degrees to radians.
+     *
+     * @param {number} deg Degrees.
+     * @returns {number} Radians.
+     */
     function toRadians(deg) {
       return (deg * Math.PI) / 180;
     }
 
+    /**
+     * Compute distance between two coordinates using the haversine formula.
+     *
+     * @param {number} lat1 Latitude of the first point.
+     * @param {number} lon1 Longitude of the first point.
+     * @param {number} lat2 Latitude of the second point.
+     * @param {number} lon2 Longitude of the second point.
+     * @returns {number} Distance in kilometres.
+     */
     function haversineDistanceKm(lat1, lon1, lat2, lon2) {
       const R = 6371;
       const dLat = toRadians(lat2 - lat1);
@@ -2092,6 +2708,13 @@ var(--fg); }
       return R * c;
     }
 
+    /**
+     * Compute distance from the configured map center.
+     *
+     * @param {number} lat Latitude in degrees.
+     * @param {number} lon Longitude in degrees.
+     * @returns {number|null} Distance in kilometres.
+     */
     function distanceFromCenterKm(lat, lon) {
       if (hasLeaflet && mapCenterLatLng) {
         try {
@@ -2103,6 +2726,12 @@ var(--fg); }
       return haversineDistanceKm(lat, lon, MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
     }
 
+    /**
+     * Annotate nodes with their distance from the map center.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @returns {Array<Object>} Updated node collection.
+     */
     function computeDistances(nodes) {
       for (const n of nodes) {
         const latRaw = n.latitude;
@@ -2121,6 +2750,13 @@ var(--fg); }
       }
     }
 
+    /**
+     * Render the nodes table with sorted and filtered data.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @param {number} nowSec Reference timestamp.
+     * @returns {void}
+     */
     function renderTable(nodes, nowSec) {
       const tb = document.querySelector('#nodes tbody');
       const frag = document.createDocumentFragment();
@@ -2155,6 +2791,13 @@ var(--fg); }
       }
     }
 
+    /**
+     * Render the Leaflet map markers and neighbour connections.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @param {number} nowSec Reference timestamp.
+     * @returns {void}
+     */
     function renderMap(nodes, nowSec) {
       if (!map || !markersLayer || !hasLeaflet) {
         return;
@@ -2362,6 +3005,13 @@ var(--fg); }
       }
     }
 
+    /**
+     * Test whether a node matches the free-text filter string.
+     *
+     * @param {Object} node Node payload.
+     * @param {string} query Filter query.
+     * @returns {boolean} True when the node should be visible.
+     */
     function matchesTextFilter(node, query) {
       if (!query) return true;
       return [node?.node_id, node?.short_name, node?.long_name]
@@ -2369,18 +3019,34 @@ var(--fg); }
         .some(value => String(value).toLowerCase().includes(query));
     }
 
+    /**
+     * Test whether a node matches the active role filters.
+     *
+     * @param {Object} node Node payload.
+     * @returns {boolean} True when the node should be visible.
+     */
     function matchesRoleFilter(node) {
       if (!activeRoleFilters.size) return true;
       const roleKey = getRoleKey(node && node.role);
       return activeRoleFilters.has(roleKey);
     }
 
+    /**
+     * Show or hide the filter clear button depending on the input state.
+     *
+     * @returns {void}
+     */
     function updateFilterClearVisibility() {
       if (!filterInput || !filterClearButton) return;
       const hasValue = filterInput.value && filterInput.value.length > 0;
       filterClearButton.hidden = !hasValue;
     }
 
+    /**
+     * Apply text and role filters to the node list and re-render outputs.
+     *
+     * @returns {void}
+     */
     function applyFilter() {
       updateFilterClearVisibility();
       const rawQuery = filterInput ? filterInput.value : '';
@@ -2417,6 +3083,11 @@ var(--fg); }
       });
     }
 
+    /**
+     * Refresh nodes, messages, and telemetry from the API and update the UI.
+     *
+     * @returns {Promise<void>} Resolves when rendering completes.
+     */
     async function refresh() {
       try {
         statusEl.textContent = 'refreshing…';
@@ -2473,6 +3144,13 @@ var(--fg); }
       });
     }
 
+    /**
+     * Update the count badge showing how many nodes are displayed.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @param {number} nowSec Reference timestamp.
+     * @returns {void}
+     */
     function updateCount(nodes, nowSec) {
       const dayAgoSec = nowSec - 86400;
       const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= dayAgoSec).length;
@@ -2485,6 +3163,13 @@ var(--fg); }
       }
     }
 
+    /**
+     * Update the status message describing the currently rendered data.
+     *
+     * @param {Array<Object>} nodes Node payloads.
+     * @param {number} nowSec Reference timestamp.
+     * @returns {void}
+     */
     function updateRefreshInfo(nodes, nowSec) {
       const windows = [
         { label: 'hour', secs: 3600 },
