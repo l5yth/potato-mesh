@@ -72,6 +72,7 @@ var(--line); }
   tbody tr:nth-child(even) td { background: var(--row-alt); }
   .leaflet-container { background: transparent !important; color:
 var(--fg); }
+  .neighbor-connection-line { cursor: pointer; }
 </style>
 <script>
     (function () {
@@ -1621,6 +1622,24 @@ var(--fg); }
       requestAnimationFrame(positionShortInfoOverlay);
     }
 
+    function openNeighborOverlay(target, segment) {
+      if (!shortInfoOverlay || !shortInfoContent || !segment) return;
+      const nodeName = shortInfoValueOrDash(segment.sourceDisplayName || segment.sourceId || '');
+      const neighborName = shortInfoValueOrDash(segment.targetDisplayName || segment.targetId || '');
+      const snrText = shortInfoValueOrDash(formatSnrDisplay(segment.snr));
+      const sourceIdHtml = segment.sourceId ? ` <span class="mono">${escapeHtml(segment.sourceId)}</span>` : '';
+      const targetIdHtml = segment.targetId ? ` <span class="mono">${escapeHtml(segment.targetId)}</span>` : '';
+      const lines = [];
+      lines.push(`<strong>${escapeHtml(nodeName)}</strong>${sourceIdHtml}`);
+      lines.push(`Neighbor: ${escapeHtml(neighborName)}${targetIdHtml}`);
+      lines.push(`SNR: ${escapeHtml(snrText)}`);
+      shortInfoContent.innerHTML = lines.join('<br/>');
+      shortInfoAnchor = target;
+      shortInfoOverlay.hidden = false;
+      shortInfoOverlay.style.visibility = 'hidden';
+      requestAnimationFrame(positionShortInfoOverlay);
+    }
+
     function maybeCreateDateDivider(ts) {
       if (!ts) return null;
       const d = new Date(ts * 1000);
@@ -1752,10 +1771,26 @@ var(--fg); }
       return Number.isFinite(n) ? `${n.toFixed(1)} hPa` : "";
     }
 
+    function formatSnrDisplay(value) {
+      if (value == null || value === '') return '';
+      const n = Number(value);
+      if (!Number.isFinite(n)) return '';
+      return `${n.toFixed(1)} dB`;
+    }
+
     function normalizeNodeNameValue(value) {
       if (value == null) return '';
       const str = String(value).trim();
       return str.length ? str : '';
+    }
+
+    function getNodeDisplayNameForOverlay(node) {
+      if (!node || typeof node !== 'object') return '';
+      return (
+        normalizeNodeNameValue(node.long_name ?? node.longName) ||
+        normalizeNodeNameValue(node.short_name ?? node.shortName) ||
+        (typeof node.node_id === 'string' ? node.node_id : '')
+      );
     }
 
     function applyNodeNameFallback(node) {
@@ -2110,13 +2145,20 @@ var(--fg); }
             rxTime = Number.isFinite(parsed) ? parsed : 0;
           }
 
+          const snrValue = toFiniteNumber(entry.snr);
+          const sourceDisplayName = getNodeDisplayNameForOverlay(sourceNode);
+          const targetDisplayName = getNodeDisplayNameForOverlay(targetNode);
+
           neighborSegments.push({
             latlngs: [[srcLat, srcLon], [tgtLat, tgtLon]],
             color: getRoleColor(sourceNode.role),
             priority,
             rxTime,
             sourceId,
-            targetId
+            targetId,
+            snr: snrValue,
+            sourceDisplayName,
+            targetDisplayName
           });
         }
 
@@ -2129,12 +2171,26 @@ var(--fg); }
             return 0;
           })
           .forEach(segment => {
-            L.polyline(segment.latlngs, {
+            const polyline = L.polyline(segment.latlngs, {
               color: segment.color,
               weight: 2,
               opacity: 0.42,
               className: 'neighbor-connection-line'
             }).addTo(neighborLinesLayer);
+            if (polyline && typeof polyline.on === 'function') {
+              polyline.on('click', event => {
+                const clickTarget = event.originalEvent && typeof Element !== 'undefined' && event.originalEvent.target instanceof Element
+                  ? event.originalEvent.target
+                  : null;
+                const anchorEl = polyline.getElement() || clickTarget;
+                if (!anchorEl) return;
+                if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === anchorEl) {
+                  closeShortInfoOverlay();
+                  return;
+                }
+                openNeighborOverlay(anchorEl, segment);
+              });
+            }
           });
       }
 
