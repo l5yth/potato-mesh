@@ -8,7 +8,7 @@
 
 A simple Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
 
-* Web app with chat window and map view showing nodes and messages.
+* Web app with chat window and map view showing nodes, neighbors, telemetry, and messages.
 * API to POST (authenticated) and to GET nodes and messages.
 * Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
 * Shows new node notifications (first seen) in chat.
@@ -16,8 +16,7 @@ A simple Meshtastic-powered node dashboard for your local community. _No MQTT cl
 
 Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
-![screenshot of the third version](./scrot-0.3.png)
-
+![screenshot of the fourth version](./scrot-0.4.png)
 
 ## Web App
 
@@ -74,9 +73,13 @@ The web app contains an API:
 * GET `/api/nodes?limit=100` - returns the latest 100 nodes reported to the app
 * GET `/api/positions?limit=100` - returns the latest 100 position data
 * GET `/api/messages?limit=100` - returns the latest 100 messages (disabled when `PRIVATE=1`)
+* GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
+* GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/positions` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`; disabled when `PRIVATE=1`)
+* POST `/api/telemetry` - appends telemetry provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
+* POST `/api/neighbors` - appends neighbor tuples provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
@@ -90,7 +93,7 @@ by ID and there will be no duplication.
 
 For convenience, the directory `./data` contains a Python ingestor. It connects to a
 Meshtastic node via serial port or to a remote device that exposes the Meshtastic TCP
-interface to gather nodes and messages seen by the node.
+or Bluetooth (BLE) interfaces to gather nodes and messages seen by the node.
 
 ```bash
 pacman -S python
@@ -119,6 +122,8 @@ Run the script with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating
 node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
 specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`) or set it to an IP
 address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
+`MESH_SERIAL` also accepts Bluetooth device addresses (e.g., `ED:4D:9E:95:CF:60`)
+and attempts an BLE connection if available.
 
 ## Demos
 
@@ -128,7 +133,14 @@ address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
 
 ## Docker
 
-Looking for container deployment instructions? See the [Docker guide](DOCKER.md).
+Docker images are published on Github for each release:
+
+```bash
+docker pull ghcr.io/l5yth/potato-mesh/web:latest
+docker pull ghcr.io/l5yth/potato-mesh/ingestor:latest
+```
+
+See the [Docker guide](DOCKER.md) for more details and custome deployment instructions.
 
 ## License
 
