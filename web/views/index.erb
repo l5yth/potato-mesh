@@ -1420,6 +1420,9 @@ var(--fg); }
         }
         return;
       }
+      if (event.target.closest('.neighbor-connection-line')) {
+        return;
+      }
       if (shortInfoOverlay && !shortInfoOverlay.hidden && !shortInfoOverlay.contains(event.target)) {
         closeShortInfoOverlay();
       }
