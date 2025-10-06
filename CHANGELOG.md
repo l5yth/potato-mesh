@@ -1,8 +1,78 @@
 # CHANGELOG
 
+## v0.4.0
+
+* Reformat neighbor overlay layout by @l5yth in <https://github.com/l5yth/potato-mesh/pull/237>
+* Add legend toggle for neighbor lines by @l5yth in <https://github.com/l5yth/potato-mesh/pull/236>
+* Hide Air Util Tx column on mobile by @l5yth in <https://github.com/l5yth/potato-mesh/pull/235>
+* Add overlay for clickable neighbor links on map by @l5yth in <https://github.com/l5yth/potato-mesh/pull/234>
+* Hide humidity and pressure columns on mobile by @l5yth in <https://github.com/l5yth/potato-mesh/pull/232>
+* Remove last position timestamp from map info overlay by @l5yth in <https://github.com/l5yth/potato-mesh/pull/233>
+* Improve live node positions and expose precision metadata by @l5yth in <https://github.com/l5yth/potato-mesh/pull/231>
+* Show neighbor short names in info overlays by @l5yth in <https://github.com/l5yth/potato-mesh/pull/228>
+* Add telemetry environment metrics to node UI by @l5yth in <https://github.com/l5yth/potato-mesh/pull/227>
+* Reduce neighbor line opacity by @l5yth in <https://github.com/l5yth/potato-mesh/pull/226>
+* Visualize neighbor connections on map canvas by @l5yth in <https://github.com/l5yth/potato-mesh/pull/224>
+* Add clear control to filter input by @l5yth in <https://github.com/l5yth/potato-mesh/pull/225>
+* Handle Bluetooth shutdown hangs gracefully by @l5yth in <https://github.com/l5yth/potato-mesh/pull/221>
+* Adjust mesh priorities and receive topics by @l5yth in <https://github.com/l5yth/potato-mesh/pull/220>
+* Add BLE and fallback mesh interface handling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/219>
+* Add neighbor info ingestion and API endpoints by @l5yth in <https://github.com/l5yth/potato-mesh/pull/218>
+* Add debug logs for unknown node creation and last-heard updates by @l5yth in <https://github.com/l5yth/potato-mesh/pull/214>
+* Update node last seen when events are received by @l5yth in <https://github.com/l5yth/potato-mesh/pull/212>
+* Improve debug logging for node and telemetry data by @l5yth in <https://github.com/l5yth/potato-mesh/pull/213>
+* Normalize stored message debug output by @l5yth in <https://github.com/l5yth/potato-mesh/pull/211>
+* Stop repeating ingestor node info snapshot and timestamp debug logs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/210>
+* Add telemetry API and ingestion support by @l5yth in <https://github.com/l5yth/potato-mesh/pull/205>
+* Add private mode to hide chat and message APIs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/204>
+* Handle offline-ready map fallback by @l5yth in <https://github.com/l5yth/potato-mesh/pull/202>
+* Add linux/armv7 container builds and configuration options by @l5yth in <https://github.com/l5yth/potato-mesh/pull/201>
+* Update Docker documentation by @l5yth in <https://github.com/l5yth/potato-mesh/pull/200>
+* Update node last seen when ingesting encrypted messages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/198>
+* Fix api in readme by @l5yth in <https://github.com/l5yth/potato-mesh/pull/197>
+
 ## v0.3.0
 
-* Add comprehensive Docker support with multi-architecture builds and automated CI/CD by @trose in <https://github.com/l5yth/potato-mesh/pull/122>
+* Add connection recovery for TCP interface by @l5yth in <https://github.com/l5yth/potato-mesh/pull/186>
+* Bump version to 0.3 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/191>
+* Pgrade styles and fix interface issues by @l5yth in <https://github.com/l5yth/potato-mesh/pull/190>
+* Some updates in the front by @dkorotkih2014-hub  in <https://github.com/l5yth/potato-mesh/pull/188>
+* Update last heard on node entry change by @l5yth in <https://github.com/l5yth/potato-mesh/pull/185>
+* Populate chat metadata for unknown nodes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/182>
+* Update role color theme to latest palette by @l5yth in <https://github.com/l5yth/potato-mesh/pull/183>
+* Add placeholder nodes for unknown senders by @l5yth in <https://github.com/l5yth/potato-mesh/pull/181>
+* Update role colors and ordering for firmware 2.7.10 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/180>
+* Handle plain IP addresses in mesh TCP detection by @l5yth in <https://github.com/l5yth/potato-mesh/pull/154>
+* Handle encrypted messages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/173>
+* Add fallback display names for unnamed nodes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/171>
+* Ensure routers render above other node types by @l5yth in <https://github.com/l5yth/potato-mesh/pull/169>
+* Move lint checks after tests in CI by @l5yth in <https://github.com/l5yth/potato-mesh/pull/168>
+* Handle proto values in nodeinfo payloads by @l5yth in <https://github.com/l5yth/potato-mesh/pull/167>
+* Remove raw payload storage from database schema by @l5yth in <https://github.com/l5yth/potato-mesh/pull/166>
+* Add POSITION_APP ingestion and API support by @l5yth in <https://github.com/l5yth/potato-mesh/pull/160>
+* Add support for NODEINFO_APP packets by @l5yth in <https://github.com/l5yth/potato-mesh/pull/159>
+* Derive SEO metadata from existing config values by @l5yth in <https://github.com/l5yth/potato-mesh/pull/153>
+* Tests: create helper script to dump all mesh data from serial by @l5yth in <https://github.com/l5yth/potato-mesh/pull/152>
+* Limit chat log to recent entries by @l5yth in <https://github.com/l5yth/potato-mesh/pull/151>
+* Require time library before formatting ISO timestamps by @l5yth in <https://github.com/l5yth/potato-mesh/pull/149>
+* Define docker compose network by @l5yth in <https://github.com/l5yth/potato-mesh/pull/148>
+* Fix sqlite3 native extension on Alpine by @l5yth in <https://github.com/l5yth/potato-mesh/pull/146>
+* Fix web app startup binding by @l5yth in <https://github.com/l5yth/potato-mesh/pull/147>
+* Ensure sqlite3 builds from source on Alpine by @l5yth in <https://github.com/l5yth/potato-mesh/pull/145>
+* Support mock serial interface in CI by @l5yth in <https://github.com/l5yth/potato-mesh/pull/143>
+* Fix Docker workflow matrix for supported platforms by @l5yth in <https://github.com/l5yth/potato-mesh/pull/142>
+* Add clickable role filters to the map legend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/140>
+* Rebuild chat log on each refresh by @l5yth in <https://github.com/l5yth/potato-mesh/pull/139>
+* Fix: retain alpine runtime libs after removing build deps by @l5yth in <https://github.com/l5yth/potato-mesh/pull/138>
+* Fix: support windows ingestor build by @l5yth in <https://github.com/l5yth/potato-mesh/pull/136>
+* Fix: use supported ruby image by @l5yth in <https://github.com/l5yth/potato-mesh/pull/135>
+* Feat: Add comprehensive Docker support by @trose in <https://github.com/l5yth/potato-mesh/pull/122>
+* Chore: bump version to 0.2.1 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/134>
+* Fix dark mode tile styling on new map tiles by @l5yth in <https://github.com/l5yth/potato-mesh/pull/132>
+* Switch map tiles to OSM HOT and add theme filters by @l5yth in <https://github.com/l5yth/potato-mesh/pull/130>
+* Add footer version display by @l5yth in <https://github.com/l5yth/potato-mesh/pull/128>
+* Add responsive controls for map legend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/129>
+* Update changelog by @l5yth in <https://github.com/l5yth/potato-mesh/pull/119>
 
 ## v0.2.0
 
