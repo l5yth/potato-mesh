@@ -134,6 +134,8 @@ class _DummySerialInterface:
     """
 
     def __init__(self):
+        """Initialise the stub with an empty ``nodes`` mapping."""
+
         self.nodes = {}
 
     def close(self):
@@ -171,6 +173,8 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
         return None
 
     def _validated_result(host: str | None, port: int | None):
+        """Return a ``(host, port)`` tuple when ``host`` is a valid IP address."""
+
         if not host:
             return None
         try:
@@ -514,6 +518,8 @@ def _first(d, *names, default=None):
     """
 
     def _mapping_get(obj, key):
+        """Return ``(True, value)`` when ``obj`` contains ``key``; otherwise ``(False, None)``."""
+
         if isinstance(obj, Mapping) and key in obj:
             return True, obj[key]
         if hasattr(obj, "__getitem__"):
@@ -1634,10 +1640,14 @@ def main():
         _debug_log(f"subscribed to receive topics: {', '.join(subscribed)}")
 
     def _close_interface(iface_obj):
+        """Shut down the active mesh interface, respecting configured timeouts."""
+
         if iface_obj is None:
             return
 
         def _do_close():
+            """Invoke :py:meth:`close` on ``iface_obj`` and surface debug errors."""
+
             try:
                 iface_obj.close()
             except Exception as exc:
