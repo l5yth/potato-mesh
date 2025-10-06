@@ -2190,10 +2190,6 @@ var(--fg); }
         if (n.last_heard) {
           lines.push(`Last seen: ${timeAgo(n.last_heard, nowSec)}`);
         }
-        const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
-        if (lastPositionTime != null) {
-          lines.push(`Last Position: ${timeAgo(lastPositionTime, nowSec)}`);
-        }
         if (n.uptime_seconds) {
           lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
         }
