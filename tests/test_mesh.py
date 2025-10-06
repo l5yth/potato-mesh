@@ -1290,3 +1290,494 @@ def test_node_items_snapshot_handles_empty_input(mesh_module):
 
     assert mesh._node_items_snapshot(None) == []
     assert mesh._node_items_snapshot({}) == []
+
+
+def test_debug_log_emits_when_enabled(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    mesh._debug_log("hello world")
+
+    captured = capsys.readouterr()
+    assert "[debug] hello world" in captured.out
+
+
+def test_event_wait_allows_default_timeout_handles_short_signature(
+    mesh_module, monkeypatch
+):
+    mesh = mesh_module
+
+    def wait_without_timeout(self):
+        return True
+
+    monkeypatch.setattr(
+        mesh.threading.Event, "wait", wait_without_timeout, raising=False
+    )
+
+    assert mesh._event_wait_allows_default_timeout() is True
+
+
+def test_event_wait_allows_default_timeout_handles_varargs(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    def wait_with_varargs(self, *args):
+        return False
+
+    monkeypatch.setattr(mesh.threading.Event, "wait", wait_with_varargs, raising=False)
+
+    assert mesh._event_wait_allows_default_timeout() is True
+
+
+def test_parse_ble_target_rejects_invalid_values(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._parse_ble_target("") is None
+    assert mesh._parse_ble_target("   ") is None
+    assert mesh._parse_ble_target("zz:zz:zz:zz:zz:zz") is None
+
+
+def test_parse_network_target_additional_cases(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._parse_network_target("") is None
+    assert mesh._parse_network_target("   ") is None
+    assert mesh._parse_network_target("tcp://example.com") is None
+
+    host, port = mesh._parse_network_target("tcp://10.1.2.3:abc")
+    assert (host, port) == ("10.1.2.3", mesh._DEFAULT_TCP_PORT)
+
+    host, port = mesh._parse_network_target("10.1.2.3:9001")
+    assert (host, port) == ("10.1.2.3", 9001)
+
+
+def test_load_ble_interface_sets_global(monkeypatch):
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(repo_root))
+
+    serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
+
+    class DummySerial:
+        def __init__(self, *_, **__):
+            pass
+
+    serial_interface_mod.SerialInterface = DummySerial
+
+    tcp_interface_mod = types.ModuleType("meshtastic.tcp_interface")
+    tcp_interface_mod.TCPInterface = DummySerial
+
+    ble_interface_mod = types.ModuleType("meshtastic.ble_interface")
+
+    class DummyBLE:
+        def __init__(self, *_, **__):
+            pass
+
+    ble_interface_mod.BLEInterface = DummyBLE
+
+    meshtastic_mod = types.ModuleType("meshtastic")
+    meshtastic_mod.serial_interface = serial_interface_mod
+    meshtastic_mod.tcp_interface = tcp_interface_mod
+    meshtastic_mod.ble_interface = ble_interface_mod
+
+    monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
+    monkeypatch.setitem(
+        sys.modules, "meshtastic.serial_interface", serial_interface_mod
+    )
+    monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
+    monkeypatch.setitem(sys.modules, "meshtastic.ble_interface", ble_interface_mod)
+
+    module_name = "data.mesh"
+    module = (
+        importlib.import_module(module_name)
+        if module_name not in sys.modules
+        else importlib.reload(sys.modules[module_name])
+    )
+
+    monkeypatch.setattr(module, "BLEInterface", None)
+
+    resolved = module._load_ble_interface()
+
+    assert resolved is ble_interface_mod.BLEInterface
+    assert module.BLEInterface is ble_interface_mod.BLEInterface
+
+
+def test_default_serial_targets_deduplicates(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    def fake_glob(pattern):
+        if pattern == "/dev/ttyUSB*":
+            return ["/dev/ttyUSB0", "/dev/ttyUSB0"]
+        if pattern == "/dev/ttyACM*":
+            return ["/dev/ttyACM1"]
+        return []
+
+    monkeypatch.setattr(mesh.glob, "glob", fake_glob)
+
+    targets = mesh._default_serial_targets()
+
+    assert targets.count("/dev/ttyUSB0") == 1
+    assert "/dev/ttyACM1" in targets
+    assert "/dev/ttyACM0" in targets
+
+
+def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "INSTANCE", "https://example.invalid")
+    monkeypatch.setattr(mesh, "DEBUG", True)
+
+    def boom(*_, **__):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(mesh.urllib.request, "urlopen", boom)
+
+    mesh._post_json("/api/test", {"foo": "bar"})
+
+    captured = capsys.readouterr()
+    assert "[warn] POST https://example.invalid/api/test failed" in captured.out
+
+
+def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    mesh._clear_post_queue()
+    monkeypatch.setattr(mesh, "_POST_QUEUE_ACTIVE", True)
+
+    mesh._queue_post_json("/api/test", {"id": 1})
+
+    assert mesh._POST_QUEUE_ACTIVE is True
+    assert mesh._POST_QUEUE
+    mesh._clear_post_queue()
+
+
+def test_node_to_dict_handles_proto_fallback(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    class FailingProto(mesh.ProtoMessage):
+        def to_dict(self):
+            raise RuntimeError("boom")
+
+        def __str__(self):
+            return "proto"
+
+    def fail_message_to_dict(*_, **__):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(mesh, "MessageToDict", fail_message_to_dict)
+    monkeypatch.setattr(
+        mesh.json, "dumps", lambda *_, **__: (_ for _ in ()).throw(TypeError())
+    )
+
+    converted = mesh._node_to_dict({"value": FailingProto()})
+
+    assert converted["value"] == "proto"
+
+
+def test_upsert_node_logs_in_debug(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    captured = []
+
+    def fake_queue(path, payload, *, priority):
+        captured.append((path, payload, priority))
+
+    monkeypatch.setattr(mesh, "_queue_post_json", fake_queue)
+
+    mesh.upsert_node("!node", {"user": {"shortName": "SN", "longName": "LN"}})
+
+    assert captured
+    out = capsys.readouterr().out
+    assert "upserted node !node" in out
+
+
+def test_coerce_int_and_float_cover_edge_cases(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._coerce_int(None) is None
+    assert mesh._coerce_int(True) == 1
+    assert mesh._coerce_int(7) == 7
+    assert mesh._coerce_int(3.2) == 3
+    assert mesh._coerce_int(float("inf")) is None
+    assert mesh._coerce_int(" 0x10 ") == 16
+    assert mesh._coerce_int("   ") is None
+    assert mesh._coerce_int("7.0") == 7
+    assert mesh._coerce_int("nan") is None
+
+    class Intable:
+        def __int__(self):
+            return 9
+
+    class BadInt:
+        def __int__(self):
+            raise TypeError
+
+    assert mesh._coerce_int(Intable()) == 9
+    assert mesh._coerce_int(BadInt()) is None
+
+    assert mesh._coerce_float(None) is None
+    assert mesh._coerce_float(True) == 1.0
+    assert mesh._coerce_float(3) == 3.0
+    assert mesh._coerce_float(float("inf")) is None
+    assert mesh._coerce_float(" 1.5 ") == 1.5
+    assert mesh._coerce_float("   ") is None
+    assert mesh._coerce_float("nan") is None
+
+    class Floatable:
+        def __float__(self):
+            return 2.5
+
+    class BadFloat:
+        def __float__(self):
+            raise TypeError
+
+    assert mesh._coerce_float(Floatable()) == 2.5
+    assert mesh._coerce_float(BadFloat()) is None
+
+
+def test_canonical_node_id_variants(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._canonical_node_id(None) is None
+    assert mesh._canonical_node_id(0x1234) == "!00001234"
+    assert mesh._canonical_node_id("  ") is None
+    assert mesh._canonical_node_id("!deadbeef") == "!deadbeef"
+    assert mesh._canonical_node_id("0xCAFEBABE") == "!cafebabe"
+    assert mesh._canonical_node_id("12345") == "!00003039"
+    assert mesh._canonical_node_id("nothex") is None
+
+
+def test_node_num_from_id_variants(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._node_num_from_id(None) is None
+    assert mesh._node_num_from_id(42) == 42
+    assert mesh._node_num_from_id(-1) is None
+    assert mesh._node_num_from_id("  ") is None
+    assert mesh._node_num_from_id("!00ff") == 0xFF
+    assert mesh._node_num_from_id("0x10") == 16
+    assert mesh._node_num_from_id("123") == 0x123
+    assert mesh._node_num_from_id("bad") == int("bad", 16)
+
+
+def test_merge_mappings_handles_non_mappings(mesh_module):
+    mesh = mesh_module
+
+    @dataclass
+    class UserBase:
+        id: str
+
+    @dataclass
+    class UserExtra:
+        name: str
+
+    @dataclass
+    class Holder:
+        user: object
+
+    base = Holder(UserBase("!1"))
+    extra = Holder(UserExtra("Node"))
+
+    merged = mesh._merge_mappings(base, extra)
+
+    assert merged == {"user": {"id": "!1", "name": "Node"}}
+
+
+def test_extract_payload_bytes_edge_cases(mesh_module):
+    mesh = mesh_module
+
+    assert mesh._extract_payload_bytes(None) is None
+    assert (
+        mesh._extract_payload_bytes({"payload": {"__bytes_b64__": "invalid"}}) is None
+    )
+    assert mesh._extract_payload_bytes({"payload": b"data"}) == b"data"
+    assert mesh._extract_payload_bytes({"payload": "ZGF0YQ=="}) == b"data"
+
+
+def test_decode_nodeinfo_payload_handles_user(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    from meshtastic.protobuf import mesh_pb2
+
+    user = mesh_pb2.User()
+    user.id = "!01020304"
+    payload = user.SerializeToString()
+
+    def raise_decode(self, *_):
+        raise mesh.DecodeError("fail")
+
+    monkeypatch.setattr(
+        mesh_pb2.NodeInfo, "ParseFromString", raise_decode, raising=False
+    )
+
+    node_info = mesh._decode_nodeinfo_payload(payload)
+
+    assert node_info is not None
+    assert node_info.user.id == "!01020304"
+
+
+def test_nodeinfo_helpers_cover_fallbacks(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    from meshtastic.protobuf import mesh_pb2
+
+    node_info = mesh_pb2.NodeInfo()
+    node_info.device_metrics.battery_level = 50
+    node_info.position.latitude_i = int(1.23 * 1e7)
+    node_info.position.longitude_i = int(4.56 * 1e7)
+    node_info.position.location_source = 99
+
+    monkeypatch.setattr(
+        mesh_pb2.Position.LocSource,
+        "Name",
+        lambda value: (_ for _ in ()).throw(RuntimeError()),
+        raising=False,
+    )
+
+    metrics = mesh._nodeinfo_metrics_dict(node_info)
+    position = mesh._nodeinfo_position_dict(node_info)
+
+    assert metrics["batteryLevel"] == 50.0
+    assert position["locationSource"] == 99
+
+    class DummyProto(mesh.ProtoMessage):
+        def __init__(self):
+            self.id = "!11223344"
+
+        def __str__(self):
+            return "dummy-proto"
+
+        def to_dict(self):
+            return {"id": self.id}
+
+    def raise_message_to_dict(*_, **__):
+        raise RuntimeError()
+
+    monkeypatch.setattr(mesh, "MessageToDict", raise_message_to_dict)
+
+    user = mesh._nodeinfo_user_dict(node_info, DummyProto())
+
+    assert user["id"] == "!11223344"
+
+
+def test_store_position_packet_defaults(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {"id": "7", "rxTime": "", "from": "!abcd", "to": "", "decoded": {}}
+
+    mesh.store_position_packet(packet, {})
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["node_id"] == "!0000abcd"
+    assert payload["node_num"] == int("abcd", 16)
+    assert payload["to_id"] is None
+    assert payload["latitude"] is None
+    assert payload["longitude"] is None
+
+
+def test_store_nodeinfo_packet_debug(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    monkeypatch.setattr(mesh, "_queue_post_json", lambda *_, **__: None)
+
+    from meshtastic.protobuf import mesh_pb2
+
+    node_info = mesh_pb2.NodeInfo()
+    user = node_info.user
+    user.id = "!01020304"
+    user.short_name = "A"
+    user.long_name = "B"
+    node_info.channel = 1
+    node_info.via_mqtt = True
+    node_info.is_ignored = True
+    node_info.is_key_manually_verified = True
+
+    payload = {
+        "__bytes_b64__": base64.b64encode(node_info.SerializeToString()).decode()
+    }
+
+    packet = {
+        "id": 1,
+        "rxTime": 1,
+        "decoded": {"portnum": "NODEINFO_APP", "payload": payload},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    out = capsys.readouterr().out
+    assert "stored nodeinfo" in out
+
+
+def test_store_neighborinfo_packet_debug(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    captured = []
+
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
+    )
+
+    packet = {
+        "id": 1,
+        "rxTime": 2,
+        "fromId": "!12345678",
+        "decoded": {
+            "portnum": "NEIGHBORINFO_APP",
+            "neighborinfo": {
+                "nodeId": 0x12345678,
+                "neighbors": [],
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    out = capsys.readouterr().out
+    assert "stored neighborinfo" in out
+
+
+def test_store_packet_dict_debug_message(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    captured = []
+
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
+    )
+
+    packet = {
+        "id": 2,
+        "rxTime": 10,
+        "fromId": "!abc",
+        "decoded": {"payload": {"text": "hi"}, "portnum": "TEXT_MESSAGE_APP"},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    out = capsys.readouterr().out
+    assert "stored message" in out
+
+
+def test_on_receive_skips_seen_packets(mesh_module):
+    mesh = mesh_module
+
+    packet = {"_potatomesh_seen": True}
+    mesh.on_receive(packet, interface=None)
+
+    assert packet["_potatomesh_seen"] is True
