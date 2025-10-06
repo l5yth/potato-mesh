@@ -73,6 +73,7 @@ var(--line); }
   .leaflet-container { background: transparent !important; color:
 var(--fg); }
   .neighbor-connection-line { cursor: pointer; }
+  .neighbor-snr { margin-left: 4px; color: var(--muted); font-size: 12px; }
 </style>
 <script>
     (function () {
@@ -1493,26 +1494,55 @@ var(--fg); }
 
     function getNeighborNodesFor(nodeId) {
       if (typeof nodeId !== 'string' || nodeId.length === 0) return [];
-      const seen = new Set();
-      const neighbors = [];
-      if (!Array.isArray(allNeighbors) || allNeighbors.length === 0) return neighbors;
+      if (!Array.isArray(allNeighbors) || allNeighbors.length === 0) return [];
+      const neighborsById = new Map();
       for (const entry of allNeighbors) {
         if (!entry || typeof entry !== 'object') continue;
         const sourceId = typeof entry.node_id === 'string' ? entry.node_id : null;
         if (sourceId !== nodeId) continue;
         const neighborId = typeof entry.neighbor_id === 'string' ? entry.neighbor_id : null;
-        if (!neighborId || seen.has(neighborId)) continue;
-        seen.add(neighborId);
-        const neighborNode = nodesById.get(neighborId);
-        if (neighborNode) {
-          neighbors.push(neighborNode);
+        if (!neighborId) continue;
+        const snrValue = toFiniteNumber(entry.snr);
+        const rxTime = resolveTimestampSeconds(entry.rx_time, entry.rxTime);
+        let record = neighborsById.get(neighborId);
+        if (!record) {
+          let neighborNode = nodesById.get(neighborId);
+          if (!neighborNode) {
+            const placeholder = { node_id: neighborId };
+            applyNodeNameFallback(placeholder);
+            neighborNode = placeholder;
+          }
+          record = {
+            node: neighborNode,
+            neighborId,
+            snr: snrValue != null ? snrValue : null,
+            rxTime: rxTime != null ? rxTime : null
+          };
+          neighborsById.set(neighborId, record);
           continue;
         }
-        const placeholder = { node_id: neighborId };
-        applyNodeNameFallback(placeholder);
-        neighbors.push(placeholder);
+        if (snrValue != null && (record.snr == null || snrValue > record.snr)) {
+          record.snr = snrValue;
+        }
+        if (rxTime != null && (record.rxTime == null || rxTime > record.rxTime)) {
+          record.rxTime = rxTime;
+        }
       }
-      return neighbors;
+      return Array.from(neighborsById.values());
+    }
+
+    function renderNeighborWithSnrHtml(neighborEntry) {
+      if (!neighborEntry || !neighborEntry.node) return '';
+      const node = neighborEntry.node;
+      const shortHtml = renderShortHtml(
+        node && (node.short_name ?? node.shortName),
+        node && node.role,
+        node && (node.long_name ?? node.longName),
+        node
+      );
+      if (!shortHtml) return '';
+      const snrText = shortInfoValueOrDash(formatSnrDisplay(neighborEntry.snr));
+      return `${shortHtml}<span class="neighbor-snr">(SNR ${escapeHtml(snrText)})</span>`;
     }
 
     function formatShortInfoUptime(value) {
@@ -1586,15 +1616,10 @@ var(--fg); }
         lines.push(`Role: ${escapeHtml(roleValue)}`);
       }
       let neighborLineHtml = '';
-      const neighborNodes = getNeighborNodesFor(info.nodeId);
-      if (neighborNodes.length) {
-        const neighborParts = neighborNodes
-          .map(node => renderShortHtml(
-            node && (node.short_name ?? node.shortName),
-            node && node.role,
-            node && (node.long_name ?? node.longName),
-            node
-          ))
+      const neighborEntries = getNeighborNodesFor(info.nodeId);
+      if (neighborEntries.length) {
+        const neighborParts = neighborEntries
+          .map(renderNeighborWithSnrHtml)
           .filter(html => html && html.length);
         if (neighborParts.length) {
           neighborLineHtml = `Neighbors: ${neighborParts.join(' ')}`;
@@ -2179,9 +2204,20 @@ var(--fg); }
             }).addTo(neighborLinesLayer);
             if (polyline && typeof polyline.on === 'function') {
               polyline.on('click', event => {
-                const clickTarget = event.originalEvent && typeof Element !== 'undefined' && event.originalEvent.target instanceof Element
-                  ? event.originalEvent.target
-                  : null;
+                if (event && event.originalEvent) {
+                  if (typeof event.originalEvent.preventDefault === 'function') {
+                    event.originalEvent.preventDefault();
+                  }
+                  if (typeof event.originalEvent.stopPropagation === 'function') {
+                    event.originalEvent.stopPropagation();
+                  }
+                }
+                const clickTarget =
+                  event.originalEvent &&
+                  typeof Element !== 'undefined' &&
+                  event.originalEvent.target instanceof Element
+                    ? event.originalEvent.target
+                    : null;
                 const anchorEl = polyline.getElement() || clickTarget;
                 if (!anchorEl) return;
                 if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === anchorEl) {
@@ -2253,15 +2289,10 @@ var(--fg); }
         if (n.uptime_seconds) {
           lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
         }
-        const mapNeighborNodes = getNeighborNodesFor(n.node_id ?? n.nodeId ?? '');
-        if (mapNeighborNodes.length) {
-          const neighborParts = mapNeighborNodes
-            .map(node => renderShortHtml(
-              node && (node.short_name ?? node.shortName),
-              node && node.role,
-              node && (node.long_name ?? node.longName),
-              node
-            ))
+        const mapNeighborEntries = getNeighborNodesFor(n.node_id ?? n.nodeId ?? '');
+        if (mapNeighborEntries.length) {
+          const neighborParts = mapNeighborEntries
+            .map(renderNeighborWithSnrHtml)
             .filter(html => html && html.length);
           if (neighborParts.length) {
             lines.push(`Neighbors: ${neighborParts.join(' ')}`);
