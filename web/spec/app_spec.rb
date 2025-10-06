@@ -175,6 +175,323 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "helper utilities" do
+    describe "#fetch_config_string" do
+      around do |example|
+        key = "SPEC_FETCH"
+        original = ENV[key]
+        begin
+          ENV.delete(key)
+          example.run
+        ensure
+          if original.nil?
+            ENV.delete(key)
+          else
+            ENV[key] = original
+          end
+        end
+      end
+
+      it "returns the default when the environment variable is missing" do
+        expect(fetch_config_string("SPEC_FETCH", "fallback")).to eq("fallback")
+      end
+
+      it "strips whitespace and rejects blank overrides" do
+        ENV["SPEC_FETCH"] = "  \t  "
+        expect(fetch_config_string("SPEC_FETCH", "fallback")).to eq("fallback")
+
+        ENV["SPEC_FETCH"] = "  override  "
+        expect(fetch_config_string("SPEC_FETCH", "fallback")).to eq("override")
+      end
+    end
+
+    describe "#determine_app_version" do
+      let(:repo_root) { File.expand_path("..", __dir__) }
+      let(:git_dir) { File.join(repo_root, ".git") }
+
+      before do
+        allow(File).to receive(:directory?).and_call_original
+      end
+
+      it "returns the fallback when the git directory is missing" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(false)
+
+        expect(determine_app_version).to eq(VERSION_FALLBACK)
+      end
+
+      it "returns the fallback when git describe fails" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        status = instance_double(Process::Status, success?: false)
+        allow(Open3).to receive(:capture2).and_return(["ignored", status])
+
+        expect(determine_app_version).to eq(VERSION_FALLBACK)
+      end
+
+      it "returns the fallback when git describe output is empty" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["\n", status])
+
+        expect(determine_app_version).to eq(VERSION_FALLBACK)
+      end
+
+      it "returns the original describe output when the format is unexpected" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["weird-output", status])
+
+        expect(determine_app_version).to eq("weird-output")
+      end
+
+      it "normalises the version when no commits are ahead of the tag" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["v1.2.3-0-gabcdef1", status])
+
+        expect(determine_app_version).to eq("v1.2.3")
+      end
+
+      it "includes commit metadata when ahead of the tag" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["v1.2.3-5-gabcdef1", status])
+
+        expect(determine_app_version).to eq("v1.2.3+5-abcdef1")
+      end
+
+      it "returns the fallback when git describe raises an error" do
+        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(Open3).to receive(:capture2).and_raise(StandardError, "boom")
+
+        expect(determine_app_version).to eq(VERSION_FALLBACK)
+      end
+    end
+
+    describe "string coercion helpers" do
+      it "normalises strings and nil values" do
+        expect(sanitized_string("  spaced  ")).to eq("spaced")
+        expect(sanitized_string(nil)).to eq("")
+      end
+
+      it "returns nil for blank matrix rooms" do
+        stub_const("MATRIX_ROOM", "  \t ")
+        expect(sanitized_matrix_room).to be_nil
+      end
+
+      it "coerces string_or_nil inputs" do
+        expect(string_or_nil("  hello \n")).to eq("hello")
+        expect(string_or_nil("   ")).to be_nil
+        expect(string_or_nil(123)).to eq("123")
+      end
+    end
+
+    describe "#coerce_integer" do
+      it "coerces integers and floats" do
+        expect(coerce_integer(5)).to eq(5)
+        expect(coerce_integer(7.9)).to eq(7)
+      end
+
+      it "coerces numeric strings" do
+        expect(coerce_integer(" 42 ")).to eq(42)
+        expect(coerce_integer("0x1a")).to eq(26)
+        expect(coerce_integer("12.8")).to eq(12)
+      end
+
+      it "returns nil for invalid values" do
+        expect(coerce_integer("not-a-number")).to be_nil
+        expect(coerce_integer(Float::INFINITY)).to be_nil
+      end
+    end
+
+    describe "#coerce_float" do
+      it "coerces numeric types" do
+        expect(coerce_float(5)).to eq(5.0)
+        expect(coerce_float(3.2)).to eq(3.2)
+      end
+
+      it "coerces numeric strings" do
+        expect(coerce_float(" 8.5 ")).to eq(8.5)
+      end
+
+      it "returns nil for invalid inputs" do
+        expect(coerce_float("bad")).to be_nil
+        expect(coerce_float(Float::INFINITY)).to be_nil
+      end
+    end
+
+    describe "JSON normalisation helpers" do
+      it "normalises nested hashes" do
+        input = { foo: { bar: 1, baz: [1, { qux: 2 }] } }
+        result = normalize_json_value(input)
+        expect(result).to eq("foo" => { "bar" => 1, "baz" => [1, { "qux" => 2 }] })
+      end
+
+      it "parses JSON strings into hashes" do
+        json = '{"foo": {"bar": 1}}'
+        expect(normalize_json_object(json)).to eq("foo" => { "bar" => 1 })
+      end
+
+      it "returns nil for invalid JSON objects" do
+        expect(normalize_json_object("not json")).to be_nil
+        expect(normalize_json_object(123)).to be_nil
+      end
+    end
+
+    describe "distance helpers" do
+      it "formats integers without trailing decimals" do
+        expect(formatted_distance_km(120.0)).to eq("120")
+        expect(formatted_distance_km(12.34)).to eq("12.3")
+      end
+
+      it "returns nil when the maximum distance is invalid" do
+        stub_const("MAX_NODE_DISTANCE_KM", -5)
+        expect(sanitized_max_distance_km).to be_nil
+
+        stub_const("MAX_NODE_DISTANCE_KM", "string")
+        expect(sanitized_max_distance_km).to be_nil
+
+        stub_const("MAX_NODE_DISTANCE_KM", 15.5)
+        expect(sanitized_max_distance_km).to eq(15.5)
+      end
+    end
+
+    describe "#secure_token_match?" do
+      it "performs constant-time comparison for matching strings" do
+        expect(secure_token_match?("abc", "abc")).to be(true)
+      end
+
+      it "returns false when inputs differ" do
+        expect(secure_token_match?("abc", "xyz")).to be(false)
+        expect(secure_token_match?("abc", nil)).to be(false)
+      end
+
+      it "handles secure compare errors" do
+        allow(Rack::Utils).to receive(:secure_compare).and_raise(Rack::Utils::SecurityError)
+        expect(secure_token_match?("abc", "abc")).to be(false)
+      end
+    end
+
+    describe "#with_busy_retry" do
+      it "raises once the retry budget is exhausted" do
+        attempts = 0
+        allow(Kernel).to receive(:sleep)
+
+        expect do
+          with_busy_retry(max_retries: 2, base_delay: 0.0) do
+            attempts += 1
+            raise SQLite3::BusyException if attempts <= 3
+          end
+        end.to raise_error(SQLite3::BusyException)
+
+        expect(attempts).to eq(3)
+        expect(Kernel).to have_received(:sleep).with(0.0).twice
+      end
+    end
+
+    describe "#resolve_node_num" do
+      it "reads numeric aliases from payloads" do
+        expect(resolve_node_num(nil, "num" => 42)).to eq(42)
+        expect(resolve_node_num(nil, "num" => 7.2)).to eq(7)
+        expect(resolve_node_num(nil, "num" => " 123 ")).to eq(123)
+        expect(resolve_node_num("!feedcafe", "num" => "feedcafe")).to eq(0xfeedcafe)
+      end
+
+      it "infers the numeric alias from the canonical identifier" do
+        expect(resolve_node_num("!00ff00aa", {})).to eq(0x00ff00aa)
+      end
+
+      it "returns nil for invalid identifiers" do
+        expect(resolve_node_num("!nothex", {})).to be_nil
+        expect(resolve_node_num(nil, "num" => "")).to be_nil
+        expect(resolve_node_num("", {})).to be_nil
+      end
+    end
+
+    describe "#canonical_node_parts" do
+      it "parses integers, strings, and fallbacks" do
+        parts = canonical_node_parts(123, nil)
+        expect(parts).to eq(["!0000007b", 123, "007B"])
+
+        parts = canonical_node_parts("!feedcafe", nil)
+        expect(parts).to eq(["!feedcafe", 0xfeedcafe, "CAFE"])
+
+        parts = canonical_node_parts("0x10", nil)
+        expect(parts).to eq(["!00000010", 16, "0010"])
+
+        parts = canonical_node_parts(nil, 31)
+        expect(parts).to eq(["!0000001f", 31, "001F"])
+      end
+
+      it "rejects invalid references" do
+        expect(canonical_node_parts("", nil)).to be_nil
+        expect(canonical_node_parts("not-valid", nil)).to be_nil
+        expect(canonical_node_parts(-5, nil)).to be_nil
+        expect(canonical_node_parts(Object.new, nil)).to be_nil
+      end
+    end
+
+    describe "#ensure_unknown_node" do
+      it "does not create duplicate placeholder nodes" do
+        node_id = "!dupe0001"
+        with_db do |db|
+          db.execute("INSERT INTO nodes(node_id) VALUES (?)", [node_id])
+          expect(ensure_unknown_node(db, node_id, nil, heard_time: reference_time.to_i)).to be_falsey
+        end
+      end
+    end
+
+    describe "#touch_node_last_seen" do
+      it "updates nodes using fallback numeric identifiers" do
+        node_id = "!fallback01"
+        node_num = 0x1234_5678
+        rx_time = reference_time.to_i - 30
+
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+            [node_id, node_num, rx_time - 120, rx_time - 180],
+          )
+
+          updated = touch_node_last_seen(db, nil, node_num, rx_time: rx_time, source: :spec)
+          expect(updated).to be_truthy
+        end
+
+        with_db(readonly: true) do |db|
+          row = db.get_first_row(
+            "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
+            [node_id],
+          )
+          expect(row["last_heard"]).to eq(rx_time)
+          expect(row["first_heard"]).to eq(rx_time - 180)
+        end
+      end
+
+      it "returns nil when the timestamp cannot be coerced" do
+        with_db do |db|
+          expect(touch_node_last_seen(db, "!unknown", nil, rx_time: " ")).to be_nil
+        end
+      end
+    end
+
+    describe "#normalize_node_id" do
+      it "resolves numeric aliases to canonical identifiers" do
+        node_id = "!alias000"
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num) VALUES (?, ?)",
+            [node_id, 321],
+          )
+        end
+
+        with_db(readonly: true) do |db|
+          expect(normalize_node_id(db, "321")).to eq(node_id)
+          expect(normalize_node_id(db, "!missing")).to be_nil
+          expect(normalize_node_id(db, nil)).to be_nil
+        end
+      end
+    end
+  end
+
   describe "logging configuration" do
     before do
       Sinatra::Application.apply_logger_level!
@@ -193,6 +510,45 @@ RSpec.describe "Potato Mesh Sinatra app" do
       Sinatra::Application.apply_logger_level!
 
       expect(Sinatra::Application.settings.logger.level).to eq(Logger::DEBUG)
+    end
+  end
+
+  describe "GET /favicon.ico" do
+    it "serves the bundled favicon when available" do
+      get "/favicon.ico"
+      expect(last_response).to be_ok
+      expect(last_response.headers["Content-Type"]).to eq("image/x-icon")
+    end
+
+    it "falls back to the SVG logo when the favicon is missing" do
+      ico_path = File.join(Sinatra::Application.settings.public_folder, "favicon.ico")
+      allow(File).to receive(:file?).and_call_original
+      allow(File).to receive(:file?).with(ico_path).and_return(false)
+
+      get "/favicon.ico"
+
+      expect(last_response).to be_ok
+      expect(last_response.headers["Content-Type"]).to eq("image/svg+xml")
+    end
+  end
+
+  describe "GET /potatomesh-logo.svg" do
+    it "serves the cached SVG asset when present" do
+      get "/potatomesh-logo.svg"
+      expect(last_response).to be_ok
+      expect(last_response.headers["Content-Type"]).to eq("image/svg+xml")
+    end
+
+    it "returns 404 when the asset is missing" do
+      svg_path = File.expand_path("potatomesh-logo.svg", Sinatra::Application.settings.public_folder)
+      allow(File).to receive(:exist?).and_call_original
+      allow(File).to receive(:readable?).and_call_original
+      allow(File).to receive(:exist?).with(svg_path).and_return(false)
+      allow(File).to receive(:readable?).with(svg_path).and_return(false)
+
+      get "/potatomesh-logo.svg"
+
+      expect(last_response.status).to eq(404)
     end
   end
 
