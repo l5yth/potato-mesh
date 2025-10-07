@@ -55,6 +55,7 @@ The web app can be configured with environment variables (defaults shown):
 * `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
 * `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)
 * `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
+* `PROM_REPORT_IDS` - comma-separated list of Node IDs to report in prometheus metrics, `*` for all (default: unset)
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled
@@ -75,6 +76,7 @@ The web app contains an API:
 * GET `/api/messages?limit=100` - returns the latest 100 messages (disabled when `PRIVATE=1`)
 * GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
 * GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
+* GET `/metrics`- prometheus endpoint
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/positions` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`; disabled when `PRIVATE=1`)

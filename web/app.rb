@@ -26,6 +26,10 @@ require "logger"
 require "rack/utils"
 require "open3"
 require "time"
+require "prometheus/client"
+require "prometheus/client/formats/text"
+require "prometheus/middleware/collector"
+require "prometheus/middleware/exporter"
 
 # Path to the SQLite database used by the web application.
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
@@ -65,6 +69,7 @@ MAP_TILE_FILTER_DARK = ENV.fetch(
   "MAP_TILE_FILTER_DARK",
   "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
 )
+PROM_REPORT_IDS = ENV.fetch("PROM_REPORT_IDS", "")
 
 # Fetch a configuration string from environment variables.
 #
@@ -130,6 +135,84 @@ MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
 DEBUG = ENV["DEBUG"] == "1"
+
+#
+# Prometheus metrics
+#
+$prom_messages_total = Prometheus::Client::Counter.new(
+  :meshtastic_messages_total,
+  docstring: "Total number of messages received",
+)
+Prometheus::Client.registry.register($prom_messages_total)
+
+$prom_nodes = Prometheus::Client::Gauge.new(
+  :meshtastic_nodes,
+  docstring: "Number of nodes seen",
+)
+Prometheus::Client.registry.register($prom_nodes)
+
+$prom_node = Prometheus::Client::Gauge.new(
+  :meshtastic_node,
+  docstring: "Node details",
+  labels: [:node, :short_name, :long_name, :hw_model, :role],
+)
+Prometheus::Client.registry.register($prom_node)
+
+$prom_node_battery_level = Prometheus::Client::Gauge.new(
+  :meshtastic_node_battery_level,
+  docstring: "Battery level of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_battery_level)
+
+$prom_node_voltage = Prometheus::Client::Gauge.new(
+  :meshtastic_node_voltage,
+  docstring: "Voltage level of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_voltage)
+
+$prom_node_uptime = Prometheus::Client::Gauge.new(
+  :meshtastic_node_uptime,
+  docstring: "Uptime of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_uptime)
+
+$prom_node_channel_utilization = Prometheus::Client::Gauge.new(
+  :meshtastic_node_channel_utilization,
+  docstring: "Channel utilization level of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_channel_utilization)
+
+$prom_node_transmit_air_utilization = Prometheus::Client::Gauge.new(
+  :meshtastic_node_transmit_air_utilization,
+  docstring: "Air transmit utilization level of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_transmit_air_utilization)
+
+$prom_node_latitude = Prometheus::Client::Gauge.new(
+  :meshtastic_node_latitude,
+  docstring: "Latitude of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_latitude)
+
+$prom_node_longitude = Prometheus::Client::Gauge.new(
+  :meshtastic_node_longitude,
+  docstring: "Longitude of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_longitude)
+
+$prom_node_altitude = Prometheus::Client::Gauge.new(
+  :meshtastic_node_altitude,
+  docstring: "Altitude of a node",
+  labels: [:node],
+)
+Prometheus::Client.registry.register($prom_node_altitude)
 
 # Log a debug message when the ``DEBUG`` environment variable is enabled.
 #
@@ -394,6 +477,9 @@ Sinatra::Application.configure do
   app_logger = Logger.new($stdout)
   set :logger, app_logger
   use Rack::CommonLogger, app_logger
+  use Rack::Deflater
+  use Prometheus::Middleware::Collector
+  use Prometheus::Middleware::Exporter
   Sinatra::Application.apply_logger_level!
 end
 
@@ -993,6 +1079,55 @@ def upsert_node(db, node_id, n)
     end
   }
   node_num = resolve_node_num(node_id, n)
+
+  if !PROM_REPORT_IDS.empty? && node_id
+    report_ids = PROM_REPORT_IDS.split(",").map(&:strip).reject(&:empty?)
+
+    if PROM_REPORT_IDS == "*" || report_ids.include?(node_id)
+      $prom_node.set(
+        1,
+        labels: {
+          node: node_id,
+          short_name: user["shortName"],
+          long_name: user["longName"],
+          hw_model: user["hwModel"] || n["hwModel"],
+          role: role,
+        },
+      )
+
+      if met["batteryLevel"]
+        $prom_node_battery_level.set(met["batteryLevel"], labels: { node: node_id })
+      end
+
+      if met["voltage"]
+        $prom_node_voltage.set(met["voltage"], labels: { node: node_id })
+      end
+
+      if met["uptimeSeconds"]
+        $prom_node_uptime.set(met["uptimeSeconds"], labels: { node: node_id })
+      end
+
+      if met["channelUtilization"]
+        $prom_node_channel_utilization.set(met["channelUtilization"], labels: { node: node_id })
+      end
+
+      if met["airUtilTx"]
+        $prom_node_transmit_air_utilization.set(met["airUtilTx"], labels: { node: node_id })
+      end
+
+      if pos["latitude"]
+        $prom_node_latitude.set(pos["latitude"], labels: { node: node_id })
+      end
+
+      if pos["longitude"]
+        $prom_node_longitude.set(pos["longitude"], labels: { node: node_id })
+      end
+
+      if pos["altitude"]
+        $prom_node_altitude.set(pos["altitude"], labels: { node: node_id })
+      end
+    end
+  end
 
   row = [
     node_id,
@@ -1808,6 +1943,8 @@ def insert_message(db, m)
         db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
       end
     else
+      $prom_messages_total.increment
+
       begin
         db.execute <<~SQL, row
                      INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit)
@@ -1865,6 +2002,9 @@ post "/api/nodes" do
   data.each do |node_id, node|
     upsert_node(db, node_id, node)
   end
+
+  $prom_nodes.set(query_nodes(1000).length)
+
   { status: "ok" }.to_json
 ensure
   db&.close
@@ -2005,4 +2145,12 @@ get "/" do
                 app_config_json: JSON.generate(config),
                 initial_theme: theme,
               }
+end
+
+# GET /metrics
+#
+# Prometheus metrics endpoint.
+get "/metrics" do
+  content_type Prometheus::Client::Formats::Text::CONTENT_TYPE
+  Prometheus::Client::Formats::Text.marshal(Prometheus::Client.registry)
 end

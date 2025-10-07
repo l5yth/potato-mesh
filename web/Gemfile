@@ -18,6 +18,7 @@ gem "sinatra", "~> 4.0"
 gem "sqlite3", "~> 1.7"
 gem "rackup", "~> 2.2"
 gem "puma", "~> 7.0"
+gem "prometheus-client"
 
 group :test do
   gem "rspec", "~> 3.12"
