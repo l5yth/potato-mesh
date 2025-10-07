@@ -646,6 +646,10 @@ ensure
   db&.close
 end
 
+# Retrieve recent neighbour signal reports ordered by the recorded time.
+#
+# @param limit [Integer] maximum number of rows returned.
+# @return [Array<Hash>] neighbour tuples formatted for the API response.
 def query_neighbors(limit)
   db = open_database(readonly: true)
   db.results_as_hash = true
@@ -666,6 +670,10 @@ ensure
   db&.close
 end
 
+# Retrieve telemetry packets enriched with parsed numeric values.
+#
+# @param limit [Integer] maximum number of rows returned.
+# @return [Array<Hash>] telemetry rows suitable for serialisation.
 def query_telemetry(limit)
   db = open_database(readonly: true)
   db.results_as_hash = true
@@ -1368,6 +1376,11 @@ def insert_position(db, payload)
   )
 end
 
+# Ingest neighbour relationship data for a node and refresh cached records.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param payload [Hash] neighbour payload provided by the data daemon.
+# @return [void]
 def insert_neighbors(db, payload)
   return unless payload.is_a?(Hash)
 
@@ -1461,6 +1474,14 @@ def insert_neighbors(db, payload)
   end
 end
 
+# Update cached node metrics using the provided telemetry readings.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param node_id [String, nil] canonical node identifier when available.
+# @param node_num [Integer, nil] numeric node reference.
+# @param rx_time [Integer, nil] last receive timestamp associated with the telemetry.
+# @param metrics [Hash] telemetry metrics extracted from the payload.
+# @return [void]
 def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   num = coerce_integer(node_num)
   id = string_or_nil(node_id)
@@ -1512,6 +1533,11 @@ def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   end
 end
 
+# Insert or update a telemetry packet and propagate relevant metrics to the node.
+#
+# @param db [SQLite3::Database] open database handle.
+# @param payload [Hash] telemetry payload provided by the data daemon.
+# @return [void]
 def insert_telemetry(db, payload)
   return unless payload.is_a?(Hash)
 
