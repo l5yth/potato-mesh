@@ -1,6 +1,20 @@
 import { readAppConfig } from './config.js';
 import { initializeApp } from './main.js';
 
+/**
+ * Default configuration values applied when the server omits a field.
+ *
+ * @type {{
+ *   refreshMs: number,
+ *   refreshIntervalSeconds: number,
+ *   chatEnabled: boolean,
+ *   defaultChannel: string,
+ *   defaultFrequency: string,
+ *   mapCenter: { lat: number, lon: number },
+ *   maxNodeDistanceKm: number,
+ *   tileFilters: { light: string, dark: string }
+ * }}
+ */
 const DEFAULT_CONFIG = {
   refreshMs: 60_000,
   refreshIntervalSeconds: 60,
@@ -15,6 +29,12 @@ const DEFAULT_CONFIG = {
   }
 };
 
+/**
+ * Merge raw configuration data from the DOM with the defaults.
+ *
+ * @param {Object<string, *>} raw Partial configuration read from ``readAppConfig``.
+ * @returns {typeof DEFAULT_CONFIG} Fully populated configuration object.
+ */
 function mergeConfig(raw) {
   const config = { ...DEFAULT_CONFIG, ...(raw || {}) };
   config.mapCenter = {
@@ -43,6 +63,12 @@ function mergeConfig(raw) {
   return config;
 }
 
+/**
+ * Bootstraps the application once the DOM is ready by reading configuration
+ * data and delegating to ``initializeApp``.
+ *
+ * @returns {void}
+ */
 document.addEventListener('DOMContentLoaded', () => {
   const rawConfig = readAppConfig();
   const config = mergeConfig(rawConfig);

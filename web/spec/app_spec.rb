@@ -23,10 +23,19 @@ require "base64"
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
 
+  # Return the absolute filesystem path to the requested fixture.
+  #
+  # @param name [String] fixture filename relative to the tests directory.
+  # @return [String] absolute path to the fixture file.
   def fixture_path(name)
     File.expand_path("../../tests/#{name}", __dir__)
   end
 
+  # Execute the provided block with a configured SQLite connection.
+  #
+  # @param readonly [Boolean] whether to open the database in read-only mode.
+  # @yieldparam db [SQLite3::Database] open database handle.
+  # @return [void]
   def with_db(readonly: false)
     db = SQLite3::Database.new(DB_PATH, readonly: readonly)
     db.busy_timeout = DB_BUSY_TIMEOUT_MS
@@ -36,6 +45,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
     db&.close
   end
 
+  # Remove all rows from the tables used by the application under test.
+  #
+  # @return [void]
   def clear_database
     with_db do |db|
       db.execute("DELETE FROM neighbors")
@@ -46,10 +58,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Build a hash excluding entries whose values are nil.
+  #
+  # @param hash [Hash] collection filtered for nil values.
+  # @return [Hash] hash containing only keys with non-nil values.
   def reject_nil_values(hash)
     hash.reject { |_, value| value.nil? }
   end
 
+  # Construct a request payload mirroring the structure produced by the daemon.
+  #
+  # @param node [Hash] node attributes from the fixture dataset.
+  # @return [Hash] payload formatted for the API.
   def build_node_payload(node)
     payload = {
       "user" => reject_nil_values(
@@ -85,10 +105,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
     payload
   end
 
+  # Determine the expected last heard timestamp for a node fixture.
+  #
+  # @param node [Hash] node attributes from the fixture dataset.
+  # @return [Integer, nil] canonical last heard timestamp.
   def expected_last_heard(node)
     [node["last_heard"], node["position_time"]].compact.max
   end
 
+  # Assemble the expected row persisted in the nodes table.
+  #
+  # @param node [Hash] node attributes from the fixture dataset.
+  # @return [Hash] expected database row for assertions.
   def expected_node_row(node)
     final_last = expected_last_heard(node)
     {
@@ -114,6 +142,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
     }
   end
 
+  # Assert equality while supporting tolerance for floating point comparisons.
+  #
+  # @param actual [Object] observed value.
+  # @param expected [Object] expected value.
+  # @param tolerance [Float] acceptable delta for floating point values.
+  # @return [void]
   def expect_same_value(actual, expected, tolerance: 1e-6)
     if expected.nil?
       expect(actual).to be_nil
@@ -124,6 +158,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Import all nodes defined in the fixture file via the HTTP API.
+  #
+  # @return [void]
   def import_nodes_fixture
     nodes_fixture.each do |node|
       payload = { node["node_id"] => build_node_payload(node) }
@@ -133,6 +170,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Import all messages defined in the fixture file via the HTTP API.
+  #
+  # @return [void]
   def import_messages_fixture
     messages_fixture.each do |message|
       payload = message.reject { |key, _| key == "node" }
