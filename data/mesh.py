@@ -3,9 +3,16 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 
-from . import mesh_ingestor as _mesh_ingestor
+try:
+    from . import mesh_ingestor as _mesh_ingestor
+except ImportError:
+    if __package__ in {None, ""}:
+        _mesh_ingestor = importlib.import_module("data.mesh_ingestor")
+    else:
+        raise
 
 # Expose the refactored mesh ingestor module under the legacy name so existing
 # imports (``import data.mesh as mesh``) continue to work. Attribute access and
