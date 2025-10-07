@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import time
 from collections.abc import Mapping
 
@@ -711,6 +712,27 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
         )
 
 
+_LAST_RECEIVE_MONOTONIC_LOCK = threading.Lock()
+_LAST_RECEIVE_MONOTONIC = time.monotonic()
+
+
+def _mark_receive_activity(now: float | None = None) -> None:
+    """Record the most recent time a packet was observed."""
+
+    if now is None:
+        now = time.monotonic()
+    with _LAST_RECEIVE_MONOTONIC_LOCK:
+        global _LAST_RECEIVE_MONOTONIC
+        _LAST_RECEIVE_MONOTONIC = float(now)
+
+
+def _last_receive_monotonic() -> float:
+    """Return the monotonic timestamp of the last observed packet."""
+
+    with _LAST_RECEIVE_MONOTONIC_LOCK:
+        return _LAST_RECEIVE_MONOTONIC
+
+
 def store_packet_dict(packet: Mapping) -> None:
     """Route a decoded packet to the appropriate storage handler.
 
@@ -833,6 +855,8 @@ def on_receive(packet, interface) -> None:
             return
         packet["_potatomesh_seen"] = True
 
+    _mark_receive_activity()
+
     packet_dict = None
     try:
         packet_dict = _pkt_to_dict(packet)
@@ -845,6 +869,8 @@ def on_receive(packet, interface) -> None:
 
 
 __all__ = [
+    "_last_receive_monotonic",
+    "_mark_receive_activity",
     "_queue_post_json",
     "on_receive",
     "store_neighborinfo_packet",

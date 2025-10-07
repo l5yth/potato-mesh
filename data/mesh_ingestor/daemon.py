@@ -38,6 +38,9 @@ _RECEIVE_TOPICS = (
 )
 
 
+_RECONNECT_INACTIVITY_SECS = 3600.0
+
+
 def _event_wait_allows_default_timeout() -> bool:
     """Return ``True`` when :meth:`threading.Event.wait` accepts ``timeout``.
 
@@ -160,6 +163,8 @@ def main() -> None:
 
     stop = threading.Event()
     initial_snapshot_sent = False
+    reconnect_cooldown_until = 0.0
+    last_seen_stream_disconnect = interfaces._last_stream_disconnect_monotonic() or 0.0
 
     def handle_sigterm(*_args) -> None:
         stop.set()
@@ -182,7 +187,31 @@ def main() -> None:
     )
     try:
         while not stop.is_set():
+            now_monotonic = time.monotonic()
+            stream_disconnect_monotonic = (
+                interfaces._last_stream_disconnect_monotonic() or 0.0
+            )
+            if stream_disconnect_monotonic > last_seen_stream_disconnect:
+                last_seen_stream_disconnect = stream_disconnect_monotonic
+                if iface is not None:
+                    print("[warn] mesh interface disconnected; will retry in 3600s")
+                    _close_interface(iface)
+                    iface = None
+                    announced_target = False
+                reconnect_cooldown_until = max(
+                    reconnect_cooldown_until,
+                    stream_disconnect_monotonic + _RECONNECT_INACTIVITY_SECS,
+                )
+
             if iface is None:
+                if (
+                    reconnect_cooldown_until
+                    and now_monotonic < reconnect_cooldown_until
+                ):
+                    wait_for = reconnect_cooldown_until - now_monotonic
+                    if wait_for > 0:
+                        stop.wait(min(config.SNAPSHOT_SECS, wait_for))
+                    continue
                 try:
                     if active_candidate:
                         iface, resolved_target = interfaces._create_serial_interface(
@@ -193,6 +222,8 @@ def main() -> None:
                         active_candidate = resolved_target
                     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
                     initial_snapshot_sent = False
+                    reconnect_cooldown_until = 0.0
+                    handlers._mark_receive_activity()
                     if not announced_target and resolved_target:
                         print(f"[info] using mesh interface: {resolved_target}")
                         announced_target = True
@@ -218,6 +249,23 @@ def main() -> None:
                             ),
                             config._RECONNECT_MAX_DELAY_SECS,
                         )
+                    continue
+
+            now_monotonic = time.monotonic()
+            if iface is not None:
+                last_receive_monotonic = handlers._last_receive_monotonic()
+                inactivity = now_monotonic - last_receive_monotonic
+                if inactivity >= _RECONNECT_INACTIVITY_SECS:
+                    print(
+                        "[warn] no mesh data received for 3600s; cycling mesh interface"
+                    )
+                    _close_interface(iface)
+                    iface = None
+                    announced_target = False
+                    reconnect_cooldown_until = max(
+                        reconnect_cooldown_until,
+                        now_monotonic + _RECONNECT_INACTIVITY_SECS,
+                    )
                     continue
 
             if not initial_snapshot_sent:

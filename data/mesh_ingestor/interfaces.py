@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import glob
 import ipaddress
+import logging
 import re
+import threading
+import time
 import urllib.parse
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
@@ -168,6 +171,54 @@ def _patch_meshtastic_ble_receive_loop() -> None:
 
 
 _patch_meshtastic_ble_receive_loop()
+
+
+_STREAM_DISCONNECT_LOCK = threading.Lock()
+_STREAM_DISCONNECT_MONOTONIC: float | None = None
+
+
+class _StreamDisconnectHandler(logging.Handler):
+    """Capture serial disconnect warnings emitted by Meshtastic."""
+
+    def emit(
+        self, record: logging.LogRecord
+    ) -> None:  # pragma: no cover - logging glue
+        message = record.getMessage()
+        if "Meshtastic serial port disconnected" not in message:
+            return
+        now = time.monotonic()
+        with _STREAM_DISCONNECT_LOCK:
+            global _STREAM_DISCONNECT_MONOTONIC
+            _STREAM_DISCONNECT_MONOTONIC = now
+
+
+def _install_stream_disconnect_handler() -> None:
+    try:
+        from meshtastic import stream_interface as _stream_interface_module  # type: ignore
+    except Exception:  # pragma: no cover - dependency optional in tests
+        return
+
+    logger = getattr(_stream_interface_module, "logger", None)
+    if logger is None:
+        return
+
+    for handler in getattr(logger, "handlers", ()):  # pragma: no cover - defensive
+        if getattr(handler, "_potato_mesh_stream_disconnect", False):
+            return
+
+    handler = _StreamDisconnectHandler()
+    handler.setLevel(logging.WARNING)
+    handler._potato_mesh_stream_disconnect = True  # type: ignore[attr-defined]
+    logger.addHandler(handler)
+
+
+def _last_stream_disconnect_monotonic() -> float | None:
+    with _STREAM_DISCONNECT_LOCK:
+        return _STREAM_DISCONNECT_MONOTONIC
+
+
+_install_stream_disconnect_handler()
+
 
 _DEFAULT_TCP_PORT = 4403
 _DEFAULT_TCP_TARGET = "http://127.0.0.1"
@@ -389,6 +440,8 @@ __all__ = [
     "_create_default_interface",
     "_create_serial_interface",
     "_default_serial_targets",
+    "_install_stream_disconnect_handler",
+    "_last_stream_disconnect_monotonic",
     "_load_ble_interface",
     "_parse_ble_target",
     "_parse_network_target",
