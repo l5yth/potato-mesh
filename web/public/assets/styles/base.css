@@ -156,6 +156,44 @@ h1 {
   justify-content: center;
 }
 
+.map-panel:fullscreen,
+.map-panel:-webkit-full-screen,
+.map-panel:-moz-full-screen,
+.map-panel:-ms-fullscreen,
+#map:fullscreen,
+#map:-webkit-full-screen,
+#map:-moz-full-screen,
+#map:-ms-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: #000;
+}
+
+.map-panel:fullscreen #map,
+.map-panel:-webkit-full-screen #map,
+.map-panel:-moz-full-screen #map,
+.map-panel:-ms-fullscreen #map,
+#map:fullscreen,
+#map:-webkit-full-screen,
+#map:-moz-full-screen,
+#map:-ms-fullscreen {
+  height: 100vh;
+  width: 100vw;
+  border: none;
+  border-radius: 0;
+}
+
+.map-panel:fullscreen .map-toolbar,
+.map-panel:-webkit-full-screen .map-toolbar,
+.map-panel:-moz-full-screen .map-toolbar,
+.map-panel:-ms-fullscreen .map-toolbar {
+  top: 16px;
+  right: 16px;
+}
+
 #map[data-map-status="placeholder"] {
   background: repeating-linear-gradient(
     135deg,
@@ -224,6 +262,16 @@ body.dark #map .map-status-message {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
+body.dark .map-toolbar button {
+  background: rgba(36, 36, 36, 0.88);
+  color: #f1f1f1;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+body.dark .map-toolbar button:hover {
+  background: rgba(52, 52, 52, 0.9);
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
@@ -257,6 +305,40 @@ th {
   display: flex;
   gap: var(--pad);
   align-items: stretch;
+}
+
+.map-panel {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.map-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 1300;
+  pointer-events: none;
+}
+
+.map-toolbar button {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  line-height: 1.2;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease;
+  pointer-events: auto;
+}
+
+.map-toolbar button:hover {
+  background: rgba(245, 245, 245, 0.95);
 }
 
 #chat {

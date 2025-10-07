@@ -130,7 +130,12 @@
     <% unless private_mode %>
       <div id="chat" aria-label="Chat log"></div>
     <% end %>
-    <div id="map" role="region" aria-label="Nodes map"></div>
+    <div class="map-panel" id="mapPanel">
+      <div id="map" role="region" aria-label="Nodes map"></div>
+      <div class="map-toolbar" role="group" aria-label="Map view controls">
+        <button id="mapFullscreenToggle" type="button" aria-pressed="false" aria-label="Enter full screen map view">Full screen</button>
+      </div>
+    </div>
   </div>
 
   <table id="nodes">

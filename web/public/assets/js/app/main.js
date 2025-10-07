@@ -253,6 +253,9 @@ export function initializeApp(config) {
   const MAP_CENTER_COORDS = Object.freeze({ lat: config.mapCenter.lat, lon: config.mapCenter.lon });
   const hasLeaflet = typeof window !== 'undefined' && typeof window.L === 'object' && window.L && typeof window.L.map === 'function';
   const mapContainer = document.getElementById('map');
+  const mapPanel = document.getElementById('mapPanel');
+  const mapFullscreenToggle = document.getElementById('mapFullscreenToggle');
+  const fullscreenContainer = mapPanel || mapContainer;
   let mapStatusEl = null;
   let map = null;
   let mapCenterLatLng = null;
@@ -265,6 +268,179 @@ export function initializeApp(config) {
   let neighborLinesToggleButton = null;
   let markersLayer = null;
   let tileDomObserver = null;
+  const fullscreenChangeEvents = [
+    'fullscreenchange',
+    'webkitfullscreenchange',
+    'mozfullscreenchange',
+    'MSFullscreenChange',
+    'msfullscreenchange'
+  ];
+
+  /**
+   * Determine whether the browser supports fullscreen requests on the map container.
+   *
+   * @returns {boolean} True when the Fullscreen API is available for the map element.
+   */
+  function supportsMapFullscreen() {
+    if (!fullscreenContainer) return false;
+    return (
+      typeof fullscreenContainer.requestFullscreen === 'function' ||
+      typeof fullscreenContainer.webkitRequestFullscreen === 'function' ||
+      typeof fullscreenContainer.msRequestFullscreen === 'function'
+    );
+  }
+
+  /**
+   * Resolve the element currently being displayed in fullscreen mode.
+   *
+   * @returns {Element|null} Active fullscreen element if any.
+   */
+  function getActiveFullscreenElement() {
+    if (typeof document === 'undefined') return null;
+    return (
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.msFullscreenElement ||
+      null
+    );
+  }
+
+  /**
+   * Determine whether the map container is currently in fullscreen mode.
+   *
+   * @returns {boolean} True when the map container owns fullscreen state.
+   */
+  function isMapInFullscreen() {
+    if (!fullscreenContainer) return false;
+    return getActiveFullscreenElement() === fullscreenContainer;
+  }
+
+  /**
+   * Update the fullscreen toggle button label and pressed state.
+   *
+   * @returns {void}
+   */
+  function updateFullscreenToggleState() {
+    if (!mapFullscreenToggle) return;
+    const active = isMapInFullscreen();
+    const label = active ? 'Exit full screen map view' : 'Enter full screen map view';
+    const text = active ? 'Exit full screen' : 'Full screen';
+    mapFullscreenToggle.setAttribute('aria-pressed', active ? 'true' : 'false');
+    mapFullscreenToggle.setAttribute('aria-label', label);
+    mapFullscreenToggle.textContent = text;
+  }
+
+  /**
+   * Request that the browser place the map container into fullscreen mode.
+   *
+   * @returns {void}
+   */
+  function enterMapFullscreen() {
+    if (!fullscreenContainer) return;
+    try {
+      if (typeof fullscreenContainer.requestFullscreen === 'function') {
+        const result = fullscreenContainer.requestFullscreen();
+        if (result && typeof result.catch === 'function') {
+          result.catch(() => {});
+        }
+        return;
+      }
+      if (typeof fullscreenContainer.webkitRequestFullscreen === 'function') {
+        fullscreenContainer.webkitRequestFullscreen();
+        return;
+      }
+      if (typeof fullscreenContainer.msRequestFullscreen === 'function') {
+        fullscreenContainer.msRequestFullscreen();
+      }
+    } catch (error) {
+      // Ignore errors triggered by the browser blocking fullscreen requests.
+    }
+  }
+
+  /**
+   * Exit fullscreen mode if the map container currently owns it.
+   *
+   * @returns {void}
+   */
+  function exitMapFullscreen() {
+    if (typeof document === 'undefined') return;
+    try {
+      if (typeof document.exitFullscreen === 'function') {
+        const result = document.exitFullscreen();
+        if (result && typeof result.catch === 'function') {
+          result.catch(() => {});
+        }
+        return;
+      }
+      if (typeof document.webkitExitFullscreen === 'function') {
+        document.webkitExitFullscreen();
+        return;
+      }
+      if (typeof document.msExitFullscreen === 'function') {
+        document.msExitFullscreen();
+      }
+    } catch (error) {
+      // Ignore errors triggered by the browser blocking fullscreen exit.
+    }
+  }
+
+  /**
+   * Toggle fullscreen mode depending on the current state.
+   *
+   * @returns {void}
+   */
+  function toggleMapFullscreen() {
+    if (!supportsMapFullscreen()) return;
+    if (isMapInFullscreen()) {
+      exitMapFullscreen();
+    } else {
+      enterMapFullscreen();
+    }
+  }
+
+  /**
+   * Schedule a Leaflet resize to ensure the map fills the container.
+   *
+   * @returns {void}
+   */
+  function refreshMapSize() {
+    if (!map || typeof map.invalidateSize !== 'function') return;
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => {
+        map.invalidateSize(true);
+      });
+    } else {
+      setTimeout(() => {
+        map.invalidateSize(true);
+      }, 160);
+    }
+  }
+
+  /**
+   * Respond to fullscreen change events originating from the browser.
+   *
+   * @returns {void}
+   */
+  function handleFullscreenChange() {
+    updateFullscreenToggleState();
+    refreshMapSize();
+  }
+
+  if (mapFullscreenToggle) {
+    if (!supportsMapFullscreen() || typeof document === 'undefined') {
+      mapFullscreenToggle.hidden = true;
+    } else {
+      mapFullscreenToggle.hidden = false;
+      mapFullscreenToggle.addEventListener('click', event => {
+        event.preventDefault();
+        toggleMapFullscreen();
+      });
+      fullscreenChangeEvents.forEach(eventName => {
+        document.addEventListener(eventName, handleFullscreenChange, false);
+      });
+      updateFullscreenToggleState();
+    }
+  }
 
   // Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
   const roleColors = Object.freeze({
