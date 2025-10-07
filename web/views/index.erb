@@ -130,7 +130,33 @@
     <% unless private_mode %>
       <div id="chat" aria-label="Chat log"></div>
     <% end %>
-    <div id="map" role="region" aria-label="Nodes map"></div>
+    <div class="map-panel" id="mapPanel">
+      <div id="map" role="region" aria-label="Nodes map"></div>
+      <div class="map-toolbar" role="group" aria-label="Map view controls">
+        <button id="mapFullscreenToggle" type="button" aria-pressed="false" aria-label="Enter full screen map view">
+          <svg class="icon-fullscreen-enter" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              d="M4 8V4h4m12 4V4h-4M4 16v4h4m12-4v4h-4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <svg class="icon-fullscreen-exit" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              d="M9 9L5 5m0 4V5m4 0H5m10 4 4-4m0 4V5m-4 0h4M9 15l-4 4m0-4v4m4 0H5m10-4 4 4m0-4v4m-4 0h4"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
   </div>
 
   <table id="nodes">
