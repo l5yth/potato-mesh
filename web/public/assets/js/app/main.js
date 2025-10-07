@@ -1,3 +1,19 @@
+/**
+ * Entry point for the interactive dashboard. Wires up event listeners,
+ * initializes the map, and triggers the first data refresh cycle.
+ *
+ * @param {{
+ *   refreshMs: number,
+ *   refreshIntervalSeconds: number,
+ *   chatEnabled: boolean,
+ *   defaultChannel: string,
+ *   defaultFrequency: string,
+ *   mapCenter: { lat: number, lon: number },
+ *   maxNodeDistanceKm: number,
+ *   tileFilters: { light: string, dark: string }
+ * }} config Normalized application configuration.
+ * @returns {void}
+ */
 export function initializeApp(config) {
   const statusEl = document.getElementById('status');
   const fitBoundsEl = document.getElementById('fitBounds');
@@ -519,6 +535,12 @@ export function initializeApp(config) {
   function createOfflineTileLayer() {
     if (!hasLeaflet) return null;
     const offlineLayer = L.gridLayer({ className: 'map-tiles map-tiles-offline' });
+    /**
+     * Render a placeholder tile for offline map usage.
+     *
+     * @param {{x: number, y: number, z: number}} coords Tile coordinates supplied by Leaflet.
+     * @returns {HTMLCanvasElement} Canvas element containing placeholder artwork.
+     */
     offlineLayer.createTile = coords => {
       const size = 256;
       const canvas = document.createElement('canvas');
@@ -706,6 +728,11 @@ export function initializeApp(config) {
   }
 
   if (typeof window !== 'undefined') {
+    /**
+     * Helper exposed for the theme module to refresh Leaflet tile filters.
+     *
+     * @type {function(): void}
+     */
     window.applyFiltersToAllTiles = applyFiltersToAllTiles;
   }
 
@@ -1074,7 +1101,7 @@ export function initializeApp(config) {
    * @param {?Object} nodeData Optional node metadata attached to the badge.
    * @returns {string} HTML snippet describing the badge.
    */
-  function renderShortHtml(short, role, longName, nodeData = null){
+  function renderShortHtml(short, role, longName, nodeData = null) {
     const safeTitle = longName ? escapeHtml(String(longName)) : '';
     const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
     const roleValue = normalizeRole(role != null && role !== '' ? role : (nodeData && nodeData.role));

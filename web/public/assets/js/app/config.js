@@ -1,5 +1,15 @@
+/**
+ * CSS selector used to locate the embedded configuration element.
+ *
+ * @type {string}
+ */
 const CONFIG_SELECTOR = '[data-app-config]';
 
+/**
+ * Read and parse the serialized application configuration from the DOM.
+ *
+ * @returns {Object<string, *>} Parsed configuration object or an empty object when unavailable.
+ */
 export function readAppConfig() {
   const el = document.querySelector(CONFIG_SELECTOR);
   if (!el) {
