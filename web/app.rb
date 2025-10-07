@@ -51,12 +51,12 @@ MAX_JSON_BODY_BYTES = begin
 VERSION_FALLBACK = "v0.3.0"
 DEFAULT_REFRESH_INTERVAL_SECONDS = 60
 REFRESH_INTERVAL_SECONDS = begin
-  raw = ENV.fetch("REFRESH_INTERVAL_SECONDS", DEFAULT_REFRESH_INTERVAL_SECONDS.to_s)
-  value = Integer(raw, 10)
-  value.positive? ? value : DEFAULT_REFRESH_INTERVAL_SECONDS
-rescue ArgumentError
-  DEFAULT_REFRESH_INTERVAL_SECONDS
-end
+    raw = ENV.fetch("REFRESH_INTERVAL_SECONDS", DEFAULT_REFRESH_INTERVAL_SECONDS.to_s)
+    value = Integer(raw, 10)
+    value.positive? ? value : DEFAULT_REFRESH_INTERVAL_SECONDS
+  rescue ArgumentError
+    DEFAULT_REFRESH_INTERVAL_SECONDS
+  end
 MAP_TILE_FILTER_LIGHT = ENV.fetch(
   "MAP_TILE_FILTER_LIGHT",
   "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
@@ -192,8 +192,8 @@ def frontend_app_config
     maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
     tileFilters: {
       light: MAP_TILE_FILTER_LIGHT,
-      dark: MAP_TILE_FILTER_DARK
-    }
+      dark: MAP_TILE_FILTER_DARK,
+    },
   }
 end
 
