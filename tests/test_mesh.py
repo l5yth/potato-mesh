@@ -2,6 +2,9 @@ import base64
 import importlib
 import sys
 import types
+
+"""End-to-end tests covering the mesh ingestion package."""
+
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +14,7 @@ import pytest
 
 @pytest.fixture
 def mesh_module(monkeypatch):
-    """Import data.mesh with stubbed dependencies."""
+    """Import :mod:`data.mesh` with stubbed dependencies."""
 
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.syspath_prepend(str(repo_root))

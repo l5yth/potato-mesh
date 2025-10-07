@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Interactive debugging helpers for live Meshtastic sessions."""
+
 import time, json, base64, threading
 from pubsub import pub  # comes with meshtastic
 from meshtastic.serial_interface import SerialInterface
@@ -28,7 +30,14 @@ stop = threading.Event()
 
 
 def to_jsonable(obj):
-    """Recursively convert protobuf/bytes/etc. into JSON-serializable structures."""
+    """Recursively convert complex objects into JSON-serialisable structures.
+
+    Parameters:
+        obj: Any Meshtastic-related payload or protobuf message.
+
+    Returns:
+        A structure composed of standard Python types.
+    """
     if obj is None:
         return None
     if isinstance(obj, ProtoMessage):
@@ -49,7 +58,14 @@ def to_jsonable(obj):
 
 
 def extract_text(d):
-    """Best-effort pull of decoded text from a dict produced by to_jsonable()."""
+    """Best-effort pull of decoded text from :func:`to_jsonable` output.
+
+    Parameters:
+        d: Mapping derived from :func:`to_jsonable`.
+
+    Returns:
+        The decoded text when available, otherwise ``None``.
+    """
     dec = d.get("decoded") or {}
     # Text packets usually at decoded.payload.text
     payload = dec.get("payload") or {}
@@ -62,6 +78,12 @@ def extract_text(d):
 
 
 def on_receive(packet, interface):
+    """Display human-readable output for each received packet.
+
+    Parameters:
+        packet: Packet instance supplied by Meshtastic.
+        interface: Interface that produced the packet.
+    """
     global packet_count, last_rx_ts
     packet_count += 1
     last_rx_ts = time.time()
@@ -86,14 +108,20 @@ def on_receive(packet, interface):
 
 
 def on_connected(interface, *args, **kwargs):
+    """Log when a connection is established."""
+
     print("[info] connection established")
 
 
 def on_disconnected(interface, *args, **kwargs):
+    """Log when the interface disconnects."""
+
     print("[info] disconnected")
 
 
 def main():
+    """Run the interactive debugging loop."""
+
     print(f"Opening Meshtastic on {PORT} …")
 
     # Use PubSub topics (reliable in current meshtastic)
