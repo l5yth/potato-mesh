@@ -9,9 +9,22 @@
   --row-alt: rgba(0, 0, 0, 0.02);
   --table-head-bg: rgba(0, 0, 0, 0.06);
   --table-head-fg: var(--fg);
+  --input-bg: #ffffff;
+  --input-fg: var(--fg);
+  --input-border: rgba(12, 15, 18, 0.18);
+  --input-placeholder: rgba(12, 15, 18, 0.45);
+  --control-accent: var(--accent);
   --pad: 16px;
   --map-tile-filter-light: grayscale(1) saturate(0) brightness(0.92) contrast(1.05);
   --map-tile-filter-dark: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
+}
+
+html {
+  color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 body.dark {
@@ -25,6 +38,11 @@ body.dark {
   --row-alt: rgba(255, 255, 255, 0.05);
   --table-head-bg: rgba(255, 255, 255, 0.06);
   --table-head-fg: var(--fg);
+  --input-bg: #1e262c;
+  --input-fg: var(--fg);
+  --input-border: rgba(230, 235, 240, 0.24);
+  --input-placeholder: rgba(230, 235, 240, 0.55);
+  --control-accent: var(--accent);
 }
 
 html,
@@ -457,8 +475,28 @@ label {
 
 input[type="text"] {
   padding: 6px 10px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--input-border);
   border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--input-fg);
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+input[type="text"]::placeholder {
+  color: var(--input-placeholder);
+}
+
+input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--control-accent);
+  transition: accent-color 160ms ease, background-color 160ms ease;
 }
 
 .legend {
@@ -816,12 +854,6 @@ body.dark .sort-button:hover {
 
 body.dark label {
   color: #ddd;
-}
-
-body.dark input[type="text"] {
-  background: #222;
-  color: #eee;
-  border-color: #444;
 }
 
 body.dark .legend {

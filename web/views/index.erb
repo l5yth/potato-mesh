@@ -16,7 +16,7 @@
   limitations under the License.
 -->
 
-<html lang="en">
+<html lang="en" data-theme="<%= initial_theme %>">
 <head>
   <meta name="color-scheme" content="dark light">
   <meta charset="utf-8" />
@@ -73,7 +73,9 @@
   
   
 </head>
-<body data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>">
+  <% body_classes = [] %>
+  <% body_classes << "dark" if initial_theme == "dark" %>
+<body class="<%= body_classes.join(" ") %>" data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>" data-theme="<%= initial_theme %>">
   <h1 class="site-title">
     <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
     <span class="site-title-text"><%= site_name %></span>

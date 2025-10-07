@@ -51,33 +51,49 @@
     setCookie('theme', value, { 'max-age': THEME_COOKIE_MAX_AGE });
   }
 
+  function applyTheme(value) {
+    var themeValue = value === 'dark' ? 'dark' : 'light';
+    var root = document.documentElement;
+    var isDark = themeValue === 'dark';
+
+    if (root) {
+      root.setAttribute('data-theme', themeValue);
+    }
+
+    if (document.body) {
+      document.body.classList.toggle('dark', isDark);
+      document.body.setAttribute('data-theme', themeValue);
+    }
+
+    return isDark;
+  }
+
   var theme = getCookie('theme');
   if (theme !== 'dark' && theme !== 'light') {
     theme = 'dark';
   }
   persistTheme(theme);
 
-  /**
-   * Apply the stored theme and refresh dependent UI elements once the DOM is ready.
-   *
-   * @returns {void}
-   */
-  document.addEventListener('DOMContentLoaded', function () {
-    if (theme === 'dark') {
-      document.body.classList.add('dark');
-    } else {
-      document.body.classList.remove('dark');
-    }
+  applyTheme(theme);
+
+  function handleReady() {
+    var isDark = applyTheme(theme);
 
     var btn = document.getElementById('themeToggle');
     if (btn) {
-      btn.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+      btn.textContent = isDark ? '☀️' : '🌙';
     }
 
     if (typeof window.applyFiltersToAllTiles === 'function') {
       window.applyFiltersToAllTiles();
     }
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', handleReady);
+  } else {
+    handleReady();
+  }
 
   /**
    * Testing hooks exposing cookie helpers for integration tests.

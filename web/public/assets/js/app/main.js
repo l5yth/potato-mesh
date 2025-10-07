@@ -965,6 +965,10 @@ export function initializeApp(config) {
     themeToggle.addEventListener('click', () => {
       const dark = document.body.classList.toggle('dark');
       const themeValue = dark ? 'dark' : 'light';
+      document.body.setAttribute('data-theme', themeValue);
+      if (document.documentElement) {
+        document.documentElement.setAttribute('data-theme', themeValue);
+      }
       themeToggle.textContent = dark ? '☀️' : '🌙';
       if (window.__themeCookie) {
         if (typeof window.__themeCookie.persistTheme === 'function') {
