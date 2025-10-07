@@ -173,6 +173,12 @@ def main() -> None:
     stop = threading.Event()
     initial_snapshot_sent = False
     energy_session_deadline = None
+    iface_connected_at: float | None = None
+    last_seen_packet_monotonic = handlers.last_packet_monotonic()
+    last_inactivity_reconnect: float | None = None
+    inactivity_reconnect_secs = max(
+        0.0, getattr(config, "_INACTIVITY_RECONNECT_SECS", 0.0)
+    )
 
     energy_saving_enabled = config.ENERGY_SAVING
     energy_online_secs = max(0.0, config._ENERGY_ONLINE_DURATION_SECS)
@@ -226,6 +232,12 @@ def main() -> None:
                         energy_session_deadline = time.monotonic() + energy_online_secs
                     else:
                         energy_session_deadline = None
+                    iface_connected_at = time.monotonic()
+                    # Seed the inactivity tracking from the connection time so a
+                    # reconnect is given a full inactivity window even when the
+                    # handler still reports the previous packet timestamp.
+                    last_seen_packet_monotonic = iface_connected_at
+                    last_inactivity_reconnect = None
                 except interfaces.NoAvailableMeshInterface as exc:
                     print(f"[error] {exc}")
                     _close_interface(iface)
@@ -315,6 +327,68 @@ def main() -> None:
                             config._RECONNECT_MAX_DELAY_SECS,
                         )
                     continue
+
+            if iface is not None and inactivity_reconnect_secs > 0:
+                now_monotonic = time.monotonic()
+                iface_activity = handlers.last_packet_monotonic()
+                if (
+                    iface_activity is not None
+                    and iface_connected_at is not None
+                    and iface_activity < iface_connected_at
+                ):
+                    iface_activity = iface_connected_at
+                if iface_activity is not None and (
+                    last_seen_packet_monotonic is None
+                    or iface_activity > last_seen_packet_monotonic
+                ):
+                    last_seen_packet_monotonic = iface_activity
+                    last_inactivity_reconnect = None
+
+                latest_activity = iface_activity
+                if latest_activity is None and iface_connected_at is not None:
+                    latest_activity = iface_connected_at
+                if latest_activity is None:
+                    latest_activity = now_monotonic
+
+                inactivity_elapsed = now_monotonic - latest_activity
+
+                connected_attr = getattr(iface, "isConnected", None)
+                believed_disconnected = False
+                if callable(connected_attr):
+                    try:
+                        believed_disconnected = not bool(connected_attr())
+                    except Exception:
+                        believed_disconnected = False
+                elif connected_attr is not None:
+                    believed_disconnected = not bool(connected_attr)
+
+                should_reconnect = believed_disconnected or (
+                    inactivity_elapsed >= inactivity_reconnect_secs
+                )
+
+                if should_reconnect:
+                    if (
+                        last_inactivity_reconnect is None
+                        or now_monotonic - last_inactivity_reconnect
+                        >= inactivity_reconnect_secs
+                    ):
+                        reason = (
+                            "disconnected"
+                            if believed_disconnected
+                            else f"no data for {inactivity_elapsed:.0f}s"
+                        )
+                        print(
+                            "[warn] mesh interface inactivity detected "
+                            f"({reason}); reconnecting"
+                        )
+                        last_inactivity_reconnect = now_monotonic
+                        _close_interface(iface)
+                        iface = None
+                        announced_target = False
+                        initial_snapshot_sent = False
+                        energy_session_deadline = None
+                        iface_connected_at = None
+                        continue
 
             retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
             stop.wait(config.SNAPSHOT_SECS)

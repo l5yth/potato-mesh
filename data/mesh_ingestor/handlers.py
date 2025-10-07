@@ -816,6 +816,22 @@ def store_packet_dict(packet: Mapping) -> None:
         )
 
 
+_last_packet_monotonic: float | None = None
+
+
+def last_packet_monotonic() -> float | None:
+    """Return the monotonic timestamp of the most recent packet."""
+
+    return _last_packet_monotonic
+
+
+def _mark_packet_seen() -> None:
+    """Record that a packet has been processed."""
+
+    global _last_packet_monotonic
+    _last_packet_monotonic = time.monotonic()
+
+
 def on_receive(packet, interface) -> None:
     """Callback registered with Meshtastic to capture incoming packets.
 
@@ -833,6 +849,8 @@ def on_receive(packet, interface) -> None:
             return
         packet["_potatomesh_seen"] = True
 
+    _mark_packet_seen()
+
     packet_dict = None
     try:
         packet_dict = _pkt_to_dict(packet)
@@ -846,6 +864,7 @@ def on_receive(packet, interface) -> None:
 
 __all__ = [
     "_queue_post_json",
+    "last_packet_monotonic",
     "on_receive",
     "store_neighborinfo_packet",
     "store_nodeinfo_packet",
