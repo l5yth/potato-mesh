@@ -3,21 +3,83 @@
 from __future__ import annotations
 
 import glob
-import inspect
 import ipaddress
 import re
 import urllib.parse
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.tcp_interface import TCPInterface
 
-from . import config
+from . import config, serialization
 
 if TYPE_CHECKING:  # pragma: no cover - import only used for type checking
     from meshtastic.ble_interface import BLEInterface as _BLEInterface
 
 BLEInterface = None
+
+
+def _patch_meshtastic_nodeinfo_handler() -> None:
+    """Ensure Meshtastic nodeinfo packets always include an ``id`` field."""
+
+    try:
+        import meshtastic  # type: ignore
+    except Exception:  # pragma: no cover - dependency optional in tests
+        return
+
+    original = getattr(meshtastic, "_onNodeInfoReceive", None)
+    if not callable(original):
+        return
+    if getattr(original, "_potato_mesh_safe_wrapper", False):
+        return
+
+    def _safe_on_node_info_receive(iface, packet):  # type: ignore[override]
+        candidate_mapping: Mapping | None = None
+        if isinstance(packet, Mapping):
+            candidate_mapping = packet
+        elif hasattr(packet, "__dict__") and isinstance(packet.__dict__, Mapping):
+            candidate_mapping = packet.__dict__
+
+        node_id = None
+        if candidate_mapping is not None:
+            node_id = serialization._canonical_node_id(candidate_mapping.get("id"))
+            if node_id is None:
+                user_section = candidate_mapping.get("user")
+                if isinstance(user_section, Mapping):
+                    node_id = serialization._canonical_node_id(user_section.get("id"))
+            if node_id is None:
+                for key in ("fromId", "from_id", "from", "num", "nodeId", "node_id"):
+                    node_id = serialization._canonical_node_id(
+                        candidate_mapping.get(key)
+                    )
+                    if node_id:
+                        break
+
+            if node_id:
+                if not isinstance(candidate_mapping, dict):
+                    try:
+                        candidate_mapping = dict(candidate_mapping)
+                    except Exception:
+                        candidate_mapping = {
+                            k: candidate_mapping[k] for k in candidate_mapping
+                        }
+                if candidate_mapping.get("id") != node_id:
+                    candidate_mapping["id"] = node_id
+                packet = candidate_mapping
+
+        try:
+            return original(iface, packet)
+        except KeyError as exc:  # pragma: no cover - defensive only
+            if exc.args and exc.args[0] == "id":
+                return None
+            raise
+
+    _safe_on_node_info_receive._potato_mesh_safe_wrapper = True  # type: ignore[attr-defined]
+    meshtastic._onNodeInfoReceive = _safe_on_node_info_receive
+
+
+_patch_meshtastic_nodeinfo_handler()
 
 _DEFAULT_TCP_PORT = 4403
 _DEFAULT_TCP_TARGET = "http://127.0.0.1"
