@@ -456,6 +456,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
 
         with_db(readonly: true) do |db|
+          db.results_as_hash = true
           row = db.get_first_row(
             "SELECT last_heard, first_heard FROM nodes WHERE node_id = ?",
             [node_id],
@@ -540,10 +541,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "returns 404 when the asset is missing" do
       svg_path = File.expand_path("potatomesh-logo.svg", Sinatra::Application.settings.public_folder)
-      allow(File).to receive(:exist?).and_call_original
-      allow(File).to receive(:readable?).and_call_original
-      allow(File).to receive(:exist?).with(svg_path).and_return(false)
-      allow(File).to receive(:readable?).with(svg_path).and_return(false)
+      allow(File).to receive(:exist?).and_return(false)
+      allow(File).to receive(:readable?).and_return(false)
 
       get "/potatomesh-logo.svg"
 
