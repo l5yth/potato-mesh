@@ -184,7 +184,9 @@ class _StreamDisconnectHandler(logging.Handler):
         self, record: logging.LogRecord
     ) -> None:  # pragma: no cover - logging glue
         message = record.getMessage()
-        if "Meshtastic serial port disconnected" not in message:
+        if "Meshtastic serial port disconnected" not in message and (
+            "device reports readiness to read but returned no data" not in message
+        ):
             return
         now = time.monotonic()
         with _STREAM_DISCONNECT_LOCK:

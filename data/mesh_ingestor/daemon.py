@@ -41,6 +41,45 @@ _RECEIVE_TOPICS = (
 _RECONNECT_INACTIVITY_SECS = 3600.0
 
 
+class _ReconnectEvent:
+    """Track state for hourly reconnect attempts."""
+
+    __slots__ = ("reason", "next_attempt_at")
+
+    def __init__(self) -> None:
+        self.reason: str | None = None
+        self.next_attempt_at: float = 0.0
+
+    def set(self, reason: str, when: float) -> None:
+        """Schedule a reconnect attempt for ``when`` due to ``reason``."""
+
+        if self.reason == reason and self.next_attempt_at:
+            self.next_attempt_at = max(self.next_attempt_at, when)
+            return
+        self.reason = reason
+        self.next_attempt_at = when
+
+    def clear(self) -> None:
+        """Reset the reconnect state."""
+
+        self.reason = None
+        self.next_attempt_at = 0.0
+
+    def due(self, now: float) -> bool:
+        """Return ``True`` when a reconnect attempt is permitted."""
+
+        if self.reason is None:
+            return True
+        return now >= self.next_attempt_at
+
+    def defer(self, now: float) -> None:
+        """Delay the next allowed reconnect attempt by one interval."""
+
+        if self.reason is None:
+            return
+        self.next_attempt_at = now + _RECONNECT_INACTIVITY_SECS
+
+
 def _event_wait_allows_default_timeout() -> bool:
     """Return ``True`` when :meth:`threading.Event.wait` accepts ``timeout``.
 
@@ -163,7 +202,7 @@ def main() -> None:
 
     stop = threading.Event()
     initial_snapshot_sent = False
-    reconnect_cooldown_until = 0.0
+    reconnect_event = _ReconnectEvent()
     last_seen_stream_disconnect = interfaces._last_stream_disconnect_monotonic() or 0.0
 
     def handle_sigterm(*_args) -> None:
@@ -194,21 +233,17 @@ def main() -> None:
             if stream_disconnect_monotonic > last_seen_stream_disconnect:
                 last_seen_stream_disconnect = stream_disconnect_monotonic
                 if iface is not None:
-                    print("[warn] mesh interface disconnected; will retry in 3600s")
+                    print(
+                        "[warn] mesh interface disconnected; scheduling hourly reconnect"
+                    )
                     _close_interface(iface)
                     iface = None
                     announced_target = False
-                reconnect_cooldown_until = max(
-                    reconnect_cooldown_until,
-                    stream_disconnect_monotonic + _RECONNECT_INACTIVITY_SECS,
-                )
+                    reconnect_event.set("disconnect", now_monotonic)
 
             if iface is None:
-                if (
-                    reconnect_cooldown_until
-                    and now_monotonic < reconnect_cooldown_until
-                ):
-                    wait_for = reconnect_cooldown_until - now_monotonic
+                if not reconnect_event.due(now_monotonic):
+                    wait_for = reconnect_event.next_attempt_at - now_monotonic
                     if wait_for > 0:
                         stop.wait(min(config.SNAPSHOT_SECS, wait_for))
                     continue
@@ -222,7 +257,7 @@ def main() -> None:
                         active_candidate = resolved_target
                     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
                     initial_snapshot_sent = False
-                    reconnect_cooldown_until = 0.0
+                    reconnect_event.clear()
                     handlers._mark_receive_activity()
                     if not announced_target and resolved_target:
                         print(f"[info] using mesh interface: {resolved_target}")
@@ -236,6 +271,13 @@ def main() -> None:
                     print(
                         f"[warn] failed to create mesh interface ({candidate_desc}): {exc}"
                     )
+                    if reconnect_event.reason:
+                        now_retry = time.monotonic()
+                        reconnect_event.defer(now_retry)
+                        wait_for = max(0.0, reconnect_event.next_attempt_at - now_retry)
+                        if wait_for > 0:
+                            stop.wait(min(config.SNAPSHOT_SECS, wait_for))
+                        continue
                     if configured_port is None:
                         active_candidate = None
                         announced_target = False
@@ -257,15 +299,12 @@ def main() -> None:
                 inactivity = now_monotonic - last_receive_monotonic
                 if inactivity >= _RECONNECT_INACTIVITY_SECS:
                     print(
-                        "[warn] no mesh data received for 3600s; cycling mesh interface"
+                        "[warn] no mesh data received for 3600s; scheduling hourly reconnect"
                     )
                     _close_interface(iface)
                     iface = None
                     announced_target = False
-                    reconnect_cooldown_until = max(
-                        reconnect_cooldown_until,
-                        now_monotonic + _RECONNECT_INACTIVITY_SECS,
-                    )
+                    reconnect_event.set("inactivity", now_monotonic)
                     continue
 
             if not initial_snapshot_sent:
