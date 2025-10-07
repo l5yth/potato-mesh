@@ -326,7 +326,7 @@ export function initializeApp(config) {
     const label = active ? 'Exit full screen map view' : 'Enter full screen map view';
     mapFullscreenToggle.setAttribute('aria-pressed', active ? 'true' : 'false');
     mapFullscreenToggle.setAttribute('aria-label', label);
-    mapFullscreenToggle.textContent = '[]';
+    mapFullscreenToggle.dataset.fullscreen = active ? 'true' : 'false';
   }
 
   /**
@@ -427,6 +427,23 @@ export function initializeApp(config) {
     }
     if (fullscreenContainer !== mapContainer && mapContainer && mapContainer.classList) {
       mapContainer.classList.toggle('is-fullscreen', active);
+    }
+    if (mapContainer && mapContainer.style) {
+      if (active) {
+        mapContainer.style.width = '100vw';
+        mapContainer.style.height = '100vh';
+        mapContainer.style.maxWidth = '100vw';
+        mapContainer.style.maxHeight = '100vh';
+        mapContainer.style.minWidth = '100vw';
+        mapContainer.style.minHeight = '100vh';
+      } else {
+        mapContainer.style.width = '';
+        mapContainer.style.height = '';
+        mapContainer.style.maxWidth = '';
+        mapContainer.style.maxHeight = '';
+        mapContainer.style.minWidth = '';
+        mapContainer.style.minHeight = '';
+      }
     }
     updateFullscreenToggleState();
     refreshMapSize();

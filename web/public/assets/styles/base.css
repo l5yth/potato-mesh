@@ -168,10 +168,22 @@ h1 {
 #map:-ms-fullscreen {
   width: 100vw;
   height: 100vh;
+  min-width: 100vw;
+  min-height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
   margin: 0;
   border: none;
   border-radius: 0;
   background: #000;
+}
+
+.map-panel.is-fullscreen,
+.map-panel:fullscreen,
+.map-panel:-webkit-full-screen,
+.map-panel:-moz-full-screen,
+.map-panel:-ms-fullscreen {
+  display: block;
 }
 
 .map-panel.is-fullscreen #map,
@@ -184,10 +196,15 @@ h1 {
 #map:-webkit-full-screen,
 #map:-moz-full-screen,
 #map:-ms-fullscreen {
-  height: 100vh;
-  width: 100vw;
+  height: 100vh !important;
+  width: 100vw !important;
+  min-height: 100vh;
+  min-width: 100vw;
+  max-height: 100vh;
+  max-width: 100vw;
   border: none;
   border-radius: 0;
+  flex: none;
 }
 
 .map-panel.is-fullscreen .map-toolbar,
@@ -330,6 +347,9 @@ th {
 }
 
 .map-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid rgba(0, 0, 0, 0.2);
@@ -344,6 +364,25 @@ th {
 
 .map-toolbar button:hover {
   background: rgba(245, 245, 245, 0.95);
+}
+
+.map-toolbar button svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: currentColor;
+}
+
+#mapFullscreenToggle .icon-fullscreen-exit {
+  display: none;
+}
+
+#mapFullscreenToggle[aria-pressed='true'] .icon-fullscreen-exit {
+  display: block;
+}
+
+#mapFullscreenToggle[aria-pressed='true'] .icon-fullscreen-enter {
+  display: none;
 }
 
 #chat {
