@@ -233,7 +233,10 @@ def main() -> None:
                     else:
                         energy_session_deadline = None
                     iface_connected_at = time.monotonic()
-                    last_seen_packet_monotonic = handlers.last_packet_monotonic()
+                    # Seed the inactivity tracking from the connection time so a
+                    # reconnect is given a full inactivity window even when the
+                    # handler still reports the previous packet timestamp.
+                    last_seen_packet_monotonic = iface_connected_at
                     last_inactivity_reconnect = None
                 except interfaces.NoAvailableMeshInterface as exc:
                     print(f"[error] {exc}")
@@ -328,6 +331,12 @@ def main() -> None:
             if iface is not None and inactivity_reconnect_secs > 0:
                 now_monotonic = time.monotonic()
                 iface_activity = handlers.last_packet_monotonic()
+                if (
+                    iface_activity is not None
+                    and iface_connected_at is not None
+                    and iface_activity < iface_connected_at
+                ):
+                    iface_activity = iface_connected_at
                 if iface_activity is not None and (
                     last_seen_packet_monotonic is None
                     or iface_activity > last_seen_packet_monotonic
