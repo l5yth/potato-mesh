@@ -25,10 +25,15 @@ CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
 DEBUG = os.environ.get("DEBUG") == "1"
 INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
 API_TOKEN = os.environ.get("API_TOKEN", "")
+ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 
 _RECONNECT_INITIAL_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_INITIAL", "5"))
 _RECONNECT_MAX_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_MAX", "60"))
 _CLOSE_TIMEOUT_SECS = float(os.environ.get("MESH_CLOSE_TIMEOUT", "5"))
+_ENERGY_ONLINE_DURATION_SECS = float(
+    os.environ.get("ENERGY_ONLINE_DURATION_SECS", "300")
+)
+_ENERGY_SLEEP_SECS = float(os.environ.get("ENERGY_SLEEP_SECS", str(6 * 60 * 60)))
 
 
 def _debug_log(message: str) -> None:
@@ -52,8 +57,11 @@ __all__ = [
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",
+    "ENERGY_SAVING",
     "_RECONNECT_INITIAL_DELAY_SECS",
     "_RECONNECT_MAX_DELAY_SECS",
     "_CLOSE_TIMEOUT_SECS",
+    "_ENERGY_ONLINE_DURATION_SECS",
+    "_ENERGY_SLEEP_SECS",
     "_debug_log",
 ]

@@ -147,6 +147,18 @@ def _close_interface(iface_obj) -> None:
         )
 
 
+def _is_ble_interface(iface_obj) -> bool:
+    """Return ``True`` when ``iface_obj`` appears to be a BLE interface."""
+
+    if iface_obj is None:
+        return False
+    iface_cls = getattr(iface_obj, "__class__", None)
+    if iface_cls is None:
+        return False
+    module_name = getattr(iface_cls, "__module__", "") or ""
+    return "ble_interface" in module_name
+
+
 def main() -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
@@ -160,6 +172,20 @@ def main() -> None:
 
     stop = threading.Event()
     initial_snapshot_sent = False
+    energy_session_deadline = None
+
+    energy_saving_enabled = config.ENERGY_SAVING
+    energy_online_secs = max(0.0, config._ENERGY_ONLINE_DURATION_SECS)
+    energy_sleep_secs = max(0.0, config._ENERGY_SLEEP_SECS)
+
+    def _energy_sleep(reason: str) -> None:
+        if not energy_saving_enabled or energy_sleep_secs <= 0:
+            return
+        if config.DEBUG:
+            config._debug_log(
+                f"energy saving: {reason}; sleeping for {energy_sleep_secs:g}s"
+            )
+        stop.wait(energy_sleep_secs)
 
     def handle_sigterm(*_args) -> None:
         stop.set()
@@ -196,6 +222,10 @@ def main() -> None:
                     if not announced_target and resolved_target:
                         print(f"[info] using mesh interface: {resolved_target}")
                         announced_target = True
+                    if energy_saving_enabled and energy_online_secs > 0:
+                        energy_session_deadline = time.monotonic() + energy_online_secs
+                    else:
+                        energy_session_deadline = None
                 except interfaces.NoAvailableMeshInterface as exc:
                     print(f"[error] {exc}")
                     _close_interface(iface)
@@ -218,6 +248,34 @@ def main() -> None:
                             ),
                             config._RECONNECT_MAX_DELAY_SECS,
                         )
+                    continue
+
+            if energy_saving_enabled and iface is not None:
+                if (
+                    energy_session_deadline is not None
+                    and time.monotonic() >= energy_session_deadline
+                ):
+                    print("[info] energy saving: disconnecting mesh interface")
+                    _close_interface(iface)
+                    iface = None
+                    announced_target = False
+                    initial_snapshot_sent = False
+                    energy_session_deadline = None
+                    _energy_sleep("disconnected after session")
+                    continue
+                if (
+                    _is_ble_interface(iface)
+                    and getattr(iface, "client", object()) is None
+                ):
+                    print(
+                        "[info] energy saving: BLE client disconnected; sleeping before retry"
+                    )
+                    _close_interface(iface)
+                    iface = None
+                    announced_target = False
+                    initial_snapshot_sent = False
+                    energy_session_deadline = None
+                    _energy_sleep("BLE client disconnected")
                     continue
 
             if not initial_snapshot_sent:
@@ -272,5 +330,6 @@ __all__ = [
     "_event_wait_allows_default_timeout",
     "_node_items_snapshot",
     "_subscribe_receive_topics",
+    "_is_ble_interface",
     "main",
 ]
