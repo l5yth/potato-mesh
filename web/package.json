@@ -1,0 +1,9 @@
+{
+  "name": "potato-mesh",
+  "version": "0.5.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "mkdir -p reports coverage && NODE_V8_COVERAGE=coverage node --test --experimental-test-coverage --test-reporter=junit --test-reporter-destination=reports/javascript-junit.xml && node ./scripts/export-coverage.js"
+  }
+}
