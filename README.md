@@ -130,6 +130,7 @@ and attempts an BLE connection if available.
 * <https://potatomesh.net/>
 * <https://vrs.kdd2105.ru/>
 * <https://potatomesh.stratospire.com/>
+* <https://es1tem.uk/>
 
 ## Docker
 
@@ -145,3 +146,6 @@ See the [Docker guide](DOCKER.md) for more details and custome deployment instru
 ## License
 
 Apache v2.0, Contact <COM0@l5y.tech>
+
+Join our Matrix to discuss the dashboard or ask for technical support:
+[#potatomesh:dod.ngo](https://matrix.to/#/#potatomesh:dod.ngo)
