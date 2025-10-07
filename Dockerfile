@@ -43,7 +43,8 @@ WORKDIR /app
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 
 # Copy application code (exclude Dockerfile from web directory)
-COPY --chown=potatomesh:potatomesh web/app.rb web/app.sh web/Gemfile web/Gemfile.lock* web/public/ web/spec/ ./
+COPY --chown=potatomesh:potatomesh web/app.rb web/app.sh web/Gemfile web/Gemfile.lock* web/spec/ ./
+COPY --chown=potatomesh:potatomesh web/public ./public
 COPY --chown=potatomesh:potatomesh web/views/ ./views/
 
 # Copy SQL schema files from data directory
