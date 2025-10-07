@@ -1956,7 +1956,11 @@ get "/" do
   meta = meta_configuration
   config = frontend_app_config
 
-  response.set_cookie("theme", value: "dark", path: "/", max_age: 60 * 60 * 24 * 7, same_site: :lax) unless request.cookies["theme"]
+  raw_theme = request.cookies["theme"]
+  theme = %w[dark light].include?(raw_theme) ? raw_theme : "dark"
+  if raw_theme != theme
+    response.set_cookie("theme", value: theme, path: "/", max_age: 60 * 60 * 24 * 7, same_site: :lax)
+  end
 
   erb :index, locals: {
                 site_name: meta[:name],
@@ -1973,5 +1977,6 @@ get "/" do
                 private_mode: private_mode?,
                 refresh_interval_seconds: REFRESH_INTERVAL_SECONDS,
                 app_config_json: JSON.generate(config),
+                initial_theme: theme,
               }
 end
