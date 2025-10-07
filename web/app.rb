@@ -26,7 +26,6 @@ require "logger"
 require "rack/utils"
 require "open3"
 require "time"
-require "rack"
 require "prometheus/client"
 require "prometheus/client/formats/text"
 require 'prometheus/middleware/collector'
@@ -1097,35 +1096,35 @@ def upsert_node(db, node_id, n)
       )
 
       if met["batteryLevel"]
-        $prom_node_battery_level.set(met["batteryLevel"] || 0, labels: { node: node_id })
+        $prom_node_battery_level.set(met["batteryLevel"], labels: { node: node_id })
       end
 
       if met["voltage"]
-        $prom_node_voltage.set(met["voltage"] || 0, labels: { node: node_id })
+        $prom_node_voltage.set(met["voltage"], labels: { node: node_id })
       end
 
       if met["uptimeSeconds"]
-        $prom_node_uptime.set(met["uptimeSeconds"] || 0, labels: { node: node_id })
+        $prom_node_uptime.set(met["uptimeSeconds"], labels: { node: node_id })
       end
 
       if met["channelUtilization"]
-        $prom_node_channel_utilization.set(met["channelUtilization"] || 0, labels: { node: node_id })
+        $prom_node_channel_utilization.set(met["channelUtilization"], labels: { node: node_id })
       end
 
       if met["airUtilTx"]
-        $prom_node_transmit_air_utilization.set(met["airUtilTx"] || 0, labels: { node: node_id })
+        $prom_node_transmit_air_utilization.set(met["airUtilTx"], labels: { node: node_id })
       end
 
       if pos["latitude"]
-        $prom_node_latitude.set(pos["latitude"] || 0, labels: { node: node_id })
+        $prom_node_latitude.set(pos["latitude"], labels: { node: node_id })
       end
 
       if pos["longitude"]
-        $prom_node_longitude.set(pos["longitude"] || 0, labels: { node: node_id })
+        $prom_node_longitude.set(pos["longitude"], labels: { node: node_id })
       end
 
       if pos["altitude"]
-        $prom_node_altitude.set(pos["altitude"] || 0, labels: { node: node_id })
+        $prom_node_altitude.set(pos["altitude"], labels: { node: node_id })
       end
     end
   end
@@ -1944,7 +1943,7 @@ def insert_message(db, m)
         db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
       end
     else
-      $prom_messages_total.increment()
+      $prom_messages_total.increment
 
       begin
         db.execute <<~SQL, row
