@@ -49,6 +49,22 @@ MAX_JSON_BODY_BYTES = begin
   end
 # Fallback version string used when Git metadata is unavailable.
 VERSION_FALLBACK = "v0.3.0"
+DEFAULT_REFRESH_INTERVAL_SECONDS = 60
+REFRESH_INTERVAL_SECONDS = begin
+    raw = ENV.fetch("REFRESH_INTERVAL_SECONDS", DEFAULT_REFRESH_INTERVAL_SECONDS.to_s)
+    value = Integer(raw, 10)
+    value.positive? ? value : DEFAULT_REFRESH_INTERVAL_SECONDS
+  rescue ArgumentError
+    DEFAULT_REFRESH_INTERVAL_SECONDS
+  end
+MAP_TILE_FILTER_LIGHT = ENV.fetch(
+  "MAP_TILE_FILTER_LIGHT",
+  "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
+)
+MAP_TILE_FILTER_DARK = ENV.fetch(
+  "MAP_TILE_FILTER_DARK",
+  "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
+)
 
 # Fetch a configuration string from environment variables.
 #
@@ -160,6 +176,25 @@ end
 # @return [String] sanitized frequency string.
 def sanitized_default_frequency
   sanitized_string(DEFAULT_FREQUENCY)
+end
+
+# Assemble configuration exposed to the frontend JavaScript bundle.
+#
+# @return [Hash] settings describing refresh cadence and map defaults.
+def frontend_app_config
+  {
+    refreshIntervalSeconds: REFRESH_INTERVAL_SECONDS,
+    refreshMs: REFRESH_INTERVAL_SECONDS * 1000,
+    chatEnabled: !private_mode?,
+    defaultChannel: sanitized_default_channel,
+    defaultFrequency: sanitized_default_frequency,
+    mapCenter: { lat: MAP_CENTER_LAT, lon: MAP_CENTER_LON },
+    maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
+    tileFilters: {
+      light: MAP_TILE_FILTER_LIGHT,
+      dark: MAP_TILE_FILTER_DARK,
+    },
+  }
 end
 
 # Return the configured Matrix room when present.
@@ -1919,6 +1954,7 @@ end
 # Renders the main site with configuration-driven defaults for the template.
 get "/" do
   meta = meta_configuration
+  config = frontend_app_config
 
   response.set_cookie("theme", value: "dark", path: "/", max_age: 60 * 60 * 24 * 7, same_site: :lax) unless request.cookies["theme"]
 
@@ -1935,5 +1971,7 @@ get "/" do
                 matrix_room: sanitized_matrix_room,
                 version: APP_VERSION,
                 private_mode: private_mode?,
+                refresh_interval_seconds: REFRESH_INTERVAL_SECONDS,
+                app_config_json: JSON.generate(config),
               }
 end
