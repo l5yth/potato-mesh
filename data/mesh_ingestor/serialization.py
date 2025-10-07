@@ -1,4 +1,8 @@
-"""Utilities for converting Meshtastic structures into JSON-friendly forms."""
+"""Utilities for converting Meshtastic structures into JSON-friendly forms.
+
+The helpers normalise loosely structured Meshtastic packets so they can be
+forwarded to the web application using predictable field names and types.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +19,33 @@ from google.protobuf.message import Message as ProtoMessage
 
 
 def _get(obj, key, default=None):
+    """Return ``obj[key]`` or ``getattr(obj, key)`` when available.
+
+    Parameters:
+        obj: Mapping or object supplying attributes.
+        key: Name of the attribute or mapping key to retrieve.
+        default: Fallback value when ``key`` is not present.
+
+    Returns:
+        The resolved value or ``default`` if the lookup fails.
+    """
+
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
 
 
 def _node_to_dict(n) -> dict:
+    """Convert ``n`` into a JSON-serialisable mapping.
+
+    Parameters:
+        n: Arbitrary data structure, commonly a protobuf message, dataclass or
+            nested containers produced by Meshtastic.
+
+    Returns:
+        A plain dictionary containing recursively converted values.
+    """
+
     def _convert(value):
         if isinstance(value, dict):
             return {k: _convert(v) for k, v in value.items()}
@@ -61,11 +86,23 @@ def _node_to_dict(n) -> dict:
 
 
 def upsert_payload(node_id, node) -> dict:
+    """Return the payload expected by ``/api/nodes`` upsert requests.
+
+    Parameters:
+        node_id: Canonical node identifier.
+        node: Node representation to convert with :func:`_node_to_dict`.
+
+    Returns:
+        A mapping keyed by ``node_id`` describing the node.
+    """
+
     ndict = _node_to_dict(node)
     return {node_id: ndict}
 
 
 def _iso(ts: int | float) -> str:
+    """Convert ``ts`` into an ISO-8601 timestamp in UTC."""
+
     import datetime
 
     return (
@@ -76,6 +113,18 @@ def _iso(ts: int | float) -> str:
 
 
 def _first(d, *names, default=None):
+    """Return the first matching attribute or key from ``d``.
+
+    Parameters:
+        d: Mapping or object providing nested attributes.
+        *names: Candidate names, optionally using ``dot.separated`` notation
+            for nested lookups.
+        default: Value returned when no candidates succeed.
+
+    Returns:
+        The first non-empty value encountered or ``default``.
+    """
+
     def _mapping_get(obj, key):
         if isinstance(obj, Mapping) and key in obj:
             return True, obj[key]
@@ -105,6 +154,15 @@ def _first(d, *names, default=None):
 
 
 def _coerce_int(value):
+    """Best-effort conversion of ``value`` to an integer.
+
+    Parameters:
+        value: Any type supported by Meshtastic payloads.
+
+    Returns:
+        An integer or ``None`` when conversion is not possible.
+    """
+
     if value is None:
         return None
     if isinstance(value, bool):
@@ -134,6 +192,15 @@ def _coerce_int(value):
 
 
 def _coerce_float(value):
+    """Best-effort conversion of ``value`` to a float.
+
+    Parameters:
+        value: Any type supported by Meshtastic payloads.
+
+    Returns:
+        A float or ``None`` when conversion fails or results in ``NaN``.
+    """
+
     if value is None:
         return None
     if isinstance(value, bool):
@@ -159,6 +226,15 @@ def _coerce_float(value):
 
 
 def _pkt_to_dict(packet) -> dict:
+    """Normalise a packet into a plain dictionary.
+
+    Parameters:
+        packet: Packet object or mapping emitted by Meshtastic.
+
+    Returns:
+        A dictionary representation suitable for downstream processing.
+    """
+
     if isinstance(packet, dict):
         return packet
     if isinstance(packet, ProtoMessage):
@@ -179,6 +255,15 @@ def _pkt_to_dict(packet) -> dict:
 
 
 def _canonical_node_id(value) -> str | None:
+    """Convert node identifiers into the canonical ``!xxxxxxxx`` format.
+
+    Parameters:
+        value: Input identifier which may be an int, float or string.
+
+    Returns:
+        The canonical identifier or ``None`` if conversion fails.
+    """
+
     if value is None:
         return None
     if isinstance(value, (int, float)):
@@ -218,6 +303,15 @@ def _canonical_node_id(value) -> str | None:
 
 
 def _node_num_from_id(node_id) -> int | None:
+    """Extract the numeric node ID from a canonical identifier.
+
+    Parameters:
+        node_id: Identifier value accepted by :func:`_canonical_node_id`.
+
+    Returns:
+        The numeric node ID or ``None`` when parsing fails.
+    """
+
     if node_id is None:
         return None
     if isinstance(node_id, (int, float)):
@@ -246,6 +340,17 @@ def _node_num_from_id(node_id) -> int | None:
 
 
 def _merge_mappings(base, extra):
+    """Merge two mapping-like objects recursively.
+
+    Parameters:
+        base: Existing mapping or mapping-like structure.
+        extra: Mapping or compatible object whose entries should overlay
+            ``base``.
+
+    Returns:
+        A new dictionary containing the merged values.
+    """
+
     base_dict: dict
     if isinstance(base, Mapping):
         base_dict = dict(base)
@@ -271,6 +376,15 @@ def _merge_mappings(base, extra):
 
 
 def _extract_payload_bytes(decoded_section: Mapping) -> bytes | None:
+    """Return raw payload bytes from ``decoded_section`` when available.
+
+    Parameters:
+        decoded_section: Mapping that may include a ``payload`` entry.
+
+    Returns:
+        Raw payload bytes or ``None`` when the payload is missing or invalid.
+    """
+
     if not isinstance(decoded_section, Mapping):
         return None
     payload = decoded_section.get("payload")
@@ -292,6 +406,15 @@ def _extract_payload_bytes(decoded_section: Mapping) -> bytes | None:
 
 
 def _decode_nodeinfo_payload(payload_bytes):
+    """Decode ``NodeInfo`` protobuf payloads from raw bytes.
+
+    Parameters:
+        payload_bytes: Serialized protobuf data from a NODEINFO packet.
+
+    Returns:
+        A :class:`meshtastic.protobuf.mesh_pb2.NodeInfo` instance or ``None``.
+    """
+
     if not payload_bytes:
         return None
     try:
@@ -315,6 +438,16 @@ def _decode_nodeinfo_payload(payload_bytes):
 
 
 def _nodeinfo_metrics_dict(node_info) -> dict | None:
+    """Extract device metric fields from a NodeInfo message.
+
+    Parameters:
+        node_info: Parsed NodeInfo protobuf message.
+
+    Returns:
+        A dictionary containing selected metric fields, or ``None`` when no
+        metrics are present.
+    """
+
     if not node_info:
         return None
     metrics_field_names = {f[0].name for f in node_info.ListFields()}
@@ -343,6 +476,15 @@ def _nodeinfo_metrics_dict(node_info) -> dict | None:
 
 
 def _nodeinfo_position_dict(node_info) -> dict | None:
+    """Return a dictionary view of positional data from NodeInfo.
+
+    Parameters:
+        node_info: Parsed NodeInfo protobuf message.
+
+    Returns:
+        A dictionary of positional fields or ``None`` if no data exists.
+    """
+
     if not node_info:
         return None
     fields = {f[0].name for f in node_info.ListFields()}
@@ -388,6 +530,18 @@ def _nodeinfo_position_dict(node_info) -> dict | None:
 
 
 def _nodeinfo_user_dict(node_info, decoded_user):
+    """Combine protobuf and decoded user information into a mapping.
+
+    Parameters:
+        node_info: Parsed NodeInfo protobuf message that may contain a ``user``
+            field.
+        decoded_user: Mapping or protobuf message representing decoded user
+            data from the packet payload.
+
+    Returns:
+        A merged mapping of user information or ``None`` when no data exists.
+    """
+
     user_dict = None
     if node_info:
         field_names = {f[0].name for f in node_info.ListFields()}

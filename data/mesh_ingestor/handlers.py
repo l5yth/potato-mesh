@@ -29,6 +29,16 @@ from .serialization import (
 
 
 def upsert_node(node_id, node) -> None:
+    """Schedule an upsert for a single node.
+
+    Parameters:
+        node_id: Canonical identifier for the node in the ``!xxxxxxxx`` format.
+        node: Node object or mapping to serialise for the API payload.
+
+    Returns:
+        ``None``. The payload is forwarded to the shared HTTP queue.
+    """
+
     payload = upsert_payload(node_id, node)
     _queue_post_json("/api/nodes", payload, priority=queue._NODE_POST_PRIORITY)
 
@@ -42,6 +52,16 @@ def upsert_node(node_id, node) -> None:
 
 
 def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
+    """Persist a decoded position packet.
+
+    Parameters:
+        packet: Raw packet metadata emitted by Meshtastic.
+        decoded: Decoded payload extracted from ``packet['decoded']``.
+
+    Returns:
+        ``None``. The formatted position data is queued for HTTP submission.
+    """
+
     node_ref = _first(packet, "fromId", "from_id", "from", default=None)
     if node_ref is None:
         node_ref = _first(decoded, "num", default=None)
@@ -215,12 +235,32 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
 
 
 def base64_payload(payload_bytes: bytes | None) -> str | None:
+    """Encode raw payload bytes for JSON transport.
+
+    Parameters:
+        payload_bytes: Optional payload to encode. ``None`` is returned when
+            the payload is empty or missing.
+
+    Returns:
+        The Base64 encoded payload string or ``None`` when no payload exists.
+    """
+
     if not payload_bytes:
         return None
     return base64.b64encode(payload_bytes).decode("ascii")
 
 
 def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
+    """Persist telemetry metrics extracted from a packet.
+
+    Parameters:
+        packet: Packet metadata received from the radio interface.
+        decoded: Meshtastic-decoded view containing telemetry structures.
+
+    Returns:
+        ``None``. The telemetry payload is added to the HTTP queue.
+    """
+
     telemetry_section = (
         decoded.get("telemetry") if isinstance(decoded, Mapping) else None
     )
@@ -392,6 +432,17 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
 
 
 def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
+    """Persist node information updates.
+
+    Parameters:
+        packet: Raw packet metadata describing the update.
+        decoded: Decoded payload that may include ``user`` and ``position``
+            sections.
+
+    Returns:
+        ``None``. The node payload is merged into the API queue.
+    """
+
     payload_bytes = _extract_payload_bytes(decoded)
     node_info = _decode_nodeinfo_payload(payload_bytes)
     decoded_user = decoded.get("user")
@@ -544,6 +595,16 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
 
 
 def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
+    """Persist neighbour information gathered from a packet.
+
+    Parameters:
+        packet: Raw Meshtastic packet metadata.
+        decoded: Decoded view containing the neighbour information section.
+
+    Returns:
+        ``None``. The neighbour snapshot is queued for submission.
+    """
+
     neighbor_section = (
         decoded.get("neighborinfo") if isinstance(decoded, Mapping) else None
     )
@@ -637,6 +698,15 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
 
 
 def store_packet_dict(packet: Mapping) -> None:
+    """Route a decoded packet to the appropriate storage handler.
+
+    Parameters:
+        packet: Packet dictionary emitted by the mesh interface.
+
+    Returns:
+        ``None``. Side-effects depend on the specific handler invoked.
+    """
+
     decoded = packet.get("decoded") or {}
 
     portnum_raw = _first(decoded, "portnum", default=None)
@@ -733,6 +803,17 @@ def store_packet_dict(packet: Mapping) -> None:
 
 
 def on_receive(packet, interface) -> None:
+    """Callback registered with Meshtastic to capture incoming packets.
+
+    Parameters:
+        packet: Packet payload supplied by the Meshtastic pubsub topic.
+        interface: Interface instance that produced the packet. Only used for
+            compatibility with Meshtastic's callback signature.
+
+    Returns:
+        ``None``. Packets are serialised and enqueued asynchronously.
+    """
+
     if isinstance(packet, dict):
         if packet.get("_potatomesh_seen"):
             return

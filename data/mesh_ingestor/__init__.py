@@ -60,6 +60,8 @@ class _MeshIngestorModule(types.ModuleType):
     """Module proxy that forwards config and interface state."""
 
     def __getattr__(self, name: str):  # type: ignore[override]
+        """Resolve attributes by delegating to the underlying submodules."""
+
         if name in _CONFIG_ATTRS:
             return getattr(config, name)
         if name in _INTERFACE_ATTRS:
@@ -69,6 +71,8 @@ class _MeshIngestorModule(types.ModuleType):
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):  # type: ignore[override]
+        """Propagate assignments to the appropriate submodule."""
+
         if name in _CONFIG_ATTRS:
             setattr(config, name, value)
             super().__setattr__(name, value)

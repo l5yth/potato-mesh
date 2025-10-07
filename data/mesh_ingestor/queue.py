@@ -40,7 +40,14 @@ def _post_json(
     instance: str | None = None,
     api_token: str | None = None,
 ) -> None:
-    """Send a JSON payload to the configured web API."""
+    """Send a JSON payload to the configured web API.
+
+    Parameters:
+        path: API path relative to the configured instance root.
+        payload: JSON-serialisable body to transmit.
+        instance: Optional override for :data:`config.INSTANCE`.
+        api_token: Optional override for :data:`config.API_TOKEN`.
+    """
 
     if instance is None:
         instance = config.INSTANCE
@@ -70,7 +77,14 @@ def _enqueue_post_json(
     *,
     state: QueueState = STATE,
 ) -> None:
-    """Store a POST request in the priority queue."""
+    """Store a POST request in the priority queue.
+
+    Parameters:
+        path: API path for the queued request.
+        payload: JSON-serialisable body.
+        priority: Lower values execute first.
+        state: Shared queue state, injectable for testing.
+    """
 
     with state.lock:
         counter = next(state.counter)
@@ -80,7 +94,12 @@ def _enqueue_post_json(
 def _drain_post_queue(
     state: QueueState = STATE, send: Callable[[str, dict], None] | None = None
 ) -> None:
-    """Process queued POST requests in priority order."""
+    """Process queued POST requests in priority order.
+
+    Parameters:
+        state: Queue container holding pending items.
+        send: Optional callable used to transmit requests.
+    """
 
     if send is None:
         send = _post_json
@@ -105,7 +124,15 @@ def _queue_post_json(
     state: QueueState = STATE,
     send: Callable[[str, dict], None] | None = None,
 ) -> None:
-    """Queue a POST request and start processing if idle."""
+    """Queue a POST request and start processing if idle.
+
+    Parameters:
+        path: API path for the request.
+        payload: JSON payload to send.
+        priority: Scheduling priority where lower values run first.
+        state: Queue container used to store pending requests.
+        send: Optional transport override, primarily for tests.
+    """
 
     if send is None:
         send = _post_json
@@ -119,7 +146,11 @@ def _queue_post_json(
 
 
 def _clear_post_queue(state: QueueState = STATE) -> None:
-    """Clear the pending POST queue (used by tests)."""
+    """Clear the pending POST queue.
+
+    Parameters:
+        state: Queue state to reset. Defaults to the global queue.
+    """
 
     with state.lock:
         state.queue.clear()

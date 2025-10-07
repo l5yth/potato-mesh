@@ -18,7 +18,11 @@ _CLOSE_TIMEOUT_SECS = float(os.environ.get("MESH_CLOSE_TIMEOUT", "5"))
 
 
 def _debug_log(message: str) -> None:
-    """Print ``message`` with a UTC timestamp when ``DEBUG`` is enabled."""
+    """Print ``message`` with a UTC timestamp when ``DEBUG`` is enabled.
+
+    Parameters:
+        message: Text to display when debug logging is active.
+    """
 
     if not DEBUG:
         return

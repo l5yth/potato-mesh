@@ -25,6 +25,12 @@ _RECEIVE_TOPICS = (
 
 
 def _event_wait_allows_default_timeout() -> bool:
+    """Return ``True`` when :meth:`threading.Event.wait` accepts ``timeout``.
+
+    The behaviour changed between Python versions; this helper shields the
+    daemon from ``TypeError`` when the default timeout parameter is absent.
+    """
+
     try:
         wait_signature = inspect.signature(threading.Event.wait)
     except (TypeError, ValueError):  # pragma: no cover
@@ -45,6 +51,8 @@ def _event_wait_allows_default_timeout() -> bool:
 
 
 def _subscribe_receive_topics() -> list[str]:
+    """Subscribe the packet handler to all receive-related pubsub topics."""
+
     subscribed = []
     for topic in _RECEIVE_TOPICS:
         try:
@@ -58,6 +66,18 @@ def _subscribe_receive_topics() -> list[str]:
 def _node_items_snapshot(
     nodes_obj, retries: int = 3
 ) -> list[tuple[str, object]] | None:
+    """Snapshot ``nodes_obj`` to avoid iteration errors during updates.
+
+    Parameters:
+        nodes_obj: Meshtastic nodes mapping or iterable.
+        retries: Number of attempts when encountering "dictionary changed"
+            runtime errors.
+
+    Returns:
+        A list of ``(node_id, node)`` tuples, ``None`` when retries are
+        exhausted, or an empty list when no nodes exist.
+    """
+
     if not nodes_obj:
         return []
 
@@ -87,6 +107,8 @@ def _node_items_snapshot(
 
 
 def _close_interface(iface_obj) -> None:
+    """Close ``iface_obj`` while respecting configured timeouts."""
+
     if iface_obj is None:
         return
 
@@ -112,6 +134,8 @@ def _close_interface(iface_obj) -> None:
 
 
 def main() -> None:
+    """Run the mesh ingestion daemon until interrupted."""
+
     subscribed = _subscribe_receive_topics()
     if config.DEBUG and subscribed:
         config._debug_log(f"subscribed to receive topics: {', '.join(subscribed)}")

@@ -1,9 +1,8 @@
-"""Mesh interface discovery helpers."""
+"""Mesh interface discovery helpers for interacting with Meshtastic hardware."""
 
 from __future__ import annotations
 
 import glob
-import inspect
 import ipaddress
 import re
 import urllib.parse
@@ -45,7 +44,14 @@ class _DummySerialInterface:
 
 
 def _parse_ble_target(value: str) -> str | None:
-    """Return an uppercase BLE MAC address when ``value`` matches the format."""
+    """Return an uppercase BLE MAC address when ``value`` matches the format.
+
+    Parameters:
+        value: User-provided target string.
+
+    Returns:
+        The normalised MAC address or ``None`` when validation fails.
+    """
 
     if not value:
         return None
@@ -58,7 +64,14 @@ def _parse_ble_target(value: str) -> str | None:
 
 
 def _parse_network_target(value: str) -> tuple[str, int] | None:
-    """Return ``(host, port)`` when ``value`` is an IP address string."""
+    """Return ``(host, port)`` when ``value`` is an IP address string.
+
+    Parameters:
+        value: Hostname or URL describing the TCP interface.
+
+    Returns:
+        A ``(host, port)`` tuple or ``None`` when parsing fails.
+    """
 
     if not value:
         return None
@@ -104,7 +117,14 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
 
 
 def _load_ble_interface():
-    """Return :class:`meshtastic.ble_interface.BLEInterface` when available."""
+    """Return :class:`meshtastic.ble_interface.BLEInterface` when available.
+
+    Returns:
+        The resolved BLE interface class.
+
+    Raises:
+        RuntimeError: If the BLE dependencies are not installed.
+    """
 
     global BLEInterface
     if BLEInterface is not None:
@@ -131,7 +151,14 @@ def _load_ble_interface():
 
 
 def _create_serial_interface(port: str) -> tuple[object, str]:
-    """Return an appropriate mesh interface for ``port``."""
+    """Return an appropriate mesh interface for ``port``.
+
+    Parameters:
+        port: User-supplied port string which may represent serial, BLE or TCP.
+
+    Returns:
+        ``(interface, resolved_target)`` describing the created interface.
+    """
 
     port_value = (port or "").strip()
     if port_value.lower() in {"", "mock", "none", "null", "disabled"}:
@@ -158,7 +185,7 @@ class NoAvailableMeshInterface(RuntimeError):
 
 
 def _default_serial_targets() -> list[str]:
-    """Return a list of candidate serial device paths for auto-discovery."""
+    """Return candidate serial device paths for auto-discovery."""
 
     candidates: list[str] = []
     seen: set[str] = set()
@@ -173,7 +200,14 @@ def _default_serial_targets() -> list[str]:
 
 
 def _create_default_interface() -> tuple[object, str]:
-    """Attempt to create the default mesh interface, raising on failure."""
+    """Attempt to create the default mesh interface, raising on failure.
+
+    Returns:
+        ``(interface, resolved_target)`` for the discovered connection.
+
+    Raises:
+        NoAvailableMeshInterface: When no usable connection can be created.
+    """
 
     errors: list[tuple[str, Exception]] = []
     for candidate in _default_serial_targets():

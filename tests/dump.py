@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-import json, os, signal, sys, time, threading
+"""Utility script to dump Meshtastic traffic for offline analysis."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import sys
+import time
 from datetime import datetime, timezone
 
-from meshtastic.serial_interface import SerialInterface
 from meshtastic.mesh_interface import MeshInterface
+from meshtastic.serial_interface import SerialInterface
 from pubsub import pub
 
 PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
@@ -13,11 +21,20 @@ OUT = os.environ.get("MESH_DUMP_FILE", "meshtastic-dump.ndjson")
 f = open(OUT, "a", buffering=1, encoding="utf-8")
 
 
-def now():
+def now() -> str:
+    """Return the current UTC timestamp in ISO 8601 format."""
+
     return datetime.now(timezone.utc).isoformat()
 
 
-def write(kind, payload):
+def write(kind: str, payload: dict) -> None:
+    """Append a JSON record to the dump file.
+
+    Parameters:
+        kind: Logical record type such as ``"packet"`` or ``"node"``.
+        payload: Serializable payload containing the record body.
+    """
+
     rec = {"ts": now(), "kind": kind, **payload}
     f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
 
@@ -28,12 +45,26 @@ iface: MeshInterface = SerialInterface(PORT)
 
 # Packet callback: every RF/Mesh packet the node receives/decodes lands here
 def on_packet(packet, iface):
+    """Write packet metadata whenever the radio receives a frame.
+
+    Parameters:
+        packet: Meshtastic packet object or dictionary.
+        iface: Interface instance delivering the packet.
+    """
+
     # 'packet' already includes decoded fields when available (portnum, payload, position, telemetry, etc.)
     write("packet", {"packet": packet})
 
 
 # Node callback: topology/metadata updates (nodeinfo, hops, lastHeard, etc.)
 def on_node(node, iface):
+    """Write node metadata updates produced by Meshtastic.
+
+    Parameters:
+        node: Meshtastic node object or mapping.
+        iface: Interface instance emitting the update.
+    """
+
     write("node", {"node": node})
 
 
@@ -57,6 +88,8 @@ except Exception as e:
 
 # Keep the process alive until Ctrl-C
 def _stop(signum, frame):
+    """Handle termination signals by flushing buffers and exiting."""
+
     write("meta", {"event": "stopping"})
     try:
         try:
