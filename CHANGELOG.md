@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## v0.5.0
+
+* Add JavaScript configuration tests and coverage workflow
+
 ## v0.4.0
 
 * Reformat neighbor overlay layout by @l5yth in <https://github.com/l5yth/potato-mesh/pull/237>
