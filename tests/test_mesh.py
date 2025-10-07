@@ -130,7 +130,7 @@ def mesh_module(monkeypatch):
         monkeypatch.setitem(sys.modules, "google.protobuf.json_format", json_format_mod)
         monkeypatch.setitem(sys.modules, "google.protobuf.message", message_mod)
 
-    module_name = "data.mesh"
+    module_name = "data.mesh_ingestor"
     if module_name in sys.modules:
         module = importlib.reload(sys.modules[module_name])
     else:
@@ -1410,7 +1410,7 @@ def test_default_serial_targets_deduplicates(mesh_module, monkeypatch):
             return ["/dev/ttyACM1"]
         return []
 
-    monkeypatch.setattr(mesh.glob, "glob", fake_glob)
+    monkeypatch.setattr(mesh.interfaces.glob, "glob", fake_glob)
 
     targets = mesh._default_serial_targets()
 
@@ -1428,7 +1428,7 @@ def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
     def boom(*_, **__):
         raise RuntimeError("offline")
 
-    monkeypatch.setattr(mesh.urllib.request, "urlopen", boom)
+    monkeypatch.setattr(mesh.queue.urllib.request, "urlopen", boom)
 
     mesh._post_json("/api/test", {"foo": "bar"})
 
@@ -1440,12 +1440,12 @@ def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
     mesh = mesh_module
 
     mesh._clear_post_queue()
-    monkeypatch.setattr(mesh, "_POST_QUEUE_ACTIVE", True)
+    mesh.STATE.active = True
 
     mesh._queue_post_json("/api/test", {"id": 1})
 
-    assert mesh._POST_QUEUE_ACTIVE is True
-    assert mesh._POST_QUEUE
+    assert mesh.STATE.active is True
+    assert mesh.STATE.queue
     mesh._clear_post_queue()
 
 
