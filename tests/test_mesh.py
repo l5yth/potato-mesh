@@ -173,7 +173,8 @@ def test_create_serial_interface_uses_serial_module(mesh_module, monkeypatch):
         created["devPath"] = devPath
         return SimpleNamespace(nodes={"!foo": sentinel}, close=lambda: None)
 
-    monkeypatch.setattr(mesh, "SerialInterface", fake_interface)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "SerialInterface", fake_interface)
 
     iface, resolved = mesh._create_serial_interface("/dev/ttyTEST")
 
@@ -191,7 +192,8 @@ def test_create_serial_interface_uses_tcp_for_ip(mesh_module, monkeypatch):
         created["portNumber"] = portNumber
         return SimpleNamespace(nodes={}, close=lambda: None)
 
-    monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "TCPInterface", fake_tcp_interface)
 
     iface, resolved = mesh._create_serial_interface("192.168.1.25:4500")
 
@@ -209,7 +211,8 @@ def test_create_serial_interface_defaults_tcp_port(mesh_module, monkeypatch):
         created["portNumber"] = portNumber
         return SimpleNamespace(nodes={}, close=lambda: None)
 
-    monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "TCPInterface", fake_tcp_interface)
 
     _, resolved = mesh._create_serial_interface("tcp://10.20.30.40")
 
@@ -227,7 +230,8 @@ def test_create_serial_interface_plain_ip(mesh_module, monkeypatch):
         created["portNumber"] = portNumber
         return SimpleNamespace(nodes={}, close=lambda: None)
 
-    monkeypatch.setattr(mesh, "TCPInterface", fake_tcp_interface)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "TCPInterface", fake_tcp_interface)
 
     _, resolved = mesh._create_serial_interface(" 192.168.50.10 ")
 
@@ -244,7 +248,8 @@ def test_create_serial_interface_ble(mesh_module, monkeypatch):
         created["address"] = address
         return SimpleNamespace(nodes={}, close=lambda: None)
 
-    monkeypatch.setattr(mesh, "BLEInterface", fake_ble_interface)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "BLEInterface", fake_ble_interface)
 
     iface, resolved = mesh._create_serial_interface("ed:4d:9e:95:cf:60")
 
@@ -266,8 +271,9 @@ def test_create_default_interface_falls_back_to_tcp(mesh_module, monkeypatch):
             raise RuntimeError("missing serial device")
         return SimpleNamespace(nodes={}, close=lambda: None), "tcp://127.0.0.1:4403"
 
-    monkeypatch.setattr(mesh, "_default_serial_targets", fake_targets)
-    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "_default_serial_targets", fake_targets)
+    monkeypatch.setattr(mesh_interfaces, "_create_serial_interface", fake_create)
 
     iface, resolved = mesh._create_default_interface()
 
@@ -279,12 +285,15 @@ def test_create_default_interface_falls_back_to_tcp(mesh_module, monkeypatch):
 def test_create_default_interface_raises_when_unavailable(mesh_module, monkeypatch):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "_default_serial_targets", lambda: ["/dev/ttyFAIL"])
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(
+        mesh_interfaces, "_default_serial_targets", lambda: ["/dev/ttyFAIL"]
+    )
 
     def always_fail(port):
         raise RuntimeError(f"boom for {port}")
 
-    monkeypatch.setattr(mesh, "_create_serial_interface", always_fail)
+    monkeypatch.setattr(mesh_interfaces, "_create_serial_interface", always_fail)
 
     with pytest.raises(mesh.NoAvailableMeshInterface) as exc_info:
         mesh._create_default_interface()
@@ -325,8 +334,9 @@ def test_node_to_dict_handles_nested_structures(mesh_module):
 def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -369,8 +379,9 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
 def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -445,8 +456,9 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
 def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -497,8 +509,9 @@ def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -567,8 +580,9 @@ def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
 def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -610,8 +624,9 @@ def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
 def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -651,8 +666,9 @@ def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
 def test_store_packet_dict_nodeinfo_sanitizes_nested_proto(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -697,8 +713,9 @@ def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
 ):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -731,8 +748,9 @@ def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda *args, **kwargs: captured.append((args, kwargs)),
     )
@@ -805,7 +823,8 @@ def test_get_handles_dicts_and_objects(mesh_module):
 
 def test_post_json_skips_without_instance(mesh_module, monkeypatch):
     mesh = mesh_module
-    monkeypatch.setattr(mesh, "INSTANCE", "")
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "INSTANCE", "")
 
     def fail_request(*_, **__):
         raise AssertionError("Request should not be created when INSTANCE is empty")
@@ -816,8 +835,9 @@ def test_post_json_skips_without_instance(mesh_module, monkeypatch):
 
 def test_post_json_sends_payload_with_token(mesh_module, monkeypatch):
     mesh = mesh_module
-    monkeypatch.setattr(mesh, "INSTANCE", "https://example.test")
-    monkeypatch.setattr(mesh, "API_TOKEN", "secret")
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "INSTANCE", "https://example.test")
+    monkeypatch.setattr(mesh_config, "API_TOKEN", "secret")
 
     captured = {}
 
@@ -939,13 +959,17 @@ def test_main_retries_interface_creation(mesh_module, monkeypatch):
             raise RuntimeError("boom")
         return iface, port
 
-    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
-    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "PORT", "/dev/ttyTEST")
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "_create_serial_interface", fake_create)
+    mesh_daemon = importlib.import_module("data.mesh.daemon")
+    monkeypatch.setattr(mesh_daemon, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
-    monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
-    monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
-    monkeypatch.setattr(mesh, "_RECONNECT_MAX_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh_config, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(mesh_config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh_config, "_RECONNECT_MAX_DELAY_SECS", 0)
 
     mesh.main()
 
@@ -1000,14 +1024,18 @@ def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch)
     def record_upsert(node_id, node):
         upsert_calls.append(node_id)
 
-    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
-    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
-    monkeypatch.setattr(mesh, "upsert_node", record_upsert)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "PORT", "/dev/ttyTEST")
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "_create_serial_interface", fake_create)
+    mesh_daemon = importlib.import_module("data.mesh.daemon")
+    monkeypatch.setattr(mesh_daemon, "_create_serial_interface", fake_create)
+    monkeypatch.setattr(mesh_daemon, "upsert_node", record_upsert)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
-    monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
-    monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
-    monkeypatch.setattr(mesh, "_RECONNECT_MAX_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh_config, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(mesh_config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh_config, "_RECONNECT_MAX_DELAY_SECS", 0)
 
     mesh.main()
 
@@ -1022,8 +1050,12 @@ def test_main_exits_when_defaults_unavailable(mesh_module, monkeypatch):
     def fail_default():
         raise mesh.NoAvailableMeshInterface("no interface available")
 
-    monkeypatch.setattr(mesh, "PORT", None)
-    monkeypatch.setattr(mesh, "_create_default_interface", fail_default)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "PORT", None)
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    monkeypatch.setattr(mesh_interfaces, "_create_default_interface", fail_default)
+    mesh_daemon = importlib.import_module("data.mesh.daemon")
+    monkeypatch.setattr(mesh_daemon, "_create_default_interface", fail_default)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -1035,8 +1067,9 @@ def test_main_exits_when_defaults_unavailable(mesh_module, monkeypatch):
 def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -1066,8 +1099,9 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
 def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -1096,8 +1130,9 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
 def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -1126,8 +1161,9 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
 def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -1184,8 +1220,9 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
 def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -1223,13 +1260,14 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
 
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
-    mesh._clear_post_queue()
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
+    mesh_post_queue._clear_post_queue()
     calls = []
 
     def record(path, payload):
         calls.append((path, payload))
 
-    monkeypatch.setattr(mesh, "_post_json", record)
+    monkeypatch.setattr(mesh_post_queue, "_post_json", record)
 
     mesh._enqueue_post_json("/api/messages", {"id": 1}, mesh._MESSAGE_POST_PRIORITY)
     mesh._enqueue_post_json(
@@ -1247,7 +1285,8 @@ def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
     def fail_post(*_, **__):
         raise AssertionError("Should not post without an id")
 
-    monkeypatch.setattr(mesh, "_queue_post_json", fail_post)
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
+    monkeypatch.setattr(mesh_post_queue, "_queue_post_json", fail_post)
 
     packet = {"decoded": {"payload": {"text": "hello"}, "portnum": "TEXT_MESSAGE_APP"}}
     mesh.store_packet_dict(packet)
@@ -1255,12 +1294,13 @@ def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
 
 def test_on_receive_logs_when_store_fails(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
-    monkeypatch.setattr(mesh, "_pkt_to_dict", lambda pkt: {"id": 1})
+    mesh_daemon = importlib.import_module("data.mesh.daemon")
+    monkeypatch.setattr(mesh_daemon, "_pkt_to_dict", lambda pkt: {"id": 1})
 
     def boom(*_, **__):
         raise ValueError("boom")
 
-    monkeypatch.setattr(mesh, "store_packet_dict", boom)
+    monkeypatch.setattr(mesh_daemon, "store_packet_dict", boom)
 
     mesh.on_receive(object(), interface=None)
 
@@ -1295,7 +1335,8 @@ def test_node_items_snapshot_handles_empty_input(mesh_module):
 def test_debug_log_emits_when_enabled(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "DEBUG", True)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "DEBUG", True)
     mesh._debug_log("hello world")
 
     captured = capsys.readouterr()
@@ -1392,6 +1433,9 @@ def test_load_ble_interface_sets_global(monkeypatch):
         else importlib.reload(sys.modules[module_name])
     )
 
+    mesh_interfaces = importlib.import_module("data.mesh.interfaces")
+    mesh_interfaces._load_ble_interface.cache_clear()
+    monkeypatch.setattr(mesh_interfaces, "BLEInterface", None)
     monkeypatch.setattr(module, "BLEInterface", None)
 
     resolved = module._load_ble_interface()
@@ -1422,8 +1466,9 @@ def test_default_serial_targets_deduplicates(mesh_module, monkeypatch):
 def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "INSTANCE", "https://example.invalid")
-    monkeypatch.setattr(mesh, "DEBUG", True)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "INSTANCE", "https://example.invalid")
+    monkeypatch.setattr(mesh_config, "DEBUG", True)
 
     def boom(*_, **__):
         raise RuntimeError("offline")
@@ -1439,14 +1484,16 @@ def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
 def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
     mesh = mesh_module
 
-    mesh._clear_post_queue()
-    monkeypatch.setattr(mesh, "_POST_QUEUE_ACTIVE", True)
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
+
+    mesh_post_queue._clear_post_queue()
+    monkeypatch.setattr(mesh_post_queue, "_POST_QUEUE_ACTIVE", True)
 
     mesh._queue_post_json("/api/test", {"id": 1})
 
-    assert mesh._POST_QUEUE_ACTIVE is True
-    assert mesh._POST_QUEUE
-    mesh._clear_post_queue()
+    assert mesh_post_queue._POST_QUEUE_ACTIVE is True
+    assert mesh_post_queue._POST_QUEUE
+    mesh_post_queue._clear_post_queue()
 
 
 def test_node_to_dict_handles_proto_fallback(mesh_module, monkeypatch):
@@ -1462,7 +1509,8 @@ def test_node_to_dict_handles_proto_fallback(mesh_module, monkeypatch):
     def fail_message_to_dict(*_, **__):
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(mesh, "MessageToDict", fail_message_to_dict)
+    mesh_packet_utils = importlib.import_module("data.mesh.packets.utils")
+    monkeypatch.setattr(mesh_packet_utils, "MessageToDict", fail_message_to_dict)
     monkeypatch.setattr(
         mesh.json, "dumps", lambda *_, **__: (_ for _ in ()).throw(TypeError())
     )
@@ -1475,13 +1523,15 @@ def test_node_to_dict_handles_proto_fallback(mesh_module, monkeypatch):
 def test_upsert_node_logs_in_debug(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "DEBUG", True)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "DEBUG", True)
     captured = []
 
     def fake_queue(path, payload, *, priority):
         captured.append((path, payload, priority))
 
-    monkeypatch.setattr(mesh, "_queue_post_json", fake_queue)
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
+    monkeypatch.setattr(mesh_post_queue, "_queue_post_json", fake_queue)
 
     mesh.upsert_node("!node", {"user": {"shortName": "SN", "longName": "LN"}})
 
@@ -1652,7 +1702,8 @@ def test_nodeinfo_helpers_cover_fallbacks(mesh_module, monkeypatch):
     def raise_message_to_dict(*_, **__):
         raise RuntimeError()
 
-    monkeypatch.setattr(mesh, "MessageToDict", raise_message_to_dict)
+    mesh_packet_utils = importlib.import_module("data.mesh.packets.utils")
+    monkeypatch.setattr(mesh_packet_utils, "MessageToDict", raise_message_to_dict)
 
     user = mesh._nodeinfo_user_dict(node_info, DummyProto())
 
@@ -1662,9 +1713,9 @@ def test_nodeinfo_helpers_cover_fallbacks(mesh_module, monkeypatch):
 def test_store_position_packet_defaults(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
-
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
@@ -1685,8 +1736,10 @@ def test_store_position_packet_defaults(mesh_module, monkeypatch):
 def test_store_nodeinfo_packet_debug(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "DEBUG", True)
-    monkeypatch.setattr(mesh, "_queue_post_json", lambda *_, **__: None)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "DEBUG", True)
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
+    monkeypatch.setattr(mesh_post_queue, "_queue_post_json", lambda *_, **__: None)
 
     from meshtastic.protobuf import mesh_pb2
 
@@ -1719,11 +1772,13 @@ def test_store_nodeinfo_packet_debug(mesh_module, monkeypatch, capsys):
 def test_store_neighborinfo_packet_debug(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "DEBUG", True)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "DEBUG", True)
     captured = []
 
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append(payload),
     )
@@ -1751,11 +1806,13 @@ def test_store_neighborinfo_packet_debug(mesh_module, monkeypatch, capsys):
 def test_store_packet_dict_debug_message(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
-    monkeypatch.setattr(mesh, "DEBUG", True)
+    mesh_config = importlib.import_module("data.mesh.config")
+    monkeypatch.setattr(mesh_config, "DEBUG", True)
     captured = []
 
+    mesh_post_queue = importlib.import_module("data.mesh.post_queue")
     monkeypatch.setattr(
-        mesh,
+        mesh_post_queue,
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append(payload),
     )
