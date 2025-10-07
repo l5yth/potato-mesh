@@ -710,6 +710,7 @@ export function initializeApp(config) {
   }
 
   let legendContainer = null;
+  let legendToggleControl = null;
   let legendToggleButton = null;
   let legendVisible = true;
 
