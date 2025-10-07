@@ -146,13 +146,13 @@ $prom_messages_total = Prometheus::Client::Counter.new(
 )
 Prometheus::Client.registry.register($prom_messages_total)
 
-$prom_nodes =  Prometheus::Client::Gauge.new(
+$prom_nodes = Prometheus::Client::Gauge.new(
   :meshtastic_nodes,
   docstring: 'Number of nodes seen'
 )
 Prometheus::Client.registry.register($prom_nodes)
 
-$prom_node =  Prometheus::Client::Gauge.new(
+$prom_node = Prometheus::Client::Gauge.new(
   :meshtastic_node,
   docstring: 'Node details',
   labels: [:node, :short_name, :long_name, :hw_model, :role]
@@ -2153,5 +2153,5 @@ end
 # Prometheus metrics endpoint.
 get "/metrics" do
   content_type Prometheus::Client::Formats::Text::CONTENT_TYPE
-  Prometheus::Client::Formats::Text.marshal($registry)
+  Prometheus::Client::Formats::Text.marshal(Prometheus::Client.registry)
 end
