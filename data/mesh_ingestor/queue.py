@@ -85,13 +85,16 @@ def _drain_post_queue(
     if send is None:
         send = _post_json
 
-    while True:
+    try:
+        while True:
+            with state.lock:
+                if not state.queue:
+                    return
+                _priority, _idx, path, payload = heapq.heappop(state.queue)
+            send(path, payload)
+    finally:
         with state.lock:
-            if not state.queue:
-                state.active = False
-                return
-            _priority, _idx, path, payload = heapq.heappop(state.queue)
-        send(path, payload)
+            state.active = False
 
 
 def _queue_post_json(
