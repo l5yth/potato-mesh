@@ -5,11 +5,16 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 
 try:
     from . import mesh_ingestor as _mesh_ingestor
 except ImportError:
     if __package__ in {None, ""}:
+        package_dir = Path(__file__).resolve().parent
+        project_root = str(package_dir.parent)
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
         _mesh_ingestor = importlib.import_module("data.mesh_ingestor")
     else:
         raise
