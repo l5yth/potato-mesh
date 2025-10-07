@@ -324,10 +324,9 @@ export function initializeApp(config) {
     if (!mapFullscreenToggle) return;
     const active = isMapInFullscreen();
     const label = active ? 'Exit full screen map view' : 'Enter full screen map view';
-    const text = active ? 'Exit full screen' : 'Full screen';
     mapFullscreenToggle.setAttribute('aria-pressed', active ? 'true' : 'false');
     mapFullscreenToggle.setAttribute('aria-label', label);
-    mapFullscreenToggle.textContent = text;
+    mapFullscreenToggle.textContent = '[]';
   }
 
   /**
@@ -422,6 +421,13 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function handleFullscreenChange() {
+    const active = isMapInFullscreen();
+    if (fullscreenContainer && fullscreenContainer.classList) {
+      fullscreenContainer.classList.toggle('is-fullscreen', active);
+    }
+    if (fullscreenContainer !== mapContainer && mapContainer && mapContainer.classList) {
+      mapContainer.classList.toggle('is-fullscreen', active);
+    }
     updateFullscreenToggleState();
     refreshMapSize();
   }
