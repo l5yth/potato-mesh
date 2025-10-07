@@ -28,8 +28,8 @@ require "open3"
 require "time"
 require "prometheus/client"
 require "prometheus/client/formats/text"
-require 'prometheus/middleware/collector'
-require 'prometheus/middleware/exporter'
+require "prometheus/middleware/collector"
+require "prometheus/middleware/exporter"
 
 # Path to the SQLite database used by the web application.
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
@@ -141,76 +141,76 @@ DEBUG = ENV["DEBUG"] == "1"
 #
 $prom_messages_total = Prometheus::Client::Counter.new(
   :meshtastic_messages_total,
-  docstring: 'Total number of messages received'
+  docstring: "Total number of messages received",
 )
 Prometheus::Client.registry.register($prom_messages_total)
 
 $prom_nodes = Prometheus::Client::Gauge.new(
   :meshtastic_nodes,
-  docstring: 'Number of nodes seen'
+  docstring: "Number of nodes seen",
 )
 Prometheus::Client.registry.register($prom_nodes)
 
 $prom_node = Prometheus::Client::Gauge.new(
   :meshtastic_node,
-  docstring: 'Node details',
-  labels: [:node, :short_name, :long_name, :hw_model, :role]
+  docstring: "Node details",
+  labels: [:node, :short_name, :long_name, :hw_model, :role],
 )
 Prometheus::Client.registry.register($prom_node)
 
 $prom_node_battery_level = Prometheus::Client::Gauge.new(
   :meshtastic_node_battery_level,
-  docstring: 'Battery level of a node',
-  labels: [:node]
+  docstring: "Battery level of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_battery_level)
 
 $prom_node_voltage = Prometheus::Client::Gauge.new(
   :meshtastic_node_voltage,
-  docstring: 'Voltage level of a node',
-  labels: [:node]
+  docstring: "Voltage level of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_voltage)
 
 $prom_node_uptime = Prometheus::Client::Gauge.new(
   :meshtastic_node_uptime,
-  docstring: 'Uptime of a node',
-  labels: [:node]
+  docstring: "Uptime of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_uptime)
 
 $prom_node_channel_utilization = Prometheus::Client::Gauge.new(
   :meshtastic_node_channel_utilization,
-  docstring: 'Channel utilization level of a node',
-  labels: [:node]
+  docstring: "Channel utilization level of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_channel_utilization)
 
 $prom_node_transmit_air_utilization = Prometheus::Client::Gauge.new(
   :meshtastic_node_transmit_air_utilization,
-  docstring: 'Air transmit utilization level of a node',
-  labels: [:node]
+  docstring: "Air transmit utilization level of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_transmit_air_utilization)
 
 $prom_node_latitude = Prometheus::Client::Gauge.new(
   :meshtastic_node_latitude,
-  docstring: 'Latitude of a node',
-  labels: [:node]
+  docstring: "Latitude of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_latitude)
 
 $prom_node_longitude = Prometheus::Client::Gauge.new(
   :meshtastic_node_longitude,
-  docstring: 'Longitude of a node',
-  labels: [:node]
+  docstring: "Longitude of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_longitude)
 
 $prom_node_altitude = Prometheus::Client::Gauge.new(
   :meshtastic_node_altitude,
-  docstring: 'Altitude of a node',
-  labels: [:node]
+  docstring: "Altitude of a node",
+  labels: [:node],
 )
 Prometheus::Client.registry.register($prom_node_altitude)
 
@@ -1081,7 +1081,7 @@ def upsert_node(db, node_id, n)
   node_num = resolve_node_num(node_id, n)
 
   if !PROM_REPORT_IDS.empty? && node_id
-    report_ids = PROM_REPORT_IDS.split(',').map(&:strip).reject(&:empty?)
+    report_ids = PROM_REPORT_IDS.split(",").map(&:strip).reject(&:empty?)
 
     if PROM_REPORT_IDS == "*" || report_ids.include?(node_id)
       $prom_node.set(
@@ -1091,8 +1091,8 @@ def upsert_node(db, node_id, n)
           short_name: user["shortName"],
           long_name: user["longName"],
           hw_model: user["hwModel"] || n["hwModel"],
-          role: role
-        }
+          role: role,
+        },
       )
 
       if met["batteryLevel"]
