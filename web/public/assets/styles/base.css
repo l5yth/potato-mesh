@@ -31,9 +31,6 @@ html,
 body {
   background-color: var(--bg);
   color: var(--fg);
-  background-image: var(--bg-image, none);
-  background-size: cover;
-  background-attachment: fixed;
   transition: background-color 160ms ease, color 160ms ease;
 }
 
