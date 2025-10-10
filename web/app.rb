@@ -1232,7 +1232,7 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
   update_prometheus_metrics(node_id, nil, nil, nil, {
     "latitude" => lat,
     "longitude" => lon,
-    "altitude" => alt
+    "altitude" => alt,
   })
 
   row = [
@@ -1655,7 +1655,6 @@ def update_prometheus_metrics(node_id, user = {}, role = "", met = {}, pos = {})
   return unless $prom_report_ids[0] == "*" || $prom_report_ids.include?(node_id)
 
   if user && user.is_a?(Hash) && role && role != ""
-
     $prom_node.set(
       1,
       labels: {
@@ -1747,8 +1746,9 @@ def update_all_prometheus_metrics_from_nodes
         {
           "latitude" => n["latitude"],
           "longitude" => n["longitude"],
-          "altitude" => n["altitude"]
-        })
+          "altitude" => n["altitude"],
+        }
+      )
     end
   end
 end
