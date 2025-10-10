@@ -1649,7 +1649,7 @@ end
 # @param met [Hash] device metrics from the node payload.
 # @param pos [Hash] position information from the node payload.
 # @return [void]
-def update_prometheus_metrics(node_id, user = {}, role = "", met = {}, pos = {})
+def update_prometheus_metrics(node_id, user = nil, role = "", met = nil, pos = nil)
   return if $prom_report_ids.empty? || !node_id
 
   return unless $prom_report_ids[0] == "*" || $prom_report_ids.include?(node_id)
@@ -1661,7 +1661,7 @@ def update_prometheus_metrics(node_id, user = {}, role = "", met = {}, pos = {})
         node: node_id,
         short_name: user["shortName"],
         long_name: user["longName"],
-        hw_model: user["hwModel"] || n["hwModel"],
+        hw_model: user["hwModel"],
         role: role,
       },
     )
