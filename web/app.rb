@@ -1661,7 +1661,7 @@ def update_prometheus_metrics(node_id, user = {}, role = "", met = {}, pos = {})
         node: node_id,
         short_name: user["shortName"],
         long_name: user["longName"],
-        hw_model: user["hwModel"],
+        hw_model: user["hwModel"] || n["hwModel"],
         role: role,
       },
     )
@@ -1730,7 +1730,6 @@ def update_all_prometheus_metrics_from_nodes
       update_prometheus_metrics(
         node_id,
         {
-          "node" => node_id,
           "shortName" => n["short_name"] || "",
           "longName" => n["long_name"] || "",
           "hwModel" => n["hw_model"] || "",
