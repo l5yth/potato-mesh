@@ -53,6 +53,7 @@ def open_database(readonly: false)
     db.execute("PRAGMA foreign_keys = ON")
   end
 end
+
 # Convenience constant used when filtering stale records.
 WEEK_SECONDS = 7 * 24 * 60 * 60
 # Default request body size allowed for JSON uploads.
