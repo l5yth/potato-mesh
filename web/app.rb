@@ -135,6 +135,44 @@ def sanitize_instance_domain(value)
   trimmed
 end
 
+# Extract the hostname component from an instance domain string, handling IPv6
+# literals and optional port suffixes.
+#
+# @param domain [String]
+# @return [String, nil]
+def instance_domain_host(domain)
+  return nil if domain.nil?
+
+  candidate = domain.strip
+  return nil if candidate.empty?
+
+  if candidate.start_with?("[")
+    match = candidate.match(/\A\[(?<host>[^\]]+)\](?::(?<port>\d+))?\z/)
+    return match[:host] if match
+    return nil
+  end
+
+  host, port = candidate.split(":", 2)
+  if port && !host.include?(":") && port.match?(/\A\d+\z/)
+    return host
+  end
+
+  candidate
+end
+
+# Parse an IP address when the provided domain represents an address literal.
+#
+# @param domain [String]
+# @return [IPAddr, nil]
+def ip_from_domain(domain)
+  host = instance_domain_host(domain)
+  return nil unless host
+
+  IPAddr.new(host)
+rescue IPAddr::InvalidAddressError
+  nil
+end
+
 # Attempt to resolve the instance's vanity domain from configuration or reverse
 # DNS lookup.
 #
@@ -1076,39 +1114,6 @@ end
 #
 # @param domain [String]
 # @return [String, nil] host portion suitable for IP parsing.
-def instance_domain_host(domain)
-  return nil if domain.nil?
-
-  candidate = domain.strip
-  return nil if candidate.empty?
-
-  if candidate.start_with?("[")
-    match = candidate.match(/\A\[(?<host>[^\]]+)\](?::(?<port>\d+))?\z/)
-    return match[:host] if match
-    return nil
-  end
-
-  host, port = candidate.split(":", 2)
-  if port && !host.include?(":") && port.match?(/\A\d+\z/)
-    return host
-  end
-
-  candidate
-end
-
-# Parse an IP address when the provided domain represents an address literal.
-#
-# @param domain [String]
-# @return [IPAddr, nil]
-def ip_from_domain(domain)
-  host = instance_domain_host(domain)
-  return nil unless host
-
-  IPAddr.new(host)
-rescue IPAddr::InvalidAddressError
-  nil
-end
-
 # Determine whether an IP address belongs to a restricted network range.
 #
 # @param ip [IPAddr]
