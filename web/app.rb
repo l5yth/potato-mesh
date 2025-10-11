@@ -28,6 +28,8 @@ require "open3"
 require "resolv"
 require "socket"
 require "time"
+require "openssl"
+require "base64"
 require "prometheus/client"
 require "prometheus/client/formats/text"
 require "prometheus/middleware/collector"
@@ -41,6 +43,17 @@ DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
 DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
 # Base delay in seconds between SQLite ``busy`` retries.
 DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
+# Open the SQLite database with a configured busy timeout.
+#
+# @param readonly [Boolean] whether to open the database in read-only mode.
+# @return [SQLite3::Database]
+def open_database(readonly: false)
+  SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
+    db.busy_timeout = DB_BUSY_TIMEOUT_MS
+    db.execute("PRAGMA foreign_keys = ON")
+  end
+end
+
 # Convenience constant used when filtering stale records.
 WEEK_SECONDS = 7 * 24 * 60 * 60
 # Default request body size allowed for JSON uploads.
@@ -168,6 +181,100 @@ end
 
 APP_VERSION = determine_app_version
 
+KEYFILE_PATH = File.join(__dir__, ".config", "keyfile")
+WELL_KNOWN_RELATIVE_PATH = File.join(".well-known", "potato-mesh")
+WELL_KNOWN_STORAGE_ROOT = File.join(__dir__, ".config", "well-known")
+LEGACY_PUBLIC_WELL_KNOWN_PATH = File.join(__dir__, "public", WELL_KNOWN_RELATIVE_PATH)
+WELL_KNOWN_REFRESH_INTERVAL = 24 * 60 * 60
+INSTANCE_SIGNATURE_ALGORITHM = "rsa-sha256"
+
+def load_or_generate_instance_private_key
+  FileUtils.mkdir_p(File.dirname(KEYFILE_PATH))
+  if File.exist?(KEYFILE_PATH)
+    contents = File.binread(KEYFILE_PATH)
+    return [OpenSSL::PKey.read(contents), false]
+  end
+
+  key = OpenSSL::PKey::RSA.new(2048)
+  File.open(KEYFILE_PATH, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+    file.write(key.export)
+  end
+  [key, true]
+rescue OpenSSL::PKey::PKeyError, ArgumentError => e
+  warn "[warn] failed to load instance private key, generating a new key: #{e.message}"
+  key = OpenSSL::PKey::RSA.new(2048)
+  File.open(KEYFILE_PATH, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+    file.write(key.export)
+  end
+  [key, true]
+end
+
+INSTANCE_PRIVATE_KEY, INSTANCE_KEY_GENERATED = load_or_generate_instance_private_key
+INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
+
+def well_known_directory
+  WELL_KNOWN_STORAGE_ROOT
+end
+
+def well_known_file_path
+  File.join(well_known_directory, File.basename(WELL_KNOWN_RELATIVE_PATH))
+end
+
+begin
+  FileUtils.rm_f(LEGACY_PUBLIC_WELL_KNOWN_PATH)
+  legacy_dir = File.dirname(LEGACY_PUBLIC_WELL_KNOWN_PATH)
+  FileUtils.rmdir(legacy_dir) if Dir.exist?(legacy_dir) && Dir.empty?(legacy_dir)
+rescue SystemCallError
+  # Ignore errors removing legacy static files; failure only means the directory
+  # or file did not exist or is in use.
+end
+
+def build_well_known_document
+  last_update = latest_node_update_timestamp
+  payload = {
+    publicKey: INSTANCE_PUBLIC_KEY_PEM,
+    name: sanitized_site_name,
+    version: APP_VERSION,
+    domain: INSTANCE_DOMAIN,
+    lastUpdate: last_update,
+  }
+
+  signed_payload = JSON.generate(payload, sort_keys: true)
+  signature = Base64.strict_encode64(
+    INSTANCE_PRIVATE_KEY.sign(OpenSSL::Digest::SHA256.new, signed_payload),
+  )
+
+  document = payload.merge(
+    signature: signature,
+    signatureAlgorithm: INSTANCE_SIGNATURE_ALGORITHM,
+    signedPayload: Base64.strict_encode64(signed_payload),
+  )
+
+  json_output = JSON.pretty_generate(document)
+  [json_output, signature]
+end
+
+def refresh_well_known_document_if_stale
+  FileUtils.mkdir_p(well_known_directory)
+  path = well_known_file_path
+  now = Time.now
+  if File.exist?(path)
+    mtime = File.mtime(path)
+    return if (now - mtime) < WELL_KNOWN_REFRESH_INTERVAL
+  end
+
+  json_output, signature = build_well_known_document
+  File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o644) do |file|
+    file.write(json_output)
+    file.write("\n") unless json_output.end_with?("\n")
+  end
+
+  debug_log("Updated #{WELL_KNOWN_RELATIVE_PATH} content: #{json_output}")
+  debug_log(
+    "Updated #{WELL_KNOWN_RELATIVE_PATH} signature (#{INSTANCE_SIGNATURE_ALGORITHM}): #{signature}",
+  )
+end
+
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
@@ -218,6 +325,13 @@ get "/version" do
     },
   }
   payload.to_json
+end
+
+get "/.well-known/potato-mesh" do
+  refresh_well_known_document_if_stale
+  cache_control :public, max_age: WELL_KNOWN_REFRESH_INTERVAL
+  content_type :json
+  send_file well_known_file_path
 end
 
 SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
@@ -317,6 +431,17 @@ def debug_log(message)
 
   logger = settings.logger if respond_to?(:settings)
   logger&.debug(message)
+end
+
+# Log the instance public key to the debug output so operators can record it for
+# federation purposes.
+#
+# @return [void]
+def log_instance_public_key
+  debug_log("Instance public key (PEM):\n#{INSTANCE_PUBLIC_KEY_PEM}")
+  if INSTANCE_KEY_GENERATED
+    debug_log("Generated new instance private key at #{KEYFILE_PATH}")
+  end
 end
 
 # Emit a debug log entry describing how the instance domain was resolved.
@@ -593,17 +718,8 @@ Sinatra::Application.configure do
   use Prometheus::Middleware::Exporter
   Sinatra::Application.apply_logger_level!
   log_instance_domain_resolution
-end
-
-# Open the SQLite database with a configured busy timeout.
-#
-# @param readonly [Boolean] whether to open the database in read-only mode.
-# @return [SQLite3::Database]
-def open_database(readonly: false)
-  SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
-    db.busy_timeout = DB_BUSY_TIMEOUT_MS
-    db.execute("PRAGMA foreign_keys = ON")
-  end
+  log_instance_public_key
+  refresh_well_known_document_if_stale
 end
 
 # Execute the provided block, retrying when SQLite reports the database is
