@@ -182,6 +182,8 @@ APP_VERSION = determine_app_version
 
 KEYFILE_PATH = File.join(__dir__, ".config", "keyfile")
 WELL_KNOWN_RELATIVE_PATH = File.join(".well-known", "potato-mesh")
+WELL_KNOWN_STORAGE_ROOT = File.join(__dir__, ".config", "well-known")
+LEGACY_PUBLIC_WELL_KNOWN_PATH = File.join(__dir__, "public", WELL_KNOWN_RELATIVE_PATH)
 WELL_KNOWN_REFRESH_INTERVAL = 24 * 60 * 60
 INSTANCE_SIGNATURE_ALGORITHM = "rsa-sha256"
 
@@ -210,11 +212,20 @@ INSTANCE_PRIVATE_KEY, INSTANCE_KEY_GENERATED = load_or_generate_instance_private
 INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
 
 def well_known_directory
-  File.join(settings.public_folder, File.dirname(WELL_KNOWN_RELATIVE_PATH))
+  WELL_KNOWN_STORAGE_ROOT
 end
 
 def well_known_file_path
-  File.join(settings.public_folder, WELL_KNOWN_RELATIVE_PATH)
+  File.join(well_known_directory, File.basename(WELL_KNOWN_RELATIVE_PATH))
+end
+
+begin
+  FileUtils.rm_f(LEGACY_PUBLIC_WELL_KNOWN_PATH)
+  legacy_dir = File.dirname(LEGACY_PUBLIC_WELL_KNOWN_PATH)
+  FileUtils.rmdir(legacy_dir) if Dir.exist?(legacy_dir) && Dir.empty?(legacy_dir)
+rescue SystemCallError
+  # Ignore errors removing legacy static files; failure only means the directory
+  # or file did not exist or is in use.
 end
 
 def build_well_known_document
