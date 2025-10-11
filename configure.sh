@@ -67,13 +67,13 @@ update_env() {
 }
 
 # Get current values from .env if they exist
-SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "My Meshtastic Network")
-DEFAULT_CHANNEL=$(grep "^DEFAULT_CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#MediumFast")
-DEFAULT_FREQUENCY=$(grep "^DEFAULT_FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "868MHz")
-MAP_CENTER_LAT=$(grep "^MAP_CENTER_LAT=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "52.502889")
-MAP_CENTER_LON=$(grep "^MAP_CENTER_LON=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "13.404194")
-MAX_NODE_DISTANCE_KM=$(grep "^MAX_NODE_DISTANCE_KM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "50")
-MATRIX_ROOM=$(grep "^MATRIX_ROOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "PotatoMesh Demo")
+DEFAULT_CHANNEL=$(grep "^DEFAULT_CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
+DEFAULT_FREQUENCY=$(grep "^DEFAULT_FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
+MAP_CENTER_LAT=$(grep "^MAP_CENTER_LAT=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944")
+MAP_CENTER_LON=$(grep "^MAP_CENTER_LON=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "-27.090833")
+MAX_NODE_DISTANCE_KM=$(grep "^MAX_NODE_DISTANCE_KM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
+MATRIX_ROOM=$(grep "^MATRIX_ROOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
 

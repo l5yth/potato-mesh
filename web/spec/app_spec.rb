@@ -281,13 +281,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(source).to eq(:environment)
       end
 
-      it "rejects IP addresses configured via the environment" do
-        ENV["INSTANCE_DOMAIN"] = "203.0.113.40"
+      it "allows IP addresses configured via the environment" do
+        ENV["INSTANCE_DOMAIN"] = "http://127.0.0.1"
 
-        expect { determine_instance_domain }.to raise_error(
-          RuntimeError,
-          /INSTANCE_DOMAIN must resolve to a DNS hostname/,
-        )
+        domain, source = determine_instance_domain
+
+        expect(domain).to eq("127.0.0.1")
+        expect(source).to eq(:environment)
       end
 
       it "rejects instance domains containing path components" do

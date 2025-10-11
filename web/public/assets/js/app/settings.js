@@ -16,10 +16,10 @@ export const DEFAULT_CONFIG = {
   refreshMs: 60_000,
   refreshIntervalSeconds: 60,
   chatEnabled: true,
-  defaultChannel: '#MediumFast',
-  defaultFrequency: '868MHz',
-  mapCenter: { lat: 52.502889, lon: 13.404194 },
-  maxNodeDistanceKm: 137,
+  defaultChannel: '#LongFast',
+  defaultFrequency: '915MHz',
+  mapCenter: { lat: 38.761944, lon: -27.090833 },
+  maxNodeDistanceKm: 42,
   tileFilters: {
     light: 'grayscale(1) saturate(0) brightness(0.92) contrast(1.05)',
     dark: 'grayscale(1) invert(1) brightness(0.9) contrast(1.08)'
