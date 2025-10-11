@@ -273,39 +273,47 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "falls back to reverse DNS when available" do
-        address = instance_double(
-          Addrinfo,
-          ip?: true,
-          ipv4_loopback?: false,
-          ipv6_loopback?: false,
-          ipv6_linklocal?: false,
-          ip_address: "203.0.113.10",
-        )
+        address = Addrinfo.ip("203.0.113.10")
         allow(Socket).to receive(:ip_address_list).and_return([address])
-        allow(Resolv).to receive(:getname).with("203.0.113.10").and_return("federation.example.com")
+        allow(Resolv).to receive(:getname).with("203.0.113.10").and_return("chara.htznr.fault.dev")
 
         domain, source = determine_instance_domain
 
-        expect(domain).to eq("federation.example.com")
+        expect(domain).to eq("chara.htznr.fault.dev")
         expect(source).to eq(:reverse_dns)
       end
 
-      it "returns nil when no sources provide a domain" do
-        address = instance_double(
-          Addrinfo,
-          ip?: true,
-          ipv4_loopback?: false,
-          ipv6_loopback?: false,
-          ipv6_linklocal?: false,
-          ip_address: "198.51.100.12",
-        )
-        allow(Socket).to receive(:ip_address_list).and_return([address])
-        allow(Resolv).to receive(:getname).with("198.51.100.12").and_raise(Resolv::ResolvError)
+      it "falls back to a public IP address when reverse DNS is unavailable" do
+        public_address = Addrinfo.ip("203.0.113.20")
+        allow(Socket).to receive(:ip_address_list).and_return([public_address])
+        allow(Resolv).to receive(:getname).and_raise(Resolv::ResolvError)
 
         domain, source = determine_instance_domain
 
-        expect(domain).to be_nil
-        expect(source).to eq(:unknown)
+        expect(domain).to eq("203.0.113.20")
+        expect(source).to eq(:public_ip)
+      end
+
+      it "falls back to a protected IP address when only private networks exist" do
+        private_address = Addrinfo.ip("10.0.0.5")
+        allow(Socket).to receive(:ip_address_list).and_return([private_address])
+        allow(Resolv).to receive(:getname).and_raise(Resolv::ResolvError)
+
+        domain, source = determine_instance_domain
+
+        expect(domain).to eq("10.0.0.5")
+        expect(source).to eq(:protected_ip)
+      end
+
+      it "falls back to a local IP address when no other sources are available" do
+        loopback_address = Addrinfo.ip("127.0.0.1")
+        allow(Socket).to receive(:ip_address_list).and_return([loopback_address])
+        allow(Resolv).to receive(:getname).and_raise(Resolv::ResolvError)
+
+        domain, source = determine_instance_domain
+
+        expect(domain).to eq("127.0.0.1")
+        expect(source).to eq(:local_ip)
       end
     end
 
