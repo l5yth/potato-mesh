@@ -835,6 +835,30 @@ def start_federation_announcer!
   thread
 end
 
+# Launch the initial federation announcement asynchronously to avoid delaying
+# application boot while network requests are attempted.
+#
+# @return [Thread, nil]
+def start_initial_federation_announcement!
+  settings = Sinatra::Application.settings
+  existing = settings.respond_to?(:initial_federation_thread) ? settings.initial_federation_thread : nil
+  return existing if existing&.alive?
+
+  thread = Thread.new do
+    begin
+      announce_instance_to_all_domains
+    rescue StandardError => e
+      debug_log("Initial federation announcement failed: #{e.message}")
+    ensure
+      Sinatra::Application.set(:initial_federation_thread, nil)
+    end
+  end
+  thread.name = "potato-mesh-federation-initial" if thread.respond_to?(:name=)
+  thread.report_on_exception = false if thread.respond_to?(:report_on_exception=)
+  Sinatra::Application.set(:initial_federation_thread, thread)
+  thread
+end
+
 # Convert arbitrary values into trimmed strings.
 #
 # @param value [Object] input value converted using ``to_s``.
@@ -1486,7 +1510,7 @@ Sinatra::Application.configure do
   refresh_well_known_document_if_stale
   ensure_self_instance_record!
   if federation_announcements_active?
-    announce_instance_to_all_domains
+    start_initial_federation_announcement!
     start_federation_announcer!
   elsif federation_enabled?
     debug_log("Federation announcements disabled in test environment")
