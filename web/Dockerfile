@@ -63,7 +63,8 @@ USER potatomesh
 EXPOSE 41447
 
 # Default environment variables (can be overridden by host)
-ENV APP_ENV=production \
+ENV RACK_ENV=production \
+    APP_ENV=production \
     MESH_DB=/app/data/mesh.db \
     DB_BUSY_TIMEOUT_MS=5000 \
     DB_BUSY_MAX_RETRIES=5 \

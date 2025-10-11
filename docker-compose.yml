@@ -1,6 +1,8 @@
 x-web-base: &web-base
   image: ghcr.io/l5yth/potato-mesh-web-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
   environment:
+    APP_ENV: ${APP_ENV:-production}
+    RACK_ENV: ${RACK_ENV:-production}
     SITE_NAME: ${SITE_NAME:-My Meshtastic Network}
     DEFAULT_CHANNEL: ${DEFAULT_CHANNEL:-#MediumFast}
     DEFAULT_FREQUENCY: ${DEFAULT_FREQUENCY:-868MHz}
@@ -10,6 +12,7 @@ x-web-base: &web-base
     MATRIX_ROOM: ${MATRIX_ROOM:-}
     API_TOKEN: ${API_TOKEN}
     DEBUG: ${DEBUG:-0}
+  command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]
   volumes:
     - potatomesh_data:/app/data
     - potatomesh_logs:/app/logs
