@@ -215,10 +215,14 @@ def _parse_ble_target(value: str) -> str | None:
 
 
 def _parse_network_target(value: str) -> tuple[str, int] | None:
-    """Return ``(host, port)`` when ``value`` is an IP address string.
+    """Return ``(host, port)`` when ``value`` is a numeric IP address string.
+
+    Only literal IPv4 or IPv6 addresses are accepted, optionally paired with a
+    port or scheme. Callers that start from hostnames should resolve them to an
+    address before invoking this helper.
 
     Parameters:
-        value: Hostname or URL describing the TCP interface.
+        value: Numeric IP literal or URL describing the TCP interface.
 
     Returns:
         A ``(host, port)`` tuple or ``None`` when parsing fails.
