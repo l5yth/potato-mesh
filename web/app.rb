@@ -34,6 +34,9 @@ require "prometheus/client"
 require "prometheus/client/formats/text"
 require "prometheus/middleware/collector"
 require "prometheus/middleware/exporter"
+require "net/http"
+require "uri"
+require "ipaddr"
 
 # Path to the SQLite database used by the web application.
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
@@ -187,6 +190,11 @@ WELL_KNOWN_STORAGE_ROOT = File.join(__dir__, ".config", "well-known")
 LEGACY_PUBLIC_WELL_KNOWN_PATH = File.join(__dir__, "public", WELL_KNOWN_RELATIVE_PATH)
 WELL_KNOWN_REFRESH_INTERVAL = 24 * 60 * 60
 INSTANCE_SIGNATURE_ALGORITHM = "rsa-sha256"
+REMOTE_INSTANCE_HTTP_TIMEOUT = 5
+REMOTE_INSTANCE_MAX_NODE_AGE = 86_400
+REMOTE_INSTANCE_MIN_NODE_COUNT = 10
+
+class InstanceFetchError < StandardError; end
 
 def load_or_generate_instance_private_key
   FileUtils.mkdir_p(File.dirname(KEYFILE_PATH))
@@ -590,6 +598,327 @@ def coerce_float(value)
   end
 end
 
+# Convert arbitrary values into boolean flags.
+#
+# @param value [Object] raw value coerced into a boolean when recognised.
+# @return [Boolean, nil] boolean representation or nil when ambiguous.
+def coerce_boolean(value)
+  case value
+  when true, false
+    value
+  when String
+    trimmed = value.strip.downcase
+    return true if %w[true 1 yes y].include?(trimmed)
+    return false if %w[false 0 no n].include?(trimmed)
+    nil
+  when Numeric
+    !value.to_i.zero?
+  else
+    nil
+  end
+end
+
+# Normalise domain strings supplied by remote instances.
+#
+# @param value [Object] untrusted domain string.
+# @return [String, nil] canonical domain without schemes or paths.
+def sanitize_instance_domain(value)
+  host = string_or_nil(value)
+  return nil unless host
+
+  trimmed = host.strip
+  trimmed = trimmed.delete_suffix(".") while trimmed.end_with?(".")
+  return nil if trimmed.empty?
+  return nil if trimmed.match?(%r{[\s/\\@]})
+
+  trimmed
+end
+
+# Normalise PEM-encoded public keys while preserving their structure.
+#
+# @param value [Object]
+# @return [String, nil]
+def sanitize_public_key_pem(value)
+  return nil if value.nil?
+
+  pem = value.is_a?(String) ? value : value.to_s
+  pem = pem.gsub(/\r\n?/, "\n")
+  return nil if pem.strip.empty?
+
+  pem
+end
+
+# Extract the host component from an instance domain string.
+#
+# @param domain [String]
+# @return [String, nil] host portion suitable for IP parsing.
+def instance_domain_host(domain)
+  return nil if domain.nil?
+
+  candidate = domain.strip
+  return nil if candidate.empty?
+
+  if candidate.start_with?("[")
+    match = candidate.match(/\A\[(?<host>[^\]]+)\](?::(?<port>\d+))?\z/)
+    return match[:host] if match
+    return nil
+  end
+
+  host, port = candidate.split(":", 2)
+  if port && !host.include?(":") && port.match?(/\A\d+\z/)
+    return host
+  end
+
+  candidate
+end
+
+# Parse an IP address when the provided domain represents an address literal.
+#
+# @param domain [String]
+# @return [IPAddr, nil]
+def ip_from_domain(domain)
+  host = instance_domain_host(domain)
+  return nil unless host
+
+  IPAddr.new(host)
+rescue IPAddr::InvalidAddressError
+  nil
+end
+
+# Determine whether an IP address belongs to a restricted network range.
+#
+# @param ip [IPAddr]
+# @return [Boolean]
+def restricted_ip_address?(ip)
+  return true if ip.loopback?
+  return true if ip.private?
+  return true if ip.link_local?
+  return true if ip.to_i.zero?
+
+  false
+end
+
+# Build canonical payload string used for signature verification.
+#
+# @param attributes [Hash]
+# @return [String]
+def canonical_instance_payload(attributes)
+  data = {}
+  data["id"] = attributes[:id] if attributes[:id]
+  data["domain"] = attributes[:domain] if attributes[:domain]
+  data["pubkey"] = attributes[:pubkey] if attributes[:pubkey]
+  data["name"] = attributes[:name] if attributes[:name]
+  data["version"] = attributes[:version] if attributes[:version]
+  data["channel"] = attributes[:channel] if attributes[:channel]
+  data["frequency"] = attributes[:frequency] if attributes[:frequency]
+  data["latitude"] = attributes[:latitude] unless attributes[:latitude].nil?
+  data["longitude"] = attributes[:longitude] unless attributes[:longitude].nil?
+  data["lastUpdateTime"] = attributes[:last_update_time] unless attributes[:last_update_time].nil?
+  data["isPrivate"] = attributes[:is_private] unless attributes[:is_private].nil?
+
+  JSON.generate(data, sort_keys: true)
+end
+
+# Validate the authenticity of a federated instance registration payload.
+#
+# @param attributes [Hash] canonicalised payload attributes.
+# @param signature [String] base64 encoded signature.
+# @param public_key_pem [String] PEM encoded public key.
+# @return [Boolean]
+def verify_instance_signature(attributes, signature, public_key_pem)
+  return false unless signature && public_key_pem
+
+  canonical = canonical_instance_payload(attributes)
+  signature_bytes = Base64.strict_decode64(signature)
+  key = OpenSSL::PKey::RSA.new(public_key_pem)
+  key.verify(OpenSSL::Digest::SHA256.new, signature_bytes, canonical)
+rescue ArgumentError, OpenSSL::PKey::PKeyError
+  false
+end
+
+# Construct potential URIs for remote instance resources.
+#
+# @param domain [String]
+# @param path [String]
+# @return [Array<URI::Generic>]
+def instance_uri_candidates(domain, path)
+  base = domain
+  [
+    URI.parse("https://#{base}#{path}"),
+    URI.parse("http://#{base}#{path}"),
+  ]
+rescue URI::InvalidURIError
+  []
+end
+
+# Perform an HTTP GET request to a remote instance.
+#
+# @param uri [URI::Generic]
+# @return [String]
+def perform_instance_http_request(uri)
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.open_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
+  http.read_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
+  http.use_ssl = uri.scheme == "https"
+  http.start do |connection|
+    response = connection.request(Net::HTTP::Get.new(uri))
+    case response
+    when Net::HTTPSuccess
+      response.body
+    else
+      raise InstanceFetchError, "unexpected response #{response.code}"
+    end
+  end
+rescue StandardError => e
+  raise InstanceFetchError, e.message
+end
+
+# Retrieve and parse JSON from a remote instance endpoint.
+#
+# @param domain [String]
+# @param path [String]
+# @return [Array]
+def fetch_instance_json(domain, path)
+  errors = []
+  instance_uri_candidates(domain, path).each do |uri|
+    begin
+      body = perform_instance_http_request(uri)
+      return [JSON.parse(body), uri] if body
+    rescue JSON::ParserError => e
+      errors << "#{uri}: invalid JSON (#{e.message})"
+    rescue InstanceFetchError => e
+      errors << "#{uri}: #{e.message}"
+    end
+  end
+  [nil, errors]
+end
+
+# Validate the contents of a remote well-known document.
+#
+# @param document [Hash]
+# @param domain [String]
+# @param pubkey [String]
+# @return [Array(Boolean, String)]
+def validate_well_known_document(document, domain, pubkey)
+  unless document.is_a?(Hash)
+    return [false, "document is not an object"]
+  end
+
+  remote_pubkey = sanitize_public_key_pem(document["publicKey"])
+  return [false, "public key missing"] unless remote_pubkey
+  return [false, "public key mismatch"] unless remote_pubkey == pubkey
+
+  remote_domain = string_or_nil(document["domain"])
+  return [false, "domain missing"] unless remote_domain
+  return [false, "domain mismatch"] unless remote_domain.casecmp?(domain)
+
+  algorithm = string_or_nil(document["signatureAlgorithm"])
+  return [false, "unsupported signature algorithm"] unless algorithm&.casecmp?(INSTANCE_SIGNATURE_ALGORITHM)
+
+  signed_payload_b64 = string_or_nil(document["signedPayload"])
+  signature_b64 = string_or_nil(document["signature"])
+  return [false, "missing signed payload"] unless signed_payload_b64
+  return [false, "missing signature"] unless signature_b64
+
+  signed_payload = Base64.strict_decode64(signed_payload_b64)
+  signature = Base64.strict_decode64(signature_b64)
+  key = OpenSSL::PKey::RSA.new(remote_pubkey)
+  unless key.verify(OpenSSL::Digest::SHA256.new, signature, signed_payload)
+    return [false, "invalid well-known signature"]
+  end
+
+  payload = JSON.parse(signed_payload)
+  unless payload.is_a?(Hash)
+    return [false, "signed payload is not an object"]
+  end
+
+  payload_domain = string_or_nil(payload["domain"])
+  payload_pubkey = sanitize_public_key_pem(payload["publicKey"])
+  return [false, "signed payload domain mismatch"] unless payload_domain&.casecmp?(domain)
+  return [false, "signed payload public key mismatch"] unless payload_pubkey == pubkey
+
+  [true, nil]
+rescue ArgumentError, OpenSSL::PKey::PKeyError => e
+  [false, e.message]
+rescue JSON::ParserError => e
+  [false, "signed payload JSON error: #{e.message}"]
+end
+
+# Determine whether the remote node dataset satisfies freshness requirements.
+#
+# @param nodes [Array<Hash>]
+# @return [Array(Boolean, String)]
+def validate_remote_nodes(nodes)
+  unless nodes.is_a?(Array)
+    return [false, "node response is not an array"]
+  end
+
+  return [false, "insufficient nodes"] if nodes.length < REMOTE_INSTANCE_MIN_NODE_COUNT
+
+  latest = nodes.filter_map do |node|
+    next unless node.is_a?(Hash)
+
+    timestamps = []
+    timestamps << coerce_integer(node["last_heard"])
+    timestamps << coerce_integer(node["position_time"])
+    timestamps << coerce_integer(node["first_heard"])
+    timestamps.compact.max
+  end.compact.max
+
+  return [false, "missing recent node updates"] unless latest
+
+  cutoff = Time.now.to_i - REMOTE_INSTANCE_MAX_NODE_AGE
+  return [false, "node data is stale"] if latest < cutoff
+
+  [true, nil]
+end
+
+# Insert or update a federated instance registration record.
+#
+# @param db [SQLite3::Database]
+# @param attributes [Hash]
+# @param signature [String]
+# @return [void]
+def upsert_instance_record(db, attributes, signature)
+  sql = <<~SQL
+    INSERT INTO instances (
+      id, domain, pubkey, name, version, channel, frequency,
+      latitude, longitude, last_update_time, is_private, signature
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      domain=excluded.domain,
+      pubkey=excluded.pubkey,
+      name=excluded.name,
+      version=excluded.version,
+      channel=excluded.channel,
+      frequency=excluded.frequency,
+      latitude=excluded.latitude,
+      longitude=excluded.longitude,
+      last_update_time=excluded.last_update_time,
+      is_private=excluded.is_private,
+      signature=excluded.signature
+  SQL
+
+  params = [
+    attributes[:id],
+    attributes[:domain],
+    attributes[:pubkey],
+    attributes[:name],
+    attributes[:version],
+    attributes[:channel],
+    attributes[:frequency],
+    attributes[:latitude],
+    attributes[:longitude],
+    attributes[:last_update_time],
+    attributes[:is_private] ? 1 : 0,
+    signature,
+  ]
+
+  with_busy_retry do
+    db.execute(sql, params)
+  end
+end
+
 # Recursively normalize JSON values to ensure keys are strings.
 #
 # @param value [Object] array, hash, or scalar value parsed from JSON.
@@ -748,8 +1077,8 @@ end
 def db_schema_present?
   return false unless File.exist?(DB_PATH)
   db = open_database(readonly: true)
-  required = %w[nodes messages positions telemetry neighbors]
-  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors')").flatten
+  required = %w[nodes messages positions telemetry neighbors instances]
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','instances')").flatten
   (required - tables).empty?
 rescue SQLite3::Exception
   false
@@ -763,7 +1092,7 @@ end
 def init_db
   FileUtils.mkdir_p(File.dirname(DB_PATH))
   db = open_database
-  %w[nodes messages positions telemetry neighbors].each do |schema|
+  %w[nodes messages positions telemetry neighbors instances].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
     db.execute_batch(File.read(sql_file))
   end
@@ -783,7 +1112,13 @@ def ensure_schema_upgrades
   unless node_columns.include?("precision_bits")
     db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
   end
-rescue SQLite3::SQLException => e
+
+  tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='instances'").flatten
+  if tables.empty?
+    sql_file = File.expand_path("../data/instances.sql", __dir__)
+    db.execute_batch(File.read(sql_file))
+  end
+rescue SQLite3::SQLException, Errno::ENOENT => e
   warn "[warn] failed to apply schema upgrade: #{e.message}"
 ensure
   db&.close
@@ -2521,6 +2856,107 @@ end
 # POST /api/nodes
 #
 # Upserts one or more nodes provided as a JSON object keyed by node ID.
+post "/api/instances" do
+  content_type :json
+  begin
+    payload = JSON.parse(read_json_body)
+  rescue JSON::ParserError
+    warn "[warn] instance registration rejected: invalid JSON"
+    halt 400, { error: "invalid JSON" }.to_json
+  end
+
+  unless payload.is_a?(Hash)
+    warn "[warn] instance registration rejected: payload is not an object"
+    halt 400, { error: "invalid payload" }.to_json
+  end
+
+  id = string_or_nil(payload["id"]) || string_or_nil(payload["instanceId"])
+  domain = sanitize_instance_domain(payload["domain"])
+  pubkey = sanitize_public_key_pem(payload["pubkey"])
+  name = string_or_nil(payload["name"])
+  version = string_or_nil(payload["version"])
+  channel = string_or_nil(payload["channel"])
+  frequency = string_or_nil(payload["frequency"])
+  latitude = coerce_float(payload["latitude"])
+  longitude = coerce_float(payload["longitude"])
+  last_update_time = coerce_integer(payload["last_update_time"] || payload["lastUpdateTime"])
+  raw_private = payload.key?("isPrivate") ? payload["isPrivate"] : payload["is_private"]
+  is_private = coerce_boolean(raw_private)
+  signature = string_or_nil(payload["signature"])
+
+  attributes = {
+    id: id,
+    domain: domain,
+    pubkey: pubkey,
+    name: name,
+    version: version,
+    channel: channel,
+    frequency: frequency,
+    latitude: latitude,
+    longitude: longitude,
+    last_update_time: last_update_time,
+    is_private: is_private,
+  }
+
+  if [attributes[:id], attributes[:domain], attributes[:pubkey], signature, attributes[:last_update_time]].any?(&:nil?)
+    warn "[warn] instance registration rejected: missing required fields"
+    halt 400, { error: "missing required fields" }.to_json
+  end
+
+  unless verify_instance_signature(attributes, signature, attributes[:pubkey])
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: invalid signature"
+    halt 400, { error: "invalid signature" }.to_json
+  end
+
+  if attributes[:is_private]
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: instance marked private"
+    halt 403, { error: "instance marked private" }.to_json
+  end
+
+  ip = ip_from_domain(attributes[:domain])
+  if ip && restricted_ip_address?(ip)
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: restricted IP address"
+    halt 400, { error: "restricted domain" }.to_json
+  end
+
+  well_known, well_known_meta = fetch_instance_json(attributes[:domain], "/.well-known/potato-mesh")
+  unless well_known
+    details_list = Array(well_known_meta).map(&:to_s)
+    details = details_list.empty? ? "no response" : details_list.join("; ")
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: failed to fetch well-known document (#{details})"
+    halt 400, { error: "failed to verify well-known document" }.to_json
+  end
+
+  valid_well_known, well_known_reason = validate_well_known_document(well_known, attributes[:domain], attributes[:pubkey])
+  unless valid_well_known
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: #{well_known_reason}"
+    halt 400, { error: "failed to verify well-known document" }.to_json
+  end
+
+  remote_nodes, nodes_meta = fetch_instance_json(attributes[:domain], "/api/nodes")
+  unless remote_nodes
+    details_list = Array(nodes_meta).map(&:to_s)
+    details = details_list.empty? ? "no response" : details_list.join("; ")
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: failed to fetch remote nodes (#{details})"
+    halt 400, { error: "failed to validate node dataset" }.to_json
+  end
+
+  valid_nodes, nodes_reason = validate_remote_nodes(remote_nodes)
+  unless valid_nodes
+    warn "[warn] instance registration rejected for #{attributes[:domain]}: #{nodes_reason}"
+    halt 400, { error: "failed to validate node dataset" }.to_json
+  end
+
+  db = open_database
+  attributes[:domain] = attributes[:domain].downcase
+  upsert_instance_record(db, attributes, signature)
+  debug_log("Registered federated instance #{attributes[:domain]} (id: #{attributes[:id]})")
+  status 201
+  { status: "registered" }.to_json
+ensure
+  db&.close
+end
+
 post "/api/nodes" do
   require_token!
   content_type :json

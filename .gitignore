@@ -66,3 +66,6 @@ reports/
 # AI planning and documentation
 ai_docs/
 *.log
+
+# Generated credentials for the instance
+web/.config
