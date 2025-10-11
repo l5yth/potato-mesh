@@ -15,6 +15,7 @@
 import base64
 import importlib
 import sys
+import threading
 import types
 
 """End-to-end tests covering the mesh ingestion package."""
@@ -1256,6 +1257,58 @@ def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh._drain_post_queue()
 
     assert [path for path, _ in calls] == ["/api/messages", "/api/nodes"]
+
+
+def test_drain_post_queue_handles_enqueued_items_during_send(mesh_module):
+    mesh = mesh_module
+    mesh._clear_post_queue()
+
+    first_send_started = threading.Event()
+    second_item_enqueued = threading.Event()
+    second_item_processed = threading.Event()
+    calls = []
+
+    def blocking_send(path, payload):
+        calls.append((path, payload))
+        if path == "/api/first":
+            first_send_started.set()
+            assert second_item_enqueued.wait(timeout=2), "Second item was not enqueued"
+        elif path == "/api/second":
+            second_item_processed.set()
+
+    mesh._enqueue_post_json(
+        "/api/first",
+        {"id": 1},
+        mesh._DEFAULT_POST_PRIORITY,
+        state=mesh.STATE,
+    )
+
+    mesh.STATE.active = True
+    drain_thread = threading.Thread(
+        target=mesh._drain_post_queue,
+        kwargs={"state": mesh.STATE, "send": blocking_send},
+    )
+    drain_thread.start()
+
+    assert first_send_started.wait(
+        timeout=2
+    ), "Drain did not begin processing the first item"
+
+    mesh._queue_post_json(
+        "/api/second",
+        {"id": 2},
+        state=mesh.STATE,
+        send=blocking_send,
+    )
+    second_item_enqueued.set()
+
+    assert second_item_processed.wait(timeout=2), "Second item was not processed"
+
+    drain_thread.join(timeout=2)
+    assert not drain_thread.is_alive(), "Drain thread did not finish"
+    assert [path for path, _ in calls] == ["/api/first", "/api/second"]
+    assert not mesh.STATE.queue
+    assert mesh.STATE.active is False
 
 
 def test_store_packet_dict_requires_id(mesh_module, monkeypatch):
