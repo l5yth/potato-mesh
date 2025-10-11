@@ -38,8 +38,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
   # @yieldparam db [SQLite3::Database] open database handle.
   # @return [void]
   def with_db(readonly: false)
-    db = SQLite3::Database.new(DB_PATH, readonly: readonly)
-    db.busy_timeout = DB_BUSY_TIMEOUT_MS
+    db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: readonly)
+    db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
     db.execute("PRAGMA foreign_keys = ON")
     yield db
   ensure
@@ -355,7 +355,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       it "returns the fallback when the git directory is missing" do
         allow(File).to receive(:directory?).with(git_dir).and_return(false)
 
-        expect(determine_app_version).to eq(VERSION_FALLBACK)
+        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
 
       it "returns the fallback when git describe fails" do
@@ -363,7 +363,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:capture2).and_return(["ignored", status])
 
-        expect(determine_app_version).to eq(VERSION_FALLBACK)
+        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
 
       it "returns the fallback when git describe output is empty" do
@@ -371,7 +371,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["\n", status])
 
-        expect(determine_app_version).to eq(VERSION_FALLBACK)
+        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
 
       it "returns the original describe output when the format is unexpected" do
@@ -402,7 +402,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         allow(File).to receive(:directory?).with(git_dir).and_return(true)
         allow(Open3).to receive(:capture2).and_raise(StandardError, "boom")
 
-        expect(determine_app_version).to eq(VERSION_FALLBACK)
+        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
     end
 
@@ -413,7 +413,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "returns nil for blank matrix rooms" do
-        stub_const("MATRIX_ROOM", "  \t ")
+        allow(PotatoMesh::Config).to receive(:matrix_room).and_return("  \t ")
         expect(sanitized_matrix_room).to be_nil
       end
 
@@ -483,13 +483,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "returns nil when the maximum distance is invalid" do
-        stub_const("MAX_NODE_DISTANCE_KM", -5)
+        allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(-5)
         expect(sanitized_max_distance_km).to be_nil
 
-        stub_const("MAX_NODE_DISTANCE_KM", "string")
+        allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return("string")
         expect(sanitized_max_distance_km).to be_nil
 
-        stub_const("MAX_NODE_DISTANCE_KM", 15.5)
+        allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(15.5)
         expect(sanitized_max_distance_km).to eq(15.5)
       end
     end
@@ -645,7 +645,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "switches to DEBUG when debug logging is enabled" do
-      stub_const("DEBUG", true)
+      allow(PotatoMesh::Config).to receive(:debug?).and_return(true)
       Sinatra::Application.apply_logger_level!
 
       expect(Sinatra::Application.settings.logger.level).to eq(Logger::DEBUG)
@@ -701,11 +701,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     it "includes SEO metadata from configuration" do
-      stub_const("SITE_NAME", "Spec Mesh Title")
-      stub_const("DEFAULT_CHANNEL", "#SpecChannel")
-      stub_const("DEFAULT_FREQUENCY", "915MHz")
-      stub_const("MAX_NODE_DISTANCE_KM", 120.5)
-      stub_const("MATRIX_ROOM", " #spec-room:example.org ")
+      allow(PotatoMesh::Config).to receive(:site_name).and_return("Spec Mesh Title")
+      allow(PotatoMesh::Config).to receive(:default_channel).and_return("#SpecChannel")
+      allow(PotatoMesh::Config).to receive(:default_frequency).and_return("915MHz")
+      allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(120.5)
+      allow(PotatoMesh::Config).to receive(:matrix_room).and_return(" #spec-room:example.org ")
 
       expected_description = "Live Meshtastic mesh map for Spec Mesh Title on #SpecChannel (915MHz). Track nodes, messages, and coverage in real time. Shows nodes within roughly 120.5 km of the map center. Join the community in #spec-room:example.org on Matrix."
 
@@ -720,9 +720,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   describe "database initialization" do
     it "creates the schema when booting" do
-      expect(File).to exist(DB_PATH)
+      expect(File).to exist(PotatoMesh::Config.db_path)
 
-      db = SQLite3::Database.new(DB_PATH, readonly: true)
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
       tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages')").flatten
 
       expect(tables).to include("nodes")
@@ -852,7 +852,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
     let(:remote_nodes) do
       now = Time.now.to_i
-      Array.new(REMOTE_INSTANCE_MIN_NODE_COUNT) do |index|
+      Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |index|
         {
           "node_id" => "remote-node-#{index}",
           "last_heard" => now - index,
@@ -1141,7 +1141,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "returns 413 when the request body exceeds the configured byte limit" do
       limit = 64
-      stub_const("MAX_JSON_BODY_BYTES", limit)
+      allow(PotatoMesh::Config).to receive(:max_json_body_bytes).and_return(limit)
       payload = { "huge-node" => { "user" => { "shortName" => "A" * (limit + 50) } } }.to_json
       expect(payload.bytesize).to be > limit
 
@@ -1352,7 +1352,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "rejects message payloads that are larger than the configured byte limit" do
       limit = 64
-      stub_const("MAX_JSON_BODY_BYTES", limit)
+      allow(PotatoMesh::Config).to receive(:max_json_body_bytes).and_return(limit)
       payload = [{ "id" => "m1", "text" => "A" * (limit + 50) }].to_json
       expect(payload.bytesize).to be > limit
 
@@ -2302,7 +2302,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     context "when DEBUG logging is enabled" do
       it "logs diagnostics for messages missing a sender" do
-        stub_const("DEBUG", true)
+        allow(PotatoMesh::Config).to receive(:debug?).and_return(true)
         allow(Kernel).to receive(:warn)
 
         message_id = 987_654

@@ -40,59 +40,32 @@ require "ipaddr"
 require "set"
 require "digest"
 
+require_relative "lib/potato_mesh/config"
+require_relative "lib/potato_mesh/sanitizer"
+require_relative "lib/potato_mesh/meta"
+
 # Path to the SQLite database used by the web application.
-DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
 # Default timeout applied to SQLite ``busy`` responses in milliseconds.
-DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
 # Maximum number of SQLite ``busy`` retries before failing the request.
-DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
 # Base delay in seconds between SQLite ``busy`` retries.
-DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
 # Open the SQLite database with a configured busy timeout.
 #
 # @param readonly [Boolean] whether to open the database in read-only mode.
 # @return [SQLite3::Database]
 def open_database(readonly: false)
-  SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
-    db.busy_timeout = DB_BUSY_TIMEOUT_MS
+  SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: readonly).tap do |db|
+    db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
     db.execute("PRAGMA foreign_keys = ON")
   end
 end
 
 # Convenience constant used when filtering stale records.
-WEEK_SECONDS = 7 * 24 * 60 * 60
 # Default request body size allowed for JSON uploads.
-DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
 # Maximum request body size for JSON uploads, configurable via ``MAX_JSON_BODY_BYTES``.
-MAX_JSON_BODY_BYTES = begin
-    raw = ENV.fetch("MAX_JSON_BODY_BYTES", DEFAULT_MAX_JSON_BODY_BYTES.to_s)
-    value = Integer(raw, 10)
-    value.positive? ? value : DEFAULT_MAX_JSON_BODY_BYTES
-  rescue ArgumentError
-    DEFAULT_MAX_JSON_BODY_BYTES
-  end
-# Fallback version string used when Git metadata is unavailable.
-VERSION_FALLBACK = "v0.5.0"
-DEFAULT_REFRESH_INTERVAL_SECONDS = 60
-REFRESH_INTERVAL_SECONDS = begin
-    raw = ENV.fetch("REFRESH_INTERVAL_SECONDS", DEFAULT_REFRESH_INTERVAL_SECONDS.to_s)
-    value = Integer(raw, 10)
-    value.positive? ? value : DEFAULT_REFRESH_INTERVAL_SECONDS
-  rescue ArgumentError
-    DEFAULT_REFRESH_INTERVAL_SECONDS
-  end
-MAP_TILE_FILTER_LIGHT = ENV.fetch(
-  "MAP_TILE_FILTER_LIGHT",
-  "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
-)
-MAP_TILE_FILTER_DARK = ENV.fetch(
-  "MAP_TILE_FILTER_DARK",
-  "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
-)
-PROM_REPORT_IDS = ENV.fetch("PROM_REPORT_IDS", "")
 
-# Map the comma-separated list of node IDs into a sanitized array.
-$prom_report_ids = PROM_REPORT_IDS.split(",").map(&:strip).reject(&:empty?)
+def prom_report_ids
+  PotatoMesh::Config.prom_report_id_list
+end
 
 # Fetch a configuration string from environment variables.
 #
@@ -100,11 +73,7 @@ $prom_report_ids = PROM_REPORT_IDS.split(",").map(&:strip).reject(&:empty?)
 # @param default [String] fallback value returned when the variable is unset or blank.
 # @return [String] sanitized configuration value.
 def fetch_config_string(key, default)
-  value = ENV[key]
-  return default if value.nil?
-
-  trimmed = value.strip
-  trimmed.empty? ? default : trimmed
+  PotatoMesh::Config.fetch_string(key, default)
 end
 
 # Convert a value into a trimmed string or return ``nil`` when blank.
@@ -112,11 +81,7 @@ end
 # @param value [Object]
 # @return [String, nil]
 def string_or_nil(value)
-  return nil if value.nil?
-
-  str = value.is_a?(String) ? value : value.to_s
-  trimmed = str.strip
-  trimmed.empty? ? nil : trimmed
+  PotatoMesh::Sanitizer.string_or_nil(value)
 end
 
 # Normalise domain strings supplied by remote instances or configuration inputs.
@@ -124,15 +89,7 @@ end
 # @param value [Object] untrusted domain string.
 # @return [String, nil] canonical domain without schemes or paths.
 def sanitize_instance_domain(value)
-  host = string_or_nil(value)
-  return nil unless host
-
-  trimmed = host.strip
-  trimmed = trimmed.delete_suffix(".") while trimmed.end_with?(".")
-  return nil if trimmed.empty?
-  return nil if trimmed.match?(%r{[\s/\\@]})
-
-  trimmed
+  PotatoMesh::Sanitizer.sanitize_instance_domain(value)
 end
 
 # Extract the hostname component from an instance domain string, handling IPv6
@@ -141,23 +98,7 @@ end
 # @param domain [String]
 # @return [String, nil]
 def instance_domain_host(domain)
-  return nil if domain.nil?
-
-  candidate = domain.strip
-  return nil if candidate.empty?
-
-  if candidate.start_with?("[")
-    match = candidate.match(/\A\[(?<host>[^\]]+)\](?::(?<port>\d+))?\z/)
-    return match[:host] if match
-    return nil
-  end
-
-  host, port = candidate.split(":", 2)
-  if port && !host.include?(":") && port.match?(/\A\d+\z/)
-    return host
-  end
-
-  candidate
+  PotatoMesh::Sanitizer.instance_domain_host(domain)
 end
 
 # Parse an IP address when the provided domain represents an address literal.
@@ -165,12 +106,7 @@ end
 # @param domain [String]
 # @return [IPAddr, nil]
 def ip_from_domain(domain)
-  host = instance_domain_host(domain)
-  return nil unless host
-
-  IPAddr.new(host)
-rescue IPAddr::InvalidAddressError
-  nil
+  PotatoMesh::Sanitizer.ip_from_domain(domain)
 end
 
 # Attempt to resolve the instance's vanity domain from configuration or reverse
@@ -394,13 +330,13 @@ end
 def determine_app_version
   repo_root = File.expand_path("..", __dir__)
   git_dir = File.join(repo_root, ".git")
-  return VERSION_FALLBACK unless File.directory?(git_dir)
+  return PotatoMesh::Config.version_fallback unless File.directory?(git_dir)
 
   stdout, status = Open3.capture2("git", "-C", repo_root, "describe", "--tags", "--long", "--abbrev=7")
-  return VERSION_FALLBACK unless status.success?
+  return PotatoMesh::Config.version_fallback unless status.success?
 
   raw = stdout.strip
-  return VERSION_FALLBACK if raw.empty?
+  return PotatoMesh::Config.version_fallback if raw.empty?
 
   match = /\A(?<tag>.+)-(?<count>\d+)-g(?<hash>[0-9a-f]+)\z/.match(raw)
   return raw unless match
@@ -412,41 +348,30 @@ def determine_app_version
 
   "#{tag}+#{count}-#{hash}"
 rescue StandardError
-  VERSION_FALLBACK
+  PotatoMesh::Config.version_fallback
 end
 
 APP_VERSION = determine_app_version
 
-KEYFILE_PATH = File.join(__dir__, ".config", "keyfile")
-WELL_KNOWN_RELATIVE_PATH = File.join(".well-known", "potato-mesh")
-WELL_KNOWN_STORAGE_ROOT = File.join(__dir__, ".config", "well-known")
-LEGACY_PUBLIC_WELL_KNOWN_PATH = File.join(__dir__, "public", WELL_KNOWN_RELATIVE_PATH)
-WELL_KNOWN_REFRESH_INTERVAL = 24 * 60 * 60
-INSTANCE_SIGNATURE_ALGORITHM = "rsa-sha256"
-REMOTE_INSTANCE_HTTP_TIMEOUT = 5
-REMOTE_INSTANCE_MAX_NODE_AGE = 86_400
-REMOTE_INSTANCE_MIN_NODE_COUNT = 10
-FEDERATION_SEED_DOMAINS = ["potatomesh.net"].freeze
-FEDERATION_ANNOUNCEMENT_INTERVAL = 24 * 60 * 60
-
 class InstanceFetchError < StandardError; end
 
 def load_or_generate_instance_private_key
-  FileUtils.mkdir_p(File.dirname(KEYFILE_PATH))
-  if File.exist?(KEYFILE_PATH)
-    contents = File.binread(KEYFILE_PATH)
+  keyfile_path = PotatoMesh::Config.keyfile_path
+  FileUtils.mkdir_p(File.dirname(keyfile_path))
+  if File.exist?(keyfile_path)
+    contents = File.binread(keyfile_path)
     return [OpenSSL::PKey.read(contents), false]
   end
 
   key = OpenSSL::PKey::RSA.new(2048)
-  File.open(KEYFILE_PATH, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+  File.open(keyfile_path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
     file.write(key.export)
   end
   [key, true]
 rescue OpenSSL::PKey::PKeyError, ArgumentError => e
   warn "[warn] failed to load instance private key, generating a new key: #{e.message}"
   key = OpenSSL::PKey::RSA.new(2048)
-  File.open(KEYFILE_PATH, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+  File.open(keyfile_path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
     file.write(key.export)
   end
   [key, true]
@@ -457,16 +382,20 @@ INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
 SELF_INSTANCE_ID = Digest::SHA256.hexdigest(INSTANCE_PUBLIC_KEY_PEM)
 
 def well_known_directory
-  WELL_KNOWN_STORAGE_ROOT
+  PotatoMesh::Config.well_known_storage_root
 end
 
 def well_known_file_path
-  File.join(well_known_directory, File.basename(WELL_KNOWN_RELATIVE_PATH))
+  File.join(
+    well_known_directory,
+    File.basename(PotatoMesh::Config.well_known_relative_path),
+  )
 end
 
 begin
-  FileUtils.rm_f(LEGACY_PUBLIC_WELL_KNOWN_PATH)
-  legacy_dir = File.dirname(LEGACY_PUBLIC_WELL_KNOWN_PATH)
+  legacy_path = PotatoMesh::Config.legacy_public_well_known_path
+  FileUtils.rm_f(legacy_path)
+  legacy_dir = File.dirname(legacy_path)
   FileUtils.rmdir(legacy_dir) if Dir.exist?(legacy_dir) && Dir.empty?(legacy_dir)
 rescue SystemCallError
   # Ignore errors removing legacy static files; failure only means the directory
@@ -490,7 +419,7 @@ def build_well_known_document
 
   document = payload.merge(
     signature: signature,
-    signatureAlgorithm: INSTANCE_SIGNATURE_ALGORITHM,
+    signatureAlgorithm: PotatoMesh::Config.instance_signature_algorithm,
     signedPayload: Base64.strict_encode64(signed_payload),
   )
 
@@ -504,7 +433,9 @@ def refresh_well_known_document_if_stale
   now = Time.now
   if File.exist?(path)
     mtime = File.mtime(path)
-    return if (now - mtime) < WELL_KNOWN_REFRESH_INTERVAL
+    if (now - mtime) < PotatoMesh::Config.well_known_refresh_interval
+      return
+    end
   end
 
   json_output, signature = build_well_known_document
@@ -513,9 +444,9 @@ def refresh_well_known_document_if_stale
     file.write("\n") unless json_output.end_with?("\n")
   end
 
-  debug_log("Updated #{WELL_KNOWN_RELATIVE_PATH} content: #{json_output}")
+  debug_log("Updated #{PotatoMesh::Config.well_known_relative_path} content: #{json_output}")
   debug_log(
-    "Updated #{WELL_KNOWN_RELATIVE_PATH} signature (#{INSTANCE_SIGNATURE_ALGORITHM}): #{signature}",
+    "Updated #{PotatoMesh::Config.well_known_relative_path} signature (#{PotatoMesh::Config.instance_signature_algorithm}): #{signature}",
   )
 end
 
@@ -524,7 +455,7 @@ set :views, File.join(__dir__, "views")
 set :federation_thread, nil
 
 def latest_node_update_timestamp
-  return nil unless File.exist?(DB_PATH)
+  return nil unless File.exist?(PotatoMesh::Config.db_path)
 
   db = open_database(readonly: true)
   value = db.get_first_value(
@@ -538,7 +469,7 @@ ensure
 end
 
 get "/favicon.ico" do
-  cache_control :public, max_age: WEEK_SECONDS
+  cache_control :public, max_age: PotatoMesh::Config.week_seconds
   ico_path = File.join(settings.public_folder, "favicon.ico")
   if File.file?(ico_path)
     send_file ico_path, type: "image/x-icon"
@@ -558,12 +489,12 @@ get "/version" do
       siteName: sanitized_site_name,
       defaultChannel: sanitized_default_channel,
       defaultFrequency: sanitized_default_frequency,
-      refreshIntervalSeconds: REFRESH_INTERVAL_SECONDS,
+      refreshIntervalSeconds: PotatoMesh::Config.refresh_interval_seconds,
       mapCenter: {
-        lat: MAP_CENTER_LAT,
-        lon: MAP_CENTER_LON,
+        lat: PotatoMesh::Config.map_center_lat,
+        lon: PotatoMesh::Config.map_center_lon,
       },
-      maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
+      maxNodeDistanceKm: PotatoMesh::Config.max_node_distance_km,
       matrixRoom: sanitized_matrix_room,
       instanceDomain: INSTANCE_DOMAIN,
       privateMode: private_mode?,
@@ -574,20 +505,12 @@ end
 
 get "/.well-known/potato-mesh" do
   refresh_well_known_document_if_stale
-  cache_control :public, max_age: WELL_KNOWN_REFRESH_INTERVAL
+  cache_control :public, max_age: PotatoMesh::Config.well_known_refresh_interval
   content_type :json
   send_file well_known_file_path
 end
 
-SITE_NAME = fetch_config_string("SITE_NAME", "PotatoMesh Demo")
-DEFAULT_CHANNEL = fetch_config_string("DEFAULT_CHANNEL", "#LongFast")
-DEFAULT_FREQUENCY = fetch_config_string("DEFAULT_FREQUENCY", "915MHz")
-MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "38.761944").to_f
-MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "-27.090833").to_f
-MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "42").to_f
-MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#potatomesh:dod.ngo")
 INSTANCE_DOMAIN, INSTANCE_DOMAIN_SOURCE = determine_instance_domain
-DEBUG = ENV["DEBUG"] == "1"
 
 #
 # Prometheus metrics
@@ -672,7 +595,7 @@ Prometheus::Client.registry.register($prom_node_altitude)
 # @param message [String] text written to the configured logger.
 # @return [void]
 def debug_log(message)
-  return unless DEBUG
+  return unless PotatoMesh::Config.debug?
 
   logger = settings.logger if respond_to?(:settings)
   logger&.debug(message)
@@ -685,7 +608,9 @@ end
 def log_instance_public_key
   debug_log("Instance public key (PEM):\n#{INSTANCE_PUBLIC_KEY_PEM}")
   if INSTANCE_KEY_GENERATED
-    debug_log("Generated new instance private key at #{KEYFILE_PATH}")
+    debug_log(
+      "Generated new instance private key at #{PotatoMesh::Config.keyfile_path}",
+    )
   end
 end
 
@@ -794,8 +719,8 @@ def self_instance_attributes
     version: APP_VERSION,
     channel: sanitized_default_channel,
     frequency: sanitized_default_frequency,
-    latitude: MAP_CENTER_LAT,
-    longitude: MAP_CENTER_LON,
+    latitude: PotatoMesh::Config.map_center_lat,
+    longitude: PotatoMesh::Config.map_center_lon,
     last_update_time: last_update,
     is_private: private_mode?,
   }
@@ -858,7 +783,7 @@ end
 # @return [Array<String>]
 def federation_target_domains(self_domain)
   domains = Set.new
-  FEDERATION_SEED_DOMAINS.each do |seed|
+  PotatoMesh::Config.federation_seed_domains.each do |seed|
     sanitized = sanitize_instance_domain(seed)
     domains << sanitized.downcase if sanitized
   end
@@ -875,7 +800,10 @@ def federation_target_domains(self_domain)
   end
   domains.to_a
 rescue SQLite3::Exception
-  domains = FEDERATION_SEED_DOMAINS.map { |seed| sanitize_instance_domain(seed)&.downcase }.compact
+  domains =
+    PotatoMesh::Config.federation_seed_domains.map do |seed|
+      sanitize_instance_domain(seed)&.downcase
+    end.compact
   self_domain ? domains.reject { |domain| domain == self_domain.downcase } : domains
 ensure
   db&.close
@@ -893,8 +821,8 @@ def announce_instance_to_domain(domain, payload_json)
   instance_uri_candidates(domain, "/api/instances").each do |uri|
     begin
       http = Net::HTTP.new(uri.host, uri.port)
-      http.open_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
-      http.read_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
+      http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
+      http.read_timeout = PotatoMesh::Config.remote_instance_http_timeout
       http.use_ssl = uri.scheme == "https"
       response = http.start do |connection|
         request = Net::HTTP::Post.new(uri)
@@ -944,7 +872,7 @@ def start_federation_announcer!
 
   thread = Thread.new do
     loop do
-      sleep FEDERATION_ANNOUNCEMENT_INTERVAL
+      sleep PotatoMesh::Config.federation_announcement_interval
       begin
         announce_instance_to_all_domains
       rescue StandardError => e
@@ -986,28 +914,28 @@ end
 # @param value [Object] input value converted using ``to_s``.
 # @return [String] trimmed representation of ``value``.
 def sanitized_string(value)
-  value.to_s.strip
+  PotatoMesh::Sanitizer.sanitized_string(value)
 end
 
 # Return the configured site name stripped of leading and trailing whitespace.
 #
 # @return [String] sanitized site name used throughout the UI.
 def sanitized_site_name
-  sanitized_string(SITE_NAME)
+  PotatoMesh::Sanitizer.sanitized_site_name
 end
 
 # Return the configured default channel label.
 #
 # @return [String] sanitized channel label for the UI.
 def sanitized_default_channel
-  sanitized_string(DEFAULT_CHANNEL)
+  PotatoMesh::Sanitizer.sanitized_default_channel
 end
 
 # Return the configured default frequency label.
 #
 # @return [String] sanitized frequency string.
 def sanitized_default_frequency
-  sanitized_string(DEFAULT_FREQUENCY)
+  PotatoMesh::Sanitizer.sanitized_default_frequency
 end
 
 # Assemble configuration exposed to the frontend JavaScript bundle.
@@ -1015,17 +943,17 @@ end
 # @return [Hash] settings describing refresh cadence and map defaults.
 def frontend_app_config
   {
-    refreshIntervalSeconds: REFRESH_INTERVAL_SECONDS,
-    refreshMs: REFRESH_INTERVAL_SECONDS * 1000,
+    refreshIntervalSeconds: PotatoMesh::Config.refresh_interval_seconds,
+    refreshMs: PotatoMesh::Config.refresh_interval_seconds * 1000,
     chatEnabled: !private_mode?,
     defaultChannel: sanitized_default_channel,
     defaultFrequency: sanitized_default_frequency,
-    mapCenter: { lat: MAP_CENTER_LAT, lon: MAP_CENTER_LON },
-    maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
-    tileFilters: {
-      light: MAP_TILE_FILTER_LIGHT,
-      dark: MAP_TILE_FILTER_DARK,
+    mapCenter: {
+      lat: PotatoMesh::Config.map_center_lat,
+      lon: PotatoMesh::Config.map_center_lon,
     },
+    maxNodeDistanceKm: PotatoMesh::Config.max_node_distance_km,
+    tileFilters: PotatoMesh::Config.tile_filters,
     instanceDomain: INSTANCE_DOMAIN,
   }
 end
@@ -1034,8 +962,7 @@ end
 #
 # @return [String, nil] Matrix room identifier or nil when blank.
 def sanitized_matrix_room
-  value = sanitized_string(MATRIX_ROOM)
-  value.empty? ? nil : value
+  PotatoMesh::Sanitizer.sanitized_matrix_room
 end
 
 # Coerce arbitrary values into strings or nil when blank.
@@ -1206,8 +1133,8 @@ end
 # @return [String]
 def perform_instance_http_request(uri)
   http = Net::HTTP.new(uri.host, uri.port)
-  http.open_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
-  http.read_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
+  http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
+  http.read_timeout = PotatoMesh::Config.remote_instance_http_timeout
   http.use_ssl = uri.scheme == "https"
   http.start do |connection|
     response = connection.request(Net::HTTP::Get.new(uri))
@@ -1262,7 +1189,9 @@ def validate_well_known_document(document, domain, pubkey)
   return [false, "domain mismatch"] unless remote_domain.casecmp?(domain)
 
   algorithm = string_or_nil(document["signatureAlgorithm"])
-  return [false, "unsupported signature algorithm"] unless algorithm&.casecmp?(INSTANCE_SIGNATURE_ALGORITHM)
+  unless algorithm&.casecmp?(PotatoMesh::Config.instance_signature_algorithm)
+    return [false, "unsupported signature algorithm"]
+  end
 
   signed_payload_b64 = string_or_nil(document["signedPayload"])
   signature_b64 = string_or_nil(document["signature"])
@@ -1302,7 +1231,9 @@ def validate_remote_nodes(nodes)
     return [false, "node response is not an array"]
   end
 
-  return [false, "insufficient nodes"] if nodes.length < REMOTE_INSTANCE_MIN_NODE_COUNT
+  if nodes.length < PotatoMesh::Config.remote_instance_min_node_count
+    return [false, "insufficient nodes"]
+  end
 
   latest = nodes.filter_map do |node|
     next unless node.is_a?(Hash)
@@ -1316,7 +1247,7 @@ def validate_remote_nodes(nodes)
 
   return [false, "missing recent node updates"] unless latest
 
-  cutoff = Time.now.to_i - REMOTE_INSTANCE_MAX_NODE_AGE
+  cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
   return [false, "node data is stale"] if latest < cutoff
 
   [true, nil]
@@ -1411,13 +1342,7 @@ end
 #
 # @return [Float, nil] positive distance in kilometres or nil when invalid.
 def sanitized_max_distance_km
-  return nil unless defined?(MAX_NODE_DISTANCE_KM)
-
-  distance = MAX_NODE_DISTANCE_KM
-  return nil unless distance.is_a?(Numeric)
-  return nil unless distance.positive?
-
-  distance
+  PotatoMesh::Sanitizer.sanitized_max_distance_km
 end
 
 # Format a distance in kilometres for display.
@@ -1425,54 +1350,21 @@ end
 # @param distance [Numeric] value expressed in kilometres.
 # @return [String] distance formatted with a single decimal place.
 def formatted_distance_km(distance)
-  format("%.1f", distance).sub(/\.0\z/, "")
+  PotatoMesh::Meta.formatted_distance_km(distance)
 end
 
 # Compose the meta description used by the landing page.
 #
 # @return [String] readable sentence summarising the instance.
 def meta_description
-  site = sanitized_site_name
-  channel = sanitized_default_channel
-  frequency = sanitized_default_frequency
-  matrix = sanitized_matrix_room
-
-  summary = "Live Meshtastic mesh map for #{site}"
-  if channel.empty? && frequency.empty?
-    summary += "."
-  elsif channel.empty?
-    summary += " tuned to #{frequency}."
-  elsif frequency.empty?
-    summary += " on #{channel}."
-  else
-    summary += " on #{channel} (#{frequency})."
-  end
-
-  activity_sentence = if private_mode?
-      "Track nodes and coverage in real time."
-    else
-      "Track nodes, messages, and coverage in real time."
-    end
-
-  sentences = [summary, activity_sentence]
-  if (distance = sanitized_max_distance_km)
-    sentences << "Shows nodes within roughly #{formatted_distance_km(distance)} km of the map center."
-  end
-  sentences << "Join the community in #{matrix} on Matrix." if matrix
-
-  sentences.join(" ")
+  PotatoMesh::Meta.description(private_mode: private_mode?)
 end
 
 # Return the metadata used to populate the HTML head section.
 #
 # @return [Hash] hash containing ``:title``, ``:name``, and ``:description`` keys.
 def meta_configuration
-  site = sanitized_site_name
-  {
-    title: site,
-    name: site,
-    description: meta_description,
-  }
+  PotatoMesh::Meta.configuration(private_mode: private_mode?)
 end
 
 class << Sinatra::Application
@@ -1483,7 +1375,7 @@ class << Sinatra::Application
     logger = settings.logger
     return unless logger
 
-    logger.level = DEBUG ? Logger::DEBUG : Logger::WARN
+    logger.level = PotatoMesh::Config.debug? ? Logger::DEBUG : Logger::WARN
   end
 end
 
@@ -1495,7 +1387,10 @@ end
 # @param base_delay [Float] base delay in seconds for linear backoff between
 #   retries.
 # @yieldreturn [Object] result of the block once it succeeds.
-def with_busy_retry(max_retries: DB_BUSY_MAX_RETRIES, base_delay: DB_BUSY_RETRY_DELAY)
+def with_busy_retry(
+  max_retries: PotatoMesh::Config.db_busy_max_retries,
+  base_delay: PotatoMesh::Config.db_busy_retry_delay
+)
   attempts = 0
   begin
     yield
@@ -1511,7 +1406,7 @@ end
 #
 # @return [Boolean] true when both +nodes+ and +messages+ tables exist.
 def db_schema_present?
-  return false unless File.exist?(DB_PATH)
+  return false unless File.exist?(PotatoMesh::Config.db_path)
   db = open_database(readonly: true)
   required = %w[nodes messages positions telemetry neighbors instances]
   tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','instances')").flatten
@@ -1526,7 +1421,7 @@ end
 #
 # @return [void]
 def init_db
-  FileUtils.mkdir_p(File.dirname(DB_PATH))
+  FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
   db = open_database
   %w[nodes messages positions telemetry neighbors instances].each do |schema|
     sql_file = File.expand_path("../data/#{schema}.sql", __dir__)
@@ -1686,7 +1581,7 @@ def query_nodes(limit, node_ref: nil)
   db = open_database(readonly: true)
   db.results_as_hash = true
   now = Time.now.to_i
-  min_last_heard = now - WEEK_SECONDS
+  min_last_heard = now - PotatoMesh::Config.week_seconds
   params = []
   where_clauses = []
 
@@ -1795,7 +1690,7 @@ def query_messages(limit, node_ref: nil)
   rows = db.execute(sql, params)
   msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit]
   rows.each do |r|
-    if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
+    if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
       Kernel.warn "[debug] messages row before join: #{raw.inspect}"
       Kernel.warn "[debug] row after join: #{r.inspect}"
@@ -1840,7 +1735,7 @@ def query_messages(limit, node_ref: nil)
         r["from_id"] = canonical_from_id
       end
     end
-    if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
+    if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
       Kernel.warn "[debug] row after processing: #{r.inspect}"
     end
   end
@@ -2408,9 +2303,11 @@ end
 # @param limit [Integer, nil] optional override for the number of bytes.
 # @return [String]
 def read_json_body(limit: nil)
-  max_bytes = limit || MAX_JSON_BODY_BYTES
+  max_bytes = limit || PotatoMesh::Config.max_json_body_bytes
   max_bytes = max_bytes.to_i
-  max_bytes = MAX_JSON_BODY_BYTES if max_bytes <= 0
+  if max_bytes <= 0
+    max_bytes = PotatoMesh::Config.max_json_body_bytes
+  end
 
   body = request.body.read(max_bytes + 1)
   body = "" if body.nil?
@@ -2889,9 +2786,10 @@ end
 # @param pos [Hash] position information from the node payload.
 # @return [void]
 def update_prometheus_metrics(node_id, user = nil, role = "", met = nil, pos = nil)
-  return if $prom_report_ids.empty? || !node_id
+  ids = prom_report_ids
+  return if ids.empty? || !node_id
 
-  return unless $prom_report_ids[0] == "*" || $prom_report_ids.include?(node_id)
+  return unless ids[0] == "*" || ids.include?(node_id)
 
   if user && user.is_a?(Hash) && role && role != ""
     $prom_node.set(
@@ -2957,12 +2855,13 @@ def update_all_prometheus_metrics_from_nodes
   $prom_nodes.set(nodes.size)
 
   # update prometheus metrics on startup if enabled
-  if !$prom_report_ids.empty?
+  ids = prom_report_ids
+  unless ids.empty?
     # fill in details for each node
     nodes.each do |n|
       node_id = n["node_id"]
 
-      if $prom_report_ids[0] != "*" && !$prom_report_ids.include?(node_id)
+      if ids[0] != "*" && !ids.include?(node_id)
         next
       end
 
@@ -3599,13 +3498,13 @@ get "/" do
                 meta_description: meta[:description],
                 default_channel: sanitized_default_channel,
                 default_frequency: sanitized_default_frequency,
-                map_center_lat: MAP_CENTER_LAT,
-                map_center_lon: MAP_CENTER_LON,
-                max_node_distance_km: MAX_NODE_DISTANCE_KM,
+                map_center_lat: PotatoMesh::Config.map_center_lat,
+                map_center_lon: PotatoMesh::Config.map_center_lon,
+                max_node_distance_km: PotatoMesh::Config.max_node_distance_km,
                 matrix_room: sanitized_matrix_room,
                 version: APP_VERSION,
                 private_mode: private_mode?,
-                refresh_interval_seconds: REFRESH_INTERVAL_SECONDS,
+                refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,
                 app_config_json: JSON.generate(config),
                 initial_theme: theme,
               }
