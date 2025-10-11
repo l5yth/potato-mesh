@@ -2867,7 +2867,6 @@ post "/api/instances" do
   last_update_time = coerce_integer(payload["last_update_time"] || payload["lastUpdateTime"])
   raw_private = payload.key?("isPrivate") ? payload["isPrivate"] : payload["is_private"]
   is_private = coerce_boolean(raw_private)
-  is_private = false if is_private.nil?
   signature = string_or_nil(payload["signature"])
 
   attributes = {
