@@ -1,5 +1,4 @@
-# NOTE: This Dockerfile is kept for backward compatibility. The canonical build
-# instructions live in `web/Dockerfile`; keep the two files in sync.
+# syntax=docker/dockerfile:1.6
 
 # Main application builder stage
 FROM ruby:3.3-alpine AS builder

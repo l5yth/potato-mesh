@@ -2,6 +2,8 @@
 services:
   web:
     build:
+      context: .
+      dockerfile: web/Dockerfile
       target: production
     environment:
       DEBUG: 0
@@ -9,6 +11,8 @@ services:
 
   web-bridge:
     build:
+      context: .
+      dockerfile: web/Dockerfile
       target: production
     environment:
       DEBUG: 0
@@ -16,6 +20,8 @@ services:
 
   ingestor:
     build:
+      context: .
+      dockerfile: data/Dockerfile
       target: production
     environment:
       DEBUG: 0
@@ -23,6 +29,8 @@ services:
 
   ingestor-bridge:
     build:
+      context: .
+      dockerfile: data/Dockerfile
       target: production
     environment:
       DEBUG: 0
