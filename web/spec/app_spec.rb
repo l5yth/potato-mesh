@@ -873,6 +873,57 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(count).to eq(0)
       end
     end
+
+    it "rejects registrations targeting restricted literal IPs when a port is supplied" do
+      restricted_domain = "127.0.0.1:8080"
+      restricted_attributes = instance_attributes.merge(domain: restricted_domain)
+      restricted_signature_payload = canonical_instance_payload(restricted_attributes)
+      restricted_signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, restricted_signature_payload),
+      )
+      restricted_payload = instance_payload.merge(
+        "domain" => restricted_domain,
+        "signature" => restricted_signature,
+      )
+
+      expect_any_instance_of(Object).to receive(:warn).with(/restricted IP address/).at_least(:once)
+
+      post "/api/instances", restricted_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "restricted domain")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM instances")
+        expect(count).to eq(0)
+      end
+    end
+
+    it "accepts signatures when the optional isPrivate field is omitted" do
+      unsigned_attributes = instance_attributes.merge(is_private: nil)
+      unsigned_payload_json = canonical_instance_payload(unsigned_attributes)
+      unsigned_signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, unsigned_payload_json),
+      )
+      payload_without_private = instance_payload.reject { |key, _| key == "isPrivate" }
+      payload_without_private["signature"] = unsigned_signature
+
+      post "/api/instances", payload_without_private.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT * FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["is_private"]).to eq(0)
+      end
+    end
   end
 
   describe "POST /api/nodes" do

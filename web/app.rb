@@ -648,25 +648,39 @@ def sanitize_public_key_pem(value)
   pem
 end
 
-# Parse an IP address when the provided domain represents an address literal.
+# Extract the host component from an instance domain string.
 #
 # @param domain [String]
-# @return [IPAddr, nil]
-def ip_from_domain(domain)
+# @return [String, nil] host portion suitable for IP parsing.
+def instance_domain_host(domain)
   return nil if domain.nil?
 
   candidate = domain.strip
   return nil if candidate.empty?
 
   if candidate.start_with?("[")
-    match = candidate.match(/\A\[(?<host>[^\]]+)\](?::\d+)?\z/)
-    candidate = match[:host] if match
-  else
-    host, port = candidate.split(":", 2)
-    candidate = host if port && port.match?(/\A\d+\z/) && !host.include?(":")
+    match = candidate.match(/\A\[(?<host>[^\]]+)\](?::(?<port>\d+))?\z/)
+    return match[:host] if match
+    return nil
   end
 
-  IPAddr.new(candidate)
+  host, port = candidate.split(":", 2)
+  if port && !host.include?(":") && port.match?(/\A\d+\z/)
+    return host
+  end
+
+  candidate
+end
+
+# Parse an IP address when the provided domain represents an address literal.
+#
+# @param domain [String]
+# @return [IPAddr, nil]
+def ip_from_domain(domain)
+  host = instance_domain_host(domain)
+  return nil unless host
+
+  IPAddr.new(host)
 rescue IPAddr::InvalidAddressError
   nil
 end
