@@ -28,6 +28,8 @@ require "open3"
 require "resolv"
 require "socket"
 require "time"
+require "openssl"
+require "base64"
 require "prometheus/client"
 require "prometheus/client/formats/text"
 require "prometheus/middleware/collector"
@@ -168,6 +170,89 @@ end
 
 APP_VERSION = determine_app_version
 
+KEYFILE_PATH = File.join(__dir__, ".config", "keyfile")
+WELL_KNOWN_RELATIVE_PATH = File.join(".well-known", "potato-mesh")
+WELL_KNOWN_REFRESH_INTERVAL = 24 * 60 * 60
+INSTANCE_SIGNATURE_ALGORITHM = "rsa-sha256"
+
+def load_or_generate_instance_private_key
+  FileUtils.mkdir_p(File.dirname(KEYFILE_PATH))
+  if File.exist?(KEYFILE_PATH)
+    contents = File.binread(KEYFILE_PATH)
+    return [OpenSSL::PKey.read(contents), false]
+  end
+
+  key = OpenSSL::PKey::RSA.new(2048)
+  File.open(KEYFILE_PATH, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+    file.write(key.export)
+  end
+  [key, true]
+rescue OpenSSL::PKey::PKeyError, ArgumentError => e
+  warn "[warn] failed to load instance private key, generating a new key: #{e.message}"
+  key = OpenSSL::PKey::RSA.new(2048)
+  File.open(KEYFILE_PATH, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+    file.write(key.export)
+  end
+  [key, true]
+end
+
+INSTANCE_PRIVATE_KEY, INSTANCE_KEY_GENERATED = load_or_generate_instance_private_key
+INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
+
+def well_known_directory
+  File.join(settings.public_folder, File.dirname(WELL_KNOWN_RELATIVE_PATH))
+end
+
+def well_known_file_path
+  File.join(settings.public_folder, WELL_KNOWN_RELATIVE_PATH)
+end
+
+def build_well_known_document
+  last_update = latest_node_update_timestamp
+  payload = {
+    publicKey: INSTANCE_PUBLIC_KEY_PEM,
+    name: sanitized_site_name,
+    version: APP_VERSION,
+    domain: INSTANCE_DOMAIN,
+    lastUpdate: last_update,
+  }
+
+  signed_payload = JSON.generate(payload, sort_keys: true)
+  signature = Base64.strict_encode64(
+    INSTANCE_PRIVATE_KEY.sign(OpenSSL::Digest::SHA256.new, signed_payload),
+  )
+
+  document = payload.merge(
+    signature: signature,
+    signatureAlgorithm: INSTANCE_SIGNATURE_ALGORITHM,
+    signedPayload: Base64.strict_encode64(signed_payload),
+  )
+
+  json_output = JSON.pretty_generate(document)
+  [json_output, signature]
+end
+
+def refresh_well_known_document_if_stale
+  FileUtils.mkdir_p(well_known_directory)
+  path = well_known_file_path
+  now = Time.now
+  if File.exist?(path)
+    mtime = File.mtime(path)
+    return if (now - mtime) < WELL_KNOWN_REFRESH_INTERVAL
+  end
+
+  json_output, signature = build_well_known_document
+  File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o644) do |file|
+    file.write(json_output)
+    file.write("\n") unless json_output.end_with?("\n")
+  end
+
+  debug_log("Updated #{WELL_KNOWN_RELATIVE_PATH} content: #{json_output}")
+  debug_log(
+    "Updated #{WELL_KNOWN_RELATIVE_PATH} signature (#{INSTANCE_SIGNATURE_ALGORITHM}): #{signature}",
+  )
+end
+
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
@@ -218,6 +303,13 @@ get "/version" do
     },
   }
   payload.to_json
+end
+
+get "/.well-known/potato-mesh" do
+  refresh_well_known_document_if_stale
+  cache_control :public, max_age: WELL_KNOWN_REFRESH_INTERVAL
+  content_type :json
+  send_file well_known_file_path
 end
 
 SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
@@ -317,6 +409,17 @@ def debug_log(message)
 
   logger = settings.logger if respond_to?(:settings)
   logger&.debug(message)
+end
+
+# Log the instance public key to the debug output so operators can record it for
+# federation purposes.
+#
+# @return [void]
+def log_instance_public_key
+  debug_log("Instance public key (PEM):\n#{INSTANCE_PUBLIC_KEY_PEM}")
+  if INSTANCE_KEY_GENERATED
+    debug_log("Generated new instance private key at #{KEYFILE_PATH}")
+  end
 end
 
 # Emit a debug log entry describing how the instance domain was resolved.
@@ -593,6 +696,8 @@ Sinatra::Application.configure do
   use Prometheus::Middleware::Exporter
   Sinatra::Application.apply_logger_level!
   log_instance_domain_resolution
+  log_instance_public_key
+  refresh_well_known_document_if_stale
 end
 
 # Open the SQLite database with a configured busy timeout.
