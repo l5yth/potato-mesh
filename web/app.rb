@@ -71,6 +71,9 @@ MAP_TILE_FILTER_DARK = ENV.fetch(
 )
 PROM_REPORT_IDS = ENV.fetch("PROM_REPORT_IDS", "")
 
+# Map the comma-separated list of node IDs into a sanitized array.
+$prom_report_ids = PROM_REPORT_IDS.split(",").map(&:strip).reject(&:empty?)
+
 # Fetch a configuration string from environment variables.
 #
 # @param key [String] name of the environment variable to read.
@@ -1080,54 +1083,8 @@ def upsert_node(db, node_id, n)
   }
   node_num = resolve_node_num(node_id, n)
 
-  if !PROM_REPORT_IDS.empty? && node_id
-    report_ids = PROM_REPORT_IDS.split(",").map(&:strip).reject(&:empty?)
-
-    if PROM_REPORT_IDS == "*" || report_ids.include?(node_id)
-      $prom_node.set(
-        1,
-        labels: {
-          node: node_id,
-          short_name: user["shortName"],
-          long_name: user["longName"],
-          hw_model: user["hwModel"] || n["hwModel"],
-          role: role,
-        },
-      )
-
-      if met["batteryLevel"]
-        $prom_node_battery_level.set(met["batteryLevel"], labels: { node: node_id })
-      end
-
-      if met["voltage"]
-        $prom_node_voltage.set(met["voltage"], labels: { node: node_id })
-      end
-
-      if met["uptimeSeconds"]
-        $prom_node_uptime.set(met["uptimeSeconds"], labels: { node: node_id })
-      end
-
-      if met["channelUtilization"]
-        $prom_node_channel_utilization.set(met["channelUtilization"], labels: { node: node_id })
-      end
-
-      if met["airUtilTx"]
-        $prom_node_transmit_air_utilization.set(met["airUtilTx"], labels: { node: node_id })
-      end
-
-      if pos["latitude"]
-        $prom_node_latitude.set(pos["latitude"], labels: { node: node_id })
-      end
-
-      if pos["longitude"]
-        $prom_node_longitude.set(pos["longitude"], labels: { node: node_id })
-      end
-
-      if pos["altitude"]
-        $prom_node_altitude.set(pos["altitude"], labels: { node: node_id })
-      end
-    end
-  end
+  # insert or update Prometheus metrics
+  update_prometheus_metrics(node_id, user, role, met, pos)
 
   row = [
     node_id,
@@ -1270,6 +1227,13 @@ def update_node_from_position(db, node_id, node_num, rx_time, position_time, loc
   alt = coerce_float(altitude)
   precision = coerce_integer(precision_bits)
   snr_val = coerce_float(snr)
+
+  # updates position metrics
+  update_prometheus_metrics(node_id, nil, nil, nil, {
+    "latitude" => lat,
+    "longitude" => lon,
+    "altitude" => alt,
+  })
 
   row = [
     id,
@@ -1635,6 +1599,15 @@ def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
   air_util_tx = coerce_float(metrics[:air_util_tx] || metrics["air_util_tx"])
   uptime = coerce_integer(metrics[:uptime_seconds] || metrics["uptime_seconds"])
 
+  # updates telemetry metrics
+  update_prometheus_metrics(node_id, nil, nil, {
+    "batteryLevel" => battery,
+    "voltage" => voltage,
+    "uptimeSeconds" => uptime,
+    "channelUtilization" => channel_util,
+    "airUtilTx" => air_util_tx,
+  }, nil)
+
   assignments = []
   params = []
 
@@ -1667,6 +1640,119 @@ def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
     db.execute("UPDATE nodes SET #{assignments_sql} WHERE node_id = ?", params)
   end
 end
+
+# Update Prometheus metrics for a node when reporting is enabled.
+#
+# @param node_id [String] meshtastic node identifier.
+# @param user [Hash] user information from the node payload.
+# @param role [String] node role designation.
+# @param met [Hash] device metrics from the node payload.
+# @param pos [Hash] position information from the node payload.
+# @return [void]
+def update_prometheus_metrics(node_id, user = nil, role = "", met = nil, pos = nil)
+  return if $prom_report_ids.empty? || !node_id
+
+  return unless $prom_report_ids[0] == "*" || $prom_report_ids.include?(node_id)
+
+  if user && user.is_a?(Hash) && role && role != ""
+    $prom_node.set(
+      1,
+      labels: {
+        node: node_id,
+        short_name: user["shortName"],
+        long_name: user["longName"],
+        hw_model: user["hwModel"],
+        role: role,
+      },
+    )
+  end
+
+  if met && met.is_a?(Hash)
+    if met["batteryLevel"]
+      $prom_node_battery_level.set(met["batteryLevel"], labels: { node: node_id })
+    end
+
+    if met["voltage"]
+      $prom_node_voltage.set(met["voltage"], labels: { node: node_id })
+    end
+
+    if met["uptimeSeconds"]
+      $prom_node_uptime.set(met["uptimeSeconds"], labels: { node: node_id })
+    end
+
+    if met["channelUtilization"]
+      $prom_node_channel_utilization.set(met["channelUtilization"], labels: { node: node_id })
+    end
+
+    if met["airUtilTx"]
+      $prom_node_transmit_air_utilization.set(met["airUtilTx"], labels: { node: node_id })
+    end
+  end
+
+  if pos && pos.is_a?(Hash)
+    if pos["latitude"]
+      $prom_node_latitude.set(pos["latitude"], labels: { node: node_id })
+    end
+
+    if pos["longitude"]
+      $prom_node_longitude.set(pos["longitude"], labels: { node: node_id })
+    end
+
+    if pos["altitude"]
+      $prom_node_altitude.set(pos["altitude"], labels: { node: node_id })
+    end
+  end
+end
+
+# Update Prometheus metrics for all known nodes when reporting is enabled.
+#
+# This is intended to be called once on startup to populate the metrics from
+# existing database records.
+#
+# @return [void]
+def update_all_prometheus_metrics_from_nodes
+  # find all nodes
+  nodes = query_nodes(1000)
+
+  # set the node size
+  $prom_nodes.set(nodes.size)
+
+  # update prometheus metrics on startup if enabled
+  if !$prom_report_ids.empty?
+    # fill in details for each node
+    nodes.each do |n|
+      node_id = n["node_id"]
+
+      if $prom_report_ids[0] != "*" && !$prom_report_ids.include?(node_id)
+        next
+      end
+
+      update_prometheus_metrics(
+        node_id,
+        {
+          "shortName" => n["short_name"] || "",
+          "longName" => n["long_name"] || "",
+          "hwModel" => n["hw_model"] || "",
+        },
+        n["role"] || "",
+        {
+          "batteryLevel" => n["battery_level"],
+          "voltage" => n["voltage"],
+          "uptimeSeconds" => n["uptime_seconds"],
+          "channelUtilization" => n["channel_utilization"],
+          "airUtilTx" => n["air_util_tx"],
+        },
+        {
+          "latitude" => n["latitude"],
+          "longitude" => n["longitude"],
+          "altitude" => n["altitude"],
+        }
+      )
+    end
+  end
+end
+
+update_all_prometheus_metrics_from_nodes
 
 # Insert or update a telemetry packet and propagate relevant metrics to the node.
 #
