@@ -146,7 +146,7 @@ node records and parsing new incoming messages. Enable debug output with `DEBUG=
 specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`) or set it to an IP
 address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
 `MESH_SERIAL` also accepts Bluetooth device addresses (e.g., `ED:4D:9E:95:CF:60`)
-and attempts an BLE connection if available.
+and the script attempts a BLE connection if available.
 
 ## Demos
 
