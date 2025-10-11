@@ -46,6 +46,27 @@ Puma starting in single mode...
 Check [127.0.0.1:41447](http://127.0.0.1:41447/) for the development preview
 of the node map. Set `API_TOKEN` required for authorizations on the API's POST endpoints.
 
+### Production
+
+When promoting the app to production, run the server with the minimum required
+configuration to ensure secure access and proper routing:
+
+```bash
+RACK_ENV="production" \
+APP_ENV="production" \
+API_TOKEN="SuperSecureTokenReally" \
+INSTANCE_DOMAIN="https://potatomesh.net" \
+exec ruby app.rb -p 41447 -o 0.0.0.0
+```
+
+* `RACK_ENV` and `APP_ENV` must be set to `production` to enable optimized
+  settings suited for live deployments.
+* Bind the server to a production port and all interfaces (`-p 41447 -o 0.0.0.0`)
+  so that clients can reach the dashboard over the network.
+* Provide a strong `API_TOKEN` value to authorize POST requests against the API.
+* Configure `INSTANCE_DOMAIN` with the public URL of your deployment so vanity
+  links and generated metadata resolve correctly.
+
 The web app can be configured with environment variables (defaults shown):
 
 * `SITE_NAME` - title and header shown in the ui (default: "Meshtastic Berlin")
