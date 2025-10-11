@@ -272,6 +272,33 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(source).to eq(:environment)
       end
 
+      it "normalises scheme-based environment overrides" do
+        ENV["INSTANCE_DOMAIN"] = " https://Example.Org "
+
+        domain, source = determine_instance_domain
+
+        expect(domain).to eq("example.org")
+        expect(source).to eq(:environment)
+      end
+
+      it "rejects IP addresses configured via the environment" do
+        ENV["INSTANCE_DOMAIN"] = "203.0.113.40"
+
+        expect { determine_instance_domain }.to raise_error(
+          RuntimeError,
+          /INSTANCE_DOMAIN must resolve to a DNS hostname/,
+        )
+      end
+
+      it "rejects instance domains containing path components" do
+        ENV["INSTANCE_DOMAIN"] = "https://example.org/app"
+
+        expect { determine_instance_domain }.to raise_error(
+          RuntimeError,
+          /must not include a path component/,
+        )
+      end
+
       it "falls back to reverse DNS when available" do
         address = Addrinfo.ip("203.0.113.10")
         allow(Socket).to receive(:ip_address_list).and_return([address])

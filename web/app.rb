@@ -107,19 +107,104 @@ def fetch_config_string(key, default)
   trimmed.empty? ? default : trimmed
 end
 
+# Convert a value into a trimmed string or return ``nil`` when blank.
+#
+# @param value [Object]
+# @return [String, nil]
+def string_or_nil(value)
+  return nil if value.nil?
+
+  str = value.is_a?(String) ? value : value.to_s
+  trimmed = str.strip
+  trimmed.empty? ? nil : trimmed
+end
+
+# Normalise domain strings supplied by remote instances or configuration inputs.
+#
+# @param value [Object] untrusted domain string.
+# @return [String, nil] canonical domain without schemes or paths.
+def sanitize_instance_domain(value)
+  host = string_or_nil(value)
+  return nil unless host
+
+  trimmed = host.strip
+  trimmed = trimmed.delete_suffix(".") while trimmed.end_with?(".")
+  return nil if trimmed.empty?
+  return nil if trimmed.match?(%r{[\s/\\@]})
+
+  trimmed
+end
+
 # Attempt to resolve the instance's vanity domain from configuration or reverse
 # DNS lookup.
 #
 # @return [Array<(String, Symbol)>] pair containing the resolved domain (or
 #   ``nil``) and the source used (:environment, :reverse_dns, :unknown).
+def canonicalize_configured_instance_domain(raw)
+  return nil if raw.nil?
+
+  trimmed = raw.to_s.strip
+  return nil if trimmed.empty?
+
+  candidate = trimmed
+
+  if candidate.include?("://")
+    begin
+      uri = URI.parse(candidate)
+    rescue URI::InvalidURIError => e
+      raise "INSTANCE_DOMAIN must be a valid hostname or URL, but parsing #{candidate.inspect} failed: #{e.message}"
+    end
+
+    unless uri.host
+      raise "INSTANCE_DOMAIN URL must include a hostname: #{candidate.inspect}"
+    end
+
+    if uri.userinfo
+      raise "INSTANCE_DOMAIN URL must not include credentials: #{candidate.inspect}"
+    end
+
+    if uri.path && !uri.path.empty? && uri.path != "/"
+      raise "INSTANCE_DOMAIN URL must not include a path component: #{candidate.inspect}"
+    end
+
+    if uri.query || uri.fragment
+      raise "INSTANCE_DOMAIN URL must not include query or fragment data: #{candidate.inspect}"
+    end
+
+    hostname = uri.hostname
+    unless hostname
+      raise "INSTANCE_DOMAIN URL must include a hostname: #{candidate.inspect}"
+    end
+
+    candidate = hostname
+    port = uri.port
+    if port && (!uri.respond_to?(:default_port) || uri.default_port.nil? || port != uri.default_port)
+      candidate = "#{candidate}:#{port}"
+    elsif port && uri.to_s.match?(/:\d+/)
+      candidate = "#{candidate}:#{port}"
+    end
+  end
+
+  sanitized = sanitize_instance_domain(candidate)
+  unless sanitized
+    raise "INSTANCE_DOMAIN must be a bare hostname (optionally with a port) without schemes or paths: #{raw.inspect}"
+  end
+
+  if (ip = ip_from_domain(sanitized))
+    raise "INSTANCE_DOMAIN must resolve to a DNS hostname, not an IP address: #{sanitized}"
+  end
+
+  sanitized.downcase
+end
+
 def determine_instance_domain
   raw = ENV["INSTANCE_DOMAIN"]
   if raw
-    trimmed = raw.strip
-    return [trimmed, :environment] unless trimmed.empty?
+    canonical = canonicalize_configured_instance_domain(raw)
+    return [canonical, :environment] if canonical
   end
 
-  reverse = reverse_dns_domain
+  reverse = sanitize_instance_domain(reverse_dns_domain)
   return [reverse, :reverse_dns] if reverse
 
   public_ip = discover_public_ip_address
@@ -654,7 +739,10 @@ end
 #
 # @return [String, nil]
 def self_instance_domain
-  sanitize_instance_domain(INSTANCE_DOMAIN) || sanitize_instance_domain(discover_local_ip_address)
+  sanitized = sanitize_instance_domain(INSTANCE_DOMAIN)
+  return sanitized if sanitized
+
+  raise "INSTANCE_DOMAIN could not be determined"
 end
 
 # Assemble the canonical attributes advertised for this instance when
@@ -896,14 +984,6 @@ end
 #
 # @param value [Object] raw value to normalize.
 # @return [String, nil] string when present or nil for empty inputs.
-def string_or_nil(value)
-  return nil if value.nil?
-
-  str = value.is_a?(String) ? value : value.to_s
-  trimmed = str.strip
-  trimmed.empty? ? nil : trimmed
-end
-
 # Convert values into integers while tolerating hexadecimal and float inputs.
 #
 # @param value [Object] input converted to an integer when possible.
@@ -976,22 +1056,6 @@ def coerce_boolean(value)
   else
     nil
   end
-end
-
-# Normalise domain strings supplied by remote instances.
-#
-# @param value [Object] untrusted domain string.
-# @return [String, nil] canonical domain without schemes or paths.
-def sanitize_instance_domain(value)
-  host = string_or_nil(value)
-  return nil unless host
-
-  trimmed = host.strip
-  trimmed = trimmed.delete_suffix(".") while trimmed.end_with?(".")
-  return nil if trimmed.empty?
-  return nil if trimmed.match?(%r{[\s/\\@]})
-
-  trimmed
 end
 
 # Normalise PEM-encoded public keys while preserving their structure.
