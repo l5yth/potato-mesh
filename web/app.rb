@@ -43,6 +43,16 @@ DB_BUSY_TIMEOUT_MS = ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
 DB_BUSY_MAX_RETRIES = ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
 # Base delay in seconds between SQLite ``busy`` retries.
 DB_BUSY_RETRY_DELAY = ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
+# Open the SQLite database with a configured busy timeout.
+#
+# @param readonly [Boolean] whether to open the database in read-only mode.
+# @return [SQLite3::Database]
+def open_database(readonly: false)
+  SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
+    db.busy_timeout = DB_BUSY_TIMEOUT_MS
+    db.execute("PRAGMA foreign_keys = ON")
+  end
+end
 # Convenience constant used when filtering stale records.
 WEEK_SECONDS = 7 * 24 * 60 * 60
 # Default request body size allowed for JSON uploads.
@@ -698,17 +708,6 @@ Sinatra::Application.configure do
   log_instance_domain_resolution
   log_instance_public_key
   refresh_well_known_document_if_stale
-end
-
-# Open the SQLite database with a configured busy timeout.
-#
-# @param readonly [Boolean] whether to open the database in read-only mode.
-# @return [SQLite3::Database]
-def open_database(readonly: false)
-  SQLite3::Database.new(DB_PATH, readonly: readonly).tap do |db|
-    db.busy_timeout = DB_BUSY_TIMEOUT_MS
-    db.execute("PRAGMA foreign_keys = ON")
-  end
 end
 
 # Execute the provided block, retrying when SQLite reports the database is
