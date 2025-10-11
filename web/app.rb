@@ -37,6 +37,8 @@ require "prometheus/middleware/exporter"
 require "net/http"
 require "uri"
 require "ipaddr"
+require "set"
+require "digest"
 
 # Path to the SQLite database used by the web application.
 DB_PATH = ENV.fetch("MESH_DB", File.join(__dir__, "../data/mesh.db"))
@@ -193,6 +195,8 @@ INSTANCE_SIGNATURE_ALGORITHM = "rsa-sha256"
 REMOTE_INSTANCE_HTTP_TIMEOUT = 5
 REMOTE_INSTANCE_MAX_NODE_AGE = 86_400
 REMOTE_INSTANCE_MIN_NODE_COUNT = 10
+FEDERATION_SEED_DOMAINS = ["potatomesh.net"].freeze
+FEDERATION_ANNOUNCEMENT_INTERVAL = 24 * 60 * 60
 
 class InstanceFetchError < StandardError; end
 
@@ -219,6 +223,7 @@ end
 
 INSTANCE_PRIVATE_KEY, INSTANCE_KEY_GENERATED = load_or_generate_instance_private_key
 INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
+SELF_INSTANCE_ID = Digest::SHA256.hexdigest(INSTANCE_PUBLIC_KEY_PEM)
 
 def well_known_directory
   WELL_KNOWN_STORAGE_ROOT
@@ -285,6 +290,7 @@ end
 
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
+set :federation_thread, nil
 
 def latest_node_update_timestamp
   return nil unless File.exist?(DB_PATH)
@@ -473,6 +479,242 @@ end
 # @return [Boolean] true when the ``PRIVATE`` flag is set.
 def private_mode?
   ENV["PRIVATE"] == "1"
+end
+
+# Determine whether the application is running in the test environment.
+#
+# @return [Boolean]
+def test_environment?
+  ENV["RACK_ENV"] == "test"
+end
+
+# Determine whether outbound federation announcements are enabled via
+# configuration and not suppressed by private mode.
+#
+# @return [Boolean]
+def federation_enabled?
+  ENV.fetch("FEDERATION", "1") != "0" && !private_mode?
+end
+
+# Determine whether automatic federation announcements should run in the
+# current environment.
+#
+# @return [Boolean]
+def federation_announcements_active?
+  federation_enabled? && !test_environment?
+end
+
+# Discover the most appropriate IP address for the local instance when a
+# hostname is unavailable.
+#
+# @return [String]
+def discover_local_ip_address
+  candidates = Socket.ip_address_list.select { |addr| addr.respond_to?(:ip?) && addr.ip? }
+
+  ipv4 = candidates.find do |addr|
+    addr.respond_to?(:ipv4?) && addr.ipv4? && !(addr.respond_to?(:ipv4_loopback?) && addr.ipv4_loopback?)
+  end
+  return ipv4.ip_address if ipv4
+
+  non_loopback = candidates.find do |addr|
+    !(addr.respond_to?(:ipv4_loopback?) && addr.ipv4_loopback?) &&
+      !(addr.respond_to?(:ipv6_loopback?) && addr.ipv6_loopback?)
+  end
+  return non_loopback.ip_address if non_loopback
+
+  loopback = candidates.find do |addr|
+    (addr.respond_to?(:ipv4_loopback?) && addr.ipv4_loopback?) ||
+      (addr.respond_to?(:ipv6_loopback?) && addr.ipv6_loopback?)
+  end
+  return loopback.ip_address if loopback
+
+  "127.0.0.1"
+end
+
+# Resolve the domain used when registering this instance in the federation
+# directory.
+#
+# @return [String, nil]
+def self_instance_domain
+  sanitize_instance_domain(INSTANCE_DOMAIN) || sanitize_instance_domain(discover_local_ip_address)
+end
+
+# Assemble the canonical attributes advertised for this instance when
+# communicating with other deployments.
+#
+# @return [Hash]
+def self_instance_attributes
+  domain = self_instance_domain
+  last_update = latest_node_update_timestamp || Time.now.to_i
+  {
+    id: SELF_INSTANCE_ID,
+    domain: domain,
+    pubkey: INSTANCE_PUBLIC_KEY_PEM,
+    name: sanitized_site_name,
+    version: APP_VERSION,
+    channel: sanitized_default_channel,
+    frequency: sanitized_default_frequency,
+    latitude: MAP_CENTER_LAT,
+    longitude: MAP_CENTER_LON,
+    last_update_time: last_update,
+    is_private: private_mode?,
+  }
+end
+
+# Generate the canonical signature for the supplied instance attributes.
+#
+# @param attributes [Hash]
+# @return [String]
+def sign_instance_attributes(attributes)
+  payload = canonical_instance_payload(attributes)
+  Base64.strict_encode64(
+    INSTANCE_PRIVATE_KEY.sign(OpenSSL::Digest::SHA256.new, payload),
+  )
+end
+
+# Construct the JSON payload delivered to remote federation peers.
+#
+# @param attributes [Hash]
+# @param signature [String]
+# @return [Hash]
+def instance_announcement_payload(attributes, signature)
+  payload = {
+    "id" => attributes[:id],
+    "domain" => attributes[:domain],
+    "pubkey" => attributes[:pubkey],
+    "name" => attributes[:name],
+    "version" => attributes[:version],
+    "channel" => attributes[:channel],
+    "frequency" => attributes[:frequency],
+    "latitude" => attributes[:latitude],
+    "longitude" => attributes[:longitude],
+    "lastUpdateTime" => attributes[:last_update_time],
+    "isPrivate" => attributes[:is_private],
+    "signature" => signature,
+  }
+  payload.reject { |_, value| value.nil? }
+end
+
+# Ensure the local instance registration exists in the database.
+#
+# @return [Array(Hash, String)] tuple containing attributes and signature.
+def ensure_self_instance_record!
+  attributes = self_instance_attributes
+  signature = sign_instance_attributes(attributes)
+  db = open_database
+  upsert_instance_record(db, attributes, signature)
+  debug_log(
+    "Registered self instance record #{attributes[:domain]} (id: #{attributes[:id]})",
+  )
+  [attributes, signature]
+ensure
+  db&.close
+end
+
+# Retrieve all known federation domains, combining the seed list and locally
+# stored registrations.
+#
+# @param self_domain [String, nil]
+# @return [Array<String>]
+def federation_target_domains(self_domain)
+  domains = Set.new
+  FEDERATION_SEED_DOMAINS.each do |seed|
+    sanitized = sanitize_instance_domain(seed)
+    domains << sanitized.downcase if sanitized
+  end
+
+  db = open_database(readonly: true)
+  db.results_as_hash = false
+  rows = with_busy_retry { db.execute("SELECT domain FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != ''") }
+  rows.flatten.compact.each do |raw_domain|
+    sanitized = sanitize_instance_domain(raw_domain)
+    domains << sanitized.downcase if sanitized
+  end
+  if self_domain
+    domains.delete(self_domain.downcase)
+  end
+  domains.to_a
+rescue SQLite3::Exception
+  domains = FEDERATION_SEED_DOMAINS.map { |seed| sanitize_instance_domain(seed)&.downcase }.compact
+  self_domain ? domains.reject { |domain| domain == self_domain.downcase } : domains
+ensure
+  db&.close
+end
+
+# Perform an HTTP POST request delivering the instance announcement payload to
+# the specified domain.
+#
+# @param domain [String]
+# @param payload_json [String]
+# @return [Boolean]
+def announce_instance_to_domain(domain, payload_json)
+  return false unless domain && !domain.empty?
+
+  instance_uri_candidates(domain, "/api/instances").each do |uri|
+    begin
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.open_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
+      http.read_timeout = REMOTE_INSTANCE_HTTP_TIMEOUT
+      http.use_ssl = uri.scheme == "https"
+      response = http.start do |connection|
+        request = Net::HTTP::Post.new(uri)
+        request["Content-Type"] = "application/json"
+        request.body = payload_json
+        connection.request(request)
+      end
+      if response.is_a?(Net::HTTPSuccess)
+        debug_log("Announced instance to #{uri}")
+        return true
+      end
+      debug_log(
+        "Federation announcement to #{uri} failed with status #{response.code}",
+      )
+    rescue StandardError => e
+      debug_log("Federation announcement to #{uri} failed: #{e.message}")
+    end
+  end
+
+  false
+end
+
+# Broadcast the local instance registration to all known federation targets.
+#
+# @return [void]
+def announce_instance_to_all_domains
+  return unless federation_enabled?
+
+  attributes, signature = ensure_self_instance_record!
+  payload_json = JSON.generate(instance_announcement_payload(attributes, signature))
+  domains = federation_target_domains(attributes[:domain])
+  domains.each do |domain|
+    announce_instance_to_domain(domain, payload_json)
+  end
+  debug_log(
+    "Federation announcement cycle complete (targets: #{domains.join(", ")})",
+  ) unless domains.empty?
+end
+
+# Launch a background thread responsible for issuing daily federation
+# announcements.
+#
+# @return [Thread, nil]
+def start_federation_announcer!
+  existing = Sinatra::Application.settings.federation_thread
+  return existing if existing&.alive?
+
+  thread = Thread.new do
+    loop do
+      sleep FEDERATION_ANNOUNCEMENT_INTERVAL
+      begin
+        announce_instance_to_all_domains
+      rescue StandardError => e
+        debug_log("Federation announcement loop error: #{e.message}")
+      end
+    end
+  end
+  thread.name = "potato-mesh-federation" if thread.respond_to?(:name=)
+  Sinatra::Application.set(:federation_thread, thread)
+  thread
 end
 
 # Convert arbitrary values into trimmed strings.
@@ -1038,19 +1280,6 @@ class << Sinatra::Application
   end
 end
 
-Sinatra::Application.configure do
-  app_logger = Logger.new($stdout)
-  set :logger, app_logger
-  use Rack::CommonLogger, app_logger
-  use Rack::Deflater
-  use Prometheus::Middleware::Collector
-  use Prometheus::Middleware::Exporter
-  Sinatra::Application.apply_logger_level!
-  log_instance_domain_resolution
-  log_instance_public_key
-  refresh_well_known_document_if_stale
-end
-
 # Execute the provided block, retrying when SQLite reports the database is
 # temporarily locked.
 #
@@ -1125,6 +1354,28 @@ ensure
 end
 
 ensure_schema_upgrades
+
+Sinatra::Application.configure do
+  app_logger = Logger.new($stdout)
+  set :logger, app_logger
+  use Rack::CommonLogger, app_logger
+  use Rack::Deflater
+  use Prometheus::Middleware::Collector
+  use Prometheus::Middleware::Exporter
+  Sinatra::Application.apply_logger_level!
+  log_instance_domain_resolution
+  log_instance_public_key
+  refresh_well_known_document_if_stale
+  ensure_self_instance_record!
+  if federation_announcements_active?
+    announce_instance_to_all_domains
+    start_federation_announcer!
+  elsif federation_enabled?
+    debug_log("Federation announcements disabled in test environment")
+  else
+    debug_log("Federation announcements disabled by configuration or private mode")
+  end
+end
 
 # Derive canonical string and numeric representations for a node reference.
 #
@@ -2853,9 +3104,47 @@ def normalize_node_id(db, node_ref)
   db.get_first_value("SELECT node_id FROM nodes WHERE num = ?", [ref_num])
 end
 
-# POST /api/nodes
+get "/api/instances" do
+  content_type :json
+  ensure_self_instance_record!
+  db = open_database(readonly: true)
+  db.results_as_hash = true
+  rows = with_busy_retry do
+    db.execute(
+      <<~SQL,
+      SELECT id, domain, pubkey, name, version, channel, frequency,
+             latitude, longitude, last_update_time, is_private, signature
+      FROM instances
+      WHERE domain IS NOT NULL AND TRIM(domain) != ''
+        AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
+      ORDER BY LOWER(domain)
+    SQL
+    )
+  end
+  payload = rows.map do |row|
+    {
+      "id" => row["id"],
+      "domain" => row["domain"],
+      "pubkey" => row["pubkey"],
+      "name" => row["name"],
+      "version" => row["version"],
+      "channel" => row["channel"],
+      "frequency" => row["frequency"],
+      "latitude" => row["latitude"],
+      "longitude" => row["longitude"],
+      "lastUpdateTime" => row["last_update_time"]&.to_i,
+      "isPrivate" => row["is_private"].to_i == 1,
+      "signature" => row["signature"],
+    }.reject { |_, value| value.nil? }
+  end
+  JSON.generate(payload)
+ensure
+  db&.close
+end
+
+# POST /api/instances
 #
-# Upserts one or more nodes provided as a JSON object keyed by node ID.
+# Accepts signed registrations from remote Potato Mesh deployments.
 post "/api/instances" do
   content_type :json
   begin

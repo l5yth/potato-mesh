@@ -58,6 +58,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
     end
+    ensure_self_instance_record!
   end
 
   # Build a hash excluding entries whose values are nil.
@@ -870,7 +871,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       with_db(readonly: true) do |db|
         count = db.get_first_value("SELECT COUNT(*) FROM instances")
-        expect(count).to eq(0)
+        expect(count).to eq(1)
       end
     end
 
@@ -895,7 +896,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       with_db(readonly: true) do |db|
         count = db.get_first_value("SELECT COUNT(*) FROM instances")
-        expect(count).to eq(0)
+        expect(count).to eq(1)
       end
     end
 
@@ -923,6 +924,58 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row).not_to be_nil
         expect(row["is_private"]).to eq(0)
       end
+    end
+  end
+
+  describe "GET /api/instances" do
+    let(:remote_key) { OpenSSL::PKey::RSA.new(2048) }
+
+    it "returns the self instance record" do
+      get "/api/instances"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      self_entry = payload.find { |entry| entry["id"] == SELF_INSTANCE_ID }
+
+      expect(self_entry).not_to be_nil
+      expect(self_entry["domain"]).not_to be_nil
+      expect(self_entry["isPrivate"]).to eq(false)
+      expect(self_entry["signature"]).not_to be_nil
+    end
+
+    it "includes previously stored remote registrations" do
+      remote_attributes = {
+        id: "remote-instance-1",
+        domain: "remote.example",
+        pubkey: remote_key.public_key.export,
+        name: "Remote Mesh",
+        version: "9.8.7",
+        channel: "#Remote",
+        frequency: "915MHz",
+        latitude: 51.5,
+        longitude: -0.1,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+      }
+      remote_signature_payload = canonical_instance_payload(remote_attributes)
+      remote_signature = Base64.strict_encode64(
+        remote_key.sign(OpenSSL::Digest::SHA256.new, remote_signature_payload),
+      )
+
+      with_db do |db|
+        upsert_instance_record(db, remote_attributes, remote_signature)
+      end
+
+      get "/api/instances"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      remote_entry = payload.find { |entry| entry["id"] == remote_attributes[:id] }
+
+      expect(remote_entry).not_to be_nil
+      expect(remote_entry["domain"]).to eq("remote.example")
+      expect(remote_entry["isPrivate"]).to eq(false)
+      expect(remote_entry["signature"]).to eq(remote_signature)
     end
   end
 
