@@ -52,9 +52,10 @@ COPY --chown=potatomesh:potatomesh web/views/ ./views/
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
 
-# Create data directory for SQLite database
-RUN mkdir -p /app/data && \
-    chown -R potatomesh:potatomesh /app/data
+# Create data and configuration directories with correct ownership
+RUN mkdir -p /app/data \
+    && mkdir -p /app/.config/well-known \
+    && chown -R potatomesh:potatomesh /app/data /app/.config
 
 # Switch to non-root user
 USER potatomesh
