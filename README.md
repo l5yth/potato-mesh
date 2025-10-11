@@ -69,12 +69,12 @@ exec ruby app.rb -p 41447 -o 0.0.0.0
 
 The web app can be configured with environment variables (defaults shown):
 
-* `SITE_NAME` - title and header shown in the ui (default: "Meshtastic Berlin")
-* `DEFAULT_CHANNEL` - default channel shown in the ui (default: "#MediumFast")
-* `DEFAULT_FREQUENCY` - default channel shown in the ui (default: "868MHz")
-* `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `52.502889` / `13.404194`)
-* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `137`)
-* `MATRIX_ROOM` - matrix room id for a footer link (default: `#meshtastic-berlin:matrix.org`)
+* `SITE_NAME` - title and header shown in the UI (default: "PotatoMesh Demo")
+* `DEFAULT_CHANNEL` - default channel shown in the UI (default: "#LongFast")
+* `DEFAULT_FREQUENCY` - default frequency shown in the UI (default: "915MHz")
+* `MAP_CENTER_LAT` / `MAP_CENTER_LON` - default map center coordinates (default: `38.761944` / `-27.090833`)
+* `MAX_NODE_DISTANCE_KM` - hide nodes farther than this distance from the center (default: `42`)
+* `MATRIX_ROOM` - matrix room id for a footer link (default: `#potatomesh:dod.ngo`)
 * `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
 * `PROM_REPORT_IDS` - comma-separated list of Node IDs to report in prometheus metrics, `*` for all (default: unset)
 
@@ -85,7 +85,7 @@ logo for Open Graph and Twitter cards.
 Example:
 
 ```bash
-SITE_NAME="Meshtastic Berlin" MAP_CENTER_LAT=52.502889 MAP_CENTER_LON=13.404194 MAX_NODE_DISTANCE_KM=137 MATRIX_ROOM="#meshtastic-berlin:matrix.org" ./app.sh
+SITE_NAME="PotatoMesh Demo" MAP_CENTER_LAT=38.761944 MAP_CENTER_LON=-27.090833 MAX_NODE_DISTANCE_KM=42 MATRIX_ROOM="#potatomesh:dod.ngo" ./app.sh
 ```
 
 ### API

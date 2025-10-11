@@ -228,10 +228,6 @@ def canonicalize_configured_instance_domain(raw)
     raise "INSTANCE_DOMAIN must be a bare hostname (optionally with a port) without schemes or paths: #{raw.inspect}"
   end
 
-  if (ip = ip_from_domain(sanitized))
-    raise "INSTANCE_DOMAIN must resolve to a DNS hostname, not an IP address: #{sanitized}"
-  end
-
   sanitized.downcase
 end
 
@@ -583,13 +579,13 @@ get "/.well-known/potato-mesh" do
   send_file well_known_file_path
 end
 
-SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
-DEFAULT_CHANNEL = fetch_config_string("DEFAULT_CHANNEL", "#MediumFast")
-DEFAULT_FREQUENCY = fetch_config_string("DEFAULT_FREQUENCY", "868MHz")
-MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "52.502889").to_f
-MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
-MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
-MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
+SITE_NAME = fetch_config_string("SITE_NAME", "PotatoMesh Demo")
+DEFAULT_CHANNEL = fetch_config_string("DEFAULT_CHANNEL", "#LongFast")
+DEFAULT_FREQUENCY = fetch_config_string("DEFAULT_FREQUENCY", "915MHz")
+MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "38.761944").to_f
+MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "-27.090833").to_f
+MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "42").to_f
+MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#potatomesh:dod.ngo")
 INSTANCE_DOMAIN, INSTANCE_DOMAIN_SOURCE = determine_instance_domain
 DEBUG = ENV["DEBUG"] == "1"
 

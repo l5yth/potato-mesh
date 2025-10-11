@@ -29,7 +29,7 @@ against the web API.
 
 ```env
 API_TOKEN=replace-with-a-strong-token
-SITE_NAME=My Meshtastic Network
+SITE_NAME=PotatoMesh Demo
 MESH_SERIAL=/dev/ttyACM0
 ```
 

@@ -70,13 +70,13 @@ ENV APP_ENV=production \
     DB_BUSY_MAX_RETRIES=5 \
     DB_BUSY_RETRY_DELAY=0.05 \
     MAX_JSON_BODY_BYTES=1048576 \
-    SITE_NAME="Berlin Mesh Network" \
-    DEFAULT_CHANNEL="#MediumFast" \
-    DEFAULT_FREQUENCY="868MHz" \
-    MAP_CENTER_LAT=52.502889 \
-    MAP_CENTER_LON=13.404194 \
-    MAX_NODE_DISTANCE_KM=50 \
-    MATRIX_ROOM="" \
+    SITE_NAME="PotatoMesh Demo" \
+    DEFAULT_CHANNEL="#LongFast" \
+    DEFAULT_FREQUENCY="915MHz" \
+    MAP_CENTER_LAT=38.761944 \
+    MAP_CENTER_LON=-27.090833 \
+    MAX_NODE_DISTANCE_KM=42 \
+    MATRIX_ROOM="#potatomesh:dod.ngo" \
     DEBUG=0
 
 # Start the application
