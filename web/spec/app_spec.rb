@@ -245,6 +245,67 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe "#determine_instance_domain" do
+      around do |example|
+        original = ENV["INSTANCE_DOMAIN"]
+        begin
+          ENV.delete("INSTANCE_DOMAIN")
+          example.run
+        ensure
+          if original.nil?
+            ENV.delete("INSTANCE_DOMAIN")
+          else
+            ENV["INSTANCE_DOMAIN"] = original
+          end
+        end
+      end
+
+      it "uses the environment override when provided" do
+        ENV["INSTANCE_DOMAIN"] = "  example.org  "
+
+        domain, source = determine_instance_domain
+
+        expect(domain).to eq("example.org")
+        expect(source).to eq(:environment)
+      end
+
+      it "falls back to reverse DNS when available" do
+        address = instance_double(
+          Addrinfo,
+          ip?: true,
+          ipv4_loopback?: false,
+          ipv6_loopback?: false,
+          ipv6_linklocal?: false,
+          ip_address: "203.0.113.10",
+        )
+        allow(Socket).to receive(:ip_address_list).and_return([address])
+        allow(Resolv).to receive(:getname).with("203.0.113.10").and_return("federation.example.com")
+
+        domain, source = determine_instance_domain
+
+        expect(domain).to eq("federation.example.com")
+        expect(source).to eq(:reverse_dns)
+      end
+
+      it "returns nil when no sources provide a domain" do
+        address = instance_double(
+          Addrinfo,
+          ip?: true,
+          ipv4_loopback?: false,
+          ipv6_loopback?: false,
+          ipv6_linklocal?: false,
+          ip_address: "198.51.100.12",
+        )
+        allow(Socket).to receive(:ip_address_list).and_return([address])
+        allow(Resolv).to receive(:getname).with("198.51.100.12").and_raise(Resolv::ResolvError)
+
+        domain, source = determine_instance_domain
+
+        expect(domain).to be_nil
+        expect(source).to eq(:unknown)
+      end
+    end
+
     describe "#determine_app_version" do
       let(:repo_root) { File.expand_path("..", __dir__) }
       let(:git_dir) { File.join(repo_root, ".git") }

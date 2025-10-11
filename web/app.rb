@@ -25,6 +25,8 @@ require "fileutils"
 require "logger"
 require "rack/utils"
 require "open3"
+require "resolv"
+require "socket"
 require "time"
 require "prometheus/client"
 require "prometheus/client/formats/text"
@@ -85,6 +87,55 @@ def fetch_config_string(key, default)
 
   trimmed = value.strip
   trimmed.empty? ? default : trimmed
+end
+
+# Attempt to resolve the instance's vanity domain from configuration or reverse
+# DNS lookup.
+#
+# @return [Array<(String, Symbol)>] pair containing the resolved domain (or
+#   ``nil``) and the source used (:environment, :reverse_dns, :unknown).
+def determine_instance_domain
+  raw = ENV["INSTANCE_DOMAIN"]
+  if raw
+    trimmed = raw.strip
+    return [trimmed, :environment] unless trimmed.empty?
+  end
+
+  reverse = reverse_dns_domain
+  return [reverse, :reverse_dns] if reverse
+
+  [nil, :unknown]
+end
+
+# Attempt to resolve a hostname via reverse DNS for the current machine.
+#
+# @return [String, nil] hostname when a reverse DNS entry exists.
+def reverse_dns_domain
+  Socket.ip_address_list.each do |address|
+    next unless address.respond_to?(:ip?) && address.ip?
+
+    loopback =
+      (address.respond_to?(:ipv4_loopback?) && address.ipv4_loopback?) ||
+      (address.respond_to?(:ipv6_loopback?) && address.ipv6_loopback?)
+    next if loopback
+
+    link_local =
+      address.respond_to?(:ipv6_linklocal?) && address.ipv6_linklocal?
+    next if link_local
+
+    ip = address.ip_address
+    next if ip.nil? || ip.empty?
+
+    begin
+      hostname = Resolv.getname(ip)
+      trimmed = hostname&.strip
+      return trimmed unless trimmed.nil? || trimmed.empty?
+    rescue Resolv::ResolvError, Resolv::ResolvTimeout, SocketError
+      next
+    end
+  end
+
+  nil
 end
 
 # Determine the current application version using ``git describe`` when
@@ -162,6 +213,7 @@ get "/version" do
       },
       maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
       matrixRoom: sanitized_matrix_room,
+      instanceDomain: INSTANCE_DOMAIN,
       privateMode: private_mode?,
     },
   }
@@ -175,6 +227,7 @@ MAP_CENTER_LAT = ENV.fetch("MAP_CENTER_LAT", "52.502889").to_f
 MAP_CENTER_LON = ENV.fetch("MAP_CENTER_LON", "13.404194").to_f
 MAX_NODE_DISTANCE_KM = ENV.fetch("MAX_NODE_DISTANCE_KM", "137").to_f
 MATRIX_ROOM = ENV.fetch("MATRIX_ROOM", "#meshtastic-berlin:matrix.org")
+INSTANCE_DOMAIN, INSTANCE_DOMAIN_SOURCE = determine_instance_domain
 DEBUG = ENV["DEBUG"] == "1"
 
 #
@@ -266,6 +319,22 @@ def debug_log(message)
   logger&.debug(message)
 end
 
+# Emit a debug log entry describing how the instance domain was resolved.
+#
+# @return [void]
+def log_instance_domain_resolution
+  message = case INSTANCE_DOMAIN_SOURCE
+    when :environment
+      "Instance domain configured from INSTANCE_DOMAIN environment variable: #{INSTANCE_DOMAIN.inspect}"
+    when :reverse_dns
+      "Instance domain resolved via reverse DNS lookup: #{INSTANCE_DOMAIN.inspect}"
+    else
+      "Instance domain could not be determined from the environment or reverse DNS."
+    end
+
+  debug_log(message)
+end
+
 # Indicates whether the instance should hide sensitive details from visitors.
 #
 # @return [Boolean] true when the ``PRIVATE`` flag is set.
@@ -318,6 +387,7 @@ def frontend_app_config
       light: MAP_TILE_FILTER_LIGHT,
       dark: MAP_TILE_FILTER_DARK,
     },
+    instanceDomain: INSTANCE_DOMAIN,
   }
 end
 
@@ -522,6 +592,7 @@ Sinatra::Application.configure do
   use Prometheus::Middleware::Collector
   use Prometheus::Middleware::Exporter
   Sinatra::Application.apply_logger_level!
+  log_instance_domain_resolution
 end
 
 # Open the SQLite database with a configured busy timeout.
