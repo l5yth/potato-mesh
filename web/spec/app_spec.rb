@@ -19,6 +19,7 @@ require "sqlite3"
 require "json"
 require "time"
 require "base64"
+require "uri"
 
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
@@ -50,6 +51,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   # @return [void]
   def clear_database
     with_db do |db|
+      db.execute("DELETE FROM instances")
       db.execute("DELETE FROM neighbors")
       db.execute("DELETE FROM messages")
       db.execute("DELETE FROM nodes")
@@ -739,6 +741,137 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response.status).to eq(403)
       expect(JSON.parse(last_response.body)).to eq("error" => "Forbidden")
+    end
+  end
+
+  describe "POST /api/instances" do
+    let(:instance_key) { OpenSSL::PKey::RSA.new(2048) }
+    let(:domain) { "mesh.example" }
+    let(:pubkey) { instance_key.public_key.export }
+    let(:last_update_time) { Time.now.to_i }
+    let(:instance_attributes) do
+      {
+        id: "mesh-instance-1",
+        domain: domain,
+        pubkey: pubkey,
+        name: "Example Mesh",
+        version: "1.2.3",
+        channel: "#MeshNet",
+        frequency: "915MHz",
+        latitude: 52.5,
+        longitude: 13.4,
+        last_update_time: last_update_time,
+        is_private: false,
+      }
+    end
+    let(:instance_signature_payload) do
+      canonical_instance_payload(instance_attributes)
+    end
+    let(:instance_signature) do
+      Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, instance_signature_payload),
+      )
+    end
+    let(:instance_payload) do
+      {
+        "id" => instance_attributes[:id],
+        "domain" => domain,
+        "pubkey" => pubkey,
+        "name" => instance_attributes[:name],
+        "version" => instance_attributes[:version],
+        "channel" => instance_attributes[:channel],
+        "frequency" => instance_attributes[:frequency],
+        "latitude" => instance_attributes[:latitude],
+        "longitude" => instance_attributes[:longitude],
+        "lastUpdateTime" => instance_attributes[:last_update_time],
+        "isPrivate" => instance_attributes[:is_private],
+        "signature" => instance_signature,
+      }
+    end
+    let(:remote_signed_payload) do
+      JSON.generate(
+        {
+          "publicKey" => pubkey,
+          "name" => instance_attributes[:name],
+          "version" => instance_attributes[:version],
+          "domain" => domain,
+          "lastUpdate" => last_update_time,
+        },
+        sort_keys: true,
+      )
+    end
+    let(:well_known_document) do
+      {
+        "publicKey" => pubkey,
+        "domain" => domain,
+        "name" => instance_attributes[:name],
+        "version" => instance_attributes[:version],
+        "lastUpdate" => last_update_time,
+        "signatureAlgorithm" => "rsa-sha256",
+        "signedPayload" => Base64.strict_encode64(remote_signed_payload),
+        "signature" => Base64.strict_encode64(
+          instance_key.sign(OpenSSL::Digest::SHA256.new, remote_signed_payload),
+        ),
+      }
+    end
+    let(:remote_nodes) do
+      now = Time.now.to_i
+      Array.new(REMOTE_INSTANCE_MIN_NODE_COUNT) do |index|
+        {
+          "node_id" => "remote-node-#{index}",
+          "last_heard" => now - index,
+        }
+      end
+    end
+
+    before do
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
+        case path
+        when "/.well-known/potato-mesh"
+          [well_known_document, URI("https://#{host}#{path}")]
+        when "/api/nodes"
+          [remote_nodes, URI("https://#{host}#{path}")]
+        else
+          [nil, []]
+        end
+      end
+    end
+
+    it "stores a federated instance when validation succeeds" do
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT * FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["domain"]).to eq(domain)
+        expect(row["pubkey"]).to eq(pubkey)
+        expect(row["signature"]).to eq(instance_signature)
+        expect(row["is_private"]).to eq(0)
+      end
+    end
+
+    it "rejects registrations with invalid signatures" do
+      invalid_payload = instance_payload.merge("signature" => Base64.strict_encode64("invalid"))
+
+      expect_any_instance_of(Object).to receive(:warn).with(/invalid signature/).at_least(:once)
+
+      post "/api/instances", invalid_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "invalid signature")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM instances")
+        expect(count).to eq(0)
+      end
     end
   end
 
