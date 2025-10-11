@@ -130,6 +130,31 @@ get "/favicon.ico" do
   end
 end
 
+get "/version" do
+  content_type :json
+  {
+    name: sanitized_site_name,
+    version: APP_VERSION,
+    config: {
+      siteName: sanitized_site_name,
+      defaultChannel: sanitized_default_channel,
+      defaultFrequency: sanitized_default_frequency,
+      refreshIntervalSeconds: REFRESH_INTERVAL_SECONDS,
+      mapCenter: {
+        lat: MAP_CENTER_LAT,
+        lon: MAP_CENTER_LON,
+      },
+      maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
+      matrixRoom: sanitized_matrix_room,
+      tileFilters: {
+        light: MAP_TILE_FILTER_LIGHT,
+        dark: MAP_TILE_FILTER_DARK,
+      },
+      privateMode: private_mode?,
+    },
+  }.to_json
+end
+
 SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
 DEFAULT_CHANNEL = fetch_config_string("DEFAULT_CHANNEL", "#MediumFast")
 DEFAULT_FREQUENCY = fetch_config_string("DEFAULT_FREQUENCY", "868MHz")
@@ -566,16 +591,126 @@ end
 
 ensure_schema_upgrades
 
+# Derive canonical string and numeric representations for a node reference.
+#
+# @param node_ref [Object] raw identifier provided by the caller.
+# @return [Hash] hash containing ``:string_values`` and ``:numeric_values`` arrays.
+def node_reference_tokens(node_ref)
+  parts = canonical_node_parts(node_ref)
+  canonical_id, numeric_id = parts ? parts[0, 2] : [nil, nil]
+
+  string_values = []
+  numeric_values = []
+
+  case node_ref
+  when Integer
+    numeric_values << node_ref
+    string_values << node_ref.to_s
+  when Numeric
+    coerced = node_ref.to_i
+    numeric_values << coerced
+    string_values << coerced.to_s
+  when String
+    trimmed = node_ref.strip
+    unless trimmed.empty?
+      string_values << trimmed
+      numeric_values << trimmed.to_i if trimmed.match?(/\A-?\d+\z/)
+    end
+  when nil
+    # no-op
+  else
+    coerced = node_ref.to_s.strip
+    string_values << coerced unless coerced.empty?
+  end
+
+  if canonical_id
+    string_values << canonical_id
+    string_values << canonical_id.upcase
+  end
+
+  if numeric_id
+    numeric_values << numeric_id
+    string_values << numeric_id.to_s
+  end
+
+  cleaned_strings = string_values.compact.map(&:to_s).map(&:strip).reject(&:empty?).uniq
+  cleaned_numbers = numeric_values.compact.map do |value|
+    begin
+      Integer(value, 10)
+    rescue ArgumentError, TypeError
+      nil
+    end
+  end.compact.uniq
+
+  {
+    string_values: cleaned_strings,
+    numeric_values: cleaned_numbers,
+  }
+end
+
+# Build a SQL predicate limiting results to the provided node reference.
+#
+# @param node_ref [Object] identifier used to match the node.
+# @param string_columns [Array<String>] columns compared against string forms.
+# @param numeric_columns [Array<String>] columns compared against numeric forms.
+# @return [Array(String, Array), nil] tuple containing the SQL fragment and
+#   bound parameters, or nil when no valid tokens can be derived.
+def node_lookup_clause(node_ref, string_columns:, numeric_columns: [])
+  tokens = node_reference_tokens(node_ref)
+  string_values = tokens[:string_values]
+  numeric_values = tokens[:numeric_values]
+
+  clauses = []
+  params = []
+
+  unless string_columns.empty? || string_values.empty?
+    string_columns.each do |column|
+      placeholders = Array.new(string_values.length, "?").join(", ")
+      clauses << "#{column} IN (#{placeholders})"
+      params.concat(string_values)
+    end
+  end
+
+  unless numeric_columns.empty? || numeric_values.empty?
+    numeric_columns.each do |column|
+      placeholders = Array.new(numeric_values.length, "?").join(", ")
+      clauses << "#{column} IN (#{placeholders})"
+      params.concat(numeric_values)
+    end
+  end
+
+  return nil if clauses.empty?
+
+  ["(#{clauses.join(" OR ")})", params]
+end
+
 # Retrieve recently heard nodes ordered by their last contact time.
 #
 # @param limit [Integer] maximum number of rows returned.
+# @param node_ref [Object, nil] optional identifier restricting the query.
 # @return [Array<Hash>] collection of node records formatted for the API.
-def query_nodes(limit)
+def query_nodes(limit, node_ref: nil)
   db = open_database(readonly: true)
   db.results_as_hash = true
   now = Time.now.to_i
   min_last_heard = now - WEEK_SECONDS
-  params = [min_last_heard]
+  params = []
+  where_clauses = []
+
+  if node_ref
+    clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["num"])
+    return [] unless clause
+    where_clauses << clause.first
+    params.concat(clause.last)
+  else
+    where_clauses << "last_heard >= ?"
+    params << min_last_heard
+  end
+
+  if private_mode?
+    where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
+  end
+
   sql = <<~SQL
     SELECT node_id, short_name, long_name, hw_model, role, snr,
            battery_level, voltage, last_heard, first_heard,
@@ -583,11 +718,8 @@ def query_nodes(limit)
            position_time, location_source, precision_bits,
            latitude, longitude, altitude
     FROM nodes
-    WHERE last_heard >= ?
   SQL
-  if private_mode?
-    sql += "    AND (role IS NULL OR role <> 'CLIENT_HIDDEN')\n"
-  end
+  sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
   sql += <<~SQL
     ORDER BY last_heard DESC
     LIMIT ?
@@ -622,27 +754,52 @@ get "/api/nodes" do
   query_nodes(limit).to_json
 end
 
+get "/api/node/:id" do
+  content_type :json
+  node_ref = string_or_nil(params["id"])
+  halt 400, { error: "missing node id" }.to_json unless node_ref
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  rows = query_nodes(limit, node_ref: node_ref)
+  halt 404, { error: "not found" }.to_json if rows.empty?
+  rows.first.to_json
+end
+
 # Retrieve recent text messages joined with related node information.
 #
 # @param limit [Integer] maximum number of rows returned.
+# @param node_ref [Object, nil] optional identifier restricting the query.
 # @return [Array<Hash>] collection of message rows suitable for serialisation.
-def query_messages(limit)
+def query_messages(limit, node_ref: nil)
   db = open_database(readonly: true)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
-                      SELECT m.*, n.*, m.snr AS msg_snr
-                      FROM messages m
-                      LEFT JOIN nodes n ON (
-                        m.from_id IS NOT NULL AND TRIM(m.from_id) <> '' AND (
-                          m.from_id = n.node_id OR (
-                            m.from_id GLOB '[0-9]*' AND CAST(m.from_id AS INTEGER) = n.num
-                          )
-                        )
-                      )
-                      WHERE COALESCE(TRIM(m.encrypted), '') = ''
-                      ORDER BY m.rx_time DESC
-                      LIMIT ?
-                    SQL
+  params = []
+  where_clauses = ["COALESCE(TRIM(m.encrypted), '') = ''"]
+
+  if node_ref
+    clause = node_lookup_clause(node_ref, string_columns: ["m.from_id", "m.to_id"])
+    return [] unless clause
+    where_clauses << clause.first
+    params.concat(clause.last)
+  end
+
+  sql = <<~SQL
+    SELECT m.*, n.*, m.snr AS msg_snr
+    FROM messages m
+    LEFT JOIN nodes n ON (
+      m.from_id IS NOT NULL AND TRIM(m.from_id) <> '' AND (
+        m.from_id = n.node_id OR (
+          m.from_id GLOB '[0-9]*' AND CAST(m.from_id AS INTEGER) = n.num
+        )
+      )
+    )
+  SQL
+  sql += "    WHERE #{where_clauses.join(" AND ")}\n"
+  sql += <<~SQL
+    ORDER BY m.rx_time DESC
+    LIMIT ?
+  SQL
+  params << limit
+  rows = db.execute(sql, params)
   msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit]
   rows.each do |r|
     if DEBUG && (r["from_id"].nil? || r["from_id"].to_s.empty?)
@@ -702,20 +859,40 @@ end
 # Retrieve recorded position packets ordered by receive time.
 #
 # @param limit [Integer] maximum number of rows returned.
+# @param node_ref [Object, nil] optional identifier restricting the query.
 # @return [Array<Hash>] collection of position rows formatted for the API.
-def query_positions(limit)
+def query_positions(limit, node_ref: nil)
   db = open_database(readonly: true)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
-                      SELECT id, node_id, node_num, rx_time, rx_iso, position_time,
-                             to_id, latitude, longitude, altitude, location_source,
-                             precision_bits, sats_in_view, pdop, ground_speed,
-                             ground_track, snr, rssi, hop_limit, bitfield,
-                             payload_b64
-                      FROM positions
-                      ORDER BY rx_time DESC
-                      LIMIT ?
-                    SQL
+  params = []
+  where_clauses = []
+
+  if node_ref
+    clause = node_lookup_clause(
+      node_ref,
+      string_columns: ["node_id", "to_id"],
+      numeric_columns: ["node_num"],
+    )
+    return [] unless clause
+    where_clauses << clause.first
+    params.concat(clause.last)
+  end
+
+  sql = <<~SQL
+    SELECT id, node_id, node_num, rx_time, rx_iso, position_time,
+           to_id, latitude, longitude, altitude, location_source,
+           precision_bits, sats_in_view, pdop, ground_speed,
+           ground_track, snr, rssi, hop_limit, bitfield,
+           payload_b64
+    FROM positions
+  SQL
+  sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+  sql += <<~SQL
+    ORDER BY rx_time DESC
+    LIMIT ?
+  SQL
+  params << limit
+  rows = db.execute(sql, params)
   rows.each do |r|
     pt = r["position_time"]
     if pt
@@ -738,16 +915,32 @@ end
 # Retrieve recent neighbour signal reports ordered by the recorded time.
 #
 # @param limit [Integer] maximum number of rows returned.
+# @param node_ref [Object, nil] optional identifier restricting the query.
 # @return [Array<Hash>] neighbour tuples formatted for the API response.
-def query_neighbors(limit)
+def query_neighbors(limit, node_ref: nil)
   db = open_database(readonly: true)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
-                      SELECT node_id, neighbor_id, snr, rx_time
-                      FROM neighbors
-                      ORDER BY rx_time DESC
-                      LIMIT ?
-                    SQL
+  params = []
+  where_clauses = []
+
+  if node_ref
+    clause = node_lookup_clause(node_ref, string_columns: ["node_id", "neighbor_id"])
+    return [] unless clause
+    where_clauses << clause.first
+    params.concat(clause.last)
+  end
+
+  sql = <<~SQL
+    SELECT node_id, neighbor_id, snr, rx_time
+    FROM neighbors
+  SQL
+  sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+  sql += <<~SQL
+    ORDER BY rx_time DESC
+    LIMIT ?
+  SQL
+  params << limit
+  rows = db.execute(sql, params)
   rows.each do |r|
     rx_time = coerce_integer(r["rx_time"])
     r["rx_time"] = rx_time if rx_time
@@ -762,20 +955,40 @@ end
 # Retrieve telemetry packets enriched with parsed numeric values.
 #
 # @param limit [Integer] maximum number of rows returned.
+# @param node_ref [Object, nil] optional identifier restricting the query.
 # @return [Array<Hash>] telemetry rows suitable for serialisation.
-def query_telemetry(limit)
+def query_telemetry(limit, node_ref: nil)
   db = open_database(readonly: true)
   db.results_as_hash = true
-  rows = db.execute <<~SQL, [limit]
-                      SELECT id, node_id, node_num, from_id, to_id, rx_time, rx_iso,
-                             telemetry_time, channel, portnum, hop_limit, snr, rssi,
-                             bitfield, payload_b64, battery_level, voltage,
-                             channel_utilization, air_util_tx, uptime_seconds,
-                             temperature, relative_humidity, barometric_pressure
-                      FROM telemetry
-                      ORDER BY rx_time DESC
-                      LIMIT ?
-                    SQL
+  params = []
+  where_clauses = []
+
+  if node_ref
+    clause = node_lookup_clause(
+      node_ref,
+      string_columns: ["node_id", "from_id", "to_id"],
+      numeric_columns: ["node_num"],
+    )
+    return [] unless clause
+    where_clauses << clause.first
+    params.concat(clause.last)
+  end
+
+  sql = <<~SQL
+    SELECT id, node_id, node_num, from_id, to_id, rx_time, rx_iso,
+           telemetry_time, channel, portnum, hop_limit, snr, rssi,
+           bitfield, payload_b64, battery_level, voltage,
+           channel_utilization, air_util_tx, uptime_seconds,
+           temperature, relative_humidity, barometric_pressure
+    FROM telemetry
+  SQL
+  sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+  sql += <<~SQL
+    ORDER BY rx_time DESC
+    LIMIT ?
+  SQL
+  params << limit
+  rows = db.execute(sql, params)
   now = Time.now.to_i
   rows.each do |r|
     rx_time = coerce_integer(r["rx_time"])
@@ -819,6 +1032,15 @@ get "/api/messages" do
   query_messages(limit).to_json
 end
 
+get "/api/messages/:id" do
+  halt 404 if private_mode?
+  content_type :json
+  node_ref = string_or_nil(params["id"])
+  halt 400, { error: "missing node id" }.to_json unless node_ref
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_messages(limit, node_ref: node_ref).to_json
+end
+
 # GET /api/positions
 #
 # Returns a JSON array of recorded position packets.
@@ -826,6 +1048,14 @@ get "/api/positions" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_positions(limit).to_json
+end
+
+get "/api/positions/:id" do
+  content_type :json
+  node_ref = string_or_nil(params["id"])
+  halt 400, { error: "missing node id" }.to_json unless node_ref
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_positions(limit, node_ref: node_ref).to_json
 end
 
 # GET /api/neighbors
@@ -837,6 +1067,14 @@ get "/api/neighbors" do
   query_neighbors(limit).to_json
 end
 
+get "/api/neighbors/:id" do
+  content_type :json
+  node_ref = string_or_nil(params["id"])
+  halt 400, { error: "missing node id" }.to_json unless node_ref
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_neighbors(limit, node_ref: node_ref).to_json
+end
+
 # GET /api/telemetry
 #
 # Returns a JSON array of recorded telemetry packets.
@@ -844,6 +1082,14 @@ get "/api/telemetry" do
   content_type :json
   limit = [params["limit"]&.to_i || 200, 1000].min
   query_telemetry(limit).to_json
+end
+
+get "/api/telemetry/:id" do
+  content_type :json
+  node_ref = string_or_nil(params["id"])
+  halt 400, { error: "missing node id" }.to_json unless node_ref
+  limit = [params["limit"]&.to_i || 200, 1000].min
+  query_telemetry(limit, node_ref: node_ref).to_json
 end
 
 # Determine the numeric node reference for a canonical node identifier.
