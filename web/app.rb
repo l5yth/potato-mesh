@@ -120,6 +120,20 @@ APP_VERSION = determine_app_version
 set :public_folder, File.join(__dir__, "public")
 set :views, File.join(__dir__, "views")
 
+def latest_node_update_timestamp
+  return nil unless File.exist?(DB_PATH)
+
+  db = open_database(readonly: true)
+  value = db.get_first_value(
+    "SELECT MAX(COALESCE(last_heard, first_heard, position_time)) FROM nodes",
+  )
+  value&.to_i
+rescue SQLite3::Exception
+  nil
+ensure
+  db&.close
+end
+
 get "/favicon.ico" do
   cache_control :public, max_age: WEEK_SECONDS
   ico_path = File.join(settings.public_folder, "favicon.ico")
@@ -132,9 +146,11 @@ end
 
 get "/version" do
   content_type :json
-  {
+  last_update = latest_node_update_timestamp
+  payload = {
     name: sanitized_site_name,
     version: APP_VERSION,
+    lastNodeUpdate: last_update,
     config: {
       siteName: sanitized_site_name,
       defaultChannel: sanitized_default_channel,
@@ -146,13 +162,10 @@ get "/version" do
       },
       maxNodeDistanceKm: MAX_NODE_DISTANCE_KM,
       matrixRoom: sanitized_matrix_room,
-      tileFilters: {
-        light: MAP_TILE_FILTER_LIGHT,
-        dark: MAP_TILE_FILTER_DARK,
-      },
       privateMode: private_mode?,
     },
-  }.to_json
+  }
+  payload.to_json
 end
 
 SITE_NAME = fetch_config_string("SITE_NAME", "Meshtastic Berlin")
@@ -754,7 +767,7 @@ get "/api/nodes" do
   query_nodes(limit).to_json
 end
 
-get "/api/node/:id" do
+get "/api/nodes/:id" do
   content_type :json
   node_ref = string_or_nil(params["id"])
   halt 400, { error: "missing node id" }.to_json unless node_ref
