@@ -323,8 +323,7 @@ end
 #
 # @return [void]
 def log_instance_domain_resolution
-  message =
-    case INSTANCE_DOMAIN_SOURCE
+  message = case INSTANCE_DOMAIN_SOURCE
     when :environment
       "Instance domain configured from INSTANCE_DOMAIN environment variable: #{INSTANCE_DOMAIN.inspect}"
     when :reverse_dns
