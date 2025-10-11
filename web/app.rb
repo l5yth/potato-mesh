@@ -918,6 +918,7 @@ def upsert_instance_record(db, attributes, signature)
     db.execute(sql, params)
   end
 end
+
 # Recursively normalize JSON values to ensure keys are strings.
 #
 # @param value [Object] array, hash, or scalar value parsed from JSON.
