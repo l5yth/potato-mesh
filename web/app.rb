@@ -122,7 +122,13 @@ def determine_instance_domain
   reverse = reverse_dns_domain
   return [reverse, :reverse_dns] if reverse
 
-  [nil, :unknown]
+  public_ip = discover_public_ip_address
+  return [public_ip, :public_ip] if public_ip
+
+  protected_ip = discover_protected_ip_address
+  return [protected_ip, :protected_ip] if protected_ip
+
+  [discover_local_ip_address, :local_ip]
 end
 
 # Attempt to resolve a hostname via reverse DNS for the current machine.
@@ -154,6 +160,112 @@ def reverse_dns_domain
   end
 
   nil
+end
+
+# Locate a globally routable IP address exposed on the current host.
+#
+# @return [String, nil]
+def discover_public_ip_address
+  address = ip_address_candidates.find { |candidate| public_ip_address?(candidate) }
+  address&.ip_address
+end
+
+# Locate a private IP address (e.g. RFC1918 or unique local) exposed on the current host.
+#
+# @return [String, nil]
+def discover_protected_ip_address
+  address = ip_address_candidates.find { |candidate| protected_ip_address?(candidate) }
+  address&.ip_address
+end
+
+# Enumerate IP address candidates exposed on the local machine.
+#
+# @return [Array<Addrinfo>]
+def ip_address_candidates
+  Socket.ip_address_list.select { |addr| addr.respond_to?(:ip?) && addr.ip? }
+end
+
+# Determine whether the supplied address is globally routable.
+#
+# @param addr [Addrinfo]
+# @return [Boolean]
+def public_ip_address?(addr)
+  ip = ipaddr_from(addr)
+  return false unless ip
+  return false if loopback_address?(addr, ip)
+  return false if link_local_address?(addr, ip)
+  return false if private_address?(addr, ip)
+  return false if unspecified_address?(ip)
+
+  true
+end
+
+# Determine whether the supplied address is suitable for protected network exposure.
+#
+# @param addr [Addrinfo]
+# @return [Boolean]
+def protected_ip_address?(addr)
+  ip = ipaddr_from(addr)
+  return false unless ip
+  return false if loopback_address?(addr, ip)
+  return false if link_local_address?(addr, ip)
+
+  private_address?(addr, ip)
+end
+
+# Convert an Addrinfo into an IPAddr instance for further inspection.
+#
+# @param addr [Addrinfo]
+# @return [IPAddr, nil]
+def ipaddr_from(addr)
+  ip = addr.ip_address
+  return nil if ip.nil? || ip.empty?
+
+  IPAddr.new(ip)
+rescue IPAddr::InvalidAddressError
+  nil
+end
+
+# Determine whether the address is a loopback interface.
+#
+# @param addr [Addrinfo]
+# @param ip [IPAddr]
+# @return [Boolean]
+def loopback_address?(addr, ip)
+  (addr.respond_to?(:ipv4_loopback?) && addr.ipv4_loopback?) ||
+    (addr.respond_to?(:ipv6_loopback?) && addr.ipv6_loopback?) ||
+    ip.loopback?
+end
+
+# Determine whether the address resides within a link-local range.
+#
+# @param addr [Addrinfo]
+# @param ip [IPAddr]
+# @return [Boolean]
+def link_local_address?(addr, ip)
+  (addr.respond_to?(:ipv6_linklocal?) && addr.ipv6_linklocal?) ||
+    (ip.respond_to?(:link_local?) && ip.link_local?)
+end
+
+# Determine whether the address is private (RFC1918 or unique local).
+#
+# @param addr [Addrinfo]
+# @param ip [IPAddr]
+# @return [Boolean]
+def private_address?(addr, ip)
+  if addr.respond_to?(:ipv4?) && addr.ipv4? && addr.respond_to?(:ipv4_private?)
+    addr.ipv4_private?
+  else
+    ip.private?
+  end
+end
+
+# Determine whether the address is the unspecified (all zeros) address.
+#
+# @param ip [IPAddr]
+# @return [Boolean]
+def unspecified_address?(ip)
+  (ip.ipv4? || ip.ipv6?) && ip.to_i.zero?
 end
 
 # Determine the current application version using ``git describe`` when
@@ -467,8 +579,14 @@ def log_instance_domain_resolution
       "Instance domain configured from INSTANCE_DOMAIN environment variable: #{INSTANCE_DOMAIN.inspect}"
     when :reverse_dns
       "Instance domain resolved via reverse DNS lookup: #{INSTANCE_DOMAIN.inspect}"
+    when :public_ip
+      "Instance domain resolved using public IP address: #{INSTANCE_DOMAIN.inspect}"
+    when :protected_ip
+      "Instance domain resolved using protected network IP address: #{INSTANCE_DOMAIN.inspect}"
+    when :local_ip
+      "Instance domain defaulted to local IP address: #{INSTANCE_DOMAIN.inspect}"
     else
-      "Instance domain could not be determined from the environment or reverse DNS."
+      "Instance domain could not be determined from the environment or local network."
     end
 
   debug_log(message)
@@ -509,7 +627,7 @@ end
 #
 # @return [String]
 def discover_local_ip_address
-  candidates = Socket.ip_address_list.select { |addr| addr.respond_to?(:ip?) && addr.ip? }
+  candidates = ip_address_candidates
 
   ipv4 = candidates.find do |addr|
     addr.respond_to?(:ipv4?) && addr.ipv4? && !(addr.respond_to?(:ipv4_loopback?) && addr.ipv4_loopback?)
