@@ -639,7 +639,18 @@ end
 # @param domain [String]
 # @return [IPAddr, nil]
 def ip_from_domain(domain)
-  IPAddr.new(domain)
+  return nil unless domain
+
+  host = if domain.start_with?("[")
+           match = domain.match(/\A\[(?<address>[^\]]+)\](?::\d+)?\z/)
+           match ? match[:address] : domain
+         elsif domain.count(":") == 1 && domain.split(":", 2).last.match?(/\A\d+\z/)
+           domain.split(":", 2).first
+         else
+           domain
+         end
+
+  IPAddr.new(host)
 rescue IPAddr::InvalidAddressError
   nil
 end

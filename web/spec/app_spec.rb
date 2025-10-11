@@ -873,6 +873,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(count).to eq(0)
       end
     end
+
+    it "rejects registrations targeting restricted IP literals with ports" do
+      domain_with_port = "127.0.0.1:8080"
+      signature_payload = canonical_instance_payload(instance_attributes.merge(domain: domain_with_port))
+      payload_with_port = instance_payload.merge(
+        "domain" => domain_with_port,
+        "signature" => Base64.strict_encode64(
+          instance_key.sign(OpenSSL::Digest::SHA256.new, signature_payload),
+        ),
+      )
+
+      expect_any_instance_of(Object).to receive(:warn).with(/restricted IP address/).at_least(:once)
+
+      post "/api/instances", payload_with_port.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "restricted domain")
+
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM instances")
+        expect(count).to eq(0)
+      end
+    end
   end
 
   describe "POST /api/nodes" do
