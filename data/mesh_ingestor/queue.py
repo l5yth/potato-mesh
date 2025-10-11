@@ -122,6 +122,7 @@ def _drain_post_queue(
         while True:
             with state.lock:
                 if not state.queue:
+                    state.active = False
                     return
                 _priority, _idx, path, payload = heapq.heappop(state.queue)
             send(path, payload)
