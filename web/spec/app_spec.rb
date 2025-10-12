@@ -23,6 +23,42 @@ require "uri"
 
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
+  let(:application_class) { PotatoMesh::Application }
+
+  describe "configuration" do
+    it "sets the default HTTP port to 41_447" do
+      expect(app.settings.port).to eq(41_447)
+    end
+  end
+
+  describe ".resolve_port" do
+    around do |example|
+      original_present = ENV.key?("PORT")
+      original_value = ENV["PORT"] if original_present
+      ENV.delete("PORT")
+      example.run
+    ensure
+      if original_present
+        ENV["PORT"] = original_value
+      else
+        ENV.delete("PORT")
+      end
+    end
+
+    it "returns the default port when the environment is unset" do
+      expect(application_class.resolve_port).to eq(41_447)
+    end
+
+    it "parses the environment override when provided" do
+      ENV["PORT"] = "51515"
+      expect(application_class.resolve_port).to eq(51_515)
+    end
+
+    it "falls back to the default port when parsing fails" do
+      ENV["PORT"] = "potato"
+      expect(application_class.resolve_port).to eq(41_447)
+    end
+  end
 
   # Return the absolute filesystem path to the requested fixture.
   #
@@ -198,6 +234,53 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:reference_time) do
     latest = nodes_fixture.map { |node| node["last_heard"] }.compact.max
     Time.at((latest || Time.now.to_i) + 1000)
+  end
+
+  describe "federation announcers" do
+    class DummyThread
+      attr_accessor :name, :report_on_exception, :block
+
+      def alive?
+        false
+      end
+    end
+
+    let(:dummy_thread) { DummyThread.new }
+
+    before do
+      app.set(:initial_federation_thread, nil)
+      app.set(:federation_thread, nil)
+    end
+
+    it "stores and clears the initial federation thread" do
+      allow(app).to receive(:announce_instance_to_all_domains)
+      allow(Thread).to receive(:new) do |&block|
+        dummy_thread.block = block
+        dummy_thread
+      end
+
+      result = app.start_initial_federation_announcement!
+
+      expect(result).to be(dummy_thread)
+      expect(app.settings.initial_federation_thread).to be(dummy_thread)
+      expect(dummy_thread.block).not_to be_nil
+
+      expect { dummy_thread.block.call }.to change {
+        app.settings.initial_federation_thread
+      }.from(dummy_thread).to(nil)
+    end
+
+    it "stores the recurring federation announcer thread" do
+      allow(Thread).to receive(:new) do |&block|
+        dummy_thread.block = block
+        dummy_thread
+      end
+
+      result = app.start_federation_announcer!
+
+      expect(result).to be(dummy_thread)
+      expect(app.settings.federation_thread).to be(dummy_thread)
+    end
   end
 
   before do
