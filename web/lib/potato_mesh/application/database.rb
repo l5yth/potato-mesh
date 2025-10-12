@@ -78,7 +78,12 @@ module PotatoMesh
           db.execute_batch(File.read(sql_file))
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
-        warn "[warn] failed to apply schema upgrade: #{e.message}"
+        warn_log(
+          "Failed to apply schema upgrade",
+          context: "database.schema",
+          error_class: e.class.name,
+          error_message: e.message,
+        )
       ensure
         db&.close
       end

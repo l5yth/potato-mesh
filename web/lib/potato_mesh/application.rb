@@ -37,6 +37,7 @@ require "digest"
 require_relative "config"
 require_relative "sanitizer"
 require_relative "meta"
+require_relative "logging"
 require_relative "application/helpers"
 require_relative "application/errors"
 require_relative "application/database"
@@ -106,7 +107,7 @@ module PotatoMesh
       set :federation_thread, nil
       set :port, resolve_port
 
-      app_logger = Logger.new($stdout)
+      app_logger = PotatoMesh::Logging.build_logger($stdout)
       set :logger, app_logger
       use Rack::CommonLogger, app_logger
       use Rack::Deflater
@@ -129,9 +130,17 @@ module PotatoMesh
         start_initial_federation_announcement!
         start_federation_announcer!
       elsif federation_enabled?
-        debug_log("Federation announcements disabled in test environment")
+        debug_log(
+          "Federation announcements disabled",
+          context: "federation",
+          reason: "test environment",
+        )
       else
-        debug_log("Federation announcements disabled by configuration or private mode")
+        debug_log(
+          "Federation announcements disabled",
+          context: "federation",
+          reason: "configuration",
+        )
       end
     end
   end

@@ -980,7 +980,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "rejects registrations with invalid signatures" do
       invalid_payload = instance_payload.merge("signature" => Base64.strict_encode64("invalid"))
 
-      expect_any_instance_of(Object).to receive(:warn).with(/invalid signature/).at_least(:once)
+      expect_any_instance_of(Sinatra::Application).to receive(:warn_log).with(
+        "Instance registration rejected",
+        context: "ingest.register",
+        domain: domain,
+        reason: "invalid signature",
+      ).at_least(:once)
 
       post "/api/instances", invalid_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -1005,7 +1010,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "signature" => restricted_signature,
       )
 
-      expect_any_instance_of(Object).to receive(:warn).with(/restricted IP address/).at_least(:once)
+      expect_any_instance_of(Sinatra::Application).to receive(:warn_log).with(
+        "Instance registration rejected",
+        context: "ingest.register",
+        domain: restricted_domain,
+        reason: "restricted IP address",
+        resolved_ip: an_instance_of(IPAddr),
+      ).at_least(:once)
 
       post "/api/instances", restricted_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -2386,7 +2397,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     context "when DEBUG logging is enabled" do
       it "logs diagnostics for messages missing a sender" do
         allow(PotatoMesh::Config).to receive(:debug?).and_return(true)
-        allow(Kernel).to receive(:warn)
+        allow(PotatoMesh::Logging).to receive(:log).and_call_original
 
         message_id = 987_654
         payload = {
@@ -2402,14 +2413,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
         get "/api/messages"
         expect(last_response).to be_ok
 
-        expect(Kernel).to have_received(:warn).with(
-          a_string_matching(/\[debug\] messages row before join: .*"id"\s*=>\s*#{message_id}/),
+        expect(PotatoMesh::Logging).to have_received(:log).with(
+          kind_of(Logger),
+          :debug,
+          "Message join produced empty sender",
+          context: "queries.messages",
+          stage: "before_join",
+          row: a_hash_including("id" => message_id),
         )
-        expect(Kernel).to have_received(:warn).with(
-          a_string_matching(/\[debug\] row after join: .*"id"\s*=>\s*#{message_id}/),
+        expect(PotatoMesh::Logging).to have_received(:log).with(
+          kind_of(Logger),
+          :debug,
+          "Message join produced empty sender",
+          context: "queries.messages",
+          stage: "after_join",
+          row: a_hash_including("id" => message_id),
         )
-        expect(Kernel).to have_received(:warn).with(
-          a_string_matching(/\[debug\] row after processing: .*"id"\s*=>\s*#{message_id}/),
+        expect(PotatoMesh::Logging).to have_received(:log).with(
+          kind_of(Logger),
+          :debug,
+          "Message row missing sender after processing",
+          context: "queries.messages",
+          stage: "after_processing",
+          row: a_hash_including("id" => message_id),
         )
 
         messages = JSON.parse(last_response.body)

@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import os
-import time
+from datetime import datetime, timezone
+from typing import Any
 
 PORT = os.environ.get("MESH_SERIAL")
 SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "60"))
@@ -39,18 +40,38 @@ _ENERGY_ONLINE_DURATION_SECS = float(
 _ENERGY_SLEEP_SECS = float(os.environ.get("ENERGY_SLEEP_SECS", str(6 * 60 * 60)))
 
 
-def _debug_log(message: str) -> None:
+def _debug_log(
+    message: str,
+    *,
+    context: str | None = None,
+    severity: str = "debug",
+    always: bool = False,
+    **metadata: Any,
+) -> None:
     """Print ``message`` with a UTC timestamp when ``DEBUG`` is enabled.
 
     Parameters:
         message: Text to display when debug logging is active.
+        context: Optional logical component emitting the message.
+        severity: Log level label to embed in the formatted output.
+        always: When ``True``, bypasses the :data:`DEBUG` guard.
+        **metadata: Additional structured log metadata.
     """
 
-    if not DEBUG:
+    normalized_severity = severity.lower()
+
+    if not DEBUG and not always and normalized_severity == "debug":
         return
 
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    print(f"[{timestamp}] [debug] {message}")
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    timestamp = timestamp.replace("+00:00", "Z")
+    parts = [f"[{timestamp}]", "[potato-mesh]", f"[{normalized_severity}]"]
+    if context:
+        parts.append(f"context={context}")
+    for key, value in sorted(metadata.items()):
+        parts.append(f"{key}={value!r}")
+    parts.append(message)
+    print(" ".join(parts))
 
 
 __all__ = [

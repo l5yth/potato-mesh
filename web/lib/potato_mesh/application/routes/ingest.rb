@@ -63,13 +63,23 @@ module PotatoMesh
             content_type :json
             begin
               payload = JSON.parse(read_json_body)
-            rescue JSON::ParserError
-              warn "[warn] instance registration rejected: invalid JSON"
+            rescue JSON::ParserError => e
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                reason: "invalid JSON",
+                error_class: e.class.name,
+                error_message: e.message,
+              )
               halt 400, { error: "invalid JSON" }.to_json
             end
 
             unless payload.is_a?(Hash)
-              warn "[warn] instance registration rejected: payload is not an object"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                reason: "payload is not an object",
+              )
               halt 400, { error: "invalid payload" }.to_json
             end
 
@@ -102,23 +112,43 @@ module PotatoMesh
             }
 
             if [attributes[:id], attributes[:domain], attributes[:pubkey], signature, attributes[:last_update_time]].any?(&:nil?)
-              warn "[warn] instance registration rejected: missing required fields"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                reason: "missing required fields",
+              )
               halt 400, { error: "missing required fields" }.to_json
             end
 
             unless verify_instance_signature(attributes, signature, attributes[:pubkey])
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: invalid signature"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "invalid signature",
+              )
               halt 400, { error: "invalid signature" }.to_json
             end
 
             if attributes[:is_private]
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: instance marked private"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "instance marked private",
+              )
               halt 403, { error: "instance marked private" }.to_json
             end
 
             ip = ip_from_domain(attributes[:domain])
             if ip && restricted_ip_address?(ip)
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: restricted IP address"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "restricted IP address",
+                resolved_ip: ip,
+              )
               halt 400, { error: "restricted domain" }.to_json
             end
 
@@ -126,13 +156,24 @@ module PotatoMesh
             unless well_known
               details_list = Array(well_known_meta).map(&:to_s)
               details = details_list.empty? ? "no response" : details_list.join("; ")
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: failed to fetch well-known document (#{details})"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "failed to fetch well-known document",
+                details: details,
+              )
               halt 400, { error: "failed to verify well-known document" }.to_json
             end
 
             valid, reason = validate_well_known_document(well_known, attributes[:domain], attributes[:pubkey])
             unless valid
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: #{reason}"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: reason || "invalid well-known document",
+              )
               halt 400, { error: reason || "invalid well-known document" }.to_json
             end
 
@@ -140,19 +181,35 @@ module PotatoMesh
             unless remote_nodes
               details_list = Array(node_source).map(&:to_s)
               details = details_list.empty? ? "no response" : details_list.join("; ")
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: failed to fetch nodes (#{details})"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "failed to fetch nodes",
+                details: details,
+              )
               halt 400, { error: "failed to fetch nodes" }.to_json
             end
 
             fresh, freshness_reason = validate_remote_nodes(remote_nodes)
             unless fresh
-              warn "[warn] instance registration rejected for #{attributes[:domain]}: #{freshness_reason}"
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: freshness_reason || "stale node data",
+              )
               halt 400, { error: freshness_reason || "stale node data" }.to_json
             end
 
             db = open_database
             upsert_instance_record(db, attributes, signature)
-            debug_log("Registered instance #{attributes[:domain]} (id: #{attributes[:id]})")
+            debug_log(
+              "Registered remote instance",
+              context: "ingest.register",
+              domain: attributes[:domain],
+              instance_id: attributes[:id],
+            )
             status 201
             { status: "registered" }.to_json
           ensure

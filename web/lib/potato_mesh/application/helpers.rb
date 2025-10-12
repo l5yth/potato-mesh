@@ -199,9 +199,26 @@ module PotatoMesh
         end
       end
 
-      def debug_log(message)
-        logger = settings.logger if respond_to?(:settings)
-        logger&.debug(message)
+      # Emit a structured debug log entry tagged with the calling context.
+      #
+      # @param message [String] text to emit.
+      # @param context [String] logical source of the message.
+      # @param metadata [Hash] additional structured key/value data.
+      # @return [void]
+      def debug_log(message, context: "app", **metadata)
+        logger = PotatoMesh::Logging.logger_for(self)
+        PotatoMesh::Logging.log(logger, :debug, message, context: context, **metadata)
+      end
+
+      # Emit a structured warning log entry tagged with the calling context.
+      #
+      # @param message [String] text to emit.
+      # @param context [String] logical source of the message.
+      # @param metadata [Hash] additional structured key/value data.
+      # @return [void]
+      def warn_log(message, context: "app", **metadata)
+        logger = PotatoMesh::Logging.logger_for(self)
+        PotatoMesh::Logging.log(logger, :warn, message, context: context, **metadata)
       end
 
       def private_mode?
