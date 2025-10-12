@@ -867,7 +867,9 @@ export function initializeApp(config) {
   function activateOfflineTiles(message) {
     if (!hasLeaflet || !map) {
       if (mapContainer) {
-        setMapPlaceholder(message);
+        setMapPlaceholder(
+          message || 'Offline basemap unavailable: Leaflet map is not initialized.'
+        );
       }
       return;
     }
@@ -875,17 +877,33 @@ export function initializeApp(config) {
       if (message) showMapStatus(message);
       return;
     }
-    usingOfflineTiles = true;
+    if (!offlineTiles) {
+      try {
+        offlineTiles = createOfflineTileLayer();
+      } catch (error) {
+        console.error('Failed to create offline tile layer', error);
+        if (mapContainer) {
+          const prefix = message ? `${message} ` : '';
+          const detail = error && error.message ? ` (${error.message})` : '';
+          const errorMessage = `${prefix}Offline fallback could not be initialized.${detail}`;
+          setMapPlaceholder(errorMessage);
+        }
+        return;
+      }
+    }
+    if (!offlineTiles) {
+      if (mapContainer) {
+        const prefix = message ? `${message} ` : '';
+        setMapPlaceholder(`${prefix}Offline fallback could not be initialized.`);
+      }
+      return;
+    }
     if (tiles && map.hasLayer(tiles)) {
       map.removeLayer(tiles);
     }
-    if (!offlineTiles) {
-      offlineTiles = createOfflineTileLayer();
-    }
-    if (offlineTiles) {
-      offlineTiles.addTo(map);
-      observeTileContainer(offlineTiles);
-    }
+    usingOfflineTiles = true;
+    offlineTiles.addTo(map);
+    observeTileContainer(offlineTiles);
     if (message) {
       showMapStatus(message);
     }
