@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+from meshtastic_protobuf_stub import build as build_protobuf_stub
+
 import pytest
 
 
@@ -43,69 +45,6 @@ def mesh_module(monkeypatch):
     real_protobuf = (
         getattr(real_meshtastic, "protobuf", None) if real_meshtastic else None
     )
-
-    # Stub meshtastic.serial_interface.SerialInterface
-    serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
-
-    class DummySerialInterface:
-        def __init__(self, *_, **__):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
-
-    serial_interface_mod.SerialInterface = DummySerialInterface
-
-    tcp_interface_mod = types.ModuleType("meshtastic.tcp_interface")
-
-    class DummyTCPInterface:
-        def __init__(self, *_, **__):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
-
-    tcp_interface_mod.TCPInterface = DummyTCPInterface
-
-    ble_interface_mod = types.ModuleType("meshtastic.ble_interface")
-
-    class DummyBLEInterface:
-        def __init__(self, *_, **__):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
-
-    ble_interface_mod.BLEInterface = DummyBLEInterface
-
-    meshtastic_mod = types.ModuleType("meshtastic")
-    meshtastic_mod.serial_interface = serial_interface_mod
-    meshtastic_mod.tcp_interface = tcp_interface_mod
-    meshtastic_mod.ble_interface = ble_interface_mod
-    if real_protobuf is not None:
-        meshtastic_mod.protobuf = real_protobuf
-
-    monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
-    monkeypatch.setitem(
-        sys.modules, "meshtastic.serial_interface", serial_interface_mod
-    )
-    monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
-    monkeypatch.setitem(sys.modules, "meshtastic.ble_interface", ble_interface_mod)
-    if real_protobuf is not None:
-        monkeypatch.setitem(sys.modules, "meshtastic.protobuf", real_protobuf)
-
-    # Stub pubsub.pub
-    pubsub_mod = types.ModuleType("pubsub")
-
-    class DummyPub:
-        def __init__(self):
-            self.subscriptions = []
-
-        def subscribe(self, *args, **kwargs):
-            self.subscriptions.append((args, kwargs))
-
-    pubsub_mod.pub = DummyPub()
-    monkeypatch.setitem(sys.modules, "pubsub", pubsub_mod)
 
     # Prefer real google.protobuf modules when available, otherwise provide stubs
     try:
@@ -148,6 +87,88 @@ def mesh_module(monkeypatch):
     else:
         monkeypatch.setitem(sys.modules, "google.protobuf.json_format", json_format_mod)
         monkeypatch.setitem(sys.modules, "google.protobuf.message", message_mod)
+
+    message_module = sys.modules.get("google.protobuf.message", message_mod)
+
+    # Stub meshtastic.serial_interface.SerialInterface
+    serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
+
+    class DummySerialInterface:
+        def __init__(self, *_, **__):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    serial_interface_mod.SerialInterface = DummySerialInterface
+
+    tcp_interface_mod = types.ModuleType("meshtastic.tcp_interface")
+
+    class DummyTCPInterface:
+        def __init__(self, *_, **__):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    tcp_interface_mod.TCPInterface = DummyTCPInterface
+
+    ble_interface_mod = types.ModuleType("meshtastic.ble_interface")
+
+    class DummyBLEInterface:
+        def __init__(self, *_, **__):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    ble_interface_mod.BLEInterface = DummyBLEInterface
+
+    meshtastic_mod = types.ModuleType("meshtastic")
+    meshtastic_mod.serial_interface = serial_interface_mod
+    meshtastic_mod.tcp_interface = tcp_interface_mod
+    meshtastic_mod.ble_interface = ble_interface_mod
+    if real_protobuf is not None:
+        meshtastic_mod.protobuf = real_protobuf
+    else:
+        serialization_mod = sys.modules.get("data.mesh_ingestor.serialization")
+        proto_base = getattr(serialization_mod, "ProtoMessage", message_module.Message)
+        decode_error = getattr(message_module, "DecodeError", Exception)
+        config_pb2_mod, mesh_pb2_mod = build_protobuf_stub(
+            proto_base,
+            decode_error,
+        )
+        protobuf_pkg = types.ModuleType("meshtastic.protobuf")
+        protobuf_pkg.config_pb2 = config_pb2_mod
+        protobuf_pkg.mesh_pb2 = mesh_pb2_mod
+        meshtastic_mod.protobuf = protobuf_pkg
+        monkeypatch.setitem(sys.modules, "meshtastic.protobuf", protobuf_pkg)
+        monkeypatch.setitem(
+            sys.modules, "meshtastic.protobuf.config_pb2", config_pb2_mod
+        )
+        monkeypatch.setitem(sys.modules, "meshtastic.protobuf.mesh_pb2", mesh_pb2_mod)
+
+    monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
+    monkeypatch.setitem(
+        sys.modules, "meshtastic.serial_interface", serial_interface_mod
+    )
+    monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
+    monkeypatch.setitem(sys.modules, "meshtastic.ble_interface", ble_interface_mod)
+    if real_protobuf is not None:
+        monkeypatch.setitem(sys.modules, "meshtastic.protobuf", real_protobuf)
+
+    # Stub pubsub.pub
+    pubsub_mod = types.ModuleType("pubsub")
+
+    class DummyPub:
+        def __init__(self):
+            self.subscriptions = []
+
+        def subscribe(self, *args, **kwargs):
+            self.subscriptions.append((args, kwargs))
+
+    pubsub_mod.pub = DummyPub()
+    monkeypatch.setitem(sys.modules, "pubsub", pubsub_mod)
 
     module_name = "data.mesh_ingestor"
     if module_name in sys.modules:
