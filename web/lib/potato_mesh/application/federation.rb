@@ -299,6 +299,8 @@ module PotatoMesh
         http.min_version = :TLS1_2 if http.respond_to?(:min_version=)
         store = remote_instance_cert_store
         http.cert_store = store if store
+        callback = remote_instance_verify_callback
+        http.verify_callback = callback if callback
         http
       end
 
@@ -322,6 +324,56 @@ module PotatoMesh
           "Failed to initialize certificate store for federation HTTP: #{e.message}",
         )
         @remote_instance_cert_store = nil
+      end
+
+      # Build a TLS verification callback that tolerates CRL availability failures.
+      #
+      # Some certificate authorities publish CRL endpoints that may occasionally be
+      # unreachable. When OpenSSL cannot download the CRL it raises the
+      # V_ERR_UNABLE_TO_GET_CRL error which would otherwise cause HTTPS federation
+      # announcements to abort. The generated callback accepts those specific
+      # failures while preserving strict verification for all other errors.
+      #
+      # @return [Proc, nil] verification callback or nil when creation fails.
+      def remote_instance_verify_callback
+        if defined?(@remote_instance_verify_callback) && @remote_instance_verify_callback
+          return @remote_instance_verify_callback
+        end
+
+        callback = lambda do |preverify_ok, store_context|
+          return true if preverify_ok
+
+          if store_context && crl_unavailable_error?(store_context.error)
+            debug_log(
+              "Ignoring TLS CRL retrieval failure during federation request",
+              context: "federation.announce",
+            )
+            true
+          else
+            false
+          end
+        end
+
+        @remote_instance_verify_callback = callback
+      rescue StandardError => e
+        debug_log(
+          "Failed to initialize federation TLS verify callback: #{e.message}",
+          context: "federation.announce",
+        )
+        @remote_instance_verify_callback = nil
+      end
+
+      # Determine whether the supplied OpenSSL verification error corresponds to a
+      # missing certificate revocation list.
+      #
+      # @param error_code [Integer, nil] OpenSSL verification error value.
+      # @return [Boolean] true when the error should be ignored.
+      def crl_unavailable_error?(error_code)
+        allowed_errors = [OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL]
+        if defined?(OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL_ISSUER)
+          allowed_errors << OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL_ISSUER
+        end
+        allowed_errors.include?(error_code)
       end
 
       def validate_well_known_document(document, domain, pubkey)
