@@ -39,13 +39,11 @@ module PotatoMesh
             raise "INSTANCE_DOMAIN URL must include a hostname: #{candidate.inspect}"
           end
 
-          candidate = hostname
+          ip_host = ipv6_literal?(hostname)
+          candidate_host = ip_host ? "[#{ip_host}]" : hostname
+          candidate = candidate_host
           port = uri.port
-          if port && (!uri.respond_to?(:default_port) || uri.default_port.nil? || port != uri.default_port)
-            candidate = "#{candidate}:#{port}"
-          elsif port && uri.to_s.match?(/:\d+/)
-            candidate = "#{candidate}:#{port}"
-          end
+          candidate = "#{candidate_host}:#{port}" if port_required?(uri, trimmed)
         end
 
         sanitized = sanitize_instance_domain(candidate)
@@ -53,7 +51,7 @@ module PotatoMesh
           raise "INSTANCE_DOMAIN must be a bare hostname (optionally with a port) without schemes or paths: #{raw.inspect}"
         end
 
-        sanitized.downcase
+        ensure_ipv6_instance_domain(sanitized).downcase
       end
 
       def determine_instance_domain
@@ -199,6 +197,73 @@ module PotatoMesh
         return true if ip.to_i.zero?
 
         false
+      end
+
+      # Normalize IPv6 instance domains so that they remain bracketed and URI-compatible.
+      #
+      # @param domain [String] sanitized hostname optionally including a port suffix.
+      # @return [String] domain with IPv6 literals wrapped in brackets when necessary.
+      def ensure_ipv6_instance_domain(domain)
+        bracketed_match = domain.match(/\A\[(?<host>[^\]]+)\](?::(?<port>\d+))?\z/)
+        if bracketed_match
+          host = bracketed_match[:host]
+          port = bracketed_match[:port]
+          ipv6 = ipv6_literal?(host)
+          if ipv6
+            return "[#{ipv6}]#{port ? ":#{port}" : ""}"
+          end
+
+          return domain
+        end
+
+        host_candidate = domain
+        port_candidate = nil
+        split_host, separator, split_port = domain.rpartition(":")
+        if !separator.empty? && split_port.match?(/\A\d+\z/) && !split_host.empty? && !split_host.end_with?(":")
+          host_candidate = split_host
+          port_candidate = split_port
+        end
+
+        if port_candidate
+          ipv6_host = ipv6_literal?(host_candidate)
+          return "[#{ipv6_host}]:#{port_candidate}" if ipv6_host
+
+          host_candidate = domain
+          port_candidate = nil
+        end
+
+        ipv6 = ipv6_literal?(host_candidate)
+        return "[#{ipv6}]" if ipv6
+
+        domain
+      end
+
+      # Parse an IPv6 literal and return its canonical representation when valid.
+      #
+      # @param candidate [String] potential IPv6 literal.
+      # @return [String, nil] normalized IPv6 literal or nil when the candidate is not IPv6.
+      def ipv6_literal?(candidate)
+        IPAddr.new(candidate).yield_self do |ip|
+          return ip.ipv6? ? ip.to_s : nil
+        end
+      rescue IPAddr::InvalidAddressError
+        nil
+      end
+
+      # Determine whether a URI's port should be included in the canonicalized domain.
+      #
+      # @param uri [URI::Generic] parsed URI for the instance domain.
+      # @param raw [String] original sanitized input string.
+      # @return [Boolean] true when the port must be preserved.
+      def port_required?(uri, raw)
+        port = uri.port
+        return false unless port
+
+        return true unless uri.respond_to?(:default_port) && uri.default_port && port == uri.default_port
+
+        raw_port_fragment = ":#{port}"
+        sanitized_raw = raw.strip
+        sanitized_raw.end_with?(raw_port_fragment)
       end
     end
   end
