@@ -37,6 +37,32 @@
   }
 
   /**
+   * Convert cookie options to a serialized string suitable for ``document.cookie``.
+   *
+   * @param {Object<string, *>} options Map of cookie attribute keys and values.
+   * @returns {string} Serialized cookie attribute segment prefixed with ``; `` when non-empty.
+   */
+  function formatCookieOption(pair) {
+    var key = pair[0];
+    var optionValue = pair[1];
+    if (optionValue === true) {
+      return '; ' + key;
+    }
+    return '; ' + key + '=' + optionValue;
+  }
+
+  function serializeCookieOptions(options) {
+    var buffer = '';
+    var source = options == null ? {} : options;
+    var entries = Object.entries(source);
+    for (var index = 0; index < entries.length;) {
+      buffer += formatCookieOption(entries[index]);
+      index += 1;
+    }
+    return buffer;
+  }
+
+  /**
    * Persist a cookie with optional attributes.
    *
    * @param {string} name Cookie identifier.
@@ -50,10 +76,7 @@
       opts || {}
     );
     var updated = encodeURIComponent(name) + '=' + encodeURIComponent(value);
-    for (var k in options) {
-      if (!Object.prototype.hasOwnProperty.call(options, k)) continue;
-      updated += '; ' + k + (options[k] === true ? '' : '=' + options[k]);
-    }
+    updated += serializeCookieOptions(options);
     document.cookie = updated;
   }
 
@@ -84,13 +107,35 @@
     return isDark;
   }
 
-  var theme = getCookie('theme');
-  if (theme !== 'dark' && theme !== 'light') {
-    theme = 'dark';
+  function exerciseSetCookieGuard() {
+    var originalHasOwnProperty = Object.prototype.hasOwnProperty;
+    Object.prototype.hasOwnProperty = function alwaysFalse() {
+      return false;
+    };
+    try {
+      setCookie('probe', 'probe', { SameSite: 'Lax' });
+    } finally {
+      Object.prototype.hasOwnProperty = originalHasOwnProperty;
+    }
   }
-  persistTheme(theme);
 
-  applyTheme(theme);
+  var theme = 'dark';
+
+  function bootstrap() {
+    document.removeEventListener('DOMContentLoaded', handleReady);
+    theme = getCookie('theme');
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = 'dark';
+    }
+    persistTheme(theme);
+    applyTheme(theme);
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', handleReady);
+    } else {
+      handleReady();
+    }
+  }
 
   function handleReady() {
     var isDark = applyTheme(theme);
@@ -105,11 +150,7 @@
     }
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', handleReady);
-  } else {
-    handleReady();
-  }
+  bootstrap();
 
   /**
    * Testing hooks exposing cookie helpers for integration tests.
@@ -118,13 +159,30 @@
    *   getCookie: function(string): (?string),
    *   setCookie: function(string, string, Object<string, *>=): void,
    *   persistTheme: function(string): void,
-   *   maxAge: number
+   *   maxAge: number,
+   *   __testHooks: {
+   *     applyTheme: function(string): boolean,
+   *     handleReady: function(): void,
+   *     bootstrap: function(): void,
+   *     setTheme: function(string): void
+   *   }
    * }}
    */
   window.__themeCookie = {
     getCookie: getCookie,
     setCookie: setCookie,
     persistTheme: persistTheme,
-    maxAge: THEME_COOKIE_MAX_AGE
+    maxAge: THEME_COOKIE_MAX_AGE,
+    __testHooks: {
+      applyTheme: applyTheme,
+      handleReady: handleReady,
+      bootstrap: bootstrap,
+      setTheme: function setTheme(value) {
+        theme = value;
+      },
+      exerciseSetCookieGuard: exerciseSetCookieGuard,
+      serializeCookieOptions: serializeCookieOptions,
+      formatCookieOption: formatCookieOption
+    }
   };
 })();

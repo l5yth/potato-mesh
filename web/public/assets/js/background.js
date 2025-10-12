@@ -73,11 +73,16 @@
     applyBackground();
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  function bootstrap() {
+    document.removeEventListener('DOMContentLoaded', init);
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
   }
+
+  bootstrap();
 
   window.addEventListener('themechange', applyBackground);
 
@@ -86,11 +91,19 @@
    *
    * @type {{
    *   applyBackground: function(): void,
-   *   resolveBackgroundColor: function(): (?string)
+   *   resolveBackgroundColor: function(): (?string),
+   *   __testHooks: {
+   *     bootstrap: function(): void,
+   *     init: function(): void
+   *   }
    * }}
    */
   window.__potatoBackground = {
     applyBackground: applyBackground,
-    resolveBackgroundColor: resolveBackgroundColor
+    resolveBackgroundColor: resolveBackgroundColor,
+    __testHooks: {
+      bootstrap: bootstrap,
+      init: init
+    }
   };
 })();

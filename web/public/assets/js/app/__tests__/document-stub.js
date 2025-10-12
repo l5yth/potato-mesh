@@ -12,20 +12,46 @@
  * limitations under the License.
  */
 
+/**
+ * Minimal document implementation that exposes the subset of behaviour needed
+ * by the front-end modules during unit tests.
+ */
 class DocumentStub {
+  /**
+   * Instantiate a new stub with a clean internal state.
+   */
   constructor() {
     this.reset();
   }
 
+  /**
+   * Clear tracked configuration elements and registered event listeners.
+   *
+   * @returns {void}
+   */
   reset() {
     this.configElement = null;
     this.listeners = new Map();
   }
 
+  /**
+   * Provide an element that will be returned by ``querySelector`` when the
+   * configuration selector is requested.
+   *
+   * @param {?Element} element DOM node exposing ``getAttribute``.
+   * @returns {void}
+   */
   setConfigElement(element) {
     this.configElement = element;
   }
 
+  /**
+   * Return the registered configuration element when the matching selector is
+   * provided.
+   *
+   * @param {string} selector CSS selector requested by the module under test.
+   * @returns {?Element} Config element or ``null`` when unavailable.
+   */
   querySelector(selector) {
     if (selector === '[data-app-config]') {
       return this.configElement;
@@ -33,10 +59,24 @@ class DocumentStub {
     return null;
   }
 
+  /**
+   * Register an event handler, mirroring the DOM ``addEventListener`` API.
+   *
+   * @param {string} event Event identifier.
+   * @param {Function} handler Callback invoked when ``dispatchEvent`` is
+   *   called.
+   * @returns {void}
+   */
   addEventListener(event, handler) {
     this.listeners.set(event, handler);
   }
 
+  /**
+   * Trigger a previously registered listener.
+   *
+   * @param {string} event Event identifier used when registering the handler.
+   * @returns {void}
+   */
   dispatchEvent(event) {
     const handler = this.listeners.get(event);
     if (handler) {
@@ -46,6 +86,12 @@ class DocumentStub {
 }
 
 export const documentStub = new DocumentStub();
+
+/**
+ * Reset the shared stub between test cases to avoid state bleed.
+ *
+ * @returns {void}
+ */
 export function resetDocumentStub() {
   documentStub.reset();
 }
