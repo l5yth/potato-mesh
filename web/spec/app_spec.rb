@@ -23,6 +23,42 @@ require "uri"
 
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
+  let(:application_class) { PotatoMesh::Application }
+
+  describe "configuration" do
+    it "sets the default HTTP port to 41_447" do
+      expect(app.settings.port).to eq(41_447)
+    end
+  end
+
+  describe ".resolve_port" do
+    around do |example|
+      original_present = ENV.key?("PORT")
+      original_value = ENV["PORT"] if original_present
+      ENV.delete("PORT")
+      example.run
+    ensure
+      if original_present
+        ENV["PORT"] = original_value
+      else
+        ENV.delete("PORT")
+      end
+    end
+
+    it "returns the default port when the environment is unset" do
+      expect(application_class.resolve_port).to eq(41_447)
+    end
+
+    it "parses the environment override when provided" do
+      ENV["PORT"] = "51515"
+      expect(application_class.resolve_port).to eq(51_515)
+    end
+
+    it "falls back to the default port when parsing fails" do
+      ENV["PORT"] = "potato"
+      expect(application_class.resolve_port).to eq(41_447)
+    end
+  end
 
   # Return the absolute filesystem path to the requested fixture.
   #

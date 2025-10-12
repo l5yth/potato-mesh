@@ -75,10 +75,24 @@ module PotatoMesh
       logger.level = PotatoMesh::Config.debug? ? Logger::DEBUG : Logger::WARN
     end
 
+    # Determine the port the application should listen on.
+    #
+    # @param default_port [Integer] fallback port when ENV['PORT'] is absent or invalid.
+    # @return [Integer] port number for the HTTP server.
+    def self.resolve_port(default_port: 41_447)
+      raw = ENV["PORT"]
+      return default_port if raw.nil?
+
+      Integer(raw, 10)
+    rescue ArgumentError
+      default_port
+    end
+
     configure do
       set :public_folder, File.expand_path("../../public", __dir__)
       set :views, File.expand_path("../../views", __dir__)
       set :federation_thread, nil
+      set :port, resolve_port
 
       app_logger = Logger.new($stdout)
       set :logger, app_logger
