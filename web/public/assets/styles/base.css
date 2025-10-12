@@ -167,9 +167,6 @@ h1 {
   border: 1px solid #ddd;
   border-radius: 8px;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .map-panel.is-fullscreen,
@@ -233,6 +230,9 @@ h1 {
 }
 
 #map[data-map-status="placeholder"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: repeating-linear-gradient(
     135deg,
     rgba(0, 0, 0, 0.02),
