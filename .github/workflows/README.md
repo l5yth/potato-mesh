@@ -4,8 +4,9 @@
 
 - **`docker.yml`** - Build and push Docker images to GHCR
 - **`codeql.yml`** - Security scanning
-- **`python.yml`** - Python testing
-- **`ruby.yml`** - Ruby testing
+- **`python.yml`** - Python ingestor pipeline
+- **`ruby.yml`** - Ruby Sinatra app testing
+- **`javascript.yml`** - Frontend test suite
 
 ## Usage
 
