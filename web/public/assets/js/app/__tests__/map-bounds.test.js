@@ -24,7 +24,7 @@ import {
   __testUtils
 } from '../map-bounds.js';
 
-const { clampLatitude, clampLongitude, normaliseRange } = __testUtils;
+const { clampLatitude, clampLongitude, normaliseRange, normaliseLongitudeAround } = __testUtils;
 
 function approximatelyEqual(actual, expected, epsilon = 1e-3) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `${actual} is not within ${epsilon} of ${expected}`);
@@ -130,4 +130,9 @@ test('computeBoundsForPoints preserves tight bounds across the antimeridian', ()
   const lonSpan = Math.abs(east - west);
   const normalizedSpan = lonSpan > 180 ? 360 - lonSpan : lonSpan;
   assert.ok(normalizedSpan < 40, 'longitude span should wrap tightly around the dateline');
+  for (const [, lon] of points) {
+    const adjustedLon = normaliseLongitudeAround(lon, (west + east) / 2);
+    assert.ok(adjustedLon >= west - 1e-6 && adjustedLon <= east + 1e-6, 'point longitude should lie within bounds');
+  }
+  assert.ok(east > 180 || west < -180, 'bounds should extend beyond the canonical range when necessary');
 });

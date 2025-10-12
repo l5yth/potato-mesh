@@ -49,6 +49,22 @@ function clampLongitude(longitude) {
 }
 
 /**
+ * Normalise a longitude so it remains close to a reference meridian.
+ *
+ * @param {number} longitude Longitude in degrees to normalise.
+ * @param {number} referenceMeridian Reference longitude in degrees.
+ * @returns {number} Longitude adjusted by multiples of 360° so the
+ *   difference from ``referenceMeridian`` lies within ``[-180, 180)``.
+ */
+function normaliseLongitudeAround(longitude, referenceMeridian) {
+  if (!Number.isFinite(longitude) || !Number.isFinite(referenceMeridian)) {
+    return longitude;
+  }
+  const delta = ((longitude - referenceMeridian + 540) % 360) - 180;
+  return referenceMeridian + delta;
+}
+
+/**
  * Convert degrees to radians.
  *
  * @param {number} degrees Angle in degrees.
@@ -144,7 +160,9 @@ export function computeBoundingBox(center, rangeKm, options = {}) {
  *   minimumRangeKm?: number
  * }} [options] Optional configuration controlling the computed bounds.
  * @returns {[[number, number], [number, number]] | null} Bounding box tuple or
- *   ``null`` when the input list is empty or invalid.
+ *   ``null`` when the input list is empty or invalid. Longitudes may extend
+ *   beyond the canonical ``[-180, 180]`` range when a dateline-spanning span is
+ *   required.
  */
 export function computeBoundsForPoints(points, options = {}) {
   if (!Array.isArray(points) || !points.length) {
@@ -199,11 +217,39 @@ export function computeBoundsForPoints(points, options = {}) {
     ? options.minimumRangeKm
     : DEFAULT_MIN_RANGE_KM;
   const paddedRangeKm = Math.max(minimumRangeKm, maxDistanceKm * (1 + paddingFraction));
-  return computeBoundingBox(centre, paddedRangeKm, { minimumRangeKm });
+  const angularDistance = paddedRangeKm / EARTH_RADIUS_KM;
+  const latDelta = angularDistance * RAD_TO_DEG;
+  const minLat = clampLatitude(centre.lat - latDelta);
+  const maxLat = clampLatitude(centre.lat + latDelta);
+
+  const cosLat = Math.cos(toRadians(centre.lat));
+  const maxProjectedLonDelta = Math.min(
+    POLE_LONGITUDE_SPAN_DEGREES,
+    Math.abs(cosLat) < COS_EPSILON
+      ? POLE_LONGITUDE_SPAN_DEGREES
+      : (angularDistance * RAD_TO_DEG) / Math.max(Math.abs(cosLat), COS_EPSILON)
+  );
+
+  const normalisedLongitudes = validPoints.map(point => normaliseLongitudeAround(point[1], centre.lon));
+  let west = Math.min(...normalisedLongitudes, centre.lon - maxProjectedLonDelta);
+  let east = Math.max(...normalisedLongitudes, centre.lon + maxProjectedLonDelta);
+
+  if (!Number.isFinite(west) || !Number.isFinite(east)) {
+    west = centre.lon - maxProjectedLonDelta;
+    east = centre.lon + maxProjectedLonDelta;
+  }
+
+  if (east - west >= 360) {
+    west = -POLE_LONGITUDE_SPAN_DEGREES;
+    east = POLE_LONGITUDE_SPAN_DEGREES;
+  }
+
+  return [[minLat, west], [maxLat, east]];
 }
 
 export const __testUtils = {
   clampLatitude,
   clampLongitude,
-  normaliseRange
+  normaliseRange,
+  normaliseLongitudeAround
 };
