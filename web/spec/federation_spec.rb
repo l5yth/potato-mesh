@@ -27,7 +27,7 @@ RSpec.describe PotatoMesh::App::Federation do
           @debug_messages ||= []
         end
 
-        def debug_log(message)
+        def debug_log(message, **_metadata)
           debug_messages << message
         end
 
@@ -40,6 +40,7 @@ RSpec.describe PotatoMesh::App::Federation do
 
   before do
     federation_helpers.instance_variable_set(:@remote_instance_cert_store, nil)
+    federation_helpers.instance_variable_set(:@remote_instance_verify_callback, nil)
     federation_helpers.reset_debug_messages
   end
 
@@ -84,6 +85,33 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
+  describe ".remote_instance_verify_callback" do
+    let(:callback) { federation_helpers.remote_instance_verify_callback }
+
+    it "memoizes the generated callback" do
+      first = federation_helpers.remote_instance_verify_callback
+      second = federation_helpers.remote_instance_verify_callback
+      expect(second).to equal(first)
+    end
+
+    it "allows the handshake to continue when CRLs are unavailable" do
+      store_context = instance_double(OpenSSL::X509::StoreContext, error: OpenSSL::X509::V_ERR_UNABLE_TO_GET_CRL)
+
+      expect(callback.call(false, store_context)).to be(true)
+      expect(federation_helpers.debug_messages.last).to include("Ignoring TLS CRL retrieval failure")
+    end
+
+    it "rejects other verification failures" do
+      store_context = instance_double(OpenSSL::X509::StoreContext, error: OpenSSL::X509::V_ERR_CERT_HAS_EXPIRED)
+
+      expect(callback.call(false, store_context)).to be(false)
+    end
+
+    it "falls back to the default behavior when the handshake is already valid" do
+      expect(callback.call(true, nil)).to be(true)
+    end
+  end
+
   describe ".build_remote_http_client" do
     let(:timeout) { 15 }
 
@@ -95,6 +123,8 @@ RSpec.describe PotatoMesh::App::Federation do
       uri = URI.parse("https://remote.example.com/api")
       store = OpenSSL::X509::Store.new
       allow(federation_helpers).to receive(:remote_instance_cert_store).and_return(store)
+      callback = proc { true }
+      allow(federation_helpers).to receive(:remote_instance_verify_callback).and_return(callback)
 
       http = federation_helpers.build_remote_http_client(uri)
 
@@ -103,6 +133,7 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(http.read_timeout).to eq(timeout)
       expect(http.cert_store).to eq(store)
       expect(http.verify_mode).to eq(OpenSSL::SSL::VERIFY_PEER)
+      expect(http.verify_callback).to eq(callback)
       if http.respond_to?(:min_version)
         expect(http.min_version).to eq(:TLS1_2)
       end
@@ -122,10 +153,12 @@ RSpec.describe PotatoMesh::App::Federation do
     it "leaves the certificate store unset when unavailable" do
       uri = URI.parse("https://remote.example.com/api")
       allow(federation_helpers).to receive(:remote_instance_cert_store).and_return(nil)
+      allow(federation_helpers).to receive(:remote_instance_verify_callback).and_return(nil)
 
       http = federation_helpers.build_remote_http_client(uri)
 
       expect(http.cert_store).to be_nil
+      expect(http.verify_callback).to be_nil
     end
   end
 end
