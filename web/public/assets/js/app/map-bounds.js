@@ -155,16 +155,34 @@ export function computeBoundsForPoints(points, options = {}) {
     return null;
   }
 
+  let xSum = 0;
+  let ySum = 0;
+  let zSum = 0;
   let latSum = 0;
   let lonSum = 0;
   for (const [lat, lon] of validPoints) {
+    const latRad = toRadians(lat);
+    const lonRad = toRadians(lon);
+    const cosLat = Math.cos(latRad);
+    xSum += cosLat * Math.cos(lonRad);
+    ySum += cosLat * Math.sin(lonRad);
+    zSum += Math.sin(latRad);
     latSum += lat;
     lonSum += lon;
   }
-  const centre = {
-    lat: latSum / validPoints.length,
-    lon: lonSum / validPoints.length
-  };
+
+  const vectorMagnitude = Math.sqrt(xSum * xSum + ySum * ySum + zSum * zSum);
+  let centre;
+  if (vectorMagnitude > COS_EPSILON) {
+    const lat = Math.atan2(zSum, Math.sqrt(xSum * xSum + ySum * ySum)) * RAD_TO_DEG;
+    const lon = Math.atan2(ySum, xSum) * RAD_TO_DEG;
+    centre = { lat, lon };
+  } else {
+    centre = {
+      lat: latSum / validPoints.length,
+      lon: lonSum / validPoints.length
+    };
+  }
 
   let maxDistanceKm = 0;
   for (const [lat, lon] of validPoints) {

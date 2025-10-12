@@ -115,3 +115,19 @@ test('computeBoundsForPoints respects the configured minimum range for single po
   const [[south], [north]] = bounds;
   assert.ok(north - south > 0.05);
 });
+
+
+test('computeBoundsForPoints preserves tight bounds across the antimeridian', () => {
+  const points = [
+    [10.0, 179.5],
+    [11.2, -179.7],
+    [9.5, 179.2]
+  ];
+  const bounds = computeBoundsForPoints(points, { paddingFraction: 0.1 });
+  assert.ok(bounds);
+  const [[south, west], [north, east]] = bounds;
+  assert.ok(north - south < 10, 'latitude span should remain tight');
+  const lonSpan = Math.abs(east - west);
+  const normalizedSpan = lonSpan > 180 ? 360 - lonSpan : lonSpan;
+  assert.ok(normalizedSpan < 40, 'longitude span should wrap tightly around the dateline');
+});
