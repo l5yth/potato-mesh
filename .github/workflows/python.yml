@@ -10,12 +10,12 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  ingestor:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v5
     - name: Set up Python 3.13
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@v5
       with:
         python-version: "3.13"
     - name: Install dependencies
