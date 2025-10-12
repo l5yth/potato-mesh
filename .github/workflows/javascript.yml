@@ -12,6 +12,9 @@ permissions:
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
     - uses: actions/checkout@v5
     - name: Set up Node.js 22
@@ -19,11 +22,9 @@ jobs:
       with:
         node-version: '22'
     - name: Install dependencies
-      run: npm install
-      working-directory: web
+      run: npm ci
     - name: Run JavaScript tests
       run: npm test
-      working-directory: web
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v5
