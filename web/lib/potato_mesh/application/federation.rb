@@ -153,7 +153,7 @@ module PotatoMesh
           end
         end
         thread.name = "potato-mesh-federation" if thread.respond_to?(:name=)
-        self.class.set(:federation_thread, thread)
+        settings.set(:federation_thread, thread)
         thread
       end
 
@@ -167,12 +167,12 @@ module PotatoMesh
           rescue StandardError => e
             debug_log("Initial federation announcement failed: #{e.message}")
           ensure
-            self.class.set(:initial_federation_thread, nil)
+            settings.set(:initial_federation_thread, nil)
           end
         end
         thread.name = "potato-mesh-federation-initial" if thread.respond_to?(:name=)
         thread.report_on_exception = false if thread.respond_to?(:report_on_exception=)
-        self.class.set(:initial_federation_thread, thread)
+        settings.set(:initial_federation_thread, thread)
         thread
       end
 
