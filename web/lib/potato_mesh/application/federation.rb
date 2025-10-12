@@ -1,3 +1,15 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # frozen_string_literal: true
 
 module PotatoMesh
@@ -102,10 +114,7 @@ module PotatoMesh
 
         instance_uri_candidates(domain, "/api/instances").each do |uri|
           begin
-            http = Net::HTTP.new(uri.host, uri.port)
-            http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
-            http.read_timeout = PotatoMesh::Config.remote_instance_http_timeout
-            http.use_ssl = uri.scheme == "https"
+            http = build_remote_http_client(uri)
             response = http.start do |connection|
               request = Net::HTTP::Post.new(uri)
               request["Content-Type"] = "application/json"
@@ -246,10 +255,7 @@ module PotatoMesh
       end
 
       def perform_instance_http_request(uri)
-        http = Net::HTTP.new(uri.host, uri.port)
-        http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
-        http.read_timeout = PotatoMesh::Config.remote_instance_http_timeout
-        http.use_ssl = uri.scheme == "https"
+        http = build_remote_http_client(uri)
         http.start do |connection|
           response = connection.request(Net::HTTP::Get.new(uri))
           case response
@@ -276,6 +282,46 @@ module PotatoMesh
           end
         end
         [nil, errors]
+      end
+
+      # Build an HTTP client configured for communication with a remote instance.
+      #
+      # @param uri [URI::Generic] target URI describing the remote endpoint.
+      # @return [Net::HTTP] HTTP client ready to execute the request.
+      def build_remote_http_client(uri)
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
+        http.read_timeout = PotatoMesh::Config.remote_instance_http_timeout
+        http.use_ssl = uri.scheme == "https"
+        return http unless http.use_ssl?
+
+        http.verify_mode = OpenSSL::SSL::VERIFY_PEER
+        http.min_version = :TLS1_2 if http.respond_to?(:min_version=)
+        store = remote_instance_cert_store
+        http.cert_store = store if store
+        http
+      end
+
+      # Construct a certificate store that disables strict CRL enforcement.
+      #
+      # OpenSSL may fail remote requests when certificate revocation lists are
+      # unavailable from the issuing authority. The returned store mirrors the
+      # default system trust store while clearing CRL-related flags so that
+      # federation announcements gracefully succeed when CRLs cannot be fetched.
+      #
+      # @return [OpenSSL::X509::Store, nil] configured store or nil when setup fails.
+      def remote_instance_cert_store
+        return @remote_instance_cert_store if defined?(@remote_instance_cert_store) && @remote_instance_cert_store
+
+        store = OpenSSL::X509::Store.new
+        store.set_default_paths
+        store.flags = 0 if store.respond_to?(:flags=)
+        @remote_instance_cert_store = store
+      rescue OpenSSL::X509::StoreError => e
+        debug_log(
+          "Failed to initialize certificate store for federation HTTP: #{e.message}",
+        )
+        @remote_instance_cert_store = nil
       end
 
       def validate_well_known_document(document, domain, pubkey)

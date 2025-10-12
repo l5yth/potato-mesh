@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  sinatra:
     defaults:
       run:
         working-directory: ./web
@@ -42,13 +42,13 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: ./web/tmp/test-results/rspec.xml
-        flags: ruby-${{ matrix.ruby-version }}
+        flags: sinatra-${{ matrix.ruby-version }}
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
-        flags: ruby-${{ matrix.ruby-version }}
+        flags: sinatra-${{ matrix.ruby-version }}
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     - name: Run rufo
