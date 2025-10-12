@@ -16,13 +16,22 @@ require_relative "config"
 require_relative "sanitizer"
 
 module PotatoMesh
+  # Helper functions used to generate SEO metadata and formatted values.
   module Meta
     module_function
 
+    # Format a distance in kilometres without trailing decimal precision when unnecessary.
+    #
+    # @param distance [Numeric] distance in kilometres.
+    # @return [String] formatted kilometre value.
     def formatted_distance_km(distance)
       format("%.1f", distance).sub(/\.0\z/, "")
     end
 
+    # Construct the meta description string displayed to search engines and social previews.
+    #
+    # @param private_mode [Boolean] whether private mode is enabled.
+    # @return [String] generated description text.
     def description(private_mode:)
       site = Sanitizer.sanitized_site_name
       channel = Sanitizer.sanitized_default_channel
@@ -55,6 +64,10 @@ module PotatoMesh
       sentences.join(" ")
     end
 
+    # Build a hash of meta configuration values used by templating layers.
+    #
+    # @param private_mode [Boolean] whether private mode is enabled.
+    # @return [Hash] structured metadata for templates.
     def configuration(private_mode:)
       site = Sanitizer.sanitized_site_name
       {

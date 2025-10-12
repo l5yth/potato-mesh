@@ -15,6 +15,10 @@
 module PotatoMesh
   module App
     module Database
+      # Open a connection to the application database applying common pragmas.
+      #
+      # @param readonly [Boolean] whether to open the database in read-only mode.
+      # @return [SQLite3::Database] configured database handle.
       def open_database(readonly: false)
         SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: readonly).tap do |db|
           db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
@@ -22,6 +26,12 @@ module PotatoMesh
         end
       end
 
+      # Execute the provided block and retry when SQLite reports a busy error.
+      #
+      # @param max_retries [Integer] maximum number of retries when locked.
+      # @param base_delay [Float] incremental back-off delay between retries.
+      # @yield Executes the database operation.
+      # @return [Object] result of the block.
       def with_busy_retry(
         max_retries: PotatoMesh::Config.db_busy_max_retries,
         base_delay: PotatoMesh::Config.db_busy_retry_delay
@@ -38,6 +48,9 @@ module PotatoMesh
         end
       end
 
+      # Determine whether the database schema has already been provisioned.
+      #
+      # @return [Boolean] true when all required tables exist.
       def db_schema_present?
         return false unless File.exist?(PotatoMesh::Config.db_path)
 
@@ -54,6 +67,9 @@ module PotatoMesh
         db&.close
       end
 
+      # Create the database schema using the bundled SQL files.
+      #
+      # @return [void]
       def init_db
         FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
@@ -65,6 +81,9 @@ module PotatoMesh
         db&.close
       end
 
+      # Apply any schema migrations required for older installations.
+      #
+      # @return [void]
       def ensure_schema_upgrades
         db = open_database
         node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }

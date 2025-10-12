@@ -17,9 +17,18 @@ require "ipaddr"
 require_relative "config"
 
 module PotatoMesh
+  # Utility module responsible for coercing and sanitising user provided
+  # configuration strings.  Each helper is exposed as a module function so it
+  # can be consumed both by the web layer and background jobs without
+  # instantiation overhead.
   module Sanitizer
     module_function
 
+    # Coerce an arbitrary value into a trimmed string unless the content is
+    # empty.
+    #
+    # @param value [Object, nil] arbitrary input that should be converted.
+    # @return [String, nil] trimmed string representation or +nil+ when blank.
     def string_or_nil(value)
       return nil if value.nil?
 
@@ -28,6 +37,11 @@ module PotatoMesh
       trimmed.empty? ? nil : trimmed
     end
 
+    # Ensure a value is a valid instance domain according to RFC 1035/3986
+    # rules. This rejects whitespace, path separators, and trailing dots.
+    #
+    # @param value [String, Object, nil] candidate domain name.
+    # @return [String, nil] canonical domain value or +nil+ when invalid.
     def sanitize_instance_domain(value)
       host = string_or_nil(value)
       return nil unless host
@@ -40,6 +54,10 @@ module PotatoMesh
       trimmed
     end
 
+    # Extract the host component from a potentially bracketed domain literal.
+    #
+    # @param domain [String, nil] raw domain string received from the user.
+    # @return [String, nil] host portion of the domain, or +nil+ when invalid.
     def instance_domain_host(domain)
       return nil if domain.nil?
 
@@ -60,6 +78,10 @@ module PotatoMesh
       candidate
     end
 
+    # Resolve a validated domain string into an IP address object.
+    #
+    # @param domain [String, nil] domain literal potentially including port.
+    # @return [IPAddr, nil] parsed IP address when valid.
     def ip_from_domain(domain)
       host = instance_domain_host(domain)
       return nil unless host
@@ -69,27 +91,46 @@ module PotatoMesh
       nil
     end
 
+    # Normalise a value into a trimmed string representation.
+    #
+    # @param value [Object] arbitrary object to coerce into text.
+    # @return [String] trimmed string version of the supplied value.
     def sanitized_string(value)
       value.to_s.strip
     end
 
+    # Retrieve the configured site name as a cleaned string.
+    #
+    # @return [String] trimmed configuration value.
     def sanitized_site_name
       sanitized_string(Config.site_name)
     end
 
+    # Retrieve the configured default channel as a cleaned string.
+    #
+    # @return [String] trimmed configuration value.
     def sanitized_default_channel
       sanitized_string(Config.default_channel)
     end
 
+    # Retrieve the configured default frequency as a cleaned string.
+    #
+    # @return [String] trimmed configuration value.
     def sanitized_default_frequency
       sanitized_string(Config.default_frequency)
     end
 
+    # Retrieve the configured Matrix room and normalise blank values to nil.
+    #
+    # @return [String, nil] Matrix room identifier or +nil+ when blank.
     def sanitized_matrix_room
       value = sanitized_string(Config.matrix_room)
       value.empty? ? nil : value
     end
 
+    # Return a positive numeric maximum distance when configured.
+    #
+    # @return [Numeric, nil] distance value in kilometres.
     def sanitized_max_distance_km
       distance = Config.max_node_distance_km
       return nil unless distance.is_a?(Numeric)

@@ -15,6 +15,9 @@
 module PotatoMesh
   module App
     module Identity
+      # Resolve the current application version string using git metadata when available.
+      #
+      # @return [String] semantic version compatible identifier.
       def determine_app_version
         repo_root = File.expand_path("../../..", __dir__)
         git_dir = File.join(repo_root, ".git")
@@ -39,6 +42,9 @@ module PotatoMesh
         PotatoMesh::Config.version_fallback
       end
 
+      # Load the persisted instance private key or generate a new one when absent.
+      #
+      # @return [Array<OpenSSL::PKey::RSA, Boolean>] tuple of key and generation flag.
       def load_or_generate_instance_private_key
         keyfile_path = PotatoMesh::Config.keyfile_path
         FileUtils.mkdir_p(File.dirname(keyfile_path))
@@ -66,10 +72,16 @@ module PotatoMesh
         [key, true]
       end
 
+      # Return the directory used to store well-known documents.
+      #
+      # @return [String] absolute path to the staging directory.
       def well_known_directory
         PotatoMesh::Config.well_known_storage_root
       end
 
+      # Determine the absolute path to the well-known document file.
+      #
+      # @return [String] filesystem path for the JSON document.
       def well_known_file_path
         File.join(
           well_known_directory,
@@ -77,6 +89,9 @@ module PotatoMesh
         )
       end
 
+      # Remove legacy well-known artifacts from previous releases.
+      #
+      # @return [void]
       def cleanup_legacy_well_known_artifacts
         legacy_path = PotatoMesh::Config.legacy_public_well_known_path
         FileUtils.rm_f(legacy_path)
@@ -87,6 +102,9 @@ module PotatoMesh
         # or file did not exist or is in use.
       end
 
+      # Construct the JSON body and detached signature for the well-known document.
+      #
+      # @return [Array(String, String)] pair of JSON output and base64 signature.
       def build_well_known_document
         last_update = latest_node_update_timestamp
         payload = {
@@ -112,6 +130,9 @@ module PotatoMesh
         [json_output, signature]
       end
 
+      # Regenerate the well-known document when the on-disk copy is stale.
+      #
+      # @return [void]
       def refresh_well_known_document_if_stale
         FileUtils.mkdir_p(well_known_directory)
         path = well_known_file_path
@@ -145,6 +166,9 @@ module PotatoMesh
         )
       end
 
+      # Retrieve the latest node update timestamp from the database.
+      #
+      # @return [Integer, nil] Unix timestamp or nil when unavailable.
       def latest_node_update_timestamp
         return nil unless File.exist?(PotatoMesh::Config.db_path)
 
@@ -159,6 +183,9 @@ module PotatoMesh
         db&.close
       end
 
+      # Emit a debug entry describing the active instance key material.
+      #
+      # @return [void]
       def log_instance_public_key
         debug_log(
           "Loaded instance public key",
@@ -174,6 +201,9 @@ module PotatoMesh
         end
       end
 
+      # Emit a debug entry describing how the instance domain was derived.
+      #
+      # @return [void]
       def log_instance_domain_resolution
         source = app_constant(:INSTANCE_DOMAIN_SOURCE) || :unknown
         debug_log(

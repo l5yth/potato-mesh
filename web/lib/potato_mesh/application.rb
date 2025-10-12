@@ -81,6 +81,9 @@ module PotatoMesh
     SELF_INSTANCE_ID = Digest::SHA256.hexdigest(INSTANCE_PUBLIC_KEY_PEM)
     INSTANCE_DOMAIN, INSTANCE_DOMAIN_SOURCE = determine_instance_domain
 
+    # Adjust the runtime logger severity to match the DEBUG flag.
+    #
+    # @return [void]
     def self.apply_logger_level!
       logger = settings.logger
       return unless logger
