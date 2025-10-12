@@ -14,6 +14,7 @@
 
 module PotatoMesh
   module App
+    # Raised when a remote instance fails to provide valid federation data.
     class InstanceFetchError < StandardError; end
   end
 end

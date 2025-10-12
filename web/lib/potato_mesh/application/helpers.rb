@@ -14,51 +14,98 @@
 
 module PotatoMesh
   module App
+    # Shared view and controller helper methods. Each helper is documented with
+    # its intended consumers to ensure consistent behaviour across the Sinatra
+    # application.
     module Helpers
+      # Fetch an application level constant exposed by {PotatoMesh::Application}.
+      #
+      # @param name [Symbol] constant identifier to retrieve.
+      # @return [Object] constant value stored on the application class.
       def app_constant(name)
         PotatoMesh::Application.const_get(name)
       end
 
+      # Retrieve the configured Prometheus report identifiers as an array.
+      #
+      # @return [Array<String>] list of report IDs used on the metrics page.
       def prom_report_ids
         PotatoMesh::Config.prom_report_id_list
       end
 
+      # Read a text configuration value with a fallback.
+      #
+      # @param key [String] environment variable key.
+      # @param default [String] fallback value when unset.
+      # @return [String] sanitised configuration string.
       def fetch_config_string(key, default)
         PotatoMesh::Config.fetch_string(key, default)
       end
 
+      # Proxy for {PotatoMesh::Sanitizer.string_or_nil}.
+      #
+      # @param value [Object] value to sanitise.
+      # @return [String, nil] cleaned string or nil.
       def string_or_nil(value)
         PotatoMesh::Sanitizer.string_or_nil(value)
       end
 
+      # Proxy for {PotatoMesh::Sanitizer.sanitize_instance_domain}.
+      #
+      # @param value [Object] candidate domain string.
+      # @return [String, nil] canonical domain or nil.
       def sanitize_instance_domain(value)
         PotatoMesh::Sanitizer.sanitize_instance_domain(value)
       end
 
+      # Proxy for {PotatoMesh::Sanitizer.instance_domain_host}.
+      #
+      # @param domain [String] domain literal.
+      # @return [String, nil] host portion of the domain.
       def instance_domain_host(domain)
         PotatoMesh::Sanitizer.instance_domain_host(domain)
       end
 
+      # Proxy for {PotatoMesh::Sanitizer.ip_from_domain}.
+      #
+      # @param domain [String] domain literal.
+      # @return [IPAddr, nil] parsed address object.
       def ip_from_domain(domain)
         PotatoMesh::Sanitizer.ip_from_domain(domain)
       end
 
+      # Proxy for {PotatoMesh::Sanitizer.sanitized_string}.
+      #
+      # @param value [Object] arbitrary input.
+      # @return [String] trimmed string representation.
       def sanitized_string(value)
         PotatoMesh::Sanitizer.sanitized_string(value)
       end
 
+      # Retrieve the site name presented to users.
+      #
+      # @return [String] sanitised site label.
       def sanitized_site_name
         PotatoMesh::Sanitizer.sanitized_site_name
       end
 
+      # Retrieve the configured default channel.
+      #
+      # @return [String] sanitised channel identifier.
       def sanitized_default_channel
         PotatoMesh::Sanitizer.sanitized_default_channel
       end
 
+      # Retrieve the configured default frequency descriptor.
+      #
+      # @return [String] sanitised frequency text.
       def sanitized_default_frequency
         PotatoMesh::Sanitizer.sanitized_default_frequency
       end
 
+      # Build the configuration hash exposed to the frontend application.
+      #
+      # @return [Hash] JSON serialisable configuration payload.
       def frontend_app_config
         {
           refreshIntervalSeconds: PotatoMesh::Config.refresh_interval_seconds,
@@ -76,26 +123,46 @@ module PotatoMesh
         }
       end
 
+      # Retrieve the configured Matrix room or nil when unset.
+      #
+      # @return [String, nil] Matrix room identifier.
       def sanitized_matrix_room
         PotatoMesh::Sanitizer.sanitized_matrix_room
       end
 
+      # Retrieve the configured maximum node distance in kilometres.
+      #
+      # @return [Numeric, nil] maximum distance or nil if disabled.
       def sanitized_max_distance_km
         PotatoMesh::Sanitizer.sanitized_max_distance_km
       end
 
+      # Format a kilometre value for human readable output.
+      #
+      # @param distance [Numeric] distance in kilometres.
+      # @return [String] formatted distance value.
       def formatted_distance_km(distance)
         PotatoMesh::Meta.formatted_distance_km(distance)
       end
 
+      # Generate the meta description used in SEO tags.
+      #
+      # @return [String] combined descriptive sentence.
       def meta_description
         PotatoMesh::Meta.description(private_mode: private_mode?)
       end
 
+      # Generate the structured meta configuration for the UI.
+      #
+      # @return [Hash] frozen configuration metadata.
       def meta_configuration
         PotatoMesh::Meta.configuration(private_mode: private_mode?)
       end
 
+      # Coerce an arbitrary value into an integer when possible.
+      #
+      # @param value [Object] user supplied value.
+      # @return [Integer, nil] parsed integer or nil when invalid.
       def coerce_integer(value)
         case value
         when Integer
@@ -120,6 +187,10 @@ module PotatoMesh
         end
       end
 
+      # Coerce an arbitrary value into a floating point number when possible.
+      #
+      # @param value [Object] user supplied value.
+      # @return [Float, nil] parsed float or nil when invalid.
       def coerce_float(value)
         case value
         when Float
@@ -142,6 +213,11 @@ module PotatoMesh
         end
       end
 
+      # Coerce an arbitrary value into a boolean according to common truthy
+      # conventions.
+      #
+      # @param value [Object] user supplied value.
+      # @return [Boolean, nil] boolean interpretation or nil when unknown.
       def coerce_boolean(value)
         case value
         when true, false
@@ -158,6 +234,10 @@ module PotatoMesh
         end
       end
 
+      # Normalise PEM encoded public key content into LF line endings.
+      #
+      # @param value [String, #to_s, nil] raw PEM content.
+      # @return [String, nil] cleaned PEM string or nil when blank.
       def sanitize_public_key_pem(value)
         return nil if value.nil?
 
@@ -168,6 +248,10 @@ module PotatoMesh
         pem
       end
 
+      # Recursively coerce hash keys to strings and normalise nested arrays.
+      #
+      # @param value [Object] JSON compatible value.
+      # @return [Object] structure with canonical string keys.
       def normalize_json_value(value)
         case value
         when Hash
@@ -181,6 +265,10 @@ module PotatoMesh
         end
       end
 
+      # Parse JSON payloads or hashes into normalised hashes with string keys.
+      #
+      # @param value [Hash, String, nil] raw JSON object or string representation.
+      # @return [Hash, nil] canonicalised hash or nil when parsing fails.
       def normalize_json_object(value)
         case value
         when Hash
@@ -221,18 +309,30 @@ module PotatoMesh
         PotatoMesh::Logging.log(logger, :warn, message, context: context, **metadata)
       end
 
+      # Indicate whether private mode has been requested.
+      #
+      # @return [Boolean] true when PRIVATE=1.
       def private_mode?
         ENV["PRIVATE"] == "1"
       end
 
+      # Identify whether the Rack environment corresponds to the test suite.
+      #
+      # @return [Boolean] true when RACK_ENV is "test".
       def test_environment?
         ENV["RACK_ENV"] == "test"
       end
 
+      # Determine whether federation features should be active.
+      #
+      # @return [Boolean] true when federation configuration allows it.
       def federation_enabled?
         ENV.fetch("FEDERATION", "1") != "0" && !private_mode?
       end
 
+      # Determine whether federation announcements should run asynchronously.
+      #
+      # @return [Boolean] true when announcements are enabled.
       def federation_announcements_active?
         federation_enabled? && !test_environment?
       end

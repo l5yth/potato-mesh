@@ -15,6 +15,10 @@
 module PotatoMesh
   module App
     module Networking
+      # Normalise the configured instance domain by stripping schemes and verifying structure.
+      #
+      # @param raw [String, nil] environment supplied domain or URL.
+      # @return [String, nil] canonicalised hostname with optional port.
       def canonicalize_configured_instance_domain(raw)
         return nil if raw.nil?
 
@@ -66,6 +70,9 @@ module PotatoMesh
         ensure_ipv6_instance_domain(sanitized).downcase
       end
 
+      # Resolve the best domain for the running instance using configuration and network discovery.
+      #
+      # @return [Array(String, Symbol)] tuple containing the domain and the discovery source.
       def determine_instance_domain
         raw = ENV["INSTANCE_DOMAIN"]
         if raw
@@ -85,6 +92,9 @@ module PotatoMesh
         [discover_local_ip_address, :local_ip]
       end
 
+      # Attempt to determine the reverse DNS hostname for the local machine.
+      #
+      # @return [String, nil] resolved hostname or nil when unavailable.
       def reverse_dns_domain
         Socket.ip_address_list.each do |address|
           next unless address.respond_to?(:ip?) && address.ip?
@@ -113,20 +123,33 @@ module PotatoMesh
         nil
       end
 
+      # Identify the first public IP address of the current host.
+      #
+      # @return [String, nil] public IP address string or nil.
       def discover_public_ip_address
         address = ip_address_candidates.find { |candidate| public_ip_address?(candidate) }
         address&.ip_address
       end
 
+      # Identify a private yet non-loopback IP address suitable for protected networks.
+      #
+      # @return [String, nil] protected network address or nil.
       def discover_protected_ip_address
         address = ip_address_candidates.find { |candidate| protected_ip_address?(candidate) }
         address&.ip_address
       end
 
+      # Collect viable socket addresses for evaluation.
+      #
+      # @return [Array<#ip?>] list of socket addresses supporting IP queries.
       def ip_address_candidates
         Socket.ip_address_list.select { |addr| addr.respond_to?(:ip?) && addr.ip? }
       end
 
+      # Determine whether a socket address represents a public IP.
+      #
+      # @param addr [Addrinfo] candidate socket address.
+      # @return [Boolean] true when the address is publicly routable.
       def public_ip_address?(addr)
         ip = ipaddr_from(addr)
         return false unless ip
@@ -138,6 +161,10 @@ module PotatoMesh
         true
       end
 
+      # Determine whether a socket address resides on a protected private network.
+      #
+      # @param addr [Addrinfo] candidate socket address.
+      # @return [Boolean] true when the address is private but not loopback/link-local.
       def protected_ip_address?(addr)
         ip = ipaddr_from(addr)
         return false unless ip
@@ -147,6 +174,10 @@ module PotatoMesh
         private_address?(addr, ip)
       end
 
+      # Parse an IP address from the provided socket address.
+      #
+      # @param addr [Addrinfo] socket address to examine.
+      # @return [IPAddr, nil] parsed IP or nil when invalid.
       def ipaddr_from(addr)
         ip = addr.ip_address
         return nil if ip.nil? || ip.empty?
@@ -156,17 +187,32 @@ module PotatoMesh
         nil
       end
 
+      # Determine whether a socket address is loopback.
+      #
+      # @param addr [Addrinfo] socket address to inspect.
+      # @param ip [IPAddr] parsed IP representation of the address.
+      # @return [Boolean] true when the address is loopback.
       def loopback_address?(addr, ip)
         (addr.respond_to?(:ipv4_loopback?) && addr.ipv4_loopback?) ||
           (addr.respond_to?(:ipv6_loopback?) && addr.ipv6_loopback?) ||
           ip.loopback?
       end
 
+      # Determine whether a socket address is link-local.
+      #
+      # @param addr [Addrinfo] socket address to inspect.
+      # @param ip [IPAddr] parsed IP representation of the address.
+      # @return [Boolean] true when the address is link-local.
       def link_local_address?(addr, ip)
         (addr.respond_to?(:ipv6_linklocal?) && addr.ipv6_linklocal?) ||
           (ip.respond_to?(:link_local?) && ip.link_local?)
       end
 
+      # Determine whether a socket address is private.
+      #
+      # @param addr [Addrinfo] socket address to inspect.
+      # @param ip [IPAddr] parsed IP representation of the address.
+      # @return [Boolean] true when the address is private.
       def private_address?(addr, ip)
         if addr.respond_to?(:ipv4?) && addr.ipv4? && addr.respond_to?(:ipv4_private?)
           addr.ipv4_private?
@@ -175,10 +221,17 @@ module PotatoMesh
         end
       end
 
+      # Identify unspecified IP addresses.
+      #
+      # @param ip [IPAddr] parsed IP.
+      # @return [Boolean] true for unspecified addresses (0.0.0.0 / ::).
       def unspecified_address?(ip)
         (ip.ipv4? || ip.ipv6?) && ip.to_i.zero?
       end
 
+      # Choose the most appropriate local IP address for the instance domain.
+      #
+      # @return [String] selected IP address string.
       def discover_local_ip_address
         candidates = ip_address_candidates
 
@@ -202,6 +255,10 @@ module PotatoMesh
         "127.0.0.1"
       end
 
+      # Determine whether an IP should be restricted from exposure.
+      #
+      # @param ip [IPAddr] candidate IP address.
+      # @return [Boolean] true when the IP should not be exposed.
       def restricted_ip_address?(ip)
         return true if ip.loopback?
         return true if ip.private?
