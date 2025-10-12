@@ -55,6 +55,15 @@ test('readAppConfig returns an empty object and logs on parse failure', () => {
   console.error = originalError;
 });
 
+test('readAppConfig ignores non-object JSON payloads', () => {
+  resetDocumentStub();
+  documentStub.setConfigElement({
+    getAttribute: name => (name === 'data-app-config' ? '42' : null)
+  });
+
+  assert.deepEqual(readAppConfig(), {});
+});
+
 test('mergeConfig applies default values when fields are missing', () => {
   const result = mergeConfig({});
   assert.deepEqual(result, {
@@ -96,4 +105,9 @@ test('mergeConfig falls back to defaults for invalid numeric values', () => {
   assert.equal(result.refreshIntervalSeconds, DEFAULT_CONFIG.refreshIntervalSeconds);
   assert.equal(result.refreshMs, DEFAULT_CONFIG.refreshMs);
   assert.equal(result.maxNodeDistanceKm, DEFAULT_CONFIG.maxNodeDistanceKm);
+});
+
+test('document stub returns null for unrelated selectors', () => {
+  resetDocumentStub();
+  assert.equal(documentStub.querySelector('#missing'), null);
 });
