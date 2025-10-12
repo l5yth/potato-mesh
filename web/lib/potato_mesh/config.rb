@@ -133,8 +133,10 @@ module PotatoMesh
       ["potatomesh.net"].freeze
     end
 
+    # @return [Integer] the number of seconds between federation announcement broadcasts.
+    #   Eight hours provides three updates per day without creating unnecessary chatter.
     def federation_announcement_interval
-      24 * 60 * 60
+      8 * 60 * 60
     end
 
     def site_name
