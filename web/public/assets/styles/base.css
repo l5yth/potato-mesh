@@ -727,6 +727,9 @@ input[type="radio"] {
 #map .leaflet-layer,
 #map .leaflet-tile.map-tiles {
   opacity: 0.75;
+}
+
+#map .leaflet-tile.map-tiles {
   filter: var(--map-tiles-filter, var(--map-tile-filter-light));
   -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-light));
 }
@@ -1090,15 +1093,11 @@ body.dark .short-info-overlay .short-info-close:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-#map .leaflet-tile-pane,
-#map .leaflet-layer,
 #map .leaflet-tile.map-tiles {
   filter: var(--map-tiles-filter, var(--map-tile-filter-light));
   -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-light));
 }
 
-body.dark #map .leaflet-tile-pane,
-body.dark #map .leaflet-layer,
 body.dark #map .leaflet-tile.map-tiles {
   filter: var(--map-tiles-filter, var(--map-tile-filter-dark));
   -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-dark));

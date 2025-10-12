@@ -15,6 +15,7 @@
  */
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
+import { supportsLeafletTileContainerFilters } from './browser-capabilities.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -274,6 +275,14 @@ export function initializeApp(config) {
   const mapPanel = document.getElementById('mapPanel');
   const mapFullscreenToggle = document.getElementById('mapFullscreenToggle');
   const fullscreenContainer = mapPanel || mapContainer;
+  /**
+   * Pre-compute whether the browser safely supports applying CSS filters to
+   * Leaflet tile container elements. Mobile Safari renders filtered containers
+   * as an opaque black rectangle, so we avoid those operations when detected.
+   */
+  const containerFiltersSupported = supportsLeafletTileContainerFilters(
+    typeof window !== 'undefined' ? window : undefined
+  );
   let mapStatusEl = null;
   let map = null;
   let mapCenterLatLng = null;
@@ -704,7 +713,7 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function applyFilterToTileContainers(filterValue) {
-    if (!map) return;
+    if (!map || !containerFiltersSupported) return;
     const value = filterValue || resolveTileFilter();
     const container = getActiveTileLayerContainer();
     if (container && container.style) {
