@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
+
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
  * initializes the map, and triggers the first data refresh cycle.
@@ -278,7 +280,12 @@ export function initializeApp(config) {
   let tiles = null;
   let offlineTiles = null;
   let usingOfflineTiles = false;
-  const MAX_NODE_DISTANCE_KM = config.maxNodeDistanceKm;
+  const MAX_NODE_DISTANCE_KM = Number.isFinite(config.maxNodeDistanceKm) && config.maxNodeDistanceKm > 0
+    ? config.maxNodeDistanceKm
+    : 1;
+  const INITIAL_VIEW_PADDING_PX = 48;
+  const AUTO_FIT_PADDING_PX = 56;
+  const MAX_INITIAL_ZOOM = 12;
   let neighborLinesLayer = null;
   let neighborLinesVisible = true;
   let neighborLinesToggleButton = null;
@@ -291,6 +298,26 @@ export function initializeApp(config) {
     'MSFullscreenChange',
     'msfullscreenchange'
   ];
+
+  /**
+   * Fit the Leaflet map to the provided geographic bounds.
+   *
+   * @param {[[number, number], [number, number]]|null} bounds Lat/lon bounds tuple.
+   * @param {{ animate?: boolean, paddingPx?: number, maxZoom?: number }} [options] Fit options.
+   * @returns {void}
+   */
+  function fitMapToBounds(bounds, options = {}) {
+    if (!map || !bounds) return;
+    const padding = Number.isFinite(options.paddingPx) && options.paddingPx >= 0 ? options.paddingPx : 32;
+    const fitOptions = {
+      animate: Boolean(options.animate),
+      padding: [padding, padding]
+    };
+    if (Number.isFinite(options.maxZoom) && options.maxZoom > 0) {
+      fitOptions.maxZoom = options.maxZoom;
+    }
+    map.fitBounds(bounds, fitOptions);
+  }
 
   /**
    * Determine whether the browser supports fullscreen requests on the map container.
@@ -926,8 +953,24 @@ export function initializeApp(config) {
 
     tiles.addTo(map);
     observeTileContainer(tiles);
-    map.setView(mapCenterLatLng || [MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon], 10);
-    applyFiltersToAllTiles();
+
+    const initialBounds = computeBoundingBox(MAP_CENTER_COORDS, MAX_NODE_DISTANCE_KM, { minimumRangeKm: 1 });
+    if (initialBounds) {
+      fitMapToBounds(initialBounds, { animate: false, paddingPx: INITIAL_VIEW_PADDING_PX, maxZoom: MAX_INITIAL_ZOOM });
+    } else if (mapCenterLatLng) {
+      map.setView(mapCenterLatLng, 10);
+    } else {
+      map.setView([MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon], 10);
+    }
+
+    if (typeof map.whenReady === 'function') {
+      map.whenReady(() => {
+        applyFiltersToAllTiles();
+        refreshMapSize();
+      });
+    } else {
+      applyFiltersToAllTiles();
+    }
 
     map.on('moveend', applyFiltersToAllTiles);
     map.on('zoomend', applyFiltersToAllTiles);
@@ -2165,36 +2208,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Convert degrees to radians.
-   *
-   * @param {number} deg Degrees.
-   * @returns {number} Radians.
-   */
-  function toRadians(deg) {
-    return (deg * Math.PI) / 180;
-  }
-
-  /**
-   * Compute distance between two coordinates using the haversine formula.
-   *
-   * @param {number} lat1 Latitude of the first point.
-   * @param {number} lon1 Longitude of the first point.
-   * @param {number} lat2 Latitude of the second point.
-   * @param {number} lon2 Longitude of the second point.
-   * @returns {number} Distance in kilometres.
-   */
-  function haversineDistanceKm(lat1, lon1, lat2, lon2) {
-    const R = 6371;
-    const dLat = toRadians(lat2 - lat1);
-    const dLon = toRadians(lon2 - lon1);
-    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  /**
    * Compute distance from the configured map center.
    *
    * @param {number} lat Latitude in degrees.
@@ -2486,8 +2499,11 @@ export function initializeApp(config) {
       pts.push([lat, lon]);
     }
     if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
-      const b = L.latLngBounds(pts);
-      map.fitBounds(b.pad(0.2), { animate: false });
+      const bounds = computeBoundsForPoints(pts, {
+        paddingFraction: 0.2,
+        minimumRangeKm: Math.min(Math.max(MAX_NODE_DISTANCE_KM * 0.1, 1), MAX_NODE_DISTANCE_KM)
+      });
+      fitMapToBounds(bounds, { animate: false, paddingPx: AUTO_FIT_PADDING_PX });
     }
   }
 
