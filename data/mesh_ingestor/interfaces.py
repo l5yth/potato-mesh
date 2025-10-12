@@ -317,21 +317,38 @@ def _create_serial_interface(port: str) -> tuple[object, str]:
 
     port_value = (port or "").strip()
     if port_value.lower() in {"", "mock", "none", "null", "disabled"}:
-        config._debug_log(f"using dummy serial interface for port={port_value!r}")
+        config._debug_log(
+            "Using dummy serial interface",
+            context="interfaces.serial",
+            port=port_value,
+        )
         return _DummySerialInterface(), "mock"
     ble_target = _parse_ble_target(port_value)
     if ble_target:
-        config._debug_log(f"using BLE interface for address={ble_target}")
+        config._debug_log(
+            "Using BLE interface",
+            context="interfaces.ble",
+            address=ble_target,
+        )
         return _load_ble_interface()(address=ble_target), ble_target
     network_target = _parse_network_target(port_value)
     if network_target:
         host, tcp_port = network_target
-        config._debug_log(f"using TCP interface for host={host!r} port={tcp_port!r}")
+        config._debug_log(
+            "Using TCP interface",
+            context="interfaces.tcp",
+            host=host,
+            port=tcp_port,
+        )
         return (
             TCPInterface(hostname=host, portNumber=tcp_port),
             f"tcp://{host}:{tcp_port}",
         )
-    config._debug_log(f"using serial interface for port={port_value!r}")
+    config._debug_log(
+        "Using serial interface",
+        context="interfaces.serial",
+        port=port_value,
+    )
     return SerialInterface(devPath=port_value), port_value
 
 
@@ -370,12 +387,24 @@ def _create_default_interface() -> tuple[object, str]:
             return _create_serial_interface(candidate)
         except Exception as exc:  # pragma: no cover - hardware dependent
             errors.append((candidate, exc))
-            config._debug_log(f"failed to open serial candidate {candidate!r}: {exc}")
+            config._debug_log(
+                "Failed to open serial candidate",
+                context="interfaces.auto_discovery",
+                target=candidate,
+                error_class=exc.__class__.__name__,
+                error_message=str(exc),
+            )
     try:
         return _create_serial_interface(_DEFAULT_TCP_TARGET)
     except Exception as exc:  # pragma: no cover - network dependent
         errors.append((_DEFAULT_TCP_TARGET, exc))
-        config._debug_log(f"failed to open TCP fallback {_DEFAULT_TCP_TARGET!r}: {exc}")
+        config._debug_log(
+            "Failed to open TCP fallback",
+            context="interfaces.auto_discovery",
+            target=_DEFAULT_TCP_TARGET,
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
     if errors:
         summary = "; ".join(f"{target}: {error}" for target, error in errors)
         raise NoAvailableMeshInterface(

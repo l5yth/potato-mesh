@@ -131,7 +131,13 @@ def _close_interface(iface_obj) -> None:
             iface_obj.close()
         except Exception as exc:  # pragma: no cover
             if config.DEBUG:
-                config._debug_log(f"error while closing mesh interface: {exc}")
+                config._debug_log(
+                    "Error closing mesh interface",
+                    context="daemon.close",
+                    severity="warn",
+                    error_class=exc.__class__.__name__,
+                    error_message=str(exc),
+                )
 
     if config._CLOSE_TIMEOUT_SECS <= 0 or not _event_wait_allows_default_timeout():
         _do_close()
@@ -141,9 +147,11 @@ def _close_interface(iface_obj) -> None:
     close_thread.start()
     close_thread.join(config._CLOSE_TIMEOUT_SECS)
     if close_thread.is_alive():
-        print(
-            "[warn] mesh interface did not close within "
-            f"{config._CLOSE_TIMEOUT_SECS:g}s; continuing shutdown"
+        config._debug_log(
+            "Mesh interface close timed out",
+            context="daemon.close",
+            severity="warn",
+            timeout_seconds=config._CLOSE_TIMEOUT_SECS,
         )
 
 
@@ -163,8 +171,13 @@ def main() -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
     subscribed = _subscribe_receive_topics()
-    if config.DEBUG and subscribed:
-        config._debug_log(f"subscribed to receive topics: {', '.join(subscribed)}")
+    if subscribed:
+        config._debug_log(
+            "Subscribed to receive topics",
+            context="daemon.subscribe",
+            severity="info",
+            topics=subscribed,
+        )
 
     iface = None
     resolved_target = None
@@ -209,8 +222,13 @@ def main() -> None:
     configured_port = config.PORT
     active_candidate = configured_port
     announced_target = False
-    print(
-        f"Mesh daemon: nodes+messages → {target} | port={configured_port or 'auto'} | channel={config.CHANNEL_INDEX}"
+    config._debug_log(
+        "Mesh daemon starting",
+        context="daemon.main",
+        severity="info",
+        target=target,
+        port=configured_port or "auto",
+        channel=config.CHANNEL_INDEX,
     )
     try:
         while not stop.is_set():
@@ -226,7 +244,12 @@ def main() -> None:
                     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
                     initial_snapshot_sent = False
                     if not announced_target and resolved_target:
-                        print(f"[info] using mesh interface: {resolved_target}")
+                        config._debug_log(
+                            "Using mesh interface",
+                            context="daemon.interface",
+                            severity="info",
+                            target=resolved_target,
+                        )
                         announced_target = True
                     if energy_saving_enabled and energy_online_secs > 0:
                         energy_session_deadline = time.monotonic() + energy_online_secs
@@ -239,13 +262,23 @@ def main() -> None:
                     last_seen_packet_monotonic = iface_connected_at
                     last_inactivity_reconnect = None
                 except interfaces.NoAvailableMeshInterface as exc:
-                    print(f"[error] {exc}")
+                    config._debug_log(
+                        "No mesh interface available",
+                        context="daemon.interface",
+                        severity="error",
+                        error_message=str(exc),
+                    )
                     _close_interface(iface)
                     raise SystemExit(1) from exc
                 except Exception as exc:
                     candidate_desc = active_candidate or "auto"
-                    print(
-                        f"[warn] failed to create mesh interface ({candidate_desc}): {exc}"
+                    config._debug_log(
+                        "Failed to create mesh interface",
+                        context="daemon.interface",
+                        severity="warn",
+                        candidate=candidate_desc,
+                        error_class=exc.__class__.__name__,
+                        error_message=str(exc),
                     )
                     if configured_port is None:
                         active_candidate = None
@@ -267,7 +300,11 @@ def main() -> None:
                     energy_session_deadline is not None
                     and time.monotonic() >= energy_session_deadline
                 ):
-                    print("[info] energy saving: disconnecting mesh interface")
+                    config._debug_log(
+                        "Energy saving disconnect",
+                        context="daemon.energy",
+                        severity="info",
+                    )
                     _close_interface(iface)
                     iface = None
                     announced_target = False
@@ -279,8 +316,10 @@ def main() -> None:
                     _is_ble_interface(iface)
                     and getattr(iface, "client", object()) is None
                 ):
-                    print(
-                        "[info] energy saving: BLE client disconnected; sleeping before retry"
+                    config._debug_log(
+                        "Energy saving BLE disconnect",
+                        context="daemon.energy",
+                        severity="info",
                     )
                     _close_interface(iface)
                     iface = None
@@ -296,7 +335,8 @@ def main() -> None:
                     node_items = _node_items_snapshot(nodes)
                     if node_items is None:
                         config._debug_log(
-                            "skipping node snapshot; nodes changed during iteration"
+                            "Skipping node snapshot due to concurrent modification",
+                            context="daemon.snapshot",
                         )
                     else:
                         processed_snapshot_item = False
@@ -305,15 +345,30 @@ def main() -> None:
                             try:
                                 handlers.upsert_node(node_id, node)
                             except Exception as exc:
-                                print(
-                                    f"[warn] failed to update node snapshot for {node_id}: {exc}"
+                                config._debug_log(
+                                    "Failed to update node snapshot",
+                                    context="daemon.snapshot",
+                                    severity="warn",
+                                    node_id=node_id,
+                                    error_class=exc.__class__.__name__,
+                                    error_message=str(exc),
                                 )
                                 if config.DEBUG:
-                                    config._debug_log(f"node object: {node!r}")
+                                    config._debug_log(
+                                        "Snapshot node payload",
+                                        context="daemon.snapshot",
+                                        node=node,
+                                    )
                         if processed_snapshot_item:
                             initial_snapshot_sent = True
                 except Exception as exc:
-                    print(f"[warn] failed to update node snapshot: {exc}")
+                    config._debug_log(
+                        "Snapshot refresh failed",
+                        context="daemon.snapshot",
+                        severity="warn",
+                        error_class=exc.__class__.__name__,
+                        error_message=str(exc),
+                    )
                     _close_interface(iface)
                     iface = None
                     stop.wait(retry_delay)
@@ -377,9 +432,11 @@ def main() -> None:
                             if believed_disconnected
                             else f"no data for {inactivity_elapsed:.0f}s"
                         )
-                        print(
-                            "[warn] mesh interface inactivity detected "
-                            f"({reason}); reconnecting"
+                        config._debug_log(
+                            "Mesh interface inactivity detected",
+                            context="daemon.interface",
+                            severity="warn",
+                            reason=reason,
                         )
                         last_inactivity_reconnect = now_monotonic
                         _close_interface(iface)
@@ -393,7 +450,11 @@ def main() -> None:
             retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
             stop.wait(config.SNAPSHOT_SECS)
     except KeyboardInterrupt:  # pragma: no cover - interactive only
-        config._debug_log("received KeyboardInterrupt; shutting down")
+        config._debug_log(
+            "Received KeyboardInterrupt; shutting down",
+            context="daemon.main",
+            severity="info",
+        )
         stop.set()
     finally:
         _close_interface(iface)

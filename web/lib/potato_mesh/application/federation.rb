@@ -59,7 +59,10 @@ module PotatoMesh
         db = open_database
         upsert_instance_record(db, attributes, signature)
         debug_log(
-          "Registered self instance record #{attributes[:domain]} (id: #{attributes[:id]})",
+          "Registered self instance record",
+          context: "federation.instances",
+          domain: attributes[:domain],
+          instance_id: attributes[:id],
         )
         [attributes, signature]
       ensure
@@ -110,14 +113,28 @@ module PotatoMesh
               connection.request(request)
             end
             if response.is_a?(Net::HTTPSuccess)
-              debug_log("Announced instance to #{uri}")
+              debug_log(
+                "Published federation announcement",
+                context: "federation.announce",
+                target: uri.to_s,
+                status: response.code,
+              )
               return true
             end
             debug_log(
-              "Federation announcement to #{uri} failed with status #{response.code}",
+              "Federation announcement failed",
+              context: "federation.announce",
+              target: uri.to_s,
+              status: response.code,
             )
           rescue StandardError => e
-            debug_log("Federation announcement to #{uri} failed: #{e.message}")
+            warn_log(
+              "Federation announcement raised exception",
+              context: "federation.announce",
+              target: uri.to_s,
+              error_class: e.class.name,
+              error_message: e.message,
+            )
           end
         end
 
@@ -133,9 +150,13 @@ module PotatoMesh
         domains.each do |domain|
           announce_instance_to_domain(domain, payload_json)
         end
-        debug_log(
-          "Federation announcement cycle complete (targets: #{domains.join(", ")})",
-        ) unless domains.empty?
+        unless domains.empty?
+          debug_log(
+            "Federation announcement cycle complete",
+            context: "federation.announce",
+            targets: domains,
+          )
+        end
       end
 
       def start_federation_announcer!
@@ -148,7 +169,12 @@ module PotatoMesh
             begin
               announce_instance_to_all_domains
             rescue StandardError => e
-              debug_log("Federation announcement loop error: #{e.message}")
+              warn_log(
+                "Federation announcement loop error",
+                context: "federation.announce",
+                error_class: e.class.name,
+                error_message: e.message,
+              )
             end
           end
         end
@@ -165,7 +191,12 @@ module PotatoMesh
           begin
             announce_instance_to_all_domains
           rescue StandardError => e
-            debug_log("Initial federation announcement failed: #{e.message}")
+            warn_log(
+              "Initial federation announcement failed",
+              context: "federation.announce",
+              error_class: e.class.name,
+              error_message: e.message,
+            )
           ensure
             set(:initial_federation_thread, nil)
           end

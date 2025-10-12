@@ -81,7 +81,14 @@ def _post_json(
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
     except Exception as exc:  # pragma: no cover - exercised in production
-        config._debug_log(f"[warn] POST {url} failed: {exc}")
+        config._debug_log(
+            "POST request failed",
+            context="queue.post_json",
+            severity="warn",
+            url=url,
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
 
 
 def _enqueue_post_json(

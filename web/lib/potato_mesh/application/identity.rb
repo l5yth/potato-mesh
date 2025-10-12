@@ -41,7 +41,12 @@ module PotatoMesh
         end
         [key, true]
       rescue OpenSSL::PKey::PKeyError, ArgumentError => e
-        warn "[warn] failed to load instance private key, generating a new key: #{e.message}"
+        warn_log(
+          "Failed to load instance private key",
+          context: "identity.keys",
+          error_class: e.class.name,
+          error_message: e.message,
+        )
         key = OpenSSL::PKey::RSA.new(2048)
         File.open(keyfile_path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
           file.write(key.export)
@@ -112,9 +117,19 @@ module PotatoMesh
           file.write("\n") unless json_output.end_with?("\n")
         end
 
-        debug_log("Updated #{PotatoMesh::Config.well_known_relative_path} content: #{json_output}")
         debug_log(
-          "Updated #{PotatoMesh::Config.well_known_relative_path} signature (#{PotatoMesh::Config.instance_signature_algorithm}): #{signature}",
+          "Refreshed well-known document content",
+          context: "identity.well_known",
+          path: PotatoMesh::Config.well_known_relative_path,
+          bytes: json_output.bytesize,
+          document: json_output,
+        )
+        debug_log(
+          "Refreshed well-known document signature",
+          context: "identity.well_known",
+          path: PotatoMesh::Config.well_known_relative_path,
+          algorithm: PotatoMesh::Config.instance_signature_algorithm,
+          signature: signature,
         )
       end
 
@@ -133,31 +148,28 @@ module PotatoMesh
       end
 
       def log_instance_public_key
-        debug_log("Instance public key (PEM):\n#{app_constant(:INSTANCE_PUBLIC_KEY_PEM)}")
+        debug_log(
+          "Loaded instance public key",
+          context: "identity.keys",
+          public_key_pem: app_constant(:INSTANCE_PUBLIC_KEY_PEM),
+        )
         if app_constant(:INSTANCE_KEY_GENERATED)
           debug_log(
-            "Generated new instance private key at #{PotatoMesh::Config.keyfile_path}",
+            "Generated new instance private key",
+            context: "identity.keys",
+            path: PotatoMesh::Config.keyfile_path,
           )
         end
       end
 
       def log_instance_domain_resolution
-        message = case app_constant(:INSTANCE_DOMAIN_SOURCE)
-          when :environment
-            "Instance domain configured from INSTANCE_DOMAIN environment variable: #{app_constant(:INSTANCE_DOMAIN).inspect}"
-          when :reverse_dns
-            "Instance domain resolved via reverse DNS lookup: #{app_constant(:INSTANCE_DOMAIN).inspect}"
-          when :public_ip
-            "Instance domain resolved using public IP address: #{app_constant(:INSTANCE_DOMAIN).inspect}"
-          when :protected_ip
-            "Instance domain resolved using protected network IP address: #{app_constant(:INSTANCE_DOMAIN).inspect}"
-          when :local_ip
-            "Instance domain defaulted to local IP address: #{app_constant(:INSTANCE_DOMAIN).inspect}"
-          else
-            "Instance domain could not be determined from the environment or local network."
-          end
-
-        debug_log(message)
+        source = app_constant(:INSTANCE_DOMAIN_SOURCE) || :unknown
+        debug_log(
+          "Resolved instance domain",
+          context: "identity.domain",
+          source: source,
+          domain: app_constant(:INSTANCE_DOMAIN),
+        )
       end
     end
   end

@@ -133,12 +133,11 @@ Check out `mesh.sh` ingestor script in the `./data` directory.
 
 ```bash
 POTATOMESH_INSTANCE=http://127.0.0.1:41447 API_TOKEN=1eb140fd-cab4-40be-b862-41c607762246 MESH_SERIAL=/dev/ttyACM0 DEBUG=1 ./mesh.sh
-Mesh daemon: nodes+messages → http://127.0.0.1 | port=41447 | channel=0
+[2025-02-20T12:34:56.789012Z] [potato-mesh] [info] channel=0 context=daemon.main port='41447' target='http://127.0.0.1' Mesh daemon starting
 [...]
-[debug] upserted node !849b7154 shortName='7154'
-[debug] upserted node !ba653ae8 shortName='3ae8'
-[debug] upserted node !16ced364 shortName='Pat'
-[debug] stored message from '!9ee71c38' to '^all' ch=0 text='Guten Morgen!'
+[2025-02-20T12:34:57.012345Z] [potato-mesh] [debug] context=handlers.upsert_node node_id=!849b7154 short_name='7154' long_name='7154' Queued node upsert payload
+[2025-02-20T12:34:57.456789Z] [potato-mesh] [debug] context=handlers.upsert_node node_id=!ba653ae8 short_name='3ae8' long_name='3ae8' Queued node upsert payload
+[2025-02-20T12:34:58.001122Z] [potato-mesh] [debug] context=handlers.store_packet_dict channel=0 from_id='!9ee71c38' payload='Guten Morgen!' to_id='^all' Queued message payload
 ```
 
 Run the script with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating

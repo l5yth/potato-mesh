@@ -61,7 +61,11 @@ def upsert_node(node_id, node) -> None:
         short = _get(user, "shortName")
         long = _get(user, "longName")
         config._debug_log(
-            f"upserted node {node_id} shortName={short!r} longName={long!r}"
+            "Queued node upsert payload",
+            context="handlers.upsert_node",
+            node_id=node_id,
+            short_name=short,
+            long_name=long,
         )
 
 
@@ -244,7 +248,12 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
 
     if config.DEBUG:
         config._debug_log(
-            f"stored position for {node_id} lat={latitude!r} lon={longitude!r}"
+            "Queued position payload",
+            context="handlers.store_position",
+            node_id=node_id,
+            latitude=latitude,
+            longitude=longitude,
+            position_time=position_time,
         )
 
 
@@ -441,7 +450,11 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
 
     if config.DEBUG:
         config._debug_log(
-            f"stored telemetry for {node_id!r} battery={battery_level!r} voltage={voltage!r}"
+            "Queued telemetry payload",
+            context="handlers.store_telemetry",
+            node_id=node_id,
+            battery_level=battery_level,
+            voltage=voltage,
         )
 
 
@@ -604,7 +617,11 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
             short = user_dict.get("shortName")
             long_name = user_dict.get("longName")
         config._debug_log(
-            f"stored nodeinfo for {node_id} shortName={short!r} longName={long_name!r}"
+            "Queued nodeinfo payload",
+            context="handlers.store_nodeinfo",
+            node_id=node_id,
+            short_name=short,
+            long_name=long_name,
         )
 
 
@@ -707,7 +724,10 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
 
     if config.DEBUG:
         config._debug_log(
-            f"stored neighborinfo for {node_id} neighbors={len(neighbor_entries)}"
+            "Queued neighborinfo payload",
+            context="handlers.store_neighborinfo",
+            node_id=node_id,
+            neighbors=len(neighbor_entries),
         )
 
 
@@ -783,7 +803,11 @@ def store_packet_dict(packet: Mapping) -> None:
             raw = json.dumps(packet, default=str)
         except Exception:
             raw = str(packet)
-        config._debug_log(f"packet missing from_id: {raw}")
+        config._debug_log(
+            "Packet missing from_id",
+            context="handlers.store_packet_dict",
+            packet=raw,
+        )
 
     snr = _first(packet, "snr", "rx_snr", "rxSnr", default=None)
     rssi = _first(packet, "rssi", "rx_rssi", "rxRssi", default=None)
@@ -812,7 +836,12 @@ def store_packet_dict(packet: Mapping) -> None:
         to_label = _canonical_node_id(to_id) or to_id
         payload_desc = "Encrypted" if text is None and encrypted else text
         config._debug_log(
-            f"stored message from {from_label!r} to {to_label!r} ch={channel} text={payload_desc!r}"
+            "Queued message payload",
+            context="handlers.store_packet_dict",
+            from_id=from_label,
+            to_id=to_label,
+            channel=channel,
+            payload=payload_desc,
         )
 
 
@@ -859,7 +888,14 @@ def on_receive(packet, interface) -> None:
         info = (
             list(packet_dict.keys()) if isinstance(packet_dict, dict) else type(packet)
         )
-        print(f"[warn] failed to store packet: {exc} | info: {info}")
+        config._debug_log(
+            "Failed to store packet",
+            context="handlers.on_receive",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+            packet_info=info,
+        )
 
 
 __all__ = [

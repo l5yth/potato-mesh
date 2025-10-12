@@ -14,6 +14,7 @@
 
 import base64
 import importlib
+import re
 import sys
 import threading
 import types
@@ -1335,7 +1336,8 @@ def test_on_receive_logs_when_store_fails(mesh_module, monkeypatch, capsys):
     mesh.on_receive(object(), interface=None)
 
     captured = capsys.readouterr()
-    assert "failed to store packet" in captured.out
+    assert "context=handlers.on_receive" in captured.out
+    assert "Failed to store packet" in captured.out
 
 
 def test_node_items_snapshot_iterable_without_items(mesh_module):
@@ -1369,7 +1371,14 @@ def test_debug_log_emits_when_enabled(mesh_module, monkeypatch, capsys):
     mesh._debug_log("hello world")
 
     captured = capsys.readouterr()
-    assert "[debug] hello world" in captured.out
+    lines = [line for line in captured.out.splitlines() if "hello world" in line]
+    assert lines, "expected debug log output"
+    log_line = lines[-1]
+    pattern = (
+        r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[potato-mesh\] \[debug\] "
+    )
+    assert re.match(pattern, log_line), f"unexpected log format: {log_line}"
+    assert log_line.endswith("hello world")
 
 
 def test_event_wait_allows_default_timeout_handles_short_signature(
@@ -1503,7 +1512,8 @@ def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
     mesh._post_json("/api/test", {"foo": "bar"})
 
     captured = capsys.readouterr()
-    assert "[warn] POST https://example.invalid/api/test failed" in captured.out
+    assert "context=queue.post_json" in captured.out
+    assert "POST request failed" in captured.out
 
 
 def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
@@ -1557,7 +1567,8 @@ def test_upsert_node_logs_in_debug(mesh_module, monkeypatch, capsys):
 
     assert captured
     out = capsys.readouterr().out
-    assert "upserted node !node" in out
+    assert "context=handlers.upsert_node" in out
+    assert "Queued node upsert payload" in out
 
 
 def test_coerce_int_and_float_cover_edge_cases(mesh_module):
@@ -1783,7 +1794,8 @@ def test_store_nodeinfo_packet_debug(mesh_module, monkeypatch, capsys):
     mesh.store_packet_dict(packet)
 
     out = capsys.readouterr().out
-    assert "stored nodeinfo" in out
+    assert "context=handlers.store_nodeinfo" in out
+    assert "Queued nodeinfo payload" in out
 
 
 def test_store_neighborinfo_packet_debug(mesh_module, monkeypatch, capsys):
@@ -1815,7 +1827,8 @@ def test_store_neighborinfo_packet_debug(mesh_module, monkeypatch, capsys):
 
     assert captured
     out = capsys.readouterr().out
-    assert "stored neighborinfo" in out
+    assert "context=handlers.store_neighborinfo" in out
+    assert "Queued neighborinfo payload" in out
 
 
 def test_store_packet_dict_debug_message(mesh_module, monkeypatch, capsys):
@@ -1841,7 +1854,8 @@ def test_store_packet_dict_debug_message(mesh_module, monkeypatch, capsys):
 
     assert captured
     out = capsys.readouterr().out
-    assert "stored message" in out
+    assert "context=handlers.store_packet_dict" in out
+    assert "Queued message payload" in out
 
 
 def test_on_receive_skips_seen_packets(mesh_module):

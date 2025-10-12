@@ -125,8 +125,12 @@ module PotatoMesh
 
         if inserted
           debug_log(
-            "ensure_unknown_node created hidden node_id=#{node_id} from=#{node_ref.inspect} " \
-            "fallback=#{fallback_num.inspect} heard_time=#{heard_time.inspect}",
+            "Created hidden placeholder node",
+            context: "data_processing.ensure_unknown_node",
+            node_id: node_id,
+            reference: node_ref,
+            fallback: fallback_num,
+            heard_time: heard_time,
           )
         end
 
@@ -170,8 +174,11 @@ module PotatoMesh
 
         if updated
           debug_log(
-            "touch_node_last_seen updated last_heard node_id=#{node_id} timestamp=#{timestamp} " \
-            "source=#{(source || :unknown).inspect}",
+            "Updated node last seen timestamp",
+            context: "data_processing.touch_node_last_seen",
+            node_id: node_id,
+            timestamp: timestamp,
+            source: source || :unknown,
           )
         end
 

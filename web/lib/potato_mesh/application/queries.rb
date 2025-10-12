@@ -176,8 +176,18 @@ module PotatoMesh
         rows.each do |r|
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
-            Kernel.warn "[debug] messages row before join: #{raw.inspect}"
-            Kernel.warn "[debug] row after join: #{r.inspect}"
+            debug_log(
+              "Message join produced empty sender",
+              context: "queries.messages",
+              stage: "before_join",
+              row: raw,
+            )
+            debug_log(
+              "Message join produced empty sender",
+              context: "queries.messages",
+              stage: "after_join",
+              row: r,
+            )
           end
           node = {}
           r.keys.each do |k|
@@ -221,7 +231,12 @@ module PotatoMesh
           end
 
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
-            Kernel.warn "[debug] row after processing: #{r.inspect}"
+            debug_log(
+              "Message row missing sender after processing",
+              context: "queries.messages",
+              stage: "after_processing",
+              row: r,
+            )
           end
         end
         rows
