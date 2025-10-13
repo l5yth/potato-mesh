@@ -30,7 +30,7 @@ against the web API.
 ```env
 API_TOKEN=replace-with-a-strong-token
 SITE_NAME=PotatoMesh Demo
-MESH_SERIAL=/dev/ttyACM0
+CONNECTION=/dev/ttyACM0
 ```
 
 The web container expects both `APP_ENV` and `RACK_ENV` to remain set to
@@ -44,8 +44,11 @@ Additional environment variables are optional:
   `42`, and `#potatomesh:dod.ngo`; Matrix rooms become matrix.to links).
 - `POTATOMESH_INSTANCE` (defaults to `http://web:41447`) lets the ingestor post
   to a remote PotatoMesh instance if you do not run both services together.
-- `MESH_CHANNEL_INDEX`, `MESH_SNAPSHOT_SECS`, and `DEBUG` adjust ingestor
-  behaviour.
+- `CONNECTION` overrides the default serial device or network endpoint used by
+  the ingestor.
+- `CHANNEL_INDEX` selects the LoRa channel when using serial or Bluetooth
+  connections.
+- `DEBUG` enables verbose logging across the stack.
 
 ## Docker Compose file
 

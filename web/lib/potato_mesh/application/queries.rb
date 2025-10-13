@@ -15,6 +15,29 @@
 module PotatoMesh
   module App
     module Queries
+      MAX_QUERY_LIMIT = 1000
+
+      # Normalise a caller-provided limit to a sane, positive integer.
+      #
+      # @param limit [Object] value coerced to an integer.
+      # @param default [Integer] fallback used when coercion fails.
+      # @return [Integer] limit clamped between 1 and MAX_QUERY_LIMIT.
+      def coerce_query_limit(limit, default: 200)
+        coerced = begin
+            if limit.is_a?(Integer)
+              limit
+            else
+              Integer(limit, 10)
+            end
+          rescue ArgumentError, TypeError
+            nil
+          end
+
+        coerced = default if coerced.nil? || coerced <= 0
+        coerced = MAX_QUERY_LIMIT if coerced > MAX_QUERY_LIMIT
+        coerced
+      end
+
       def node_reference_tokens(node_ref)
         parts = canonical_node_parts(node_ref)
         canonical_id, numeric_id = parts ? parts[0, 2] : [nil, nil]
@@ -98,6 +121,7 @@ module PotatoMesh
       end
 
       def query_nodes(limit, node_ref: nil)
+        limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
@@ -135,6 +159,13 @@ module PotatoMesh
         params << limit
 
         rows = db.execute(sql, params)
+        rows.select! do |r|
+          last_candidate = [r["last_heard"], r["position_time"], r["first_heard"]]
+            .map { |value| coerce_integer(value) }
+            .compact
+            .max
+          last_candidate && last_candidate >= min_last_heard
+        end
         rows.each do |r|
           r["role"] ||= "CLIENT"
           lh = r["last_heard"]&.to_i
@@ -154,10 +185,15 @@ module PotatoMesh
       end
 
       def query_messages(limit, node_ref: nil)
+        limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
         where_clauses = ["COALESCE(TRIM(m.encrypted), '') = ''"]
+        now = Time.now.to_i
+        min_rx_time = now - PotatoMesh::Config.week_seconds
+        where_clauses << "m.rx_time >= ?"
+        params << min_rx_time
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["m.from_id", "m.to_id"])
@@ -257,10 +293,15 @@ module PotatoMesh
       end
 
       def query_positions(limit, node_ref: nil)
+        limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
         where_clauses = []
+        now = Time.now.to_i
+        min_rx_time = now - PotatoMesh::Config.week_seconds
+        where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
+        params << min_rx_time
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -279,7 +320,6 @@ module PotatoMesh
         SQL
         params << limit
         rows = db.execute(sql, params)
-        now = Time.now.to_i
         rows.each do |r|
           rx_time = coerce_integer(r["rx_time"])
           r["rx_time"] = rx_time if rx_time
@@ -304,10 +344,15 @@ module PotatoMesh
       end
 
       def query_neighbors(limit, node_ref: nil)
+        limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
         where_clauses = []
+        now = Time.now.to_i
+        min_rx_time = now - PotatoMesh::Config.week_seconds
+        where_clauses << "COALESCE(rx_time, 0) >= ?"
+        params << min_rx_time
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id", "neighbor_id"])
@@ -326,7 +371,6 @@ module PotatoMesh
         SQL
         params << limit
         rows = db.execute(sql, params)
-        now = Time.now.to_i
         rows.each do |r|
           rx_time = coerce_integer(r["rx_time"])
           rx_time = now if rx_time && rx_time > now
@@ -340,10 +384,15 @@ module PotatoMesh
       end
 
       def query_telemetry(limit, node_ref: nil)
+        limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
         where_clauses = []
+        now = Time.now.to_i
+        min_rx_time = now - PotatoMesh::Config.week_seconds
+        where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
+        params << min_rx_time
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -362,7 +411,6 @@ module PotatoMesh
         SQL
         params << limit
         rows = db.execute(sql, params)
-        now = Time.now.to_i
         rows.each do |r|
           rx_time = coerce_integer(r["rx_time"])
           r["rx_time"] = rx_time if rx_time

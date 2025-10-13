@@ -46,7 +46,7 @@ for _module in (daemon, handlers, interfaces, queue, serialization):
 _export_constants()
 
 _CONFIG_ATTRS = {
-    "PORT",
+    "CONNECTION",
     "SNAPSHOT_SECS",
     "CHANNEL_INDEX",
     "DEBUG",
@@ -57,6 +57,9 @@ _CONFIG_ATTRS = {
     "_CLOSE_TIMEOUT_SECS",
     "_debug_log",
 }
+
+# Legacy export maintained for backwards compatibility.
+_CONFIG_ATTRS.add("PORT")
 
 _INTERFACE_ATTRS = {"BLEInterface", "SerialInterface", "TCPInterface"}
 
