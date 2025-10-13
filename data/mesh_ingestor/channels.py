@@ -169,10 +169,9 @@ def refresh_channel_metadata(iface: Any) -> list[tuple[int, str | None]]:
         index = _coerce_int(_mapping_get(channel_mapping, entry, "index"))
         if index is None:
             continue
-        settings = _coerce_mapping(_mapping_get(channel_mapping, entry, "settings"))
-        channel_name = None
-        if settings is not None:
-            channel_name = _string_or_none(settings.get("name"))
+        settings_obj = _mapping_get(channel_mapping, entry, "settings")
+        settings = _coerce_mapping(settings_obj)
+        channel_name = _string_or_none(_mapping_get(settings, settings_obj, "name"))
         metadata[index] = channel_name
     global _CHANNEL_METADATA
     _CHANNEL_METADATA = sorted(metadata.items())
