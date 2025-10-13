@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.tcp_interface import TCPInterface
 
-from . import config, serialization
+from . import channels, config, serialization
 
 if TYPE_CHECKING:  # pragma: no cover - import only used for type checking
     from meshtastic.ble_interface import BLEInterface as _BLEInterface
@@ -334,6 +334,24 @@ def _ensure_radio_metadata(iface: Any) -> None:
         )
 
 
+def _ensure_channel_metadata(iface: Any) -> None:
+    """Capture channel metadata by inspecting ``iface`` once per runtime."""
+
+    if iface is None:
+        return
+
+    try:
+        channels.capture_from_interface(iface)
+    except Exception as exc:  # pragma: no cover - defensive instrumentation
+        config._debug_log(
+            "Failed to capture channel metadata",
+            context="interfaces.ensure_channel_metadata",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+
+
 _DEFAULT_TCP_PORT = 4403
 _DEFAULT_TCP_TARGET = "http://127.0.0.1"
 
@@ -581,6 +599,7 @@ def _create_default_interface() -> tuple[object, str]:
 __all__ = [
     "BLEInterface",
     "NoAvailableMeshInterface",
+    "_ensure_channel_metadata",
     "_ensure_radio_metadata",
     "_DummySerialInterface",
     "_DEFAULT_TCP_PORT",

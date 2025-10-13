@@ -21,7 +21,7 @@ import threading as threading  # re-exported for compatibility
 import sys
 import types
 
-from . import config, daemon, handlers, interfaces, queue, serialization
+from . import channels, config, daemon, handlers, interfaces, queue, serialization
 
 __all__: list[str] = []
 
@@ -40,7 +40,7 @@ def _export_constants() -> None:
     __all__.extend(["json", "urllib", "glob", "threading", "signal"])
 
 
-for _module in (daemon, handlers, interfaces, queue, serialization):
+for _module in (channels, daemon, handlers, interfaces, queue, serialization):
     _reexport(_module)
 
 _export_constants()

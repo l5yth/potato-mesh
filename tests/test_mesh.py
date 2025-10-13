@@ -185,6 +185,7 @@ def mesh_module(monkeypatch):
     for attr in ("LORA_FREQ", "MODEM_PRESET"):
         if attr in module.__dict__:
             delattr(module, attr)
+    module.channels._reset_channel_cache()
 
     yield module
 
@@ -400,6 +401,64 @@ def test_ensure_radio_metadata_extracts_config(mesh_module, capsys):
     assert mesh.config.LORA_FREQ == 868
     assert mesh.config.MODEM_PRESET == "MediumFast"
     assert second_log == ""
+
+
+def test_capture_channels_from_interface_records_metadata(mesh_module, capsys):
+    mesh = mesh_module
+
+    mesh.config.MODEM_PRESET = "MediumFast"
+
+    class DummyInterface:
+        def __init__(self) -> None:
+            self.wait_calls = 0
+            primary = SimpleNamespace(role=1, settings=SimpleNamespace())
+            secondary = SimpleNamespace(
+                role="SECONDARY",
+                index="7",
+                settings=SimpleNamespace(name="TestChannel"),
+            )
+            self.localNode = SimpleNamespace(channels=[primary, secondary])
+
+        def waitForConfig(self) -> None:  # noqa: D401 - matches interface contract
+            self.wait_calls += 1
+
+    iface = DummyInterface()
+
+    mesh.channels.capture_from_interface(iface)
+    log_output = capsys.readouterr().out
+
+    assert iface.wait_calls == 1
+    assert mesh.channels.channel_mappings() == ((0, "MediumFast"), (7, "TestChannel"))
+    assert mesh.channels.channel_name(7) == "TestChannel"
+    assert "Captured channel metadata" in log_output
+    assert "channels=((0, 'MediumFast'), (7, 'TestChannel'))" in log_output
+
+    mesh.channels.capture_from_interface(SimpleNamespace(localNode=None))
+    assert mesh.channels.channel_mappings() == ((0, "MediumFast"), (7, "TestChannel"))
+
+
+def test_capture_channels_primary_falls_back_to_env(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    mesh.config.MODEM_PRESET = None
+    monkeypatch.setenv("CHANNEL", "FallbackName")
+
+    class DummyInterface:
+        def __init__(self) -> None:
+            self.localNode = SimpleNamespace(
+                channels={"primary": SimpleNamespace(role="PRIMARY")}
+            )
+
+        def waitForConfig(self) -> None:  # noqa: D401 - placeholder
+            return None
+
+    mesh.channels._reset_channel_cache()
+    mesh.channels.capture_from_interface(DummyInterface())
+    log_output = capsys.readouterr().out
+
+    assert mesh.channels.channel_mappings() == ((0, "FallbackName"),)
+    assert mesh.channels.channel_name(0) == "FallbackName"
+    assert "FallbackName" in log_output
 
 
 def test_create_default_interface_falls_back_to_tcp(mesh_module, monkeypatch):
@@ -1292,6 +1351,64 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+    mesh.channels._reset_channel_cache()
+    mesh.config.MODEM_PRESET = "MediumFast"
+
+    class DummyInterface:
+        def __init__(self) -> None:
+            self.localNode = SimpleNamespace(
+                channels=[
+                    SimpleNamespace(role=1, settings=SimpleNamespace()),
+                    SimpleNamespace(
+                        role=2,
+                        index=5,
+                        settings=SimpleNamespace(name="Chat"),
+                    ),
+                ]
+            )
+
+        def waitForConfig(self) -> None:  # noqa: D401 - matches interface contract
+            return None
+
+    mesh.channels.capture_from_interface(DummyInterface())
+    capsys.readouterr()
+
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+
+    packet = {
+        "id": "789",
+        "rxTime": 123456,
+        "from": "!abc",
+        "to": "!def",
+        "channel": 5,
+        "decoded": {"text": "hi", "portnum": 1},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected message to be stored"
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["channel_name"] == "Chat"
+    assert payload["channel"] == 5
+    assert payload["text"] == "hi"
+    assert payload["encrypted"] is None
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+    log_output = capsys.readouterr().out
+    assert "channel_name='Chat'" in log_output
+    assert "channel_display='Chat'" in log_output
+
+
 def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
@@ -1322,6 +1439,7 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     assert payload["text"] is None
     assert payload["from_id"] == 2988082812
     assert payload["to_id"] == "!receiver"
+    assert "channel_name" not in payload
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
     assert priority == mesh._MESSAGE_POST_PRIORITY
@@ -2056,6 +2174,8 @@ def test_store_packet_dict_debug_message(mesh_module, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "context=handlers.store_packet_dict" in out
     assert "Queued message payload" in out
+    assert "channel_display=0" in out
+    assert "channel_name=" not in out
 
 
 def test_on_receive_skips_seen_packets(mesh_module):
