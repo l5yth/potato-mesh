@@ -37,6 +37,51 @@ module PotatoMesh
       trimmed.empty? ? nil : trimmed
     end
 
+    # Coerce a LoRa frequency value into an integer centre frequency.
+    #
+    # Strings containing numeric ranges (e.g. "902-928") are converted by
+    # averaging the lowest and highest values, while plain numeric values are
+    # rounded to the nearest integer.
+    #
+    # @param value [Object] raw frequency provided by clients.
+    # @return [Integer, nil] parsed integer frequency or +nil+ when invalid.
+    def lora_frequency_or_nil(value)
+      case value
+      when Integer
+        value
+      when Float
+        value.finite? ? value.round : nil
+      when Numeric
+        value.to_i
+      when String
+        trimmed = value.strip
+        return nil if trimmed.empty?
+
+        numbers = trimmed.scan(/\d+(?:\.\d+)?/)
+        return nil if numbers.empty?
+
+        numeric = numbers.each_with_object([]) do |fragment, acc|
+          begin
+            acc << Float(fragment)
+          rescue ArgumentError
+            # Skip fragments that cannot be parsed as floating point numbers.
+          end
+        end
+        return nil if numeric.empty?
+
+        candidate = if numeric.length == 1
+            numeric.first
+          else
+            (numeric.min + numeric.max) / 2.0
+          end
+        candidate.round
+      else
+        nil
+      end
+    rescue StandardError
+      nil
+    end
+
     # Ensure a value is a valid instance domain according to RFC 1035/3986
     # rules. This rejects whitespace, path separators, and trailing dots.
     #

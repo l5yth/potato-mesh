@@ -160,7 +160,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "longitude" => node["longitude"],
       "altitude" => node["altitude"],
       "lora_preset" => node["lora_preset"],
-      "lora_frequency" => node["lora_frequency"],
+      "lora_frequency" => PotatoMesh::Sanitizer.lora_frequency_or_nil(node["lora_frequency"]),
     }
   end
 
@@ -198,6 +198,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
   def import_messages_fixture
     messages_fixture.each do |message|
       payload = message.reject { |key, _| key == "node" }
+      payload["lora_frequency"] =
+        PotatoMesh::Sanitizer.lora_frequency_or_nil(payload["lora_frequency"])
       post "/api/messages", payload.to_json, auth_headers
       expect(last_response).to be_ok
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
@@ -1162,7 +1164,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(row).not_to be_nil
         expect(row["lora_preset"]).to eq("#LongFast")
-        expect(row["lora_frequency"]).to eq("902-928")
+        expect(row["lora_frequency"]).to eq(915)
       end
     end
 
@@ -1387,7 +1389,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       import_messages_fixture
 
       expected_messages = messages_fixture.map do |message|
-        [message["id"], message.reject { |key, _| key == "node" }]
+        payload = message.reject { |key, _| key == "node" }
+        payload["lora_frequency"] =
+          PotatoMesh::Sanitizer.lora_frequency_or_nil(payload["lora_frequency"])
+        [message["id"], payload]
       end.to_h
 
       with_db(readonly: true) do |db|
@@ -1448,7 +1453,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(row).not_to be_nil
         expect(row["lora_preset"]).to eq("#LongFast")
-        expect(row["lora_frequency"]).to eq("902-928")
+        expect(row["lora_frequency"]).to eq(915)
       end
     end
 

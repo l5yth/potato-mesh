@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS messages (
     rssi      INTEGER,
     hop_limit INTEGER,
     lora_preset TEXT,
-    lora_frequency TEXT
+    lora_frequency INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);

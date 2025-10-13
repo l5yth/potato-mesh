@@ -15,7 +15,7 @@
 -- Introduce cached LoRa metadata fields for nodes and messages.
 BEGIN;
 ALTER TABLE nodes ADD COLUMN lora_preset TEXT;
-ALTER TABLE nodes ADD COLUMN lora_frequency TEXT;
+ALTER TABLE nodes ADD COLUMN lora_frequency INTEGER;
 ALTER TABLE messages ADD COLUMN lora_preset TEXT;
-ALTER TABLE messages ADD COLUMN lora_frequency TEXT;
+ALTER TABLE messages ADD COLUMN lora_frequency INTEGER;
 COMMIT;

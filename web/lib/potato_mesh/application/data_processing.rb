@@ -251,7 +251,7 @@ module PotatoMesh
           pos["longitude"],
           pos["altitude"],
           string_or_nil(n["lora_preset"]),
-          string_or_nil(n["lora_frequency"]),
+          lora_frequency_or_nil(n["lora_frequency"]),
         ]
         with_busy_retry do
           db.execute <<~SQL, row
@@ -958,7 +958,7 @@ module PotatoMesh
           message["rssi"],
           message["hop_limit"],
           string_or_nil(message["lora_preset"]),
-          string_or_nil(message["lora_frequency"]),
+          lora_frequency_or_nil(message["lora_frequency"]),
         ]
 
         with_busy_retry do
@@ -1002,7 +1002,7 @@ module PotatoMesh
               updates["lora_preset"] = preset if should_update
             end
 
-            frequency = string_or_nil(message["lora_frequency"])
+            frequency = lora_frequency_or_nil(message["lora_frequency"])
             if frequency
               existing_frequency = existing.is_a?(Hash) ? existing["lora_frequency"] : existing[4]
               existing_frequency_str = existing_frequency&.to_s
@@ -1029,7 +1029,7 @@ module PotatoMesh
               fallback_updates["to_id"] = to_id if to_id
               fallback_updates["encrypted"] = encrypted if encrypted
               preset = string_or_nil(message["lora_preset"])
-              frequency = string_or_nil(message["lora_frequency"])
+              frequency = lora_frequency_or_nil(message["lora_frequency"])
               fallback_updates["lora_preset"] = preset if preset
               fallback_updates["lora_frequency"] = frequency if frequency
               unless fallback_updates.empty?

@@ -410,7 +410,9 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
 
 def test_store_packet_dict_applies_lora_metadata(mesh_module, monkeypatch):
     mesh = mesh_module
-    mesh.set_metadata(preset="#LongFast", frequency="902-928")
+    mesh.set_metadata(
+        preset="#LongFast", frequency=mesh.format_region_frequency("902-928")
+    )
     captured = []
     monkeypatch.setattr(
         mesh,
@@ -433,7 +435,7 @@ def test_store_packet_dict_applies_lora_metadata(mesh_module, monkeypatch):
     assert captured
     _, payload, _ = captured[0]
     assert payload["lora_preset"] == "#LongFast"
-    assert payload["lora_frequency"] == "902-928"
+    assert payload["lora_frequency"] == 915
 
 
 def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
@@ -981,8 +983,10 @@ def test_lora_formatting_helpers(mesh_module):
     assert mesh.format_modem_preset("  long-fast ") == "#LongFast"
     assert mesh.format_modem_preset(None) is None
 
-    assert mesh.format_region_frequency("US_902_928") == "902-928"
-    assert mesh.format_region_frequency("EU433") == "433"
+    assert mesh.format_region_frequency("US_902_928") == 915
+    assert mesh.format_region_frequency("EU433") == 433
+    assert mesh.format_region_frequency("915 MHz") == 915
+    assert mesh.format_region_frequency(433.9) == 434
     assert mesh.format_region_frequency(None) is None
 
 
@@ -993,7 +997,7 @@ def test_extract_from_device_config_supports_mappings_and_objects(mesh_module):
         {"lora": {"modemPreset": "LONG_FAST", "region": "US_902_928"}}
     )
     assert preset == "#LongFast"
-    assert frequency == "902-928"
+    assert frequency == 915
 
     class DummyConfig:
         def __init__(self):
@@ -1001,19 +1005,21 @@ def test_extract_from_device_config_supports_mappings_and_objects(mesh_module):
 
     preset, frequency = mesh.extract_from_device_config(DummyConfig())
     assert preset == "#ShortSlow"
-    assert frequency == "868"
+    assert frequency == 868
 
 
 def test_upsert_payload_includes_lora_metadata(mesh_module):
     mesh = mesh_module
-    mesh.set_metadata(preset="#LongFast", frequency="902-928")
+    mesh.set_metadata(
+        preset="#LongFast", frequency=mesh.format_region_frequency("902-928")
+    )
     try:
         payload = mesh.upsert_payload("!node", {})
     finally:
         mesh.set_metadata(preset=None, frequency=None)
 
     assert payload["!node"]["lora_preset"] == "#LongFast"
-    assert payload["!node"]["lora_frequency"] == "902-928"
+    assert payload["!node"]["lora_frequency"] == 915
 
 
 def test_refresh_lora_metadata_reads_from_interface(mesh_module):
@@ -1034,7 +1040,7 @@ def test_refresh_lora_metadata_reads_from_interface(mesh_module):
     iface = DummyInterface("LONG_FAST", "US_902_928")
     mesh._refresh_lora_metadata(iface)
     assert mesh.current_preset() == "#LongFast"
-    assert mesh.current_frequency() == "902-928"
+    assert mesh.current_frequency() == 915
 
 
 def test_main_retries_interface_creation(mesh_module, monkeypatch):

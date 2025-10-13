@@ -50,6 +50,15 @@ module PotatoMesh
         PotatoMesh::Sanitizer.string_or_nil(value)
       end
 
+      # Proxy for {PotatoMesh::Sanitizer.lora_frequency_or_nil} to ensure LoRa
+      # frequency values are consistently normalised across the application.
+      #
+      # @param value [Object] raw frequency provided by clients.
+      # @return [Integer, nil] parsed integer centre frequency or +nil+.
+      def lora_frequency_or_nil(value)
+        PotatoMesh::Sanitizer.lora_frequency_or_nil(value)
+      end
+
       # Proxy for {PotatoMesh::Sanitizer.sanitize_instance_domain}.
       #
       # @param value [Object] candidate domain string.

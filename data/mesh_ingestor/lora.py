@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from typing import Any
 
 _LORA_PRESET: str | None = None
-_LORA_FREQUENCY: str | None = None
+_LORA_FREQUENCY: int | None = None
 
 
 def _lookup(obj: Any, key: str) -> Any:
@@ -46,22 +46,38 @@ def format_modem_preset(value: Any) -> str | None:
     return f"#{camel}"
 
 
-def format_region_frequency(value: Any) -> str | None:
-    """Extract the frequency component from a LoRa region label."""
+def format_region_frequency(value: Any) -> int | None:
+    """Extract an integer LoRa frequency from a region label.
+
+    The helper scans ``value`` for numeric fragments and returns an averaged
+    centre frequency when a range is supplied (e.g. ``"902-928"`` becomes
+    ``915``).
+    """
 
     if value in {None, ""}:
         return None
     text = str(value).strip()
     if not text:
         return None
-    numbers = re.findall(r"\d+(?:\.\d+)?", text)
-    if not numbers:
+    matches = re.findall(r"\d+(?:\.\d+)?", text)
+    if not matches:
         return None
-    frequency = "-".join(numbers) if len(numbers) > 1 else numbers[0]
-    return frequency
+    numeric = []
+    for match in matches:
+        try:
+            numeric.append(float(match))
+        except ValueError:
+            continue
+    if not numeric:
+        return None
+    if len(numeric) == 1:
+        frequency = numeric[0]
+    else:
+        frequency = (min(numeric) + max(numeric)) / 2.0
+    return int(round(frequency))
 
 
-def extract_from_device_config(device_config: Any) -> tuple[str | None, str | None]:
+def extract_from_device_config(device_config: Any) -> tuple[str | None, int | None]:
     """Return the formatted LoRa metadata from ``device_config``."""
 
     if device_config is None:
@@ -76,7 +92,7 @@ def extract_from_device_config(device_config: Any) -> tuple[str | None, str | No
     return format_modem_preset(preset), format_region_frequency(region)
 
 
-def set_metadata(*, preset: str | None, frequency: str | None) -> None:
+def set_metadata(*, preset: str | None, frequency: int | None) -> None:
     """Set the cached LoRa metadata values."""
 
     global _LORA_PRESET, _LORA_FREQUENCY
@@ -84,7 +100,7 @@ def set_metadata(*, preset: str | None, frequency: str | None) -> None:
     _LORA_FREQUENCY = frequency
 
 
-def update_from_device_config(device_config: Any) -> tuple[str | None, str | None]:
+def update_from_device_config(device_config: Any) -> tuple[str | None, int | None]:
     """Extract and store LoRa metadata from ``device_config``."""
 
     preset, frequency = extract_from_device_config(device_config)
@@ -98,7 +114,7 @@ def current_preset() -> str | None:
     return _LORA_PRESET
 
 
-def current_frequency() -> str | None:
+def current_frequency() -> int | None:
     """Return the cached LoRa region frequency."""
 
     return _LORA_FREQUENCY

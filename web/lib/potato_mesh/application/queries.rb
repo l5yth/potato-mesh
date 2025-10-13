@@ -179,7 +179,7 @@ module PotatoMesh
           pb = r["precision_bits"]
           r["precision_bits"] = pb.to_i if pb
           r["lora_preset"] = string_or_nil(r["lora_preset"])
-          r["lora_frequency"] = string_or_nil(r["lora_frequency"])
+          r["lora_frequency"] = lora_frequency_or_nil(r["lora_frequency"])
         end
         rows
       ensure
@@ -225,7 +225,7 @@ module PotatoMesh
         msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit lora_preset lora_frequency]
         rows.each do |r|
           message_preset = r["lora_preset"] = string_or_nil(r["lora_preset"])
-          message_frequency = r["lora_frequency"] = string_or_nil(r["lora_frequency"])
+          message_frequency = r["lora_frequency"] = lora_frequency_or_nil(r["lora_frequency"])
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(
@@ -247,7 +247,7 @@ module PotatoMesh
             node[k] = r.delete(k)
           end
           node_preset = string_or_nil(node["lora_preset"])
-          node_frequency = string_or_nil(node["lora_frequency"])
+          node_frequency = lora_frequency_or_nil(node["lora_frequency"])
           node["lora_preset"] = node_preset || message_preset
           node["lora_frequency"] = node_frequency || message_frequency
           r["snr"] = r.delete("msg_snr")

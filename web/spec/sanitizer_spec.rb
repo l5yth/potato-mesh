@@ -26,6 +26,16 @@ RSpec.describe PotatoMesh::Sanitizer do
     end
   end
 
+  describe ".lora_frequency_or_nil" do
+    it "normalises numeric and textual LoRa frequencies" do
+      expect(described_class.lora_frequency_or_nil(915)).to eq(915)
+      expect(described_class.lora_frequency_or_nil(902.8)).to eq(903)
+      expect(described_class.lora_frequency_or_nil("US_902_928")).to eq(915)
+      expect(described_class.lora_frequency_or_nil(" 915 MHz ")).to eq(915)
+      expect(described_class.lora_frequency_or_nil("invalid")).to be_nil
+    end
+  end
+
   describe ".sanitize_instance_domain" do
     it "rejects invalid domains" do
       expect(described_class.sanitize_instance_domain(nil)).to be_nil
