@@ -315,10 +315,23 @@ def _ensure_radio_metadata(iface: Any) -> None:
     frequency = _region_frequency(lora_message)
     preset = _modem_preset(lora_message)
 
+    updated = False
     if frequency is not None and getattr(config, "LORA_FREQ", None) is None:
         config.LORA_FREQ = frequency
+        updated = True
     if preset is not None and getattr(config, "MODEM_PRESET", None) is None:
         config.MODEM_PRESET = preset
+        updated = True
+
+    if updated:
+        config._debug_log(
+            "Captured LoRa radio metadata",
+            context="interfaces.ensure_radio_metadata",
+            severity="info",
+            always=True,
+            lora_freq=frequency,
+            modem_preset=preset,
+        )
 
 
 _DEFAULT_TCP_PORT = 4403
