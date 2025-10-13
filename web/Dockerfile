@@ -44,10 +44,16 @@ WORKDIR /app
 # Copy installed gems from builder stage
 COPY --from=builder /usr/local/bundle /usr/local/bundle
 
-# Copy application code (exclude Dockerfile from web directory)
-COPY --chown=potatomesh:potatomesh web/app.rb web/app.sh web/Gemfile web/Gemfile.lock* web/spec/ ./
+# Copy application code (excluding the Dockerfile which is not required at runtime)
+COPY --chown=potatomesh:potatomesh web/app.rb ./
+COPY --chown=potatomesh:potatomesh web/app.sh ./
+COPY --chown=potatomesh:potatomesh web/Gemfile ./
+COPY --chown=potatomesh:potatomesh web/Gemfile.lock* ./
+COPY --chown=potatomesh:potatomesh web/lib ./lib
+COPY --chown=potatomesh:potatomesh web/spec ./spec
 COPY --chown=potatomesh:potatomesh web/public ./public
-COPY --chown=potatomesh:potatomesh web/views/ ./views/
+COPY --chown=potatomesh:potatomesh web/views ./views
+COPY --chown=potatomesh:potatomesh web/scripts ./scripts
 
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
