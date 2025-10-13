@@ -21,7 +21,7 @@ import json
 import time
 from collections.abc import Mapping
 
-from . import config, queue
+from . import channels, config, queue
 from .serialization import (
     _canonical_node_id,
     _coerce_float,
@@ -62,6 +62,21 @@ def _apply_radio_metadata(payload: dict) -> dict:
     if metadata:
         payload.update(metadata)
     return payload
+
+
+def _is_encrypted_flag(value) -> bool:
+    """Return ``True`` when ``value`` represents an encrypted payload."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "false", "no"}:
+            return False
+        return True
+    return bool(value)
 
 
 def _apply_radio_metadata_to_nodes(payload: dict) -> dict:
@@ -857,6 +872,8 @@ def store_packet_dict(packet: Mapping) -> None:
     rssi = _first(packet, "rssi", "rx_rssi", "rxRssi", default=None)
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
 
+    encrypted_flag = _is_encrypted_flag(encrypted)
+
     message_payload = {
         "id": int(pkt_id),
         "rx_time": rx_time,
@@ -871,6 +888,12 @@ def store_packet_dict(packet: Mapping) -> None:
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
     }
+
+    channel_name_value = None
+    if not encrypted_flag:
+        channel_name_value = channels.channel_name(channel)
+        if channel_name_value:
+            message_payload["channel_name"] = channel_name_value
     _queue_post_json(
         "/api/messages",
         _apply_radio_metadata(message_payload),
@@ -881,14 +904,17 @@ def store_packet_dict(packet: Mapping) -> None:
         from_label = _canonical_node_id(from_id) or from_id
         to_label = _canonical_node_id(to_id) or to_id
         payload_desc = "Encrypted" if text is None and encrypted else text
-        config._debug_log(
-            "Queued message payload",
-            context="handlers.store_packet_dict",
-            from_id=from_label,
-            to_id=to_label,
-            channel=channel,
-            payload=payload_desc,
-        )
+        log_kwargs = {
+            "context": "handlers.store_packet_dict",
+            "from_id": from_label,
+            "to_id": to_label,
+            "channel": channel,
+            "channel_display": channel_name_value or channel,
+            "payload": payload_desc,
+        }
+        if channel_name_value:
+            log_kwargs["channel_name"] = channel_name_value
+        config._debug_log("Queued message payload", **log_kwargs)
 
 
 _last_packet_monotonic: float | None = None
