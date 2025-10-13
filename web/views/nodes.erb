@@ -15,25 +15,92 @@
 -->
 
 <% page_title_html = Rack::Utils.escape_html(page_title) %>
-<% body_classes = [] %>
-<% body_classes << "dark" if initial_theme == "dark" %>
-<% role_color_css = Rack::Utils.escape_html(role_color) %>
-<% long_name_title_html = Rack::Utils.escape_html(long_name_title) %>
 <% long_name_html = Rack::Utils.escape_html(long_name_text) %>
+<% long_name_title_html = Rack::Utils.escape_html(long_name_title) %>
+<% role_color_css = Rack::Utils.escape_html(role_color) %>
+<% role_label_html = Rack::Utils.escape_html(role_label.to_s) %>
+<% hardware_label_html = Rack::Utils.escape_html(hardware_label.to_s) %>
+<% node_identifier_html = Rack::Utils.escape_html(node_identifier.to_s) %>
+<% last_heard_iso_html = last_heard_iso ? Rack::Utils.escape_html(last_heard_iso) : nil %>
+<% last_heard_display_html = last_heard_display ? Rack::Utils.escape_html(last_heard_display) : nil %>
+<% body_classes = ["node-view-page"] %>
+<% body_classes << "dark" if initial_theme == "dark" %>
 <html lang="en" data-theme="<%= initial_theme %>">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title><%= page_title_html %></title>
-  <link rel="stylesheet" href="/assets/styles/base.css" />
-  <script src="/assets/js/theme.js" defer></script>
-</head>
-<body class="<%= body_classes.join(" ") %>" data-theme="<%= initial_theme %>">
-  <main class="node-view">
-    <h1 class="node-view__title">
-      <span class="short-name" style="background:<%= role_color_css %>" title="<%= long_name_title_html %>"><%= short_name_badge_html %></span>
-      <span class="node-view__long"><%= long_name_html %></span>
-    </h1>
-  </main>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title><%= page_title_html %></title>
+    <link rel="stylesheet" href="/assets/styles/base.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <script src="/assets/js/theme.js" defer></script>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+      defer
+    ></script>
+  </head>
+  <body
+    class="<%= body_classes.join(" ") %>"
+    data-theme="<%= initial_theme %>"
+    data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>"
+  >
+    <main class="node-view" data-node-id="<%= node_identifier_html %>">
+      <header class="node-view__header">
+        <h1 class="node-view__title">
+          <span class="short-name" style="background:<%= role_color_css %>" title="<%= long_name_title_html %>"><%= short_name_badge_html %></span>
+          <span class="node-view__long"><%= long_name_html %></span>
+        </h1>
+        <dl class="node-view__summary" aria-label="Node summary">
+          <div class="node-view__summary-item">
+            <dt>Role</dt>
+            <dd>
+              <% if role_label_html && !role_label_html.empty? %>
+                <span class="node-view__role" style="--role-accent:<%= role_color_css %>"><%= role_label_html %></span>
+              <% else %>
+                <span class="node-view__value">—</span>
+              <% end %>
+            </dd>
+          </div>
+          <div class="node-view__summary-item">
+            <dt>Hardware</dt>
+            <dd>
+              <% if hardware_label_html && !hardware_label_html.empty? %>
+                <span class="node-view__value"><%= hardware_label_html %></span>
+              <% else %>
+                <span class="node-view__value">—</span>
+              <% end %>
+            </dd>
+          </div>
+          <div class="node-view__summary-item">
+            <dt>Last heard</dt>
+            <dd>
+              <% if last_heard_display_html && last_heard_iso_html %>
+                <time class="node-view__value" datetime="<%= last_heard_iso_html %>"><%= last_heard_display_html %></time>
+              <% else %>
+                <span class="node-view__value">—</span>
+              <% end %>
+            </dd>
+          </div>
+        </dl>
+      </header>
+      <section class="node-view__panels">
+        <div class="node-view__panel node-view__panel--telemetry">
+          <h2 class="node-view__panel-title">Telemetry (7 days)</h2>
+          <div id="nodeTelemetry" class="node-view__plot" role="img" aria-live="polite" aria-label="Telemetry scatter plot"></div>
+        </div>
+        <div class="node-view__panel node-view__panel--map">
+          <h2 class="node-view__panel-title">Positions (7 days)</h2>
+          <div id="nodeMap" class="node-view__map" role="region" aria-live="polite" aria-label="Node movement map"></div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/assets/js/app/node-view.js" defer></script>
+  </body>
 </html>

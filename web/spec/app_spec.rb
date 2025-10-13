@@ -795,6 +795,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       expect(last_response.body).to include('<span class="short-name"')
       expect(last_response.body).to include(node["long_name"])
+      expect(last_response.body).to include("Telemetry (7 days)")
+      expect(last_response.body).to include("Positions (7 days)")
+      expect(last_response.body).to include('data-app-config="')
+      expect(last_response.body).to include('aria-label="Node summary"')
     end
 
     it "applies the theme from the visitor cookie" do
