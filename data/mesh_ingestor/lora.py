@@ -19,6 +19,41 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+_RADIO_PREFERENCE_KEYS = ("modem_preset", "modemPreset")
+
+
+def _raw_radio_fields(radio_config: Any) -> tuple[Any, Any, bool]:
+    """Return raw modem preset and region from ``radio_config``."""
+
+    if radio_config is None:
+        return None, None, False
+    preferences = _lookup(radio_config, "preferences")
+    if preferences is None:
+        return None, None, False
+    preset = None
+    for key in _RADIO_PREFERENCE_KEYS:
+        preset = _lookup(preferences, key)
+        if preset is not None:
+            break
+    region = _lookup(preferences, "region")
+    return preset, region, True
+
+
+def _raw_device_fields(device_config: Any) -> tuple[Any, Any, bool]:
+    """Return raw modem preset and region from ``device_config``."""
+
+    if device_config is None:
+        return None, None, False
+    lora_section = _lookup(device_config, "lora")
+    if lora_section is None:
+        return None, None, False
+    preset = _lookup(lora_section, "modemPreset")
+    if preset is None:
+        preset = _lookup(lora_section, "modem_preset")
+    region = _lookup(lora_section, "region")
+    return preset, region, True
+
+
 _LORA_PRESET: str | None = None
 _LORA_FREQUENCY: int | None = None
 
@@ -80,15 +115,9 @@ def format_region_frequency(value: Any) -> int | None:
 def extract_from_device_config(device_config: Any) -> tuple[str | None, int | None]:
     """Return the formatted LoRa metadata from ``device_config``."""
 
-    if device_config is None:
+    preset, region, has_section = _raw_device_fields(device_config)
+    if not has_section:
         return None, None
-    lora_section = _lookup(device_config, "lora")
-    if lora_section is None:
-        return None, None
-    preset = _lookup(lora_section, "modemPreset")
-    if preset is None:
-        preset = _lookup(lora_section, "modem_preset")
-    region = _lookup(lora_section, "region")
     return format_modem_preset(preset), format_region_frequency(region)
 
 
@@ -101,16 +130,34 @@ def extract_from_radio_config(radio_config: Any) -> tuple[str | None, int | None
     application-friendly formats handled elsewhere in the ingestion pipeline.
     """
 
-    if radio_config is None:
+    preset, region, has_preferences = _raw_radio_fields(radio_config)
+    if not has_preferences:
         return None, None
-    preferences = _lookup(radio_config, "preferences")
-    if preferences is None:
-        return None, None
-    preset = _lookup(preferences, "modem_preset")
-    if preset is None:
-        preset = _lookup(preferences, "modemPreset")
-    region = _lookup(preferences, "region")
     return format_modem_preset(preset), format_region_frequency(region)
+
+
+def inspect_device_config(device_config: Any) -> dict[str, Any]:
+    """Return raw LoRa details extracted from ``device_config`` for logging."""
+
+    preset, region, has_section = _raw_device_fields(device_config)
+    return {
+        "device_config_present": device_config is not None,
+        "device_lora_present": has_section,
+        "device_raw_preset": preset,
+        "device_raw_region": region,
+    }
+
+
+def inspect_radio_config(radio_config: Any) -> dict[str, Any]:
+    """Return raw LoRa details from ``radio_config`` for debug logging."""
+
+    preset, region, has_preferences = _raw_radio_fields(radio_config)
+    return {
+        "radio_config_present": radio_config is not None,
+        "radio_preferences_present": has_preferences,
+        "radio_raw_preset": preset,
+        "radio_raw_region": region,
+    }
 
 
 def set_metadata(*, preset: str | None, frequency: int | None) -> None:
@@ -156,6 +203,8 @@ __all__ = [
     "extract_from_device_config",
     "format_modem_preset",
     "format_region_frequency",
+    "inspect_device_config",
+    "inspect_radio_config",
     "extract_from_radio_config",
     "set_metadata",
     "update_from_device_config",

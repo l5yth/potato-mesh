@@ -171,8 +171,23 @@ def _refresh_lora_metadata(iface_obj) -> None:
     preset = frequency = None
     if radio_config is not None:
         preset, frequency = lora.extract_from_radio_config(radio_config)
+        if config.DEBUG:
+            radio_details = lora.inspect_radio_config(radio_config)
+            radio_details.update(
+                context="daemon.lora",
+                severity="debug",
+                formatted_preset=preset,
+                formatted_frequency=frequency,
+            )
+            config._debug_log("Inspected RadioConfig metadata", **radio_details)
         if preset is not None or frequency is not None:
             metadata_source = "radio_config"
+    elif config.DEBUG:
+        config._debug_log(
+            "RadioConfig missing on interface",
+            context="daemon.lora",
+            severity="debug",
+        )
 
     if metadata_source is None:
         get_config = getattr(iface_obj, "getDeviceConfig", None)
@@ -194,6 +209,15 @@ def _refresh_lora_metadata(iface_obj) -> None:
             return
 
         preset, frequency = lora.extract_from_device_config(device_config)
+        if config.DEBUG:
+            device_details = lora.inspect_device_config(device_config)
+            device_details.update(
+                context="daemon.lora",
+                severity="debug",
+                formatted_preset=preset,
+                formatted_frequency=frequency,
+            )
+            config._debug_log("Inspected DeviceConfig metadata", **device_details)
         if preset is not None or frequency is not None:
             metadata_source = "device_config"
 

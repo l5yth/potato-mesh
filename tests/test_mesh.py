@@ -512,6 +512,44 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
         == "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER"
     )
     assert payload["raw"]["time"] == 1_758_624_189
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
+
+
+def test_store_position_packet_applies_lora_metadata(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.set_metadata(
+        preset="#ShortSlow", frequency=mesh.format_region_frequency("EU_868")
+    )
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 99,
+        "rxTime": 1_700_000_123,
+        "fromId": "!c0ffee00",
+        "decoded": {
+            "portnum": "POSITION_APP",
+            "position": {
+                "latitude": 10.0,
+                "longitude": 20.0,
+            },
+        },
+    }
+
+    try:
+        mesh.store_packet_dict(packet)
+    finally:
+        mesh.set_metadata(preset=None, frequency=None)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["lora_preset"] == "#ShortSlow"
+    assert payload["lora_frequency"] == 868
 
 
 def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
@@ -564,6 +602,45 @@ def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
     assert neighbors[1]["snr"] == pytest.approx(-2.75)
     assert neighbors[2]["neighbor_id"] == "!0badc0de"
     assert neighbors[2]["neighbor_num"] == 0x0BAD_C0DE
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
+
+
+def test_store_neighborinfo_packet_applies_lora_metadata(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.set_metadata(
+        preset="#MediumFast", frequency=mesh.format_region_frequency("915")
+    )
+    captured: list[tuple[str, dict, int]] = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 444,
+        "rxTime": 1_700_000_500,
+        "fromId": "!01020304",
+        "decoded": {
+            "portnum": "NEIGHBORINFO_APP",
+            "neighborinfo": {
+                "neighbors": [
+                    {"nodeId": 0x01020305, "snr": -1.0},
+                ]
+            },
+        },
+    }
+
+    try:
+        mesh.store_packet_dict(packet)
+    finally:
+        mesh.set_metadata(preset=None, frequency=None)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["lora_preset"] == "#MediumFast"
+    assert payload["lora_frequency"] == 915
 
 
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
@@ -634,6 +711,40 @@ def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     assert node_entry["position"]["latitude"] == pytest.approx(52.5)
     assert node_entry["position"]["longitude"] == pytest.approx(13.4)
     assert node_entry["position"]["time"] == 1_700_000_050
+    assert node_entry.get("lora_preset") is None
+    assert node_entry.get("lora_frequency") is None
+
+
+def test_store_nodeinfo_packet_applies_lora_metadata(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.set_metadata(preset="#Turbo", frequency=mesh.format_region_frequency("433"))
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 1,
+        "rxTime": 2,
+        "fromId": "!cafebabe",
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "user": {"id": "!cafebabe", "shortName": "Node"},
+        },
+    }
+
+    try:
+        mesh.store_packet_dict(packet)
+    finally:
+        mesh.set_metadata(preset=None, frequency=None)
+
+    assert captured
+    _, payload, _ = captured[0]
+    entry = payload["!cafebabe"]
+    assert entry["lora_preset"] == "#Turbo"
+    assert entry["lora_frequency"] == 433
 
 
 def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
@@ -1023,6 +1134,32 @@ def test_extract_from_radio_config_supports_preferences(mesh_module):
     assert mesh.extract_from_radio_config(empty_radio) == (None, None)
 
 
+def test_inspect_radio_and_device_configs(mesh_module):
+    mesh = mesh_module
+
+    radio = SimpleNamespace(
+        preferences=SimpleNamespace(modemPreset="LONG_FAST", region="US_902_928")
+    )
+    radio_details = mesh.inspect_radio_config(radio)
+    assert radio_details["radio_config_present"] is True
+    assert radio_details["radio_preferences_present"] is True
+    assert radio_details["radio_raw_preset"] == "LONG_FAST"
+    assert radio_details["radio_raw_region"] == "US_902_928"
+
+    missing_radio = SimpleNamespace(preferences=None)
+    missing_details = mesh.inspect_radio_config(missing_radio)
+    assert missing_details["radio_preferences_present"] is False
+
+    device = {"lora": {"modem_preset": "SHORT_SLOW", "region": "EU_868"}}
+    device_details = mesh.inspect_device_config(device)
+    assert device_details["device_config_present"] is True
+    assert device_details["device_lora_present"] is True
+    assert device_details["device_raw_preset"] == "SHORT_SLOW"
+    assert device_details["device_raw_region"] == "EU_868"
+
+    assert mesh.inspect_device_config(None)["device_lora_present"] is False
+
+
 def test_upsert_payload_includes_lora_metadata(mesh_module):
     mesh = mesh_module
     mesh.set_metadata(
@@ -1095,6 +1232,53 @@ def test_refresh_lora_metadata_clears_when_no_config(mesh_module):
 
     assert mesh.current_preset() is None
     assert mesh.current_frequency() is None
+
+
+def test_refresh_lora_metadata_emits_debug_details(mesh_module, monkeypatch):
+    mesh = mesh_module
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    logs: list[tuple[str, dict]] = []
+
+    def capture(message, **kwargs):
+        logs.append((message, kwargs))
+
+    monkeypatch.setattr(mesh, "_debug_log", capture)
+
+    iface = SimpleNamespace(
+        radioConfig=SimpleNamespace(
+            preferences=SimpleNamespace(modem_preset="LONG_FAST", region="US_902_928")
+        ),
+        getDeviceConfig=lambda: None,
+    )
+
+    mesh._refresh_lora_metadata(iface)
+
+    radio_logs = [
+        entry for entry in logs if entry[0] == "Inspected RadioConfig metadata"
+    ]
+    assert radio_logs, "expected radio inspection log"
+    radio_payload = radio_logs[-1][1]
+    assert radio_payload["formatted_preset"] == "#LongFast"
+    assert radio_payload["radio_raw_preset"] == "LONG_FAST"
+    assert radio_payload["radio_raw_region"] == "US_902_928"
+
+    logs.clear()
+    iface_missing = SimpleNamespace(radioConfig=None, getDeviceConfig=lambda: None)
+    mesh._refresh_lora_metadata(iface_missing)
+
+    missing = [
+        entry for entry in logs if entry[0] == "RadioConfig missing on interface"
+    ]
+    assert missing, "expected missing radio log"
+    device_logs = [
+        entry for entry in logs if entry[0] == "Inspected DeviceConfig metadata"
+    ]
+    assert device_logs, "expected device inspection log"
+    device_payload = device_logs[-1][1]
+    assert device_payload["device_config_present"] is False
+    assert device_payload["formatted_frequency"] is None
+
+    mesh.set_metadata(preset=None, frequency=None)
 
 
 def test_main_retries_interface_creation(mesh_module, monkeypatch):
@@ -1378,6 +1562,8 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     assert payload["channel_utilization"] == pytest.approx(0.59666663)
     assert payload["air_util_tx"] == pytest.approx(0.03908333)
     assert payload["uptime_seconds"] == 305044
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
 
 
 def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatch):
@@ -1418,6 +1604,44 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["temperature"] == pytest.approx(21.98)
     assert payload["relative_humidity"] == pytest.approx(39.475586)
     assert payload["barometric_pressure"] == pytest.approx(1017.8353)
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
+
+
+def test_store_telemetry_packet_applies_lora_metadata(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.set_metadata(
+        preset="#LongFast", frequency=mesh.format_region_frequency("902-928")
+    )
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 321,
+        "rxTime": 1_700_100_000,
+        "fromId": "!beadface",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_700_100_000,
+                "deviceMetrics": {"batteryLevel": 50},
+            },
+        },
+    }
+
+    try:
+        mesh.store_packet_dict(packet)
+    finally:
+        mesh.set_metadata(preset=None, frequency=None)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["lora_preset"] == "#LongFast"
+    assert payload["lora_frequency"] == 915
 
 
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):

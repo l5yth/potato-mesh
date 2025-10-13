@@ -242,6 +242,8 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
     if raw_payload:
         position_payload["raw"] = raw_payload
 
+    lora.apply_metadata(position_payload)
+
     _queue_post_json(
         "/api/positions", position_payload, priority=queue._POSITION_POST_PRIORITY
     )
@@ -444,6 +446,8 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     if barometric_pressure is not None:
         telemetry_payload["barometric_pressure"] = barometric_pressure
 
+    lora.apply_metadata(telemetry_payload)
+
     _queue_post_json(
         "/api/telemetry", telemetry_payload, priority=queue._TELEMETRY_POST_PRIORITY
     )
@@ -606,6 +610,8 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
         except (TypeError, ValueError):
             pass
 
+    lora.apply_metadata(node_payload)
+
     _queue_post_json(
         "/api/nodes", {node_id: node_payload}, priority=queue._NODE_POST_PRIORITY
     )
@@ -719,6 +725,8 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
         payload["node_broadcast_interval_secs"] = node_broadcast_interval
     if last_sent_by_id is not None:
         payload["last_sent_by_id"] = last_sent_by_id
+
+    lora.apply_metadata(payload)
 
     _queue_post_json("/api/neighbors", payload, priority=queue._NEIGHBOR_POST_PRIORITY)
 
