@@ -805,6 +805,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include("#{APP_VERSION}")
     end
 
+    it "renders the responsive footer container" do
+      get "/"
+
+      expect(last_response.body).to include('<footer class="app-footer">')
+      expect(last_response.body).to include('class="footer-content"')
+    end
+
     it "includes SEO metadata from configuration" do
       allow(PotatoMesh::Config).to receive(:site_name).and_return("Spec Mesh Title")
       allow(PotatoMesh::Config).to receive(:channel).and_return("#SpecChannel")
