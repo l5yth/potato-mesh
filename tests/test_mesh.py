@@ -124,10 +124,19 @@ def mesh_module(monkeypatch):
 
     ble_interface_mod.BLEInterface = DummyBLEInterface
 
+    mesh_interface_mod = types.ModuleType("meshtastic.mesh_interface")
+
+    class DummyMeshInterface:
+        MODEM_PRESET = "DEFAULT_PRESET"
+
+    mesh_interface_mod.MeshInterface = DummyMeshInterface
+    mesh_interface_mod.MODEM_PRESET = "DEFAULT_PRESET"
+
     meshtastic_mod = types.ModuleType("meshtastic")
     meshtastic_mod.serial_interface = serial_interface_mod
     meshtastic_mod.tcp_interface = tcp_interface_mod
     meshtastic_mod.ble_interface = ble_interface_mod
+    meshtastic_mod.mesh_interface = mesh_interface_mod
     if real_protobuf is not None:
         meshtastic_mod.protobuf = real_protobuf
     else:
@@ -154,6 +163,7 @@ def mesh_module(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "meshtastic.tcp_interface", tcp_interface_mod)
     monkeypatch.setitem(sys.modules, "meshtastic.ble_interface", ble_interface_mod)
+    monkeypatch.setitem(sys.modules, "meshtastic.mesh_interface", mesh_interface_mod)
     if real_protobuf is not None:
         monkeypatch.setitem(sys.modules, "meshtastic.protobuf", real_protobuf)
 
@@ -1259,6 +1269,161 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["temperature"] == pytest.approx(21.98)
     assert payload["relative_humidity"] == pytest.approx(39.475586)
     assert payload["barometric_pressure"] == pytest.approx(1017.8353)
+
+
+def test_refresh_channel_metadata_tracks_primary_and_secondary(
+    mesh_module, monkeypatch
+):
+    mesh = mesh_module
+    monkeypatch.delenv("CHANNEL", raising=False)
+    primary = SimpleNamespace(role=1)
+    secondary = SimpleNamespace(
+        role=2, index=2, settings=SimpleNamespace(name="Backhaul")
+    )
+    iface = SimpleNamespace(localNode=SimpleNamespace(channels=[primary, secondary]))
+
+    metadata = mesh.refresh_channel_metadata(iface)
+
+    assert metadata == [(0, "DEFAULT_PRESET"), (2, "Backhaul")]
+    assert mesh.channel_metadata() == metadata
+
+
+def test_refresh_channel_metadata_falls_back_to_env_channel(mesh_module, monkeypatch):
+    mesh = mesh_module
+    channels_mod = sys.modules["data.mesh_ingestor.channels"]
+    mesh_iface_mod = getattr(channels_mod, "_mesh_interface_mod", None)
+    if mesh_iface_mod is not None:
+        monkeypatch.setattr(mesh_iface_mod, "MODEM_PRESET", None, raising=False)
+        mesh_iface_cls = getattr(mesh_iface_mod, "MeshInterface", None)
+        if mesh_iface_cls is not None:
+            monkeypatch.setattr(mesh_iface_cls, "MODEM_PRESET", None, raising=False)
+    monkeypatch.setenv("CHANNEL", "ENV_PRESET")
+    iface = SimpleNamespace(
+        localNode=SimpleNamespace(channels={0: SimpleNamespace(role=1)})
+    )
+
+    metadata = mesh.refresh_channel_metadata(iface)
+
+    assert metadata == [(0, "ENV_PRESET")]
+
+
+def test_refresh_channel_metadata_handles_missing_interface(mesh_module):
+    mesh = mesh_module
+
+    metadata = mesh.refresh_channel_metadata(SimpleNamespace())
+
+    assert metadata == []
+
+
+def test_store_packet_dict_includes_channel_name_when_known(
+    mesh_module, monkeypatch, capsys
+):
+    mesh = mesh_module
+    channel = SimpleNamespace(role=2, index=5, settings={"name": "SideChannel"})
+    mesh.refresh_channel_metadata(
+        SimpleNamespace(localNode=SimpleNamespace(channels=[channel]))
+    )
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 42,
+        "rxTime": 1,
+        "from": "!abc",
+        "decoded": {
+            "portnum": "TEXT_MESSAGE_APP",
+            "payload": {"text": "hello"},
+            "channel": 5,
+        },
+    }
+
+    monkeypatch.setattr(mesh, "DEBUG", True, raising=False)
+    capsys.readouterr()
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    payload = captured[0][1]
+    assert payload["channel_name"] == "SideChannel"
+    out = capsys.readouterr().out
+    assert "channel_label='SideChannel'" in out
+
+
+def test_store_packet_dict_omits_channel_name_for_encrypted_packets(
+    mesh_module, monkeypatch, capsys
+):
+    mesh = mesh_module
+    channel = SimpleNamespace(role=2, index=3, settings=SimpleNamespace(name="Secure"))
+    mesh.refresh_channel_metadata(
+        SimpleNamespace(localNode=SimpleNamespace(channels=[channel]))
+    )
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 7,
+        "rxTime": 2,
+        "from": "!abc",
+        "channel": 3,
+        "encrypted": "abc123==",
+    }
+
+    monkeypatch.setattr(mesh, "DEBUG", True, raising=False)
+    capsys.readouterr()
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    payload = captured[0][1]
+    assert "channel_name" not in payload
+    out = capsys.readouterr().out
+    assert "channel_label=3" in out
+
+
+def test_store_packet_dict_omits_channel_name_when_unknown(
+    mesh_module, monkeypatch, capsys
+):
+    mesh = mesh_module
+    channel = SimpleNamespace(role=2, index=8, settings=SimpleNamespace(name=None))
+    mesh.refresh_channel_metadata(
+        SimpleNamespace(localNode=SimpleNamespace(channels=[channel]))
+    )
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 9,
+        "rxTime": 3,
+        "from": "!abc",
+        "decoded": {
+            "portnum": "TEXT_MESSAGE_APP",
+            "payload": {"text": "test"},
+            "channel": 1,
+        },
+    }
+
+    monkeypatch.setattr(mesh, "DEBUG", True, raising=False)
+    capsys.readouterr()
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    payload = captured[0][1]
+    assert "channel_name" not in payload
+    out = capsys.readouterr().out
+    assert "channel_label=1" in out
 
 
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):

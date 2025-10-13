@@ -23,7 +23,7 @@ import time
 
 from pubsub import pub
 
-from . import config, handlers, interfaces
+from . import channels, config, handlers, interfaces
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
@@ -251,6 +251,16 @@ def main() -> None:
                             target=resolved_target,
                         )
                         announced_target = True
+                    try:
+                        channels.refresh_channel_metadata(iface)
+                    except Exception as exc:  # pragma: no cover - defensive guard
+                        config._debug_log(
+                            "Failed to refresh channel metadata",
+                            context="daemon.interface",
+                            severity="warn",
+                            error_class=exc.__class__.__name__,
+                            error_message=str(exc),
+                        )
                     if energy_saving_enabled and energy_online_secs > 0:
                         energy_session_deadline = time.monotonic() + energy_online_secs
                     else:

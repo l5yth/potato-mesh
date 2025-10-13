@@ -21,7 +21,7 @@ import json
 import time
 from collections.abc import Mapping
 
-from . import config, queue
+from . import channels, config, queue
 from .serialization import (
     _canonical_node_id,
     _coerce_float,
@@ -827,6 +827,10 @@ def store_packet_dict(packet: Mapping) -> None:
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
     }
+    channel_name = channels.channel_name_for(channel, encrypted=bool(encrypted))
+    channel_label = channel_name if channel_name is not None else channel
+    if channel_name is not None:
+        message_payload["channel_name"] = channel_name
     _queue_post_json(
         "/api/messages", message_payload, priority=queue._MESSAGE_POST_PRIORITY
     )
@@ -842,6 +846,7 @@ def store_packet_dict(packet: Mapping) -> None:
             to_id=to_label,
             channel=channel,
             payload=payload_desc,
+            channel_label=channel_label,
         )
 
 

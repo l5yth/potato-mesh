@@ -21,7 +21,7 @@ import threading as threading  # re-exported for compatibility
 import sys
 import types
 
-from . import config, daemon, handlers, interfaces, queue, serialization
+from . import channels, config, daemon, handlers, interfaces, queue, serialization
 
 __all__: list[str] = []
 
@@ -40,7 +40,7 @@ def _export_constants() -> None:
     __all__.extend(["json", "urllib", "glob", "threading", "signal"])
 
 
-for _module in (daemon, handlers, interfaces, queue, serialization):
+for _module in (channels, daemon, handlers, interfaces, queue, serialization):
     _reexport(_module)
 
 _export_constants()
@@ -64,6 +64,7 @@ _CONFIG_ATTRS.add("PORT")
 _INTERFACE_ATTRS = {"BLEInterface", "SerialInterface", "TCPInterface"}
 
 _QUEUE_ATTRS = set(queue.__all__)
+_CHANNEL_ATTRS = set(channels.__all__)
 _HANDLER_ATTRS = set(handlers.__all__)
 _DAEMON_ATTRS = set(daemon.__all__)
 _SERIALIZATION_ATTRS = set(serialization.__all__)
@@ -85,6 +86,8 @@ class _MeshIngestorModule(types.ModuleType):
             return getattr(interfaces, name)
         if name in _INTERFACE_EXPORTS:
             return getattr(interfaces, name)
+        if name in _CHANNEL_ATTRS:
+            return getattr(channels, name)
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):  # type: ignore[override]
@@ -102,6 +105,10 @@ class _MeshIngestorModule(types.ModuleType):
         if name in _INTERFACE_EXPORTS:
             setattr(interfaces, name, value)
             super().__setattr__(name, getattr(interfaces, name, value))
+            handled = True
+        if name in _CHANNEL_ATTRS:
+            setattr(channels, name, value)
+            super().__setattr__(name, getattr(channels, name, value))
             handled = True
         if name in _QUEUE_ATTRS:
             setattr(queue, name, value)
