@@ -99,6 +99,11 @@ module PotatoMesh
       overrides = PotatoMesh::Config.config_overrides
       return PotatoMesh::Config.http_port if overrides.key?(:http_port)
 
+      env_port = ENV["PORT"]
+      return default_port unless env_port && !env_port.strip.empty?
+
+      Integer(env_port, 10)
+    rescue ArgumentError, TypeError
       default_port
     end
 

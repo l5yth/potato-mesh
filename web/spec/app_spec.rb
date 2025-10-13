@@ -34,9 +34,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
   describe ".resolve_port" do
     around do |example|
       PotatoMesh::Config.reset_overrides!
+      original_port = ENV.delete("PORT")
+
       example.run
     ensure
       PotatoMesh::Config.reset_overrides!
+      if original_port
+        ENV["PORT"] = original_port
+      else
+        ENV.delete("PORT")
+      end
     end
 
     it "returns the default port when no override is configured" do
@@ -51,6 +58,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "falls back to the default port when parsing fails" do
       PotatoMesh::Config.configure(http_port: "potato")
       expect(application_class.resolve_port).to eq(41_447)
+    end
+
+    it "honours the PORT environment variable when present" do
+      ENV["PORT"] = "5000"
+      expect(application_class.resolve_port).to eq(5_000)
     end
   end
 
