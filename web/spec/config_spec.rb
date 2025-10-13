@@ -15,6 +15,91 @@
 require "spec_helper"
 
 RSpec.describe PotatoMesh::Config do
+  describe ".data_directory" do
+    it "uses the configured XDG data home when provided" do
+      Dir.mktmpdir do |dir|
+        data_home = File.join(dir, "xdg-data")
+        within_env("XDG_DATA_HOME" => data_home) do
+          expect(described_class.data_directory).to eq(File.join(data_home, "potato-mesh"))
+        end
+      end
+    end
+
+    it "falls back to the user home directory" do
+      within_env("XDG_DATA_HOME" => nil) do
+        allow(Dir).to receive(:home).and_return("/home/spec")
+        expect(described_class.data_directory).to eq("/home/spec/.local/share/potato-mesh")
+      end
+    ensure
+      allow(Dir).to receive(:home).and_call_original
+    end
+
+    it "falls back to the web root when the home directory is unavailable" do
+      within_env("XDG_DATA_HOME" => nil) do
+        allow(Dir).to receive(:home).and_raise(ArgumentError)
+        expected = File.join(described_class.web_root, ".local", "share", "potato-mesh")
+        expect(described_class.data_directory).to eq(expected)
+      end
+    ensure
+      allow(Dir).to receive(:home).and_call_original
+    end
+
+    it "falls back to the web root when the home directory is nil" do
+      within_env("XDG_DATA_HOME" => nil) do
+        allow(Dir).to receive(:home).and_return(nil)
+        expected = File.join(described_class.web_root, ".local", "share", "potato-mesh")
+        expect(described_class.data_directory).to eq(expected)
+      end
+    ensure
+      allow(Dir).to receive(:home).and_call_original
+    end
+  end
+
+  describe ".config_directory" do
+    it "uses the configured XDG config home when provided" do
+      Dir.mktmpdir do |dir|
+        config_home = File.join(dir, "xdg-config")
+        within_env("XDG_CONFIG_HOME" => config_home) do
+          expect(described_class.config_directory).to eq(File.join(config_home, "potato-mesh"))
+        end
+      end
+    end
+
+    it "falls back to the web root when the home directory is empty" do
+      within_env("XDG_CONFIG_HOME" => nil) do
+        allow(Dir).to receive(:home).and_return("")
+        expected = File.join(described_class.web_root, ".config", "potato-mesh")
+        expect(described_class.config_directory).to eq(expected)
+      end
+    ensure
+      allow(Dir).to receive(:home).and_call_original
+    end
+  end
+
+  describe ".legacy_config_directory" do
+    it "returns the repository managed configuration directory" do
+      expect(described_class.legacy_config_directory).to eq(
+        File.join(described_class.web_root, ".config"),
+      )
+    end
+  end
+
+  describe ".legacy_keyfile_path" do
+    it "returns the legacy keyfile location" do
+      expect(described_class.legacy_keyfile_path).to eq(
+        File.join(described_class.web_root, ".config", "keyfile"),
+      )
+    end
+  end
+
+  describe ".legacy_db_path" do
+    it "returns the bundled database location" do
+      expect(described_class.legacy_db_path).to eq(
+        File.expand_path("../data/mesh.db", described_class.web_root),
+      )
+    end
+  end
+
   describe ".federation_announcement_interval" do
     it "returns eight hours in seconds" do
       expect(described_class.federation_announcement_interval).to eq(8 * 60 * 60)

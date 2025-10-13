@@ -1,0 +1,188 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe PotatoMesh::App::Filesystem do
+  let(:harness_class) do
+    Class.new do
+      extend PotatoMesh::App::Filesystem
+
+      class << self
+        def debug_entries
+          @debug_entries ||= []
+        end
+
+        def warning_entries
+          @warning_entries ||= []
+        end
+
+        def debug_log(message, context:, **metadata)
+          debug_entries << { message: message, context: context, metadata: metadata }
+        end
+
+        def warn_log(message, context:, **metadata)
+          warning_entries << { message: message, context: context, metadata: metadata }
+        end
+
+        def reset_logs!
+          @debug_entries = []
+          @warning_entries = []
+        end
+      end
+    end
+  end
+
+  around do |example|
+    harness_class.reset_logs!
+    example.run
+    harness_class.reset_logs!
+  end
+
+  describe "#perform_initial_filesystem_setup!" do
+    it "migrates the legacy database and keyfile" do
+      Dir.mktmpdir do |dir|
+        legacy_db = File.join(dir, "legacy", "mesh.db")
+        legacy_key = File.join(dir, "legacy-config", "keyfile")
+        new_db = File.join(dir, "data", "potato-mesh", "mesh.db")
+        new_key = File.join(dir, "config", "potato-mesh", "keyfile")
+
+        FileUtils.mkdir_p(File.dirname(legacy_db))
+        File.write(legacy_db, "db")
+        FileUtils.mkdir_p(File.dirname(legacy_key))
+        File.write(legacy_key, "key")
+
+        allow(PotatoMesh::Config).to receive_messages(
+          legacy_db_path: legacy_db,
+          db_path: new_db,
+          default_db_path: new_db,
+          legacy_keyfile_path: legacy_key,
+          keyfile_path: new_key,
+        )
+
+        harness_class.perform_initial_filesystem_setup!
+
+        expect(File).to exist(new_db)
+        expect(File).to exist(new_key)
+        expect(File.read(new_db)).to eq("db")
+        expect(File.read(new_key)).to eq("key")
+        expect(File.stat(new_key).mode & 0o777).to eq(0o600)
+        expect(File.stat(new_db).mode & 0o777).to eq(0o600)
+        expect(harness_class.debug_entries.size).to eq(2)
+        expect(harness_class.warning_entries).to be_empty
+      end
+    end
+
+    it "skips database migration when using a custom destination" do
+      Dir.mktmpdir do |dir|
+        legacy_db = File.join(dir, "legacy", "mesh.db")
+        new_db = File.join(dir, "custom", "database.db")
+
+        FileUtils.mkdir_p(File.dirname(legacy_db))
+        File.write(legacy_db, "db")
+
+        allow(PotatoMesh::Config).to receive_messages(
+          legacy_db_path: legacy_db,
+          db_path: new_db,
+          default_db_path: File.join(dir, "default", "mesh.db"),
+          legacy_keyfile_path: File.join(dir, "old", "keyfile"),
+          keyfile_path: File.join(dir, "config", "keyfile"),
+        )
+
+        harness_class.perform_initial_filesystem_setup!
+
+        expect(File).not_to exist(new_db)
+      end
+    end
+  end
+
+  describe "private migration helpers" do
+    it "does not migrate when the source is missing" do
+      Dir.mktmpdir do |dir|
+        destination = File.join(dir, "target", "file")
+        harness_class.send(
+          :migrate_legacy_file,
+          File.join(dir, "missing"),
+          destination,
+          chmod: 0o600,
+          context: "spec.context",
+        )
+
+        expect(File).not_to exist(destination)
+        expect(harness_class.debug_entries).to be_empty
+      end
+    end
+
+    it "does not overwrite existing destinations" do
+      Dir.mktmpdir do |dir|
+        source = File.join(dir, "source")
+        destination = File.join(dir, "destination")
+
+        File.write(source, "alpha")
+        FileUtils.mkdir_p(File.dirname(destination))
+        File.write(destination, "beta")
+
+        harness_class.send(
+          :migrate_legacy_file,
+          source,
+          destination,
+          chmod: 0o600,
+          context: "spec.context",
+        )
+
+        expect(File.read(destination)).to eq("beta")
+      end
+    end
+
+    it "ignores migrations when the source and destination are identical" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "shared")
+        File.write(path, "same")
+
+        harness_class.send(
+          :migrate_legacy_file,
+          path,
+          path,
+          chmod: 0o600,
+          context: "spec.context",
+        )
+
+        expect(harness_class.debug_entries).to be_empty
+      end
+    end
+
+    it "logs warnings when the migration fails" do
+      Dir.mktmpdir do |dir|
+        source = File.join(dir, "source")
+        destination = File.join(dir, "destination")
+        File.write(source, "data")
+
+        allow(FileUtils).to receive(:mkdir_p).and_raise(Errno::EACCES)
+
+        harness_class.send(
+          :migrate_legacy_file,
+          source,
+          destination,
+          chmod: 0o600,
+          context: "spec.context",
+        )
+
+        expect(harness_class.warning_entries.size).to eq(1)
+        expect(harness_class.debug_entries).to be_empty
+      end
+    ensure
+      allow(FileUtils).to receive(:mkdir_p).and_call_original
+    end
+  end
+end
