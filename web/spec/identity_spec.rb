@@ -40,5 +40,28 @@ RSpec.describe PotatoMesh::App::Identity do
     ensure
       allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
     end
+
+    it "migrates a legacy keyfile before loading" do
+      Dir.mktmpdir do |dir|
+        key_path = File.join(dir, "config", "potato-mesh", "keyfile")
+        legacy_key_path = File.join(dir, "legacy", "keyfile")
+        FileUtils.mkdir_p(File.dirname(legacy_key_path))
+        key = OpenSSL::PKey::RSA.new(2048)
+        File.write(legacy_key_path, key.export)
+
+        allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(key_path)
+        allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_return([legacy_key_path])
+
+        loaded_key, generated = harness_class.load_or_generate_instance_private_key
+
+        expect(generated).to be(false)
+        expect(loaded_key.to_pem).to eq(key.to_pem)
+        expect(File.exist?(key_path)).to be(true)
+        expect(File.binread(key_path)).to eq(key.export)
+      end
+    ensure
+      allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
+      allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_call_original
+    end
   end
 end
