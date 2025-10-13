@@ -126,7 +126,7 @@ tbody tr:nth-child(even) td {
 body {
   font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
   margin: var(--pad);
-  padding-bottom: 32px;
+  padding-bottom: 96px;
   --map-tiles-filter: var(--map-tile-filter-light);
 }
 
@@ -740,16 +740,66 @@ input[type="radio"] {
   font-size: 12px;
 }
 
-footer {
+.app-footer {
   position: fixed;
-  bottom: 0;
-  left: var(--pad);
-  width: calc(100% - 2 * var(--pad));
+  inset-block-end: 0;
+  inset-inline: 0;
+  width: 100%;
   background: #fafafa;
   border-top: 1px solid #ddd;
-  text-align: center;
   font-size: 12px;
-  padding: 4px 0;
+  z-index: 4100;
+}
+
+.app-footer .footer-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 960px;
+  padding: 6px var(--pad);
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.app-footer .footer-separator {
+  margin: 0 4px;
+}
+
+.app-footer .footer-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.app-footer .footer-brand {
+  font-weight: 600;
+}
+
+.app-footer a {
+  color: inherit;
+}
+
+@media (max-width: 600px) {
+  .app-footer .footer-content {
+    padding: 10px 12px;
+    justify-content: center;
+    gap: 4px 8px;
+  }
+
+  .app-footer .footer-links {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .app-footer .footer-separator {
+    display: none;
+  }
 }
 
 .info-overlay {

@@ -408,65 +408,106 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    describe "#determine_app_version" do
-      let(:repo_root) { File.expand_path("..", __dir__) }
-      let(:git_dir) { File.join(repo_root, ".git") }
+    describe ".locate_git_repo_root" do
+      it "returns nil when a git directory cannot be found" do
+        nested_dir = Dir.mktmpdir("potato-mesh-no-git-")
+        begin
+          deep_dir = File.join(nested_dir, "a", "b", "c")
+          FileUtils.mkdir_p(deep_dir)
 
-      before do
-        allow(File).to receive(:directory?).and_call_original
+          result = application_class.send(:locate_git_repo_root, deep_dir)
+          expect(result).to be_nil
+        ensure
+          FileUtils.remove_entry(nested_dir)
+        end
       end
 
-      it "returns the fallback when the git directory is missing" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(false)
+      it "locates a git directory" do
+        nested_dir = Dir.mktmpdir("potato-mesh-with-git-")
+        begin
+          repo_root = File.join(nested_dir, "repo")
+          FileUtils.mkdir_p(File.join(repo_root, ".git"))
+          deep_dir = File.join(repo_root, "lib", "potato")
+          FileUtils.mkdir_p(deep_dir)
 
-        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+          result = application_class.send(:locate_git_repo_root, deep_dir)
+          expect(result).to eq(repo_root)
+        ensure
+          FileUtils.remove_entry(nested_dir)
+        end
+      end
+
+      it "recognises git worktree files" do
+        nested_dir = Dir.mktmpdir("potato-mesh-worktree-")
+        begin
+          repo_root = File.join(nested_dir, "worktree")
+          FileUtils.mkdir_p(repo_root)
+          File.write(File.join(repo_root, ".git"), "gitdir: /tmp/worktree")
+          deep_dir = File.join(repo_root, "app", "lib")
+          FileUtils.mkdir_p(deep_dir)
+
+          result = application_class.send(:locate_git_repo_root, deep_dir)
+          expect(result).to eq(repo_root)
+        ensure
+          FileUtils.remove_entry(nested_dir)
+        end
+      end
+    end
+
+    describe "#determine_app_version" do
+      let(:repo_root) { File.expand_path("..", __dir__) }
+
+      it "returns the fallback when the git directory is missing" do
+        allow(application_class).to receive(:locate_git_repo_root).and_return(nil)
+
+        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
 
       it "returns the fallback when git describe fails" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:capture2).and_return(["ignored", status])
 
-        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
 
       it "returns the fallback when git describe output is empty" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["\n", status])
 
-        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
 
       it "returns the original describe output when the format is unexpected" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["weird-output", status])
 
-        expect(determine_app_version).to eq("weird-output")
+        expect(application_class.determine_app_version).to eq("weird-output")
       end
 
       it "normalises the version when no commits are ahead of the tag" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["v1.2.3-0-gabcdef1", status])
 
-        expect(determine_app_version).to eq("v1.2.3")
+        expect(application_class.determine_app_version).to eq("v1.2.3")
       end
 
       it "includes commit metadata when ahead of the tag" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["v1.2.3-5-gabcdef1", status])
 
-        expect(determine_app_version).to eq("v1.2.3+5-abcdef1")
+        expect(application_class.determine_app_version).to eq("v1.2.3+5-abcdef1")
       end
 
       it "returns the fallback when git describe raises an error" do
-        allow(File).to receive(:directory?).with(git_dir).and_return(true)
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         allow(Open3).to receive(:capture2).and_raise(StandardError, "boom")
 
-        expect(determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
       end
     end
 
@@ -762,6 +803,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "includes the application version in the footer" do
       get "/"
       expect(last_response.body).to include("#{APP_VERSION}")
+    end
+
+    it "renders the responsive footer container" do
+      get "/"
+
+      expect(last_response.body).to include('<footer class="app-footer">')
+      expect(last_response.body).to include('class="footer-content"')
     end
 
     it "includes SEO metadata from configuration" do

@@ -196,20 +196,29 @@
     </div>
   </template>
 
-  <footer>
-    PotatoMesh
-    <% if version && !version.empty? %>
-      <span class="mono"><%= version %></span> —
-    <% end %>
-    GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
-    <% if contact_link && !contact_link.empty? %>
-      — <%= site_name %> chat:
-      <% if contact_link_url %>
-        <a href="<%= contact_link_url %>" target="_blank"><%= contact_link %></a>
-      <% else %>
-        <%= contact_link %>
+  <footer class="app-footer">
+    <div class="footer-content">
+      <span class="footer-brand">PotatoMesh</span>
+      <% if version && !version.empty? %>
+        <span class="mono"><%= version %></span>
       <% end %>
-    <% end %>
+      <span class="footer-separator" aria-hidden="true">—</span>
+      <span class="footer-links">
+        GitHub:
+        <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
+        <% if contact_link && !contact_link.empty? %>
+          <span class="footer-separator" aria-hidden="true">—</span>
+          <span class="footer-contact">
+            <%= site_name %> chat:
+            <% if contact_link_url %>
+              <a href="<%= contact_link_url %>" target="_blank"><%= contact_link %></a>
+            <% else %>
+              <%= contact_link %>
+            <% end %>
+          </span>
+        <% end %>
+      </span>
+    </div>
   </footer>
 
   

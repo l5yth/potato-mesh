@@ -19,9 +19,8 @@ module PotatoMesh
       #
       # @return [String] semantic version compatible identifier.
       def determine_app_version
-        repo_root = File.expand_path("../../..", __dir__)
-        git_dir = File.join(repo_root, ".git")
-        return PotatoMesh::Config.version_fallback unless File.directory?(git_dir)
+        repo_root = locate_git_repo_root(File.expand_path("../../..", __dir__))
+        return PotatoMesh::Config.version_fallback unless repo_root
 
         stdout, status = Open3.capture2("git", "-C", repo_root, "describe", "--tags", "--long", "--abbrev=7")
         return PotatoMesh::Config.version_fallback unless status.success?
@@ -40,6 +39,29 @@ module PotatoMesh
         "#{tag}+#{count}-#{hash}"
       rescue StandardError
         PotatoMesh::Config.version_fallback
+      end
+
+      # Discover the root directory of the git repository containing the
+      # application by traversing parent directories until a ``.git`` entry is
+      # located. This supports both traditional repositories where ``.git`` is a
+      # directory and worktree checkouts where it is a plain file.
+      #
+      # @param start_dir [String] absolute path where the search should begin.
+      # @return [String, nil] absolute path to the repository root when found,
+      #   otherwise ``nil``.
+      def locate_git_repo_root(start_dir)
+        current = File.expand_path(start_dir)
+        loop do
+          git_entry = File.join(current, ".git")
+          return current if File.exist?(git_entry)
+
+          parent = File.dirname(current)
+          break if parent == current
+
+          current = parent
+        end
+
+        nil
       end
 
       # Load the persisted instance private key or generate a new one when absent.
@@ -111,7 +133,7 @@ module PotatoMesh
         end
       end
 
-      private :migrate_legacy_keyfile_for_identity!
+      private :migrate_legacy_keyfile_for_identity!, :locate_git_repo_root
 
       # Return the directory used to store well-known documents.
       #
