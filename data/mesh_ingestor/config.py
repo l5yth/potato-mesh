@@ -17,27 +17,63 @@
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
+from types import ModuleType
 from typing import Any
 
-PORT = os.environ.get("MESH_SERIAL")
-SNAPSHOT_SECS = int(os.environ.get("MESH_SNAPSHOT_SECS", "60"))
-CHANNEL_INDEX = int(os.environ.get("MESH_CHANNEL_INDEX", "0"))
+DEFAULT_SNAPSHOT_SECS = 60
+"""Default interval, in seconds, between state snapshot uploads."""
+
+DEFAULT_CHANNEL_INDEX = 0
+"""Default LoRa channel index used when none is specified."""
+
+DEFAULT_RECONNECT_INITIAL_DELAY_SECS = 5.0
+"""Initial reconnection delay applied after connection loss."""
+
+DEFAULT_RECONNECT_MAX_DELAY_SECS = 60.0
+"""Maximum reconnection backoff delay applied by the ingestor."""
+
+DEFAULT_CLOSE_TIMEOUT_SECS = 5.0
+"""Grace period for interface shutdown routines to complete."""
+
+DEFAULT_INACTIVITY_RECONNECT_SECS = float(60 * 60)
+"""Interval before forcing a reconnect when no packets are observed."""
+
+DEFAULT_ENERGY_ONLINE_DURATION_SECS = 300.0
+"""Duration to stay online before entering a low-power sleep cycle."""
+
+DEFAULT_ENERGY_SLEEP_SECS = float(6 * 60 * 60)
+"""Sleep duration used when energy saving mode is active."""
+
+CONNECTION = os.environ.get("CONNECTION") or os.environ.get("MESH_SERIAL")
+"""Optional connection target for the mesh interface.
+
+When unset, platform-specific defaults will be inferred by the interface
+implementations. The legacy :envvar:`MESH_SERIAL` environment variable is still
+accepted for backwards compatibility.
+"""
+
+SNAPSHOT_SECS = DEFAULT_SNAPSHOT_SECS
+"""Interval, in seconds, between state snapshot uploads."""
+
+CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
+"""Index of the LoRa channel to select when connecting."""
+
 DEBUG = os.environ.get("DEBUG") == "1"
 INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
 API_TOKEN = os.environ.get("API_TOKEN", "")
 ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 
-_RECONNECT_INITIAL_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_INITIAL", "5"))
-_RECONNECT_MAX_DELAY_SECS = float(os.environ.get("MESH_RECONNECT_MAX", "60"))
-_CLOSE_TIMEOUT_SECS = float(os.environ.get("MESH_CLOSE_TIMEOUT", "5"))
-_INACTIVITY_RECONNECT_SECS = float(
-    os.environ.get("MESH_INACTIVITY_RECONNECT_SECS", str(60 * 60))
-)
-_ENERGY_ONLINE_DURATION_SECS = float(
-    os.environ.get("ENERGY_ONLINE_DURATION_SECS", "300")
-)
-_ENERGY_SLEEP_SECS = float(os.environ.get("ENERGY_SLEEP_SECS", str(6 * 60 * 60)))
+_RECONNECT_INITIAL_DELAY_SECS = DEFAULT_RECONNECT_INITIAL_DELAY_SECS
+_RECONNECT_MAX_DELAY_SECS = DEFAULT_RECONNECT_MAX_DELAY_SECS
+_CLOSE_TIMEOUT_SECS = DEFAULT_CLOSE_TIMEOUT_SECS
+_INACTIVITY_RECONNECT_SECS = DEFAULT_INACTIVITY_RECONNECT_SECS
+_ENERGY_ONLINE_DURATION_SECS = DEFAULT_ENERGY_ONLINE_DURATION_SECS
+_ENERGY_SLEEP_SECS = DEFAULT_ENERGY_SLEEP_SECS
+
+# Backwards compatibility shim for legacy imports.
+PORT = CONNECTION
 
 
 def _debug_log(
@@ -75,7 +111,7 @@ def _debug_log(
 
 
 __all__ = [
-    "PORT",
+    "CONNECTION",
     "SNAPSHOT_SECS",
     "CHANNEL_INDEX",
     "DEBUG",
@@ -90,3 +126,19 @@ __all__ = [
     "_ENERGY_SLEEP_SECS",
     "_debug_log",
 ]
+
+
+class _ConfigModule(ModuleType):
+    """Module proxy that keeps connection aliases synchronised."""
+
+    def __setattr__(self, name: str, value: Any) -> None:  # type: ignore[override]
+        """Propagate CONNECTION/PORT assignments to both attributes."""
+
+        if name in {"CONNECTION", "PORT"}:
+            super().__setattr__("CONNECTION", value)
+            super().__setattr__("PORT", value)
+            return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _ConfigModule
