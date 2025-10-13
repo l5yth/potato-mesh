@@ -159,7 +159,7 @@ module PotatoMesh
         params << limit
 
         rows = db.execute(sql, params)
-        rows.select! do |r|
+        rows = rows.select do |r|
           last_candidate = [r["last_heard"], r["position_time"], r["first_heard"]]
             .map { |value| coerce_integer(value) }
             .compact
