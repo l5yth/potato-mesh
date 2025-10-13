@@ -163,25 +163,41 @@ def _refresh_lora_metadata(iface_obj) -> None:
         lora.set_metadata(preset=None, frequency=None)
         return
 
-    get_config = getattr(iface_obj, "getDeviceConfig", None)
-    if not callable(get_config):
-        lora.set_metadata(preset=None, frequency=None)
-        return
+    preset: str | None
+    frequency: int | None
+    metadata_source: str | None = None
 
-    try:
-        device_config = get_config()
-    except Exception as exc:  # pragma: no cover - requires faulty interface
-        lora.set_metadata(preset=None, frequency=None)
-        config._debug_log(
-            "Failed to fetch device config",
-            context="daemon.lora",
-            severity="warn",
-            error_class=exc.__class__.__name__,
-            error_message=str(exc),
-        )
-        return
+    radio_config = getattr(iface_obj, "radioConfig", None)
+    preset = frequency = None
+    if radio_config is not None:
+        preset, frequency = lora.extract_from_radio_config(radio_config)
+        if preset is not None or frequency is not None:
+            metadata_source = "radio_config"
 
-    preset, frequency = lora.update_from_device_config(device_config)
+    if metadata_source is None:
+        get_config = getattr(iface_obj, "getDeviceConfig", None)
+        if not callable(get_config):
+            lora.set_metadata(preset=None, frequency=None)
+            return
+
+        try:
+            device_config = get_config()
+        except Exception as exc:  # pragma: no cover - requires faulty interface
+            lora.set_metadata(preset=None, frequency=None)
+            config._debug_log(
+                "Failed to fetch device config",
+                context="daemon.lora",
+                severity="warn",
+                error_class=exc.__class__.__name__,
+                error_message=str(exc),
+            )
+            return
+
+        preset, frequency = lora.extract_from_device_config(device_config)
+        if preset is not None or frequency is not None:
+            metadata_source = "device_config"
+
+    lora.set_metadata(preset=preset, frequency=frequency)
     if config.DEBUG:
         config._debug_log(
             "Updated LoRa metadata",
@@ -189,6 +205,7 @@ def _refresh_lora_metadata(iface_obj) -> None:
             severity="info",
             lora_preset=preset,
             lora_frequency=frequency,
+            lora_source=metadata_source or "unknown",
         )
 
 

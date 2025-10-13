@@ -92,6 +92,27 @@ def extract_from_device_config(device_config: Any) -> tuple[str | None, int | No
     return format_modem_preset(preset), format_region_frequency(region)
 
 
+def extract_from_radio_config(radio_config: Any) -> tuple[str | None, int | None]:
+    """Return LoRa metadata extracted from a Meshtastic ``RadioConfig`` proto.
+
+    The mesh daemon exposes the last-known radio configuration on
+    ``iface.radioConfig``. This helper drills into the ``preferences`` section to
+    obtain the modem preset and region fields, converting them into the
+    application-friendly formats handled elsewhere in the ingestion pipeline.
+    """
+
+    if radio_config is None:
+        return None, None
+    preferences = _lookup(radio_config, "preferences")
+    if preferences is None:
+        return None, None
+    preset = _lookup(preferences, "modem_preset")
+    if preset is None:
+        preset = _lookup(preferences, "modemPreset")
+    region = _lookup(preferences, "region")
+    return format_modem_preset(preset), format_region_frequency(region)
+
+
 def set_metadata(*, preset: str | None, frequency: int | None) -> None:
     """Set the cached LoRa metadata values."""
 
@@ -135,6 +156,7 @@ __all__ = [
     "extract_from_device_config",
     "format_modem_preset",
     "format_region_frequency",
+    "extract_from_radio_config",
     "set_metadata",
     "update_from_device_config",
 ]

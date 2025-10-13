@@ -1008,6 +1008,21 @@ def test_extract_from_device_config_supports_mappings_and_objects(mesh_module):
     assert frequency == 868
 
 
+def test_extract_from_radio_config_supports_preferences(mesh_module):
+    mesh = mesh_module
+
+    preferences = SimpleNamespace(modem_preset="LONG_FAST", region="US_902_928")
+    radio = SimpleNamespace(preferences=preferences)
+
+    preset, frequency = mesh.extract_from_radio_config(radio)
+
+    assert preset == "#LongFast"
+    assert frequency == 915
+
+    empty_radio = SimpleNamespace(preferences=None)
+    assert mesh.extract_from_radio_config(empty_radio) == (None, None)
+
+
 def test_upsert_payload_includes_lora_metadata(mesh_module):
     mesh = mesh_module
     mesh.set_metadata(
@@ -1027,11 +1042,12 @@ def test_refresh_lora_metadata_reads_from_interface(mesh_module):
 
     class DummyInterface:
         def __init__(self, preset, region):
-            self._preset = preset
-            self._region = region
+            self.radioConfig = SimpleNamespace(
+                preferences=SimpleNamespace(modem_preset=preset, region=region)
+            )
 
-        def getDeviceConfig(self):
-            return {"lora": {"modemPreset": self._preset, "region": self._region}}
+        def getDeviceConfig(self):  # pragma: no cover - should not be called
+            raise AssertionError("radioConfig should be preferred")
 
     mesh._refresh_lora_metadata(None)
     assert mesh.current_preset() is None
@@ -1041,6 +1057,44 @@ def test_refresh_lora_metadata_reads_from_interface(mesh_module):
     mesh._refresh_lora_metadata(iface)
     assert mesh.current_preset() == "#LongFast"
     assert mesh.current_frequency() == 915
+
+
+def test_refresh_lora_metadata_falls_back_to_device_config(mesh_module):
+    mesh = mesh_module
+
+    class DummyInterface:
+        def __init__(self, preset, region):
+            self._preset = preset
+            self._region = region
+            self.radioConfig = SimpleNamespace(preferences=None)
+            self.device_config_calls = 0
+
+        def getDeviceConfig(self):
+            self.device_config_calls += 1
+            return {"lora": {"modemPreset": self._preset, "region": self._region}}
+
+    iface = DummyInterface("LONG_SLOW", "EU_433")
+    mesh._refresh_lora_metadata(iface)
+
+    assert iface.device_config_calls == 1
+    assert mesh.current_preset() == "#LongSlow"
+    assert mesh.current_frequency() == 433
+
+
+def test_refresh_lora_metadata_clears_when_no_config(mesh_module):
+    mesh = mesh_module
+
+    class DummyInterface:
+        radioConfig = None
+
+        def getDeviceConfig(self):
+            return None
+
+    mesh.set_metadata(preset="#Existing", frequency=915)
+    mesh._refresh_lora_metadata(DummyInterface())
+
+    assert mesh.current_preset() is None
+    assert mesh.current_frequency() is None
 
 
 def test_main_retries_interface_creation(mesh_module, monkeypatch):
