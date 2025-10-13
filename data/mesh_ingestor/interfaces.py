@@ -21,7 +21,7 @@ import ipaddress
 import re
 import urllib.parse
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from meshtastic.serial_interface import SerialInterface
 from meshtastic.tcp_interface import TCPInterface
@@ -168,6 +168,171 @@ def _patch_meshtastic_ble_receive_loop() -> None:
 
 
 _patch_meshtastic_ble_receive_loop()
+
+
+def _has_field(message: Any, field_name: str) -> bool:
+    """Return ``True`` when ``message`` advertises ``field_name`` via ``HasField``."""
+
+    if message is None:
+        return False
+    has_field = getattr(message, "HasField", None)
+    if callable(has_field):
+        try:
+            return bool(has_field(field_name))
+        except Exception:  # pragma: no cover - defensive guard
+            return False
+    return hasattr(message, field_name)
+
+
+def _enum_name_from_field(message: Any, field_name: str, value: Any) -> str | None:
+    """Return the enum name for ``value`` using ``message`` descriptors."""
+
+    descriptor = getattr(message, "DESCRIPTOR", None)
+    if descriptor is None:
+        return None
+    fields_by_name = getattr(descriptor, "fields_by_name", {})
+    field_desc = fields_by_name.get(field_name)
+    if field_desc is None:
+        return None
+    enum_type = getattr(field_desc, "enum_type", None)
+    if enum_type is None:
+        return None
+    enum_values = getattr(enum_type, "values_by_number", {})
+    enum_value = enum_values.get(value)
+    if enum_value is None:
+        return None
+    return getattr(enum_value, "name", None)
+
+
+def _resolve_lora_message(local_config: Any) -> Any | None:
+    """Return the LoRa configuration sub-message from ``local_config``."""
+
+    if local_config is None:
+        return None
+    if _has_field(local_config, "lora"):
+        candidate = getattr(local_config, "lora", None)
+        if candidate is not None:
+            return candidate
+    radio_section = getattr(local_config, "radio", None)
+    if radio_section is not None:
+        if _has_field(radio_section, "lora"):
+            return getattr(radio_section, "lora", None)
+        if hasattr(radio_section, "lora"):
+            return getattr(radio_section, "lora")
+    if hasattr(local_config, "lora"):
+        return getattr(local_config, "lora")
+    return None
+
+
+def _region_frequency(lora_message: Any) -> int | None:
+    """Derive the LoRa region frequency in MHz from ``lora_message``."""
+
+    if lora_message is None:
+        return None
+    region_value = getattr(lora_message, "region", None)
+    if region_value is None:
+        return None
+    enum_name = _enum_name_from_field(lora_message, "region", region_value)
+    if enum_name:
+        digits = re.findall(r"\d+", enum_name)
+        for token in digits:
+            try:
+                freq = int(token)
+            except ValueError:  # pragma: no cover - regex guarantees digits
+                continue
+            if freq >= 100:
+                return freq
+        for token in reversed(digits):
+            try:
+                return int(token)
+            except ValueError:  # pragma: no cover - defensive only
+                continue
+    if isinstance(region_value, int) and region_value >= 100:
+        return region_value
+    return None
+
+
+def _camelcase_enum_name(name: str | None) -> str | None:
+    """Convert ``name`` from ``SCREAMING_SNAKE`` to ``CamelCase``."""
+
+    if not name:
+        return None
+    parts = re.split(r"[^0-9A-Za-z]+", name.strip())
+    camel_parts = [part.capitalize() for part in parts if part]
+    if not camel_parts:
+        return None
+    return "".join(camel_parts)
+
+
+def _modem_preset(lora_message: Any) -> str | None:
+    """Return the CamelCase modem preset configured on ``lora_message``."""
+
+    if lora_message is None:
+        return None
+    descriptor = getattr(lora_message, "DESCRIPTOR", None)
+    fields_by_name = getattr(descriptor, "fields_by_name", {}) if descriptor else {}
+    if "modem_preset" in fields_by_name:
+        preset_field = "modem_preset"
+    elif "preset" in fields_by_name:
+        preset_field = "preset"
+    elif hasattr(lora_message, "modem_preset"):
+        preset_field = "modem_preset"
+    elif hasattr(lora_message, "preset"):
+        preset_field = "preset"
+    else:
+        return None
+
+    preset_value = getattr(lora_message, preset_field, None)
+    if preset_value is None:
+        return None
+    enum_name = _enum_name_from_field(lora_message, preset_field, preset_value)
+    if isinstance(enum_name, str) and enum_name:
+        return _camelcase_enum_name(enum_name)
+    if isinstance(preset_value, str) and preset_value:
+        return _camelcase_enum_name(preset_value)
+    return None
+
+
+def _ensure_radio_metadata(iface: Any) -> None:
+    """Populate cached LoRa metadata by inspecting ``iface`` when available."""
+
+    if iface is None:
+        return
+
+    try:
+        wait_for_config = getattr(iface, "waitForConfig", None)
+        if callable(wait_for_config):
+            wait_for_config()
+    except Exception:  # pragma: no cover - hardware dependent guard
+        pass
+
+    local_node = getattr(iface, "localNode", None)
+    local_config = getattr(local_node, "localConfig", None) if local_node else None
+    lora_message = _resolve_lora_message(local_config)
+    if lora_message is None:
+        return
+
+    frequency = _region_frequency(lora_message)
+    preset = _modem_preset(lora_message)
+
+    updated = False
+    if frequency is not None and getattr(config, "LORA_FREQ", None) is None:
+        config.LORA_FREQ = frequency
+        updated = True
+    if preset is not None and getattr(config, "MODEM_PRESET", None) is None:
+        config.MODEM_PRESET = preset
+        updated = True
+
+    if updated:
+        config._debug_log(
+            "Captured LoRa radio metadata",
+            context="interfaces.ensure_radio_metadata",
+            severity="info",
+            always=True,
+            lora_freq=frequency,
+            modem_preset=preset,
+        )
+
 
 _DEFAULT_TCP_PORT = 4403
 _DEFAULT_TCP_TARGET = "http://127.0.0.1"
@@ -416,6 +581,7 @@ def _create_default_interface() -> tuple[object, str]:
 __all__ = [
     "BLEInterface",
     "NoAvailableMeshInterface",
+    "_ensure_radio_metadata",
     "_DummySerialInterface",
     "_DEFAULT_TCP_PORT",
     "_DEFAULT_TCP_TARGET",
