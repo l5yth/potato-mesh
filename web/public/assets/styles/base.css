@@ -162,14 +162,12 @@ h1 {
 
 #map {
   position: relative;
-  flex: 1;
+  width: 100%;
   height: 60vh;
   border: 1px solid #ddd;
   border-radius: 8px;
   overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
 }
 
 .map-panel.is-fullscreen,
@@ -347,9 +345,9 @@ th {
 
 .map-panel {
   position: relative;
-  flex: 1;
-  display: flex;
+  flex: 1 1 0%;
   min-width: 0;
+  display: block;
 }
 
 .map-toolbar {
@@ -900,7 +898,7 @@ footer {
 
   #map {
     order: 1;
-    flex: none;
+    width: 100%;
     max-width: 100%;
     height: 50vh;
   }
