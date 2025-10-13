@@ -29,9 +29,8 @@ x-web-base: &web-base
 x-ingestor-base: &ingestor-base
   image: ghcr.io/l5yth/potato-mesh-ingestor-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
   environment:
-    MESH_SERIAL: ${MESH_SERIAL:-/dev/ttyACM0}
-    MESH_SNAPSHOT_SECS: ${MESH_SNAPSHOT_SECS:-60}
-    MESH_CHANNEL_INDEX: ${MESH_CHANNEL_INDEX:-0}
+    CONNECTION: ${CONNECTION:-/dev/ttyACM0}
+    CHANNEL_INDEX: ${CHANNEL_INDEX:-0}
     POTATOMESH_INSTANCE: ${POTATOMESH_INSTANCE:-http://web:41447}
     API_TOKEN: ${API_TOKEN}
     DEBUG: ${DEBUG:-0}
@@ -39,7 +38,7 @@ x-ingestor-base: &ingestor-base
     - potatomesh_data:/app/data
     - potatomesh_logs:/app/logs
   devices:
-    - ${MESH_SERIAL:-/dev/ttyACM0}:${MESH_SERIAL:-/dev/ttyACM0}
+    - ${CONNECTION:-/dev/ttyACM0}:${CONNECTION:-/dev/ttyACM0}
   privileged: false
   restart: unless-stopped
   deploy:

@@ -219,7 +219,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, handle_sigterm)
 
     target = config.INSTANCE or "(no POTATOMESH_INSTANCE)"
-    configured_port = config.PORT
+    configured_port = config.CONNECTION
     active_candidate = configured_port
     announced_target = False
     config._debug_log(

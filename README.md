@@ -132,7 +132,7 @@ to the configured potato-mesh instance.
 Check out `mesh.sh` ingestor script in the `./data` directory.
 
 ```bash
-POTATOMESH_INSTANCE=http://127.0.0.1:41447 API_TOKEN=1eb140fd-cab4-40be-b862-41c607762246 MESH_SERIAL=/dev/ttyACM0 DEBUG=1 ./mesh.sh
+POTATOMESH_INSTANCE=http://127.0.0.1:41447 API_TOKEN=1eb140fd-cab4-40be-b862-41c607762246 CONNECTION=/dev/ttyACM0 DEBUG=1 ./mesh.sh
 [2025-02-20T12:34:56.789012Z] [potato-mesh] [info] channel=0 context=daemon.main port='41447' target='http://127.0.0.1' Mesh daemon starting
 [...]
 [2025-02-20T12:34:57.012345Z] [potato-mesh] [debug] context=handlers.upsert_node node_id=!849b7154 short_name='7154' long_name='7154' Queued node upsert payload
@@ -142,10 +142,10 @@ POTATOMESH_INSTANCE=http://127.0.0.1:41447 API_TOKEN=1eb140fd-cab4-40be-b862-41c
 
 Run the script with `POTATOMESH_INSTANCE` and `API_TOKEN` to keep updating
 node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
-specify the serial port with `MESH_SERIAL` (default `/dev/ttyACM0`) or set it to an IP
-address (for example `192.168.1.20:4403`) to use the Meshtastic TCP interface.
-`MESH_SERIAL` also accepts Bluetooth device addresses (e.g., `ED:4D:9E:95:CF:60`)
-and the script attempts a BLE connection if available.
+specify the connection target with `CONNECTION` (default `/dev/ttyACM0`) or set it to
+an IP address (for example `192.168.1.20:4403`) to use the Meshtastic TCP
+interface. `CONNECTION` also accepts Bluetooth device addresses (e.g.,
+`ED:4D:9E:95:CF:60`) and the script attempts a BLE connection if available.
 
 ## Demos
 

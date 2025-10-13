@@ -28,7 +28,10 @@ from meshtastic.mesh_interface import MeshInterface
 from meshtastic.serial_interface import SerialInterface
 from pubsub import pub
 
-PORT = os.environ.get("MESH_SERIAL", "/dev/ttyACM0")
+CONNECTION = os.environ.get("CONNECTION") or os.environ.get(
+    "MESH_SERIAL", "/dev/ttyACM0"
+)
+"""Connection target opened to capture Meshtastic traffic."""
 OUT = os.environ.get("MESH_DUMP_FILE", "meshtastic-dump.ndjson")
 
 # line-buffered append so you can tail -f safely
@@ -54,7 +57,7 @@ def write(kind: str, payload: dict) -> None:
 
 
 # Connect to the node
-iface: MeshInterface = SerialInterface(PORT)
+iface: MeshInterface = SerialInterface(CONNECTION)
 
 
 # Packet callback: every RF/Mesh packet the node receives/decodes lands here
@@ -92,12 +95,12 @@ try:
         "meta",
         {
             "event": "started",
-            "port": PORT,
+            "port": CONNECTION,
             "my_node_num": getattr(my, "my_node_num", None) if my else None,
         },
     )
 except Exception as e:
-    write("meta", {"event": "started", "port": PORT, "error": str(e)})
+    write("meta", {"event": "started", "port": CONNECTION, "error": str(e)})
 
 
 # Keep the process alive until Ctrl-C

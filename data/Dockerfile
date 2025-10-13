@@ -34,9 +34,8 @@ RUN addgroup -S potatomesh && \
 
 USER potatomesh
 
-ENV MESH_SERIAL=/dev/ttyACM0 \
-    MESH_SNAPSHOT_SECS=60 \
-    MESH_CHANNEL_INDEX=0 \
+ENV CONNECTION=/dev/ttyACM0 \
+    CHANNEL_INDEX=0 \
     DEBUG=0 \
     POTATOMESH_INSTANCE="" \
     API_TOKEN=""
@@ -60,9 +59,8 @@ COPY data/ .
 
 USER ContainerUser
 
-ENV MESH_SERIAL=/dev/ttyACM0 \
-    MESH_SNAPSHOT_SECS=60 \
-    MESH_CHANNEL_INDEX=0 \
+ENV CONNECTION=/dev/ttyACM0 \
+    CHANNEL_INDEX=0 \
     DEBUG=0 \
     POTATOMESH_INSTANCE="" \
     API_TOKEN=""
