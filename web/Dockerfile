@@ -53,9 +53,9 @@ COPY --chown=potatomesh:potatomesh web/views/ ./views/
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
 
 # Create data and configuration directories with correct ownership
-RUN mkdir -p /app/data \
-    && mkdir -p /app/.config/well-known \
-    && chown -R potatomesh:potatomesh /app/data /app/.config
+RUN mkdir -p /app/.local/share/potato-mesh \
+    && mkdir -p /app/.config/potato-mesh/well-known \
+    && chown -R potatomesh:potatomesh /app/.local/share /app/.config
 
 # Switch to non-root user
 USER potatomesh
@@ -66,7 +66,9 @@ EXPOSE 41447
 # Default environment variables (can be overridden by host)
 ENV RACK_ENV=production \
     APP_ENV=production \
-    MESH_DB=/app/data/mesh.db \
+    XDG_DATA_HOME=/app/.local/share \
+    XDG_CONFIG_HOME=/app/.config \
+    MESH_DB=/app/.local/share/potato-mesh/mesh.db \
     DB_BUSY_TIMEOUT_MS=5000 \
     DB_BUSY_MAX_RETRIES=5 \
     DB_BUSY_RETRY_DELAY=0.05 \

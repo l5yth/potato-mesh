@@ -32,10 +32,31 @@ module PotatoMesh
       @repo_root ||= File.expand_path("..", web_root)
     end
 
+    # Resolve the current XDG data directory for PotatoMesh content.
+    #
+    # @return [String] absolute path to the PotatoMesh data directory.
+    def data_directory
+      File.join(resolve_xdg_home("XDG_DATA_HOME", %w[.local share]), "potato-mesh")
+    end
+
+    # Resolve the current XDG configuration directory for PotatoMesh files.
+    #
+    # @return [String] absolute path to the PotatoMesh configuration directory.
+    def config_directory
+      File.join(resolve_xdg_home("XDG_CONFIG_HOME", %w[.config]), "potato-mesh")
+    end
+
     # Build the default SQLite database path inside the data directory.
     #
-    # @return [String] absolute path to +data/mesh.db+.
+    # @return [String] absolute path to the managed +mesh.db+ file.
     def default_db_path
+      File.join(data_directory, "mesh.db")
+    end
+
+    # Legacy database path bundled alongside the repository.
+    #
+    # @return [String] absolute path to the repository managed database file.
+    def legacy_db_path
       File.expand_path("../data/mesh.db", web_root)
     end
 
@@ -166,7 +187,7 @@ module PotatoMesh
     #
     # @return [String] absolute location of the PEM file.
     def keyfile_path
-      File.join(web_root, ".config", "keyfile")
+      File.join(config_directory, "keyfile")
     end
 
     # Sub-path used when exposing well known configuration files.
@@ -180,7 +201,21 @@ module PotatoMesh
     #
     # @return [String] absolute storage path.
     def well_known_storage_root
-      File.join(web_root, ".config", "well-known")
+      File.join(config_directory, "well-known")
+    end
+
+    # Legacy configuration directory bundled with the repository.
+    #
+    # @return [String] absolute path to the repository managed configuration directory.
+    def legacy_config_directory
+      File.join(web_root, ".config")
+    end
+
+    # Legacy keyfile location used before introducing XDG directories.
+    #
+    # @return [String] absolute filesystem path to the legacy keyfile.
+    def legacy_keyfile_path
+      File.join(legacy_config_directory, "keyfile")
     end
 
     # Legacy location for well known assets within the public folder.
@@ -307,6 +342,32 @@ module PotatoMesh
 
       trimmed = value.strip
       trimmed.empty? ? default : trimmed
+    end
+
+    # Resolve the effective XDG directory honoring environment overrides.
+    #
+    # @param env_key [String] name of the environment variable to inspect.
+    # @param fallback_segments [Array<String>] path segments appended to the user home directory.
+    # @return [String] absolute base directory referenced by the XDG variable.
+    def resolve_xdg_home(env_key, fallback_segments)
+      raw = fetch_string(env_key, nil)
+      candidate = raw && !raw.empty? ? raw : nil
+      return File.expand_path(candidate) if candidate
+
+      base_home = safe_home_directory
+      File.expand_path(File.join(base_home, *fallback_segments))
+    end
+
+    # Retrieve the current user's home directory handling runtime failures.
+    #
+    # @return [String] absolute path to the user home or web root fallback.
+    def safe_home_directory
+      home = Dir.home
+      return web_root if home.nil? || home.empty?
+
+      home
+    rescue ArgumentError, RuntimeError
+      web_root
     end
   end
 end

@@ -47,6 +47,7 @@ require_relative "application/federation"
 require_relative "application/prometheus"
 require_relative "application/queries"
 require_relative "application/data_processing"
+require_relative "application/filesystem"
 require_relative "application/routes/api"
 require_relative "application/routes/ingest"
 require_relative "application/routes/root"
@@ -61,6 +62,7 @@ module PotatoMesh
     extend App::Prometheus
     extend App::Queries
     extend App::DataProcessing
+    extend App::Filesystem
 
     helpers App::Helpers
     include App::Database
@@ -70,6 +72,7 @@ module PotatoMesh
     include App::Prometheus
     include App::Queries
     include App::DataProcessing
+    include App::Filesystem
 
     register App::Routes::Api
     register App::Routes::Ingest
@@ -119,6 +122,7 @@ module PotatoMesh
 
       apply_logger_level!
 
+      perform_initial_filesystem_setup!
       cleanup_legacy_well_known_artifacts
       init_db unless db_schema_present?
       ensure_schema_upgrades
