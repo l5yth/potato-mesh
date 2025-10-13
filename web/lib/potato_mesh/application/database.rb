@@ -90,6 +90,20 @@ module PotatoMesh
         unless node_columns.include?("precision_bits")
           db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
         end
+        unless node_columns.include?("lora_preset")
+          db.execute("ALTER TABLE nodes ADD COLUMN lora_preset TEXT")
+        end
+        unless node_columns.include?("lora_frequency")
+          db.execute("ALTER TABLE nodes ADD COLUMN lora_frequency TEXT")
+        end
+
+        message_columns = db.execute("PRAGMA table_info(messages)").map { |row| row[1] }
+        unless message_columns.include?("lora_preset")
+          db.execute("ALTER TABLE messages ADD COLUMN lora_preset TEXT")
+        end
+        unless message_columns.include?("lora_frequency")
+          db.execute("ALTER TABLE messages ADD COLUMN lora_frequency TEXT")
+        end
 
         tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='instances'").flatten
         if tables.empty?

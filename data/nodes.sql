@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS nodes (
   precision_bits     INTEGER,
   latitude           REAL,
   longitude          REAL,
-  altitude           REAL
+  altitude           REAL,
+  lora_preset        TEXT,
+  lora_frequency     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);

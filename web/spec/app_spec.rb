@@ -159,6 +159,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "latitude" => node["latitude"],
       "longitude" => node["longitude"],
       "altitude" => node["altitude"],
+      "lora_preset" => node["lora_preset"],
+      "lora_frequency" => node["lora_frequency"],
     }
   end
 
@@ -1103,7 +1105,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
           SELECT node_id, short_name, long_name, hw_model, role, snr,
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
-                 position_time, latitude, longitude, altitude
+                 position_time, latitude, longitude, altitude,
+                 lora_preset, lora_frequency
           FROM nodes
           ORDER BY node_id
         SQL
@@ -1128,7 +1131,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(row["latitude"], expected["latitude"])
           expect_same_value(row["longitude"], expected["longitude"])
           expect_same_value(row["altitude"], expected["altitude"])
+          expect_same_value(row["lora_preset"], expected["lora_preset"])
+          expect_same_value(row["lora_frequency"], expected["lora_frequency"])
         end
+      end
+    end
+
+    it "persists provided LoRa metadata" do
+      node_id = "!loratest"
+      payload = {
+        node_id => {
+          "user" => { "shortName" => "LoRa" },
+          "lastHeard" => reference_time.to_i,
+          "lora_preset" => "#LongFast",
+          "lora_frequency" => "902-928",
+        },
+      }
+
+      post "/api/nodes", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_preset, lora_frequency FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["lora_preset"]).to eq("#LongFast")
+        expect(row["lora_frequency"]).to eq("902-928")
       end
     end
 
@@ -1360,7 +1394,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.results_as_hash = true
         rows = db.execute(<<~SQL)
           SELECT id, rx_time, rx_iso, from_id, to_id, channel,
-                 portnum, text, snr, rssi, hop_limit
+                 portnum, text, snr, rssi, hop_limit,
+                 lora_preset, lora_frequency
           FROM messages
           ORDER BY id
         SQL
@@ -1379,7 +1414,41 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(row["snr"], expected["snr"])
           expect(row["rssi"]).to eq(expected["rssi"])
           expect(row["hop_limit"]).to eq(expected["hop_limit"])
+          expect_same_value(row["lora_preset"], expected["lora_preset"])
+          expect_same_value(row["lora_frequency"], expected["lora_frequency"])
         end
+      end
+    end
+
+    it "stores provided LoRa metadata" do
+      payload = {
+        "id" => 42,
+        "rx_time" => reference_time.to_i,
+        "rx_iso" => reference_time.iso8601,
+        "from_id" => "!spec-lora",
+        "to_id" => "^all",
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "LoRa test",
+        "lora_preset" => "#LongFast",
+        "lora_frequency" => "902-928",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_preset, lora_frequency FROM messages WHERE id = ?",
+          [payload["id"]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["lora_preset"]).to eq("#LongFast")
+        expect(row["lora_frequency"]).to eq("902-928")
       end
     end
 
@@ -2217,6 +2286,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect_same_value(actual_row["latitude"], expected["latitude"])
         expect_same_value(actual_row["longitude"], expected["longitude"])
         expect_same_value(actual_row["altitude"], expected["altitude"])
+        expect_same_value(actual_row["lora_preset"], expected["lora_preset"])
+        expect_same_value(actual_row["lora_frequency"], expected["lora_frequency"])
 
         if expected["last_heard"]
           expected_last_seen_iso = Time.at(expected["last_heard"]).utc.iso8601
@@ -2371,6 +2442,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect_same_value(actual_row["snr"], expected["snr"])
         expect(actual_row["rssi"]).to eq(expected["rssi"])
         expect(actual_row["hop_limit"]).to eq(expected["hop_limit"])
+        expect_same_value(actual_row["lora_preset"], expected["lora_preset"])
+        expect_same_value(actual_row["lora_frequency"], expected["lora_frequency"])
 
         if expected["from_id"]
           lookup_id = expected["from_id"]
@@ -2402,6 +2475,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(node_actual["latitude"], node_expected["latitude"])
           expect_same_value(node_actual["longitude"], node_expected["longitude"])
           expect_same_value(node_actual["altitude"], node_expected["altitude"])
+          expected_preset = node_expected["lora_preset"] || actual_row["lora_preset"]
+          expected_frequency = node_expected["lora_frequency"] || actual_row["lora_frequency"]
+          expect_same_value(node_actual["lora_preset"], expected_preset)
+          expect_same_value(node_actual["lora_frequency"], expected_frequency)
         else
           expect(actual_row["node"]).to be_a(Hash)
           expect(actual_row["node"]["node_id"]).to be_nil

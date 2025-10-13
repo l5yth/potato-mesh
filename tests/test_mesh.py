@@ -403,7 +403,37 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert payload["hop_limit"] == 3
     assert payload["snr"] == pytest.approx(1.25)
     assert payload["rssi"] == -70
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_store_packet_dict_applies_lora_metadata(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.set_metadata(preset="#LongFast", frequency="902-928")
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 1,
+        "rxTime": 1000,
+        "from": "!abc",
+        "decoded": {"text": "hi", "portnum": 1},
+    }
+
+    try:
+        mesh.store_packet_dict(packet)
+    finally:
+        mesh.set_metadata(preset=None, frequency=None)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["lora_preset"] == "#LongFast"
+    assert payload["lora_frequency"] == "902-928"
 
 
 def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
@@ -944,6 +974,69 @@ def test_pkt_to_dict_handles_dict_and_proto(mesh_module, monkeypatch):
     assert isinstance(fallback["_unparsed"], str)
 
 
+def test_lora_formatting_helpers(mesh_module):
+    mesh = mesh_module
+
+    assert mesh.format_modem_preset("LONG_FAST") == "#LongFast"
+    assert mesh.format_modem_preset("  long-fast ") == "#LongFast"
+    assert mesh.format_modem_preset(None) is None
+
+    assert mesh.format_region_frequency("US_902_928") == "902-928"
+    assert mesh.format_region_frequency("EU433") == "433"
+    assert mesh.format_region_frequency(None) is None
+
+
+def test_extract_from_device_config_supports_mappings_and_objects(mesh_module):
+    mesh = mesh_module
+
+    preset, frequency = mesh.extract_from_device_config(
+        {"lora": {"modemPreset": "LONG_FAST", "region": "US_902_928"}}
+    )
+    assert preset == "#LongFast"
+    assert frequency == "902-928"
+
+    class DummyConfig:
+        def __init__(self):
+            self.lora = SimpleNamespace(modemPreset="SHORT_SLOW", region="EU_868")
+
+    preset, frequency = mesh.extract_from_device_config(DummyConfig())
+    assert preset == "#ShortSlow"
+    assert frequency == "868"
+
+
+def test_upsert_payload_includes_lora_metadata(mesh_module):
+    mesh = mesh_module
+    mesh.set_metadata(preset="#LongFast", frequency="902-928")
+    try:
+        payload = mesh.upsert_payload("!node", {})
+    finally:
+        mesh.set_metadata(preset=None, frequency=None)
+
+    assert payload["!node"]["lora_preset"] == "#LongFast"
+    assert payload["!node"]["lora_frequency"] == "902-928"
+
+
+def test_refresh_lora_metadata_reads_from_interface(mesh_module):
+    mesh = mesh_module
+
+    class DummyInterface:
+        def __init__(self, preset, region):
+            self._preset = preset
+            self._region = region
+
+        def getDeviceConfig(self):
+            return {"lora": {"modemPreset": self._preset, "region": self._region}}
+
+    mesh._refresh_lora_metadata(None)
+    assert mesh.current_preset() is None
+    assert mesh.current_frequency() is None
+
+    iface = DummyInterface("LONG_FAST", "US_902_928")
+    mesh._refresh_lora_metadata(iface)
+    assert mesh.current_preset() == "#LongFast"
+    assert mesh.current_frequency() == "902-928"
+
+
 def test_main_retries_interface_creation(mesh_module, monkeypatch):
     mesh = mesh_module
 
@@ -1100,6 +1193,8 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     assert payload["text"] == "hi"
     assert payload["encrypted"] is None
     assert payload["snr"] is None and payload["rssi"] is None
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1130,6 +1225,8 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert path == "/api/messages"
     assert payload["channel"] == 0
     assert payload["encrypted"] is None
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1160,6 +1257,8 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     assert payload["text"] is None
     assert payload["from_id"] == 2988082812
     assert payload["to_id"] == "!receiver"
+    assert payload["lora_preset"] is None
+    assert payload["lora_frequency"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1587,6 +1686,9 @@ def test_upsert_node_logs_in_debug(mesh_module, monkeypatch, capsys):
     mesh.upsert_node("!node", {"user": {"shortName": "SN", "longName": "LN"}})
 
     assert captured
+    _, payload, _ = captured[0]
+    assert payload["!node"].get("lora_preset") is None
+    assert payload["!node"].get("lora_frequency") is None
     out = capsys.readouterr().out
     assert "context=handlers.upsert_node" in out
     assert "Queued node upsert payload" in out

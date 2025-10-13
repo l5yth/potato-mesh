@@ -250,13 +250,15 @@ module PotatoMesh
           pos["latitude"],
           pos["longitude"],
           pos["altitude"],
+          string_or_nil(n["lora_preset"]),
+          string_or_nil(n["lora_frequency"]),
         ]
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                          hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                         position_time,location_source,precision_bits,latitude,longitude,altitude)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                         position_time,location_source,precision_bits,latitude,longitude,altitude,lora_preset,lora_frequency)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(node_id) DO UPDATE SET
                          num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                          hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
@@ -265,7 +267,8 @@ module PotatoMesh
                          battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                          air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
                          location_source=excluded.location_source, precision_bits=excluded.precision_bits, latitude=excluded.latitude, longitude=excluded.longitude,
-                         altitude=excluded.altitude
+                         altitude=excluded.altitude, lora_preset=COALESCE(excluded.lora_preset, nodes.lora_preset),
+                         lora_frequency=COALESCE(excluded.lora_frequency, nodes.lora_frequency)
                        WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                      SQL
         end
@@ -954,11 +957,13 @@ module PotatoMesh
           message["snr"],
           message["rssi"],
           message["hop_limit"],
+          string_or_nil(message["lora_preset"]),
+          string_or_nil(message["lora_frequency"]),
         ]
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, encrypted FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, encrypted, lora_preset, lora_frequency FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -988,6 +993,24 @@ module PotatoMesh
               updates["encrypted"] = encrypted if should_update
             end
 
+            preset = string_or_nil(message["lora_preset"])
+            if preset
+              existing_preset = existing.is_a?(Hash) ? existing["lora_preset"] : existing[3]
+              existing_preset_str = existing_preset&.to_s
+              should_update = existing_preset_str.nil? || existing_preset_str.strip.empty?
+              should_update ||= existing_preset != preset
+              updates["lora_preset"] = preset if should_update
+            end
+
+            frequency = string_or_nil(message["lora_frequency"])
+            if frequency
+              existing_frequency = existing.is_a?(Hash) ? existing["lora_frequency"] : existing[4]
+              existing_frequency_str = existing_frequency&.to_s
+              should_update = existing_frequency_str.nil? || existing_frequency_str.strip.empty?
+              should_update ||= existing_frequency != frequency
+              updates["lora_frequency"] = frequency if should_update
+            end
+
             unless updates.empty?
               assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
               db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
@@ -997,14 +1020,18 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_preset,lora_frequency)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
               fallback_updates["to_id"] = to_id if to_id
               fallback_updates["encrypted"] = encrypted if encrypted
+              preset = string_or_nil(message["lora_preset"])
+              frequency = string_or_nil(message["lora_frequency"])
+              fallback_updates["lora_preset"] = preset if preset
+              fallback_updates["lora_frequency"] = frequency if frequency
               unless fallback_updates.empty?
                 assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
                 db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])

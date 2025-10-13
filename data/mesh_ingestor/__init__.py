@@ -21,7 +21,7 @@ import threading as threading  # re-exported for compatibility
 import sys
 import types
 
-from . import config, daemon, handlers, interfaces, queue, serialization
+from . import config, daemon, handlers, interfaces, lora, queue, serialization
 
 __all__: list[str] = []
 
@@ -40,7 +40,7 @@ def _export_constants() -> None:
     __all__.extend(["json", "urllib", "glob", "threading", "signal"])
 
 
-for _module in (daemon, handlers, interfaces, queue, serialization):
+for _module in (daemon, handlers, interfaces, lora, queue, serialization):
     _reexport(_module)
 
 _export_constants()
@@ -67,6 +67,7 @@ _QUEUE_ATTRS = set(queue.__all__)
 _HANDLER_ATTRS = set(handlers.__all__)
 _DAEMON_ATTRS = set(daemon.__all__)
 _SERIALIZATION_ATTRS = set(serialization.__all__)
+_LORA_ATTRS = set(lora.__all__)
 _INTERFACE_EXPORTS = set(interfaces.__all__)
 
 __all__.extend(sorted(_CONFIG_ATTRS))
@@ -85,6 +86,8 @@ class _MeshIngestorModule(types.ModuleType):
             return getattr(interfaces, name)
         if name in _INTERFACE_EXPORTS:
             return getattr(interfaces, name)
+        if name in _LORA_ATTRS:
+            return getattr(lora, name)
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):  # type: ignore[override]
@@ -121,7 +124,14 @@ class _MeshIngestorModule(types.ModuleType):
             handled = True
         if handled:
             return
+        if name in _LORA_ATTRS:
+            setattr(lora, name, value)
+            super().__setattr__(name, getattr(lora, name, value))
+            return
         super().__setattr__(name, value)
 
 
 sys.modules[__name__].__class__ = _MeshIngestorModule
+
+globals()["lora"] = lora
+__all__.extend(sorted(_LORA_ATTRS))

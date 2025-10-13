@@ -148,7 +148,7 @@ module PotatoMesh
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
                  position_time, location_source, precision_bits,
-                 latitude, longitude, altitude
+                 latitude, longitude, altitude, lora_preset, lora_frequency
           FROM nodes
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
@@ -178,6 +178,8 @@ module PotatoMesh
           r["pos_time_iso"] = Time.at(pt).utc.iso8601 if pt
           pb = r["precision_bits"]
           r["precision_bits"] = pb.to_i if pb
+          r["lora_preset"] = string_or_nil(r["lora_preset"])
+          r["lora_frequency"] = string_or_nil(r["lora_frequency"])
         end
         rows
       ensure
@@ -220,8 +222,10 @@ module PotatoMesh
         SQL
         params << limit
         rows = db.execute(sql, params)
-        msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit]
+        msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit lora_preset lora_frequency]
         rows.each do |r|
+          message_preset = r["lora_preset"] = string_or_nil(r["lora_preset"])
+          message_frequency = r["lora_frequency"] = string_or_nil(r["lora_frequency"])
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(
@@ -242,6 +246,10 @@ module PotatoMesh
             next if msg_fields.include?(k)
             node[k] = r.delete(k)
           end
+          node_preset = string_or_nil(node["lora_preset"])
+          node_frequency = string_or_nil(node["lora_frequency"])
+          node["lora_preset"] = node_preset || message_preset
+          node["lora_frequency"] = node_frequency || message_frequency
           r["snr"] = r.delete("msg_snr")
           references = [r["from_id"]].compact
           if references.any? && (node["node_id"].nil? || node["node_id"].to_s.empty?)

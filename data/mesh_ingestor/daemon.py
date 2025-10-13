@@ -23,7 +23,7 @@ import time
 
 from pubsub import pub
 
-from . import config, handlers, interfaces
+from . import config, handlers, interfaces, lora
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
@@ -123,6 +123,7 @@ def _node_items_snapshot(
 def _close_interface(iface_obj) -> None:
     """Close ``iface_obj`` while respecting configured timeouts."""
 
+    lora.set_metadata(preset=None, frequency=None)
     if iface_obj is None:
         return
 
@@ -152,6 +153,42 @@ def _close_interface(iface_obj) -> None:
             context="daemon.close",
             severity="warn",
             timeout_seconds=config._CLOSE_TIMEOUT_SECS,
+        )
+
+
+def _refresh_lora_metadata(iface_obj) -> None:
+    """Update cached LoRa metadata from ``iface_obj``."""
+
+    if iface_obj is None:
+        lora.set_metadata(preset=None, frequency=None)
+        return
+
+    get_config = getattr(iface_obj, "getDeviceConfig", None)
+    if not callable(get_config):
+        lora.set_metadata(preset=None, frequency=None)
+        return
+
+    try:
+        device_config = get_config()
+    except Exception as exc:  # pragma: no cover - requires faulty interface
+        lora.set_metadata(preset=None, frequency=None)
+        config._debug_log(
+            "Failed to fetch device config",
+            context="daemon.lora",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+        return
+
+    preset, frequency = lora.update_from_device_config(device_config)
+    if config.DEBUG:
+        config._debug_log(
+            "Updated LoRa metadata",
+            context="daemon.lora",
+            severity="info",
+            lora_preset=preset,
+            lora_frequency=frequency,
         )
 
 
@@ -256,6 +293,7 @@ def main() -> None:
                     else:
                         energy_session_deadline = None
                     iface_connected_at = time.monotonic()
+                    _refresh_lora_metadata(iface)
                     # Seed the inactivity tracking from the connection time so a
                     # reconnect is given a full inactivity window even when the
                     # handler still reports the previous packet timestamp.
@@ -466,5 +504,6 @@ __all__ = [
     "_node_items_snapshot",
     "_subscribe_receive_topics",
     "_is_ble_interface",
+    "_refresh_lora_metadata",
     "main",
 ]

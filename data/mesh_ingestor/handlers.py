@@ -21,7 +21,7 @@ import json
 import time
 from collections.abc import Mapping
 
-from . import config, queue
+from . import config, lora, queue
 from .serialization import (
     _canonical_node_id,
     _coerce_float,
@@ -827,6 +827,8 @@ def store_packet_dict(packet: Mapping) -> None:
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
     }
+    lora.apply_metadata(message_payload)
+
     _queue_post_json(
         "/api/messages", message_payload, priority=queue._MESSAGE_POST_PRIORITY
     )

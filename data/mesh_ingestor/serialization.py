@@ -31,6 +31,8 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import DecodeError
 from google.protobuf.message import Message as ProtoMessage
 
+from . import lora
+
 
 def _get(obj, key, default=None):
     """Return ``obj[key]`` or ``getattr(obj, key)`` when available.
@@ -111,6 +113,7 @@ def upsert_payload(node_id, node) -> dict:
     """
 
     ndict = _node_to_dict(node)
+    lora.apply_metadata(ndict)
     return {node_id: ndict}
 
 
