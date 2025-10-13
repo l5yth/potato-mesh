@@ -15,6 +15,7 @@
  */
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
+import { createMapAutoFitController } from './map-auto-fit-controller.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -299,6 +300,12 @@ export function initializeApp(config) {
     'msfullscreenchange'
   ];
 
+  const autoFitController = createMapAutoFitController({
+    toggleEl: fitBoundsEl,
+    windowObject: typeof window !== 'undefined' ? window : undefined,
+    defaultPaddingPx: AUTO_FIT_PADDING_PX
+  });
+
   /**
    * Fit the Leaflet map to the provided geographic bounds.
    *
@@ -316,7 +323,28 @@ export function initializeApp(config) {
     if (Number.isFinite(options.maxZoom) && options.maxZoom > 0) {
       fitOptions.maxZoom = options.maxZoom;
     }
-    map.fitBounds(bounds, fitOptions);
+    autoFitController.recordFit(bounds, { paddingPx: padding, maxZoom: fitOptions.maxZoom });
+    autoFitController.runAutoFitOperation(() => {
+      map.fitBounds(bounds, fitOptions);
+    });
+  }
+
+  /**
+   * Attempt to reapply the last recorded bounds when auto-fit is enabled.
+   *
+   * @param {{ animate?: boolean }} [options] Animation preferences.
+   * @returns {void}
+   */
+  function applyLastRecordedBounds(options = {}) {
+    if (!autoFitController.isAutoFitEnabled()) return;
+    const snapshot = autoFitController.getLastFit();
+    if (!snapshot) return;
+    const { bounds, options: fitOptions } = snapshot;
+    fitMapToBounds(bounds, {
+      animate: Boolean(options.animate),
+      paddingPx: fitOptions.paddingPx,
+      maxZoom: fitOptions.maxZoom
+    });
   }
 
   /**
@@ -457,6 +485,17 @@ export function initializeApp(config) {
       }, 160);
     }
   }
+
+  autoFitController.attachResizeListener(snapshot => {
+    refreshMapSize();
+    if (!snapshot) return;
+    if (!autoFitController.isAutoFitEnabled()) return;
+    fitMapToBounds(snapshot.bounds, {
+      animate: false,
+      paddingPx: snapshot.options.paddingPx,
+      maxZoom: snapshot.options.maxZoom
+    });
+  });
 
   /**
    * Respond to fullscreen change events originating from the browser.
@@ -967,13 +1006,21 @@ export function initializeApp(config) {
       map.whenReady(() => {
         applyFiltersToAllTiles();
         refreshMapSize();
+        applyLastRecordedBounds({ animate: false });
       });
     } else {
       applyFiltersToAllTiles();
+      applyLastRecordedBounds({ animate: false });
     }
 
     map.on('moveend', applyFiltersToAllTiles);
     map.on('zoomend', applyFiltersToAllTiles);
+    map.on('movestart', () => {
+      autoFitController.handleUserInteraction();
+    });
+    map.on('zoomstart', () => {
+      autoFitController.handleUserInteraction();
+    });
 
     neighborLinesLayer = L.layerGroup().addTo(map);
     markersLayer = L.layerGroup().addTo(map);
