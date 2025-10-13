@@ -205,7 +205,14 @@ module PotatoMesh
         end
 
         sql = <<~SQL
-          SELECT m.*, n.*, m.snr AS msg_snr
+          SELECT
+            m.*,
+            n.*,
+            m.lora_preset AS msg_lora_preset,
+            m.lora_frequency AS msg_lora_frequency,
+            n.lora_preset AS node_lora_preset,
+            n.lora_frequency AS node_lora_frequency,
+            m.snr AS msg_snr
           FROM messages m
           LEFT JOIN nodes n ON (
             m.from_id IS NOT NULL AND TRIM(m.from_id) <> '' AND (
@@ -224,8 +231,13 @@ module PotatoMesh
         rows = db.execute(sql, params)
         msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit lora_preset lora_frequency]
         rows.each do |r|
-          message_preset = r["lora_preset"] = string_or_nil(r["lora_preset"])
-          message_frequency = r["lora_frequency"] = lora_frequency_or_nil(r["lora_frequency"])
+          msg_lora_preset = r.delete("msg_lora_preset")
+          msg_lora_frequency = r.delete("msg_lora_frequency")
+          node_lora_preset = r.delete("node_lora_preset")
+          node_lora_frequency = r.delete("node_lora_frequency")
+
+          message_preset = r["lora_preset"] = string_or_nil(msg_lora_preset || r["lora_preset"])
+          message_frequency = r["lora_frequency"] = lora_frequency_or_nil(msg_lora_frequency || r["lora_frequency"])
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(
@@ -246,8 +258,8 @@ module PotatoMesh
             next if msg_fields.include?(k)
             node[k] = r.delete(k)
           end
-          node_preset = string_or_nil(node["lora_preset"])
-          node_frequency = lora_frequency_or_nil(node["lora_frequency"])
+          node_preset = string_or_nil(node_lora_preset || node["lora_preset"])
+          node_frequency = lora_frequency_or_nil(node_lora_frequency || node["lora_frequency"])
           node["lora_preset"] = node_preset || message_preset
           node["lora_frequency"] = node_frequency || message_frequency
           r["snr"] = r.delete("msg_snr")
