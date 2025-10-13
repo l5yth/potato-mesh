@@ -18,12 +18,80 @@ module PotatoMesh
     # its intended consumers to ensure consistent behaviour across the Sinatra
     # application.
     module Helpers
+      ROLE_COLORS = {
+        "CLIENT_HIDDEN" => "#A9CBE8",
+        "SENSOR" => "#A8D5BA",
+        "TRACKER" => "#B9DFAC",
+        "CLIENT_MUTE" => "#CDE7A9",
+        "CLIENT" => "#E8E6A1",
+        "CLIENT_BASE" => "#F6D0A6",
+        "REPEATER" => "#F7B7A3",
+        "ROUTER_LATE" => "#F29AA3",
+        "ROUTER" => "#E88B94",
+        "LOST_AND_FOUND" => "#C3A8E8",
+      }.freeze
       # Fetch an application level constant exposed by {PotatoMesh::Application}.
       #
       # @param name [Symbol] constant identifier to retrieve.
       # @return [Object] constant value stored on the application class.
       def app_constant(name)
         PotatoMesh::Application.const_get(name)
+      end
+
+      # Determine the canonical role key used for colour lookups.
+      #
+      # @param role [Object] raw role value returned by the database.
+      # @return [String] normalised role identifier present in {ROLE_COLORS}.
+      def canonical_role_key(role)
+        raw = PotatoMesh::Sanitizer.string_or_nil(role)
+        normalized = raw ? raw.strip : ""
+        normalized = "CLIENT" if normalized.empty?
+        return normalized if ROLE_COLORS.key?(normalized)
+
+        upper = normalized.upcase
+        ROLE_COLORS.key?(upper) ? upper : normalized
+      end
+
+      # Resolve the configured colour for a node role.
+      #
+      # @param role [Object] role value supplied by the database.
+      # @return [String] hexadecimal colour string used for UI badges.
+      def role_color(role)
+        key = canonical_role_key(role)
+        ROLE_COLORS[key] || ROLE_COLORS["CLIENT"] || "#3388ff"
+      end
+
+      # Format a short name badge label using non-breaking spaces.
+      #
+      # @param short_name [Object] node short name.
+      # @return [String] HTML snippet safe for insertion into ERB templates.
+      def short_name_label_html(short_name)
+        value = PotatoMesh::Sanitizer.string_or_nil(short_name)
+        return "?&nbsp;&nbsp;&nbsp;" unless value
+
+        padded = value.rjust(4, " ")
+        Rack::Utils.escape_html(padded).gsub(" ", "&nbsp;")
+      end
+
+      # Determine the UI theme based on the visitor cookie value.
+      #
+      # @param request [Sinatra::Request] incoming HTTP request.
+      # @param response [Sinatra::Response] HTTP response object.
+      # @param default_theme [String] fallback theme when the cookie is missing or invalid.
+      # @return [String] resolved theme identifier.
+      def resolve_theme_from_cookie(request:, response:, default_theme: "dark")
+        raw_theme = request.cookies["theme"]
+        theme = %w[dark light].include?(raw_theme) ? raw_theme : default_theme
+        if raw_theme != theme
+          response.set_cookie(
+            "theme",
+            value: theme,
+            path: "/",
+            max_age: 60 * 60 * 24 * 7,
+            same_site: :lax,
+          )
+        end
+        theme
       end
 
       # Retrieve the configured Prometheus report identifiers as an array.

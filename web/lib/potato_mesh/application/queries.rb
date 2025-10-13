@@ -120,7 +120,13 @@ module PotatoMesh
         ["(#{clauses.join(" OR ")})", params]
       end
 
-      def query_nodes(limit, node_ref: nil)
+      # Query nodes from the database applying optional filters.
+      #
+      # @param limit [Integer] maximum number of nodes to return.
+      # @param node_ref [Object, nil] optional node identifier filter.
+      # @param require_recent [Boolean] whether to restrict results to recently heard nodes.
+      # @return [Array<Hash>] collection of node rows.
+      def query_nodes(limit, node_ref: nil, require_recent: true)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -134,7 +140,7 @@ module PotatoMesh
           return [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)
-        else
+        elsif require_recent
           where_clauses << "last_heard >= ?"
           params << min_last_heard
         end
@@ -159,12 +165,14 @@ module PotatoMesh
         params << limit
 
         rows = db.execute(sql, params)
-        rows.select! do |r|
-          last_candidate = [r["last_heard"], r["position_time"], r["first_heard"]]
-            .map { |value| coerce_integer(value) }
-            .compact
-            .max
-          last_candidate && last_candidate >= min_last_heard
+        if require_recent
+          rows.select! do |r|
+            last_candidate = [r["last_heard"], r["position_time"], r["first_heard"]]
+              .map { |value| coerce_integer(value) }
+              .compact
+              .max
+            last_candidate && last_candidate >= min_last_heard
+          end
         end
         rows.each do |r|
           r["role"] ||= "CLIENT"
@@ -182,6 +190,17 @@ module PotatoMesh
         rows
       ensure
         db&.close
+      end
+
+      # Retrieve a single node by identifier without enforcing recency filters.
+      #
+      # @param node_ref [Object, nil] node reference supplied by callers.
+      # @return [Hash, nil] node record when present.
+      def find_node(node_ref)
+        return nil if node_ref.nil?
+
+        rows = query_nodes(1, node_ref: node_ref, require_recent: false)
+        rows.first
       end
 
       def query_messages(limit, node_ref: nil)

@@ -782,6 +782,36 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /node/:id" do
+    before do
+      clear_database
+      import_nodes_fixture
+    end
+
+    it "renders the node detail view with badge and long name" do
+      node = nodes_fixture.first
+      get "/node/#{node["node_id"]}"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('<span class="short-name"')
+      expect(last_response.body).to include(node["long_name"])
+    end
+
+    it "applies the theme from the visitor cookie" do
+      node = nodes_fixture.first
+      get "/node/#{node["node_id"]}", {}, { "HTTP_COOKIE" => "theme=light" }
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('data-theme="light"')
+    end
+
+    it "returns 404 when the node does not exist" do
+      get "/node/unknown"
+
+      expect(last_response.status).to eq(404)
+    end
+  end
+
   describe "database initialization" do
     it "creates the schema when booting" do
       expect(File).to exist(PotatoMesh::Config.db_path)

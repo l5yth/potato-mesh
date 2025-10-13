@@ -42,12 +42,7 @@ module PotatoMesh
             meta = meta_configuration
             config = frontend_app_config
 
-            raw_theme = request.cookies["theme"]
-            theme = %w[dark light].include?(raw_theme) ? raw_theme : "dark"
-            if raw_theme != theme
-              response.set_cookie("theme", value: theme, path: "/", max_age: 60 * 60 * 24 * 7, same_site: :lax)
-            end
-
+            theme = resolve_theme_from_cookie(request: request, response: response)
             erb :index, locals: {
                           site_name: meta[:name],
                           meta_title: meta[:title],

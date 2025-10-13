@@ -19,6 +19,7 @@ import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
+import { createNodeOverlayController } from './node-overlay.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -50,6 +51,7 @@ export function initializeApp(config) {
   const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
   const overlayStack = createShortInfoOverlayStack({ document, window, template: shortInfoTemplate });
+  const nodeOverlayController = createNodeOverlayController({ document });
   const titleEl = document.querySelector('title');
   const headerEl = document.querySelector('h1');
   const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
@@ -1560,6 +1562,31 @@ export function initializeApp(config) {
   }
 
   /**
+   * Render the long name column with a hyperlink for overlay activation.
+   *
+   * @param {Object} node Node payload.
+   * @returns {string} HTML snippet for the long name cell.
+   */
+  function renderLongNameHtml(node) {
+    if (!node || typeof node !== 'object') {
+      return '';
+    }
+    const longRaw = node.long_name ?? node.longName;
+    if (longRaw == null || longRaw === '') {
+      return '';
+    }
+    const longText = escapeHtml(String(longRaw));
+    const nodeId = typeof node.node_id === 'string' ? node.node_id : null;
+    if (!nodeId || nodeId.length === 0) {
+      return longText;
+    }
+    const href = `/node/${encodeURIComponent(nodeId)}`;
+    const safeHref = escapeHtml(href);
+    const safeId = escapeHtml(nodeId);
+    return `<a class="node-detail-link" data-node-overlay-link="true" data-node-id="${safeId}" href="${safeHref}">${longText}</a>`;
+  }
+
+  /**
    * Populate the ``nodesById`` index for quick lookups.
    *
    * @param {Array<Object>} nodes Collection of node payloads.
@@ -2583,7 +2610,7 @@ export function initializeApp(config) {
       tr.innerHTML = `
         <td class="mono">${n.node_id || ""}</td>
         <td>${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
-        <td>${n.long_name || ""}</td>
+        <td>${renderLongNameHtml(n)}</td>
         <td>${timeAgo(n.last_heard, nowSec)}</td>
         <td>${n.role || "CLIENT"}</td>
         <td>${fmtHw(n.hw_model)}</td>
@@ -2603,6 +2630,9 @@ export function initializeApp(config) {
     }
     tb.replaceChildren(frag);
     overlayStack.cleanupOrphans();
+    if (nodeOverlayController && typeof nodeOverlayController.attachAll === 'function') {
+      nodeOverlayController.attachAll(tb.querySelectorAll('a[data-node-overlay-link="true"]'));
+    }
   }
 
   /**

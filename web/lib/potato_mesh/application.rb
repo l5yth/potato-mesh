@@ -51,6 +51,7 @@ require_relative "application/filesystem"
 require_relative "application/routes/api"
 require_relative "application/routes/ingest"
 require_relative "application/routes/root"
+require_relative "application/routes/nodes"
 
 module PotatoMesh
   class Application < Sinatra::Base
@@ -77,6 +78,7 @@ module PotatoMesh
     register App::Routes::Api
     register App::Routes::Ingest
     register App::Routes::Root
+    register App::Routes::Nodes
 
     DEFAULT_PORT = 41_447
     DEFAULT_BIND_ADDRESS = "0.0.0.0"
