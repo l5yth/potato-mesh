@@ -78,6 +78,9 @@ module PotatoMesh
     register App::Routes::Ingest
     register App::Routes::Root
 
+    DEFAULT_PORT = 41_447
+    DEFAULT_BIND_ADDRESS = "0.0.0.0"
+
     APP_VERSION = determine_app_version
     INSTANCE_PRIVATE_KEY, INSTANCE_KEY_GENERATED = load_or_generate_instance_private_key
     INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
@@ -98,12 +101,7 @@ module PotatoMesh
     #
     # @param default_port [Integer] fallback port when ENV['PORT'] is absent or invalid.
     # @return [Integer] port number for the HTTP server.
-    def self.resolve_port(default_port: 41_447)
-      raw = ENV["PORT"]
-      return default_port if raw.nil?
-
-      Integer(raw, 10)
-    rescue ArgumentError
+    def self.resolve_port(default_port: DEFAULT_PORT)
       default_port
     end
 
@@ -112,6 +110,7 @@ module PotatoMesh
       set :views, File.expand_path("../../views", __dir__)
       set :federation_thread, nil
       set :port, resolve_port
+      set :bind, DEFAULT_BIND_ADDRESS
 
       app_logger = PotatoMesh::Logging.build_logger($stdout)
       set :logger, app_logger

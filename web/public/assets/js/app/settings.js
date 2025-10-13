@@ -19,10 +19,12 @@
  *   refreshMs: number,
  *   refreshIntervalSeconds: number,
  *   chatEnabled: boolean,
- *   defaultChannel: string,
- *   defaultFrequency: string,
+ *   channel: string,
+ *   frequency: string,
+ *   contactLink: string,
+ *   contactLinkUrl: string | null,
  *   mapCenter: { lat: number, lon: number },
- *   maxNodeDistanceKm: number,
+ *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string }
  * }}
  */
@@ -30,10 +32,12 @@ export const DEFAULT_CONFIG = {
   refreshMs: 60_000,
   refreshIntervalSeconds: 60,
   chatEnabled: true,
-  defaultChannel: '#LongFast',
-  defaultFrequency: '915MHz',
+  channel: '#LongFast',
+  frequency: '915MHz',
+  contactLink: '#potatomesh:dod.ngo',
+  contactLinkUrl: 'https://matrix.to/#/#potatomesh:dod.ngo',
   mapCenter: { lat: 38.761944, lon: -27.090833 },
-  maxNodeDistanceKm: 42,
+  maxDistanceKm: 42,
   tileFilters: {
     light: 'grayscale(1) saturate(0) brightness(0.92) contrast(1.05)',
     dark: 'grayscale(1) invert(1) brightness(0.9) contrast(1.08)'
@@ -65,11 +69,13 @@ export function mergeConfig(raw) {
   const refreshMs = Number(raw?.refreshMs ?? config.refreshIntervalSeconds * 1000);
   config.refreshMs = Number.isFinite(refreshMs) ? refreshMs : DEFAULT_CONFIG.refreshMs;
   config.chatEnabled = Boolean(raw?.chatEnabled ?? DEFAULT_CONFIG.chatEnabled);
-  config.defaultChannel = raw?.defaultChannel || DEFAULT_CONFIG.defaultChannel;
-  config.defaultFrequency = raw?.defaultFrequency || DEFAULT_CONFIG.defaultFrequency;
-  const maxDistance = Number(raw?.maxNodeDistanceKm ?? DEFAULT_CONFIG.maxNodeDistanceKm);
-  config.maxNodeDistanceKm = Number.isFinite(maxDistance)
+  config.channel = raw?.channel || DEFAULT_CONFIG.channel;
+  config.frequency = raw?.frequency || DEFAULT_CONFIG.frequency;
+  config.contactLink = raw?.contactLink || DEFAULT_CONFIG.contactLink;
+  config.contactLinkUrl = raw?.contactLinkUrl ?? DEFAULT_CONFIG.contactLinkUrl;
+  const maxDistance = Number(raw?.maxDistanceKm ?? DEFAULT_CONFIG.maxDistanceKm);
+  config.maxDistanceKm = Number.isFinite(maxDistance)
     ? maxDistance
-    : DEFAULT_CONFIG.maxNodeDistanceKm;
+    : DEFAULT_CONFIG.maxDistanceKm;
   return config;
 }

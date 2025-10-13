@@ -83,7 +83,7 @@
   <div class="row meta">
     <div class="meta-info">
       <div class="refresh-row">
-        <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= default_channel %> (<%= default_frequency %>) — active nodes: …</p>
+        <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= channel %> (<%= frequency %>) — active nodes: …</p>
         <div class="refresh-actions">
           <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
           <button id="refreshBtn" type="button">Refresh now</button>
@@ -108,19 +108,23 @@
       <h2 id="infoTitle" class="info-title">About <%= site_name %></h2>
       <p class="info-intro">Quick facts about this PotatoMesh instance.</p>
       <dl class="info-details">
-        <dt>Default channel</dt>
-        <dd><%= default_channel %></dd>
+        <dt>Channel</dt>
+        <dd><%= channel %></dd>
         <dt>Frequency</dt>
-        <dd><%= default_frequency %></dd>
+        <dd><%= frequency %></dd>
         <dt>Map center</dt>
         <dd><%= format("%.5f, %.5f", map_center_lat, map_center_lon) %></dd>
         <dt>Visible range</dt>
-        <dd>Nodes within roughly <%= max_node_distance_km %> km of the center are shown.</dd>
+        <dd>Nodes within roughly <%= max_distance_km %> km of the center are shown.</dd>
         <dt>Auto-refresh</dt>
         <dd>Updates every <%= refresh_interval_seconds %> seconds.</dd>
-        <% if matrix_room && !matrix_room.empty? %>
-          <dt>Matrix room</dt>
-          <dd><a href="https://matrix.to/#/<%= matrix_room %>" target="_blank" rel="noreferrer noopener"><%= matrix_room %></a></dd>
+        <% if contact_link && !contact_link.empty? %>
+          <dt>Chat</dt>
+          <% if contact_link_url %>
+            <dd><a href="<%= contact_link_url %>" target="_blank" rel="noreferrer noopener"><%= contact_link %></a></dd>
+          <% else %>
+            <dd><%= contact_link %></dd>
+          <% end %>
         <% end %>
       </dl>
     </div>
@@ -196,9 +200,13 @@
       <span class="mono"><%= version %></span> —
     <% end %>
     GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
-    <% if matrix_room && !matrix_room.empty? %>
-      — <%= site_name %> Matrix:
-      <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
+    <% if contact_link && !contact_link.empty? %>
+      — <%= site_name %> chat:
+      <% if contact_link_url %>
+        <a href="<%= contact_link_url %>" target="_blank"><%= contact_link %></a>
+      <% else %>
+        <%= contact_link %>
+      <% end %>
     <% end %>
   </footer>
 

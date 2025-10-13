@@ -107,77 +107,122 @@ RSpec.describe PotatoMesh::Config do
   end
 
   describe ".db_path" do
-    it "uses the environment override when available" do
-      within_env("MESH_DB" => "/tmp/spec.db") do
-        expect(described_class.db_path).to eq("/tmp/spec.db")
-      end
-    end
-
-    it "falls back to the bundled database path" do
-      within_env("MESH_DB" => nil) do
-        expect(described_class.db_path).to eq(described_class.default_db_path)
-      end
+    it "returns the default path inside the data directory" do
+      expect(described_class.db_path).to eq(described_class.default_db_path)
+      expect(described_class.db_path).to eq(File.join(described_class.data_directory, "mesh.db"))
     end
   end
 
   describe ".max_json_body_bytes" do
-    it "returns the default when the value is missing" do
-      within_env("MAX_JSON_BODY_BYTES" => nil) do
-        expect(described_class.max_json_body_bytes).to eq(
-          described_class.default_max_json_body_bytes,
-        )
-      end
-    end
-
-    it "returns the parsed integer when valid" do
-      within_env("MAX_JSON_BODY_BYTES" => "2048") do
-        expect(described_class.max_json_body_bytes).to eq(2048)
-      end
-    end
-
-    it "rejects invalid and non-positive values" do
-      within_env("MAX_JSON_BODY_BYTES" => "potato") do
-        expect(described_class.max_json_body_bytes).to eq(
-          described_class.default_max_json_body_bytes,
-        )
-      end
-
-      within_env("MAX_JSON_BODY_BYTES" => "0") do
-        expect(described_class.max_json_body_bytes).to eq(
-          described_class.default_max_json_body_bytes,
-        )
-      end
+    it "returns the baked-in default size" do
+      expect(described_class.max_json_body_bytes).to eq(described_class.default_max_json_body_bytes)
     end
   end
 
   describe ".refresh_interval_seconds" do
-    it "returns the default when the configuration is invalid" do
-      within_env("REFRESH_INTERVAL_SECONDS" => "invalid") do
-        expect(described_class.refresh_interval_seconds).to eq(
-          described_class.default_refresh_interval_seconds,
-        )
-      end
-    end
-
-    it "honours positive integer overrides" do
-      within_env("REFRESH_INTERVAL_SECONDS" => "120") do
-        expect(described_class.refresh_interval_seconds).to eq(120)
-      end
-    end
-
-    it "rejects zero or negative overrides" do
-      within_env("REFRESH_INTERVAL_SECONDS" => "0") do
-        expect(described_class.refresh_interval_seconds).to eq(
-          described_class.default_refresh_interval_seconds,
-        )
-      end
+    it "returns the baked-in refresh cadence" do
+      expect(described_class.refresh_interval_seconds).to eq(described_class.default_refresh_interval_seconds)
     end
   end
 
   describe ".prom_report_id_list" do
-    it "splits and normalises identifiers" do
-      within_env("PROM_REPORT_IDS" => " alpha , beta,, ") do
-        expect(described_class.prom_report_id_list).to eq(%w[alpha beta])
+    it "returns an empty collection when no identifiers are configured" do
+      expect(described_class.prom_report_id_list).to eq([])
+    end
+  end
+
+  describe ".channel" do
+    it "returns the default channel when unset" do
+      within_env("CHANNEL" => nil) do
+        expect(described_class.channel).to eq(PotatoMesh::Config::DEFAULT_CHANNEL)
+      end
+    end
+
+    it "trims whitespace from overrides" do
+      within_env("CHANNEL" => "  #Spec  ") do
+        expect(described_class.channel).to eq("#Spec")
+      end
+    end
+  end
+
+  describe ".frequency" do
+    it "returns the default frequency when unset" do
+      within_env("FREQUENCY" => nil) do
+        expect(described_class.frequency).to eq(PotatoMesh::Config::DEFAULT_FREQUENCY)
+      end
+    end
+
+    it "trims whitespace from overrides" do
+      within_env("FREQUENCY" => " 915MHz  ") do
+        expect(described_class.frequency).to eq("915MHz")
+      end
+    end
+  end
+
+  describe ".map_center" do
+    it "parses latitude and longitude from the environment" do
+      within_env("MAP_CENTER" => "10.5, -20.25") do
+        expect(described_class.map_center).to eq({ lat: 10.5, lon: -20.25 })
+      end
+    end
+
+    it "falls back to defaults when parsing fails" do
+      within_env("MAP_CENTER" => "potato") do
+        expect(described_class.map_center).to eq({ lat: PotatoMesh::Config::DEFAULT_MAP_CENTER_LAT, lon: PotatoMesh::Config::DEFAULT_MAP_CENTER_LON })
+      end
+    end
+  end
+
+  describe ".max_distance_km" do
+    it "returns the default distance when unset" do
+      within_env("MAX_DISTANCE" => nil) do
+        expect(described_class.max_distance_km).to eq(PotatoMesh::Config::DEFAULT_MAX_DISTANCE_KM)
+      end
+    end
+
+    it "parses positive numeric overrides" do
+      within_env("MAX_DISTANCE" => "105.5") do
+        expect(described_class.max_distance_km).to eq(105.5)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("MAX_DISTANCE" => "-1") do
+        expect(described_class.max_distance_km).to eq(PotatoMesh::Config::DEFAULT_MAX_DISTANCE_KM)
+      end
+    end
+  end
+
+  describe ".contact_link" do
+    it "returns the default contact when unset" do
+      within_env("CONTACT_LINK" => nil) do
+        expect(described_class.contact_link).to eq(PotatoMesh::Config::DEFAULT_CONTACT_LINK)
+      end
+    end
+
+    it "trims whitespace from overrides" do
+      within_env("CONTACT_LINK" => "  https://example.org/chat  ") do
+        expect(described_class.contact_link).to eq("https://example.org/chat")
+      end
+    end
+  end
+
+  describe ".contact_link_url" do
+    it "builds a matrix.to URL for aliases" do
+      within_env("CONTACT_LINK" => "#spec:example.org") do
+        expect(described_class.contact_link_url).to eq("https://matrix.to/#/#spec:example.org")
+      end
+    end
+
+    it "passes through existing URLs" do
+      within_env("CONTACT_LINK" => "https://example.org/chat") do
+        expect(described_class.contact_link_url).to eq("https://example.org/chat")
+      end
+    end
+
+    it "returns nil for unrecognised values" do
+      within_env("CONTACT_LINK" => "Community Portal") do
+        expect(described_class.contact_link_url).to be_nil
       end
     end
   end

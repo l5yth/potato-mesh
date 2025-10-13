@@ -27,10 +27,10 @@ import { refreshNodeInformation } from './node-details.js';
  *   refreshMs: number,
  *   refreshIntervalSeconds: number,
  *   chatEnabled: boolean,
- *   defaultChannel: string,
- *   defaultFrequency: string,
+ *   channel: string,
+ *   frequency: string,
  *   mapCenter: { lat: number, lon: number },
- *   maxNodeDistanceKm: number,
+ *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string }
  * }} config Normalized application configuration.
  * @returns {void}
@@ -111,7 +111,7 @@ export function initializeApp(config) {
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
-  refreshInfo.textContent = `${config.defaultChannel} (${config.defaultFrequency}) — active nodes: …`;
+  refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;
@@ -285,9 +285,10 @@ export function initializeApp(config) {
   let tiles = null;
   let offlineTiles = null;
   let usingOfflineTiles = false;
-  const MAX_NODE_DISTANCE_KM = Number.isFinite(config.maxNodeDistanceKm) && config.maxNodeDistanceKm > 0
-    ? config.maxNodeDistanceKm
-    : 1;
+  const MAX_DISTANCE_KM = Number.isFinite(config.maxDistanceKm) && config.maxDistanceKm > 0
+    ? config.maxDistanceKm
+    : null;
+  const LIMIT_DISTANCE = Number.isFinite(MAX_DISTANCE_KM);
   const INITIAL_VIEW_PADDING_PX = 12;
   const AUTO_FIT_PADDING_PX = 12;
   const MAX_INITIAL_ZOOM = 13;
@@ -1052,7 +1053,11 @@ export function initializeApp(config) {
     tiles.addTo(map);
     observeTileContainer(tiles);
 
-    const initialBounds = computeBoundingBox(MAP_CENTER_COORDS, MAX_NODE_DISTANCE_KM, { minimumRangeKm: 1 });
+    const initialBounds = computeBoundingBox(
+      MAP_CENTER_COORDS,
+      LIMIT_DISTANCE ? MAX_DISTANCE_KM : null,
+      { minimumRangeKm: 1 }
+    );
     if (initialBounds) {
       fitMapToBounds(initialBounds, { animate: false, paddingPx: INITIAL_VIEW_PADDING_PX, maxZoom: MAX_INITIAL_ZOOM });
     } else if (mapCenterLatLng) {
@@ -2726,8 +2731,8 @@ export function initializeApp(config) {
         if (!Number.isFinite(srcLat) || !Number.isFinite(srcLon) || !Number.isFinite(tgtLat) || !Number.isFinite(tgtLon)) {
           continue;
         }
-        if (sourceNode.distance_km != null && sourceNode.distance_km > MAX_NODE_DISTANCE_KM) continue;
-        if (targetNode.distance_km != null && targetNode.distance_km > MAX_NODE_DISTANCE_KM) continue;
+        if (LIMIT_DISTANCE && sourceNode.distance_km != null && sourceNode.distance_km > MAX_DISTANCE_KM) continue;
+        if (LIMIT_DISTANCE && targetNode.distance_km != null && targetNode.distance_km > MAX_DISTANCE_KM) continue;
 
         const priority = getRoleRenderPriority(sourceNode.role);
         const rxTimeRaw = entry.rx_time;
@@ -2820,7 +2825,7 @@ export function initializeApp(config) {
       if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
       const lat = Number(latRaw), lon = Number(lonRaw);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      if (n.distance_km != null && n.distance_km > MAX_NODE_DISTANCE_KM) continue;
+      if (LIMIT_DISTANCE && n.distance_km != null && n.distance_km > MAX_DISTANCE_KM) continue;
 
       const color = getRoleColor(n.role);
       const marker = L.circleMarker([lat, lon], {
@@ -2894,7 +2899,9 @@ export function initializeApp(config) {
     if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
       const bounds = computeBoundsForPoints(pts, {
         paddingFraction: 0.2,
-        minimumRangeKm: Math.min(Math.max(MAX_NODE_DISTANCE_KM * 0.1, 1), MAX_NODE_DISTANCE_KM)
+        minimumRangeKm: LIMIT_DISTANCE
+          ? Math.min(Math.max(MAX_DISTANCE_KM * 0.1, 1), MAX_DISTANCE_KM)
+          : 1
       });
       fitMapToBounds(bounds, { animate: false, paddingPx: AUTO_FIT_PADDING_PX });
     }
@@ -3075,6 +3082,6 @@ export function initializeApp(config) {
       const c = nodes.filter(n => n.last_heard && nowSec - Number(n.last_heard) <= w.secs).length;
       return `${c}/${w.label}`;
     }).join(', ');
-    refreshInfo.textContent = `${config.defaultChannel} (${config.defaultFrequency}) — active nodes: ${counts}.`;
+    refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: ${counts}.`;
   }
 }

@@ -18,6 +18,21 @@ module PotatoMesh
   module Config
     module_function
 
+    DEFAULT_DB_BUSY_TIMEOUT_MS = 5_000
+    DEFAULT_DB_BUSY_MAX_RETRIES = 5
+    DEFAULT_DB_BUSY_RETRY_DELAY = 0.05
+    DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
+    DEFAULT_REFRESH_INTERVAL_SECONDS = 60
+    DEFAULT_TILE_FILTER_LIGHT = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
+    DEFAULT_TILE_FILTER_DARK = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
+    DEFAULT_MAP_CENTER_LAT = 38.761944
+    DEFAULT_MAP_CENTER_LON = -27.090833
+    DEFAULT_MAP_CENTER = "#{DEFAULT_MAP_CENTER_LAT},#{DEFAULT_MAP_CENTER_LON}"
+    DEFAULT_CHANNEL = "#LongFast"
+    DEFAULT_FREQUENCY = "915MHz"
+    DEFAULT_CONTACT_LINK = "#potatomesh:dod.ngo"
+    DEFAULT_MAX_DISTANCE_KM = 42.0
+
     # Resolve the absolute path to the web application root directory.
     #
     # @return [String] absolute filesystem path of the web folder.
@@ -65,28 +80,28 @@ module PotatoMesh
     #
     # @return [String] absolute path to the database file.
     def db_path
-      ENV.fetch("MESH_DB", default_db_path)
+      default_db_path
     end
 
     # Retrieve the SQLite busy timeout duration in milliseconds.
     #
     # @return [Integer] timeout value in milliseconds.
     def db_busy_timeout_ms
-      ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
+      DEFAULT_DB_BUSY_TIMEOUT_MS
     end
 
     # Retrieve the maximum number of retries when encountering SQLITE_BUSY.
     #
     # @return [Integer] maximum retry attempts.
     def db_busy_max_retries
-      ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
+      DEFAULT_DB_BUSY_MAX_RETRIES
     end
 
     # Retrieve the backoff delay between busy retries in seconds.
     #
     # @return [Float] seconds to wait between retries.
     def db_busy_retry_delay
-      ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
+      DEFAULT_DB_BUSY_RETRY_DELAY
     end
 
     # Convenience constant describing the number of seconds in a week.
@@ -100,17 +115,13 @@ module PotatoMesh
     #
     # @return [Integer] byte ceiling for HTTP request bodies.
     def default_max_json_body_bytes
-      1_048_576
+      DEFAULT_MAX_JSON_BODY_BYTES
     end
 
     # Determine the maximum allowed JSON body size with validation.
     #
     # @return [Integer] configured byte limit.
     def max_json_body_bytes
-      raw = ENV.fetch("MAX_JSON_BODY_BYTES", default_max_json_body_bytes.to_s)
-      value = Integer(raw, 10)
-      value.positive? ? value : default_max_json_body_bytes
-    rescue ArgumentError
       default_max_json_body_bytes
     end
 
@@ -125,17 +136,13 @@ module PotatoMesh
     #
     # @return [Integer] refresh period in seconds.
     def default_refresh_interval_seconds
-      60
+      DEFAULT_REFRESH_INTERVAL_SECONDS
     end
 
     # Fetch the refresh interval, ensuring a positive integer value.
     #
     # @return [Integer] polling cadence in seconds.
     def refresh_interval_seconds
-      raw = ENV.fetch("REFRESH_INTERVAL_SECONDS", default_refresh_interval_seconds.to_s)
-      value = Integer(raw, 10)
-      value.positive? ? value : default_refresh_interval_seconds
-    rescue ArgumentError
       default_refresh_interval_seconds
     end
 
@@ -143,20 +150,14 @@ module PotatoMesh
     #
     # @return [String] CSS filter string.
     def map_tile_filter_light
-      ENV.fetch(
-        "MAP_TILE_FILTER_LIGHT",
-        "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)",
-      )
+      DEFAULT_TILE_FILTER_LIGHT
     end
 
     # Retrieve the CSS filter used for dark themed maps.
     #
     # @return [String] CSS filter string for dark tiles.
     def map_tile_filter_dark
-      ENV.fetch(
-        "MAP_TILE_FILTER_DARK",
-        "grayscale(1) invert(1) brightness(0.9) contrast(1.08)",
-      )
+      DEFAULT_TILE_FILTER_DARK
     end
 
     # Provide a simple hash of tile filters for template use.
@@ -173,7 +174,7 @@ module PotatoMesh
     #
     # @return [String] comma separated list of report IDs.
     def prom_report_ids
-      ENV.fetch("PROM_REPORT_IDS", "")
+      ""
     end
 
     # Transform Prometheus report identifiers into a cleaned array.
@@ -284,44 +285,85 @@ module PotatoMesh
     # Retrieve the default radio channel label.
     #
     # @return [String] channel name from configuration.
-    def default_channel
-      fetch_string("DEFAULT_CHANNEL", "#LongFast")
+    def channel
+      fetch_string("CHANNEL", DEFAULT_CHANNEL)
     end
 
     # Retrieve the default radio frequency description.
     #
     # @return [String] frequency identifier.
-    def default_frequency
-      fetch_string("DEFAULT_FREQUENCY", "915MHz")
+    def frequency
+      fetch_string("FREQUENCY", DEFAULT_FREQUENCY)
+    end
+
+    # Parse the configured map centre coordinates.
+    #
+    # @return [Hash{Symbol=>Float}] latitude and longitude in decimal degrees.
+    def map_center
+      raw = fetch_string("MAP_CENTER", DEFAULT_MAP_CENTER)
+      lat_str, lon_str = raw.split(",", 2).map { |part| part&.strip }.compact
+      lat = Float(lat_str, exception: false)
+      lon = Float(lon_str, exception: false)
+      lat = DEFAULT_MAP_CENTER_LAT unless lat
+      lon = DEFAULT_MAP_CENTER_LON unless lon
+      { lat: lat, lon: lon }
     end
 
     # Map display latitude centre for the frontend map widget.
     #
     # @return [Float] latitude in decimal degrees.
     def map_center_lat
-      ENV.fetch("MAP_CENTER_LAT", "38.761944").to_f
+      map_center[:lat]
     end
 
     # Map display longitude centre for the frontend map widget.
     #
     # @return [Float] longitude in decimal degrees.
     def map_center_lon
-      ENV.fetch("MAP_CENTER_LON", "-27.090833").to_f
+      map_center[:lon]
     end
 
     # Maximum straight-line distance between nodes before relationships are
     # hidden.
     #
     # @return [Float] distance in kilometres.
-    def max_node_distance_km
-      ENV.fetch("MAX_NODE_DISTANCE_KM", "42").to_f
+    def max_distance_km
+      raw = fetch_string("MAX_DISTANCE", nil)
+      parsed = raw && Float(raw, exception: false)
+      return parsed if parsed && parsed.positive?
+
+      DEFAULT_MAX_DISTANCE_KM
     end
 
-    # Matrix room identifier for community discussion.
+    # Contact link for community discussion.
     #
-    # @return [String] Matrix room alias.
-    def matrix_room
-      ENV.fetch("MATRIX_ROOM", "#potatomesh:dod.ngo")
+    # @return [String] contact URI or identifier.
+    def contact_link
+      fetch_string("CONTACT_LINK", DEFAULT_CONTACT_LINK)
+    end
+
+    # Determine the best URL to represent the configured contact link.
+    #
+    # @return [String, nil] absolute URL when derivable, otherwise nil.
+    def contact_link_url
+      link = contact_link.to_s.strip
+      return nil if link.empty?
+
+      if matrix_alias?(link)
+        "https://matrix.to/#/#{link}"
+      elsif link.match?(%r{\Ahttps?://}i)
+        link
+      else
+        nil
+      end
+    end
+
+    # Check whether a contact link is a Matrix room alias.
+    #
+    # @param link [String] candidate link string.
+    # @return [Boolean] true when the link resembles a Matrix alias.
+    def matrix_alias?(link)
+      link.match?(/\A[#!][^\s:]+:[^\s]+\z/)
     end
 
     # Check whether verbose debugging is enabled for the runtime.

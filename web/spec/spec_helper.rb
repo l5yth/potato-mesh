@@ -36,7 +36,6 @@ require "fileutils"
 ENV["RACK_ENV"] = "test"
 
 SPEC_TMPDIR = Dir.mktmpdir("potato-mesh-spec-")
-ENV["MESH_DB"] = File.join(SPEC_TMPDIR, "mesh.db")
 ENV["XDG_DATA_HOME"] = File.join(SPEC_TMPDIR, "xdg-data")
 ENV["XDG_CONFIG_HOME"] = File.join(SPEC_TMPDIR, "xdg-config")
 
