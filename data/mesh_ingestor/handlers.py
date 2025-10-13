@@ -42,6 +42,40 @@ from .serialization import (
 )
 
 
+def _radio_metadata_fields() -> dict[str, object]:
+    """Return the shared radio metadata fields for payload enrichment."""
+
+    metadata: dict[str, object] = {}
+    freq = getattr(config, "LORA_FREQ", None)
+    if freq is not None:
+        metadata["lora_freq"] = freq
+    preset = getattr(config, "MODEM_PRESET", None)
+    if preset is not None:
+        metadata["modem_preset"] = preset
+    return metadata
+
+
+def _apply_radio_metadata(payload: dict) -> dict:
+    """Augment ``payload`` with radio metadata when available."""
+
+    metadata = _radio_metadata_fields()
+    if metadata:
+        payload.update(metadata)
+    return payload
+
+
+def _apply_radio_metadata_to_nodes(payload: dict) -> dict:
+    """Attach radio metadata to each node entry stored in ``payload``."""
+
+    metadata = _radio_metadata_fields()
+    if not metadata:
+        return payload
+    for value in payload.values():
+        if isinstance(value, dict):
+            value.update(metadata)
+    return payload
+
+
 def upsert_node(node_id, node) -> None:
     """Schedule an upsert for a single node.
 
@@ -53,7 +87,7 @@ def upsert_node(node_id, node) -> None:
         ``None``. The payload is forwarded to the shared HTTP queue.
     """
 
-    payload = upsert_payload(node_id, node)
+    payload = _apply_radio_metadata_to_nodes(upsert_payload(node_id, node))
     _queue_post_json("/api/nodes", payload, priority=queue._NODE_POST_PRIORITY)
 
     if config.DEBUG:
@@ -243,7 +277,9 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
         position_payload["raw"] = raw_payload
 
     _queue_post_json(
-        "/api/positions", position_payload, priority=queue._POSITION_POST_PRIORITY
+        "/api/positions",
+        _apply_radio_metadata(position_payload),
+        priority=queue._POSITION_POST_PRIORITY,
     )
 
     if config.DEBUG:
@@ -445,7 +481,9 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         telemetry_payload["barometric_pressure"] = barometric_pressure
 
     _queue_post_json(
-        "/api/telemetry", telemetry_payload, priority=queue._TELEMETRY_POST_PRIORITY
+        "/api/telemetry",
+        _apply_radio_metadata(telemetry_payload),
+        priority=queue._TELEMETRY_POST_PRIORITY,
     )
 
     if config.DEBUG:
@@ -607,7 +645,9 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
             pass
 
     _queue_post_json(
-        "/api/nodes", {node_id: node_payload}, priority=queue._NODE_POST_PRIORITY
+        "/api/nodes",
+        _apply_radio_metadata_to_nodes({node_id: node_payload}),
+        priority=queue._NODE_POST_PRIORITY,
     )
 
     if config.DEBUG:
@@ -720,7 +760,11 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     if last_sent_by_id is not None:
         payload["last_sent_by_id"] = last_sent_by_id
 
-    _queue_post_json("/api/neighbors", payload, priority=queue._NEIGHBOR_POST_PRIORITY)
+    _queue_post_json(
+        "/api/neighbors",
+        _apply_radio_metadata(payload),
+        priority=queue._NEIGHBOR_POST_PRIORITY,
+    )
 
     if config.DEBUG:
         config._debug_log(
@@ -828,7 +872,9 @@ def store_packet_dict(packet: Mapping) -> None:
         "hop_limit": int(hop) if hop is not None else None,
     }
     _queue_post_json(
-        "/api/messages", message_payload, priority=queue._MESSAGE_POST_PRIORITY
+        "/api/messages",
+        _apply_radio_metadata(message_payload),
+        priority=queue._MESSAGE_POST_PRIORITY,
     )
 
     if config.DEBUG:

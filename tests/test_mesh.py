@@ -179,6 +179,13 @@ def mesh_module(monkeypatch):
     if hasattr(module, "_clear_post_queue"):
         module._clear_post_queue()
 
+    # Ensure radio metadata starts unset for each test run.
+    module.config.LORA_FREQ = None
+    module.config.MODEM_PRESET = None
+    for attr in ("LORA_FREQ", "MODEM_PRESET"):
+        if attr in module.__dict__:
+            delattr(module, attr)
+
     yield module
 
     # Ensure a clean import for the next test
@@ -293,6 +300,102 @@ def test_create_serial_interface_ble(mesh_module, monkeypatch):
     assert iface.nodes == {}
 
 
+def test_ensure_radio_metadata_extracts_config(mesh_module):
+    mesh = mesh_module
+
+    class DummyEnumValue:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class DummyEnum:
+        def __init__(self, mapping: dict[int, str]) -> None:
+            self.values_by_number = {
+                number: DummyEnumValue(name) for number, name in mapping.items()
+            }
+
+    class DummyField:
+        def __init__(self, enum_type=None) -> None:
+            self.enum_type = enum_type
+
+    class DummyDescriptor:
+        def __init__(self, fields: dict[str, DummyField]) -> None:
+            self.fields_by_name = fields
+
+    def make_lora(
+        region_value: int,
+        region_name: str,
+        preset_value: int,
+        preset_name: str,
+        *,
+        preset_field: str = "modem_preset",
+    ):
+        descriptor = DummyDescriptor(
+            {
+                "region": DummyField(DummyEnum({region_value: region_name})),
+                preset_field: DummyField(DummyEnum({preset_value: preset_name})),
+            }
+        )
+
+        class DummyLora:
+            DESCRIPTOR = descriptor
+
+            def __init__(self) -> None:
+                self.region = region_value
+                setattr(self, preset_field, preset_value)
+
+            def HasField(self, name: str) -> bool:  # noqa: D401 - simple proxy
+                return hasattr(self, name)
+
+        return DummyLora()
+
+    class DummyRadio:
+        def __init__(self, lora) -> None:
+            self.lora = lora
+
+        def HasField(self, name: str) -> bool:
+            return hasattr(self, name)
+
+    class DummyConfig:
+        def __init__(self, lora, *, expose_direct: bool) -> None:
+            if expose_direct:
+                self.lora = lora
+            else:
+                self.radio = DummyRadio(lora)
+
+        def HasField(self, name: str) -> bool:  # noqa: D401 - mimics protobuf API
+            return hasattr(self, name)
+
+    class DummyLocalNode:
+        def __init__(self, config) -> None:
+            self.localConfig = config
+
+    class DummyInterface:
+        def __init__(self, local_config) -> None:
+            self.localNode = DummyLocalNode(local_config)
+            self.wait_calls = 0
+
+        def waitForConfig(self) -> None:  # noqa: D401 - matches Meshtastic API
+            self.wait_calls += 1
+
+    primary_lora = make_lora(3, "EU_868", 4, "MEDIUM_FAST")
+    iface = DummyInterface(DummyConfig(primary_lora, expose_direct=False))
+
+    mesh._ensure_radio_metadata(iface)
+
+    assert iface.wait_calls == 1
+    assert mesh.config.LORA_FREQ == 868
+    assert mesh.config.MODEM_PRESET == "MediumFast"
+
+    secondary_lora = make_lora(7, "US_915", 2, "LONG_FAST", preset_field="preset")
+    second_iface = DummyInterface(DummyConfig(secondary_lora, expose_direct=True))
+
+    mesh._ensure_radio_metadata(second_iface)
+
+    assert second_iface.wait_calls == 1
+    assert mesh.config.LORA_FREQ == 868
+    assert mesh.config.MODEM_PRESET == "MediumFast"
+
+
 def test_create_default_interface_falls_back_to_tcp(mesh_module, monkeypatch):
     mesh = mesh_module
     attempts = []
@@ -371,6 +474,9 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
 
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
+
     packet = {
         "id": 123,
         "rxTime": 1_700_000_000,
@@ -403,6 +509,8 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert payload["hop_limit"] == 3
     assert payload["snr"] == pytest.approx(1.25)
     assert payload["rssi"] == -70
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -414,6 +522,9 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     packet = {
         "id": 200498337,
@@ -479,6 +590,8 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
         payload["payload_b64"]
         == "DQDATR8VAMATCBjw//////////8BJb150mgoAljTAXgCgAEAmAEHuAER"
     )
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
     assert payload["raw"]["time"] == 1_758_624_189
 
 
@@ -490,6 +603,9 @@ def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     packet = {
         "id": 2049886869,
@@ -532,6 +648,8 @@ def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
     assert neighbors[1]["snr"] == pytest.approx(-2.75)
     assert neighbors[2]["neighbor_id"] == "!0badc0de"
     assert neighbors[2]["neighbor_num"] == 0x0BAD_C0DE
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
@@ -542,6 +660,9 @@ def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     from meshtastic.protobuf import config_pb2, mesh_pb2
 
@@ -602,6 +723,8 @@ def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
     assert node_entry["position"]["latitude"] == pytest.approx(52.5)
     assert node_entry["position"]["longitude"] == pytest.approx(13.4)
     assert node_entry["position"]["time"] == 1_700_000_050
+    assert node_entry["lora_freq"] == 868
+    assert node_entry["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
@@ -612,6 +735,9 @@ def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     from meshtastic.protobuf import mesh_pb2
 
@@ -645,6 +771,8 @@ def test_store_packet_dict_handles_user_only_nodeinfo(mesh_module, monkeypatch):
     assert node_entry["lastHeard"] == 1_234
     assert node_entry["user"]["longName"] == "Test Node"
     assert "deviceMetrics" not in node_entry
+    assert node_entry["lora_freq"] == 868
+    assert node_entry["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
@@ -655,6 +783,9 @@ def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     from meshtastic.protobuf import mesh_pb2
 
@@ -686,6 +817,8 @@ def test_store_packet_dict_nodeinfo_merges_proto_user(mesh_module, monkeypatch):
     assert node_entry["lastHeard"] == 5_000
     assert node_entry["user"]["shortName"] == "Proto"
     assert node_entry["user"]["longName"] == "Proto User"
+    assert node_entry["lora_freq"] == 868
+    assert node_entry["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_nodeinfo_sanitizes_nested_proto(mesh_module, monkeypatch):
@@ -696,6 +829,9 @@ def test_store_packet_dict_nodeinfo_sanitizes_nested_proto(mesh_module, monkeypa
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     from meshtastic.protobuf import mesh_pb2
 
@@ -730,6 +866,8 @@ def test_store_packet_dict_nodeinfo_sanitizes_nested_proto(mesh_module, monkeypa
     assert node_entry["user"]["shortName"] == "Nested"
     assert isinstance(node_entry["user"]["raw"], dict)
     assert node_entry["user"]["raw"]["id"] == "!55667788"
+    assert node_entry["lora_freq"] == 868
+    assert node_entry["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
@@ -742,6 +880,9 @@ def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     from meshtastic.protobuf import mesh_pb2
 
@@ -766,6 +907,8 @@ def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
     assert node_entry["num"] == 0x01020304
     assert node_entry["lastHeard"] == 200
     assert node_entry["snr"] == pytest.approx(1.5)
+    assert node_entry["lora_freq"] == 868
+    assert node_entry["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
@@ -1081,6 +1224,9 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
 
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
+
     packet = {
         "id": "789",
         "rxTime": 123456,
@@ -1100,6 +1246,8 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
     assert payload["text"] == "hi"
     assert payload["encrypted"] is None
     assert payload["snr"] is None and payload["rssi"] is None
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1111,6 +1259,9 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     packet = {
         "id": 321,
@@ -1130,6 +1281,8 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert path == "/api/messages"
     assert payload["channel"] == 0
     assert payload["encrypted"] is None
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1141,6 +1294,9 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     packet = {
         "id": 555,
@@ -1160,6 +1316,8 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     assert payload["text"] is None
     assert payload["from_id"] == 2988082812
     assert payload["to_id"] == "!receiver"
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1171,6 +1329,9 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     packet = {
         "id": 1_256_091_342,
@@ -1219,6 +1380,8 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     assert payload["channel_utilization"] == pytest.approx(0.59666663)
     assert payload["air_util_tx"] == pytest.approx(0.03908333)
     assert payload["uptime_seconds"] == 305044
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
 
 
 def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatch):
@@ -1229,6 +1392,9 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
         "_queue_post_json",
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
+
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
 
     packet = {
         "id": 2_817_720_548,
@@ -1259,6 +1425,8 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["temperature"] == pytest.approx(21.98)
     assert payload["relative_humidity"] == pytest.approx(39.475586)
     assert payload["barometric_pressure"] == pytest.approx(1017.8353)
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
 
 
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
@@ -1771,6 +1939,9 @@ def test_store_position_packet_defaults(mesh_module, monkeypatch):
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
 
+    mesh.config.LORA_FREQ = 868
+    mesh.config.MODEM_PRESET = "MediumFast"
+
     packet = {"id": "7", "rxTime": "", "from": "!abcd", "to": "", "decoded": {}}
 
     mesh.store_position_packet(packet, {})
@@ -1782,6 +1953,8 @@ def test_store_position_packet_defaults(mesh_module, monkeypatch):
     assert payload["to_id"] is None
     assert payload["latitude"] is None
     assert payload["longitude"] is None
+    assert payload["lora_freq"] == 868
+    assert payload["modem_preset"] == "MediumFast"
 
 
 def test_store_nodeinfo_packet_debug(mesh_module, monkeypatch, capsys):

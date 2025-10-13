@@ -241,6 +241,7 @@ def main() -> None:
                     else:
                         iface, resolved_target = interfaces._create_default_interface()
                         active_candidate = resolved_target
+                    interfaces._ensure_radio_metadata(iface)
                     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
                     initial_snapshot_sent = False
                     if not announced_target and resolved_target:
