@@ -16,6 +16,7 @@
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
+import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { refreshNodeInformation } from './node-details.js';
 
 /**
@@ -1654,6 +1655,87 @@ export function initializeApp(config) {
   }
 
   /**
+   * Build HTML markup describing a node for a Leaflet popup.
+   *
+   * @param {Object} node Map node payload with snake_case keys.
+   * @param {number} nowSec Reference timestamp for relative calculations.
+   * @returns {string} HTML snippet rendered inside the popup.
+   */
+  function buildMapPopupHtml(node, nowSec) {
+    const lines = [];
+    const longName = node && node.long_name ? escapeHtml(String(node.long_name)) : '';
+    if (longName) {
+      lines.push(`<b>${longName}</b>`);
+    }
+
+    const shortHtml = renderShortHtml(node?.short_name, node?.role, node?.long_name, node);
+    const nodeIdText = node && node.node_id ? `<span class="mono">${escapeHtml(String(node.node_id))}</span>` : '';
+    const shortParts = [];
+    if (shortHtml) shortParts.push(shortHtml);
+    if (nodeIdText) shortParts.push(nodeIdText);
+    if (shortParts.length) {
+      lines.push(shortParts.join(' '));
+    }
+
+    const hardwareText = fmtHw(node?.hw_model);
+    if (hardwareText) {
+      lines.push(`Model: ${escapeHtml(hardwareText)}`);
+    }
+
+    const roleValue = node?.role || 'CLIENT';
+    if (roleValue) {
+      lines.push(`Role: ${escapeHtml(roleValue)}`);
+    }
+
+    const batteryParts = [];
+    const batteryText = fmtAlt(node?.battery_level, '%');
+    if (batteryText) batteryParts.push(batteryText);
+    const voltageText = fmtAlt(node?.voltage, 'V');
+    if (voltageText) batteryParts.push(voltageText);
+    if (batteryParts.length) {
+      lines.push(`Battery: ${batteryParts.join(', ')}`);
+    }
+
+    const temperatureText = fmtTemperature(node?.temperature);
+    if (temperatureText) {
+      lines.push(`Temperature: ${temperatureText}`);
+    }
+    const humidityText = fmtHumidity(node?.relative_humidity);
+    if (humidityText) {
+      lines.push(`Humidity: ${humidityText}`);
+    }
+    const pressureText = fmtPressure(node?.barometric_pressure);
+    if (pressureText) {
+      lines.push(`Pressure: ${pressureText}`);
+    }
+
+    const lastHeardNum = Number(node?.last_heard);
+    if (Number.isFinite(lastHeardNum) && lastHeardNum > 0) {
+      lines.push(`Last seen: ${timeAgo(lastHeardNum, nowSec)}`);
+    }
+
+    const uptimeNum = Number(node?.uptime_seconds);
+    if (Number.isFinite(uptimeNum) && uptimeNum > 0) {
+      lines.push(`Uptime: ${timeHum(uptimeNum)}`);
+    }
+
+    const overlayNeighbors = Array.isArray(node?.neighbors) ? node.neighbors : [];
+    const neighborEntries = overlayNeighbors.length
+      ? overlayNeighbors
+      : getNeighborNodesFor(node?.node_id ?? '');
+    if (neighborEntries.length) {
+      const neighborParts = neighborEntries
+        .map(renderNeighborWithSnrHtml)
+        .filter(html => html && html.length);
+      if (neighborParts.length) {
+        lines.push(`Neighbors: ${neighborParts.join(' ')}`);
+      }
+    }
+
+    return lines.join('<br/>');
+  }
+
+  /**
    * Format uptime values for the short-info overlay.
    *
    * @param {*} value Raw uptime value.
@@ -1760,7 +1842,10 @@ export function initializeApp(config) {
     }
 
     if (Array.isArray(source.neighbors)) {
-      normalized.neighbors = source.neighbors;
+      const overlayNeighbors = overlayToPopupNode({ neighbors: source.neighbors }).neighbors;
+      if (overlayNeighbors.length) {
+        normalized.neighbors = overlayNeighbors;
+      }
     }
 
     return normalized;
@@ -2746,51 +2831,65 @@ export function initializeApp(config) {
         fillOpacity: 0.7,
         opacity: 0.7
       });
-      const lines = [];
-      lines.push(`<b>${n.long_name || ''}</b>`);
-      lines.push(`${renderShortHtml(n.short_name, n.role, n.long_name, n)} <span class="mono">${n.node_id || ''}</span>`);
-      if (n.hw_model) {
-        lines.push(`Model: ${fmtHw(n.hw_model)}`);
-      }
-      lines.push(`Role: ${n.role || 'CLIENT'}`);
-      const batteryParts = [];
-      const batteryText = fmtAlt(n.battery_level, "%");
-      if (batteryText) batteryParts.push(batteryText);
-      const voltageText = fmtAlt(n.voltage, "V");
-      if (voltageText) batteryParts.push(voltageText);
-      if (batteryParts.length) {
-        lines.push(`Battery: ${batteryParts.join(', ')}`);
-      }
-      const tempText = fmtTemperature(n.temperature);
-      if (tempText) {
-        lines.push(`Temperature: ${tempText}`);
-      }
-      const humidityText = fmtHumidity(n.relative_humidity);
-      if (humidityText) {
-        lines.push(`Humidity: ${humidityText}`);
-      }
-      const pressureText = fmtPressure(n.barometric_pressure);
-      if (pressureText) {
-        lines.push(`Pressure: ${pressureText}`);
-      }
-      if (n.last_heard) {
-        lines.push(`Last seen: ${timeAgo(n.last_heard, nowSec)}`);
-      }
-      if (n.uptime_seconds) {
-        lines.push(`Uptime: ${timeHum(n.uptime_seconds)}`);
-      }
-      const mapNeighborEntries = getNeighborNodesFor(n.node_id ?? n.nodeId ?? '');
-      if (mapNeighborEntries.length) {
-        const neighborParts = mapNeighborEntries
-          .map(renderNeighborWithSnrHtml)
-          .filter(html => html && html.length);
-        if (neighborParts.length) {
-          lines.push(`Neighbors: ${neighborParts.join(' ')}`);
-        }
-      }
-      marker.bindPopup(lines.join('<br/>'));
+
+      const fallbackOverlayProvider = () => mergeOverlayDetails(null, n);
+      const initialOverlay = fallbackOverlayProvider();
+      const initialPopupHtml = buildMapPopupHtml(overlayToPopupNode(initialOverlay), nowSec);
+
+      marker.bindPopup(initialPopupHtml);
       marker.addTo(markersLayer);
       pts.push([lat, lon]);
+
+      const updateMarkerPopup = overlayDetails => {
+        const popupNode = overlayToPopupNode(overlayDetails);
+        const html = buildMapPopupHtml(popupNode, Math.floor(Date.now() / 1000));
+        if (typeof marker.setPopupContent === 'function') {
+          marker.setPopupContent(html);
+          return;
+        }
+        if (typeof marker.getPopup === 'function') {
+          const popup = marker.getPopup();
+          if (popup && typeof popup.setContent === 'function') {
+            popup.setContent(html);
+            return;
+          }
+        }
+        marker.bindPopup(html);
+      };
+
+      attachNodeInfoRefreshToMarker({
+        marker,
+        getOverlayFallback: fallbackOverlayProvider,
+        refreshNodeInformation,
+        mergeOverlayDetails,
+        createRequestToken: () => ++shortInfoRequestToken,
+        isTokenCurrent: token => token === shortInfoRequestToken,
+        showLoading: (anchor, info) => {
+          if (anchor) {
+            showShortInfoLoading(anchor, info);
+          }
+        },
+        showDetails: (anchor, info) => {
+          if (anchor) {
+            openShortInfoOverlay(anchor, info);
+          }
+        },
+        showError: (anchor, info, error) => {
+          console.warn('Failed to refresh node information for map marker', error);
+          if (anchor) {
+            openShortInfoOverlay(anchor, info);
+          }
+        },
+        updatePopup: updateMarkerPopup,
+        shouldHandleClick: anchor => {
+          if (!anchor) return true;
+          if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === anchor) {
+            closeShortInfoOverlay();
+            return false;
+          }
+          return true;
+        },
+      });
     }
     if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
       const bounds = computeBoundsForPoints(pts, {
