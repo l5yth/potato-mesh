@@ -16,6 +16,7 @@
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
+import { refreshNodeInformation } from './node-details.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -100,6 +101,8 @@ export function initializeApp(config) {
   let nodesById = new Map();
   /** @type {HTMLElement|null} */
   let shortInfoAnchor = null;
+  /** @type {number} */
+  let shortInfoRequestToken = 0;
   /** @type {string|undefined} */
   let lastChatDate;
   const NODE_LIMIT = 1000;
@@ -1397,27 +1400,86 @@ export function initializeApp(config) {
 
   document.addEventListener('click', event => {
     const shortTarget = event.target.closest('.short-name');
-    if (shortTarget && shortTarget.dataset && shortTarget.dataset.nodeInfo) {
+    if (
+      shortTarget &&
+      shortTarget.dataset &&
+      (shortTarget.dataset.nodeInfo || shortTarget.dataset.nodeId || shortTarget.dataset.nodeNum)
+    ) {
       event.preventDefault();
       event.stopPropagation();
-      let info = null;
-      try {
-        info = JSON.parse(shortTarget.dataset.nodeInfo);
-      } catch (err) {
-        console.warn('Failed to parse node info payload', err);
+
+      let fallbackInfo = null;
+      if (shortTarget.dataset.nodeInfo) {
+        try {
+          fallbackInfo = JSON.parse(shortTarget.dataset.nodeInfo);
+        } catch (err) {
+          console.warn('Failed to parse node info payload', err);
+        }
       }
-      if (!info) return;
-      if (!info.shortName && shortTarget.textContent) {
-        info.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
+      if (!fallbackInfo || typeof fallbackInfo !== 'object') {
+        fallbackInfo = {};
       }
-      if (!info.role) {
-        info.role = 'CLIENT';
+
+      const datasetNodeId = typeof shortTarget.dataset.nodeId === 'string'
+        ? shortTarget.dataset.nodeId.trim()
+        : '';
+      if (datasetNodeId && !fallbackInfo.nodeId && !fallbackInfo.node_id) {
+        fallbackInfo.nodeId = datasetNodeId;
       }
+
+      if (fallbackInfo.nodeNum == null && fallbackInfo.node_num == null && shortTarget.dataset.nodeNum != null) {
+        const parsedDatasetNum = Number(shortTarget.dataset.nodeNum);
+        if (Number.isFinite(parsedDatasetNum)) {
+          fallbackInfo.nodeNum = parsedDatasetNum;
+        }
+      }
+
+      if (!fallbackInfo.shortName && shortTarget.textContent) {
+        fallbackInfo.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
+      }
+
+      const fallbackDetails = mergeOverlayDetails(null, fallbackInfo);
+      if (!fallbackDetails.shortName && shortTarget.textContent) {
+        fallbackDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
+        fallbackInfo.shortName = fallbackDetails.shortName;
+      }
+
       if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === shortTarget) {
         closeShortInfoOverlay();
-      } else {
-        openShortInfoOverlay(shortTarget, info);
+        return;
       }
+
+      const nodeId = typeof fallbackDetails.nodeId === 'string' && fallbackDetails.nodeId.trim().length
+        ? fallbackDetails.nodeId.trim()
+        : '';
+      const nodeNum = Number.isFinite(fallbackDetails.nodeNum) ? fallbackDetails.nodeNum : null;
+
+      if (!nodeId && !nodeNum) {
+        openShortInfoOverlay(shortTarget, fallbackDetails);
+        return;
+      }
+
+      const requestId = ++shortInfoRequestToken;
+      showShortInfoLoading(shortTarget, fallbackDetails);
+
+      refreshNodeInformation({ nodeId: nodeId || undefined, nodeNum: nodeNum ?? undefined, fallback: fallbackInfo })
+        .then(details => {
+          if (requestId !== shortInfoRequestToken) return;
+          const overlayDetails = mergeOverlayDetails(details, fallbackInfo);
+          if (!overlayDetails.shortName && shortTarget.textContent) {
+            overlayDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
+          }
+          openShortInfoOverlay(shortTarget, overlayDetails);
+        })
+        .catch(err => {
+          console.warn('Failed to refresh node information', err);
+          if (requestId !== shortInfoRequestToken) return;
+          const overlayDetails = mergeOverlayDetails(null, fallbackInfo);
+          if (!overlayDetails.shortName && shortTarget.textContent) {
+            overlayDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
+          }
+          openShortInfoOverlay(shortTarget, overlayDetails);
+        });
       return;
     }
     if (event.target.closest('.neighbor-connection-line')) {
@@ -1473,6 +1535,7 @@ export function initializeApp(config) {
     if (nodeData && typeof nodeData === 'object') {
       const info = {
         nodeId: nodeData.node_id ?? nodeData.nodeId ?? '',
+        nodeNum: nodeData.num ?? nodeData.node_num ?? nodeData.nodeNum ?? null,
         shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
         longName: nodeData.long_name ?? longName ?? '',
         role: roleValue,
@@ -1487,7 +1550,16 @@ export function initializeApp(config) {
         pressure: nodeData.barometric_pressure ?? nodeData.barometricPressure ?? nodeData.pressure ?? null,
         telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
       };
-      infoAttr = ` data-node-info="${escapeHtml(JSON.stringify(info))}"`;
+      const attrParts = [` data-node-info="${escapeHtml(JSON.stringify(info))}"`];
+      const attrNodeIdRaw = info.nodeId != null ? String(info.nodeId).trim() : '';
+      if (attrNodeIdRaw) {
+        attrParts.push(` data-node-id="${escapeHtml(attrNodeIdRaw)}"`);
+      }
+      const attrNodeNum = Number(info.nodeNum);
+      if (Number.isFinite(attrNodeNum)) {
+        attrParts.push(` data-node-num="${escapeHtml(String(attrNodeNum))}"`);
+      }
+      infoAttr = attrParts.join('');
     }
     if (!short) {
       return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
@@ -1622,11 +1694,125 @@ export function initializeApp(config) {
   }
 
   /**
+   * Transform a node-shaped payload into the overlay data format.
+   *
+   * @param {*} source Arbitrary node data.
+   * @returns {Object} Normalized overlay payload.
+   */
+  function normalizeOverlaySource(source) {
+    if (!source || typeof source !== 'object') return {};
+    const normalized = {};
+    const nodeIdRaw = source.nodeId ?? source.node_id;
+    if (typeof nodeIdRaw === 'string' && nodeIdRaw.trim().length > 0) {
+      normalized.nodeId = nodeIdRaw.trim();
+    }
+    const nodeNumRaw = source.nodeNum ?? source.node_num ?? source.num;
+    const nodeNumParsed = Number(nodeNumRaw);
+    if (Number.isFinite(nodeNumParsed)) {
+      normalized.nodeNum = nodeNumParsed;
+    }
+    const shortRaw = source.shortName ?? source.short_name;
+    if (shortRaw != null && String(shortRaw).trim().length > 0) {
+      normalized.shortName = String(shortRaw).trim();
+    }
+    const longRaw = source.longName ?? source.long_name;
+    if (longRaw != null && String(longRaw).trim().length > 0) {
+      normalized.longName = String(longRaw).trim();
+    }
+    if (source.role && String(source.role).trim().length > 0) {
+      normalized.role = String(source.role).trim();
+    }
+    if (source.hwModel ?? source.hw_model) {
+      normalized.hwModel = source.hwModel ?? source.hw_model;
+    }
+
+    const numericPairs = [
+      ['battery', source.battery ?? source.battery_level],
+      ['voltage', source.voltage],
+      ['uptime', source.uptime ?? source.uptime_seconds],
+      ['channel', source.channel ?? source.channel_utilization],
+      ['airUtil', source.airUtil ?? source.air_util_tx],
+      ['temperature', source.temperature],
+      ['humidity', source.humidity ?? source.relative_humidity],
+      ['pressure', source.pressure ?? source.barometric_pressure],
+      ['telemetryTime', source.telemetryTime ?? source.telemetry_time],
+      ['lastHeard', source.lastHeard ?? source.last_heard],
+      ['latitude', source.latitude],
+      ['longitude', source.longitude],
+      ['altitude', source.altitude],
+      ['positionTime', source.positionTime ?? source.position_time],
+    ];
+    for (const [key, value] of numericPairs) {
+      if (value == null || value === '') continue;
+      const num = Number(value);
+      if (Number.isFinite(num)) {
+        normalized[key] = num;
+      }
+    }
+
+    const lastSeenRaw = source.lastSeenIso ?? source.last_seen_iso;
+    if (typeof lastSeenRaw === 'string' && lastSeenRaw.trim().length > 0) {
+      normalized.lastSeenIso = lastSeenRaw.trim();
+    }
+    const positionIsoRaw = source.positionTimeIso ?? source.position_time_iso;
+    if (typeof positionIsoRaw === 'string' && positionIsoRaw.trim().length > 0) {
+      normalized.positionTimeIso = positionIsoRaw.trim();
+    }
+
+    if (Array.isArray(source.neighbors)) {
+      normalized.neighbors = source.neighbors;
+    }
+
+    return normalized;
+  }
+
+  /**
+   * Combine primary and fallback node information into an overlay payload.
+   *
+   * @param {*} primary Primary node details (e.g. fetched from the API).
+   * @param {*} fallback Fallback node details rendered with the page.
+   * @returns {Object} Overlay payload ready for rendering.
+   */
+  function mergeOverlayDetails(primary, fallback) {
+    const fallbackNormalized = normalizeOverlaySource(fallback);
+    const primaryNormalized = normalizeOverlaySource(primary);
+    const merged = { ...fallbackNormalized, ...primaryNormalized };
+    const neighborList = primaryNormalized.neighbors ?? fallbackNormalized.neighbors;
+    if (neighborList) {
+      merged.neighbors = neighborList;
+    }
+    if (!merged.role || merged.role === '') {
+      merged.role = 'CLIENT';
+    }
+    return merged;
+  }
+
+  /**
+   * Display a temporary loading state while node details are fetched.
+   *
+   * @param {HTMLElement} target Anchor element associated with the overlay.
+   * @param {Object} [info] Optional fallback information describing the node.
+   * @returns {void}
+   */
+  function showShortInfoLoading(target, info) {
+    if (!shortInfoOverlay || !shortInfoContent) return;
+    const normalized = normalizeOverlaySource(info || {});
+    const heading = normalized.longName || normalized.shortName || normalized.nodeId || '';
+    const headingHtml = heading ? `<strong>${escapeHtml(heading)}</strong><br/>` : '';
+    shortInfoContent.innerHTML = `${headingHtml}Loading…`;
+    shortInfoAnchor = target;
+    shortInfoOverlay.hidden = false;
+    shortInfoOverlay.style.visibility = 'hidden';
+    requestAnimationFrame(positionShortInfoOverlay);
+  }
+
+  /**
    * Hide the short-info overlay used for inline node details.
    *
    * @returns {void}
    */
   function closeShortInfoOverlay() {
+    shortInfoRequestToken += 1;
     if (!shortInfoOverlay) return;
     shortInfoOverlay.hidden = true;
     shortInfoOverlay.style.visibility = 'visible';
@@ -1668,29 +1854,35 @@ export function initializeApp(config) {
    */
   function openShortInfoOverlay(target, info) {
     if (!shortInfoOverlay || !shortInfoContent || !info) return;
+    const overlayInfo = normalizeOverlaySource(info);
+    if (!overlayInfo.role || overlayInfo.role === '') {
+      overlayInfo.role = 'CLIENT';
+    }
     const lines = [];
-    const longNameValue = shortInfoValueOrDash(info.longName ?? '');
+    const longNameValue = shortInfoValueOrDash(overlayInfo.longName ?? '');
     if (longNameValue !== '—') {
       lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
     }
     const shortParts = [];
-    const shortHtml = renderShortHtml(info.shortName, info.role, info.longName);
+    const shortHtml = renderShortHtml(overlayInfo.shortName, overlayInfo.role, overlayInfo.longName);
     if (shortHtml) {
       shortParts.push(shortHtml);
     }
-    const nodeIdValue = shortInfoValueOrDash(info.nodeId ?? '');
+    const nodeIdValue = shortInfoValueOrDash(overlayInfo.nodeId ?? '');
     if (nodeIdValue !== '—') {
       shortParts.push(`<span class="mono">${escapeHtml(nodeIdValue)}</span>`);
     }
     if (shortParts.length) {
       lines.push(shortParts.join(' '));
     }
-    const roleValue = shortInfoValueOrDash(info.role || 'CLIENT');
+    const roleValue = shortInfoValueOrDash(overlayInfo.role || 'CLIENT');
     if (roleValue !== '—') {
       lines.push(`Role: ${escapeHtml(roleValue)}`);
     }
     let neighborLineHtml = '';
-    const neighborEntries = getNeighborNodesFor(info.nodeId);
+    const neighborEntries = Array.isArray(overlayInfo.neighbors) && overlayInfo.neighbors.some(entry => entry && entry.node)
+      ? overlayInfo.neighbors
+      : getNeighborNodesFor(overlayInfo.nodeId);
     if (neighborEntries.length) {
       const neighborParts = neighborEntries
         .map(renderNeighborWithSnrHtml)
@@ -1699,18 +1891,18 @@ export function initializeApp(config) {
         neighborLineHtml = `Neighbors: ${neighborParts.join(' ')}`;
       }
     }
-    const modelValue = fmtHw(info.hwModel);
+    const modelValue = fmtHw(overlayInfo.hwModel);
     if (modelValue) {
       lines.push(`Model: ${escapeHtml(modelValue)}`);
     }
-    appendTelemetryLine(lines, 'Battery', info.battery, value => fmtAlt(value, '%'));
-    appendTelemetryLine(lines, 'Voltage', info.voltage, value => fmtAlt(value, 'V'));
-    appendTelemetryLine(lines, 'Uptime', info.uptime, formatShortInfoUptime);
-    appendTelemetryLine(lines, 'Channel Util', info.channel, fmtTx);
-    appendTelemetryLine(lines, 'Air Util Tx', info.airUtil, fmtTx);
-    appendTelemetryLine(lines, 'Temperature', info.temperature, fmtTemperature);
-    appendTelemetryLine(lines, 'Humidity', info.humidity, fmtHumidity);
-    appendTelemetryLine(lines, 'Pressure', info.pressure, fmtPressure);
+    appendTelemetryLine(lines, 'Battery', overlayInfo.battery, value => fmtAlt(value, '%'));
+    appendTelemetryLine(lines, 'Voltage', overlayInfo.voltage, value => fmtAlt(value, 'V'));
+    appendTelemetryLine(lines, 'Uptime', overlayInfo.uptime, formatShortInfoUptime);
+    appendTelemetryLine(lines, 'Channel Util', overlayInfo.channel, fmtTx);
+    appendTelemetryLine(lines, 'Air Util Tx', overlayInfo.airUtil, fmtTx);
+    appendTelemetryLine(lines, 'Temperature', overlayInfo.temperature, fmtTemperature);
+    appendTelemetryLine(lines, 'Humidity', overlayInfo.humidity, fmtHumidity);
+    appendTelemetryLine(lines, 'Pressure', overlayInfo.pressure, fmtPressure);
     if (neighborLineHtml) {
       lines.push(neighborLineHtml);
     }
