@@ -34,9 +34,9 @@ module PotatoMesh
     # @return [String] generated description text.
     def description(private_mode:)
       site = Sanitizer.sanitized_site_name
-      channel = Sanitizer.sanitized_default_channel
-      frequency = Sanitizer.sanitized_default_frequency
-      matrix = Sanitizer.sanitized_matrix_room
+      channel = Sanitizer.sanitized_channel
+      frequency = Sanitizer.sanitized_frequency
+      contact = Sanitizer.sanitized_contact_link
 
       summary = "Live Meshtastic mesh map for #{site}"
       if channel.empty? && frequency.empty?
@@ -59,7 +59,7 @@ module PotatoMesh
       if (distance = Sanitizer.sanitized_max_distance_km)
         sentences << "Shows nodes within roughly #{formatted_distance_km(distance)} km of the map center."
       end
-      sentences << "Join the community in #{matrix} on Matrix." if matrix
+      sentences << "Join the community in #{contact} via chat." if contact
 
       sentences.join(" ")
     end

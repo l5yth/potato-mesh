@@ -89,18 +89,18 @@ module PotatoMesh
         PotatoMesh::Sanitizer.sanitized_site_name
       end
 
-      # Retrieve the configured default channel.
+      # Retrieve the configured channel.
       #
       # @return [String] sanitised channel identifier.
-      def sanitized_default_channel
-        PotatoMesh::Sanitizer.sanitized_default_channel
+      def sanitized_channel
+        PotatoMesh::Sanitizer.sanitized_channel
       end
 
-      # Retrieve the configured default frequency descriptor.
+      # Retrieve the configured frequency descriptor.
       #
       # @return [String] sanitised frequency text.
-      def sanitized_default_frequency
-        PotatoMesh::Sanitizer.sanitized_default_frequency
+      def sanitized_frequency
+        PotatoMesh::Sanitizer.sanitized_frequency
       end
 
       # Build the configuration hash exposed to the frontend application.
@@ -111,23 +111,32 @@ module PotatoMesh
           refreshIntervalSeconds: PotatoMesh::Config.refresh_interval_seconds,
           refreshMs: PotatoMesh::Config.refresh_interval_seconds * 1000,
           chatEnabled: !private_mode?,
-          defaultChannel: sanitized_default_channel,
-          defaultFrequency: sanitized_default_frequency,
+          channel: sanitized_channel,
+          frequency: sanitized_frequency,
+          contactLink: sanitized_contact_link,
+          contactLinkUrl: sanitized_contact_link_url,
           mapCenter: {
             lat: PotatoMesh::Config.map_center_lat,
             lon: PotatoMesh::Config.map_center_lon,
           },
-          maxNodeDistanceKm: PotatoMesh::Config.max_node_distance_km,
+          maxDistanceKm: PotatoMesh::Config.max_distance_km,
           tileFilters: PotatoMesh::Config.tile_filters,
           instanceDomain: app_constant(:INSTANCE_DOMAIN),
         }
       end
 
-      # Retrieve the configured Matrix room or nil when unset.
+      # Retrieve the configured contact link or nil when unset.
       #
-      # @return [String, nil] Matrix room identifier.
-      def sanitized_matrix_room
-        PotatoMesh::Sanitizer.sanitized_matrix_room
+      # @return [String, nil] contact link identifier.
+      def sanitized_contact_link
+        PotatoMesh::Sanitizer.sanitized_contact_link
+      end
+
+      # Retrieve the hyperlink derived from the configured contact link.
+      #
+      # @return [String, nil] hyperlink pointing to the community chat.
+      def sanitized_contact_link_url
+        PotatoMesh::Sanitizer.sanitized_contact_link_url
       end
 
       # Retrieve the configured maximum node distance in kilometres.

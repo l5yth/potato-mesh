@@ -80,9 +80,11 @@ test('mergeConfig coerces numeric values and nested objects', () => {
     mapCenter: { lat: '10.5', lon: '20.1' },
     tileFilters: { dark: 'contrast(2)' },
     chatEnabled: 0,
-    defaultChannel: '#Custom',
-    defaultFrequency: '915MHz',
-    maxNodeDistanceKm: '55.5'
+    channel: '#Custom',
+    frequency: '915MHz',
+    contactLink: 'https://example.org/chat',
+    contactLinkUrl: 'https://example.org/chat',
+    maxDistanceKm: '55.5'
   });
 
   assert.equal(result.refreshIntervalSeconds, 30);
@@ -90,21 +92,23 @@ test('mergeConfig coerces numeric values and nested objects', () => {
   assert.deepEqual(result.mapCenter, { lat: 10.5, lon: 20.1 });
   assert.deepEqual(result.tileFilters, { light: DEFAULT_CONFIG.tileFilters.light, dark: 'contrast(2)' });
   assert.equal(result.chatEnabled, false);
-  assert.equal(result.defaultChannel, '#Custom');
-  assert.equal(result.defaultFrequency, '915MHz');
-  assert.equal(result.maxNodeDistanceKm, 55.5);
+  assert.equal(result.channel, '#Custom');
+  assert.equal(result.frequency, '915MHz');
+  assert.equal(result.contactLink, 'https://example.org/chat');
+  assert.equal(result.contactLinkUrl, 'https://example.org/chat');
+  assert.equal(result.maxDistanceKm, 55.5);
 });
 
 test('mergeConfig falls back to defaults for invalid numeric values', () => {
   const result = mergeConfig({
     refreshIntervalSeconds: 'NaN',
     refreshMs: 'NaN',
-    maxNodeDistanceKm: 'oops'
+    maxDistanceKm: 'oops'
   });
 
   assert.equal(result.refreshIntervalSeconds, DEFAULT_CONFIG.refreshIntervalSeconds);
   assert.equal(result.refreshMs, DEFAULT_CONFIG.refreshMs);
-  assert.equal(result.maxNodeDistanceKm, DEFAULT_CONFIG.maxNodeDistanceKm);
+  assert.equal(result.maxDistanceKm, DEFAULT_CONFIG.maxDistanceKm);
 });
 
 test('document stub returns null for unrelated selectors', () => {

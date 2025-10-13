@@ -5,7 +5,7 @@ services:
       DEBUG: 1
     volumes:
       - ./web:/app
-      - ./data:/data
+      - ./data:/app/.local/share/potato-mesh
       - /app/vendor/bundle
 
   web-bridge:
@@ -13,7 +13,7 @@ services:
       DEBUG: 1
     volumes:
       - ./web:/app
-      - ./data:/data
+      - ./data:/app/.local/share/potato-mesh
       - /app/vendor/bundle
     ports:
       - "41447:41447"
@@ -24,6 +24,7 @@ services:
       DEBUG: 1
     volumes:
       - ./data:/app
+      - ./data:/app/.local/share/potato-mesh
       - /app/.local
 
   ingestor-bridge:
@@ -31,4 +32,5 @@ services:
       DEBUG: 1
     volumes:
       - ./data:/app
+      - ./data:/app/.local/share/potato-mesh
       - /app/.local

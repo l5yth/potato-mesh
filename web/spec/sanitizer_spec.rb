@@ -62,35 +62,37 @@ RSpec.describe PotatoMesh::Sanitizer do
     before do
       allow(PotatoMesh::Config).to receive_messages(
         site_name: "  Spec Mesh  ",
-        default_channel: "  #Spec  ",
-        default_frequency: " 915MHz  ",
-        matrix_room: "  #room:example.org  ",
-        max_node_distance_km: 42,
+        channel: "  #Spec  ",
+        frequency: " 915MHz  ",
+        contact_link: "  #room:example.org  ",
+        max_distance_km: 42,
       )
     end
 
     it "provides trimmed strings" do
       expect(described_class.sanitized_site_name).to eq("Spec Mesh")
-      expect(described_class.sanitized_default_channel).to eq("#Spec")
-      expect(described_class.sanitized_default_frequency).to eq("915MHz")
-      expect(described_class.sanitized_matrix_room).to eq("#room:example.org")
+      expect(described_class.sanitized_channel).to eq("#Spec")
+      expect(described_class.sanitized_frequency).to eq("915MHz")
+      expect(described_class.sanitized_contact_link).to eq("#room:example.org")
+      expect(described_class.sanitized_contact_link_url).to eq("https://matrix.to/#/#room:example.org")
       expect(described_class.sanitized_max_distance_km).to eq(42)
     end
 
-    it "returns nil when the matrix room is blank" do
-      allow(PotatoMesh::Config).to receive(:matrix_room).and_return(" \t ")
+    it "returns nil when the contact link is blank" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return(" \t ")
 
-      expect(described_class.sanitized_matrix_room).to be_nil
+      expect(described_class.sanitized_contact_link).to be_nil
+      expect(described_class.sanitized_contact_link_url).to be_nil
     end
 
     it "returns nil when the distance is not positive" do
-      allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(0)
+      allow(PotatoMesh::Config).to receive(:max_distance_km).and_return(0)
 
       expect(described_class.sanitized_max_distance_km).to be_nil
     end
 
     it "returns nil when the distance is not numeric" do
-      allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return("far")
+      allow(PotatoMesh::Config).to receive(:max_distance_km).and_return("far")
 
       expect(described_class.sanitized_max_distance_km).to be_nil
     end

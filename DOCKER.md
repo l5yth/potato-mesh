@@ -35,8 +35,8 @@ CONNECTION=/dev/ttyACM0
 
 Additional environment variables are optional:
 
-- `DEFAULT_CHANNEL`, `DEFAULT_FREQUENCY`, `MAP_CENTER_LAT`, `MAP_CENTER_LON`,
-  `MAX_NODE_DISTANCE_KM`, and `MATRIX_ROOM` customise the UI.
+- `CHANNEL`, `FREQUENCY`, `MAP_CENTER`, `MAX_DISTANCE`, and `CONTACT_LINK`
+  customise the UI.
 - `POTATOMESH_INSTANCE` (defaults to `http://web:41447`) lets the ingestor post
   to a remote PotatoMesh instance if you do not run both services together.
 - `CONNECTION` overrides the default serial device or network endpoint used by

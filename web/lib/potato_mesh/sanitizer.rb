@@ -106,33 +106,40 @@ module PotatoMesh
       sanitized_string(Config.site_name)
     end
 
-    # Retrieve the configured default channel as a cleaned string.
+    # Retrieve the configured channel as a cleaned string.
     #
     # @return [String] trimmed configuration value.
-    def sanitized_default_channel
-      sanitized_string(Config.default_channel)
+    def sanitized_channel
+      sanitized_string(Config.channel)
     end
 
-    # Retrieve the configured default frequency as a cleaned string.
+    # Retrieve the configured frequency as a cleaned string.
     #
     # @return [String] trimmed configuration value.
-    def sanitized_default_frequency
-      sanitized_string(Config.default_frequency)
+    def sanitized_frequency
+      sanitized_string(Config.frequency)
     end
 
-    # Retrieve the configured Matrix room and normalise blank values to nil.
+    # Retrieve the configured contact link and normalise blank values to nil.
     #
-    # @return [String, nil] Matrix room identifier or +nil+ when blank.
-    def sanitized_matrix_room
-      value = sanitized_string(Config.matrix_room)
+    # @return [String, nil] contact link identifier or +nil+ when blank.
+    def sanitized_contact_link
+      value = sanitized_string(Config.contact_link)
       value.empty? ? nil : value
+    end
+
+    # Retrieve the best effort URL for the configured contact link.
+    #
+    # @return [String, nil] contact hyperlink when derivable.
+    def sanitized_contact_link_url
+      Config.contact_link_url
     end
 
     # Return a positive numeric maximum distance when configured.
     #
     # @return [Numeric, nil] distance value in kilometres.
     def sanitized_max_distance_km
-      distance = Config.max_node_distance_km
+      distance = Config.max_distance_km
       return nil unless distance.is_a?(Numeric)
       return nil unless distance.positive?
 

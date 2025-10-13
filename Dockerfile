@@ -54,8 +54,8 @@ COPY --chown=potatomesh:potatomesh web/views/ ./views/
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
 
 # Create data directory for SQLite database
-RUN mkdir -p /app/data && \
-    chown -R potatomesh:potatomesh /app/data
+RUN mkdir -p /app/data /app/.local/share/potato-mesh && \
+    chown -R potatomesh:potatomesh /app/data /app/.local
 
 # Switch to non-root user
 USER potatomesh
@@ -65,18 +65,13 @@ EXPOSE 41447
 
 # Default environment variables (can be overridden by host)
 ENV APP_ENV=production \
-    MESH_DB=/app/data/mesh.db \
-    DB_BUSY_TIMEOUT_MS=5000 \
-    DB_BUSY_MAX_RETRIES=5 \
-    DB_BUSY_RETRY_DELAY=0.05 \
-    MAX_JSON_BODY_BYTES=1048576 \
+    RACK_ENV=production \
     SITE_NAME="PotatoMesh Demo" \
-    DEFAULT_CHANNEL="#LongFast" \
-    DEFAULT_FREQUENCY="915MHz" \
-    MAP_CENTER_LAT=38.761944 \
-    MAP_CENTER_LON=-27.090833 \
-    MAX_NODE_DISTANCE_KM=42 \
-    MATRIX_ROOM="#potatomesh:dod.ngo" \
+    CHANNEL="#LongFast" \
+    FREQUENCY="915MHz" \
+    MAP_CENTER="38.761944,-27.090833" \
+    MAX_DISTANCE=42 \
+    CONTACT_LINK="#potatomesh:dod.ngo" \
     DEBUG=0
 
 # Start the application

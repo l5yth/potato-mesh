@@ -26,37 +26,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:application_class) { PotatoMesh::Application }
 
   describe "configuration" do
-    it "sets the default HTTP port to 41_447" do
-      expect(app.settings.port).to eq(41_447)
+    it "sets the default HTTP port to the baked-in value" do
+      expect(app.settings.port).to eq(PotatoMesh::Application::DEFAULT_PORT)
     end
   end
 
   describe ".resolve_port" do
-    around do |example|
-      original_present = ENV.key?("PORT")
-      original_value = ENV["PORT"] if original_present
-      ENV.delete("PORT")
-      example.run
-    ensure
-      if original_present
-        ENV["PORT"] = original_value
-      else
-        ENV.delete("PORT")
-      end
-    end
-
-    it "returns the default port when the environment is unset" do
-      expect(application_class.resolve_port).to eq(41_447)
-    end
-
-    it "parses the environment override when provided" do
+    it "always returns the baked-in default port" do
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
       ENV["PORT"] = "51515"
-      expect(application_class.resolve_port).to eq(51_515)
-    end
-
-    it "falls back to the default port when parsing fails" do
-      ENV["PORT"] = "potato"
-      expect(application_class.resolve_port).to eq(41_447)
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
+    ensure
+      ENV.delete("PORT")
     end
   end
 
@@ -495,9 +476,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(sanitized_string(nil)).to eq("")
       end
 
-      it "returns nil for blank matrix rooms" do
-        allow(PotatoMesh::Config).to receive(:matrix_room).and_return("  \t ")
-        expect(sanitized_matrix_room).to be_nil
+      it "returns nil for blank contact links" do
+        allow(PotatoMesh::Config).to receive(:contact_link).and_return("  \t ")
+        expect(sanitized_contact_link).to be_nil
       end
 
       it "coerces string_or_nil inputs" do
@@ -566,13 +547,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       it "returns nil when the maximum distance is invalid" do
-        allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(-5)
+        allow(PotatoMesh::Config).to receive(:max_distance_km).and_return(-5)
         expect(sanitized_max_distance_km).to be_nil
 
-        allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return("string")
+        allow(PotatoMesh::Config).to receive(:max_distance_km).and_return("string")
         expect(sanitized_max_distance_km).to be_nil
 
-        allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(15.5)
+        allow(PotatoMesh::Config).to receive(:max_distance_km).and_return(15.5)
         expect(sanitized_max_distance_km).to eq(15.5)
       end
     end
@@ -785,12 +766,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "includes SEO metadata from configuration" do
       allow(PotatoMesh::Config).to receive(:site_name).and_return("Spec Mesh Title")
-      allow(PotatoMesh::Config).to receive(:default_channel).and_return("#SpecChannel")
-      allow(PotatoMesh::Config).to receive(:default_frequency).and_return("915MHz")
-      allow(PotatoMesh::Config).to receive(:max_node_distance_km).and_return(120.5)
-      allow(PotatoMesh::Config).to receive(:matrix_room).and_return(" #spec-room:example.org ")
+      allow(PotatoMesh::Config).to receive(:channel).and_return("#SpecChannel")
+      allow(PotatoMesh::Config).to receive(:frequency).and_return("915MHz")
+      allow(PotatoMesh::Config).to receive(:max_distance_km).and_return(120.5)
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return(" #spec-room:example.org ")
 
-      expected_description = "Live Meshtastic mesh map for Spec Mesh Title on #SpecChannel (915MHz). Track nodes, messages, and coverage in real time. Shows nodes within roughly 120.5 km of the map center. Join the community in #spec-room:example.org on Matrix."
+      expected_description = "Live Meshtastic mesh map for Spec Mesh Title on #SpecChannel (915MHz). Track nodes, messages, and coverage in real time. Shows nodes within roughly 120.5 km of the map center. Join the community in #spec-room:example.org via chat."
 
       get "/"
 
