@@ -67,9 +67,9 @@ RSpec.describe PotatoMesh::App::Filesystem do
           legacy_db_path: legacy_db,
           db_path: new_db,
           default_db_path: new_db,
-          legacy_keyfile_path: legacy_key,
           keyfile_path: new_key,
         )
+        allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_return([legacy_key])
 
         harness_class.perform_initial_filesystem_setup!
 
@@ -81,6 +81,40 @@ RSpec.describe PotatoMesh::App::Filesystem do
         expect(File.stat(new_db).mode & 0o777).to eq(0o600)
         expect(harness_class.debug_entries.size).to eq(2)
         expect(harness_class.warning_entries).to be_empty
+      end
+    end
+
+    it "migrates repository configuration assets from web/config" do
+      Dir.mktmpdir do |dir|
+        web_root = File.join(dir, "web")
+        legacy_key = File.join(web_root, "config", "potato-mesh", "keyfile")
+        legacy_well_known = File.join(web_root, "config", "potato-mesh", "well-known", "potato-mesh")
+        destination_root = File.join(dir, "xdg-config", "potato-mesh")
+        new_key = File.join(destination_root, "keyfile")
+        new_well_known = File.join(destination_root, "well-known", "potato-mesh")
+
+        FileUtils.mkdir_p(File.dirname(legacy_key))
+        File.write(legacy_key, "legacy-key")
+        FileUtils.mkdir_p(File.dirname(legacy_well_known))
+        File.write(legacy_well_known, "{\"legacy\":true}")
+
+        allow(PotatoMesh::Config).to receive(:web_root).and_return(web_root)
+        allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(new_key)
+        allow(PotatoMesh::Config).to receive(:well_known_storage_root).and_return(File.dirname(new_well_known))
+        allow(PotatoMesh::Config).to receive(:well_known_relative_path).and_return(".well-known/potato-mesh")
+        allow(PotatoMesh::Config).to receive(:legacy_db_path).and_return(File.join(dir, "legacy", "mesh.db"))
+        allow(PotatoMesh::Config).to receive(:db_path).and_return(File.join(dir, "data", "potato-mesh", "mesh.db"))
+        allow(PotatoMesh::Config).to receive(:default_db_path).and_return(File.join(dir, "data", "potato-mesh", "mesh.db"))
+
+        harness_class.perform_initial_filesystem_setup!
+
+        expect(File).to exist(new_key)
+        expect(File.read(new_key)).to eq("legacy-key")
+        expect(File.stat(new_key).mode & 0o777).to eq(0o600)
+        expect(File).to exist(new_well_known)
+        expect(File.read(new_well_known)).to eq("{\"legacy\":true}")
+        expect(File.stat(new_well_known).mode & 0o777).to eq(0o644)
+        expect(harness_class.debug_entries.map { |entry| entry[:context] }).to include("filesystem.keys", "filesystem.well_known")
       end
     end
 

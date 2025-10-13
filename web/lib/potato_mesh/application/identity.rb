@@ -47,6 +47,7 @@ module PotatoMesh
       # @return [Array<OpenSSL::PKey::RSA, Boolean>] tuple of key and generation flag.
       def load_or_generate_instance_private_key
         keyfile_path = PotatoMesh::Config.keyfile_path
+        migrate_legacy_keyfile_for_identity!(keyfile_path)
         FileUtils.mkdir_p(File.dirname(keyfile_path))
         if File.exist?(keyfile_path)
           contents = File.binread(keyfile_path)
@@ -71,6 +72,46 @@ module PotatoMesh
         end
         [key, true]
       end
+
+      # Migrate an existing legacy keyfile into the configured destination.
+      #
+      # @param destination_path [String] absolute path where the keyfile should reside.
+      # @return [void]
+      def migrate_legacy_keyfile_for_identity!(destination_path)
+        return if File.exist?(destination_path)
+
+        PotatoMesh::Config.legacy_keyfile_candidates.each do |candidate|
+          next unless File.exist?(candidate)
+          next if candidate == destination_path
+
+          begin
+            FileUtils.mkdir_p(File.dirname(destination_path))
+            FileUtils.cp(candidate, destination_path)
+            File.chmod(0o600, destination_path)
+
+            debug_log(
+              "Migrated legacy keyfile to XDG directory",
+              context: "identity.keys",
+              source: candidate,
+              destination: destination_path,
+            )
+          rescue SystemCallError => e
+            warn_log(
+              "Failed to migrate legacy keyfile",
+              context: "identity.keys",
+              source: candidate,
+              destination: destination_path,
+              error_class: e.class.name,
+              error_message: e.message,
+            )
+            next
+          end
+
+          break
+        end
+      end
+
+      private :migrate_legacy_keyfile_for_identity!
 
       # Return the directory used to store well-known documents.
       #

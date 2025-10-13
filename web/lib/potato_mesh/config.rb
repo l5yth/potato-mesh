@@ -215,7 +215,19 @@ module PotatoMesh
     #
     # @return [String] absolute filesystem path to the legacy keyfile.
     def legacy_keyfile_path
-      File.join(legacy_config_directory, "keyfile")
+      legacy_keyfile_candidates.find { |path| File.exist?(path) } || legacy_keyfile_candidates.first
+    end
+
+    # Enumerate known legacy keyfile locations for migration.
+    #
+    # @return [Array<String>] ordered list of absolute legacy keyfile paths.
+    def legacy_keyfile_candidates
+      [
+        File.join(web_root, ".config", "keyfile"),
+        File.join(web_root, ".config", "potato-mesh", "keyfile"),
+        File.join(web_root, "config", "keyfile"),
+        File.join(web_root, "config", "potato-mesh", "keyfile"),
+      ].map { |path| File.expand_path(path) }.uniq
     end
 
     # Legacy location for well known assets within the public folder.
@@ -223,6 +235,23 @@ module PotatoMesh
     # @return [String] absolute path to the legacy output directory.
     def legacy_public_well_known_path
       File.join(web_root, "public", well_known_relative_path)
+    end
+
+    # Enumerate known legacy well-known document locations for migration.
+    #
+    # @return [Array<String>] ordered list of absolute legacy well-known document paths.
+    def legacy_well_known_candidates
+      filename = File.basename(well_known_relative_path)
+      [
+        File.join(web_root, ".config", "well-known", filename),
+        File.join(web_root, ".config", ".well-known", filename),
+        File.join(web_root, ".config", "potato-mesh", "well-known", filename),
+        File.join(web_root, ".config", "potato-mesh", ".well-known", filename),
+        File.join(web_root, "config", "well-known", filename),
+        File.join(web_root, "config", ".well-known", filename),
+        File.join(web_root, "config", "potato-mesh", "well-known", filename),
+        File.join(web_root, "config", "potato-mesh", ".well-known", filename),
+      ].map { |path| File.expand_path(path) }.uniq
     end
 
     # Interval used to refresh well known documents from disk.

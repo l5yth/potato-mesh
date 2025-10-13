@@ -90,6 +90,21 @@ RSpec.describe PotatoMesh::Config do
         File.join(described_class.web_root, ".config", "keyfile"),
       )
     end
+
+    it "prefers repository config keyfiles when present" do
+      Dir.mktmpdir do |dir|
+        web_root = File.join(dir, "web")
+        legacy_key = File.join(web_root, "config", "potato-mesh", "keyfile")
+        FileUtils.mkdir_p(File.dirname(legacy_key))
+        File.write(legacy_key, "legacy")
+
+        allow(described_class).to receive(:web_root).and_return(web_root)
+
+        expect(described_class.legacy_keyfile_path).to eq(legacy_key)
+      end
+    ensure
+      allow(described_class).to receive(:web_root).and_call_original
+    end
   end
 
   describe ".legacy_db_path" do
@@ -97,6 +112,22 @@ RSpec.describe PotatoMesh::Config do
       expect(described_class.legacy_db_path).to eq(
         File.expand_path("../data/mesh.db", described_class.web_root),
       )
+    end
+  end
+
+  describe ".legacy_well_known_candidates" do
+    it "includes repository config directories" do
+      Dir.mktmpdir do |dir|
+        web_root = File.join(dir, "web")
+        allow(described_class).to receive(:web_root).and_return(web_root)
+
+        candidates = described_class.legacy_well_known_candidates
+        expect(candidates).to include(
+          File.join(web_root, "config", "potato-mesh", "well-known", "potato-mesh"),
+        )
+      end
+    ensure
+      allow(described_class).to receive(:web_root).and_call_original
     end
   end
 

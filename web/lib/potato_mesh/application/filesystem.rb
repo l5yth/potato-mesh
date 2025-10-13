@@ -25,6 +25,7 @@ module PotatoMesh
       def perform_initial_filesystem_setup!
         migrate_legacy_database!
         migrate_legacy_keyfile!
+        migrate_legacy_well_known_assets!
       end
 
       private
@@ -47,12 +48,33 @@ module PotatoMesh
       #
       # @return [void]
       def migrate_legacy_keyfile!
-        migrate_legacy_file(
-          PotatoMesh::Config.legacy_keyfile_path,
-          PotatoMesh::Config.keyfile_path,
-          chmod: 0o600,
-          context: "filesystem.keys",
+        PotatoMesh::Config.legacy_keyfile_candidates.each do |candidate|
+          migrate_legacy_file(
+            candidate,
+            PotatoMesh::Config.keyfile_path,
+            chmod: 0o600,
+            context: "filesystem.keys",
+          )
+        end
+      end
+
+      # Copy the legacy well-known document into the configured XDG directory.
+      #
+      # @return [void]
+      def migrate_legacy_well_known_assets!
+        destination = File.join(
+          PotatoMesh::Config.well_known_storage_root,
+          File.basename(PotatoMesh::Config.well_known_relative_path),
         )
+
+        PotatoMesh::Config.legacy_well_known_candidates.each do |candidate|
+          migrate_legacy_file(
+            candidate,
+            destination,
+            chmod: 0o644,
+            context: "filesystem.well_known",
+          )
+        end
       end
 
       # Migrate a legacy file if it exists and the destination has not been created yet.

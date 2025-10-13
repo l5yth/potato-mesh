@@ -67,6 +67,20 @@ exec ruby app.rb -p 41447 -o 0.0.0.0
 * Configure `INSTANCE_DOMAIN` with the public URL of your deployment so vanity
   links and generated metadata resolve correctly.
 
+### Configuration storage
+
+PotatoMesh stores its runtime assets using the XDG base directory specification.
+During startup the web application migrates existing configuration from
+`web/.config` and `web/config` into the resolved `XDG_CONFIG_HOME` directory.
+This preserves previously generated instance key material and
+`/.well-known/potato-mesh` documents so upgrades do not create new credentials
+unnecessarily. When XDG directories are not provided the application falls back
+to the repository root.
+
+The migrated key is written to `<XDG_CONFIG_HOME>/potato-mesh/keyfile` and the
+well-known document is staged in
+`<XDG_CONFIG_HOME>/potato-mesh/well-known/potato-mesh`.
+
 The web app can be configured with environment variables (defaults shown):
 
 * `SITE_NAME` - title and header shown in the UI (default: "PotatoMesh Demo")

@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Unreleased
+
+* Preserve legacy configuration assets when migrating to XDG directories.
+
 ## v0.5.0
 
 * Add JavaScript configuration tests and coverage workflow
