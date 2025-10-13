@@ -189,10 +189,12 @@
     <tbody></tbody>
   </table>
 
-  <div id="shortInfoOverlay" class="short-info-overlay" role="dialog" hidden>
-    <button type="button" class="short-info-close" aria-label="Close node details">×</button>
-    <div class="short-info-content"></div>
-  </div>
+  <template id="shortInfoOverlayTemplate">
+    <div class="short-info-overlay" role="dialog" aria-modal="false">
+      <button type="button" class="short-info-close" aria-label="Close node details">×</button>
+      <div class="short-info-content"></div>
+    </div>
+  </template>
 
   <footer>
     PotatoMesh
