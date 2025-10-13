@@ -2252,6 +2252,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
     end
+
+    it "excludes nodes whose last activity is older than a week" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_last = now - (PotatoMesh::Config.week_seconds + 60)
+      fresh_last = now - 30
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!stale-node", "stal", "Stale", "TBEAM", "CLIENT", 0.0, stale_last, stale_last],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!fresh-node", "frsh", "Fresh", "TBEAM", "CLIENT", 0.0, fresh_last, fresh_last],
+        )
+      end
+
+      get "/api/nodes"
+
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |row| row["node_id"] }
+      expect(ids).to include("!fresh-node")
+      expect(ids).not_to include("!stale-node")
+
+      get "/api/nodes/!stale-node"
+      expect(last_response.status).to eq(404)
+
+      get "/api/nodes/!fresh-node"
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload["node_id"]).to eq("!fresh-node")
+    end
   end
 
   describe "GET /api/messages" do
@@ -2443,6 +2477,43 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(messages.first["from_id"]).to be_nil
       end
     end
+
+    it "omits messages received more than seven days ago" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_rx = now - (PotatoMesh::Config.week_seconds + 120)
+      fresh_rx = now - 15
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!fresh", "frsh", "Fresh", "TBEAM", "CLIENT", 0.0, fresh_rx, fresh_rx],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+          [1, stale_rx, Time.at(stale_rx).utc.iso8601, "!old", "!fresh", 0, "TEXT_MESSAGE_APP", "stale", 1.0, -70, 3],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+          [2, fresh_rx, Time.at(fresh_rx).utc.iso8601, "!fresh", "!old", 0, "TEXT_MESSAGE_APP", "fresh", 2.0, -60, 3],
+        )
+      end
+
+      get "/api/messages"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      ids = payload.map { |row| row["id"] }
+      expect(ids).to include(2)
+      expect(ids).not_to include(1)
+
+      get "/api/messages/!old"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["id"] }).to eq([2])
+    end
   end
 
   context "when private mode is enabled" do
@@ -2533,6 +2604,87 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["precision_bits"]).to eq(8)
       expect(entry["payload_b64"]).to eq("AQI=")
     end
+
+    it "excludes position entries older than seven days" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_rx = now - (PotatoMesh::Config.week_seconds + 10)
+      fresh_rx = now - 20
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [1, "!pos", 42, stale_rx, Time.at(stale_rx).utc.iso8601, stale_rx - 5, 52.0, 13.0],
+        )
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [2, "!pos", 42, fresh_rx, Time.at(fresh_rx).utc.iso8601, fresh_rx - 5, 53.0, 14.0],
+        )
+      end
+
+      get "/api/positions"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      ids = payload.map { |row| row["id"] }
+      expect(ids).to eq([2])
+
+      get "/api/positions/!pos"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["id"] }).to eq([2])
+    end
+  end
+
+  describe "GET /api/neighbors" do
+    it "excludes neighbor records older than seven days" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_rx = now - (PotatoMesh::Config.week_seconds + 45)
+      fresh_rx = now - 10
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!root", "root", "Root", "TBEAM", "CLIENT", 0.0, fresh_rx, fresh_rx],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!neighbor-old", "oldn", "Neighbor Old", "TBEAM", "CLIENT", 0.0, fresh_rx, fresh_rx],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!neighbor-new", "newn", "Neighbor New", "TBEAM", "CLIENT", 0.0, fresh_rx, fresh_rx],
+        )
+        db.execute(
+          "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
+          ["!root", "!neighbor-old", 1.0, stale_rx],
+        )
+        db.execute(
+          "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
+          ["!root", "!neighbor-new", 8.0, fresh_rx],
+        )
+      end
+
+      get "/api/neighbors"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.length).to eq(1)
+      expect(payload.first["neighbor_id"]).to eq("!neighbor-new")
+      expect(payload.first["rx_time"]).to eq(fresh_rx)
+
+      get "/api/neighbors/!root"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.length).to eq(1)
+      expect(filtered.first["neighbor_id"]).to eq("!neighbor-new")
+      expect(filtered.first["rx_time"]).to eq(fresh_rx)
+    end
   end
 
   describe "GET /api/telemetry" do
@@ -2564,6 +2716,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(second_entry["temperature"]).to be_within(1e-6).of(second_latest["environment_metrics"]["temperature"])
       expect(second_entry["relative_humidity"]).to be_within(1e-6).of(second_latest["environment_metrics"]["relativeHumidity"])
       expect(second_entry["barometric_pressure"]).to be_within(1e-6).of(second_latest["environment_metrics"]["barometricPressure"])
+    end
+
+    it "excludes telemetry entries older than seven days" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_rx = now - (PotatoMesh::Config.week_seconds + 30)
+      fresh_rx = now - 5
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, node_num, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?,?)",
+          [1, "!tele", 7, stale_rx, Time.at(stale_rx).utc.iso8601, stale_rx - 60, 10.0, 3.9],
+        )
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, node_num, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?,?)",
+          [2, "!tele", 7, fresh_rx, Time.at(fresh_rx).utc.iso8601, fresh_rx - 60, 90.0, 4.1],
+        )
+      end
+
+      get "/api/telemetry"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      ids = payload.map { |row| row["id"] }
+      expect(ids).to eq([2])
+
+      get "/api/telemetry/!tele"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["id"] }).to eq([2])
     end
   end
 end
