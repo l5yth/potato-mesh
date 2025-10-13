@@ -201,14 +201,6 @@ export function createShortInfoOverlayStack(options = {}) {
       overlayEl.setAttribute('data-short-info-overlay', '');
     }
 
-    if (typeof overlayEl.addEventListener === 'function') {
-      overlayEl.addEventListener('click', event => {
-        if (event && typeof event.stopPropagation === 'function') {
-          event.stopPropagation();
-        }
-      });
-    }
-
     if (closeButton && typeof closeButton.addEventListener === 'function') {
       closeButton.addEventListener('click', event => {
         if (event) {

@@ -339,3 +339,12 @@ test('containsNode recognises overlay descendants', () => {
   const stray = new StubElement('div');
   assert.equal(stack.containsNode(stray), false);
 });
+
+test('rendered overlays do not swallow click events by default', () => {
+  const { document, window, factory, anchor } = createStubDom();
+  const stack = createShortInfoOverlayStack({ document, window, factory });
+  stack.render(anchor, 'Event test');
+  const [entry] = stack.getOpenOverlays();
+  assert.ok(entry);
+  assert.equal(entry.element.eventHandlers.has('click'), false);
+});
