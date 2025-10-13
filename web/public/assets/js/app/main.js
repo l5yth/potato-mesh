@@ -284,9 +284,9 @@ export function initializeApp(config) {
   const MAX_NODE_DISTANCE_KM = Number.isFinite(config.maxNodeDistanceKm) && config.maxNodeDistanceKm > 0
     ? config.maxNodeDistanceKm
     : 1;
-  const INITIAL_VIEW_PADDING_PX = 48;
-  const AUTO_FIT_PADDING_PX = 56;
-  const MAX_INITIAL_ZOOM = 12;
+  const INITIAL_VIEW_PADDING_PX = 12;
+  const AUTO_FIT_PADDING_PX = 12;
+  const MAX_INITIAL_ZOOM = 13;
   let neighborLinesLayer = null;
   let neighborLinesVisible = true;
   let neighborLinesToggleButton = null;
@@ -315,7 +315,7 @@ export function initializeApp(config) {
    */
   function fitMapToBounds(bounds, options = {}) {
     if (!map || !bounds) return;
-    const padding = Number.isFinite(options.paddingPx) && options.paddingPx >= 0 ? options.paddingPx : 32;
+    const padding = Number.isFinite(options.paddingPx) && options.paddingPx >= 0 ? options.paddingPx : AUTO_FIT_PADDING_PX;
     const fitOptions = {
       animate: Boolean(options.animate),
       padding: [padding, padding]
