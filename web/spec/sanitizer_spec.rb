@@ -74,6 +74,7 @@ RSpec.describe PotatoMesh::Sanitizer do
       expect(described_class.sanitized_channel).to eq("#Spec")
       expect(described_class.sanitized_frequency).to eq("915MHz")
       expect(described_class.sanitized_contact_link).to eq("https://chat.example.org")
+      expect(described_class.sanitized_contact_label).to eq("https://chat.example.org")
       expect(described_class.sanitized_max_distance_km).to eq(42)
     end
 
@@ -81,6 +82,7 @@ RSpec.describe PotatoMesh::Sanitizer do
       allow(PotatoMesh::Config).to receive(:contact_link).and_return(" \t ")
 
       expect(described_class.sanitized_contact_link).to be_nil
+      expect(described_class.sanitized_contact_label).to be_nil
     end
 
     it "returns nil when the distance is not positive" do
@@ -93,6 +95,13 @@ RSpec.describe PotatoMesh::Sanitizer do
       allow(PotatoMesh::Config).to receive(:max_distance_km).and_return("far")
 
       expect(described_class.sanitized_max_distance_km).to be_nil
+    end
+
+    it "converts matrix room identifiers to matrix.to links" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return("  #spec-room:example.org  ")
+
+      expect(described_class.sanitized_contact_link).to eq("https://matrix.to/#/%23spec-room%3Aexample.org")
+      expect(described_class.sanitized_contact_label).to eq("#spec-room:example.org")
     end
   end
 

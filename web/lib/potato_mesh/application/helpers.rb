@@ -125,9 +125,16 @@ module PotatoMesh
 
       # Retrieve the configured contact link or nil when unset.
       #
-      # @return [String, nil] chat/contact link identifier.
+      # @return [String, nil] chat/contact link URL or identifier.
       def sanitized_contact_link
         PotatoMesh::Sanitizer.sanitized_contact_link
+      end
+
+      # Retrieve the configured contact label for display beside the link.
+      #
+      # @return [String, nil] human readable contact identifier.
+      def sanitized_contact_label
+        PotatoMesh::Sanitizer.sanitized_contact_label
       end
 
       # Retrieve the configured maximum node distance in kilometres.

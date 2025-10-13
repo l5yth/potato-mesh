@@ -12,6 +12,7 @@
 
 # frozen_string_literal: true
 
+require "cgi"
 require "ipaddr"
 
 require_relative "config"
@@ -121,9 +122,25 @@ module PotatoMesh
     end
 
     # Retrieve the configured contact link and normalise blank values to nil.
+    # Matrix room identifiers are automatically converted into matrix.to URLs
+    # so the frontend can present a clickable link.
     #
-    # @return [String, nil] contact link or +nil+ when blank.
+    # @return [String, nil] contact link URL or identifier.
     def sanitized_contact_link
+      value = sanitized_string(Config.contact_link)
+      return nil if value.empty?
+
+      return value if value.match?(%r{\Ahttps?://}i)
+      return matrix_room_link(value) if matrix_room_identifier?(value)
+
+      value
+    end
+
+    # Retrieve the configured contact label for display purposes without
+    # coercing chat room identifiers into matrix.to URLs.
+    #
+    # @return [String, nil] human readable contact label or +nil+ when blank.
+    def sanitized_contact_label
       value = sanitized_string(Config.contact_link)
       value.empty? ? nil : value
     end
@@ -137,6 +154,23 @@ module PotatoMesh
       return nil unless distance.positive?
 
       distance
+    end
+
+    # Determine whether a value resembles a Matrix room identifier.
+    #
+    # @param value [String] candidate contact identifier.
+    # @return [Boolean] true if the identifier looks like a Matrix room.
+    def matrix_room_identifier?(value)
+      value.start_with?("#", "!") && value.include?(":")
+    end
+
+    # Convert a Matrix room identifier into a matrix.to share URL.
+    #
+    # @param room [String] Matrix room identifier, e.g. +#example:server+.
+    # @return [String] matrix.to deep link for the provided room.
+    def matrix_room_link(room)
+      encoded = CGI.escape(room)
+      "https://matrix.to/#/#{encoded}"
     end
   end
 end

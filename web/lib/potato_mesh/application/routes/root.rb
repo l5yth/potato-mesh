@@ -59,6 +59,7 @@ module PotatoMesh
                           map_center_lon: PotatoMesh::Config.map_center_lon,
                           max_node_distance_km: PotatoMesh::Config.max_distance_km,
                           contact_link: sanitized_contact_link,
+                          contact_label: sanitized_contact_label,
                           version: app_constant(:APP_VERSION),
                           private_mode: private_mode?,
                           refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,

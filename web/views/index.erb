@@ -118,13 +118,16 @@
         <dd>Nodes within roughly <%= max_node_distance_km %> km of the center are shown.</dd>
         <dt>Auto-refresh</dt>
         <dd>Updates every <%= refresh_interval_seconds %> seconds.</dd>
-        <% if contact_link && !contact_link.empty? %>
+        <% if contact_label && !contact_label.empty? %>
           <dt>Chat</dt>
           <dd>
-            <% if contact_link.match?(%r{\Ahttps?://}i) %>
+            <% if contact_link && contact_link.match?(%r{\Ahttps?://}i) %>
               <a href="<%= contact_link %>" target="_blank" rel="noreferrer noopener">Join chat</a>
+              <% if contact_label != contact_link %>
+                <span class="mono"><%= contact_label %></span>
+              <% end %>
             <% else %>
-              <span class="mono"><%= contact_link %></span>
+              <span class="mono"><%= contact_label %></span>
             <% end %>
           </dd>
         <% end %>
@@ -202,12 +205,15 @@
       <span class="mono"><%= version %></span> —
     <% end %>
     GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
-    <% if contact_link && !contact_link.empty? %>
+    <% if contact_label && !contact_label.empty? %>
       — <%= site_name %> chat:
-      <% if contact_link.match?(%r{\Ahttps?://}i) %>
+      <% if contact_link && contact_link.match?(%r{\Ahttps?://}i) %>
         <a href="<%= contact_link %>" target="_blank" rel="noreferrer noopener">Join chat</a>
+        <% if contact_label != contact_link %>
+          <span class="mono"><%= contact_label %></span>
+        <% end %>
       <% else %>
-        <span class="mono"><%= contact_link %></span>
+        <span class="mono"><%= contact_label %></span>
       <% end %>
     <% end %>
   </footer>

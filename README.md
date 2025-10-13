@@ -58,8 +58,8 @@ INSTANCE_DOMAIN="https://potatomesh.net" \
 ruby app.rb -p 41447 -o 0.0.0.0
 ```
 
-* `RACK_ENV` must be set to `production` to enable optimized settings suited for
-  live deployments.
+* `APP_ENV` and `RACK_ENV` must be set to `production` to enable optimized
+  settings suited for live deployments.
 * Bind the server to a production port and all interfaces (`-p 41447 -o 0.0.0.0`)
   so that clients can reach the dashboard over the network.
 * Provide a strong `API_TOKEN` value to authorize POST requests against the API.
@@ -69,11 +69,12 @@ ruby app.rb -p 41447 -o 0.0.0.0
 The web app can be configured with environment variables (defaults shown):
 
 * `SITE_NAME` - title and header shown in the UI (default: "PotatoMesh Demo")
-* `CHANNEL` - default channel shown in the UI (default: "#LongFast")
+* `CHANNEL` - default channel shown in the UI (default: "LongFast")
 * `FREQUENCY` - default frequency shown in the UI (default: "915MHz")
 * `MAP_CENTER` - default map center as "lat,lon" (default: `38.761944,-27.090833`)
 * `MAX_DISTANCE` - hide nodes farther than this distance from the center (default: `42`)
-* `CONTACT_LINK` - optional chat/contact link displayed in the footer (default: unset)
+* `CONTACT_LINK` - optional chat/contact link displayed in the footer (default:
+  `#potatomesh:dod.ngo`, Matrix rooms become matrix.to links automatically)
 * `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
 
 The application derives SEO-friendly document titles, descriptions, and social

@@ -36,7 +36,7 @@ module PotatoMesh
       site = Sanitizer.sanitized_site_name
       channel = Sanitizer.sanitized_channel
       frequency = Sanitizer.sanitized_frequency
-      contact = Sanitizer.sanitized_contact_link
+      contact_label = Sanitizer.sanitized_contact_label
 
       summary = "Live Meshtastic mesh map for #{site}"
       if channel.empty? && frequency.empty?
@@ -59,7 +59,7 @@ module PotatoMesh
       if (distance = Sanitizer.sanitized_max_distance_km)
         sentences << "Shows nodes within roughly #{formatted_distance_km(distance)} km of the map center."
       end
-      sentences << "Join the community in #{contact} via chat." if contact
+      sentences << "Join the community in #{contact_label} via chat." if contact_label
 
       sentences.join(" ")
     end

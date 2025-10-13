@@ -68,7 +68,7 @@ update_env() {
 
 # Get current values from .env if they exist
 SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "PotatoMesh Demo")
-CHANNEL=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
+CHANNEL=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "LongFast")
 FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
 MAP_CENTER=$(grep "^MAP_CENTER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944,-27.090833")
 MAP_CENTER_LAT=$(echo "$MAP_CENTER" | cut -d',' -f1)
@@ -76,7 +76,7 @@ MAP_CENTER_LON=$(echo "$MAP_CENTER" | cut -d',' -f2)
 MAP_CENTER_LAT=${MAP_CENTER_LAT:-38.761944}
 MAP_CENTER_LON=${MAP_CENTER_LON:--27.090833}
 MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
-CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
 
@@ -96,7 +96,7 @@ read_with_default "Default Frequency (868MHz, 915MHz, etc.)" "$FREQUENCY" FREQUE
 echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
-read_with_default "Chat link (optional, e.g., https://chat.example.org)" "$CONTACT_LINK" CONTACT_LINK
+read_with_default "Chat link (optional, e.g., #room:server or https://chat.example.org)" "$CONTACT_LINK" CONTACT_LINK
 
 echo ""
 echo "🛠 Docker Settings"

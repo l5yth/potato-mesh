@@ -1,13 +1,14 @@
 x-web-base: &web-base
   image: ghcr.io/l5yth/potato-mesh-web-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
   environment:
+    APP_ENV: ${APP_ENV:-production}
     RACK_ENV: ${RACK_ENV:-production}
     SITE_NAME: ${SITE_NAME:-PotatoMesh Demo}
-    CHANNEL: ${CHANNEL:-#LongFast}
+    CHANNEL: ${CHANNEL:-LongFast}
     FREQUENCY: ${FREQUENCY:-915MHz}
     MAP_CENTER: ${MAP_CENTER:-38.761944,-27.090833}
     MAX_DISTANCE: ${MAX_DISTANCE:-42}
-    CONTACT_LINK: ${CONTACT_LINK:-}
+    CONTACT_LINK: ${CONTACT_LINK:-#potatomesh:dod.ngo}
     API_TOKEN: ${API_TOKEN}
     DEBUG: ${DEBUG:-0}
   command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]

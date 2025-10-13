@@ -171,12 +171,18 @@ RSpec.describe PotatoMesh::Config do
         expect(described_class.contact_link).to eq("https://chat.example.org")
       end
     end
+
+    it "defaults to the bundled Matrix room" do
+      within_env("CONTACT_LINK" => nil) do
+        expect(described_class.contact_link).to eq(PotatoMesh::Config::DEFAULT_CONTACT_LINK)
+      end
+    end
   end
 
   describe ".max_distance_km" do
     it "enforces a positive distance" do
       within_env("MAX_DISTANCE" => "-5") do
-        expect(described_class.max_distance_km).to eq(42.0)
+        expect(described_class.max_distance_km).to eq(PotatoMesh::Config::DEFAULT_MAX_DISTANCE_KM)
       end
 
       within_env("MAX_DISTANCE" => "120.5") do

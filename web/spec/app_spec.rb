@@ -492,6 +492,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       it "returns nil for blank contact links" do
         allow(PotatoMesh::Config).to receive(:contact_link).and_return("  \t ")
         expect(sanitized_contact_link).to be_nil
+        expect(sanitized_contact_label).to be_nil
       end
 
       it "coerces string_or_nil inputs" do
@@ -792,6 +793,28 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('<meta property="og:title" content="Spec Mesh Title" />')
       expect(last_response.body).to include('<meta property="og:site_name" content="Spec Mesh Title" />')
       expect(last_response.body).to include('<meta name="twitter:image" content="http://example.org/potatomesh-logo.svg" />')
+    end
+
+    it "renders Matrix chat links with matrix.to URLs and labels" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return(" #spec-room:example.org ")
+
+      get "/"
+
+      expect(last_response.body).to include("https://matrix.to/#/%23spec-room%3Aexample.org")
+      expect(last_response.body).to include("#spec-room:example.org")
+    end
+  end
+
+  describe "GET /version" do
+    it "includes contact link and label in the configuration payload" do
+      allow(PotatoMesh::Config).to receive(:contact_link).and_return("#spec-room:example.org")
+
+      get "/version"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.dig("config", "contactLink")).to eq("https://matrix.to/#/%23spec-room%3Aexample.org")
+      expect(payload.dig("config", "contactLabel")).to eq("#spec-room:example.org")
     end
   end
 

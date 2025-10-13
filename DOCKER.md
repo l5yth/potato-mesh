@@ -33,10 +33,15 @@ SITE_NAME=PotatoMesh Demo
 MESH_SERIAL=/dev/ttyACM0
 ```
 
+The web container expects both `APP_ENV` and `RACK_ENV` to remain set to
+`production` so Sinatra boots in production mode. The provided Docker assets set
+these automatically.
+
 Additional environment variables are optional:
 
 - `CHANNEL`, `FREQUENCY`, `MAP_CENTER`, `MAX_DISTANCE`, and `CONTACT_LINK`
-  customise the UI.
+  customise the UI (defaults: `LongFast`, `915MHz`, `38.761944,-27.090833`,
+  `42`, and `#potatomesh:dod.ngo`; Matrix rooms become matrix.to links).
 - `POTATOMESH_INSTANCE` (defaults to `http://web:41447`) lets the ingestor post
   to a remote PotatoMesh instance if you do not run both services together.
 - `MESH_CHANNEL_INDEX`, `MESH_SNAPSHOT_SECS`, and `DEBUG` adjust ingestor

@@ -64,13 +64,14 @@ USER potatomesh
 EXPOSE 41447
 
 # Default environment variables (can be overridden by host)
-ENV RACK_ENV=production \
+ENV APP_ENV=production \
+    RACK_ENV=production \
     SITE_NAME="PotatoMesh Demo" \
-    CHANNEL="#LongFast" \
+    CHANNEL="LongFast" \
     FREQUENCY="915MHz" \
     MAP_CENTER=38.761944,-27.090833 \
     MAX_DISTANCE=42 \
-    CONTACT_LINK="" \
+    CONTACT_LINK="#potatomesh:dod.ngo" \
     DEBUG=0
 
 # Start the application

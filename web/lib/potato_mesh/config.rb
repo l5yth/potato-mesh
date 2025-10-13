@@ -26,6 +26,10 @@ module PotatoMesh
       dark: "grayscale(1) invert(1) brightness(0.9) contrast(1.08)",
     }.freeze
     DEFAULT_MAP_CENTER = [38.761944, -27.090833].freeze
+    DEFAULT_CHANNEL = "LongFast".freeze
+    DEFAULT_FREQUENCY = "915MHz".freeze
+    DEFAULT_CONTACT_LINK = "#potatomesh:dod.ngo".freeze
+    DEFAULT_MAX_DISTANCE_KM = 42.0
     DEFAULT_HTTP_PORT = 41_447
 
     module_function
@@ -312,14 +316,14 @@ module PotatoMesh
     #
     # @return [String] channel name from configuration.
     def channel
-      fetch_string("CHANNEL", "#LongFast")
+      fetch_string("CHANNEL", DEFAULT_CHANNEL)
     end
 
     # Retrieve the default radio frequency description.
     #
     # @return [String] frequency identifier.
     def frequency
-      fetch_string("FREQUENCY", "915MHz")
+      fetch_string("FREQUENCY", DEFAULT_FREQUENCY)
     end
 
     # Retrieve the configured map centre coordinates as a tuple.
@@ -358,15 +362,15 @@ module PotatoMesh
     #
     # @return [Float] distance in kilometres.
     def max_distance_km
-      value = ENV.fetch("MAX_DISTANCE", "42").to_f
-      value.positive? ? value : 42.0
+      value = ENV.fetch("MAX_DISTANCE", DEFAULT_MAX_DISTANCE_KM.to_s).to_f
+      value.positive? ? value : DEFAULT_MAX_DISTANCE_KM
     end
 
     # Contact link for community discussion.
     #
     # @return [String] contact URL or identifier.
     def contact_link
-      fetch_string("CONTACT_LINK", "")
+      fetch_string("CONTACT_LINK", DEFAULT_CONTACT_LINK)
     end
 
     # Check whether verbose debugging is enabled for the runtime.

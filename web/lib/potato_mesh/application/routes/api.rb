@@ -35,6 +35,7 @@ module PotatoMesh
                 },
                 maxNodeDistanceKm: PotatoMesh::Config.max_distance_km,
                 contactLink: sanitized_contact_link,
+                contactLabel: sanitized_contact_label,
                 instanceDomain: app_constant(:INSTANCE_DOMAIN),
                 privateMode: private_mode?,
               },

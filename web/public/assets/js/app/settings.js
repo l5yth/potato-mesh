@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG = {
   refreshMs: 60_000,
   refreshIntervalSeconds: 60,
   chatEnabled: true,
-  defaultChannel: '#LongFast',
+  defaultChannel: 'LongFast',
   defaultFrequency: '915MHz',
   mapCenter: { lat: 38.761944, lon: -27.090833 },
   maxNodeDistanceKm: 42,
