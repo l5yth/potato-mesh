@@ -110,6 +110,7 @@ module PotatoMesh
           break
         end
       end
+
       private :migrate_legacy_keyfile_for_identity!
 
       # Return the directory used to store well-known documents.
