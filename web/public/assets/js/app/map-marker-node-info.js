@@ -149,7 +149,9 @@ export function overlayToPopupNode(source) {
  * @param {Function} options.refreshNodeInformation Async function fetching node details.
  * @param {Function} options.mergeOverlayDetails Merge function combining fetched and fallback details.
  * @param {Function} options.createRequestToken Generates a token for cancellation tracking.
+ *   Receives the marker anchor element and the fallback overlay payload.
  * @param {Function} options.isTokenCurrent Tests whether a request token is still current.
+ *   Receives the marker anchor element and the candidate token value.
  * @param {Function} [options.showLoading] Callback invoked before refreshing.
  * @param {Function} [options.showDetails] Callback invoked with merged overlay details.
  * @param {Function} [options.showError] Callback invoked when refreshing fails.
@@ -222,7 +224,7 @@ export function attachNodeInfoRefreshToMarker({
       return;
     }
 
-    const requestToken = createRequestToken();
+    const requestToken = createRequestToken(anchor, fallbackOverlay);
 
     if (anchor && typeof showLoading === 'function') {
       showLoading(anchor, fallbackOverlay);
@@ -236,7 +238,7 @@ export function attachNodeInfoRefreshToMarker({
     try {
       refreshPromise = Promise.resolve(refreshNodeInformation(reference));
     } catch (error) {
-      if (isTokenCurrent(requestToken)) {
+      if (isTokenCurrent(anchor, requestToken)) {
         if (anchor && typeof showError === 'function') {
           showError(anchor, fallbackOverlay, error);
         }
@@ -246,7 +248,7 @@ export function attachNodeInfoRefreshToMarker({
 
     refreshPromise
       .then(details => {
-        if (!isTokenCurrent(requestToken)) {
+        if (!isTokenCurrent(anchor, requestToken)) {
           return;
         }
         const merged = mergeOverlayDetails(details, fallbackOverlay);
@@ -258,7 +260,7 @@ export function attachNodeInfoRefreshToMarker({
         }
       })
       .catch(error => {
-        if (!isTokenCurrent(requestToken)) {
+        if (!isTokenCurrent(anchor, requestToken)) {
           return;
         }
         if (typeof updatePopup === 'function') {

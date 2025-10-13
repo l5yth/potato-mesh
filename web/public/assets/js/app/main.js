@@ -17,6 +17,7 @@
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
+import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
 
 /**
@@ -47,9 +48,8 @@ export function initializeApp(config) {
   const infoOverlay = document.getElementById('infoOverlay');
   const infoClose = document.getElementById('infoClose');
   const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
-  const shortInfoOverlay = document.getElementById('shortInfoOverlay');
-  const shortInfoClose = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-close') : null;
-  const shortInfoContent = shortInfoOverlay ? shortInfoOverlay.querySelector('.short-info-content') : null;
+  const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
+  const overlayStack = createShortInfoOverlayStack({ document, window, template: shortInfoTemplate });
   const titleEl = document.querySelector('title');
   const headerEl = document.querySelector('h1');
   const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
@@ -100,10 +100,6 @@ export function initializeApp(config) {
   let allNeighbors = [];
   /** @type {Map<string, Object>} */
   let nodesById = new Map();
-  /** @type {HTMLElement|null} */
-  let shortInfoAnchor = null;
-  /** @type {number} */
-  let shortInfoRequestToken = 0;
   /** @type {string|undefined} */
   let lastChatDate;
   const NODE_LIMIT = 1000;
@@ -1396,14 +1392,6 @@ export function initializeApp(config) {
     });
   }
 
-  if (shortInfoClose) {
-    shortInfoClose.addEventListener('click', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      closeShortInfoOverlay();
-    });
-  }
-
   document.addEventListener('click', event => {
     const shortTarget = event.target.closest('.short-name');
     if (
@@ -1450,8 +1438,8 @@ export function initializeApp(config) {
         fallbackInfo.shortName = fallbackDetails.shortName;
       }
 
-      if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === shortTarget) {
-        closeShortInfoOverlay();
+      if (overlayStack.isOpen(shortTarget)) {
+        overlayStack.close(shortTarget);
         return;
       }
 
@@ -1465,12 +1453,12 @@ export function initializeApp(config) {
         return;
       }
 
-      const requestId = ++shortInfoRequestToken;
+      const requestId = overlayStack.incrementRequestToken(shortTarget);
       showShortInfoLoading(shortTarget, fallbackDetails);
 
       refreshNodeInformation({ nodeId: nodeId || undefined, nodeNum: nodeNum ?? undefined, fallback: fallbackInfo })
         .then(details => {
-          if (requestId !== shortInfoRequestToken) return;
+          if (!overlayStack.isTokenCurrent(shortTarget, requestId)) return;
           const overlayDetails = mergeOverlayDetails(details, fallbackInfo);
           if (!overlayDetails.shortName && shortTarget.textContent) {
             overlayDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
@@ -1479,7 +1467,7 @@ export function initializeApp(config) {
         })
         .catch(err => {
           console.warn('Failed to refresh node information', err);
-          if (requestId !== shortInfoRequestToken) return;
+          if (!overlayStack.isTokenCurrent(shortTarget, requestId)) return;
           const overlayDetails = mergeOverlayDetails(null, fallbackInfo);
           if (!overlayDetails.shortName && shortTarget.textContent) {
             overlayDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
@@ -1491,21 +1479,17 @@ export function initializeApp(config) {
     if (event.target.closest('.neighbor-connection-line')) {
       return;
     }
-    if (shortInfoOverlay && !shortInfoOverlay.hidden && !shortInfoOverlay.contains(event.target)) {
-      closeShortInfoOverlay();
+    if (overlayStack.containsNode(event.target)) {
+      return;
     }
-  });
-
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && shortInfoOverlay && !shortInfoOverlay.hidden) {
-      closeShortInfoOverlay();
-    }
+    overlayStack.closeAll();
   });
 
   window.addEventListener('resize', () => {
-    if (shortInfoOverlay && !shortInfoOverlay.hidden) {
-      requestAnimationFrame(positionShortInfoOverlay);
-    }
+    overlayStack.positionAll();
+  });
+  window.addEventListener('scroll', () => {
+    overlayStack.positionAll();
   });
 
   // --- Helpers ---
@@ -1885,54 +1869,11 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function showShortInfoLoading(target, info) {
-    if (!shortInfoOverlay || !shortInfoContent) return;
+    if (!target) return;
     const normalized = normalizeOverlaySource(info || {});
     const heading = normalized.longName || normalized.shortName || normalized.nodeId || '';
     const headingHtml = heading ? `<strong>${escapeHtml(heading)}</strong><br/>` : '';
-    shortInfoContent.innerHTML = `${headingHtml}Loading…`;
-    shortInfoAnchor = target;
-    shortInfoOverlay.hidden = false;
-    shortInfoOverlay.style.visibility = 'hidden';
-    requestAnimationFrame(positionShortInfoOverlay);
-  }
-
-  /**
-   * Hide the short-info overlay used for inline node details.
-   *
-   * @returns {void}
-   */
-  function closeShortInfoOverlay() {
-    shortInfoRequestToken += 1;
-    if (!shortInfoOverlay) return;
-    shortInfoOverlay.hidden = true;
-    shortInfoOverlay.style.visibility = 'visible';
-    shortInfoAnchor = null;
-  }
-
-  /**
-   * Position the short-info overlay near its anchor element.
-   *
-   * @returns {void}
-   */
-  function positionShortInfoOverlay() {
-    if (!shortInfoOverlay || shortInfoOverlay.hidden || !shortInfoAnchor) return;
-    if (!document.body.contains(shortInfoAnchor)) {
-      closeShortInfoOverlay();
-      return;
-    }
-    const rect = shortInfoAnchor.getBoundingClientRect();
-    const overlayRect = shortInfoOverlay.getBoundingClientRect();
-    const viewportWidth = document.documentElement.clientWidth;
-    const viewportHeight = document.documentElement.clientHeight;
-    let left = rect.left + window.scrollX;
-    let top = rect.top + window.scrollY;
-    const maxLeft = window.scrollX + viewportWidth - overlayRect.width - 8;
-    const maxTop = window.scrollY + viewportHeight - overlayRect.height - 8;
-    left = Math.max(window.scrollX + 8, Math.min(left, maxLeft));
-    top = Math.max(window.scrollY + 8, Math.min(top, maxTop));
-    shortInfoOverlay.style.left = `${left}px`;
-    shortInfoOverlay.style.top = `${top}px`;
-    shortInfoOverlay.style.visibility = 'visible';
+    overlayStack.render(target, `${headingHtml}Loading…`);
   }
 
   /**
@@ -1943,7 +1884,7 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function openShortInfoOverlay(target, info) {
-    if (!shortInfoOverlay || !shortInfoContent || !info) return;
+    if (!target || !info) return;
     const overlayInfo = normalizeOverlaySource(info);
     if (!overlayInfo.role || overlayInfo.role === '') {
       overlayInfo.role = 'CLIENT';
@@ -1996,11 +1937,7 @@ export function initializeApp(config) {
     if (neighborLineHtml) {
       lines.push(neighborLineHtml);
     }
-    shortInfoContent.innerHTML = lines.join('<br/>');
-    shortInfoAnchor = target;
-    shortInfoOverlay.hidden = false;
-    shortInfoOverlay.style.visibility = 'hidden';
-    requestAnimationFrame(positionShortInfoOverlay);
+    overlayStack.render(target, lines.join('<br/>'));
   }
 
   /**
@@ -2011,7 +1948,7 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function openNeighborOverlay(target, segment) {
-    if (!shortInfoOverlay || !shortInfoContent || !segment) return;
+    if (!target || !segment) return;
     const nodeName = shortInfoValueOrDash(segment.sourceDisplayName || segment.sourceId || '');
     const snrText = shortInfoValueOrDash(formatSnrDisplay(segment.snr));
     const sourceShortHtml = renderShortHtml(
@@ -2032,11 +1969,7 @@ export function initializeApp(config) {
     const neighborLine = `${targetShortHtml} [${escapeHtml(neighborFullName)}]`;
     lines.push(neighborLine);
     lines.push(`SNR: ${escapeHtml(snrText)}`);
-    shortInfoContent.innerHTML = lines.join('<br/>');
-    shortInfoAnchor = target;
-    shortInfoOverlay.hidden = false;
-    shortInfoOverlay.style.visibility = 'hidden';
-    requestAnimationFrame(positionShortInfoOverlay);
+    overlayStack.render(target, lines.join('<br/>'));
   }
 
   /**
@@ -2669,9 +2602,7 @@ export function initializeApp(config) {
       frag.appendChild(tr);
     }
     tb.replaceChildren(frag);
-    if (shortInfoOverlay && shortInfoAnchor && !document.body.contains(shortInfoAnchor)) {
-      closeShortInfoOverlay();
-    }
+    overlayStack.cleanupOrphans();
   }
 
   /**
@@ -2800,8 +2731,8 @@ export function initializeApp(config) {
                   : null;
               const anchorEl = polyline.getElement() || clickTarget;
               if (!anchorEl) return;
-              if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === anchorEl) {
-                closeShortInfoOverlay();
+              if (overlayStack.isOpen(anchorEl)) {
+                overlayStack.close(anchorEl);
                 return;
               }
               openNeighborOverlay(anchorEl, segment);
@@ -2838,37 +2769,28 @@ export function initializeApp(config) {
       });
 
       const fallbackOverlayProvider = () => mergeOverlayDetails(null, n);
-      const initialOverlay = fallbackOverlayProvider();
-      const initialPopupHtml = buildMapPopupHtml(overlayToPopupNode(initialOverlay), nowSec);
-
-      marker.bindPopup(initialPopupHtml);
+      let markerToken = 0;
       marker.addTo(markersLayer);
       pts.push([lat, lon]);
-
-      const updateMarkerPopup = overlayDetails => {
-        const popupNode = overlayToPopupNode(overlayDetails);
-        const html = buildMapPopupHtml(popupNode, Math.floor(Date.now() / 1000));
-        if (typeof marker.setPopupContent === 'function') {
-          marker.setPopupContent(html);
-          return;
-        }
-        if (typeof marker.getPopup === 'function') {
-          const popup = marker.getPopup();
-          if (popup && typeof popup.setContent === 'function') {
-            popup.setContent(html);
-            return;
-          }
-        }
-        marker.bindPopup(html);
-      };
 
       attachNodeInfoRefreshToMarker({
         marker,
         getOverlayFallback: fallbackOverlayProvider,
         refreshNodeInformation,
         mergeOverlayDetails,
-        createRequestToken: () => ++shortInfoRequestToken,
-        isTokenCurrent: token => token === shortInfoRequestToken,
+        createRequestToken: anchor => {
+          if (anchor) {
+            return overlayStack.incrementRequestToken(anchor);
+          }
+          markerToken += 1;
+          return markerToken;
+        },
+        isTokenCurrent: (anchor, token) => {
+          if (anchor) {
+            return overlayStack.isTokenCurrent(anchor, token);
+          }
+          return token === markerToken;
+        },
         showLoading: (anchor, info) => {
           if (anchor) {
             showShortInfoLoading(anchor, info);
@@ -2885,11 +2807,10 @@ export function initializeApp(config) {
             openShortInfoOverlay(anchor, info);
           }
         },
-        updatePopup: updateMarkerPopup,
         shouldHandleClick: anchor => {
           if (!anchor) return true;
-          if (shortInfoOverlay && !shortInfoOverlay.hidden && shortInfoAnchor === anchor) {
-            closeShortInfoOverlay();
+          if (overlayStack.isOpen(anchor)) {
+            overlayStack.close(anchor);
             return false;
           }
           return true;
@@ -2905,6 +2826,7 @@ export function initializeApp(config) {
       });
       fitMapToBounds(bounds, { animate: false, paddingPx: AUTO_FIT_PADDING_PX });
     }
+    overlayStack.cleanupOrphans();
   }
 
   /**

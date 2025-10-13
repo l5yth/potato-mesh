@@ -57,8 +57,14 @@ test('attachNodeInfoRefreshToMarker refreshes markers with merged overlay detail
       return { battery: 55.5, telemetryTime: 123, neighbors: [{ neighbor_id: '!bar', snr: 9.5 }] };
     },
     mergeOverlayDetails: (primary, fallback) => ({ ...fallback, ...primary }),
-    createRequestToken: () => ++token,
-    isTokenCurrent: candidate => candidate === token,
+    createRequestToken: el => {
+      assert.equal(el, anchor);
+      return ++token;
+    },
+    isTokenCurrent: (el, candidate) => {
+      assert.equal(el, anchor);
+      return candidate === token;
+    },
     showLoading: (el, info) => {
       assert.equal(el, anchor);
       assert.equal(info.nodeId, '!foo');
@@ -119,8 +125,14 @@ test('attachNodeInfoRefreshToMarker surfaces errors with fallback overlays', asy
       throw new Error('boom');
     },
     mergeOverlayDetails: (primary, fallback) => ({ ...fallback, ...primary }),
-    createRequestToken: () => ++token,
-    isTokenCurrent: candidate => candidate === token,
+    createRequestToken: el => {
+      assert.equal(el, anchor);
+      return ++token;
+    },
+    isTokenCurrent: (el, candidate) => {
+      assert.equal(el, anchor);
+      return candidate === token;
+    },
     showLoading: () => {},
     showDetails: () => {
       detailCalls += 1;
@@ -158,8 +170,14 @@ test('attachNodeInfoRefreshToMarker skips refresh when identifiers are missing',
       refreshed = true;
     },
     mergeOverlayDetails: (primary, fallback) => ({ ...fallback, ...primary }),
-    createRequestToken: () => ++token,
-    isTokenCurrent: candidate => candidate === token,
+    createRequestToken: el => {
+      assert.equal(el, anchor);
+      return ++token;
+    },
+    isTokenCurrent: (el, candidate) => {
+      assert.equal(el, anchor);
+      return candidate === token;
+    },
     showLoading: () => {
       assert.fail('showLoading should not run without identifiers');
     },
@@ -190,7 +208,7 @@ test('attachNodeInfoRefreshToMarker honours shouldHandleClick predicate', async 
     },
     mergeOverlayDetails: (primary, fallback) => ({ ...fallback, ...primary }),
     createRequestToken: () => ++token,
-    isTokenCurrent: candidate => candidate === token,
+    isTokenCurrent: (el, candidate) => candidate === token,
     shouldHandleClick: () => false,
   });
 
