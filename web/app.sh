@@ -18,7 +18,7 @@ set -euo pipefail
 
 bundle install
 
-PORT=${PORT:-41447}
-BIND_ADDRESS=${BIND_ADDRESS:-0.0.0.0}
+PORT=${1:-41447}
+BIND_ADDRESS=${2:-0.0.0.0}
 
 exec ruby app.rb -p "${PORT}" -o "${BIND_ADDRESS}"

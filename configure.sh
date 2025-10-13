@@ -68,12 +68,15 @@ update_env() {
 
 # Get current values from .env if they exist
 SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "PotatoMesh Demo")
-DEFAULT_CHANNEL=$(grep "^DEFAULT_CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
-DEFAULT_FREQUENCY=$(grep "^DEFAULT_FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
-MAP_CENTER_LAT=$(grep "^MAP_CENTER_LAT=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944")
-MAP_CENTER_LON=$(grep "^MAP_CENTER_LON=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "-27.090833")
-MAX_NODE_DISTANCE_KM=$(grep "^MAX_NODE_DISTANCE_KM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
-MATRIX_ROOM=$(grep "^MATRIX_ROOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
+CHANNEL=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
+FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
+MAP_CENTER=$(grep "^MAP_CENTER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944,-27.090833")
+MAP_CENTER_LAT=$(echo "$MAP_CENTER" | cut -d',' -f1)
+MAP_CENTER_LON=$(echo "$MAP_CENTER" | cut -d',' -f2)
+MAP_CENTER_LAT=${MAP_CENTER_LAT:-38.761944}
+MAP_CENTER_LON=${MAP_CENTER_LON:--27.090833}
+MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
+CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
 
@@ -82,18 +85,18 @@ echo "-------------------"
 read_with_default "Site Name (your mesh network name)" "$SITE_NAME" SITE_NAME
 read_with_default "Map Center Latitude" "$MAP_CENTER_LAT" MAP_CENTER_LAT
 read_with_default "Map Center Longitude" "$MAP_CENTER_LON" MAP_CENTER_LON
-read_with_default "Max Node Distance (km)" "$MAX_NODE_DISTANCE_KM" MAX_NODE_DISTANCE_KM
+read_with_default "Max Node Distance (km)" "$MAX_DISTANCE" MAX_DISTANCE
 
 echo ""
 echo "📡 Meshtastic Settings"
 echo "---------------------"
-read_with_default "Default Channel" "$DEFAULT_CHANNEL" DEFAULT_CHANNEL
-read_with_default "Default Frequency (868MHz, 915MHz, etc.)" "$DEFAULT_FREQUENCY" DEFAULT_FREQUENCY
+read_with_default "Default Channel" "$CHANNEL" CHANNEL
+read_with_default "Default Frequency (868MHz, 915MHz, etc.)" "$FREQUENCY" FREQUENCY
 
 echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
-read_with_default "Matrix Room (optional, e.g., #meshtastic-berlin:matrix.org)" "$MATRIX_ROOM" MATRIX_ROOM
+read_with_default "Chat link (optional, e.g., https://chat.example.org)" "$CONTACT_LINK" CONTACT_LINK
 
 echo ""
 echo "🛠 Docker Settings"
@@ -137,12 +140,15 @@ echo "📝 Updating .env file..."
 
 # Update .env file
 update_env "SITE_NAME" "\"$SITE_NAME\""
-update_env "DEFAULT_CHANNEL" "\"$DEFAULT_CHANNEL\""
-update_env "DEFAULT_FREQUENCY" "\"$DEFAULT_FREQUENCY\""
-update_env "MAP_CENTER_LAT" "$MAP_CENTER_LAT"
-update_env "MAP_CENTER_LON" "$MAP_CENTER_LON"
-update_env "MAX_NODE_DISTANCE_KM" "$MAX_NODE_DISTANCE_KM"
-update_env "MATRIX_ROOM" "\"$MATRIX_ROOM\""
+update_env "CHANNEL" "\"$CHANNEL\""
+update_env "FREQUENCY" "\"$FREQUENCY\""
+update_env "MAP_CENTER" "$MAP_CENTER_LAT,$MAP_CENTER_LON"
+update_env "MAX_DISTANCE" "$MAX_DISTANCE"
+if [ -n "$CONTACT_LINK" ]; then
+    update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
+else
+    sed -i.bak '/^CONTACT_LINK=/d' .env 2>/dev/null || true
+fi
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
 
@@ -164,10 +170,10 @@ echo ""
 echo "📋 Your settings:"
 echo "   Site Name: $SITE_NAME"
 echo "   Map Center: $MAP_CENTER_LAT, $MAP_CENTER_LON"
-echo "   Max Distance: ${MAX_NODE_DISTANCE_KM}km"
-echo "   Channel: $DEFAULT_CHANNEL"
-echo "   Frequency: $DEFAULT_FREQUENCY"
-echo "   Matrix Room: ${MATRIX_ROOM:-'Not set'}"
+echo "   Max Distance: ${MAX_DISTANCE}km"
+echo "   Channel: $CHANNEL"
+echo "   Frequency: $FREQUENCY"
+echo "   Chat Link: ${CONTACT_LINK:-'Not set'}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo ""

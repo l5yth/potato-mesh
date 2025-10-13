@@ -93,14 +93,12 @@ module PotatoMesh
 
     # Determine the port the application should listen on.
     #
-    # @param default_port [Integer] fallback port when ENV['PORT'] is absent or invalid.
+    # @param default_port [Integer] fallback port used when no override is configured.
     # @return [Integer] port number for the HTTP server.
-    def self.resolve_port(default_port: 41_447)
-      raw = ENV["PORT"]
-      return default_port if raw.nil?
+    def self.resolve_port(default_port: PotatoMesh::Config::DEFAULT_HTTP_PORT)
+      overrides = PotatoMesh::Config.config_overrides
+      return PotatoMesh::Config.http_port if overrides.key?(:http_port)
 
-      Integer(raw, 10)
-    rescue ArgumentError
       default_port
     end
 

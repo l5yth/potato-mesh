@@ -16,7 +16,45 @@ module PotatoMesh
   # Configuration wrapper responsible for exposing ENV backed settings used by
   # the web and data ingestion services.
   module Config
+    DEFAULT_DB_BUSY_TIMEOUT_MS = 5_000
+    DEFAULT_DB_BUSY_MAX_RETRIES = 5
+    DEFAULT_DB_BUSY_RETRY_DELAY = 0.05
+    DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
+    DEFAULT_REFRESH_INTERVAL_SECONDS = 60
+    DEFAULT_TILE_FILTERS = {
+      light: "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)",
+      dark: "grayscale(1) invert(1) brightness(0.9) contrast(1.08)",
+    }.freeze
+    DEFAULT_MAP_CENTER = [38.761944, -27.090833].freeze
+    DEFAULT_HTTP_PORT = 41_447
+
     module_function
+
+    # Container for runtime configuration overrides used by the test suite and
+    # internal components. Public configuration is read exclusively from
+    # environment variables that remain supported.
+    #
+    # @return [Hash{Symbol=>Object}] override mapping.
+    def config_overrides
+      @config_overrides ||= {}
+    end
+
+    # Apply temporary runtime configuration overrides.
+    #
+    # @param values [Hash{Symbol=>Object}] collection of overrides to apply.
+    # @return [void]
+    def configure(values = {})
+      values.each do |key, value|
+        config_overrides[key] = value
+      end
+    end
+
+    # Reset all runtime overrides to their defaults.
+    #
+    # @return [void]
+    def reset_overrides!
+      config_overrides.clear
+    end
 
     # Resolve the absolute path to the web application root directory.
     #
@@ -44,28 +82,34 @@ module PotatoMesh
     #
     # @return [String] absolute path to the database file.
     def db_path
-      ENV.fetch("MESH_DB", default_db_path)
+      override = config_overrides[:db_path]
+      return override if override && !override.to_s.empty?
+
+      default_db_path
     end
 
     # Retrieve the SQLite busy timeout duration in milliseconds.
     #
     # @return [Integer] timeout value in milliseconds.
     def db_busy_timeout_ms
-      ENV.fetch("DB_BUSY_TIMEOUT_MS", "5000").to_i
+      value = config_overrides.fetch(:db_busy_timeout_ms, DEFAULT_DB_BUSY_TIMEOUT_MS)
+      value.to_i
     end
 
     # Retrieve the maximum number of retries when encountering SQLITE_BUSY.
     #
     # @return [Integer] maximum retry attempts.
     def db_busy_max_retries
-      ENV.fetch("DB_BUSY_MAX_RETRIES", "5").to_i
+      value = config_overrides.fetch(:db_busy_max_retries, DEFAULT_DB_BUSY_MAX_RETRIES)
+      value.to_i
     end
 
     # Retrieve the backoff delay between busy retries in seconds.
     #
     # @return [Float] seconds to wait between retries.
     def db_busy_retry_delay
-      ENV.fetch("DB_BUSY_RETRY_DELAY", "0.05").to_f
+      value = config_overrides.fetch(:db_busy_retry_delay, DEFAULT_DB_BUSY_RETRY_DELAY)
+      value.to_f
     end
 
     # Convenience constant describing the number of seconds in a week.
@@ -79,17 +123,21 @@ module PotatoMesh
     #
     # @return [Integer] byte ceiling for HTTP request bodies.
     def default_max_json_body_bytes
-      1_048_576
+      DEFAULT_MAX_JSON_BODY_BYTES
     end
 
-    # Determine the maximum allowed JSON body size with validation.
+    # Determine the maximum allowed JSON body size with validation. When an
+    # override is present it must be a positive integer, otherwise the default
+    # value is returned.
     #
     # @return [Integer] configured byte limit.
     def max_json_body_bytes
-      raw = ENV.fetch("MAX_JSON_BODY_BYTES", default_max_json_body_bytes.to_s)
+      raw = config_overrides[:max_json_body_bytes]
+      return default_max_json_body_bytes if raw.nil?
+
       value = Integer(raw, 10)
       value.positive? ? value : default_max_json_body_bytes
-    rescue ArgumentError
+    rescue ArgumentError, TypeError
       default_max_json_body_bytes
     end
 
@@ -104,38 +152,49 @@ module PotatoMesh
     #
     # @return [Integer] refresh period in seconds.
     def default_refresh_interval_seconds
-      60
+      DEFAULT_REFRESH_INTERVAL_SECONDS
     end
 
-    # Fetch the refresh interval, ensuring a positive integer value.
+    # Fetch the refresh interval, ensuring a positive integer value. Overrides
+    # are primarily intended for tests and internal callers.
     #
     # @return [Integer] polling cadence in seconds.
     def refresh_interval_seconds
-      raw = ENV.fetch("REFRESH_INTERVAL_SECONDS", default_refresh_interval_seconds.to_s)
+      raw = config_overrides[:refresh_interval_seconds]
+      return default_refresh_interval_seconds if raw.nil?
+
       value = Integer(raw, 10)
       value.positive? ? value : default_refresh_interval_seconds
-    rescue ArgumentError
+    rescue ArgumentError, TypeError
       default_refresh_interval_seconds
+    end
+
+    # Determine the HTTP port used when binding the Sinatra server.
+    #
+    # @return [Integer] resolved TCP port number.
+    def http_port
+      raw = config_overrides[:http_port]
+      return DEFAULT_HTTP_PORT if raw.nil?
+
+      Integer(raw, 10)
+    rescue ArgumentError, TypeError
+      DEFAULT_HTTP_PORT
     end
 
     # Retrieve the CSS filter used for light themed maps.
     #
     # @return [String] CSS filter string.
     def map_tile_filter_light
-      ENV.fetch(
-        "MAP_TILE_FILTER_LIGHT",
-        "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)",
-      )
+      override = config_overrides.dig(:tile_filters, :light)
+      override ? override.to_s : DEFAULT_TILE_FILTERS[:light]
     end
 
     # Retrieve the CSS filter used for dark themed maps.
     #
     # @return [String] CSS filter string for dark tiles.
     def map_tile_filter_dark
-      ENV.fetch(
-        "MAP_TILE_FILTER_DARK",
-        "grayscale(1) invert(1) brightness(0.9) contrast(1.08)",
-      )
+      override = config_overrides.dig(:tile_filters, :dark)
+      override ? override.to_s : DEFAULT_TILE_FILTERS[:dark]
     end
 
     # Provide a simple hash of tile filters for template use.
@@ -152,14 +211,17 @@ module PotatoMesh
     #
     # @return [String] comma separated list of report IDs.
     def prom_report_ids
-      ENV.fetch("PROM_REPORT_IDS", "")
+      config_overrides.fetch(:prom_report_ids, "")
     end
 
     # Transform Prometheus report identifiers into a cleaned array.
     #
     # @return [Array<String>] list of unique report identifiers.
     def prom_report_id_list
-      prom_report_ids.split(",").map(&:strip).reject(&:empty?)
+      value = prom_report_ids
+      return value if value.is_a?(Array)
+
+      value.to_s.split(",").map(&:strip).reject(&:empty?)
     end
 
     # Path storing the instance private key used for signing.
@@ -249,44 +311,62 @@ module PotatoMesh
     # Retrieve the default radio channel label.
     #
     # @return [String] channel name from configuration.
-    def default_channel
-      fetch_string("DEFAULT_CHANNEL", "#LongFast")
+    def channel
+      fetch_string("CHANNEL", "#LongFast")
     end
 
     # Retrieve the default radio frequency description.
     #
     # @return [String] frequency identifier.
-    def default_frequency
-      fetch_string("DEFAULT_FREQUENCY", "915MHz")
+    def frequency
+      fetch_string("FREQUENCY", "915MHz")
+    end
+
+    # Retrieve the configured map centre coordinates as a tuple.
+    #
+    # @return [Array(Float, Float)] latitude and longitude pair.
+    def map_center
+      return config_overrides[:map_center] if config_overrides[:map_center]
+
+      raw = ENV["MAP_CENTER"]
+      return DEFAULT_MAP_CENTER unless raw
+
+      lat_str, lon_str = raw.split(",", 2)
+      return DEFAULT_MAP_CENTER unless lat_str && lon_str
+
+      [Float(lat_str), Float(lon_str)]
+    rescue ArgumentError
+      DEFAULT_MAP_CENTER
     end
 
     # Map display latitude centre for the frontend map widget.
     #
     # @return [Float] latitude in decimal degrees.
     def map_center_lat
-      ENV.fetch("MAP_CENTER_LAT", "38.761944").to_f
+      map_center[0]
     end
 
     # Map display longitude centre for the frontend map widget.
     #
     # @return [Float] longitude in decimal degrees.
     def map_center_lon
-      ENV.fetch("MAP_CENTER_LON", "-27.090833").to_f
+      map_center[1]
     end
 
     # Maximum straight-line distance between nodes before relationships are
     # hidden.
     #
     # @return [Float] distance in kilometres.
-    def max_node_distance_km
-      ENV.fetch("MAX_NODE_DISTANCE_KM", "42").to_f
+    def max_distance_km
+      value = ENV.fetch("MAX_DISTANCE", "42").to_f
+      value.positive? ? value : 42.0
     end
 
-    # Matrix room identifier for community discussion.
+    # Contact link for community discussion.
     #
-    # @return [String] Matrix room alias.
-    def matrix_room
-      ENV.fetch("MATRIX_ROOM", "#potatomesh:dod.ngo")
+    # @return [String] contact URL or identifier.
+    def contact_link
+      fetch_string("CONTACT_LINK", "")
     end
 
     # Check whether verbose debugging is enabled for the runtime.

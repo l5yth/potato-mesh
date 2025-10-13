@@ -118,9 +118,15 @@
         <dd>Nodes within roughly <%= max_node_distance_km %> km of the center are shown.</dd>
         <dt>Auto-refresh</dt>
         <dd>Updates every <%= refresh_interval_seconds %> seconds.</dd>
-        <% if matrix_room && !matrix_room.empty? %>
-          <dt>Matrix room</dt>
-          <dd><a href="https://matrix.to/#/<%= matrix_room %>" target="_blank" rel="noreferrer noopener"><%= matrix_room %></a></dd>
+        <% if contact_link && !contact_link.empty? %>
+          <dt>Chat</dt>
+          <dd>
+            <% if contact_link.match?(%r{\Ahttps?://}i) %>
+              <a href="<%= contact_link %>" target="_blank" rel="noreferrer noopener">Join chat</a>
+            <% else %>
+              <span class="mono"><%= contact_link %></span>
+            <% end %>
+          </dd>
         <% end %>
       </dl>
     </div>
@@ -196,9 +202,13 @@
       <span class="mono"><%= version %></span> —
     <% end %>
     GitHub: <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
-    <% if matrix_room && !matrix_room.empty? %>
-      — <%= site_name %> Matrix:
-      <a href="https://matrix.to/#/<%= matrix_room %>" target="_blank"><%= matrix_room %></a>
+    <% if contact_link && !contact_link.empty? %>
+      — <%= site_name %> chat:
+      <% if contact_link.match?(%r{\Ahttps?://}i) %>
+        <a href="<%= contact_link %>" target="_blank" rel="noreferrer noopener">Join chat</a>
+      <% else %>
+        <span class="mono"><%= contact_link %></span>
+      <% end %>
     <% end %>
   </footer>
 

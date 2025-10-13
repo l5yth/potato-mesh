@@ -35,8 +35,11 @@ require "fileutils"
 
 ENV["RACK_ENV"] = "test"
 
+require_relative "../lib/potato_mesh/config"
+
 SPEC_TMPDIR = Dir.mktmpdir("potato-mesh-spec-")
-ENV["MESH_DB"] = File.join(SPEC_TMPDIR, "mesh.db")
+
+PotatoMesh::Config.configure(db_path: File.join(SPEC_TMPDIR, "mesh.db"))
 
 require_relative "../app"
 
@@ -58,5 +61,6 @@ RSpec.configure do |config|
 
   config.after(:suite) do
     FileUtils.remove_entry(SPEC_TMPDIR) if File.directory?(SPEC_TMPDIR)
+    PotatoMesh::Config.reset_overrides!
   end
 end
