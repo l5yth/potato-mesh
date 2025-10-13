@@ -43,6 +43,48 @@ def _string_or_none(value: Any) -> str | None:
     return text or None
 
 
+def _mapping_from_slots(value: Any) -> Mapping[str, Any] | None:
+    """Return a mapping generated from ``__slots__`` when available."""
+
+    slots = getattr(value, "__slots__", None)
+    if not slots:
+        return None
+    if isinstance(slots, str):
+        slots = [slots]
+    result: dict[str, Any] = {}
+    for slot in slots:
+        try:
+            result[slot] = getattr(value, slot)
+        except AttributeError:
+            continue
+    return result if result else None
+
+
+def _mapping_from_protobuf(value: Any) -> Mapping[str, Any] | None:
+    """Return a mapping for protobuf-style messages when possible."""
+
+    descriptor = getattr(value, "DESCRIPTOR", None)
+    list_fields = getattr(value, "ListFields", None)
+    if descriptor is None or not callable(list_fields):
+        return None
+    try:
+        result: dict[str, Any] = {}
+        for field, field_value in list_fields():
+            field_name = getattr(field, "name", None)
+            if field_name:
+                result[field_name] = field_value
+        for field in getattr(descriptor, "fields", []):
+            field_name = getattr(field, "name", None)
+            if field_name and field_name not in result:
+                try:
+                    result[field_name] = getattr(value, field_name)
+                except Exception:
+                    continue
+    except Exception:
+        return None
+    return result if result else None
+
+
 def _coerce_mapping(value: Any) -> Mapping[str, Any] | None:
     """Return a mapping view over ``value`` when possible."""
 
@@ -55,6 +97,12 @@ def _coerce_mapping(value: Any) -> Mapping[str, Any] | None:
             candidate = None
         if isinstance(candidate, Mapping):
             return candidate
+    proto_mapping = _mapping_from_protobuf(value)
+    if proto_mapping is not None:
+        return proto_mapping
+    slots_mapping = _mapping_from_slots(value)
+    if slots_mapping is not None:
+        return slots_mapping
     try:
         attrs = vars(value)
     except TypeError:

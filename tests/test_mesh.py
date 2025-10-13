@@ -1307,6 +1307,34 @@ def test_refresh_channel_metadata_falls_back_to_env_channel(mesh_module, monkeyp
     assert metadata == [(0, "ENV_PRESET")]
 
 
+def test_refresh_channel_metadata_supports_slot_based_settings(mesh_module):
+    """Ensure refresh handles channel entries exposing only ``__slots__``."""
+
+    mesh = mesh_module
+
+    class SlotSettings:
+        __slots__ = ("name",)
+
+        def __init__(self, name):
+            self.name = name
+
+    class SlotChannel:
+        __slots__ = ("role", "index", "settings")
+
+        def __init__(self, role, index, settings):
+            self.role = role
+            self.index = index
+            self.settings = settings
+
+    channel = SlotChannel(role=2, index=4, settings=SlotSettings("SlotName"))
+
+    metadata = mesh.refresh_channel_metadata(
+        SimpleNamespace(localNode=SimpleNamespace(channels=[channel]))
+    )
+
+    assert metadata == [(4, "SlotName")]
+
+
 def test_refresh_channel_metadata_handles_missing_interface(mesh_module):
     mesh = mesh_module
 
@@ -1319,9 +1347,53 @@ def test_store_packet_dict_includes_channel_name_when_known(
     mesh_module, monkeypatch, capsys
 ):
     mesh = mesh_module
-    channel = SimpleNamespace(role=2, index=5, settings={"name": "SideChannel"})
+
+    class ProtoField(SimpleNamespace):
+        """Minimal field descriptor stub used for protobuf-like objects."""
+
+    class ProtoSettings:
+        """Proto stub mirroring ``channel_pb2.ChannelSettings``."""
+
+        __slots__ = ("name",)
+
+        DESCRIPTOR = SimpleNamespace(fields=[ProtoField(name="name")])
+
+        def __init__(self, name: str):
+            self.name = name
+
+        def ListFields(self):
+            if self.name:
+                return [(ProtoField(name="name"), self.name)]
+            return []
+
+    class ProtoChannel:
+        """Proto stub mirroring ``channel_pb2.Channel``."""
+
+        __slots__ = ("role", "index", "settings")
+
+        DESCRIPTOR = SimpleNamespace(
+            fields=[
+                ProtoField(name="role"),
+                ProtoField(name="index"),
+                ProtoField(name="settings"),
+            ]
+        )
+
+        def __init__(self, *, role: int, index: int, settings: ProtoSettings):
+            self.role = role
+            self.index = index
+            self.settings = settings
+
+        def ListFields(self):
+            return [
+                (ProtoField(name="role"), self.role),
+                (ProtoField(name="index"), self.index),
+                (ProtoField(name="settings"), self.settings),
+            ]
+
+    proto_channel = ProtoChannel(role=2, index=5, settings=ProtoSettings("SideChannel"))
     mesh.refresh_channel_metadata(
-        SimpleNamespace(localNode=SimpleNamespace(channels=[channel]))
+        SimpleNamespace(localNode=SimpleNamespace(channels=[proto_channel]))
     )
     captured = []
     monkeypatch.setattr(
