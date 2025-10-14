@@ -19,6 +19,7 @@ import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
+import { extractChatMessageMetadata } from './chat-format.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -2084,8 +2085,16 @@ export function initializeApp(config) {
     const ts = formatTime(new Date(m.rx_time * 1000));
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     const text = escapeHtml(m.text || '');
+    const metadata = extractChatMessageMetadata(m);
+    const prefixSegments = [`[${escapeHtml(ts)}]`];
+    if (metadata.frequency) {
+      prefixSegments.push(`[${escapeHtml(metadata.frequency)}]`);
+    }
+    if (metadata.channelName) {
+      prefixSegments.push(`[${escapeHtml(metadata.channelName)}]`);
+    }
     div.className = 'chat-entry-msg';
-    div.innerHTML = `[${ts}] ${short} ${text}`;
+    div.innerHTML = `${prefixSegments.join('')} ${short} ${text}`;
     return div;
   }
 
