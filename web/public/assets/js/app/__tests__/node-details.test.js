@@ -26,6 +26,7 @@ const {
   extractNumber,
   assignString,
   assignNumber,
+  mergeModemMetadata,
   mergeNodeFields,
   mergeTelemetry,
   mergePosition,
@@ -49,6 +50,8 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
       short_name: 'TST',
       battery_level: null,
       last_heard: 1_000,
+      modem_preset: 'MediumFast',
+      lora_freq: '868.1',
     })],
     ['/api/telemetry/!test?limit=1', createResponse(200, [{
       node_id: '!test',
@@ -87,6 +90,8 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
   assert.equal(node.battery, 73.5);
   assert.equal(node.voltage, 4.1);
   assert.equal(node.role, 'CLIENT');
+  assert.equal(node.modemPreset, 'MediumFast');
+  assert.equal(node.loraFreq, 868.1);
   assert.equal(node.lastHeard, 1_200);
   assert.equal(node.telemetryTime, 1_180);
   assert.equal(node.latitude, 52.5);
@@ -123,7 +128,7 @@ test('refreshNodeInformation preserves fallback metrics when telemetry is unavai
     return response ?? createResponse(404, { error: 'not found' });
   };
 
-  const fallback = { nodeNum: 42, battery: 12.5, role: 'CLIENT' };
+  const fallback = { nodeNum: 42, battery: 12.5, role: 'CLIENT', modemPreset: 'FallbackPreset', loraFreq: 915 };
   const node = await refreshNodeInformation({ nodeNum: 42, fallback }, { fetchImpl });
 
   assert.equal(node.nodeId, '!num');
@@ -131,6 +136,8 @@ test('refreshNodeInformation preserves fallback metrics when telemetry is unavai
   assert.equal(node.shortName, 'NUM');
   assert.equal(node.battery, 12.5);
   assert.equal(node.role, 'CLIENT');
+  assert.equal(node.modemPreset, 'FallbackPreset');
+  assert.equal(node.loraFreq, 915);
   assert.equal(Array.isArray(node.neighbors) && node.neighbors.length, 0);
 });
 
@@ -194,6 +201,21 @@ test('refreshNodeInformation enforces a fetch implementation', async () => {
     // eslint-disable-next-line no-global-assign
     globalThis.fetch = originalFetch;
   }
+});
+
+test('mergeModemMetadata respects preference flags', () => {
+  const target = {};
+  mergeModemMetadata(target, { modem_preset: 'Base', lora_freq: '915.5' });
+  assert.equal(target.modemPreset, 'Base');
+  assert.equal(target.loraFreq, 915.5);
+
+  mergeModemMetadata(target, { modem_preset: 'New', lora_freq: '433' }, { preferExisting: true });
+  assert.equal(target.modemPreset, 'Base');
+  assert.equal(target.loraFreq, 915.5);
+
+  mergeModemMetadata(target, { modem_preset: 'Updated', lora_freq: '433' }, { preferExisting: false });
+  assert.equal(target.modemPreset, 'Updated');
+  assert.equal(target.loraFreq, 433);
 });
 
 test('helper utilities normalise primitive values', () => {
