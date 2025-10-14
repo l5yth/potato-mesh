@@ -42,6 +42,33 @@ function isValidAnchor(candidate) {
 const SHORT_INFO_OVERLAY_Z_INDEX = 6000;
 
 /**
+ * Highest stacking context value assigned to the overlay root container.
+ *
+ * The root must outrank fullscreen chrome, Leaflet panes and other floating
+ * controls. Using an intentionally extreme value guarantees the overlays stay
+ * interactive even when the browser promotes the map container to a dedicated
+ * fullscreen layer with its own stacking context.
+ *
+ * @type {number}
+ */
+const SHORT_INFO_OVERLAY_ROOT_Z_INDEX = 2147483600;
+
+/**
+ * Identifier assigned to the overlay root container within the document.
+ *
+ * @type {string}
+ */
+const SHORT_INFO_OVERLAY_ROOT_ID = 'short-info-overlay-root';
+
+/**
+ * CSS class applied to the overlay root container to aid debugging and
+ * external styling hooks.
+ *
+ * @type {string}
+ */
+const SHORT_INFO_OVERLAY_ROOT_CLASS = 'short-info-overlay-root';
+
+/**
  * Apply inline styles that ensure overlays sit atop all other UI chrome.
  *
  * @param {?Element} element Overlay root element.
@@ -58,6 +85,72 @@ function enforceOverlayLayering(element) {
   }
 
   style.zIndex = String(SHORT_INFO_OVERLAY_Z_INDEX);
+  if (!style.position || style.position === 'static') {
+    style.position = 'absolute';
+  }
+  style.pointerEvents = 'auto';
+}
+
+/**
+ * Apply inline styles that keep the overlay root container above fullscreen
+ * chrome while avoiding pointer-event interference with the map canvas.
+ *
+ * @param {?Element} element Overlay root container.
+ * @returns {void}
+ */
+function enforceOverlayRootLayering(element) {
+  if (!element || typeof element !== 'object') {
+    return;
+  }
+
+  const style = element.style || null;
+  if (!style || typeof style !== 'object') {
+    return;
+  }
+
+  style.position = 'fixed';
+  style.top = '0';
+  style.left = '0';
+  style.right = '0';
+  style.bottom = '0';
+  style.width = '100%';
+  style.height = '100%';
+  style.pointerEvents = 'none';
+  style.zIndex = String(SHORT_INFO_OVERLAY_ROOT_Z_INDEX);
+}
+
+/**
+ * Ensure a dedicated overlay root container exists and remains layered above
+ * the fullscreen map viewport.
+ *
+ * @param {Document} doc Host document reference.
+ * @returns {?Element} Root container used to host overlays.
+ */
+function ensureOverlayRoot(doc) {
+  if (!doc || !doc.body || typeof doc.createElement !== 'function') {
+    return null;
+  }
+
+  const existing =
+    typeof doc.getElementById === 'function'
+      ? doc.getElementById(SHORT_INFO_OVERLAY_ROOT_ID)
+      : null;
+  if (existing) {
+    enforceOverlayRootLayering(existing);
+    return existing;
+  }
+
+  const root = doc.createElement('div');
+  root.id = SHORT_INFO_OVERLAY_ROOT_ID;
+  root.className = `${SHORT_INFO_OVERLAY_ROOT_CLASS}`;
+  root.setAttribute('data-short-info-overlay-root', '');
+  enforceOverlayRootLayering(root);
+
+  if (typeof doc.body.appendChild === 'function') {
+    doc.body.appendChild(root);
+  }
+
+  return root;
 }
 
 /**
@@ -169,6 +262,8 @@ export function createShortInfoOverlayStack(options = {}) {
     return createNoopOverlayStack();
   }
 
+  const overlayRoot = ensureOverlayRoot(doc);
+
   const template =
     options.template !== undefined
       ? options.template
@@ -249,8 +344,8 @@ export function createShortInfoOverlayStack(options = {}) {
       });
     }
 
-    if (typeof doc.body.appendChild === 'function') {
-      doc.body.appendChild(overlayEl);
+    if (overlayRoot && typeof overlayRoot.appendChild === 'function') {
+      overlayRoot.appendChild(overlayEl);
     }
 
     state = {
@@ -327,7 +422,6 @@ export function createShortInfoOverlayStack(options = {}) {
       state.element.style.left = `${left}px`;
       state.element.style.top = `${top}px`;
       state.element.style.visibility = 'visible';
-      state.element.style.position = state.element.style.position || 'absolute';
     }
   }
 

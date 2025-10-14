@@ -33,6 +33,7 @@ class StubElement {
     this.style = {};
     this.dataset = {};
     this.className = '';
+    this.id = '';
     this.innerHTML = '';
     this.attributes = new Map();
     this.eventHandlers = new Map();
@@ -88,6 +89,9 @@ class StubElement {
     if (name === 'class' || name === 'className') {
       this.className = String(value);
     }
+    if (name === 'id') {
+      this.id = String(value);
+    }
   }
 
   /**
@@ -100,6 +104,9 @@ class StubElement {
     this.attributes.delete(name);
     if (name === 'class' || name === 'className') {
       this.className = '';
+    }
+    if (name === 'id') {
+      this.id = '';
     }
   }
 
@@ -228,6 +235,25 @@ class StubElement {
     }
     return null;
   }
+
+  /**
+   * Recursively search for an element with ``id``.
+   *
+   * @param {string} id Element identifier to match.
+   * @returns {?StubElement} Matching element or ``null``.
+   */
+  _findById(id) {
+    if (this.id === id) {
+      return this;
+    }
+    for (const child of this.children) {
+      const found = child._findById(id);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  }
 }
 
 /**
@@ -244,8 +270,8 @@ function createStubDom() {
     createElement(tagName) {
       return new StubElement(tagName);
     },
-    getElementById() {
-      return null;
+    getElementById(id) {
+      return body._findById(id);
     },
   };
   const window = {
@@ -281,7 +307,10 @@ test('render opens overlays and positions them relative to anchors', () => {
   const open = stack.getOpenOverlays();
   assert.equal(open.length, 1);
   const overlay = open[0].element;
-  assert.equal(overlay.parentNode, body);
+  const root = document.getElementById('short-info-overlay-root');
+  assert.ok(root);
+  assert.equal(root.parentNode, body);
+  assert.equal(overlay.parentNode, root);
   const content = overlay.querySelector('.short-info-content');
   assert.ok(content);
   assert.equal(content.innerHTML, '<strong>Node</strong>');
@@ -296,6 +325,41 @@ test('render enforces z-index layering for overlays', () => {
   const [entry] = stack.getOpenOverlays();
   assert.ok(entry);
   assert.equal(entry.element.style.zIndex, '6000');
+  assert.equal(entry.element.style.pointerEvents, 'auto');
+  assert.equal(entry.element.style.position, 'absolute');
+  const root = document.getElementById('short-info-overlay-root');
+  assert.ok(root);
+  assert.equal(root.style.zIndex, '2147483600');
+  assert.equal(root.style.position, 'fixed');
+  assert.equal(root.style.pointerEvents, 'none');
+  assert.equal(root.style.top, '0');
+  assert.equal(root.style.left, '0');
+});
+
+test('overlay root is reused across stack instances and remains unique', () => {
+  const { document, window, factory, anchor, body } = createStubDom();
+  const firstStack = createShortInfoOverlayStack({ document, window, factory });
+  firstStack.render(anchor, 'First overlay');
+  const overlayRoot = document.getElementById('short-info-overlay-root');
+  assert.ok(overlayRoot);
+  assert.equal(
+    body.children.filter(child => child === overlayRoot).length,
+    1,
+    'overlay root should exist exactly once'
+  );
+  const secondAnchor = document.createElement('span');
+  secondAnchor.setBoundingRect({ left: 120, top: 140 });
+  body.appendChild(secondAnchor);
+  const secondStack = createShortInfoOverlayStack({ document, window, factory });
+  secondStack.render(secondAnchor, 'Second overlay');
+  const rootAgain = document.getElementById('short-info-overlay-root');
+  assert.strictEqual(rootAgain, overlayRoot);
+  assert.equal(
+    body.children.filter(child => child === overlayRoot).length,
+    1,
+    'overlay root should still be unique after creating a second stack'
+  );
+  assert.equal(rootAgain.children.length >= 2, true);
 });
 
 test('request tokens track anchors independently', () => {
