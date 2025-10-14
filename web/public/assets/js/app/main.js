@@ -58,6 +58,9 @@ export function initializeApp(config) {
   const baseTitle = document.title;
   const nodesTable = document.getElementById('nodes');
   const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
+  const infoOverlayHome = infoOverlay
+    ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
+    : null;
   /**
    * Column sorter configuration for the node table.
    *
@@ -499,6 +502,62 @@ export function initializeApp(config) {
   });
 
   /**
+   * Append the informational modal overlay to the fullscreen container when active.
+   *
+   * @returns {void}
+   */
+  function attachInfoOverlayToFullscreenHost() {
+    if (!infoOverlay || !fullscreenContainer) return;
+    if (infoOverlay.parentNode !== fullscreenContainer) {
+      fullscreenContainer.appendChild(infoOverlay);
+    }
+    if (infoOverlay.classList) {
+      infoOverlay.classList.add('info-overlay--fullscreen');
+    }
+  }
+
+  /**
+   * Restore the informational overlay to its original DOM position.
+   *
+   * @returns {void}
+   */
+  function restoreInfoOverlayToHome() {
+    if (!infoOverlay || !infoOverlayHome || !infoOverlayHome.parent) return;
+    if (infoOverlay.parentNode === infoOverlayHome.parent) {
+      if (infoOverlay.classList) {
+        infoOverlay.classList.remove('info-overlay--fullscreen');
+      }
+      return;
+    }
+    if (
+      infoOverlayHome.nextSibling &&
+      infoOverlayHome.nextSibling.parentNode === infoOverlayHome.parent &&
+      typeof infoOverlayHome.parent.insertBefore === 'function'
+    ) {
+      infoOverlayHome.parent.insertBefore(infoOverlay, infoOverlayHome.nextSibling);
+    } else if (typeof infoOverlayHome.parent.appendChild === 'function') {
+      infoOverlayHome.parent.appendChild(infoOverlay);
+    }
+    if (infoOverlay.classList) {
+      infoOverlay.classList.remove('info-overlay--fullscreen');
+    }
+  }
+
+  /**
+   * Ensure the informational overlay participates in the active fullscreen subtree.
+   *
+   * @returns {void}
+   */
+  function syncInfoOverlayHost() {
+    if (!infoOverlay) return;
+    if (isMapInFullscreen()) {
+      attachInfoOverlayToFullscreenHost();
+    } else {
+      restoreInfoOverlayToHome();
+    }
+  }
+
+  /**
    * Respond to fullscreen change events originating from the browser.
    *
    * @returns {void}
@@ -528,6 +587,7 @@ export function initializeApp(config) {
         mapContainer.style.minHeight = '';
       }
     }
+    syncInfoOverlayHost();
     updateFullscreenToggleState();
     refreshMapSize();
   }
@@ -547,6 +607,8 @@ export function initializeApp(config) {
       updateFullscreenToggleState();
     }
   }
+
+  syncInfoOverlayHost();
 
   // Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
   const roleColors = Object.freeze({
@@ -1355,6 +1417,7 @@ export function initializeApp(config) {
    */
   function openInfoOverlay() {
     if (!infoOverlay || !infoDialog) return;
+    syncInfoOverlayHost();
     lastFocusBeforeInfo = document.activeElement;
     infoOverlay.hidden = false;
     document.body.style.setProperty('overflow', 'hidden');

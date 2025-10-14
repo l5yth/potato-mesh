@@ -238,6 +238,7 @@ class StubElement {
 function createStubDom() {
   const body = new StubElement('body');
   body.contains = body.contains.bind(body);
+  const listenerMap = new Map();
   const document = {
     body,
     documentElement: { clientWidth: 640, clientHeight: 480 },
@@ -246,6 +247,26 @@ function createStubDom() {
     },
     getElementById() {
       return null;
+    },
+    addEventListener(event, handler) {
+      if (!listenerMap.has(event)) {
+        listenerMap.set(event, new Set());
+      }
+      listenerMap.get(event).add(handler);
+    },
+    removeEventListener(event, handler) {
+      if (!listenerMap.has(event)) {
+        return;
+      }
+      listenerMap.get(event).delete(handler);
+    },
+    _dispatch(event) {
+      if (!listenerMap.has(event)) {
+        return;
+      }
+      for (const handler of Array.from(listenerMap.get(event))) {
+        handler();
+      }
     },
   };
   const window = {
@@ -282,6 +303,7 @@ test('render opens overlays and positions them relative to anchors', () => {
   assert.equal(open.length, 1);
   const overlay = open[0].element;
   assert.equal(overlay.parentNode, body);
+  assert.equal(overlay.style.position, 'absolute');
   const content = overlay.querySelector('.short-info-content');
   assert.ok(content);
   assert.equal(content.innerHTML, '<strong>Node</strong>');
@@ -338,6 +360,31 @@ test('containsNode recognises overlay descendants', () => {
   assert.ok(stack.containsNode(content));
   const stray = new StubElement('div');
   assert.equal(stack.containsNode(stray), false);
+});
+
+test('overlays migrate into and out of fullscreen hosts', () => {
+  const { document, window, factory, anchor, body } = createStubDom();
+  const fullscreenRoot = document.createElement('div');
+  body.appendChild(fullscreenRoot);
+  const stack = createShortInfoOverlayStack({ document, window, factory });
+  stack.render(anchor, 'Fullscreen');
+  const [entry] = stack.getOpenOverlays();
+  assert.equal(entry.element.parentNode, body);
+  assert.equal(entry.element.style.position, 'absolute');
+
+  document.fullscreenElement = fullscreenRoot;
+  document._dispatch('fullscreenchange');
+  assert.equal(entry.element.parentNode, fullscreenRoot);
+  assert.equal(entry.element.style.position, 'fixed');
+  assert.equal(entry.element.style.left, '40px');
+  assert.equal(entry.element.style.top, '50px');
+
+  document.fullscreenElement = null;
+  document._dispatch('fullscreenchange');
+  assert.equal(entry.element.parentNode, body);
+  assert.equal(entry.element.style.position, 'absolute');
+  assert.equal(entry.element.style.left, '50px');
+  assert.equal(entry.element.style.top, '70px');
 });
 
 test('rendered overlays do not swallow click events by default', () => {
