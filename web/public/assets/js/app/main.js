@@ -19,6 +19,7 @@ import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
+import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
 import {
   extractChatMessageMetadata,
   formatChatMessagePrefix,
@@ -1866,6 +1867,14 @@ export function initializeApp(config) {
       normalized.hwModel = source.hwModel ?? source.hw_model;
     }
 
+    const modemMetadata = extractModemMetadata(source);
+    if (modemMetadata.modemPreset) {
+      normalized.modemPreset = modemMetadata.modemPreset;
+    }
+    if (modemMetadata.loraFreq != null) {
+      normalized.loraFreq = modemMetadata.loraFreq;
+    }
+
     const numericPairs = [
       ['battery', source.battery ?? source.battery_level],
       ['voltage', source.voltage],
@@ -1974,6 +1983,10 @@ export function initializeApp(config) {
     }
     if (shortParts.length) {
       lines.push(shortParts.join(' '));
+    }
+    const modemDisplay = formatModemDisplay(overlayInfo.modemPreset, overlayInfo.loraFreq);
+    if (modemDisplay) {
+      lines.push(escapeHtml(modemDisplay));
     }
     const roleValue = shortInfoValueOrDash(overlayInfo.role || 'CLIENT');
     if (roleValue !== '—') {

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { extractModemMetadata } from './node-modem-metadata.js';
+
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
 const TELEMETRY_LIMIT = 1;
 const POSITION_LIMIT = 1;
@@ -131,6 +133,30 @@ function assignNumber(target, key, value, { preferExisting = false } = {}) {
 }
 
 /**
+ * Merge modem preset and frequency metadata into the aggregate node object.
+ *
+ * @param {Object} target Mutable aggregate node reference.
+ * @param {*} source Source record inspected for modem attributes.
+ * @param {{ preferExisting?: boolean }} [options] Behaviour modifiers.
+ * @returns {void}
+ */
+function mergeModemMetadata(target, source, { preferExisting = false } = {}) {
+  if (!isObject(target)) return;
+  if (!source || typeof source !== 'object') return;
+  const metadata = extractModemMetadata(source);
+  if (metadata.modemPreset) {
+    if (!preferExisting || toTrimmedString(target.modemPreset) == null) {
+      target.modemPreset = metadata.modemPreset;
+    }
+  }
+  if (metadata.loraFreq != null) {
+    if (!preferExisting || toFiniteNumber(target.loraFreq) == null) {
+      target.loraFreq = metadata.loraFreq;
+    }
+  }
+}
+
+/**
  * Merge base node fields from an arbitrary record into the aggregate node object.
  *
  * @param {Object} target Mutable aggregate node reference.
@@ -145,6 +171,7 @@ function mergeNodeFields(target, record) {
   assignString(target, 'longName', extractString(record, ['longName', 'long_name']));
   assignString(target, 'role', extractString(record, ['role']));
   assignString(target, 'hwModel', extractString(record, ['hwModel', 'hw_model']));
+  mergeModemMetadata(target, record);
   assignNumber(target, 'snr', extractNumber(record, ['snr']));
   assignNumber(target, 'battery', extractNumber(record, ['battery', 'battery_level', 'batteryLevel']));
   assignNumber(target, 'voltage', extractNumber(record, ['voltage']));
@@ -176,6 +203,7 @@ function mergeTelemetry(target, telemetry) {
   target.telemetry = telemetry;
   assignString(target, 'nodeId', extractString(telemetry, ['node_id', 'nodeId']), { preferExisting: true });
   assignNumber(target, 'nodeNum', extractNumber(telemetry, ['node_num', 'nodeNum']), { preferExisting: true });
+  mergeModemMetadata(target, telemetry, { preferExisting: true });
   assignNumber(target, 'battery', extractNumber(telemetry, ['battery_level', 'batteryLevel']), { preferExisting: true });
   assignNumber(target, 'voltage', extractNumber(telemetry, ['voltage']), { preferExisting: true });
   assignNumber(target, 'uptime', extractNumber(telemetry, ['uptime_seconds', 'uptimeSeconds']), { preferExisting: true });
@@ -408,6 +436,7 @@ export const __testUtils = {
   extractNumber,
   assignString,
   assignNumber,
+  mergeModemMetadata,
   mergeNodeFields,
   mergeTelemetry,
   mergePosition,
