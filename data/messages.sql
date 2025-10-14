@@ -24,7 +24,10 @@ CREATE TABLE IF NOT EXISTS messages (
     encrypted TEXT,
     snr       REAL,
     rssi      INTEGER,
-    hop_limit INTEGER
+    hop_limit INTEGER,
+    lora_freq INTEGER,
+    modem_preset TEXT,
+    channel_name TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);

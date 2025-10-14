@@ -11,6 +11,9 @@
     "rssi": -121,
     "hop_limit": 1,
     "snr": -13.25,
+    "lora_freq": 915,
+    "modem_preset": "LONG_FAST",
+    "channel_name": "SpecChannel",
     "node": {
       "snr": -13.25,
       "node_id": "!bba83318",
@@ -50,6 +53,9 @@
     "rssi": -117,
     "hop_limit": 3,
     "snr": -12.0,
+    "lora_freq": 868,
+    "modem_preset": "MEDIUM_SLOW",
+    "channel_name": "SpecChannel",
     "node": {
       "snr": -12.0,
       "node_id": "!43b6e530",

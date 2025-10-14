@@ -220,6 +220,9 @@ module PotatoMesh
 
         update_prometheus_metrics(node_id, user, role, met, pos)
 
+        lora_freq = coerce_integer(n["lora_freq"] || n["loraFrequency"])
+        modem_preset = string_or_nil(n["modem_preset"] || n["modemPreset"])
+
         row = [
           node_id,
           node_num,
@@ -250,13 +253,15 @@ module PotatoMesh
           pos["latitude"],
           pos["longitude"],
           pos["altitude"],
+          lora_freq,
+          modem_preset,
         ]
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                          hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                         position_time,location_source,precision_bits,latitude,longitude,altitude)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                         position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(node_id) DO UPDATE SET
                          num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                          hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
@@ -265,7 +270,7 @@ module PotatoMesh
                          battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                          air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
                          location_source=excluded.location_source, precision_bits=excluded.precision_bits, latitude=excluded.latitude, longitude=excluded.longitude,
-                         altitude=excluded.altitude
+                         altitude=excluded.altitude, lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset
                        WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                      SQL
         end
@@ -941,6 +946,10 @@ module PotatoMesh
           source: :message,
         )
 
+        lora_freq = coerce_integer(message["lora_freq"] || message["loraFrequency"])
+        modem_preset = string_or_nil(message["modem_preset"] || message["modemPreset"])
+        channel_name = string_or_nil(message["channel_name"] || message["channelName"])
+
         row = [
           msg_id,
           rx_time,
@@ -954,11 +963,14 @@ module PotatoMesh
           message["snr"],
           message["rssi"],
           message["hop_limit"],
+          lora_freq,
+          modem_preset,
+          channel_name,
         ]
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, encrypted FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, encrypted, lora_freq, modem_preset, channel_name FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -988,6 +1000,27 @@ module PotatoMesh
               updates["encrypted"] = encrypted if should_update
             end
 
+            unless lora_freq.nil?
+              existing_lora = existing.is_a?(Hash) ? existing["lora_freq"] : existing[3]
+              updates["lora_freq"] = lora_freq if existing_lora != lora_freq
+            end
+
+            if modem_preset
+              existing_preset = existing.is_a?(Hash) ? existing["modem_preset"] : existing[4]
+              existing_preset_str = existing_preset&.to_s
+              should_update = existing_preset_str.nil? || existing_preset_str.strip.empty?
+              should_update ||= existing_preset != modem_preset
+              updates["modem_preset"] = modem_preset if should_update
+            end
+
+            if channel_name
+              existing_channel = existing.is_a?(Hash) ? existing["channel_name"] : existing[5]
+              existing_channel_str = existing_channel&.to_s
+              should_update = existing_channel_str.nil? || existing_channel_str.strip.empty?
+              should_update ||= existing_channel != channel_name
+              updates["channel_name"] = channel_name if should_update
+            end
+
             unless updates.empty?
               assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
               db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
@@ -997,14 +1030,17 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
               fallback_updates["to_id"] = to_id if to_id
               fallback_updates["encrypted"] = encrypted if encrypted
+              fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
+              fallback_updates["modem_preset"] = modem_preset if modem_preset
+              fallback_updates["channel_name"] = channel_name if channel_name
               unless fallback_updates.empty?
                 assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
                 db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])

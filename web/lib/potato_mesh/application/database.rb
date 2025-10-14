@@ -89,6 +89,29 @@ module PotatoMesh
         node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }
         unless node_columns.include?("precision_bits")
           db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
+          node_columns << "precision_bits"
+        end
+
+        unless node_columns.include?("lora_freq")
+          db.execute("ALTER TABLE nodes ADD COLUMN lora_freq INTEGER")
+        end
+
+        unless node_columns.include?("modem_preset")
+          db.execute("ALTER TABLE nodes ADD COLUMN modem_preset TEXT")
+        end
+
+        message_columns = db.execute("PRAGMA table_info(messages)").map { |row| row[1] }
+
+        unless message_columns.include?("lora_freq")
+          db.execute("ALTER TABLE messages ADD COLUMN lora_freq INTEGER")
+        end
+
+        unless message_columns.include?("modem_preset")
+          db.execute("ALTER TABLE messages ADD COLUMN modem_preset TEXT")
+        end
+
+        unless message_columns.include?("channel_name")
+          db.execute("ALTER TABLE messages ADD COLUMN channel_name TEXT")
         end
 
         tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='instances'").flatten

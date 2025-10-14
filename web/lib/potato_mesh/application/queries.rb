@@ -148,7 +148,7 @@ module PotatoMesh
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
                  position_time, location_source, precision_bits,
-                 latitude, longitude, altitude
+                 latitude, longitude, altitude, lora_freq, modem_preset
           FROM nodes
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
@@ -203,7 +203,28 @@ module PotatoMesh
         end
 
         sql = <<~SQL
-          SELECT m.*, n.*, m.snr AS msg_snr
+          SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
+                 m.portnum, m.text, m.encrypted, m.rssi, m.hop_limit,
+                 m.lora_freq AS msg_lora_freq, m.modem_preset AS msg_modem_preset,
+                 m.channel_name AS msg_channel_name, m.snr AS msg_snr,
+                 n.node_id AS node_node_id, n.num AS node_num,
+                 n.short_name AS node_short_name, n.long_name AS node_long_name,
+                 n.macaddr AS node_macaddr, n.hw_model AS node_hw_model,
+                 n.role AS node_role, n.public_key AS node_public_key,
+                 n.is_unmessagable AS node_is_unmessagable,
+                 n.is_favorite AS node_is_favorite,
+                 n.hops_away AS node_hops_away, n.snr AS node_snr,
+                 n.last_heard AS node_last_heard, n.first_heard AS node_first_heard,
+                 n.battery_level AS node_battery_level, n.voltage AS node_voltage,
+                 n.channel_utilization AS node_channel_utilization,
+                 n.air_util_tx AS node_air_util_tx,
+                 n.uptime_seconds AS node_uptime_seconds,
+                 n.position_time AS node_position_time,
+                 n.location_source AS node_location_source,
+                 n.precision_bits AS node_precision_bits,
+                 n.latitude AS node_latitude, n.longitude AS node_longitude,
+                 n.altitude AS node_altitude,
+                 n.lora_freq AS node_lora_freq, n.modem_preset AS node_modem_preset
           FROM messages m
           LEFT JOIN nodes n ON (
             m.from_id IS NOT NULL AND TRIM(m.from_id) <> '' AND (
@@ -220,8 +241,12 @@ module PotatoMesh
         SQL
         params << limit
         rows = db.execute(sql, params)
-        msg_fields = %w[id rx_time rx_iso from_id to_id channel portnum text encrypted msg_snr rssi hop_limit]
         rows.each do |r|
+          r.delete_if { |key, _| key.is_a?(Integer) }
+          r["lora_freq"] = r.delete("msg_lora_freq")
+          r["modem_preset"] = r.delete("msg_modem_preset")
+          r["channel_name"] = r.delete("msg_channel_name")
+          snr_value = r.delete("msg_snr")
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(
@@ -238,11 +263,11 @@ module PotatoMesh
             )
           end
           node = {}
-          r.keys.each do |k|
-            next if msg_fields.include?(k)
-            node[k] = r.delete(k)
+          r.keys.grep(/^node_/).each do |k|
+            attribute = k.delete_prefix("node_")
+            node[attribute] = r.delete(k)
           end
-          r["snr"] = r.delete("msg_snr")
+          r["snr"] = snr_value
           references = [r["from_id"]].compact
           if references.any? && (node["node_id"].nil? || node["node_id"].to_s.empty?)
             lookup_keys = []
@@ -260,7 +285,6 @@ module PotatoMesh
             if fallback
               fallback.each do |key, value|
                 next unless key.is_a?(String)
-                next if msg_fields.include?(key)
                 node[key] = value if node[key].nil?
               end
             end
