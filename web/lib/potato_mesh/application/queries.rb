@@ -242,6 +242,7 @@ module PotatoMesh
         params << limit
         rows = db.execute(sql, params)
         rows.each do |r|
+          r.delete_if { |key, _| key.is_a?(Integer) }
           r["lora_freq"] = r.delete("msg_lora_freq")
           r["modem_preset"] = r.delete("msg_modem_preset")
           r["channel_name"] = r.delete("msg_channel_name")
