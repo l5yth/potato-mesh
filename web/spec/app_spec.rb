@@ -122,6 +122,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
     )
     payload["position"] = position unless position.empty?
 
+    payload["lora_freq"] = node["lora_freq"] if node.key?("lora_freq")
+    payload["modem_preset"] = node["modem_preset"] if node.key?("modem_preset")
+
     payload
   end
 
@@ -159,6 +162,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "latitude" => node["latitude"],
       "longitude" => node["longitude"],
       "altitude" => node["altitude"],
+      "lora_freq" => node["lora_freq"],
+      "modem_preset" => node["modem_preset"],
     }
   end
 
@@ -1151,7 +1156,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
           SELECT node_id, short_name, long_name, hw_model, role, snr,
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
-                 position_time, latitude, longitude, altitude
+                 position_time, location_source, precision_bits,
+                 latitude, longitude, altitude, lora_freq, modem_preset
           FROM nodes
           ORDER BY node_id
         SQL
@@ -1173,9 +1179,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(row["channel_utilization"], expected["channel_utilization"])
           expect_same_value(row["air_util_tx"], expected["air_util_tx"])
           expect_same_value(row["position_time"], expected["position_time"])
+          expect(row["location_source"]).to eq(expected["location_source"])
+          expect_same_value(row["precision_bits"], expected["precision_bits"])
           expect_same_value(row["latitude"], expected["latitude"])
           expect_same_value(row["longitude"], expected["longitude"])
           expect_same_value(row["altitude"], expected["altitude"])
+          expect_same_value(row["lora_freq"], expected["lora_freq"])
+          expect(row["modem_preset"]).to eq(expected["modem_preset"])
         end
       end
     end
@@ -1408,7 +1418,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.results_as_hash = true
         rows = db.execute(<<~SQL)
           SELECT id, rx_time, rx_iso, from_id, to_id, channel,
-                 portnum, text, snr, rssi, hop_limit
+                 portnum, text, snr, rssi, hop_limit,
+                 lora_freq, modem_preset, channel_name
           FROM messages
           ORDER BY id
         SQL
@@ -1427,6 +1438,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(row["snr"], expected["snr"])
           expect(row["rssi"]).to eq(expected["rssi"])
           expect(row["hop_limit"]).to eq(expected["hop_limit"])
+          expect(row["lora_freq"]).to eq(expected["lora_freq"])
+          expect(row["modem_preset"]).to eq(expected["modem_preset"])
+          expect(row["channel_name"]).to eq(expected["channel_name"])
         end
       end
     end
@@ -2419,6 +2433,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect_same_value(actual_row["snr"], expected["snr"])
         expect(actual_row["rssi"]).to eq(expected["rssi"])
         expect(actual_row["hop_limit"]).to eq(expected["hop_limit"])
+        expect(actual_row["lora_freq"]).to eq(expected["lora_freq"])
+        expect(actual_row["modem_preset"]).to eq(expected["modem_preset"])
+        expect(actual_row["channel_name"]).to eq(expected["channel_name"])
 
         if expected["from_id"]
           lookup_id = expected["from_id"]
@@ -2438,6 +2455,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(node_actual["long_name"]).to eq(node_expected["long_name"])
           expect(node_actual["role"]).to eq(node_expected["role"])
           expect_same_value(node_actual["snr"], node_expected["snr"])
+          expect(node_actual["lora_freq"]).to eq(node_expected["lora_freq"])
+          expect(node_actual["modem_preset"]).to eq(node_expected["modem_preset"])
           expect_same_value(node_actual["battery_level"], node_expected["battery_level"])
           expect_same_value(node_actual["voltage"], node_expected["voltage"])
           expected_last_heard = node_expected["last_heard"]
