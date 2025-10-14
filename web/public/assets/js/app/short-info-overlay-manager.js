@@ -15,6 +15,61 @@
  */
 
 const DEFAULT_TEMPLATE_ID = 'shortInfoOverlayTemplate';
+const FULLSCREEN_CHANGE_EVENTS = [
+  'fullscreenchange',
+  'webkitfullscreenchange',
+  'mozfullscreenchange',
+  'MSFullscreenChange',
+];
+
+/**
+ * Resolve the element currently presented in fullscreen mode.
+ *
+ * @param {Document} doc Host document reference.
+ * @returns {?Element} Fullscreen element or ``null`` when fullscreen is inactive.
+ */
+function getFullscreenElement(doc) {
+  if (!doc) return null;
+  return (
+    doc.fullscreenElement ||
+    doc.webkitFullscreenElement ||
+    doc.mozFullScreenElement ||
+    doc.msFullscreenElement ||
+    null
+  );
+}
+
+/**
+ * Determine the container that should host overlays.
+ *
+ * @param {Document} doc Host document reference.
+ * @returns {?Element} Preferred overlay host element.
+ */
+function resolveOverlayHost(doc) {
+  const fullscreenElement = getFullscreenElement(doc);
+  if (fullscreenElement && typeof fullscreenElement.appendChild === 'function') {
+    return fullscreenElement;
+  }
+  return doc && doc.body && typeof doc.body.appendChild === 'function' ? doc.body : null;
+}
+
+/**
+ * Update overlay positioning mode based on fullscreen state.
+ *
+ * @param {Element} element Overlay DOM node.
+ * @param {Document} doc Host document reference.
+ * @returns {void}
+ */
+function applyOverlayPositioning(element, doc) {
+  if (!element || !element.style) {
+    return;
+  }
+  const fullscreenElement = getFullscreenElement(doc);
+  const desired = fullscreenElement ? 'fixed' : 'absolute';
+  if (element.style.position !== desired) {
+    element.style.position = desired;
+  }
+}
 
 /**
  * Determine whether a value behaves like a DOM element that can host overlays.
@@ -151,6 +206,49 @@ export function createShortInfoOverlayStack(options = {}) {
   const overlayOrder = [];
 
   /**
+   * Retrieve the active overlay host element.
+   *
+   * @returns {?Element} Host element capable of containing overlays.
+   */
+  function getOverlayHost() {
+    return resolveOverlayHost(doc);
+  }
+
+  /**
+   * Append ``element`` to the preferred overlay host when necessary.
+   *
+   * @param {Element} element Overlay root element.
+   * @returns {void}
+   */
+  function ensureOverlayAttached(element) {
+    if (!element) return;
+    const host = getOverlayHost();
+    if (!host) return;
+    if (element.parentNode !== host) {
+      host.appendChild(element);
+    }
+    applyOverlayPositioning(element, doc);
+  }
+
+  /**
+   * React to fullscreen transitions by reattaching overlays to the active host.
+   *
+   * @returns {void}
+   */
+  function handleFullscreenChange() {
+    for (const state of overlayStates.values()) {
+      ensureOverlayAttached(state.element);
+    }
+    positionAll();
+  }
+
+  if (doc && typeof doc.addEventListener === 'function') {
+    for (const eventName of FULLSCREEN_CHANGE_EVENTS) {
+      doc.addEventListener(eventName, handleFullscreenChange);
+    }
+  }
+
+  /**
    * Remove an overlay element from the DOM tree.
    *
    * @param {Element} element Overlay root element.
@@ -215,9 +313,7 @@ export function createShortInfoOverlayStack(options = {}) {
       });
     }
 
-    if (typeof doc.body.appendChild === 'function') {
-      doc.body.appendChild(overlayEl);
-    }
+    ensureOverlayAttached(overlayEl);
 
     state = {
       anchor,
@@ -276,24 +372,27 @@ export function createShortInfoOverlayStack(options = {}) {
       (win && typeof win.innerHeight === 'number' ? win.innerHeight : 0);
     const scrollX = (win && typeof win.scrollX === 'number' ? win.scrollX : 0) || 0;
     const scrollY = (win && typeof win.scrollY === 'number' ? win.scrollY : 0) || 0;
+    const fullscreenElement = getFullscreenElement(doc);
+    const offsetX = fullscreenElement ? 0 : scrollX;
+    const offsetY = fullscreenElement ? 0 : scrollY;
 
-    let left = rect.left + scrollX;
-    let top = rect.top + scrollY;
+    let left = rect.left + offsetX;
+    let top = rect.top + offsetY;
 
     if (viewportWidth > 0) {
-      const maxLeft = scrollX + viewportWidth - overlayRect.width - 8;
-      left = Math.max(scrollX + 8, Math.min(left, maxLeft));
+      const maxLeft = offsetX + viewportWidth - overlayRect.width - 8;
+      left = Math.max(offsetX + 8, Math.min(left, maxLeft));
     }
     if (viewportHeight > 0) {
-      const maxTop = scrollY + viewportHeight - overlayRect.height - 8;
-      top = Math.max(scrollY + 8, Math.min(top, maxTop));
+      const maxTop = offsetY + viewportHeight - overlayRect.height - 8;
+      top = Math.max(offsetY + 8, Math.min(top, maxTop));
     }
 
     if (state.element.style) {
+      applyOverlayPositioning(state.element, doc);
       state.element.style.left = `${left}px`;
       state.element.style.top = `${top}px`;
       state.element.style.visibility = 'visible';
-      state.element.style.position = state.element.style.position || 'absolute';
     }
   }
 
@@ -328,6 +427,7 @@ export function createShortInfoOverlayStack(options = {}) {
     if (!state) {
       return;
     }
+    ensureOverlayAttached(state.element);
     if (state.content && typeof state.content.innerHTML === 'string') {
       state.content.innerHTML = html;
     }
