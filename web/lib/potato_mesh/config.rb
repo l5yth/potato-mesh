@@ -129,7 +129,7 @@ module PotatoMesh
     #
     # @return [String] semantic version identifier.
     def version_fallback
-      "v0.5.0"
+      "v0.5.1"
     end
 
     # Default refresh interval for frontend polling routines.
