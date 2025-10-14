@@ -882,19 +882,6 @@ input[type="radio"] {
   word-break: break-word;
 }
 
-@media (max-width: 1280px) {
-  #nodes th:nth-child(15),
-  #nodes td:nth-child(15),
-  #nodes th:nth-child(16),
-  #nodes td:nth-child(16),
-  #nodes th:nth-child(17),
-  #nodes td:nth-child(17),
-  #nodes th:nth-child(18),
-  #nodes td:nth-child(18) {
-    display: none;
-  }
-}
-
 @media (max-width: 1024px) {
   .row {
     flex-direction: column;
@@ -960,33 +947,54 @@ input[type="radio"] {
     height: 30vh;
   }
 
-  #nodes th:nth-child(1),
-  #nodes td:nth-child(1),
-  #nodes th:nth-child(5),
-  #nodes td:nth-child(5),
-  #nodes th:nth-child(6),
-  #nodes td:nth-child(6),
-  #nodes th:nth-child(9),
-  #nodes td:nth-child(9),
-  #nodes th:nth-child(11),
-  #nodes td:nth-child(11),
-  #nodes th:nth-child(13),
-  #nodes td:nth-child(13),
-  #nodes th:nth-child(14),
-  #nodes td:nth-child(14),
-  #nodes th:nth-child(15),
-  #nodes td:nth-child(15),
-  #nodes th:nth-child(16),
-  #nodes td:nth-child(16),
-  #nodes th:nth-child(17),
-  #nodes td:nth-child(17),
-  #nodes th:nth-child(18),
-  #nodes td:nth-child(18) {
-    display: none;
-  }
-
   .legend {
     max-width: min(240px, 80vw);
+  }
+}
+
+@media (max-width: 1679px) {
+  .nodes-col--node-id {
+    display: none;
+  }
+}
+
+@media (max-width: 1559px) {
+  .nodes-col--temperature,
+  .nodes-col--humidity,
+  .nodes-col--pressure {
+    display: none;
+  }
+}
+
+@media (max-width: 1319px) {
+  .nodes-col--latitude,
+  .nodes-col--longitude,
+  .nodes-col--last-position {
+    display: none;
+  }
+}
+
+@media (max-width: 1109px) {
+  .nodes-col--voltage,
+  .nodes-col--air-util-tx,
+  .nodes-col--altitude {
+    display: none;
+  }
+}
+
+@media (max-width: 899px) {
+  .nodes-col--uptime,
+  .nodes-col--frequency,
+  .nodes-col--modem-preset {
+    display: none;
+  }
+}
+
+@media (max-width: 659px) {
+  .nodes-col--battery,
+  .nodes-col--channel-util,
+  .nodes-col--hw-model {
+    display: none;
   }
 }
 
