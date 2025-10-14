@@ -289,6 +289,15 @@ test('render opens overlays and positions them relative to anchors', () => {
   assert.equal(overlay.style.top, '70px');
 });
 
+test('render enforces z-index layering for overlays', () => {
+  const { document, window, factory, anchor } = createStubDom();
+  const stack = createShortInfoOverlayStack({ document, window, factory });
+  stack.render(anchor, 'Layered node');
+  const [entry] = stack.getOpenOverlays();
+  assert.ok(entry);
+  assert.equal(entry.element.style.zIndex, '6000');
+});
+
 test('request tokens track anchors independently', () => {
   const { document, window, factory, anchor } = createStubDom();
   const stack = createShortInfoOverlayStack({ document, window, factory });

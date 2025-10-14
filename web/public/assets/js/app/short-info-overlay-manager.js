@@ -31,6 +31,36 @@ function isValidAnchor(candidate) {
 }
 
 /**
+ * Highest stacking context value applied to node overlays.
+ *
+ * The value intentionally exceeds other UI layers (toolbars, footers, map tiles)
+ * to guarantee overlays remain interactive even when the map enters
+ * fullscreen mode.
+ *
+ * @type {number}
+ */
+const SHORT_INFO_OVERLAY_Z_INDEX = 6000;
+
+/**
+ * Apply inline styles that ensure overlays sit atop all other UI chrome.
+ *
+ * @param {?Element} element Overlay root element.
+ * @returns {void}
+ */
+function enforceOverlayLayering(element) {
+  if (!element || typeof element !== 'object') {
+    return;
+  }
+
+  const style = element.style || null;
+  if (!style || typeof style !== 'object') {
+    return;
+  }
+
+  style.zIndex = String(SHORT_INFO_OVERLAY_Z_INDEX);
+}
+
+/**
  * Create a factory that instantiates overlay DOM nodes.
  *
  * @param {Document} document Host document reference.
@@ -62,6 +92,8 @@ function createDefaultOverlayFactory(document, template) {
       overlay.appendChild(closeButton);
       overlay.appendChild(content);
     }
+
+    enforceOverlayLayering(overlay);
 
     const closeButton =
       typeof overlay.querySelector === 'function'
@@ -196,6 +228,8 @@ export function createShortInfoOverlayStack(options = {}) {
     const overlayEl = created.overlay;
     const closeButton = created.closeButton || null;
     const contentEl = created.content;
+
+    enforceOverlayLayering(overlayEl);
 
     if (typeof overlayEl.setAttribute === 'function') {
       overlayEl.setAttribute('data-short-info-overlay', '');
