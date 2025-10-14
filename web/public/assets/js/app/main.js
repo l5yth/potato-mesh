@@ -19,7 +19,7 @@ import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
-import { extractChatMessageMetadata } from './chat-format.js';
+import { extractChatMessageMetadata, formatChatMessagePrefix, formatNodeAnnouncementPrefix } from './chat-format.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -2070,7 +2070,12 @@ export function initializeApp(config) {
     div.className = 'chat-entry-node';
     const short = renderShortHtml(n.short_name, n.role, n.long_name, n);
     const longName = escapeHtml(n.long_name || '');
-    div.innerHTML = `[${ts}] ${short} <em>New node: ${longName}</em>`;
+    const metadata = extractChatMessageMetadata(n);
+    const prefix = formatNodeAnnouncementPrefix({
+      timestamp: escapeHtml(ts),
+      frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
+    });
+    div.innerHTML = `${prefix} ${short} <em>New node: ${longName}</em>`;
     return div;
   }
 
@@ -2086,15 +2091,13 @@ export function initializeApp(config) {
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     const text = escapeHtml(m.text || '');
     const metadata = extractChatMessageMetadata(m);
-    const prefixSegments = [`[${escapeHtml(ts)}]`];
-    if (metadata.frequency) {
-      prefixSegments.push(`[${escapeHtml(metadata.frequency)}]`);
-    }
-    if (metadata.channelName) {
-      prefixSegments.push(`[${escapeHtml(metadata.channelName)}]`);
-    }
+    const prefix = formatChatMessagePrefix({
+      timestamp: escapeHtml(ts),
+      frequency: metadata.frequency ? escapeHtml(metadata.frequency) : '',
+      channelName: metadata.channelName ? escapeHtml(metadata.channelName) : ''
+    });
     div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefixSegments.join('')} ${short} ${text}`;
+    div.innerHTML = `${prefix} ${short} ${text}`;
     return div;
   }
 

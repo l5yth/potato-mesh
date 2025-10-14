@@ -44,6 +44,42 @@ export function extractChatMessageMetadata(message) {
 }
 
 /**
+ * Produce the formatted prefix for a chat message entry.
+ *
+ * Timestamp, frequency, and channel name will each be wrapped in square
+ * brackets. Missing metadata values result in empty brackets to preserve the
+ * positional layout expected by operators.
+ *
+ * @param {{
+ *   timestamp: string,
+ *   frequency: string|null,
+ *   channelName: string|null
+ * }} params Normalised and escaped display strings.
+ * @returns {string} Prefix string suitable for HTML insertion.
+ */
+export function formatChatMessagePrefix({ timestamp, frequency, channelName }) {
+  const ts = typeof timestamp === 'string' ? timestamp : '';
+  const freq = typeof frequency === 'string' ? frequency : frequency == null ? '' : String(frequency);
+  const channel = typeof channelName === 'string' ? channelName : channelName == null ? '' : String(channelName);
+  return `[${ts}][${freq}][${channel}]`;
+}
+
+/**
+ * Create the formatted prefix for node announcements in the chat log.
+ *
+ * Both the timestamp and the optional frequency will be wrapped in brackets,
+ * mirroring the chat message display while omitting the channel indicator.
+ *
+ * @param {{ timestamp: string, frequency: string|null }} params Display strings.
+ * @returns {string} Prefix string suitable for HTML insertion.
+ */
+export function formatNodeAnnouncementPrefix({ timestamp, frequency }) {
+  const ts = typeof timestamp === 'string' ? timestamp : '';
+  const freq = typeof frequency === 'string' ? frequency : frequency == null ? '' : String(frequency);
+  return `[${ts}][${freq}]`;
+}
+
+/**
  * Return the first value in ``candidates`` that is not ``null`` or ``undefined``.
  *
  * @param {...*} candidates Candidate values.
@@ -109,5 +145,7 @@ function normalizeFrequency(value) {
 export const __test__ = {
   firstNonNull,
   normalizeString,
-  normalizeFrequency
+  normalizeFrequency,
+  formatChatMessagePrefix,
+  formatNodeAnnouncementPrefix
 };
