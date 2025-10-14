@@ -26,7 +26,7 @@ RUN set -eux; \
     python -m pip install --no-cache-dir -r requirements.txt; \
     apk del .build-deps
 
-COPY data/ .
+COPY data /app/data
 RUN addgroup -S potatomesh && \
     adduser -S potatomesh -G potatomesh && \
     adduser potatomesh dialout && \
@@ -40,7 +40,7 @@ ENV CONNECTION=/dev/ttyACM0 \
     POTATOMESH_INSTANCE="" \
     API_TOKEN=""
 
-CMD ["python", "mesh.py"]
+CMD ["python", "-m", "data.mesh"]
 
 # Windows production image
 FROM python:${PYTHON_VERSION}-windowsservercore-ltsc2022 AS production-windows
@@ -55,7 +55,7 @@ WORKDIR /app
 COPY data/requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY data/ .
+COPY data /app/data
 
 USER ContainerUser
 
@@ -65,6 +65,6 @@ ENV CONNECTION=/dev/ttyACM0 \
     POTATOMESH_INSTANCE="" \
     API_TOKEN=""
 
-CMD ["python", "mesh.py"]
+CMD ["python", "-m", "data.mesh"]
 
 FROM production-${TARGETOS} AS production
