@@ -2581,24 +2581,24 @@ export function initializeApp(config) {
       const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
       tr.innerHTML = `
-        <td class="mono">${n.node_id || ""}</td>
-        <td>${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
-        <td>${n.long_name || ""}</td>
-        <td>${timeAgo(n.last_heard, nowSec)}</td>
-        <td>${n.role || "CLIENT"}</td>
-        <td>${fmtHw(n.hw_model)}</td>
-        <td>${fmtAlt(n.battery_level, "%")}</td>
-        <td>${fmtAlt(n.voltage, "V")}</td>
-        <td>${timeHum(n.uptime_seconds)}</td>
-        <td>${fmtTx(n.channel_utilization)}</td>
-        <td>${fmtTx(n.air_util_tx)}</td>
-        <td>${fmtTemperature(n.temperature)}</td>
-        <td>${fmtHumidity(n.relative_humidity)}</td>
-        <td>${fmtPressure(n.barometric_pressure)}</td>
-        <td>${fmtCoords(n.latitude)}</td>
-        <td>${fmtCoords(n.longitude)}</td>
-        <td>${fmtAlt(n.altitude, "m")}</td>
-        <td class="mono">${lastPositionCell}</td>`;
+        <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
+        <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
+        <td class="nodes-col nodes-col--long-name">${n.long_name || ""}</td>
+        <td class="nodes-col nodes-col--last-seen">${timeAgo(n.last_heard, nowSec)}</td>
+        <td class="nodes-col nodes-col--role">${n.role || "CLIENT"}</td>
+        <td class="nodes-col nodes-col--hw-model">${fmtHw(n.hw_model)}</td>
+        <td class="nodes-col nodes-col--battery">${fmtAlt(n.battery_level, "%")}</td>
+        <td class="nodes-col nodes-col--voltage">${fmtAlt(n.voltage, "V")}</td>
+        <td class="nodes-col nodes-col--uptime">${timeHum(n.uptime_seconds)}</td>
+        <td class="nodes-col nodes-col--channel-util">${fmtTx(n.channel_utilization)}</td>
+        <td class="nodes-col nodes-col--air-util-tx">${fmtTx(n.air_util_tx)}</td>
+        <td class="nodes-col nodes-col--temperature">${fmtTemperature(n.temperature)}</td>
+        <td class="nodes-col nodes-col--humidity">${fmtHumidity(n.relative_humidity)}</td>
+        <td class="nodes-col nodes-col--pressure">${fmtPressure(n.barometric_pressure)}</td>
+        <td class="nodes-col nodes-col--latitude">${fmtCoords(n.latitude)}</td>
+        <td class="nodes-col nodes-col--longitude">${fmtCoords(n.longitude)}</td>
+        <td class="nodes-col nodes-col--altitude">${fmtAlt(n.altitude, "m")}</td>
+        <td class="mono nodes-col nodes-col--last-position">${lastPositionCell}</td>`;
       frag.appendChild(tr);
     }
     tb.replaceChildren(frag);
