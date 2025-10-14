@@ -1,12 +1,79 @@
 # CHANGELOG
 
-## Unreleased
-
-* Preserve legacy configuration assets when migrating to XDG directories.
-
 ## v0.5.0
 
-* Add JavaScript configuration tests and coverage workflow
+* Ensure node overlays appear above fullscreen map by @l5yth in <https://github.com/l5yth/potato-mesh/pull/333>
+* Adjust node table columns responsively by @l5yth in <https://github.com/l5yth/potato-mesh/pull/332>
+* Add LoRa metadata fields to nodes and messages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/331>
+* Add channel metadata capture for message tagging by @l5yth in <https://github.com/l5yth/potato-mesh/pull/329>
+* Capture radio metadata for ingestor payloads by @l5yth in <https://github.com/l5yth/potato-mesh/pull/327>
+* Fix FrozenError when filtering node query results by @l5yth in <https://github.com/l5yth/potato-mesh/pull/324>
+* Ensure frontend reports git-aware version strings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/321>
+* Ensure web Docker image ships application sources by @l5yth in <https://github.com/l5yth/potato-mesh/pull/322>
+* Refine stacked short info overlays on the map by @l5yth in <https://github.com/l5yth/potato-mesh/pull/319>
+* Refine environment configuration defaults by @l5yth in <https://github.com/l5yth/potato-mesh/pull/318>
+* Fix legacy configuration migration to XDG directories by @l5yth in <https://github.com/l5yth/potato-mesh/pull/317>
+* Adopt XDG base directories for app data and config by @l5yth in <https://github.com/l5yth/potato-mesh/pull/316>
+* Refactor: streamline ingestor environment variables by @l5yth in <https://github.com/l5yth/potato-mesh/pull/314>
+* Adjust map auto-fit padding and default zoom by @l5yth in <https://github.com/l5yth/potato-mesh/pull/315>
+* Ensure APIs filter stale data and refresh node details from latest sources by @l5yth in <https://github.com/l5yth/potato-mesh/pull/312>
+* Improve offline tile fallback initialization by @l5yth in <https://github.com/l5yth/potato-mesh/pull/307>
+* Add fallback for offline tile rendering errors by @l5yth in <https://github.com/l5yth/potato-mesh/pull/306>
+* Fix map auto-fit handling and add controller by @l5yth in <https://github.com/l5yth/potato-mesh/pull/311>
+* Fix map initialization bounds and add coverage by @l5yth in <https://github.com/l5yth/potato-mesh/pull/305>
+* Increase coverage for configuration and sanitizer helpers by @l5yth in <https://github.com/l5yth/potato-mesh/pull/303>
+* Add comprehensive theme and background front-end tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/302>
+* Document sanitization and helper modules by @l5yth in <https://github.com/l5yth/potato-mesh/pull/301>
+* Add in-repo Meshtastic protobuf stubs for tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/300>
+* Handle CRL lookup failures during federation TLS by @l5yth in <https://github.com/l5yth/potato-mesh/pull/299>
+* Ensure JavaScript workflow runs frontend tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/298>
+* Unify structured logging across application and ingestor by @l5yth in <https://github.com/l5yth/potato-mesh/pull/296>
+* Add Apache license headers to missing sources by @l5yth in <https://github.com/l5yth/potato-mesh/pull/297>
+* Update workflows for ingestor, sinatra, and frontend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/295>
+* Fix IPv6 instance domain canonicalization by @l5yth in <https://github.com/l5yth/potato-mesh/pull/294>
+* Handle federation HTTPS CRL verification failures by @l5yth in <https://github.com/l5yth/potato-mesh/pull/293>
+* Adjust federation announcement interval to eight hours by @l5yth in <https://github.com/l5yth/potato-mesh/pull/292>
+* Restore modular app functionality by @l5yth in <https://github.com/l5yth/potato-mesh/pull/291>
+* Refactor config and metadata helpers into PotatoMesh modules by @l5yth in <https://github.com/l5yth/potato-mesh/pull/290>
+* Update default site configuration defaults by @l5yth in <https://github.com/l5yth/potato-mesh/pull/288>
+* Add regression test for queue drain concurrency by @l5yth in <https://github.com/l5yth/potato-mesh/pull/287>
+* Ensure Docker config directories are created for non-root user by @l5yth in <https://github.com/l5yth/potato-mesh/pull/286>
+* Clarify numeric address requirement for network target parsing by @l5yth in <https://github.com/l5yth/potato-mesh/pull/285>
+* Ensure mesh ingestor queue resets active flag when idle by @l5yth in <https://github.com/l5yth/potato-mesh/pull/284>
+* Clarify BLE connection description in README by @l5yth in <https://github.com/l5yth/potato-mesh/pull/283>
+* Configure web container for production mode by @l5yth in <https://github.com/l5yth/potato-mesh/pull/282>
+* Normalize INSTANCE_DOMAIN configuration to require hostnames by @l5yth in <https://github.com/l5yth/potato-mesh/pull/280>
+* Avoid blocking startup on federation announcements by @l5yth in <https://github.com/l5yth/potato-mesh/pull/281>
+* Fix production Docker builds for web and ingestor images by @l5yth in <https://github.com/l5yth/potato-mesh/pull/279>
+* Improve instance domain detection logic by @l5yth in <https://github.com/l5yth/potato-mesh/pull/278>
+* Implement federation announcements and instances API by @l5yth in <https://github.com/l5yth/potato-mesh/pull/277>
+* Fix federation signature handling and IP guard by @l5yth in <https://github.com/l5yth/potato-mesh/pull/276>
+* Add persistent federation metadata endpoint by @l5yth in <https://github.com/l5yth/potato-mesh/pull/274>
+* Add configurable instance domain with reverse DNS fallback by @l5yth in <https://github.com/l5yth/potato-mesh/pull/272>
+* Document production deployment configuration by @l5yth in <https://github.com/l5yth/potato-mesh/pull/273>
+* Add targeted API endpoints and expose version metadata by @l5yth in <https://github.com/l5yth/potato-mesh/pull/271>
+* Prometheus metrics updates on startup and for position/telemetry by @nicjansma in <https://github.com/l5yth/potato-mesh/pull/270>
+* Add hourly reconnect handling for inactive mesh interface by @l5yth in <https://github.com/l5yth/potato-mesh/pull/267>
+* Dockerfile fixes by @nicjansma in <https://github.com/l5yth/potato-mesh/pull/268>
+* Added prometheus /metrics endpoint by @nicjansma in <https://github.com/l5yth/potato-mesh/pull/262>
+* Add fullscreen toggle to map view by @l5yth in <https://github.com/l5yth/potato-mesh/pull/263>
+* Relocate JS coverage export script into web directory by @l5yth in <https://github.com/l5yth/potato-mesh/pull/266>
+* V0.4.0 version string in web UI by @nicjansma in <https://github.com/l5yth/potato-mesh/pull/265>
+* Add energy saving cycle to ingestor daemon by @l5yth in <https://github.com/l5yth/potato-mesh/pull/256>
+* Chore: restore apache headers by @l5yth in <https://github.com/l5yth/potato-mesh/pull/260>
+* Docs: add matrix to readme by @l5yth in <https://github.com/l5yth/potato-mesh/pull/259>
+* Force dark theme default based on sanitized cookie by @l5yth in <https://github.com/l5yth/potato-mesh/pull/252>
+* Document mesh ingestor modules with PDoc-style docstrings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/255>
+* Handle missing node IDs in Meshtastic nodeinfo packets by @l5yth in <https://github.com/l5yth/potato-mesh/pull/251>
+* Document Ruby helper methods with RDoc comments by @l5yth in <https://github.com/l5yth/potato-mesh/pull/254>
+* Add JSDoc documentation across client scripts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/253>
+* Fix mesh ingestor telemetry and neighbor handling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/249>
+* Refactor front-end assets into external modules by @l5yth in <https://github.com/l5yth/potato-mesh/pull/245>
+* Add tests for helper utilities and asset routes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/243>
+* Docs: add ingestor inline docstrings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/244>
+* Add comprehensive coverage tests for mesh ingestor by @l5yth in <https://github.com/l5yth/potato-mesh/pull/241>
+* Add inline documentation to config helpers and frontend scripts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/240>
+* Update changelog by @l5yth in <https://github.com/l5yth/potato-mesh/pull/238>
 
 ## v0.4.0
 
