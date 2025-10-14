@@ -59,7 +59,7 @@ export function extractChatMessageMetadata(message) {
  */
 export function formatChatMessagePrefix({ timestamp, frequency, channelName }) {
   const ts = typeof timestamp === 'string' ? timestamp : '';
-  const freq = typeof frequency === 'string' ? frequency : frequency == null ? '' : String(frequency);
+  const freq = normalizeFrequencySlot(frequency);
   const channel = typeof channelName === 'string' ? channelName : channelName == null ? '' : String(channelName);
   return `[${ts}][${freq}][${channel}]`;
 }
@@ -75,9 +75,36 @@ export function formatChatMessagePrefix({ timestamp, frequency, channelName }) {
  */
 export function formatNodeAnnouncementPrefix({ timestamp, frequency }) {
   const ts = typeof timestamp === 'string' ? timestamp : '';
-  const freq = typeof frequency === 'string' ? frequency : frequency == null ? '' : String(frequency);
+  const freq = normalizeFrequencySlot(frequency);
   return `[${ts}][${freq}]`;
 }
+
+/**
+ * Produce a consistently formatted frequency slot for chat prefixes.
+ *
+ * A missing or empty frequency is rendered as three HTML non-breaking spaces to
+ * ensure the UI maintains its expected alignment while clearly indicating the
+ * absence of data.
+ *
+ * @param {*} value Frequency value that has already been escaped for HTML.
+ * @returns {string} Frequency slot suitable for prefix rendering.
+ */
+function normalizeFrequencySlot(value) {
+  if (value == null) {
+    return FREQUENCY_PLACEHOLDER;
+  }
+  if (typeof value === 'string') {
+    return value.length > 0 ? value : FREQUENCY_PLACEHOLDER;
+  }
+  const strValue = String(value);
+  return strValue.length > 0 ? strValue : FREQUENCY_PLACEHOLDER;
+}
+
+/**
+ * HTML entity sequence inserted when a frequency is unavailable.
+ * @type {string}
+ */
+const FREQUENCY_PLACEHOLDER = '&nbsp;&nbsp;&nbsp;';
 
 /**
  * Return the first value in ``candidates`` that is not ``null`` or ``undefined``.
@@ -147,5 +174,7 @@ export const __test__ = {
   normalizeString,
   normalizeFrequency,
   formatChatMessagePrefix,
-  formatNodeAnnouncementPrefix
+  formatNodeAnnouncementPrefix,
+  normalizeFrequencySlot,
+  FREQUENCY_PLACEHOLDER
 };

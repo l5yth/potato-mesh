@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 
 import { extractChatMessageMetadata, formatChatMessagePrefix, formatNodeAnnouncementPrefix, __test__ } from '../chat-format.js';
 
-const { firstNonNull, normalizeString, normalizeFrequency } = __test__;
+const { firstNonNull, normalizeString, normalizeFrequency, normalizeFrequencySlot, FREQUENCY_PLACEHOLDER } = __test__;
 
 test('extractChatMessageMetadata prefers explicit region_frequency and channel_name', () => {
   const payload = {
@@ -72,11 +72,11 @@ test('formatChatMessagePrefix preserves bracket placeholders', () => {
   );
   assert.equal(
     formatChatMessagePrefix({ timestamp: '16:19:19', frequency: null, channelName: 'MediumFast' }),
-    '[16:19:19][][MediumFast]'
+    `[16:19:19][${FREQUENCY_PLACEHOLDER}][MediumFast]`
   );
   assert.equal(
     formatChatMessagePrefix({ timestamp: '09:00:00', frequency: '', channelName: '' }),
-    '[09:00:00][][]'
+    `[09:00:00][${FREQUENCY_PLACEHOLDER}][]`
   );
 });
 
@@ -85,5 +85,15 @@ test('formatNodeAnnouncementPrefix includes optional frequency bracket', () => {
     formatNodeAnnouncementPrefix({ timestamp: '12:34:56', frequency: '868' }),
     '[12:34:56][868]'
   );
-  assert.equal(formatNodeAnnouncementPrefix({ timestamp: '01:02:03', frequency: null }), '[01:02:03][]');
+  assert.equal(
+    formatNodeAnnouncementPrefix({ timestamp: '01:02:03', frequency: null }),
+    `[01:02:03][${FREQUENCY_PLACEHOLDER}]`
+  );
+});
+
+test('normalizeFrequencySlot returns placeholder when frequency is missing', () => {
+  assert.equal(normalizeFrequencySlot(null), FREQUENCY_PLACEHOLDER);
+  assert.equal(normalizeFrequencySlot(''), FREQUENCY_PLACEHOLDER);
+  assert.equal(normalizeFrequencySlot(undefined), FREQUENCY_PLACEHOLDER);
+  assert.equal(normalizeFrequencySlot('915'), '915');
 });
