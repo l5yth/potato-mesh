@@ -446,7 +446,7 @@ th {
   line-height: 1.4;
   min-width: 200px;
   max-width: 240px;
-  z-index: 2000;
+  z-index: 12000;
 }
 
 .short-info-overlay[hidden] {
@@ -810,7 +810,7 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   padding: var(--pad);
-  z-index: 4000;
+  z-index: 13000;
 }
 
 .info-overlay[hidden] {
