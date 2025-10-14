@@ -15,9 +15,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { extractChatMessageMetadata, formatChatMessagePrefix, formatNodeAnnouncementPrefix, __test__ } from '../chat-format.js';
+import {
+  extractChatMessageMetadata,
+  formatChatMessagePrefix,
+  formatChatChannelTag,
+  formatNodeAnnouncementPrefix,
+  __test__
+} from '../chat-format.js';
 
-const { firstNonNull, normalizeString, normalizeFrequency, normalizeFrequencySlot, FREQUENCY_PLACEHOLDER } = __test__;
+const {
+  firstNonNull,
+  normalizeString,
+  normalizeFrequency,
+  normalizeFrequencySlot,
+  FREQUENCY_PLACEHOLDER
+} = __test__;
 
 test('extractChatMessageMetadata prefers explicit region_frequency and channel_name', () => {
   const payload = {
@@ -67,16 +79,31 @@ test('normalizeFrequency handles numeric and string inputs', () => {
 
 test('formatChatMessagePrefix preserves bracket placeholders', () => {
   assert.equal(
-    formatChatMessagePrefix({ timestamp: '11:46:48', frequency: '868', channelName: 'TEST' }),
-    '[11:46:48][868][TEST]'
+    formatChatMessagePrefix({ timestamp: '11:46:48', frequency: '868' }),
+    '[11:46:48][868]'
   );
   assert.equal(
-    formatChatMessagePrefix({ timestamp: '16:19:19', frequency: null, channelName: 'MediumFast' }),
-    `[16:19:19][${FREQUENCY_PLACEHOLDER}][MediumFast]`
+    formatChatMessagePrefix({ timestamp: '16:19:19', frequency: null }),
+    `[16:19:19][${FREQUENCY_PLACEHOLDER}]`
   );
   assert.equal(
-    formatChatMessagePrefix({ timestamp: '09:00:00', frequency: '', channelName: '' }),
-    `[09:00:00][${FREQUENCY_PLACEHOLDER}][]`
+    formatChatMessagePrefix({ timestamp: '09:00:00', frequency: '' }),
+    `[09:00:00][${FREQUENCY_PLACEHOLDER}]`
+  );
+});
+
+test('formatChatChannelTag wraps channel names after the short name slot', () => {
+  assert.equal(
+    formatChatChannelTag({ channelName: 'TEST' }),
+    '[TEST]'
+  );
+  assert.equal(
+    formatChatChannelTag({ channelName: '' }),
+    '[]'
+  );
+  assert.equal(
+    formatChatChannelTag({ channelName: null }),
+    '[]'
   );
 });
 

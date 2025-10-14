@@ -46,22 +46,35 @@ export function extractChatMessageMetadata(message) {
 /**
  * Produce the formatted prefix for a chat message entry.
  *
- * Timestamp, frequency, and channel name will each be wrapped in square
- * brackets. Missing metadata values result in empty brackets to preserve the
- * positional layout expected by operators.
+ * Timestamp and frequency will each be wrapped in square brackets. Missing
+ * metadata values result in empty brackets (with the frequency replaced by the
+ * configured placeholder) to preserve the positional layout expected by
+ * operators.
  *
  * @param {{
  *   timestamp: string,
- *   frequency: string|null,
- *   channelName: string|null
+ *   frequency: string|null
  * }} params Normalised and escaped display strings.
  * @returns {string} Prefix string suitable for HTML insertion.
  */
-export function formatChatMessagePrefix({ timestamp, frequency, channelName }) {
+export function formatChatMessagePrefix({ timestamp, frequency }) {
   const ts = typeof timestamp === 'string' ? timestamp : '';
   const freq = normalizeFrequencySlot(frequency);
+  return `[${ts}][${freq}]`;
+}
+
+/**
+ * Render the channel tag that follows the short name in a chat message entry.
+ *
+ * Empty channel names remain blank within the brackets, mirroring the original
+ * UI behaviour that reserves the slot without introducing placeholder text.
+ *
+ * @param {{ channelName: string|null }} params Normalised and escaped display strings.
+ * @returns {string} Channel tag suitable for HTML insertion.
+ */
+export function formatChatChannelTag({ channelName }) {
   const channel = typeof channelName === 'string' ? channelName : channelName == null ? '' : String(channelName);
-  return `[${ts}][${freq}][${channel}]`;
+  return `[${channel}]`;
 }
 
 /**
@@ -176,5 +189,6 @@ export const __test__ = {
   formatChatMessagePrefix,
   formatNodeAnnouncementPrefix,
   normalizeFrequencySlot,
-  FREQUENCY_PLACEHOLDER
+  FREQUENCY_PLACEHOLDER,
+  formatChatChannelTag
 };
