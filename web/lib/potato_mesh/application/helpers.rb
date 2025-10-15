@@ -53,9 +53,10 @@ module PotatoMesh
       # Proxy for {PotatoMesh::Sanitizer.sanitize_instance_domain}.
       #
       # @param value [Object] candidate domain string.
+      # @param downcase [Boolean] whether to force lowercase normalisation.
       # @return [String, nil] canonical domain or nil.
-      def sanitize_instance_domain(value)
-        PotatoMesh::Sanitizer.sanitize_instance_domain(value)
+      def sanitize_instance_domain(value, downcase: true)
+        PotatoMesh::Sanitizer.sanitize_instance_domain(value, downcase: downcase)
       end
 
       # Proxy for {PotatoMesh::Sanitizer.instance_domain_host}.
