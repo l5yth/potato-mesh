@@ -156,6 +156,8 @@ module PotatoMesh
       def announce_instance_to_domain(domain, payload_json)
         return false unless domain && !domain.empty?
 
+        https_failures = []
+
         instance_uri_candidates(domain, "/api/instances").each do |uri|
           begin
             http = build_remote_http_client(uri)
@@ -181,14 +183,49 @@ module PotatoMesh
               status: response.code,
             )
           rescue StandardError => e
-            warn_log(
-              "Federation announcement raised exception",
+            metadata = {
               context: "federation.announce",
               target: uri.to_s,
               error_class: e.class.name,
               error_message: e.message,
+            }
+
+            if uri.scheme == "https" && https_connection_refused?(e)
+              debug_log(
+                "HTTPS federation announcement failed, retrying with HTTP",
+                **metadata,
+              )
+              https_failures << metadata
+              next
+            end
+
+            warn_log(
+              "Federation announcement raised exception",
+              **metadata,
             )
           end
+        end
+
+        https_failures.each do |metadata|
+          warn_log(
+            "Federation announcement raised exception",
+            **metadata,
+          )
+        end
+
+        false
+      end
+
+      # Determine whether an HTTPS announcement failure should fall back to HTTP.
+      #
+      # @param error [StandardError] failure raised while attempting HTTPS.
+      # @return [Boolean] true when the error corresponds to a refused TCP connection.
+      def https_connection_refused?(error)
+        current = error
+        while current
+          return true if current.is_a?(Errno::ECONNREFUSED)
+
+          current = current.respond_to?(:cause) ? current.cause : nil
         end
 
         false
