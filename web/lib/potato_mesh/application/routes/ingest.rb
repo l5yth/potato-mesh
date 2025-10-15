@@ -85,6 +85,9 @@ module PotatoMesh
 
             id = string_or_nil(payload["id"]) || string_or_nil(payload["instanceId"])
             raw_domain = sanitize_instance_domain(payload["domain"], downcase: false)
+            # Normalise the domain for persistence while retaining the caller's
+            # original casing for signature verification fallbacks.
+            normalized_domain = sanitize_instance_domain(raw_domain)
             pubkey = sanitize_public_key_pem(payload["pubkey"])
             name = string_or_nil(payload["name"])
             version = string_or_nil(payload["version"])
@@ -99,7 +102,7 @@ module PotatoMesh
 
             attributes = {
               id: id,
-              domain: raw_domain,
+              domain: normalized_domain,
               pubkey: pubkey,
               name: name,
               version: version,
@@ -120,11 +123,21 @@ module PotatoMesh
               halt 400, { error: "missing required fields" }.to_json
             end
 
-            unless verify_instance_signature(attributes, signature, attributes[:pubkey])
+            signature_valid = verify_instance_signature(attributes, signature, attributes[:pubkey])
+            # Some remote peers sign payloads using a canonicalised lowercase
+            # domain while still sending a mixed-case domain. Retry signature
+            # verification with the original casing when the first attempt
+            # fails to maximise interoperability.
+            if !signature_valid && raw_domain && normalized_domain && raw_domain.casecmp?(normalized_domain) && raw_domain != normalized_domain
+              alternate_attributes = attributes.merge(domain: raw_domain)
+              signature_valid = verify_instance_signature(alternate_attributes, signature, attributes[:pubkey])
+            end
+
+            unless signature_valid
               warn_log(
                 "Instance registration rejected",
                 context: "ingest.register",
-                domain: attributes[:domain],
+                domain: raw_domain || attributes[:domain],
                 reason: "invalid signature",
               )
               halt 400, { error: "invalid signature" }.to_json
