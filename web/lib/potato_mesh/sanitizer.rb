@@ -41,8 +41,9 @@ module PotatoMesh
     # rules. This rejects whitespace, path separators, and trailing dots.
     #
     # @param value [String, Object, nil] candidate domain name.
+    # @param downcase [Boolean] whether to force the result to lowercase.
     # @return [String, nil] canonical domain value or +nil+ when invalid.
-    def sanitize_instance_domain(value)
+    def sanitize_instance_domain(value, downcase: true)
       host = string_or_nil(value)
       return nil unless host
 
@@ -51,7 +52,7 @@ module PotatoMesh
       return nil if trimmed.empty?
       return nil if trimmed.match?(%r{[\s/\\@]})
 
-      trimmed
+      downcase ? trimmed.downcase : trimmed
     end
 
     # Extract the host component from a potentially bracketed domain literal.
