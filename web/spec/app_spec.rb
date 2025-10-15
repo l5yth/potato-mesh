@@ -1140,6 +1140,110 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(remote_entry["isPrivate"]).to eq(false)
       expect(remote_entry["signature"]).to eq(remote_signature)
     end
+
+    it "skips malformed rows without failing" do
+      with_db do |db|
+        sql = <<~SQL
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+        db.execute(
+          sql,
+          [
+            "broken-instance",
+            "invalid domain name",
+            remote_key.public_key.export,
+            "Broken",
+            "0.0.0",
+            nil,
+            nil,
+            "not-a-number",
+            nil,
+            "not-a-timestamp",
+            "not-a-bool",
+            nil,
+          ],
+        )
+      end
+
+      get "/api/instances"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      broken_entry = payload.find { |entry| entry["id"] == "broken-instance" }
+
+      expect(broken_entry).to be_nil
+      expect(payload).not_to be_empty
+    end
+
+    it "deduplicates records by domain keeping the newest entry" do
+      newer_time = Time.now.to_i
+      older_time = newer_time - 60
+
+      with_db do |db|
+        insert_sql = <<~SQL
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+        db.execute(
+          insert_sql,
+          [
+            "duplicate-old",
+            "duplicate.example ",
+            remote_key.public_key.export,
+            "Duplicate Old",
+            "1.0.0",
+            nil,
+            nil,
+            nil,
+            nil,
+            older_time,
+            0,
+            "sig-old",
+          ],
+        )
+
+        db.execute(
+          insert_sql,
+          [
+            "duplicate-new",
+            "Duplicate.Example",
+            remote_key.public_key.export,
+            "Duplicate New",
+            "2.0.0",
+            nil,
+            nil,
+            nil,
+            nil,
+            newer_time,
+            0,
+            "sig-new",
+          ],
+        )
+      end
+
+      get "/api/instances"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      duplicate_entries = payload.select { |entry| entry["domain"] == "duplicate.example" }
+
+      expect(duplicate_entries.size).to eq(1)
+      expect(duplicate_entries.first["id"]).to eq("duplicate-new")
+
+      with_db(readonly: true) do |db|
+        domains = db.execute(
+          "SELECT domain FROM instances WHERE domain LIKE ? ORDER BY domain",
+          ["duplicate.example%"],
+        ).flatten
+
+        expect(domains).to eq(["duplicate.example"])
+      end
+    end
   end
 
   describe "POST /api/nodes" do

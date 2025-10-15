@@ -48,6 +48,7 @@ require_relative "application/prometheus"
 require_relative "application/queries"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
+require_relative "application/instances"
 require_relative "application/routes/api"
 require_relative "application/routes/ingest"
 require_relative "application/routes/root"
@@ -59,6 +60,7 @@ module PotatoMesh
     extend App::Networking
     extend App::Identity
     extend App::Federation
+    extend App::Instances
     extend App::Prometheus
     extend App::Queries
     extend App::DataProcessing
@@ -69,6 +71,7 @@ module PotatoMesh
     include App::Networking
     include App::Identity
     include App::Federation
+    include App::Instances
     include App::Prometheus
     include App::Queries
     include App::DataProcessing
@@ -166,6 +169,7 @@ SELF_INSTANCE_ID = PotatoMesh::Application::SELF_INSTANCE_ID unless defined?(SEL
   PotatoMesh::App::Networking,
   PotatoMesh::App::Identity,
   PotatoMesh::App::Federation,
+  PotatoMesh::App::Instances,
   PotatoMesh::App::Prometheus,
   PotatoMesh::App::Queries,
   PotatoMesh::App::DataProcessing,

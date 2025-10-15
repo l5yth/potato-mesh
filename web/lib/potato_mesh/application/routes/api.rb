@@ -127,39 +127,8 @@ module PotatoMesh
           app.get "/api/instances" do
             content_type :json
             ensure_self_instance_record!
-            db = open_database(readonly: true)
-            db.results_as_hash = true
-            rows = with_busy_retry do
-              db.execute(
-                <<~SQL,
-                SELECT id, domain, pubkey, name, version, channel, frequency,
-                       latitude, longitude, last_update_time, is_private, signature
-                FROM instances
-                WHERE domain IS NOT NULL AND TRIM(domain) != ''
-                  AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
-                ORDER BY LOWER(domain)
-              SQL
-              )
-            end
-            payload = rows.map do |row|
-              {
-                "id" => row["id"],
-                "domain" => row["domain"],
-                "pubkey" => row["pubkey"],
-                "name" => row["name"],
-                "version" => row["version"],
-                "channel" => row["channel"],
-                "frequency" => row["frequency"],
-                "latitude" => row["latitude"],
-                "longitude" => row["longitude"],
-                "lastUpdateTime" => row["last_update_time"]&.to_i,
-                "isPrivate" => row["is_private"].to_i == 1,
-                "signature" => row["signature"],
-              }.reject { |_, value| value.nil? }
-            end
+            payload = load_instances_for_api
             JSON.generate(payload)
-          ensure
-            db&.close
           end
         end
       end
