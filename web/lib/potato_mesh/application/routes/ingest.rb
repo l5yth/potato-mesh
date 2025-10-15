@@ -84,7 +84,7 @@ module PotatoMesh
             end
 
             id = string_or_nil(payload["id"]) || string_or_nil(payload["instanceId"])
-            domain = sanitize_instance_domain(payload["domain"])
+            raw_domain = sanitize_instance_domain(payload["domain"], downcase: false)
             pubkey = sanitize_public_key_pem(payload["pubkey"])
             name = string_or_nil(payload["name"])
             version = string_or_nil(payload["version"])
@@ -99,7 +99,7 @@ module PotatoMesh
 
             attributes = {
               id: id,
-              domain: domain,
+              domain: raw_domain,
               pubkey: pubkey,
               name: name,
               version: version,
