@@ -29,6 +29,7 @@ services:
       - ./data:/app/.local/share/potato-mesh
       - ./.config/potato-mesh:/app/.config/potato-mesh
       - /app/.local
+      - /dev:/dev
 
   ingestor-bridge:
     environment:
@@ -38,3 +39,4 @@ services:
       - ./data:/app/.local/share/potato-mesh
       - ./.config/potato-mesh:/app/.config/potato-mesh
       - /app/.local
+      - /dev:/dev
