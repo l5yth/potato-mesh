@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## v0.5.1
+
+* Recursively ingest federated instances by @l5yth in <https://github.com/l5yth/potato-mesh/pull/353>
+* Remove federation timeout environment overrides by @l5yth in <https://github.com/l5yth/potato-mesh/pull/352>
+* Close unrelated short info overlays when opening short info by @l5yth in <https://github.com/l5yth/potato-mesh/pull/351>
+* Improve federation instance error diagnostics by @l5yth in <https://github.com/l5yth/potato-mesh/pull/350>
+* Harden federation domain validation and tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/347>
+* Handle malformed instance records gracefully by @l5yth in <https://github.com/l5yth/potato-mesh/pull/348>
+* Fix ingestor device mounting for non-serial connections by @l5yth in <https://github.com/l5yth/potato-mesh/pull/346>
+* Ensure Docker deployments persist keyfile and well-known assets by @l5yth in <https://github.com/l5yth/potato-mesh/pull/345>
+* Add modem preset display to node overlay by @l5yth in <https://github.com/l5yth/potato-mesh/pull/340>
+* Display message frequency and channel in chat log by @l5yth in <https://github.com/l5yth/potato-mesh/pull/339>
+* Bump fallback version string to v0.5.1 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/338>
+* Docs: update changelog for 0.5.0 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/337>
+* Fix ingestor docker import path by @l5yth in <https://github.com/l5yth/potato-mesh/pull/336>
+
 ## v0.5.0
 
 * Ensure node overlays appear above fullscreen map by @l5yth in <https://github.com/l5yth/potato-mesh/pull/333>
