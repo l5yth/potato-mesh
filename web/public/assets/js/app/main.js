@@ -123,6 +123,29 @@ export function initializeApp(config) {
   let refreshTimer = null;
 
   /**
+   * Close any open short-info overlays that do not contain the provided anchor.
+   *
+   * The method preserves ancestor overlays that host nested short-name badges,
+   * ensuring context overlays (for example, neighbor listings) remain visible
+   * while unrelated overlays are dismissed.
+   *
+   * @param {?Element} anchorEl Short-name badge that triggered the interaction.
+   * @returns {void}
+   */
+  function closeUnrelatedShortOverlays(anchorEl) {
+    if (!anchorEl) {
+      return;
+    }
+    const openOverlays = overlayStack.getOpenOverlays();
+    for (const entry of openOverlays) {
+      if (!entry || !entry.element || entry.element.contains(anchorEl)) {
+        continue;
+      }
+      overlayStack.close(entry.anchor);
+    }
+  }
+
+  /**
    * Determine whether the provided value contains a non-empty string.
    *
    * @param {*} value Candidate value extracted from a node record.
@@ -1519,6 +1542,7 @@ export function initializeApp(config) {
       const nodeNum = Number.isFinite(fallbackDetails.nodeNum) ? fallbackDetails.nodeNum : null;
 
       if (!nodeId && !nodeNum) {
+        closeUnrelatedShortOverlays(shortTarget);
         openShortInfoOverlay(shortTarget, fallbackDetails);
         return;
       }
@@ -1533,6 +1557,7 @@ export function initializeApp(config) {
           if (!overlayDetails.shortName && shortTarget.textContent) {
             overlayDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
           }
+          closeUnrelatedShortOverlays(shortTarget);
           openShortInfoOverlay(shortTarget, overlayDetails);
         })
         .catch(err => {
@@ -1542,6 +1567,7 @@ export function initializeApp(config) {
           if (!overlayDetails.shortName && shortTarget.textContent) {
             overlayDetails.shortName = shortTarget.textContent.replace(/\u00a0/g, ' ').trim();
           }
+          closeUnrelatedShortOverlays(shortTarget);
           openShortInfoOverlay(shortTarget, overlayDetails);
         });
       return;
@@ -2893,12 +2919,14 @@ export function initializeApp(config) {
         },
         showDetails: (anchor, info) => {
           if (anchor) {
+            closeUnrelatedShortOverlays(anchor);
             openShortInfoOverlay(anchor, info);
           }
         },
         showError: (anchor, info, error) => {
           console.warn('Failed to refresh node information for map marker', error);
           if (anchor) {
+            closeUnrelatedShortOverlays(anchor);
             openShortInfoOverlay(anchor, info);
           }
         },
