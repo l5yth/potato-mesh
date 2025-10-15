@@ -31,6 +31,7 @@ against the web API.
 API_TOKEN=replace-with-a-strong-token
 SITE_NAME=PotatoMesh Demo
 CONNECTION=/dev/ttyACM0
+INSTANCE_DOMAIN=mesh.example.org
 ```
 
 Additional environment variables are optional:
@@ -43,6 +44,8 @@ Additional environment variables are optional:
   the ingestor.
 - `CHANNEL_INDEX` selects the LoRa channel when using serial or Bluetooth
   connections.
+- `INSTANCE_DOMAIN` pins the public hostname advertised by the web UI and API
+  responses, bypassing reverse DNS detection when set.
 - `DEBUG` enables verbose logging across the stack.
 
 ## Docker Compose file
