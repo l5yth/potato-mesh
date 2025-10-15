@@ -34,6 +34,18 @@ RSpec.describe PotatoMesh::App::Federation do
         def reset_debug_messages
           @debug_messages = []
         end
+
+        def warn_messages
+          @warn_messages ||= []
+        end
+
+        def warn_log(message, **_metadata)
+          warn_messages << message
+        end
+
+        def reset_warn_messages
+          @warn_messages = []
+        end
       end
     end
   end
@@ -42,6 +54,7 @@ RSpec.describe PotatoMesh::App::Federation do
     federation_helpers.instance_variable_set(:@remote_instance_cert_store, nil)
     federation_helpers.instance_variable_set(:@remote_instance_verify_callback, nil)
     federation_helpers.reset_debug_messages
+    federation_helpers.reset_warn_messages
   end
 
   describe ".remote_instance_cert_store" do
@@ -206,6 +219,55 @@ RSpec.describe PotatoMesh::App::Federation do
       expect do
         federation_helpers.send(:perform_instance_http_request, uri)
       end.to raise_error(PotatoMesh::App::InstanceFetchError, "Net::ReadTimeout")
+    end
+  end
+
+  describe ".announce_instance_to_domain" do
+    let(:payload) { "{}" }
+    let(:https_uri) { URI.parse("https://remote.mesh/api/instances") }
+    let(:http_uri) { URI.parse("http://remote.mesh/api/instances") }
+    let(:http_connection) { instance_double("Net::HTTPConnection") }
+    let(:success_response) { Net::HTTPOK.new("1.1", "200", "OK") }
+
+    before do
+      allow(success_response).to receive(:code).and_return("200")
+    end
+
+    it "retries over HTTP when HTTPS connections are refused" do
+      https_client = instance_double(Net::HTTP)
+      http_client = instance_double(Net::HTTP)
+
+      allow(federation_helpers).to receive(:build_remote_http_client).with(https_uri).and_return(https_client)
+      allow(federation_helpers).to receive(:build_remote_http_client).with(http_uri).and_return(http_client)
+
+      allow(https_client).to receive(:start).and_raise(Errno::ECONNREFUSED.new("refused"))
+      allow(http_connection).to receive(:request).and_return(success_response)
+      allow(http_client).to receive(:start).and_yield(http_connection).and_return(success_response)
+
+      result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
+
+      expect(result).to be(true)
+      expect(federation_helpers.debug_messages).to include("HTTPS federation announcement failed, retrying with HTTP")
+      expect(federation_helpers.warn_messages).to be_empty
+    end
+
+    it "logs a warning when HTTPS refusal persists after HTTP fallback" do
+      https_client = instance_double(Net::HTTP)
+      http_client = instance_double(Net::HTTP)
+
+      allow(federation_helpers).to receive(:build_remote_http_client).with(https_uri).and_return(https_client)
+      allow(federation_helpers).to receive(:build_remote_http_client).with(http_uri).and_return(http_client)
+
+      allow(https_client).to receive(:start).and_raise(Errno::ECONNREFUSED.new("refused"))
+      allow(http_client).to receive(:start).and_raise(SocketError.new("dns failure"))
+
+      result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
+
+      expect(result).to be(false)
+      expect(federation_helpers.debug_messages).to include("HTTPS federation announcement failed, retrying with HTTP")
+      expect(
+        federation_helpers.warn_messages.count { |message| message.include?("Federation announcement raised exception") },
+      ).to eq(2)
     end
   end
 end
