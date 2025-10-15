@@ -50,9 +50,15 @@ Additional environment variables are optional:
 Use the `docker-compose.yml` file provided in the repository (or download the
 [raw file from GitHub](https://raw.githubusercontent.com/l5yth/potato-mesh/main/docker-compose.yml)).
 It already references the published GHCR images, defines persistent volumes for
-data and logs, and includes optional bridge-profile services for environments
-that require classic port mapping. Place this file in the same directory as
-your `.env` file so Compose can pick up both.
+data, configuration, and logs, and includes optional bridge-profile services for
+environments that require classic port mapping. Place this file in the same
+directory as your `.env` file so Compose can pick up both.
+
+The dedicated configuration volume binds to `/app/.config/potato-mesh` inside
+the container. This path stores the instance private key and staged
+`/.well-known/potato-mesh` documents. Because the volume persists independently
+of container lifecycle events, generated credentials are not replaced on reboot
+or re-deploy.
 
 ## Start the stack
 

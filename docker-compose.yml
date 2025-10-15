@@ -14,6 +14,7 @@ x-web-base: &web-base
   command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
+    - potatomesh_config:/app/.config/potato-mesh
     - potatomesh_logs:/app/logs
   restart: unless-stopped
   deploy:
@@ -35,6 +36,7 @@ x-ingestor-base: &ingestor-base
     DEBUG: ${DEBUG:-0}
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
+    - potatomesh_config:/app/.config/potato-mesh
     - potatomesh_logs:/app/logs
   devices:
     - ${CONNECTION:-/dev/ttyACM0}:${CONNECTION:-/dev/ttyACM0}
@@ -84,6 +86,8 @@ services:
 
 volumes:
   potatomesh_data:
+    driver: local
+  potatomesh_config:
     driver: local
   potatomesh_logs:
     driver: local
