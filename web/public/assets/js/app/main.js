@@ -2919,12 +2919,14 @@ export function initializeApp(config) {
         },
         showDetails: (anchor, info) => {
           if (anchor) {
+            closeUnrelatedShortOverlays(anchor);
             openShortInfoOverlay(anchor, info);
           }
         },
         showError: (anchor, info, error) => {
           console.warn('Failed to refresh node information for map marker', error);
           if (anchor) {
+            closeUnrelatedShortOverlays(anchor);
             openShortInfoOverlay(anchor, info);
           }
         },
