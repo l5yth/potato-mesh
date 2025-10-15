@@ -395,7 +395,7 @@ module PotatoMesh
           latitude: coerce_float(payload["latitude"]),
           longitude: coerce_float(payload["longitude"]),
           last_update_time: coerce_integer(payload["lastUpdateTime"]),
-          is_private: private_flag.nil? ? false : private_flag,
+          is_private: private_flag,
         }
 
         [attributes, signature, nil]
@@ -459,6 +459,8 @@ module PotatoMesh
             )
             next
           end
+
+          attributes[:is_private] = false if attributes[:is_private].nil?
 
           remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
           unless remote_nodes
