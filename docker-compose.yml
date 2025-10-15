@@ -39,6 +39,10 @@ x-ingestor-base: &ingestor-base
     - potatomesh_config:/app/.config/potato-mesh
     - potatomesh_logs:/app/logs
     - /dev:/dev
+  device_cgroup_rules:
+    - 'c 166:* rwm' # ttyACM devices
+    - 'c 188:* rwm' # ttyUSB devices
+    - 'c 4:* rwm'   # ttyS devices
   privileged: false
   restart: unless-stopped
   deploy:
