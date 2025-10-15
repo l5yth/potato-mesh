@@ -137,6 +137,38 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".remote_instance_http_timeout" do
+    it "returns the baked-in connect timeout" do
+      expect(described_class.remote_instance_http_timeout).to eq(
+        PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT,
+      )
+    end
+
+    it "ignores environment overrides" do
+      within_env("REMOTE_INSTANCE_CONNECT_TIMEOUT" => "27") do
+        expect(described_class.remote_instance_http_timeout).to eq(
+          PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT,
+        )
+      end
+    end
+  end
+
+  describe ".remote_instance_read_timeout" do
+    it "returns the baked-in read timeout" do
+      expect(described_class.remote_instance_read_timeout).to eq(
+        PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT,
+      )
+    end
+
+    it "ignores environment overrides" do
+      within_env("REMOTE_INSTANCE_READ_TIMEOUT" => "20") do
+        expect(described_class.remote_instance_read_timeout).to eq(
+          PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT,
+        )
+      end
+    end
+  end
+
   describe ".db_path" do
     it "returns the default path inside the data directory" do
       expect(described_class.db_path).to eq(described_class.default_db_path)

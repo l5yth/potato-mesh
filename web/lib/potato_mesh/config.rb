@@ -32,6 +32,8 @@ module PotatoMesh
     DEFAULT_FREQUENCY = "915MHz"
     DEFAULT_CONTACT_LINK = "#potatomesh:dod.ngo"
     DEFAULT_MAX_DISTANCE_KM = 42.0
+    DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 5
+    DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 12
 
     # Resolve the absolute path to the web application root directory.
     #
@@ -269,11 +271,18 @@ module PotatoMesh
       "rsa-sha256"
     end
 
-    # Timeout used when querying remote instances during federation.
+    # Connection timeout used when establishing federation HTTP sockets.
     #
-    # @return [Integer] HTTP timeout in seconds.
+    # @return [Integer] connect timeout in seconds.
     def remote_instance_http_timeout
-      5
+      DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT
+    end
+
+    # Read timeout used when streaming federation HTTP responses.
+    #
+    # @return [Integer] read timeout in seconds.
+    def remote_instance_read_timeout
+      DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT
     end
 
     # Maximum acceptable age for remote node data.
