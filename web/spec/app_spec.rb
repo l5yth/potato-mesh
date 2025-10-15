@@ -78,6 +78,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
     ensure_self_instance_record!
   end
 
+  # Retrieve the number of rows stored in the instances table.
+  #
+  # @return [Integer] count of stored instance records.
+  def instance_count
+    with_db(readonly: true) do |db|
+      db.get_first_value("SELECT COUNT(*) FROM instances").to_i
+    end
+  end
+
   # Build a hash excluding entries whose values are nil.
   #
   # @param hash [Hash] collection filtered for nil values.
@@ -739,6 +748,176 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
     end
+
+    describe ".self_instance_registration_decision" do
+      let(:domain) { "spec.mesh.test" }
+
+      it "rejects registration when the domain source is not the environment" do
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns) do
+          allowed, reason = application_class.self_instance_registration_decision(domain)
+
+          expect(allowed).to be(false)
+          expect(reason).to eq("INSTANCE_DOMAIN source is reverse_dns")
+        end
+      end
+
+      it "rejects registration when the domain is invalid" do
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
+          allowed, reason = application_class.self_instance_registration_decision(nil)
+
+          expect(allowed).to be(false)
+          expect(reason).to eq("INSTANCE_DOMAIN missing or invalid")
+        end
+      end
+
+      it "rejects registration when the domain resolves to a restricted IP" do
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
+          allowed, reason = application_class.self_instance_registration_decision("127.0.0.1")
+
+          expect(allowed).to be(false)
+          expect(reason).to eq("INSTANCE_DOMAIN resolves to restricted IP")
+        end
+      end
+
+      it "accepts registration when configuration is valid" do
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
+          allowed, reason = application_class.self_instance_registration_decision(domain)
+
+          expect(allowed).to be(true)
+          expect(reason).to be_nil
+        end
+      end
+    end
+
+    describe ".ensure_self_instance_record!" do
+      it "persists the self instance when registration is allowed" do
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
+          stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "self.mesh") do
+            with_db do |db|
+              db.execute("DELETE FROM instances")
+            end
+
+            application_class.ensure_self_instance_record!
+
+            expect(instance_count).to eq(1)
+          end
+        end
+      end
+
+      it "skips persistence when registration is not allowed" do
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns) do
+          with_db do |db|
+            db.execute("DELETE FROM instances")
+          end
+
+          application_class.ensure_self_instance_record!
+
+          expect(instance_count).to eq(0)
+        end
+      end
+    end
+  end
+
+  describe ".federation_target_domains" do
+    it "prioritises seed domains before database records" do
+      with_db do |db|
+        db.execute(
+          "INSERT INTO instances (id, domain, pubkey, name, version, channel, frequency, latitude, longitude, last_update_time, is_private, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            "remote-id",
+            "Remote.Mesh",
+            "pubkey",
+            "Remote",
+            "1.0.0",
+            nil,
+            nil,
+            nil,
+            nil,
+            Time.now.to_i,
+            0,
+            "signature",
+          ],
+        )
+      end
+
+      targets = application_class.federation_target_domains("self.mesh")
+
+      expect(targets.first).to eq("potatomesh.net")
+      expect(targets).to include("remote.mesh")
+      expect(targets).not_to include("self.mesh")
+    end
+
+    it "falls back to seeds when the database is unavailable" do
+      allow(application_class).to receive(:open_database).and_raise(SQLite3::Exception.new("boom"))
+
+      targets = application_class.federation_target_domains("self.mesh")
+
+      expect(targets).to eq(["potatomesh.net"])
+    end
+  end
+
+  describe ".latest_node_update_timestamp" do
+    it "returns the maximum last_heard value" do
+      with_db do |db|
+        db.execute("DELETE FROM nodes")
+        db.execute("INSERT INTO nodes (node_id, last_heard) VALUES (?, ?)", ["node-a", 100])
+        db.execute("INSERT INTO nodes (node_id, last_heard) VALUES (?, ?)", ["node-b", 200])
+      end
+
+      expect(application_class.latest_node_update_timestamp).to eq(200)
+    end
+
+    it "returns nil when no nodes contain last_heard values" do
+      with_db do |db|
+        db.execute("DELETE FROM nodes")
+      end
+
+      expect(application_class.latest_node_update_timestamp).to be_nil
+    end
+  end
+
+  describe ".build_well_known_document" do
+    it "signs the payload and normalises the domain" do
+      with_db do |db|
+        db.execute("DELETE FROM nodes")
+        db.execute("INSERT INTO nodes (node_id, last_heard) VALUES (?, ?)", ["node-z", 321])
+      end
+
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "Example.NET") do
+        json_output, signature = application_class.build_well_known_document
+        document = JSON.parse(json_output)
+
+        expect(document["domain"]).to eq("example.net")
+        expect(document["lastUpdate"]).to eq(321)
+        expect(document["signatureAlgorithm"]).to eq("rsa-sha256")
+        expect(signature).to be_a(String)
+        expect(signature).not_to be_empty
+      end
+    end
+  end
+
+  describe ".upsert_instance_record" do
+    it "rejects restricted domains" do
+      attributes = {
+        id: "restricted",
+        domain: "127.0.0.1",
+        pubkey: application_class::INSTANCE_PUBLIC_KEY_PEM,
+        name: nil,
+        version: nil,
+        channel: nil,
+        frequency: nil,
+        latitude: nil,
+        longitude: nil,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+      }
+
+      expect do
+        with_db do |db|
+          application_class.upsert_instance_record(db, attributes, "sig")
+        end
+      end.to raise_error(ArgumentError, "restricted domain")
+    end
   end
 
   describe "logging configuration" do
@@ -1087,6 +1266,113 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row).not_to be_nil
         expect(row["is_private"]).to eq(0)
       end
+    end
+
+    it "replaces an existing record when the domain is reused" do
+      with_db do |db|
+        db.execute(
+          <<~SQL,
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+          [
+            "legacy-id",
+            domain,
+            "legacy-pubkey",
+            "Legacy Instance",
+            "0.9.0",
+            nil,
+            nil,
+            nil,
+            nil,
+            last_update_time - 100,
+            0,
+            "legacy-signature",
+          ],
+        )
+      end
+
+      debug_calls = []
+      allow_any_instance_of(Sinatra::Application).to receive(:debug_log).and_wrap_original do |method, *args, **kwargs|
+        debug_calls << [args, kwargs]
+        method.call(*args, **kwargs)
+      end
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        ids = db.execute("SELECT id FROM instances WHERE domain = ?", [domain]).flatten
+
+        expect(ids).to eq([instance_attributes[:id]])
+      end
+
+      expect(debug_calls).to include(
+        [
+          ["Removed conflicting instance by domain"],
+          hash_including(
+            context: "federation.instances",
+            domain: domain,
+            replaced_id: "legacy-id",
+            incoming_id: instance_attributes[:id],
+          ),
+        ],
+      )
+    end
+
+    it "normalises stored domains to lowercase" do
+      uppercase_payload = instance_payload.merge("domain" => "Mesh.Example")
+
+      post "/api/instances", uppercase_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value("SELECT domain FROM instances WHERE id = ?", [instance_attributes[:id]])
+        expect(stored).to eq(domain)
+      end
+    end
+
+    it "rejects registrations missing last_heard data" do
+      missing_nodes = Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |index|
+        { "node_id" => "remote-#{index}", "first_heard" => Time.now.to_i - index }
+      end
+
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
+        case path
+        when "/.well-known/potato-mesh"
+          [well_known_document, URI("https://#{host}#{path}")]
+        when "/api/nodes"
+          [missing_nodes, URI("https://#{host}#{path}")]
+        else
+          [nil, []]
+        end
+      end
+
+      warning_calls = []
+      allow_any_instance_of(Sinatra::Application).to receive(:warn_log).and_wrap_original do |method, *args, **kwargs|
+        warning_calls << [args, kwargs]
+        method.call(*args, **kwargs)
+      end
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "missing last_heard data")
+
+      expect(warning_calls).to include(
+        [
+          ["Instance registration rejected"],
+          hash_including(
+            context: "ingest.register",
+            domain: domain,
+            reason: "missing last_heard data",
+          ),
+        ],
+      )
     end
   end
 

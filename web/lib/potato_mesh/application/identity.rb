@@ -170,11 +170,13 @@ module PotatoMesh
       # @return [Array(String, String)] pair of JSON output and base64 signature.
       def build_well_known_document
         last_update = latest_node_update_timestamp
+        domain_value = sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN))
+
         payload = {
           publicKey: app_constant(:INSTANCE_PUBLIC_KEY_PEM),
           name: sanitized_site_name,
           version: app_constant(:APP_VERSION),
-          domain: app_constant(:INSTANCE_DOMAIN),
+          domain: domain_value,
           lastUpdate: last_update,
         }
 
@@ -236,9 +238,7 @@ module PotatoMesh
         return nil unless File.exist?(PotatoMesh::Config.db_path)
 
         db = open_database(readonly: true)
-        value = db.get_first_value(
-          "SELECT MAX(COALESCE(last_heard, first_heard, position_time)) FROM nodes",
-        )
+        value = db.get_first_value("SELECT MAX(last_heard) FROM nodes")
         value&.to_i
       rescue SQLite3::Exception
         nil

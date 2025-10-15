@@ -51,7 +51,7 @@ module PotatoMesh
       return nil if trimmed.empty?
       return nil if trimmed.match?(%r{[\s/\\@]})
 
-      trimmed
+      trimmed.downcase
     end
 
     # Extract the host component from a potentially bracketed domain literal.

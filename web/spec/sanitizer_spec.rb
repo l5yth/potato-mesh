@@ -35,7 +35,7 @@ RSpec.describe PotatoMesh::Sanitizer do
     end
 
     it "normalises valid domains" do
-      expect(described_class.sanitize_instance_domain(" Example.Org. ")).to eq("Example.Org")
+      expect(described_class.sanitize_instance_domain(" Example.Org. ")).to eq("example.org")
       expect(described_class.sanitize_instance_domain("[::1]")).to eq("[::1]")
     end
   end

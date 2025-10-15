@@ -22,6 +22,25 @@ module PotatoMesh
         raise "INSTANCE_DOMAIN could not be determined"
       end
 
+      # Determine whether the local instance should persist its own record.
+      #
+      # @param domain [String, nil] candidate domain for the running instance.
+      # @return [Array(Boolean, String, nil)] tuple containing a decision flag and an optional reason.
+      def self_instance_registration_decision(domain)
+        source = app_constant(:INSTANCE_DOMAIN_SOURCE)
+        return [false, "INSTANCE_DOMAIN source is #{source}"] unless source == :environment
+
+        sanitized = sanitize_instance_domain(domain)
+        return [false, "INSTANCE_DOMAIN missing or invalid"] unless sanitized
+
+        ip = ip_from_domain(sanitized)
+        if ip && restricted_ip_address?(ip)
+          return [false, "INSTANCE_DOMAIN resolves to restricted IP"]
+        end
+
+        [true, nil]
+      end
+
       def self_instance_attributes
         domain = self_instance_domain
         last_update = latest_node_update_timestamp || Time.now.to_i
@@ -68,43 +87,68 @@ module PotatoMesh
       def ensure_self_instance_record!
         attributes = self_instance_attributes
         signature = sign_instance_attributes(attributes)
-        db = open_database
-        upsert_instance_record(db, attributes, signature)
-        debug_log(
-          "Registered self instance record",
-          context: "federation.instances",
-          domain: attributes[:domain],
-          instance_id: attributes[:id],
-        )
+        db = nil
+        allowed, reason = self_instance_registration_decision(attributes[:domain])
+        if allowed
+          db = open_database
+          upsert_instance_record(db, attributes, signature)
+          debug_log(
+            "Registered self instance record",
+            context: "federation.instances",
+            domain: attributes[:domain],
+            instance_id: attributes[:id],
+          )
+        else
+          debug_log(
+            "Skipped self instance registration",
+            context: "federation.instances",
+            domain: attributes[:domain],
+            reason: reason,
+          )
+        end
         [attributes, signature]
       ensure
         db&.close
       end
 
       def federation_target_domains(self_domain)
-        domains = Set.new
+        normalized_self = sanitize_instance_domain(self_domain)&.downcase
+        ordered = []
+        seen = Set.new
+
         PotatoMesh::Config.federation_seed_domains.each do |seed|
-          sanitized = sanitize_instance_domain(seed)
-          domains << sanitized.downcase if sanitized
+          sanitized = sanitize_instance_domain(seed)&.downcase
+          next unless sanitized
+          next if normalized_self && sanitized == normalized_self
+          next if seen.include?(sanitized)
+
+          ordered << sanitized
+          seen << sanitized
         end
 
         db = open_database(readonly: true)
         db.results_as_hash = false
-        rows = with_busy_retry { db.execute("SELECT domain FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != ''") }
+        rows = with_busy_retry {
+          db.execute("SELECT domain FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != ''")
+        }
         rows.flatten.compact.each do |raw_domain|
-          sanitized = sanitize_instance_domain(raw_domain)
-          domains << sanitized.downcase if sanitized
+          sanitized = sanitize_instance_domain(raw_domain)&.downcase
+          next unless sanitized
+          next if normalized_self && sanitized == normalized_self
+          next if seen.include?(sanitized)
+
+          ordered << sanitized
+          seen << sanitized
         end
-        if self_domain
-          domains.delete(self_domain.downcase)
-        end
-        domains.to_a
+        ordered
       rescue SQLite3::Exception
-        domains =
-          PotatoMesh::Config.federation_seed_domains.map do |seed|
-            sanitize_instance_domain(seed)&.downcase
-          end.compact
-        self_domain ? domains.reject { |domain| domain == self_domain.downcase } : domains
+        fallback = PotatoMesh::Config.federation_seed_domains.filter_map do |seed|
+          candidate = sanitize_instance_domain(seed)&.downcase
+          next if normalized_self && candidate == normalized_self
+
+          candidate
+        end
+        fallback.uniq
       ensure
         db&.close
       end
@@ -435,14 +479,13 @@ module PotatoMesh
         latest = nodes.filter_map do |node|
           next unless node.is_a?(Hash)
 
-          timestamps = []
-          timestamps << coerce_integer(node["last_heard"])
-          timestamps << coerce_integer(node["position_time"])
-          timestamps << coerce_integer(node["first_heard"])
-          timestamps.compact.max
+          last_heard_values = []
+          last_heard_values << coerce_integer(node["last_heard"])
+          last_heard_values << coerce_integer(node["lastHeard"])
+          last_heard_values.compact.max
         end.compact.max
 
-        return [false, "missing recent node updates"] unless latest
+        return [false, "missing last_heard data"] unless latest
 
         cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
         return [false, "node data is stale"] if latest < cutoff
@@ -451,6 +494,34 @@ module PotatoMesh
       end
 
       def upsert_instance_record(db, attributes, signature)
+        sanitized_domain = sanitize_instance_domain(attributes[:domain])
+        raise ArgumentError, "invalid domain" unless sanitized_domain
+
+        ip = ip_from_domain(sanitized_domain)
+        if ip && restricted_ip_address?(ip)
+          raise ArgumentError, "restricted domain"
+        end
+
+        normalized_domain = sanitized_domain
+        existing_id = with_busy_retry do
+          db.get_first_value(
+            "SELECT id FROM instances WHERE domain = ?",
+            normalized_domain,
+          )
+        end
+        if existing_id && existing_id != attributes[:id]
+          with_busy_retry do
+            db.execute("DELETE FROM instances WHERE id = ?", existing_id)
+          end
+          debug_log(
+            "Removed conflicting instance by domain",
+            context: "federation.instances",
+            domain: normalized_domain,
+            replaced_id: existing_id,
+            incoming_id: attributes[:id],
+          )
+        end
+
         sql = <<~SQL
           INSERT INTO instances (
             id, domain, pubkey, name, version, channel, frequency,
@@ -472,7 +543,7 @@ module PotatoMesh
 
         params = [
           attributes[:id],
-          attributes[:domain],
+          normalized_domain,
           attributes[:pubkey],
           attributes[:name],
           attributes[:version],
