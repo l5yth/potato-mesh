@@ -217,6 +217,7 @@ module PotatoMesh
 
             db = open_database
             upsert_instance_record(db, attributes, signature)
+            ingest_known_instances_from!(db, attributes[:domain])
             debug_log(
               "Registered remote instance",
               context: "ingest.register",
