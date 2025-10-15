@@ -161,4 +161,49 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(http.verify_callback).to be_nil
     end
   end
+
+  describe ".perform_instance_http_request" do
+    let(:uri) { URI.parse("https://remote.example.com/api") }
+    let(:http_client) { instance_double(Net::HTTP) }
+
+    before do
+      allow(federation_helpers).to receive(:build_remote_http_client).with(uri).and_return(http_client)
+    end
+
+    it "wraps errors that omit a message with the error class name" do
+      stub_const(
+        "RemoteTcpFailure",
+        Class.new(StandardError) do
+          def message
+            ""
+          end
+        end,
+      )
+
+      allow(http_client).to receive(:start).and_raise(RemoteTcpFailure.new)
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, "RemoteTcpFailure")
+    end
+
+    it "includes the error class name when the message omits it" do
+      allow(http_client).to receive(:start).and_raise(OpenSSL::SSL::SSLError.new("handshake failed"))
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(
+        PotatoMesh::App::InstanceFetchError,
+        "OpenSSL::SSL::SSLError: handshake failed",
+      )
+    end
+
+    it "preserves messages that already include the error class" do
+      allow(http_client).to receive(:start).and_raise(Net::ReadTimeout.new)
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, "Net::ReadTimeout")
+    end
+  end
 end
