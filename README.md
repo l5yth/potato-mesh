@@ -81,6 +81,11 @@ The migrated key is written to `<XDG_CONFIG_HOME>/potato-mesh/keyfile` and the
 well-known document is staged in
 `<XDG_CONFIG_HOME>/potato-mesh/well-known/potato-mesh`.
 
+When deploying with Docker Compose, the default `docker-compose.yml` mounts a
+named volume at `/app/.config/potato-mesh` to persist these files. Avoid
+removing this volume once a key has been generated so the instance identity and
+well-known metadata remain stable across restarts.
+
 The web app can be configured with environment variables (defaults shown):
 
 * `SITE_NAME` - title and header shown in the UI (default: "PotatoMesh Demo")
