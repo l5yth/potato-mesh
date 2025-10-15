@@ -351,6 +351,156 @@ module PotatoMesh
         [nil, errors]
       end
 
+      # Parse a remote federation instance payload into canonical attributes.
+      #
+      # @param payload [Hash] JSON object describing a remote instance.
+      # @return [Array<(Hash, String), String>] tuple containing the attribute
+      #   hash and signature when valid or a failure reason when invalid.
+      def remote_instance_attributes_from_payload(payload)
+        unless payload.is_a?(Hash)
+          return [nil, nil, "instance payload is not an object"]
+        end
+
+        id = string_or_nil(payload["id"])
+        return [nil, nil, "missing instance id"] unless id
+
+        domain = sanitize_instance_domain(payload["domain"])
+        return [nil, nil, "missing instance domain"] unless domain
+
+        pubkey = sanitize_public_key_pem(payload["pubkey"])
+        return [nil, nil, "missing instance public key"] unless pubkey
+
+        signature = string_or_nil(payload["signature"])
+        return [nil, nil, "missing instance signature"] unless signature
+
+        private_value = if payload.key?("isPrivate")
+            payload["isPrivate"]
+          else
+            payload["is_private"]
+          end
+        private_flag = coerce_boolean(private_value)
+        if private_flag.nil?
+          numeric_flag = coerce_integer(private_value)
+          private_flag = !numeric_flag.to_i.zero? if numeric_flag
+        end
+
+        attributes = {
+          id: id,
+          domain: domain,
+          pubkey: pubkey,
+          name: string_or_nil(payload["name"]),
+          version: string_or_nil(payload["version"]),
+          channel: string_or_nil(payload["channel"]),
+          frequency: string_or_nil(payload["frequency"]),
+          latitude: coerce_float(payload["latitude"]),
+          longitude: coerce_float(payload["longitude"]),
+          last_update_time: coerce_integer(payload["lastUpdateTime"]),
+          is_private: private_flag,
+        }
+
+        [attributes, signature, nil]
+      rescue StandardError => e
+        [nil, nil, e.message]
+      end
+
+      # Recursively ingest federation records exposed by the supplied domain.
+      #
+      # @param db [SQLite3::Database] open database connection used for writes.
+      # @param domain [String] remote domain to crawl for federation records.
+      # @param visited [Set<String>] domains processed during this crawl.
+      # @return [Set<String>] updated set of visited domains.
+      def ingest_known_instances_from!(db, domain, visited: nil)
+        sanitized = sanitize_instance_domain(domain)
+        return visited || Set.new unless sanitized
+
+        visited ||= Set.new
+        return visited if visited.include?(sanitized)
+
+        visited << sanitized
+
+        payload, metadata = fetch_instance_json(sanitized, "/api/instances")
+        unless payload.is_a?(Array)
+          warn_log(
+            "Failed to load remote federation instances",
+            context: "federation.instances",
+            domain: sanitized,
+            reason: Array(metadata).map(&:to_s).join("; "),
+          )
+          return visited
+        end
+
+        payload.each do |entry|
+          attributes, signature, reason = remote_instance_attributes_from_payload(entry)
+          unless attributes && signature
+            warn_log(
+              "Discarded remote instance entry",
+              context: "federation.instances",
+              domain: sanitized,
+              reason: reason || "invalid payload",
+            )
+            next
+          end
+
+          if attributes[:is_private]
+            debug_log(
+              "Skipped private remote instance",
+              context: "federation.instances",
+              domain: attributes[:domain],
+            )
+            next
+          end
+
+          unless verify_instance_signature(attributes, signature, attributes[:pubkey])
+            warn_log(
+              "Discarded remote instance entry",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              reason: "invalid signature",
+            )
+            next
+          end
+
+          attributes[:is_private] = false if attributes[:is_private].nil?
+
+          remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
+          unless remote_nodes
+            warn_log(
+              "Failed to load remote node data",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              reason: Array(node_metadata).map(&:to_s).join("; "),
+            )
+            next
+          end
+
+          fresh, freshness_reason = validate_remote_nodes(remote_nodes)
+          unless fresh
+            warn_log(
+              "Discarded remote instance entry",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              reason: freshness_reason || "stale node data",
+            )
+            next
+          end
+
+          begin
+            upsert_instance_record(db, attributes, signature)
+            ingest_known_instances_from!(db, attributes[:domain], visited: visited)
+          rescue ArgumentError => e
+            warn_log(
+              "Failed to persist remote instance",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              error_class: e.class.name,
+              error_message: e.message,
+            )
+          end
+        end
+
+        visited
+      end
+
       # Build an HTTP client configured for communication with a remote instance.
       #
       # @param uri [URI::Generic] target URI describing the remote endpoint.
