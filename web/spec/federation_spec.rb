@@ -113,10 +113,12 @@ RSpec.describe PotatoMesh::App::Federation do
   end
 
   describe ".build_remote_http_client" do
-    let(:timeout) { 15 }
+    let(:connect_timeout) { 5 }
+    let(:read_timeout) { 12 }
 
     before do
-      allow(PotatoMesh::Config).to receive(:remote_instance_http_timeout).and_return(timeout)
+      allow(PotatoMesh::Config).to receive(:remote_instance_http_timeout).and_return(connect_timeout)
+      allow(PotatoMesh::Config).to receive(:remote_instance_read_timeout).and_return(read_timeout)
     end
 
     it "configures SSL settings for HTTPS endpoints" do
@@ -129,8 +131,8 @@ RSpec.describe PotatoMesh::App::Federation do
       http = federation_helpers.build_remote_http_client(uri)
 
       expect(http.use_ssl?).to be(true)
-      expect(http.open_timeout).to eq(timeout)
-      expect(http.read_timeout).to eq(timeout)
+      expect(http.open_timeout).to eq(connect_timeout)
+      expect(http.read_timeout).to eq(read_timeout)
       expect(http.cert_store).to eq(store)
       expect(http.verify_mode).to eq(OpenSSL::SSL::VERIFY_PEER)
       expect(http.verify_callback).to eq(callback)
@@ -146,8 +148,8 @@ RSpec.describe PotatoMesh::App::Federation do
 
       expect(http.use_ssl?).to be(false)
       expect(http.cert_store).to be_nil
-      expect(http.open_timeout).to eq(timeout)
-      expect(http.read_timeout).to eq(timeout)
+      expect(http.open_timeout).to eq(connect_timeout)
+      expect(http.read_timeout).to eq(read_timeout)
     end
 
     it "leaves the certificate store unset when unavailable" do

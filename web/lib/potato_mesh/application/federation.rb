@@ -358,7 +358,7 @@ module PotatoMesh
       def build_remote_http_client(uri)
         http = Net::HTTP.new(uri.host, uri.port)
         http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
-        http.read_timeout = PotatoMesh::Config.remote_instance_http_timeout
+        http.read_timeout = PotatoMesh::Config.remote_instance_read_timeout
         http.use_ssl = uri.scheme == "https"
         return http unless http.use_ssl?
 
