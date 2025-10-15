@@ -1,10 +1,11 @@
 # 🥔 PotatoMesh
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5yth/potato-mesh/ruby.yml?branch=main)](https://github.com/l5yth/potato-mesh/actions)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/l5yth/potato-mesh)](https://github.com/l5yth/potato-mesh/releases)
+[![GitHub release](https://img.shields.io/github/v/release/l5yth/potato-mesh)](https://github.com/l5yth/potato-mesh/releases)
 [![codecov](https://codecov.io/gh/l5yth/potato-mesh/branch/main/graph/badge.svg?token=FS7252JVZT)](https://codecov.io/gh/l5yth/potato-mesh)
 [![Open-Source License](https://img.shields.io/github/license/l5yth/potato-mesh)](LICENSE)
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5yth/potato-mesh/issues)
+[![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
 
 A simple Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
 
@@ -24,7 +25,7 @@ Requires Ruby for the Sinatra web app and SQLite3 for the app's database.
 
 ```bash
 pacman -S ruby sqlite3
-gem install sinatra sqlite3 rackup puma rspec rack-test rufo
+gem install sinatra sqlite3 rackup puma rspec rack-test rufo prometheus-client
 cd ./web
 bundle install
 ```
@@ -67,25 +68,6 @@ exec ruby app.rb -p 41447 -o 0.0.0.0
 * Configure `INSTANCE_DOMAIN` with the public URL of your deployment so vanity
   links and generated metadata resolve correctly.
 
-### Configuration storage
-
-PotatoMesh stores its runtime assets using the XDG base directory specification.
-During startup the web application migrates existing configuration from
-`web/.config` and `web/config` into the resolved `XDG_CONFIG_HOME` directory.
-This preserves previously generated instance key material and
-`/.well-known/potato-mesh` documents so upgrades do not create new credentials
-unnecessarily. When XDG directories are not provided the application falls back
-to the repository root.
-
-The migrated key is written to `<XDG_CONFIG_HOME>/potato-mesh/keyfile` and the
-well-known document is staged in
-`<XDG_CONFIG_HOME>/potato-mesh/well-known/potato-mesh`.
-
-When deploying with Docker Compose, the default `docker-compose.yml` mounts a
-named volume at `/app/.config/potato-mesh` to persist these files. Avoid
-removing this volume once a key has been generated so the instance identity and
-well-known metadata remain stable across restarts.
-
 The web app can be configured with environment variables (defaults shown):
 
 * `SITE_NAME` - title and header shown in the UI (default: "PotatoMesh Demo")
@@ -106,6 +88,18 @@ Example:
 SITE_NAME="PotatoMesh Demo" MAP_CENTER=38.761944,-27.090833 MAX_DISTANCE=42 CONTACT_LINK="#potatomesh:dod.ngo" ./app.sh
 ```
 
+### Configuration & Storage
+
+PotatoMesh stores its runtime assets using the XDG base directory specification.
+When XDG directories are not provided the application falls back
+to the repository root.
+
+The key is written to `$XDG_CONFIG_HOME/potato-mesh/keyfile` and the
+well-known document is staged in
+`$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`.
+
+The database can be found in `$XDG_DATA_HOME/potato-mesh`.
+
 ### API
 
 The web app contains an API:
@@ -115,7 +109,9 @@ The web app contains an API:
 * GET `/api/messages?limit=100` - returns the latest 100 messages (disabled when `PRIVATE=1`)
 * GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
 * GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
-* GET `/metrics`- prometheus endpoint
+* GET `/api/instances` - returns known potato-mesh instances in other locations
+* GET `/metrics`- metrics for the prometheus endpoint
+* GET `/version`- information about the potato-mesh instance
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/positions` - appends positions provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`; disabled when `PRIVATE=1`)
@@ -167,10 +163,9 @@ interface. `CONNECTION` also accepts Bluetooth device addresses (e.g.,
 
 ## Demos
 
-* <https://potatomesh.net/>
-* <https://vrs.kdd2105.ru/>
-* <https://potatomesh.stratospire.com/>
-* <https://es1tem.uk/>
+Post your nodes here:
+
+* <https://github.com/l5yth/potato-mesh/discussions/258>
 
 ## Docker
 
