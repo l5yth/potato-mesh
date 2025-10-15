@@ -77,6 +77,7 @@ The web app can be configured with environment variables (defaults shown):
 * `MAX_DISTANCE` - hide nodes farther than this distance from the center (default: `42`)
 * `CONTACT_LINK` - chat link or Matrix alias for footer and overlay (default: `#potatomesh:dod.ngo`)
 * `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
+* `INSTANCE_DOMAIN` - public hostname (optionally with port) used for metadata, federation, and API links (default: auto-detected)
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled

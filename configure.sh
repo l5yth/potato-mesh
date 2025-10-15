@@ -75,6 +75,7 @@ MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '
 CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
+INSTANCE_DOMAIN=$(grep "^INSTANCE_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 
 echo "📍 Location Settings"
 echo "-------------------"
@@ -98,6 +99,13 @@ echo "🛠 Docker Settings"
 echo "------------------"
 echo "Specify the Docker image architecture for your host (linux-amd64, linux-arm64, linux-armv7)."
 read_with_default "Docker image architecture" "$POTATOMESH_IMAGE_ARCH" POTATOMESH_IMAGE_ARCH
+
+echo ""
+echo "🌐 Domain Settings"
+echo "------------------"
+echo "Provide the public hostname that clients should use to reach this PotatoMesh instance."
+echo "Leave blank to allow automatic detection via reverse DNS."
+read_with_default "Instance domain (e.g. mesh.example.org)" "$INSTANCE_DOMAIN" INSTANCE_DOMAIN
 
 echo ""
 echo "🔐 Security Settings"
@@ -142,6 +150,11 @@ update_env "MAX_DISTANCE" "$MAX_DISTANCE"
 update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
+if [ -n "$INSTANCE_DOMAIN" ]; then
+    update_env "INSTANCE_DOMAIN" "$INSTANCE_DOMAIN"
+else
+    sed -i.bak '/^INSTANCE_DOMAIN=.*/d' .env
+fi
 
 # Migrate legacy connection settings and ensure defaults exist
 if grep -q "^MESH_SERIAL=" .env; then
@@ -176,6 +189,7 @@ echo "   Frequency: $FREQUENCY"
 echo "   Chat: ${CONTACT_LINK:-'Not set'}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
+echo "   Instance Domain: ${INSTANCE_DOMAIN:-'Auto-detected'}"
 echo ""
 echo "🚀 You can now start PotatoMesh with:"
 echo "   docker-compose up -d"

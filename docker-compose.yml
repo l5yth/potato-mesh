@@ -10,6 +10,7 @@ x-web-base: &web-base
     MAX_DISTANCE: ${MAX_DISTANCE:-42}
     CONTACT_LINK: ${CONTACT_LINK:-#potatomesh:dod.ngo}
     API_TOKEN: ${API_TOKEN}
+    INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
     DEBUG: ${DEBUG:-0}
   command: ["ruby", "app.rb", "-p", "41447", "-o", "0.0.0.0"]
   volumes:
@@ -33,6 +34,7 @@ x-ingestor-base: &ingestor-base
     CHANNEL_INDEX: ${CHANNEL_INDEX:-0}
     POTATOMESH_INSTANCE: ${POTATOMESH_INSTANCE:-http://web:41447}
     API_TOKEN: ${API_TOKEN}
+    INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
     DEBUG: ${DEBUG:-0}
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
