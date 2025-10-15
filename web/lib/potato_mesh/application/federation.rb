@@ -310,7 +310,30 @@ module PotatoMesh
           end
         end
       rescue StandardError => e
-        raise InstanceFetchError, e.message
+        raise_instance_fetch_error(e)
+      end
+
+      # Build a human readable error message for a failed instance request.
+      #
+      # @param error [StandardError] failure raised while performing the request.
+      # @return [String] description including the error class when necessary.
+      def instance_fetch_error_message(error)
+        message = error.message.to_s.strip
+        class_name = error.class.name || error.class.to_s
+        return class_name if message.empty?
+
+        message.include?(class_name) ? message : "#{class_name}: #{message}"
+      end
+
+      # Raise an InstanceFetchError that preserves the original context.
+      #
+      # @param error [StandardError] failure raised while performing the request.
+      # @return [void]
+      def raise_instance_fetch_error(error)
+        message = instance_fetch_error_message(error)
+        wrapped = InstanceFetchError.new(message)
+        wrapped.set_backtrace(error.backtrace)
+        raise wrapped
       end
 
       def fetch_instance_json(domain, path)
