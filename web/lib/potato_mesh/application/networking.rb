@@ -62,6 +62,22 @@ module PotatoMesh
           candidate = "#{candidate_host}:#{port}" if port_required?(uri, trimmed)
         end
 
+        ipv6_with_port = candidate.match(/\A(?<address>.+):(?<port>\d+)\z/)
+        if ipv6_with_port
+          address = ipv6_with_port[:address]
+          port = ipv6_with_port[:port]
+          literal = ipv6_literal?(address)
+          if literal && PotatoMesh::Sanitizer.valid_port?(port)
+            candidate = "[#{literal}]:#{port}"
+          else
+            ipv6_literal = ipv6_literal?(candidate)
+            candidate = "[#{ipv6_literal}]" if ipv6_literal
+          end
+        else
+          ipv6_literal = ipv6_literal?(candidate)
+          candidate = "[#{ipv6_literal}]" if ipv6_literal
+        end
+
         sanitized = sanitize_instance_domain(candidate)
         unless sanitized
           raise "INSTANCE_DOMAIN must be a bare hostname (optionally with a port) without schemes or paths: #{raw.inspect}"
