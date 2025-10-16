@@ -78,14 +78,33 @@ def _iter_channel_objects(channels_obj: Any) -> Iterator[Any]:
 
 
 def _primary_channel_name() -> str | None:
-    """Return the name to use for the primary channel when available."""
+    """Return the fallback name to use for the primary channel when needed."""
 
     preset = getattr(config, "MODEM_PRESET", None)
     if isinstance(preset, str) and preset.strip():
-        return preset
+        return preset.strip()
     env_name = os.environ.get("CHANNEL", "").strip()
     if env_name:
         return env_name
+    return None
+
+
+def _extract_channel_name(settings_obj: Any) -> str | None:
+    """Normalise the configured channel name extracted from ``settings_obj``."""
+
+    if settings_obj is None:
+        return None
+
+    if isinstance(settings_obj, dict):
+        candidate = settings_obj.get("name")
+    else:
+        candidate = getattr(settings_obj, "name", None)
+
+    if isinstance(candidate, str):
+        candidate = candidate.strip()
+        if candidate:
+            return candidate
+
     return None
 
 
@@ -122,27 +141,23 @@ def _channel_tuple(channel_obj: Any) -> tuple[int, str] | None:
     role_value = _normalize_role(getattr(channel_obj, "role", None))
     if role_value == _ROLE_PRIMARY:
         channel_index = 0
-        channel_name = _primary_channel_name()
+        channel_name = _extract_channel_name(getattr(channel_obj, "settings", None))
+        if channel_name is None:
+            channel_name = _primary_channel_name()
     elif role_value == _ROLE_SECONDARY:
         raw_index = getattr(channel_obj, "index", None)
         try:
             channel_index = int(raw_index)
         except Exception:
             channel_index = None
-        settings = getattr(channel_obj, "settings", None)
-        channel_name = getattr(settings, "name", None) if settings else None
+        channel_name = _extract_channel_name(getattr(channel_obj, "settings", None))
     else:
         return None
 
     if not isinstance(channel_index, int):
         return None
 
-    if isinstance(channel_name, str):
-        channel_name = channel_name.strip()
-    else:
-        channel_name = None
-
-    if not channel_name:
+    if not isinstance(channel_name, str) or not channel_name:
         return None
 
     return channel_index, channel_name
