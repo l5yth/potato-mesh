@@ -36,6 +36,7 @@ module PotatoMesh
     DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 12
     DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE = 64
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
+    DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
 
     # Resolve the absolute path to the web application root directory.
     #
@@ -333,6 +334,16 @@ module PotatoMesh
     # @return [Integer] number of seconds between announcement cycles.
     def federation_announcement_interval
       8 * 60 * 60
+    end
+
+    # Determine the grace period before sending the initial federation announcement.
+    #
+    # @return [Integer] seconds to wait before the first broadcast cycle.
+    def initial_federation_delay_seconds
+      fetch_positive_integer(
+        "INITIAL_FEDERATION_DELAY_SECONDS",
+        DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS,
+      )
     end
 
     # Retrieve the configured site name for presentation.
