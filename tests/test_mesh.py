@@ -407,11 +407,14 @@ def test_capture_channels_from_interface_records_metadata(mesh_module, capsys):
     mesh = mesh_module
 
     mesh.config.MODEM_PRESET = "MediumFast"
+    mesh.channels._reset_channel_cache()
 
     class DummyInterface:
         def __init__(self) -> None:
             self.wait_calls = 0
-            primary = SimpleNamespace(role=1, settings=SimpleNamespace())
+            primary = SimpleNamespace(
+                role=1, settings=SimpleNamespace(name=" radioamator ")
+            )
             secondary = SimpleNamespace(
                 role="SECONDARY",
                 index="7",
@@ -428,19 +431,20 @@ def test_capture_channels_from_interface_records_metadata(mesh_module, capsys):
     log_output = capsys.readouterr().out
 
     assert iface.wait_calls == 1
-    assert mesh.channels.channel_mappings() == ((0, "MediumFast"), (7, "TestChannel"))
+    assert mesh.channels.channel_mappings() == ((0, "radioamator"), (7, "TestChannel"))
     assert mesh.channels.channel_name(7) == "TestChannel"
     assert "Captured channel metadata" in log_output
-    assert "channels=((0, 'MediumFast'), (7, 'TestChannel'))" in log_output
+    assert "channels=((0, 'radioamator'), (7, 'TestChannel'))" in log_output
 
     mesh.channels.capture_from_interface(SimpleNamespace(localNode=None))
-    assert mesh.channels.channel_mappings() == ((0, "MediumFast"), (7, "TestChannel"))
+    assert mesh.channels.channel_mappings() == ((0, "radioamator"), (7, "TestChannel"))
 
 
 def test_capture_channels_primary_falls_back_to_env(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
 
     mesh.config.MODEM_PRESET = None
+    mesh.channels._reset_channel_cache()
     monkeypatch.setenv("CHANNEL", "FallbackName")
 
     class DummyInterface:
@@ -459,6 +463,29 @@ def test_capture_channels_primary_falls_back_to_env(mesh_module, monkeypatch, ca
     assert mesh.channels.channel_mappings() == ((0, "FallbackName"),)
     assert mesh.channels.channel_name(0) == "FallbackName"
     assert "FallbackName" in log_output
+
+
+def test_capture_channels_primary_falls_back_to_preset(mesh_module, capsys):
+    mesh = mesh_module
+
+    mesh.config.MODEM_PRESET = " MediumFast "
+    mesh.channels._reset_channel_cache()
+
+    class DummyInterface:
+        def __init__(self) -> None:
+            self.localNode = SimpleNamespace(
+                channels=[SimpleNamespace(role="PRIMARY", settings=SimpleNamespace())]
+            )
+
+        def waitForConfig(self) -> None:  # noqa: D401 - matches interface contract
+            return None
+
+    mesh.channels.capture_from_interface(DummyInterface())
+    log_output = capsys.readouterr().out
+
+    assert mesh.channels.channel_mappings() == ((0, "MediumFast"),)
+    assert mesh.channels.channel_name(0) == "MediumFast"
+    assert "MediumFast" in log_output
 
 
 def test_create_default_interface_falls_back_to_tcp(mesh_module, monkeypatch):
