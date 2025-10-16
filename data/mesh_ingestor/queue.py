@@ -72,11 +72,25 @@ def _post_json(
         return
     url = f"{instance}{path}"
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}
-    )
+
+    # Add full headers to avoid Cloudflare blocks on instances behind cloudflare proxy
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": f"{instance}",
+        "Referer": f"{instance}",
+    }
     if api_token:
-        req.add_header("Authorization", f"Bearer {api_token}")
+        headers["Authorization"] = f"Bearer {api_token}"
+
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers=headers,
+    )
+
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
