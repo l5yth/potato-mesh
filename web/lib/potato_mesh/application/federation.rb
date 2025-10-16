@@ -273,12 +273,17 @@ module PotatoMesh
         thread
       end
 
+      # Launch a background thread responsible for the first federation broadcast.
+      #
+      # @return [Thread, nil] the thread handling the initial announcement.
       def start_initial_federation_announcement!
         existing = settings.respond_to?(:initial_federation_thread) ? settings.initial_federation_thread : nil
         return existing if existing&.alive?
 
         thread = Thread.new do
           begin
+            delay = PotatoMesh::Config.initial_federation_delay_seconds
+            Kernel.sleep(delay) if delay.positive?
             announce_instance_to_all_domains
           rescue StandardError => e
             warn_log(
