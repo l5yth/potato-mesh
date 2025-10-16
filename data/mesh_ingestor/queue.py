@@ -84,8 +84,8 @@ def _post_json(
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
             "Origin": f"{instance}",
-            "Referer": f"{instance}"
-        }
+            "Referer": f"{instance}",
+        },
     )
 
     try:
