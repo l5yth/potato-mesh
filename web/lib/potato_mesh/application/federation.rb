@@ -549,7 +549,7 @@ module PotatoMesh
       # abort the federation request before contacting the remote endpoint.
       #
       # @param uri [URI::Generic] remote endpoint candidate.
-      # @return [Array<IPAddr>] list of resolved IP addresses.
+      # @return [Array<IPAddr>] list of resolved, unrestricted IP addresses.
       # @raise [ArgumentError] when +uri.host+ is blank or resolves solely to
       #   restricted addresses.
       def resolve_remote_ip_addresses(uri)
@@ -565,12 +565,13 @@ module PotatoMesh
           end
         end
         unique_addresses = addresses.uniq { |ip| [ip.family, ip.to_s] }
+        unrestricted_addresses = unique_addresses.reject { |ip| restricted_ip_address?(ip) }
 
-        if unique_addresses.any? && unique_addresses.all? { |ip| restricted_ip_address?(ip) }
+        if unique_addresses.any? && unrestricted_addresses.empty?
           raise ArgumentError, "restricted domain"
         end
 
-        unique_addresses
+        unrestricted_addresses
       end
 
       # Build an HTTP client configured for communication with a remote instance.
@@ -578,8 +579,11 @@ module PotatoMesh
       # @param uri [URI::Generic] target URI describing the remote endpoint.
       # @return [Net::HTTP] HTTP client ready to execute the request.
       def build_remote_http_client(uri)
-        resolve_remote_ip_addresses(uri)
+        remote_addresses = resolve_remote_ip_addresses(uri)
         http = Net::HTTP.new(uri.host, uri.port)
+        if http.respond_to?(:ipaddr=) && remote_addresses.any?
+          http.ipaddr = remote_addresses.first.to_s
+        end
         http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
         http.read_timeout = PotatoMesh::Config.remote_instance_read_timeout
         http.use_ssl = uri.scheme == "https"

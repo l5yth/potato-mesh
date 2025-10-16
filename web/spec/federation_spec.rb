@@ -187,6 +187,23 @@ RSpec.describe PotatoMesh::App::Federation do
         federation_helpers.build_remote_http_client(uri)
       end.to raise_error(ArgumentError, "restricted domain")
     end
+
+    it "binds the HTTP client to the first unrestricted address" do
+      uri = URI.parse("https://remote.example.com/api")
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([
+        Addrinfo.ip("127.0.0.1"),
+        public_addrinfo,
+        Addrinfo.ip("10.0.0.3"),
+      ])
+
+      http = federation_helpers.build_remote_http_client(uri)
+
+      if http.respond_to?(:ipaddr)
+        expect(http.ipaddr).to eq("203.0.113.5")
+      else
+        skip "Net::HTTP#ipaddr accessor unavailable"
+      end
+    end
   end
 
   describe ".perform_instance_http_request" do
