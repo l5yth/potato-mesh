@@ -195,24 +195,31 @@ module PotatoMesh
         [json_output, signature]
       end
 
-      # Regenerate the well-known document when the on-disk copy is stale.
+      # Regenerate the well-known document when it is stale or when the existing
+      # content no longer matches the current instance configuration.
       #
       # @return [void]
       def refresh_well_known_document_if_stale
         FileUtils.mkdir_p(well_known_directory)
         path = well_known_file_path
         now = Time.now
+        json_output, signature = build_well_known_document
+        expected_contents = json_output.end_with?("\n") ? json_output : "#{json_output}\n"
+
+        needs_update = true
         if File.exist?(path)
+          current_contents = File.binread(path)
           mtime = File.mtime(path)
-          if (now - mtime) < PotatoMesh::Config.well_known_refresh_interval
-            return
+          if current_contents == expected_contents &&
+             (now - mtime) < PotatoMesh::Config.well_known_refresh_interval
+            needs_update = false
           end
         end
 
-        json_output, signature = build_well_known_document
+        return unless needs_update
+
         File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o644) do |file|
-          file.write(json_output)
-          file.write("\n") unless json_output.end_with?("\n")
+          file.write(expected_contents)
         end
 
         debug_log(
