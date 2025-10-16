@@ -445,12 +445,34 @@ module PotatoMesh
       # @param db [SQLite3::Database] open database connection used for writes.
       # @param domain [String] remote domain to crawl for federation records.
       # @param visited [Set<String>] domains processed during this crawl.
+      # @param per_response_limit [Integer, nil] maximum entries processed per response.
+      # @param overall_limit [Integer, nil] maximum unique domains visited.
       # @return [Set<String>] updated set of visited domains.
-      def ingest_known_instances_from!(db, domain, visited: nil)
+      def ingest_known_instances_from!(
+        db,
+        domain,
+        visited: nil,
+        per_response_limit: nil,
+        overall_limit: nil
+      )
         sanitized = sanitize_instance_domain(domain)
         return visited || Set.new unless sanitized
 
         visited ||= Set.new
+
+        overall_limit ||= PotatoMesh::Config.federation_max_domains_per_crawl
+        per_response_limit ||= PotatoMesh::Config.federation_max_instances_per_response
+
+        if overall_limit && overall_limit.positive? && visited.size >= overall_limit
+          debug_log(
+            "Skipped remote instance crawl due to crawl limit",
+            context: "federation.instances",
+            domain: sanitized,
+            limit: overall_limit,
+          )
+          return visited
+        end
+
         return visited if visited.include?(sanitized)
 
         visited << sanitized
@@ -466,7 +488,29 @@ module PotatoMesh
           return visited
         end
 
+        processed_entries = 0
         payload.each do |entry|
+          if per_response_limit && per_response_limit.positive? && processed_entries >= per_response_limit
+            debug_log(
+              "Skipped remote instance entry due to response limit",
+              context: "federation.instances",
+              domain: sanitized,
+              limit: per_response_limit,
+            )
+            break
+          end
+
+          if overall_limit && overall_limit.positive? && visited.size >= overall_limit
+            debug_log(
+              "Skipped remote instance entry due to crawl limit",
+              context: "federation.instances",
+              domain: sanitized,
+              limit: overall_limit,
+            )
+            break
+          end
+
+          processed_entries += 1
           attributes, signature, reason = remote_instance_attributes_from_payload(entry)
           unless attributes && signature
             warn_log(
@@ -523,7 +567,13 @@ module PotatoMesh
 
           begin
             upsert_instance_record(db, attributes, signature)
-            ingest_known_instances_from!(db, attributes[:domain], visited: visited)
+            ingest_known_instances_from!(
+              db,
+              attributes[:domain],
+              visited: visited,
+              per_response_limit: per_response_limit,
+              overall_limit: overall_limit,
+            )
           rescue ArgumentError => e
             warn_log(
               "Failed to persist remote instance",

@@ -15,6 +15,7 @@
 require "spec_helper"
 require "net/http"
 require "openssl"
+require "set"
 require "uri"
 
 RSpec.describe PotatoMesh::App::Federation do
@@ -174,6 +175,97 @@ RSpec.describe PotatoMesh::App::Federation do
 
       expect(http.cert_store).to be_nil
       expect(http.verify_callback).to be_nil
+    end
+  end
+
+  describe ".ingest_known_instances_from!" do
+    let(:db) { double(:db) }
+    let(:seed_domain) { "seed.mesh" }
+    let(:payload_entries) do
+      Array.new(3) do |index|
+        {
+          "id" => "remote-#{index}",
+          "domain" => "ally-#{index}.mesh",
+          "pubkey" => "ignored-pubkey-#{index}",
+          "signature" => "ignored-signature-#{index}",
+        }
+      end
+    end
+    let(:attributes_list) do
+      payload_entries.map do |entry|
+        {
+          id: entry["id"],
+          domain: entry["domain"],
+          pubkey: entry["pubkey"],
+          name: nil,
+          version: nil,
+          channel: nil,
+          frequency: nil,
+          latitude: nil,
+          longitude: nil,
+          last_update_time: nil,
+          is_private: false,
+        }
+      end
+    end
+    let(:node_payload) do
+      Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |index|
+        { "node_id" => "node-#{index}", "last_heard" => Time.now.to_i - index }
+      end
+    end
+    let(:response_map) do
+      mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
+      attributes_list.each do |attributes|
+        mapping[[attributes[:domain], "/api/nodes"]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
+      end
+      mapping
+    end
+
+    before do
+      allow(federation_helpers).to receive(:fetch_instance_json) do |host, path|
+        response_map.fetch([host, path]) { [nil, []] }
+      end
+      allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
+      allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
+      payload_entries.each_with_index do |entry, index|
+        allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(entry).and_return([attributes_list[index], "signature-#{index}", nil])
+      end
+    end
+
+    it "stops processing once the per-response limit is exceeded" do
+      processed_domains = []
+      allow(federation_helpers).to receive(:upsert_instance_record) do |_db, attrs, _signature|
+        processed_domains << attrs[:domain]
+      end
+      allow(PotatoMesh::Config).to receive(:federation_max_instances_per_response).and_return(2)
+      allow(PotatoMesh::Config).to receive(:federation_max_domains_per_crawl).and_return(10)
+
+      visited = federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(processed_domains).to eq([
+        attributes_list[0][:domain],
+        attributes_list[1][:domain],
+      ])
+      expect(visited).to include(seed_domain, attributes_list[0][:domain], attributes_list[1][:domain])
+      expect(visited).not_to include(attributes_list[2][:domain])
+      expect(federation_helpers.debug_messages).to include(a_string_including("response limit"))
+    end
+
+    it "halts recursion once the crawl limit would be exceeded" do
+      processed_domains = []
+      allow(federation_helpers).to receive(:upsert_instance_record) do |_db, attrs, _signature|
+        processed_domains << attrs[:domain]
+      end
+      allow(PotatoMesh::Config).to receive(:federation_max_instances_per_response).and_return(5)
+      allow(PotatoMesh::Config).to receive(:federation_max_domains_per_crawl).and_return(2)
+
+      visited = federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(processed_domains).to eq([attributes_list.first[:domain]])
+      expect(visited).to include(seed_domain, attributes_list.first[:domain])
+      expect(visited).not_to include(attributes_list[1][:domain], attributes_list[2][:domain])
+      expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
     end
   end
 

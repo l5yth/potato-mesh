@@ -34,6 +34,8 @@ module PotatoMesh
     DEFAULT_MAX_DISTANCE_KM = 42.0
     DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 5
     DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 12
+    DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE = 64
+    DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
 
     # Resolve the absolute path to the web application root directory.
     #
@@ -285,6 +287,26 @@ module PotatoMesh
       DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT
     end
 
+    # Limit the number of remote instances processed from a single response.
+    #
+    # @return [Integer] maximum entries processed per /api/instances payload.
+    def federation_max_instances_per_response
+      fetch_positive_integer(
+        "FEDERATION_MAX_INSTANCES_PER_RESPONSE",
+        DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE,
+      )
+    end
+
+    # Limit the total number of distinct domains crawled during one ingestion.
+    #
+    # @return [Integer] maximum unique domains visited per crawl.
+    def federation_max_domains_per_crawl
+      fetch_positive_integer(
+        "FEDERATION_MAX_DOMAINS_PER_CRAWL",
+        DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL,
+      )
+    end
+
     # Maximum acceptable age for remote node data.
     #
     # @return [Integer] seconds before remote nodes are considered stale.
@@ -422,6 +444,27 @@ module PotatoMesh
 
       trimmed = value.strip
       trimmed.empty? ? default : trimmed
+    end
+
+    # Fetch and validate integer based configuration flags.
+    #
+    # @param key [String] environment variable to read.
+    # @param default [Integer] fallback value when unset or invalid.
+    # @return [Integer] positive integer sourced from configuration.
+    def fetch_positive_integer(key, default)
+      value = ENV[key]
+      return default if value.nil?
+
+      trimmed = value.strip
+      return default if trimmed.empty?
+
+      begin
+        parsed = Integer(trimmed, 10)
+      rescue ArgumentError
+        return default
+      end
+
+      parsed.positive? ? parsed : default
     end
 
     # Resolve the effective XDG directory honoring environment overrides.

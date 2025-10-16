@@ -169,6 +169,54 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".federation_max_instances_per_response" do
+    it "returns the baked-in response limit when unset" do
+      within_env("FEDERATION_MAX_INSTANCES_PER_RESPONSE" => nil) do
+        expect(described_class.federation_max_instances_per_response).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_MAX_INSTANCES_PER_RESPONSE" => "7") do
+        expect(described_class.federation_max_instances_per_response).to eq(7)
+      end
+    end
+
+    it "rejects non-positive overrides" do
+      within_env("FEDERATION_MAX_INSTANCES_PER_RESPONSE" => "0") do
+        expect(described_class.federation_max_instances_per_response).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE,
+        )
+      end
+    end
+  end
+
+  describe ".federation_max_domains_per_crawl" do
+    it "returns the baked-in crawl limit when unset" do
+      within_env("FEDERATION_MAX_DOMAINS_PER_CRAWL" => nil) do
+        expect(described_class.federation_max_domains_per_crawl).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_MAX_DOMAINS_PER_CRAWL" => "11") do
+        expect(described_class.federation_max_domains_per_crawl).to eq(11)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_MAX_DOMAINS_PER_CRAWL" => "-5") do
+        expect(described_class.federation_max_domains_per_crawl).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL,
+        )
+      end
+    end
+  end
+
   describe ".db_path" do
     it "returns the default path inside the data directory" do
       expect(described_class.db_path).to eq(described_class.default_db_path)
