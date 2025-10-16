@@ -167,6 +167,45 @@ def _is_ble_interface(iface_obj) -> bool:
     return "ble_interface" in module_name
 
 
+def _connected_state(candidate) -> bool | None:
+    """Return the connection state advertised by ``candidate``.
+
+    Parameters:
+        candidate: Attribute returned from ``iface.isConnected`` on a
+            Meshtastic interface. The value may be a boolean, a callable that
+            yields a boolean, or a :class:`threading.Event` instance.
+
+    Returns:
+        ``True`` when the interface is believed to be connected, ``False``
+        when it appears disconnected, and ``None`` when the state cannot be
+        determined from the provided attribute.
+    """
+
+    if candidate is None:
+        return None
+
+    if isinstance(candidate, threading.Event):
+        return candidate.is_set()
+
+    is_set_method = getattr(candidate, "is_set", None)
+    if callable(is_set_method):
+        try:
+            return bool(is_set_method())
+        except Exception:
+            return None
+
+    if callable(candidate):
+        try:
+            return bool(candidate())
+        except Exception:
+            return None
+
+    try:
+        return bool(candidate)
+    except Exception:  # pragma: no cover - defensive guard
+        return None
+
+
 def main() -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
@@ -411,13 +450,20 @@ def main() -> None:
 
                 connected_attr = getattr(iface, "isConnected", None)
                 believed_disconnected = False
-                if callable(connected_attr):
-                    try:
-                        believed_disconnected = not bool(connected_attr())
-                    except Exception:
-                        believed_disconnected = False
-                elif connected_attr is not None:
-                    believed_disconnected = not bool(connected_attr)
+                connected_state = _connected_state(connected_attr)
+                if connected_state is None:
+                    if callable(connected_attr):
+                        try:
+                            believed_disconnected = not bool(connected_attr())
+                        except Exception:
+                            believed_disconnected = False
+                    elif connected_attr is not None:
+                        try:
+                            believed_disconnected = not bool(connected_attr)
+                        except Exception:  # pragma: no cover - defensive guard
+                            believed_disconnected = False
+                else:
+                    believed_disconnected = not connected_state
 
                 should_reconnect = believed_disconnected or (
                     inactivity_elapsed >= inactivity_reconnect_secs
@@ -468,5 +514,6 @@ __all__ = [
     "_node_items_snapshot",
     "_subscribe_receive_topics",
     "_is_ble_interface",
+    "_connected_state",
     "main",
 ]
