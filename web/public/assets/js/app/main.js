@@ -20,6 +20,7 @@ import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
+import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
   formatChatMessagePrefix,
@@ -110,6 +111,11 @@ export function initializeApp(config) {
   let allNeighbors = [];
   /** @type {Map<string, Object>} */
   let nodesById = new Map();
+  const messageNodeHydrator = createMessageNodeHydrator({
+    fetchNodeById,
+    applyNodeFallback: applyNodeNameFallback,
+    logger: console,
+  });
   /** @type {string|undefined} */
   let lastChatDate;
   const NODE_LIMIT = 1000;
@@ -2418,6 +2424,22 @@ export function initializeApp(config) {
   }
 
   /**
+   * Retrieve a single node record by identifier from the API.
+   *
+   * @param {string} nodeId Canonical node identifier.
+   * @returns {Promise<Object|null>} Parsed node payload or null when absent.
+   */
+  async function fetchNodeById(nodeId) {
+    if (typeof nodeId !== 'string') return null;
+    const trimmed = nodeId.trim();
+    if (trimmed.length === 0) return null;
+    const r = await fetch(`/api/nodes/${encodeURIComponent(trimmed)}`, { cache: 'no-store' });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  /**
    * Fetch recent messages from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
@@ -3061,14 +3083,10 @@ export function initializeApp(config) {
       mergePositionsIntoNodes(nodes, positions);
       computeDistances(nodes);
       mergeTelemetryIntoNodes(nodes, telemetryEntries);
-      if (Array.isArray(messages)) {
-        messages.forEach(message => {
-          if (message && message.node) applyNodeNameFallback(message.node);
-        });
-      }
-      renderChatLog(nodes, messages);
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
+      const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
+      renderChatLog(nodes, chatMessages);
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
       statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();

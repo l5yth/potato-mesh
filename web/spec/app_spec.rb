@@ -3172,7 +3172,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/messages" do
-    it "returns the stored messages along with joined node data" do
+    it "returns the stored messages with canonical node references" do
       import_nodes_fixture
       import_messages_fixture
 
@@ -3186,86 +3186,59 @@ RSpec.describe "Potato Mesh Sinatra app" do
         acc[row["id"]] = row
       end
 
-      nodes_by_id = {}
       node_aliases = {}
 
       nodes_fixture.each do |node|
-        node_id = node["node_id"]
-        expected_row = expected_node_row(node)
-        nodes_by_id[node_id] = expected_row
-
         if (num = node["num"])
-          node_aliases[num.to_s] = node_id
+          node_aliases[num.to_s] = node["node_id"]
         end
-      end
-
-      messages_fixture.each do |message|
-        node = message["node"]
-        next unless node.is_a?(Hash)
-
-        canonical = node["node_id"]
-        num = node["num"]
-        next unless canonical && num
-
-        node_aliases[num.to_s] ||= canonical
-      end
-
-      latest_rx_by_node = {}
-      messages_fixture.each do |message|
-        rx_time = message["rx_time"]
-        next unless rx_time
-
-        canonical = nil
-        from_id = message["from_id"]
-
-        if from_id.is_a?(String)
-          trimmed = from_id.strip
-          unless trimmed.empty?
-            if trimmed.match?(/\A[0-9]+\z/)
-              canonical = node_aliases[trimmed] || trimmed
-            else
-              canonical = trimmed
-            end
-          end
-        end
-
-        canonical ||= message.dig("node", "node_id")
-
-        if canonical.nil?
-          num = message.dig("node", "num")
-          canonical = node_aliases[num.to_s] if num
-        end
-
-        next unless canonical
-
-        existing = latest_rx_by_node[canonical]
-        latest_rx_by_node[canonical] = [existing, rx_time].compact.max
       end
 
       messages_fixture.each do |message|
         expected = message.reject { |key, _| key == "node" }
         actual_row = actual_by_id.fetch(message["id"])
 
-        expect(actual_row["rx_time"]).to eq(expected["rx_time"])
-        expect(actual_row["rx_iso"]).to eq(expected["rx_iso"])
-
         expected_from_id = expected["from_id"]
-        if expected_from_id.is_a?(String) && expected_from_id.match?(/\A[0-9]+\z/)
-          expected_from_id = node_aliases[expected_from_id] || expected_from_id
+        if expected_from_id.is_a?(String)
+          trimmed = expected_from_id.strip
+          if trimmed.match?(/\A[0-9]+\z/)
+            expected_from_id = node_aliases[trimmed] || message.dig("node", "node_id") || trimmed
+          else
+            expected_from_id = trimmed
+          end
         elsif expected_from_id.nil?
           expected_from_id = message.dig("node", "node_id")
         end
         expect(actual_row["from_id"]).to eq(expected_from_id)
-        expect(actual_row).not_to have_key("from_node_id")
-        expect(actual_row).not_to have_key("from_node_num")
+
+        expected_node_id = if expected_from_id.is_a?(String)
+            expected_from_id
+          else
+            node_id = message.dig("node", "node_id")
+            if node_id.nil?
+              num = message.dig("node", "num")
+              node_id = node_aliases[num.to_s] if num
+            end
+            node_id
+          end
+
+        if expected_node_id
+          expect(actual_row["node_id"]).to eq(expected_node_id)
+        else
+          expect(actual_row).not_to have_key("node_id")
+        end
 
         expected_to_id = expected["to_id"]
-        if expected_to_id.is_a?(String) && expected_to_id.match?(/\A[0-9]+\z/)
-          expected_to_id = node_aliases[expected_to_id] || expected_to_id
+        if expected_to_id.is_a?(String)
+          trimmed_to = expected_to_id.strip
+          if trimmed_to.match?(/\A[0-9]+\z/)
+            expected_to_id = node_aliases[trimmed_to] || trimmed_to
+          else
+            expected_to_id = trimmed_to
+          end
         end
         expect(actual_row["to_id"]).to eq(expected_to_id)
-        expect(actual_row).not_to have_key("to_node_id")
-        expect(actual_row).not_to have_key("to_node_num")
+
         expect(actual_row["channel"]).to eq(expected["channel"])
         expect(actual_row["portnum"]).to eq(expected["portnum"])
         expect(actual_row["text"]).to eq(expected["text"])
@@ -3276,46 +3249,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(actual_row["lora_freq"]).to eq(expected["lora_freq"])
         expect(actual_row["modem_preset"]).to eq(expected["modem_preset"])
         expect(actual_row["channel_name"]).to eq(expected["channel_name"])
-
-        if expected["from_id"]
-          lookup_id = expected["from_id"]
-          node_expected = nodes_by_id[lookup_id]
-
-          unless node_expected
-            canonical_id = node_aliases[lookup_id.to_s]
-            expect(canonical_id).not_to be_nil,
-                                        "node fixture missing for from_id #{lookup_id.inspect}"
-            node_expected = nodes_by_id.fetch(canonical_id)
-          end
-
-          node_actual = actual_row.fetch("node")
-
-          expect(node_actual["node_id"]).to eq(node_expected["node_id"])
-          expect(node_actual["short_name"]).to eq(node_expected["short_name"])
-          expect(node_actual["long_name"]).to eq(node_expected["long_name"])
-          expect(node_actual["role"]).to eq(node_expected["role"])
-          expect_same_value(node_actual["snr"], node_expected["snr"])
-          expect(node_actual["lora_freq"]).to eq(node_expected["lora_freq"])
-          expect(node_actual["modem_preset"]).to eq(node_expected["modem_preset"])
-          expect_same_value(node_actual["battery_level"], node_expected["battery_level"])
-          expect_same_value(node_actual["voltage"], node_expected["voltage"])
-          expected_last_heard = node_expected["last_heard"]
-          latest_rx = latest_rx_by_node[node_expected["node_id"]]
-          if latest_rx
-            expected_last_heard = [expected_last_heard, latest_rx].compact.max
-          end
-          expect(node_actual["last_heard"]).to eq(expected_last_heard)
-          expect(node_actual["first_heard"]).to eq(node_expected["first_heard"])
-          expect_same_value(node_actual["latitude"], node_expected["latitude"])
-          expect_same_value(node_actual["longitude"], node_expected["longitude"])
-          expect_same_value(node_actual["altitude"], node_expected["altitude"])
-        else
-          expect(actual_row["node"]).to be_a(Hash)
-          expect(actual_row["node"]["node_id"]).to be_nil
-        end
+        expect(actual_row["rx_time"]).to eq(expected["rx_time"])
+        expect(actual_row["rx_iso"]).to eq(expected["rx_iso"])
+        expect(actual_row).not_to have_key("node")
       end
     end
-
     context "when DEBUG logging is enabled" do
       it "logs diagnostics for messages missing a sender" do
         allow(PotatoMesh::Config).to receive(:debug?).and_return(true)
@@ -3338,28 +3276,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(PotatoMesh::Logging).to have_received(:log).with(
           kind_of(Logger),
           :debug,
-          "Message join produced empty sender",
+          "Message query produced empty sender",
           context: "queries.messages",
-          stage: "before_join",
+          stage: "raw_row",
           row: a_hash_including("id" => message_id),
         )
         expect(PotatoMesh::Logging).to have_received(:log).with(
           kind_of(Logger),
           :debug,
-          "Message join produced empty sender",
+          "Message query produced empty sender",
           context: "queries.messages",
-          stage: "after_join",
+          stage: "after_normalization",
           row: a_hash_including("id" => message_id),
         )
-        expect(PotatoMesh::Logging).to have_received(:log).with(
-          kind_of(Logger),
-          :debug,
-          "Message row missing sender after processing",
-          context: "queries.messages",
-          stage: "after_processing",
-          row: a_hash_including("id" => message_id),
-        )
-
         messages = JSON.parse(last_response.body)
         expect(messages.size).to eq(1)
         expect(messages.first["from_id"]).to be_nil

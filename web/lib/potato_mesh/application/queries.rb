@@ -205,34 +205,8 @@ module PotatoMesh
         sql = <<~SQL
           SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
                  m.portnum, m.text, m.encrypted, m.rssi, m.hop_limit,
-                 m.lora_freq AS msg_lora_freq, m.modem_preset AS msg_modem_preset,
-                 m.channel_name AS msg_channel_name, m.snr AS msg_snr,
-                 n.node_id AS node_node_id, n.num AS node_num,
-                 n.short_name AS node_short_name, n.long_name AS node_long_name,
-                 n.macaddr AS node_macaddr, n.hw_model AS node_hw_model,
-                 n.role AS node_role, n.public_key AS node_public_key,
-                 n.is_unmessagable AS node_is_unmessagable,
-                 n.is_favorite AS node_is_favorite,
-                 n.hops_away AS node_hops_away, n.snr AS node_snr,
-                 n.last_heard AS node_last_heard, n.first_heard AS node_first_heard,
-                 n.battery_level AS node_battery_level, n.voltage AS node_voltage,
-                 n.channel_utilization AS node_channel_utilization,
-                 n.air_util_tx AS node_air_util_tx,
-                 n.uptime_seconds AS node_uptime_seconds,
-                 n.position_time AS node_position_time,
-                 n.location_source AS node_location_source,
-                 n.precision_bits AS node_precision_bits,
-                 n.latitude AS node_latitude, n.longitude AS node_longitude,
-                 n.altitude AS node_altitude,
-                 n.lora_freq AS node_lora_freq, n.modem_preset AS node_modem_preset
+                 m.lora_freq, m.modem_preset, m.channel_name, m.snr
           FROM messages m
-          LEFT JOIN nodes n ON (
-            m.from_id IS NOT NULL AND TRIM(m.from_id) <> '' AND (
-              m.from_id = n.node_id OR (
-                m.from_id GLOB '[0-9]*' AND CAST(m.from_id AS INTEGER) = n.num
-              )
-            )
-          )
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
@@ -243,56 +217,19 @@ module PotatoMesh
         rows = db.execute(sql, params)
         rows.each do |r|
           r.delete_if { |key, _| key.is_a?(Integer) }
-          r["lora_freq"] = r.delete("msg_lora_freq")
-          r["modem_preset"] = r.delete("msg_modem_preset")
-          r["channel_name"] = r.delete("msg_channel_name")
-          snr_value = r.delete("msg_snr")
-          if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
+          if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.strip.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(
-              "Message join produced empty sender",
+              "Message query produced empty sender",
               context: "queries.messages",
-              stage: "before_join",
+              stage: "raw_row",
               row: raw,
             )
-            debug_log(
-              "Message join produced empty sender",
-              context: "queries.messages",
-              stage: "after_join",
-              row: r,
-            )
           end
-          node = {}
-          r.keys.grep(/^node_/).each do |k|
-            attribute = k.delete_prefix("node_")
-            node[attribute] = r.delete(k)
-          end
-          r["snr"] = snr_value
-          references = [r["from_id"]].compact
-          if references.any? && (node["node_id"].nil? || node["node_id"].to_s.empty?)
-            lookup_keys = []
-            canonical = normalize_node_id(db, r["from_id"])
-            lookup_keys << canonical if canonical
-            raw_ref = r["from_id"].to_s.strip
-            lookup_keys << raw_ref unless raw_ref.empty?
-            lookup_keys << raw_ref.to_i if raw_ref.match?(/\A[0-9]+\z/)
-            fallback = nil
-            lookup_keys.uniq.each do |ref|
-              sql = ref.is_a?(Integer) ? "SELECT * FROM nodes WHERE num = ?" : "SELECT * FROM nodes WHERE node_id = ?"
-              fallback = db.get_first_row(sql, [ref])
-              break if fallback
-            end
-            if fallback
-              fallback.each do |key, value|
-                next unless key.is_a?(String)
-                node[key] = value if node[key].nil?
-              end
-            end
-          end
-          node["role"] = "CLIENT" if node.key?("role") && (node["role"].nil? || node["role"].to_s.empty?)
-          r["node"] = node
 
-          canonical_from_id = string_or_nil(node["node_id"]) || string_or_nil(normalize_node_id(db, r["from_id"]))
+          canonical_from_id = string_or_nil(normalize_node_id(db, r["from_id"]))
+          node_id = canonical_from_id || string_or_nil(r["from_id"])
+
           if canonical_from_id
             raw_from_id = string_or_nil(r["from_id"])
             if raw_from_id.nil? || raw_from_id.match?(/\A[0-9]+\z/)
@@ -302,11 +239,13 @@ module PotatoMesh
             end
           end
 
-          if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.empty?)
+          r["node_id"] = node_id if node_id
+
+          if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.strip.empty?)
             debug_log(
-              "Message row missing sender after processing",
+              "Message query produced empty sender",
               context: "queries.messages",
-              stage: "after_processing",
+              stage: "after_normalization",
               row: r,
             )
           end
