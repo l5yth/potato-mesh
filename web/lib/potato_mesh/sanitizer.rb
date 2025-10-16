@@ -38,7 +38,12 @@ module PotatoMesh
     end
 
     # Ensure a value is a valid instance domain according to RFC 1035/3986
-    # rules. This rejects whitespace, path separators, and trailing dots.
+    # rules.  Hostnames must include at least one dot-separated label and a
+    # top-level domain containing an alphabetic character. Literal IP
+    # addresses must be provided in standard dotted decimal form or enclosed in
+    # brackets when IPv6 notation is used. Optional ports must fall within the
+    # valid TCP/UDP range.  Any opaque identifiers, URIs, or malformed hosts are
+    # rejected.
     #
     # @param value [String, Object, nil] candidate domain name.
     # @param downcase [Boolean] whether to force the result to lowercase.
@@ -52,7 +57,92 @@ module PotatoMesh
       return nil if trimmed.empty?
       return nil if trimmed.match?(%r{[\s/\\@]})
 
-      downcase ? trimmed.downcase : trimmed
+      if trimmed.start_with?("[")
+        match = trimmed.match(/\A\[(?<address>[^\]]+)\](?::(?<port>\d+))?\z/)
+        return nil unless match
+
+        address = match[:address]
+        port = match[:port]
+
+        return nil if port && !valid_port?(port)
+
+        begin
+          IPAddr.new(address)
+        rescue IPAddr::InvalidAddressError
+          return nil
+        end
+
+        sanitized_address = downcase ? address.downcase : address
+        return "[#{sanitized_address}]#{port ? ":#{port}" : ""}"
+      end
+
+      domain = trimmed
+      port = nil
+
+      if domain.include?(":")
+        host_part, port_part = domain.split(":", 2)
+        return nil if host_part.nil? || host_part.empty?
+        return nil unless port_part && port_part.match?(/\A\d+\z/)
+        return nil unless valid_port?(port_part)
+        return nil if port_part.include?(":")
+
+        domain = host_part
+        port = port_part
+      end
+
+      unless valid_hostname?(domain) || valid_ipv4_literal?(domain)
+        return nil
+      end
+
+      sanitized_domain = downcase ? domain.downcase : domain
+      port ? "#{sanitized_domain}:#{port}" : sanitized_domain
+    end
+
+    # Determine whether the supplied hostname conforms to RFC 1035 label
+    # requirements and includes a valid top-level domain.
+    #
+    # @param hostname [String] host component without any port information.
+    # @return [Boolean] true when the hostname is valid.
+    def valid_hostname?(hostname)
+      return false if hostname.length > 253
+
+      labels = hostname.split(".")
+      return false if labels.length < 2
+      return false unless labels.all? { |label| valid_hostname_label?(label) }
+
+      top_level = labels.last
+      top_level.match?(/[a-z]/i)
+    end
+
+    # Validate a single hostname label ensuring the first and last characters
+    # are alphanumeric and that no unsupported symbols are present.
+    #
+    # @param label [String] hostname component between dots.
+    # @return [Boolean] true when the label is valid.
+    def valid_hostname_label?(label)
+      return false if label.empty?
+      return false if label.length > 63
+
+      label.match?(/\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\z/i)
+    end
+
+    # Validate whether a candidate represents a dotted decimal IPv4 literal.
+    #
+    # @param address [String] IP address string without port information.
+    # @return [Boolean] true when the address is a valid IPv4 literal.
+    def valid_ipv4_literal?(address)
+      return false unless address.match?(/\A\d{1,3}(?:\.\d{1,3}){3}\z/)
+
+      address.split(".").all? { |octet| octet.to_i.between?(0, 255) }
+    end
+
+    # Determine whether a port string represents a valid TCP/UDP port.
+    #
+    # @param port [String] numeric port representation.
+    # @return [Boolean] true when the port falls within the acceptable range.
+    def valid_port?(port)
+      value = port.to_i
+      value.positive? && value <= 65_535
     end
 
     # Extract the host component from a potentially bracketed domain literal.

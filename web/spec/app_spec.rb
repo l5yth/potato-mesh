@@ -1190,6 +1190,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "rejects registrations with invalid domains" do
+      invalid_payload = instance_payload.merge("domain" => "mesh-instance")
+
+      warning_calls = []
+      allow_any_instance_of(Sinatra::Application).to receive(:warn_log).and_wrap_original do |method, *args, **kwargs|
+        warning_calls << [args, kwargs]
+        method.call(*args, **kwargs)
+      end
+
+      post "/api/instances", invalid_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "invalid domain")
+
+      expect(warning_calls).to include(
+        [
+          ["Instance registration rejected"],
+          hash_including(
+            context: "ingest.register",
+            domain: "mesh-instance",
+            reason: "invalid domain",
+          ),
+        ],
+      )
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT COUNT(*) FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+        expect(stored).to eq(0)
+      end
+    end
+
     it "rejects registrations with invalid signatures" do
       invalid_payload = instance_payload.merge("signature" => Base64.strict_encode64("invalid"))
 
@@ -1218,6 +1252,62 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         count = db.get_first_value("SELECT COUNT(*) FROM instances")
         expect(count).to eq(1)
+      end
+    end
+
+    it "accepts bracketed IPv6 domains" do
+      ipv6_domain = "[2001:db8::1]"
+      ipv6_attributes = instance_attributes.merge(domain: ipv6_domain)
+      ipv6_signature_payload = canonical_instance_payload(ipv6_attributes)
+      ipv6_signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, ipv6_signature_payload),
+      )
+      ipv6_payload = instance_payload.merge(
+        "domain" => ipv6_domain,
+        "signature" => ipv6_signature,
+      )
+
+      ipv6_remote_payload = JSON.generate(
+        {
+          "publicKey" => pubkey,
+          "name" => instance_attributes[:name],
+          "version" => instance_attributes[:version],
+          "domain" => ipv6_domain,
+          "lastUpdate" => last_update_time,
+        },
+        sort_keys: true,
+      )
+
+      ipv6_document = well_known_document.merge(
+        "domain" => ipv6_domain,
+        "signedPayload" => Base64.strict_encode64(ipv6_remote_payload),
+        "signature" => Base64.strict_encode64(
+          instance_key.sign(OpenSSL::Digest::SHA256.new, ipv6_remote_payload),
+        ),
+      )
+
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
+        case path
+        when "/.well-known/potato-mesh"
+          [ipv6_document, URI("https://#{host}#{path}")]
+        when "/api/nodes"
+          [remote_nodes, URI("https://#{host}#{path}")]
+        else
+          [nil, []]
+        end
+      end
+
+      post "/api/instances", ipv6_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        stored_domain = db.get_first_value(
+          "SELECT domain FROM instances WHERE id = ?",
+          [ipv6_attributes[:id]],
+        )
+        expect(stored_domain).to eq(ipv6_domain.downcase)
       end
     end
 

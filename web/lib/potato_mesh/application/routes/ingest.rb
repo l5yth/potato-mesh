@@ -84,10 +84,18 @@ module PotatoMesh
             end
 
             id = string_or_nil(payload["id"]) || string_or_nil(payload["instanceId"])
-            raw_domain = sanitize_instance_domain(payload["domain"], downcase: false)
-            # Normalise the domain for persistence while retaining the caller's
-            # original casing for signature verification fallbacks.
-            normalized_domain = sanitize_instance_domain(raw_domain)
+            raw_domain_input = payload["domain"]
+            raw_domain = sanitize_instance_domain(raw_domain_input, downcase: false)
+            normalized_domain = raw_domain && sanitize_instance_domain(raw_domain)
+            unless raw_domain && normalized_domain
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: string_or_nil(raw_domain_input),
+                reason: "invalid domain",
+              )
+              halt 400, { error: "invalid domain" }.to_json
+            end
             pubkey = sanitize_public_key_pem(payload["pubkey"])
             name = string_or_nil(payload["name"])
             version = string_or_nil(payload["version"])

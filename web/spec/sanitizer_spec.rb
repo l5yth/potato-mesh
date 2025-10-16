@@ -30,17 +30,24 @@ RSpec.describe PotatoMesh::Sanitizer do
     it "rejects invalid domains" do
       expect(described_class.sanitize_instance_domain(nil)).to be_nil
       expect(described_class.sanitize_instance_domain(" ")).to be_nil
+      expect(described_class.sanitize_instance_domain("example")).to be_nil
       expect(described_class.sanitize_instance_domain("example.org/")).to be_nil
       expect(described_class.sanitize_instance_domain("example .org")).to be_nil
+      expect(described_class.sanitize_instance_domain("mesh_instance.example")).to be_nil
+      expect(described_class.sanitize_instance_domain("example.org:70000")).to be_nil
+      expect(described_class.sanitize_instance_domain("[::1")).to be_nil
     end
 
     it "normalises valid domains" do
       expect(described_class.sanitize_instance_domain(" Example.Org. ")).to eq("example.org")
-      expect(described_class.sanitize_instance_domain("[::1]")).to eq("[::1]")
+      expect(described_class.sanitize_instance_domain("Example.Org:443")).to eq("example.org:443")
+      expect(described_class.sanitize_instance_domain("[2001:DB8::1]")).to eq("[2001:db8::1]")
+      expect(described_class.sanitize_instance_domain("127.0.0.1:8080")).to eq("127.0.0.1:8080")
     end
 
     it "preserves case when requested" do
       expect(described_class.sanitize_instance_domain("Mesh.Example", downcase: false)).to eq("Mesh.Example")
+      expect(described_class.sanitize_instance_domain("[2001:DB8::1]", downcase: false)).to eq("[2001:DB8::1]")
     end
   end
 
