@@ -538,11 +538,47 @@ module PotatoMesh
         visited
       end
 
+      # Resolve the host component of a remote URI and ensure the destination is
+      # safe for federation HTTP requests.
+      #
+      # The method performs a DNS lookup using Addrinfo to capture every
+      # available address for the supplied URI host. The resulting addresses are
+      # converted to {IPAddr} objects for consistent inspection via
+      # {restricted_ip_address?}. When all resolved addresses fall within
+      # restricted ranges, the method raises an ArgumentError so callers can
+      # abort the federation request before contacting the remote endpoint.
+      #
+      # @param uri [URI::Generic] remote endpoint candidate.
+      # @return [Array<IPAddr>] list of resolved IP addresses.
+      # @raise [ArgumentError] when +uri.host+ is blank or resolves solely to
+      #   restricted addresses.
+      def resolve_remote_ip_addresses(uri)
+        host = uri&.host
+        raise ArgumentError, "URI missing host" unless host
+
+        addrinfo_records = Addrinfo.getaddrinfo(host, nil, Socket::AF_UNSPEC, Socket::SOCK_STREAM)
+        addresses = addrinfo_records.filter_map do |addr|
+          begin
+            IPAddr.new(addr.ip_address)
+          rescue IPAddr::InvalidAddressError
+            nil
+          end
+        end
+        unique_addresses = addresses.uniq { |ip| [ip.family, ip.to_s] }
+
+        if unique_addresses.any? && unique_addresses.all? { |ip| restricted_ip_address?(ip) }
+          raise ArgumentError, "restricted domain"
+        end
+
+        unique_addresses
+      end
+
       # Build an HTTP client configured for communication with a remote instance.
       #
       # @param uri [URI::Generic] target URI describing the remote endpoint.
       # @return [Net::HTTP] HTTP client ready to execute the request.
       def build_remote_http_client(uri)
+        resolve_remote_ip_addresses(uri)
         http = Net::HTTP.new(uri.host, uri.port)
         http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
         http.read_timeout = PotatoMesh::Config.remote_instance_read_timeout

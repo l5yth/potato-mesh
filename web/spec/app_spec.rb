@@ -20,6 +20,7 @@ require "json"
 require "time"
 require "base64"
 require "uri"
+require "socket"
 
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
@@ -1252,6 +1253,45 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         count = db.get_first_value("SELECT COUNT(*) FROM instances")
         expect(count).to eq(1)
+      end
+    end
+
+    it "rejects registrations when DNS resolves to restricted addresses" do
+      restricted_addrinfo = Addrinfo.ip("127.0.0.1")
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([restricted_addrinfo])
+
+      warning_calls = []
+      allow_any_instance_of(Sinatra::Application).to receive(:warn_log).and_wrap_original do |method, *args, **kwargs|
+        warning_calls << [args, kwargs]
+        method.call(*args, **kwargs)
+      end
+
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do
+        raise "fetch_instance_json should not be called for restricted domains"
+      end
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "restricted domain")
+
+      expect(warning_calls).to include(
+        [
+          ["Instance registration rejected"],
+          hash_including(
+            context: "ingest.register",
+            domain: domain,
+            reason: "restricted domain",
+          ),
+        ],
+      )
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT COUNT(*) FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+        expect(stored).to eq(0)
       end
     end
 

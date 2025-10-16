@@ -173,6 +173,22 @@ module PotatoMesh
               halt 400, { error: "restricted domain" }.to_json
             end
 
+            begin
+              resolve_remote_ip_addresses(URI.parse("https://#{attributes[:domain]}"))
+            rescue ArgumentError => e
+              warn_log(
+                "Instance registration rejected",
+                context: "ingest.register",
+                domain: attributes[:domain],
+                reason: "restricted domain",
+                error_message: e.message,
+              )
+              halt 400, { error: "restricted domain" }.to_json
+            rescue SocketError
+              # DNS lookups that fail to resolve are handled later when the
+              # registration flow attempts to contact the remote instance.
+            end
+
             well_known, well_known_meta = fetch_instance_json(attributes[:domain], "/.well-known/potato-mesh")
             unless well_known
               details_list = Array(well_known_meta).map(&:to_s)
