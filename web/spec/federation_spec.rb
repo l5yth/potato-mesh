@@ -17,6 +17,7 @@ require "net/http"
 require "openssl"
 require "set"
 require "uri"
+require "socket"
 
 RSpec.describe PotatoMesh::App::Federation do
   subject(:federation_helpers) do
@@ -129,10 +130,12 @@ RSpec.describe PotatoMesh::App::Federation do
   describe ".build_remote_http_client" do
     let(:connect_timeout) { 5 }
     let(:read_timeout) { 12 }
+    let(:public_addrinfo) { Addrinfo.ip("203.0.113.5") }
 
     before do
       allow(PotatoMesh::Config).to receive(:remote_instance_http_timeout).and_return(connect_timeout)
       allow(PotatoMesh::Config).to receive(:remote_instance_read_timeout).and_return(read_timeout)
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([public_addrinfo])
     end
 
     it "configures SSL settings for HTTPS endpoints" do
@@ -175,6 +178,32 @@ RSpec.describe PotatoMesh::App::Federation do
 
       expect(http.cert_store).to be_nil
       expect(http.verify_callback).to be_nil
+    end
+
+    it "rejects URIs that resolve exclusively to restricted addresses" do
+      uri = URI.parse("https://loopback.mesh/api")
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip("127.0.0.1")])
+
+      expect do
+        federation_helpers.build_remote_http_client(uri)
+      end.to raise_error(ArgumentError, "restricted domain")
+    end
+
+    it "binds the HTTP client to the first unrestricted address" do
+      uri = URI.parse("https://remote.example.com/api")
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([
+        Addrinfo.ip("127.0.0.1"),
+        public_addrinfo,
+        Addrinfo.ip("10.0.0.3"),
+      ])
+
+      http = federation_helpers.build_remote_http_client(uri)
+
+      if http.respond_to?(:ipaddr)
+        expect(http.ipaddr).to eq("203.0.113.5")
+      else
+        skip "Net::HTTP#ipaddr accessor unavailable"
+      end
     end
   end
 
@@ -311,6 +340,15 @@ RSpec.describe PotatoMesh::App::Federation do
       expect do
         federation_helpers.send(:perform_instance_http_request, uri)
       end.to raise_error(PotatoMesh::App::InstanceFetchError, "Net::ReadTimeout")
+    end
+
+    it "wraps restricted address resolution failures" do
+      allow(federation_helpers).to receive(:build_remote_http_client).and_call_original
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip("127.0.0.1")])
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, "ArgumentError: restricted domain")
     end
   end
 
