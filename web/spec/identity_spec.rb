@@ -64,4 +64,59 @@ RSpec.describe PotatoMesh::App::Identity do
       allow(PotatoMesh::Config).to receive(:legacy_keyfile_candidates).and_call_original
     end
   end
+
+  describe ".refresh_well_known_document_if_stale" do
+    let(:storage_dir) { Dir.mktmpdir }
+    let(:well_known_path) do
+      File.join(storage_dir, File.basename(PotatoMesh::Config.well_known_relative_path))
+    end
+
+    before do
+      allow(PotatoMesh::Config).to receive(:well_known_storage_root).and_return(storage_dir)
+      allow(PotatoMesh::Config).to receive(:well_known_relative_path).and_return(".well-known/potato-mesh")
+      allow(PotatoMesh::Config).to receive(:well_known_refresh_interval).and_return(86_400)
+      allow(PotatoMesh::Sanitizer).to receive(:sanitized_site_name).and_return("Test Instance")
+      allow(PotatoMesh::Sanitizer).to receive(:sanitize_instance_domain).and_return("example.com")
+    end
+
+    after do
+      FileUtils.remove_entry(storage_dir)
+      allow(PotatoMesh::Config).to receive(:well_known_storage_root).and_call_original
+      allow(PotatoMesh::Config).to receive(:well_known_relative_path).and_call_original
+      allow(PotatoMesh::Config).to receive(:well_known_refresh_interval).and_call_original
+      allow(PotatoMesh::Sanitizer).to receive(:sanitized_site_name).and_call_original
+      allow(PotatoMesh::Sanitizer).to receive(:sanitize_instance_domain).and_call_original
+    end
+
+    it "writes a well-known document when none exists" do
+      PotatoMesh::Application.refresh_well_known_document_if_stale
+
+      expect(File.exist?(well_known_path)).to be(true)
+      document = JSON.parse(File.read(well_known_path))
+      expect(document.fetch("version")).to eq(PotatoMesh::Application::APP_VERSION)
+      expect(document.fetch("domain")).to eq("example.com")
+    end
+
+    it "rewrites the document when configuration values change" do
+      PotatoMesh::Application.refresh_well_known_document_if_stale
+      original_contents = File.binread(well_known_path)
+
+      stub_const("PotatoMesh::Application::APP_VERSION", "9.9.9-test")
+      PotatoMesh::Application.refresh_well_known_document_if_stale
+
+      rewritten_contents = File.binread(well_known_path)
+      expect(rewritten_contents).not_to eq(original_contents)
+      document = JSON.parse(rewritten_contents)
+      expect(document.fetch("version")).to eq("9.9.9-test")
+    end
+
+    it "does not rewrite when content is current and within the refresh interval" do
+      PotatoMesh::Application.refresh_well_known_document_if_stale
+      original_contents = File.binread(well_known_path)
+
+      PotatoMesh::Application.refresh_well_known_document_if_stale
+
+      expect(File.binread(well_known_path)).to eq(original_contents)
+    end
+  end
 end
