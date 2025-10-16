@@ -1201,6 +1201,81 @@ def test_main_retries_interface_creation(mesh_module, monkeypatch):
     assert iface.closed is True
 
 
+def test_connected_state_handles_threading_event(mesh_module):
+    mesh = mesh_module
+
+    event = mesh.threading.Event()
+    assert mesh._connected_state(event) is False
+
+    event.set()
+    assert mesh._connected_state(event) is True
+
+
+def test_main_reconnects_when_connection_event_clears(mesh_module, monkeypatch):
+    mesh = mesh_module
+
+    attempts = []
+    interfaces = []
+    current_iface = {"obj": None}
+    import threading as real_threading_module
+
+    real_event_cls = real_threading_module.Event
+
+    class DummyInterface:
+        def __init__(self):
+            self.nodes = {}
+            self.isConnected = real_event_cls()
+            self.isConnected.set()
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    def fake_create(port):
+        iface = DummyInterface()
+        attempts.append(port)
+        interfaces.append(iface)
+        current_iface["obj"] = iface
+        return iface, port
+
+    class DummyStopEvent:
+        def __init__(self):
+            self._flag = False
+            self.wait_calls = 0
+
+        def is_set(self):
+            return self._flag
+
+        def set(self):
+            self._flag = True
+
+        def wait(self, timeout):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                iface = current_iface["obj"]
+                assert iface is not None, "interface should be available"
+                iface.isConnected.clear()
+                return self._flag
+            self._flag = True
+            return True
+
+    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
+    monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
+    monkeypatch.setattr(mesh.threading, "Event", DummyStopEvent)
+    monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
+    monkeypatch.setattr(mesh, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(mesh, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh, "_RECONNECT_MAX_DELAY_SECS", 0)
+    monkeypatch.setattr(mesh, "_CLOSE_TIMEOUT_SECS", 0)
+
+    mesh.main()
+
+    assert len(attempts) == 2
+    assert len(interfaces) == 2
+    assert interfaces[0].close_calls >= 1
+    assert interfaces[1].close_calls >= 1
+
+
 def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch):
     mesh = mesh_module
 
