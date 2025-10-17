@@ -16,6 +16,21 @@ module PotatoMesh
   module App
     # Helper methods for maintaining and presenting instance records.
     module Instances
+      # Number of seconds an instance may remain idle before being removed
+      # from API responses.
+      RECENT_INSTANCE_WINDOW_SECONDS = 3 * 24 * 60 * 60
+      private_constant :RECENT_INSTANCE_WINDOW_SECONDS
+
+      # Determine the minimum acceptable last update timestamp for instances
+      # served via the public API.
+      #
+      # @param now [Integer] current UNIX timestamp, primarily provided for
+      #   test control.
+      # @return [Integer] cutoff timestamp; rows older than this are stale.
+      def instances_api_staleness_cutoff(now: Time.now.to_i)
+        now - RECENT_INSTANCE_WINDOW_SECONDS
+      end
+
       # Remove duplicate instance records grouped by their canonical domain name
       # while favouring the most recent entry.
       #
@@ -179,9 +194,25 @@ module PotatoMesh
           )
         end
 
+        cutoff = instances_api_staleness_cutoff
+
         rows.each_with_object([]) do |row, memo|
           normalized = normalize_instance_row(row)
-          memo << normalized if normalized
+          next unless normalized
+
+          last_update_time = normalized["lastUpdateTime"]
+          unless last_update_time && last_update_time >= cutoff
+            warn_log(
+              "Discarded stale instance record",
+              context: "instances.load",
+              domain: normalized["domain"],
+              last_update_time: last_update_time,
+              cutoff: cutoff,
+            )
+            next
+          end
+
+          memo << normalized
         end
       rescue SQLite3::Exception => e
         warn_log(

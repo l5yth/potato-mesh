@@ -1957,6 +1957,69 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload).not_to be_empty
     end
 
+    it "excludes records older than three days" do
+      frozen_time = Time.at(1_700_000_000)
+      allow(Time).to receive(:now).and_return(frozen_time)
+
+      cutoff = frozen_time.to_i - (3 * 24 * 60 * 60)
+      fresh_time = cutoff + 60
+      stale_time = cutoff - 60
+
+      with_db do |db|
+        insert_sql = <<~SQL
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+
+        db.execute(
+          insert_sql,
+          [
+            "fresh-instance",
+            "fresh.example",
+            remote_key.public_key.export,
+            "Fresh",
+            "3.2.1",
+            nil,
+            nil,
+            nil,
+            nil,
+            fresh_time,
+            0,
+            "sig-fresh",
+          ],
+        )
+
+        db.execute(
+          insert_sql,
+          [
+            "stale-instance",
+            "stale.example",
+            remote_key.public_key.export,
+            "Stale",
+            "3.2.1",
+            nil,
+            nil,
+            nil,
+            nil,
+            stale_time,
+            0,
+            "sig-stale",
+          ],
+        )
+      end
+
+      get "/api/instances"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      ids = payload.map { |entry| entry["id"] }
+
+      expect(ids).to include("fresh-instance")
+      expect(ids).not_to include("stale-instance")
+    end
+
     it "deduplicates records by domain keeping the newest entry" do
       newer_time = Time.now.to_i
       older_time = newer_time - 60
