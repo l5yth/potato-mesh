@@ -9,6 +9,7 @@ x-web-base: &web-base
     MAP_CENTER: ${MAP_CENTER:-38.761944,-27.090833}
     MAX_DISTANCE: ${MAX_DISTANCE:-42}
     CONTACT_LINK: ${CONTACT_LINK:-#potatomesh:dod.ngo}
+    FEDERATION: ${FEDERATION:-1}
     API_TOKEN: ${API_TOKEN}
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
     DEBUG: ${DEBUG:-0}
@@ -36,6 +37,7 @@ x-ingestor-base: &ingestor-base
     API_TOKEN: ${API_TOKEN}
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
     DEBUG: ${DEBUG:-0}
+    FEDERATION: ${FEDERATION:-1}
   volumes:
     - potatomesh_data:/app/.local/share/potato-mesh
     - potatomesh_config:/app/.config/potato-mesh
