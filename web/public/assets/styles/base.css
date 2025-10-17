@@ -574,6 +574,17 @@ button {
   color: var(--fg);
 }
 
+.icon-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+}
+
 button:hover {
   background: #f6f6f6;
 }
