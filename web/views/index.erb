@@ -66,12 +66,12 @@
     crossorigin=""
   ></script>
 
-  
-  
-  
-  
-  
-  
+
+
+
+
+
+
 </head>
   <% body_classes = [] %>
   <% body_classes << "dark" if initial_theme == "dark" %>
@@ -97,8 +97,8 @@
         <input type="text" id="filterInput" placeholder="Filter nodes" />
         <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
       </div>
-      <button id="themeToggle" type="button" aria-label="Toggle dark mode">🌙</button>
-      <button id="infoBtn" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information">ℹ️ Info</button>
+      <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle dark mode"><span aria-hidden="true">🌙</span></button>
+      <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>
     </div>
   </div>
 
@@ -106,7 +106,6 @@
     <div class="info-dialog" tabindex="-1">
       <button type="button" class="info-close" id="infoClose" aria-label="Close site information">×</button>
       <h2 id="infoTitle" class="info-title">About <%= site_name %></h2>
-      <p class="info-intro">Quick facts about this PotatoMesh instance.</p>
       <dl class="info-details">
         <dt>Channel</dt>
         <dd><%= channel %></dd>
@@ -116,8 +115,6 @@
         <dd><%= format("%.5f, %.5f", map_center_lat, map_center_lon) %></dd>
         <dt>Visible range</dt>
         <dd>Nodes within roughly <%= max_distance_km %> km of the center are shown.</dd>
-        <dt>Auto-refresh</dt>
-        <dd>Updates every <%= refresh_interval_seconds %> seconds.</dd>
         <% if contact_link && !contact_link.empty? %>
           <dt>Chat</dt>
           <% if contact_link_url %>
@@ -221,7 +218,7 @@
     </div>
   </footer>
 
-  
+
 
   <script>
     const CHAT_ENABLED = <%= private_mode ? "false" : "true" %>;
