@@ -80,7 +80,7 @@ test('instance selector populates options and respects default domain', async ()
   assert.equal(fetchCalls, 1);
   assert.equal(container.hidden, false);
   assert.equal(select.disabled, false);
-  assert.equal(placeholder.textContent, 'Browse instances…');
+  assert.equal(placeholder.textContent, 'Select region ...');
   assert.equal(instances.length, 3);
   assert.deepEqual(instances.map(entry => entry.domain), [
     'alpha.mesh',

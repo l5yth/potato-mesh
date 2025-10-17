@@ -236,7 +236,7 @@ export function createInstanceSelector({ document, window, fetchImpl = fetch, co
       }
     }
 
-    placeholderEl.textContent = 'Browse instances…';
+    placeholderEl.textContent = 'Select region ...';
     selectEl.disabled = false;
     containerEl.hidden = false;
 

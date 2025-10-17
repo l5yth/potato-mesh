@@ -541,12 +541,29 @@ th {
   background: var(--input-bg);
   color: var(--input-fg);
   font: inherit;
+  font-size: 0.875rem;
   line-height: 1.2;
 }
 
 .instance-selector select:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .controls {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .instance-selector {
+    flex: 1 1 100%;
+  }
+
+  .instance-selector select {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .filter-input input[type="text"] {
