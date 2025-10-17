@@ -125,6 +125,9 @@ module PotatoMesh
           end
 
           app.get "/api/instances" do
+            # Prevent the federation catalog from being exposed when federation is disabled.
+            halt 404 unless federation_enabled?
+
             content_type :json
             ensure_self_instance_record!
             payload = load_instances_for_api
