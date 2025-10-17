@@ -38,6 +38,14 @@ module PotatoMesh
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
 
+    # Determine whether private mode should be activated.
+    #
+    # @return [Boolean] true when PRIVATE=1 in the environment.
+    def private_mode_enabled?
+      value = ENV.fetch("PRIVATE", "0")
+      value.to_s.strip == "1"
+    end
+
     # Resolve the absolute path to the web application root directory.
     #
     # @return [String] absolute filesystem path of the web folder.

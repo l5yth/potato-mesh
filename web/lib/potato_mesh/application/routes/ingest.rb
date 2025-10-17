@@ -40,7 +40,6 @@ module PotatoMesh
           end
 
           app.post "/api/messages" do
-            halt 404 if private_mode?
             require_token!
             content_type :json
             begin

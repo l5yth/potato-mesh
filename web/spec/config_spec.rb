@@ -115,6 +115,32 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".private_mode_enabled?" do
+    it "returns false when PRIVATE is unset" do
+      within_env("PRIVATE" => nil) do
+        expect(described_class.private_mode_enabled?).to be(false)
+      end
+    end
+
+    it "returns false when PRIVATE=0" do
+      within_env("PRIVATE" => "0") do
+        expect(described_class.private_mode_enabled?).to be(false)
+      end
+    end
+
+    it "returns true when PRIVATE=1" do
+      within_env("PRIVATE" => "1") do
+        expect(described_class.private_mode_enabled?).to be(true)
+      end
+    end
+
+    it "ignores surrounding whitespace" do
+      within_env("PRIVATE" => "  1  ") do
+        expect(described_class.private_mode_enabled?).to be(true)
+      end
+    end
+  end
+
   describe ".legacy_well_known_candidates" do
     it "includes repository config directories" do
       Dir.mktmpdir do |dir|
