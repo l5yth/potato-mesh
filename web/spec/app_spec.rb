@@ -3386,6 +3386,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.status).to eq(404)
     end
 
+    it "returns 404 for HEAD /api/messages" do
+      head "/api/messages"
+      expect(last_response.status).to eq(404)
+    end
+
     it "returns 404 for POST /api/messages" do
       post "/api/messages", {}.to_json, auth_headers
       expect(last_response.status).to eq(404)

@@ -17,6 +17,10 @@ module PotatoMesh
     module Routes
       module Api
         def self.registered(app)
+          app.before "/api/messages*" do
+            halt 404 if private_mode?
+          end
+
           app.get "/version" do
             content_type :json
             last_update = latest_node_update_timestamp
@@ -67,14 +71,12 @@ module PotatoMesh
           end
 
           app.get "/api/messages" do
-            halt 404 if private_mode?
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
             query_messages(limit).to_json
           end
 
           app.get "/api/messages/:id" do
-            halt 404 if private_mode?
             content_type :json
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref

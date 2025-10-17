@@ -323,7 +323,7 @@ module PotatoMesh
       #
       # @return [Boolean] true when PRIVATE=1.
       def private_mode?
-        ENV["PRIVATE"] == "1"
+        PotatoMesh::Config.private_mode_enabled?
       end
 
       # Identify whether the Rack environment corresponds to the test suite.
