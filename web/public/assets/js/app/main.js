@@ -18,6 +18,7 @@ import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from 
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
+import { createInstanceSelector } from './instance-selector.js';
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
 import { createMessageNodeHydrator } from './message-node-hydrator.js';
@@ -40,7 +41,8 @@ import {
  *   frequency: string,
  *   mapCenter: { lat: number, lon: number },
  *   maxDistanceKm: number,
- *   tileFilters: { light: string, dark: string }
+ *   tileFilters: { light: string, dark: string },
+ *   instanceDomain?: string
  * }} config Normalized application configuration.
  * @returns {void}
  */
@@ -69,6 +71,12 @@ export function initializeApp(config) {
   const infoOverlayHome = infoOverlay
     ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
     : null;
+  const instanceSelector = createInstanceSelector({
+    document,
+    window,
+    fetchImpl: fetch,
+    config
+  });
   /**
    * Column sorter configuration for the node table.
    *
@@ -127,6 +135,8 @@ export function initializeApp(config) {
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;
+
+  void instanceSelector.loadInstances();
 
   /**
    * Close any open short-info overlays that do not contain the provided anchor.

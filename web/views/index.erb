@@ -97,6 +97,11 @@
         <input type="text" id="filterInput" placeholder="Filter nodes" />
         <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
       </div>
+      <div class="instance-selector" id="instanceSelectorContainer" hidden>
+        <select id="instanceSelect" aria-label="Open a PotatoMesh instance" disabled>
+          <option value="" id="instanceSelectPlaceholder">Loading instances…</option>
+        </select>
+      </div>
       <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle dark mode"><span aria-hidden="true">🌙</span></button>
       <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>
     </div>

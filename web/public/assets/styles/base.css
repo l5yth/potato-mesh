@@ -528,6 +528,27 @@ th {
   position: relative;
 }
 
+.instance-selector {
+  display: inline-flex;
+  align-items: center;
+}
+
+.instance-selector select {
+  min-width: 180px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg);
+  font: inherit;
+  line-height: 1.2;
+}
+
+.instance-selector select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .filter-input input[type="text"] {
   flex: 1 1 auto;
   width: 100%;

@@ -84,7 +84,8 @@ test('mergeConfig coerces numeric values and nested objects', () => {
     frequency: '915MHz',
     contactLink: 'https://example.org/chat',
     contactLinkUrl: 'https://example.org/chat',
-    maxDistanceKm: '55.5'
+    maxDistanceKm: '55.5',
+    instanceDomain: 'Remote.Mesh'
   });
 
   assert.equal(result.refreshIntervalSeconds, 30);
@@ -97,6 +98,7 @@ test('mergeConfig coerces numeric values and nested objects', () => {
   assert.equal(result.contactLink, 'https://example.org/chat');
   assert.equal(result.contactLinkUrl, 'https://example.org/chat');
   assert.equal(result.maxDistanceKm, 55.5);
+  assert.equal(result.instanceDomain, 'Remote.Mesh');
 });
 
 test('mergeConfig falls back to defaults for invalid numeric values', () => {

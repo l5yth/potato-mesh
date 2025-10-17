@@ -25,7 +25,8 @@
  *   contactLinkUrl: string | null,
  *   mapCenter: { lat: number, lon: number },
  *   maxDistanceKm: number,
- *   tileFilters: { light: string, dark: string }
+ *   tileFilters: { light: string, dark: string },
+ *   instanceDomain: string
  * }}
  */
 export const DEFAULT_CONFIG = {
@@ -41,7 +42,8 @@ export const DEFAULT_CONFIG = {
   tileFilters: {
     light: 'grayscale(1) saturate(0) brightness(0.92) contrast(1.05)',
     dark: 'grayscale(1) invert(1) brightness(0.9) contrast(1.08)'
-  }
+  },
+  instanceDomain: ''
 };
 
 /**
@@ -77,5 +79,8 @@ export function mergeConfig(raw) {
   config.maxDistanceKm = Number.isFinite(maxDistance)
     ? maxDistance
     : DEFAULT_CONFIG.maxDistanceKm;
+  config.instanceDomain = typeof raw?.instanceDomain === 'string'
+    ? raw.instanceDomain
+    : DEFAULT_CONFIG.instanceDomain;
   return config;
 }

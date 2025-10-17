@@ -104,6 +104,9 @@ class MockElement {
     this.style = {};
     this.textContent = '';
     this.classList = new MockClassList();
+    this.children = [];
+    this.parentNode = null;
+    this._eventHandlers = new Map();
   }
 
   /**
@@ -128,6 +131,93 @@ class MockElement {
    */
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  /**
+   * Append a child element to the current node.
+   *
+   * @param {MockElement} child Child element inserted into the node.
+   * @returns {MockElement} The appended child.
+   */
+  appendChild(child) {
+    if (!child) {
+      return child;
+    }
+    this.children.push(child);
+    child.parentNode = this;
+    return child;
+  }
+
+  /**
+   * Remove a child element from the current node.
+   *
+   * @param {MockElement} child Child element to remove.
+   * @returns {MockElement} The removed child.
+   */
+  removeChild(child) {
+    if (!child) {
+      return child;
+    }
+    const index = this.children.indexOf(child);
+    if (index !== -1) {
+      this.children.splice(index, 1);
+      child.parentNode = null;
+    }
+    return child;
+  }
+
+  /**
+   * Replace all child nodes with the provided elements.
+   *
+   * @param {...MockElement} nodes Replacement children in order.
+   * @returns {void}
+   */
+  replaceChildren(...nodes) {
+    for (const child of this.children) {
+      child.parentNode = null;
+    }
+    this.children = [];
+    nodes.forEach(node => {
+      if (node) {
+        this.children.push(node);
+        node.parentNode = this;
+      }
+    });
+  }
+
+  /**
+   * Register an event listener on the mock element.
+   *
+   * @param {string} type Event name.
+   * @param {Function} handler Event handler callback.
+   * @returns {void}
+   */
+  addEventListener(type, handler) {
+    this._eventHandlers.set(type, handler);
+  }
+
+  /**
+   * Trigger a previously registered event handler.
+   *
+   * @param {string|{type: string}} event Event descriptor.
+   * @returns {void}
+   */
+  dispatchEvent(event) {
+    const type = typeof event === 'string' ? event : event?.type;
+    const handler = type ? this._eventHandlers.get(type) : null;
+    if (handler) {
+      handler(typeof event === 'object' ? event : { type, target: this });
+    }
+  }
+
+  /**
+   * Remove a previously registered event handler.
+   *
+   * @param {string} type Event name to remove.
+   * @returns {void}
+   */
+  removeEventListener(type) {
+    this._eventHandlers.delete(type);
   }
 }
 
