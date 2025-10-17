@@ -71,6 +71,7 @@ SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || 
 CHANNEL=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
 FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
 FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
+PRIVATE=$(grep "^PRIVATE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 MAP_CENTER=$(grep "^MAP_CENTER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944,-27.090833")
 MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
 CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
@@ -101,6 +102,13 @@ echo "----------------------"
 echo "Federation shares instance metadata with other PotatoMesh deployments."
 echo "Set to 1 to enable discovery or 0 to keep your instance isolated."
 read_with_default "Enable federation (1=yes, 0=no)" "$FEDERATION" FEDERATION
+
+echo ""
+echo "🙈 Privacy Settings"
+echo "-------------------"
+echo "Private mode hides public mesh messages from unauthenticated visitors."
+echo "Set to 1 to hide public feeds or 0 to keep them visible."
+read_with_default "Enable private mode (1=yes, 0=no)" "$PRIVATE" PRIVATE
 
 echo ""
 echo "🛠 Docker Settings"
@@ -159,6 +167,7 @@ update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
 update_env "FEDERATION" "$FEDERATION"
+update_env "PRIVATE" "$PRIVATE"
 if [ -n "$INSTANCE_DOMAIN" ]; then
     update_env "INSTANCE_DOMAIN" "$INSTANCE_DOMAIN"
 else
@@ -198,6 +207,7 @@ echo "   Frequency: $FREQUENCY"
 echo "   Chat: ${CONTACT_LINK:-'Not set'}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
+echo "   Private Mode: ${PRIVATE}"
 echo "   Instance Domain: ${INSTANCE_DOMAIN:-'Auto-detected'}"
 if [ "${FEDERATION:-1}" = "0" ]; then
     echo "   Federation: Disabled"
