@@ -510,9 +510,27 @@ th {
 }
 
 .controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+}
+
+.map-controls,
+.site-controls {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.map-controls {
+  justify-content: flex-start;
+}
+
+.site-controls {
+  justify-content: flex-end;
 }
 
 .controls label {
@@ -521,7 +539,7 @@ th {
   gap: 6px;
 }
 
-.controls .filter-input {
+.map-controls .filter-input {
   display: inline-flex;
   align-items: center;
   flex: 1 1 260px;
@@ -551,9 +569,8 @@ th {
 }
 
 @media (max-width: 768px) {
-  .controls {
-    flex-wrap: wrap;
-    align-items: flex-start;
+  .site-controls {
+    justify-content: flex-start;
   }
 
   .instance-selector {
@@ -948,19 +965,17 @@ input[type="radio"] {
 
   .controls {
     order: 2;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    align-items: center;
-    width: 100%;
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
   }
 
-  .controls .filter-input {
+  .map-controls .filter-input {
     width: 100%;
   }
 
-  .controls button {
-    justify-self: end;
+  .site-controls {
+    justify-content: flex-start;
+    width: 100%;
   }
 
   .meta-info {

@@ -119,7 +119,7 @@ function formatDomainUrl(domain, windowRef) {
  *   document: Document,
  *   window: Window,
  *   fetchImpl?: typeof fetch,
- *   config?: { instanceDomain?: string }
+ *   config?: { instanceDomain?: string, federationEnabled?: boolean, privateMode?: boolean }
  * }} options Instance selector configuration.
  * @returns {{
  *   loadInstances: () => Promise<Array<{ domain: string, normalizedDomain: string, displayName: string }>>,
@@ -136,18 +136,35 @@ export function createInstanceSelector({ document, window, fetchImpl = fetch, co
   const placeholderEl = document?.getElementById('instanceSelectPlaceholder');
 
   const normalizedSelfDomain = normalizeDomain(config?.instanceDomain);
+  const isPrivateMode = config?.privateMode === true;
+  const isFederationEnabled = config?.federationEnabled !== false;
+  const selectorActive = isFederationEnabled && !isPrivateMode;
+
+  const disabledResponse = {
+    async loadInstances() {
+      return [];
+    },
+    __testHooks: {
+      normalizeInstancePayload,
+      formatDomainUrl: domain => formatDomainUrl(domain, window),
+      handleChange() {}
+    }
+  };
 
   if (!containerEl || !selectEl || !placeholderEl) {
-    return {
-      async loadInstances() {
-        return [];
-      },
-      __testHooks: {
-        normalizeInstancePayload,
-        formatDomainUrl: domain => formatDomainUrl(domain, window),
-        handleChange() {}
-      }
-    };
+    return disabledResponse;
+  }
+
+  if (!selectorActive) {
+    containerEl.hidden = true;
+    selectEl.disabled = true;
+    selectEl.value = '';
+    placeholderEl.textContent = 'Select region ...';
+    placeholderEl.selected = true;
+    if (typeof selectEl.replaceChildren === 'function') {
+      selectEl.replaceChildren(placeholderEl);
+    }
+    return disabledResponse;
   }
 
   /**

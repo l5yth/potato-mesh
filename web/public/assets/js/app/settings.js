@@ -26,7 +26,9 @@
  *   mapCenter: { lat: number, lon: number },
  *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string },
- *   instanceDomain: string
+ *   instanceDomain: string,
+ *   privateMode: boolean,
+ *   federationEnabled: boolean
  * }}
  */
 export const DEFAULT_CONFIG = {
@@ -43,7 +45,9 @@ export const DEFAULT_CONFIG = {
     light: 'grayscale(1) saturate(0) brightness(0.92) contrast(1.05)',
     dark: 'grayscale(1) invert(1) brightness(0.9) contrast(1.08)'
   },
-  instanceDomain: ''
+  instanceDomain: '',
+  privateMode: false,
+  federationEnabled: true
 };
 
 /**
@@ -82,5 +86,9 @@ export function mergeConfig(raw) {
   config.instanceDomain = typeof raw?.instanceDomain === 'string'
     ? raw.instanceDomain
     : DEFAULT_CONFIG.instanceDomain;
+  config.privateMode = Boolean(raw?.privateMode ?? DEFAULT_CONFIG.privateMode);
+  config.federationEnabled = Boolean(
+    raw?.federationEnabled ?? DEFAULT_CONFIG.federationEnabled
+  );
   return config;
 }

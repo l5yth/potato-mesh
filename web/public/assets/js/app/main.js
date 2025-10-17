@@ -42,7 +42,9 @@ import {
  *   mapCenter: { lat: number, lon: number },
  *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string },
- *   instanceDomain?: string
+ *   instanceDomain?: string,
+ *   privateMode: boolean,
+ *   federationEnabled: boolean
  * }} config Normalized application configuration.
  * @returns {void}
  */

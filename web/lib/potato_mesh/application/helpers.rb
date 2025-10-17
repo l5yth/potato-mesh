@@ -123,6 +123,8 @@ module PotatoMesh
           maxDistanceKm: PotatoMesh::Config.max_distance_km,
           tileFilters: PotatoMesh::Config.tile_filters,
           instanceDomain: app_constant(:INSTANCE_DOMAIN),
+          privateMode: private_mode?,
+          federationEnabled: federation_enabled?,
         }
       end
 

@@ -529,6 +529,57 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe "#frontend_app_config" do
+      around do |example|
+        original_private = ENV["PRIVATE"]
+        original_federation = ENV["FEDERATION"]
+        begin
+          example.run
+        ensure
+          if original_private
+            ENV["PRIVATE"] = original_private
+          else
+            ENV.delete("PRIVATE")
+          end
+          if original_federation
+            ENV["FEDERATION"] = original_federation
+          else
+            ENV.delete("FEDERATION")
+          end
+        end
+      end
+
+      it "exposes default private and federation flags" do
+        ENV.delete("PRIVATE")
+        ENV.delete("FEDERATION")
+
+        config = frontend_app_config
+
+        expect(config[:privateMode]).to be(false)
+        expect(config[:federationEnabled]).to be(true)
+      end
+
+      it "disables federation when private mode is enabled" do
+        ENV["PRIVATE"] = "1"
+        ENV.delete("FEDERATION")
+
+        config = frontend_app_config
+
+        expect(config[:privateMode]).to be(true)
+        expect(config[:federationEnabled]).to be(false)
+      end
+
+      it "disables federation when the flag is unset" do
+        ENV.delete("PRIVATE")
+        ENV["FEDERATION"] = "0"
+
+        config = frontend_app_config
+
+        expect(config[:privateMode]).to be(false)
+        expect(config[:federationEnabled]).to be(false)
+      end
+    end
+
     describe "string coercion helpers" do
       it "normalises strings and nil values" do
         expect(sanitized_string("  spaced  ")).to eq("spaced")

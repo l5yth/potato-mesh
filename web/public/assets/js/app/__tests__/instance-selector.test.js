@@ -100,6 +100,56 @@ test('instance selector populates options and respects default domain', async ()
   env.cleanup();
 });
 
+test('instance selector remains hidden when federation is disabled', async () => {
+  const env = createDomEnvironment();
+  const { container, select, placeholder } = setupInstanceSelectorDom(env);
+
+  const selector = createInstanceSelector({
+    document: env.document,
+    window: env.window,
+    fetchImpl: async () => {
+      throw new Error('fetch should not be called when federation is disabled');
+    },
+    config: { federationEnabled: false }
+  });
+
+  const result = await selector.loadInstances();
+
+  assert.deepEqual(result, []);
+  assert.equal(container.hidden, true);
+  assert.equal(select.disabled, true);
+  assert.equal(select.value, '');
+  assert.equal(placeholder.textContent, 'Select region ...');
+  assert.equal(placeholder.selected, true);
+  assert.equal(select.children.length, 1);
+
+  env.cleanup();
+});
+
+test('instance selector remains hidden when private mode is active', async () => {
+  const env = createDomEnvironment();
+  const { container, select, placeholder } = setupInstanceSelectorDom(env);
+
+  const selector = createInstanceSelector({
+    document: env.document,
+    window: env.window,
+    fetchImpl: async () => {
+      throw new Error('fetch should not be called when private mode is active');
+    },
+    config: { federationEnabled: true, privateMode: true }
+  });
+
+  const result = await selector.loadInstances();
+
+  assert.deepEqual(result, []);
+  assert.equal(container.hidden, true);
+  assert.equal(select.disabled, true);
+  assert.equal(placeholder.textContent, 'Select region ...');
+  assert.equal(select.children.length, 1);
+
+  env.cleanup();
+});
+
 test('instance selector ignores placeholder changes and tolerates failures', async () => {
   const env = createDomEnvironment();
   const { container, select, placeholder } = setupInstanceSelectorDom(env);
