@@ -139,7 +139,16 @@ async function buildCoverageMap(coverageFiles) {
             const relativePath = path.relative(projectRoot, coverage.path);
             coverage.path = relativePath || coverage.path;
           }
-          coverageMap.addFileCoverage(coverage);
+          try {
+            const existingCoverage = coverageMap.fileCoverageFor(coverage.path);
+            existingCoverage.merge(coverage);
+          } catch (error) {
+            if (error && typeof error.message === 'string' && error.message.includes('No file coverage')) {
+              coverageMap.addFileCoverage(coverage);
+            } else {
+              throw error;
+            }
+          }
         }
       } catch (error) {
         console.warn(`Failed to translate coverage for ${filePath}:`, error);
