@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## v0.5.2
+
+* Align theme and info controls by @l5yth in <https://github.com/l5yth/potato-mesh/pull/371>
+* Fixes POST request 403 errors on instances behind Cloudflare proxy by @varna9000 in <https://github.com/l5yth/potato-mesh/pull/368>
+* Delay initial federation announcements by @l5yth in <https://github.com/l5yth/potato-mesh/pull/366>
+* Ensure well-known document stays in sync on startup by @l5yth in <https://github.com/l5yth/potato-mesh/pull/365>
+* Guard federation DNS resolution against restricted networks by @l5yth in <https://github.com/l5yth/potato-mesh/pull/362>
+* Add federation ingestion limits and tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/364>
+* Prefer reported primary channel names by @l5yth in <https://github.com/l5yth/potato-mesh/pull/363>
+* Decouple message API node hydration by @l5yth in <https://github.com/l5yth/potato-mesh/pull/360>
+* Fix ingestor reconnection detection by @l5yth in <https://github.com/l5yth/potato-mesh/pull/361>
+* Harden instance domain validation by @l5yth in <https://github.com/l5yth/potato-mesh/pull/359>
+* Ensure INSTANCE_DOMAIN propagates to containers by @l5yth in <https://github.com/l5yth/potato-mesh/pull/358>
+* Chore: bump version to 0.5.2 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/356>
+* Gracefully retry federation announcements over HTTP by @l5yth in <https://github.com/l5yth/potato-mesh/pull/355>
+
 ## v0.5.1
 
 * Recursively ingest federated instances by @l5yth in <https://github.com/l5yth/potato-mesh/pull/353>
