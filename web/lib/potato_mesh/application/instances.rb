@@ -158,7 +158,8 @@ module PotatoMesh
       end
 
       # Fetch all instance rows ready to be served by the API while handling
-      # malformed rows gracefully.
+      # malformed rows gracefully. The dataset is restricted to records updated
+      # within the rolling window defined by PotatoMesh::Config.week_seconds.
       #
       # @return [Array<Hash>] list of cleaned instance payloads.
       def load_instances_for_api
@@ -166,22 +167,30 @@ module PotatoMesh
 
         db = open_database(readonly: true)
         db.results_as_hash = true
+        now = Time.now.to_i
+        min_last_update_time = now - PotatoMesh::Config.week_seconds
+        sql = <<~SQL
+          SELECT id, domain, pubkey, name, version, channel, frequency,
+                 latitude, longitude, last_update_time, is_private, signature
+          FROM instances
+          WHERE domain IS NOT NULL AND TRIM(domain) != ''
+            AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
+            AND last_update_time IS NOT NULL AND last_update_time >= ?
+          ORDER BY LOWER(domain)
+        SQL
+
         rows = with_busy_retry do
-          db.execute(
-            <<~SQL
-              SELECT id, domain, pubkey, name, version, channel, frequency,
-                     latitude, longitude, last_update_time, is_private, signature
-              FROM instances
-              WHERE domain IS NOT NULL AND TRIM(domain) != ''
-                AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
-              ORDER BY LOWER(domain)
-            SQL
-          )
+          db.execute(sql, min_last_update_time)
         end
 
         rows.each_with_object([]) do |row, memo|
           normalized = normalize_instance_row(row)
-          memo << normalized if normalized
+          next unless normalized
+
+          last_update_time = normalized["lastUpdateTime"]
+          next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
+
+          memo << normalized
         end
       rescue SQLite3::Exception => e
         warn_log(
