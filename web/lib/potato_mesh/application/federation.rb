@@ -250,6 +250,9 @@ module PotatoMesh
       end
 
       def start_federation_announcer!
+        # Federation broadcasts must not execute when federation support is disabled.
+        return nil unless federation_enabled?
+
         existing = settings.federation_thread
         return existing if existing&.alive?
 
@@ -277,6 +280,9 @@ module PotatoMesh
       #
       # @return [Thread, nil] the thread handling the initial announcement.
       def start_initial_federation_announcement!
+        # Skip the initial broadcast entirely when federation is disabled.
+        return nil unless federation_enabled?
+
         existing = settings.respond_to?(:initial_federation_thread) ? settings.initial_federation_thread : nil
         return existing if existing&.alive?
 

@@ -280,6 +280,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(result).to be(dummy_thread)
       expect(app.settings.federation_thread).to be(dummy_thread)
     end
+
+    context "when federation is disabled" do
+      around do |example|
+        original = ENV["FEDERATION"]
+        begin
+          ENV["FEDERATION"] = "0"
+          example.run
+        ensure
+          if original.nil?
+            ENV.delete("FEDERATION")
+          else
+            ENV["FEDERATION"] = original
+          end
+        end
+      end
+
+      it "does not start the initial announcement thread" do
+        expect(Thread).not_to receive(:new)
+
+        result = app.start_initial_federation_announcement!
+
+        expect(result).to be_nil
+        expect(app.settings.respond_to?(:initial_federation_thread) ? app.settings.initial_federation_thread : nil).to be_nil
+      end
+
+      it "does not start the recurring announcer thread" do
+        expect(Thread).not_to receive(:new)
+
+        result = app.start_federation_announcer!
+
+        expect(result).to be_nil
+        expect(app.settings.federation_thread).to be_nil
+      end
+    end
   end
 
   before do
@@ -2021,6 +2055,28 @@ RSpec.describe "Potato Mesh Sinatra app" do
         ).flatten
 
         expect(domains).to eq(["duplicate.example"])
+      end
+    end
+
+    context "when federation is disabled" do
+      around do |example|
+        original = ENV["FEDERATION"]
+        begin
+          ENV["FEDERATION"] = "0"
+          example.run
+        ensure
+          if original.nil?
+            ENV.delete("FEDERATION")
+          else
+            ENV["FEDERATION"] = original
+          end
+        end
+      end
+
+      it "returns 404" do
+        get "/api/instances"
+
+        expect(last_response.status).to eq(404)
       end
     end
   end
