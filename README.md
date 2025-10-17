@@ -78,6 +78,7 @@ The web app can be configured with environment variables (defaults shown):
 * `CONTACT_LINK` - chat link or Matrix alias for footer and overlay (default: `#potatomesh:dod.ngo`)
 * `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
 * `INSTANCE_DOMAIN` - public hostname (optionally with port) used for metadata, federation, and API links (default: auto-detected)
+* `FEDERATION` - set to `1` to announce your instance and crawl peers, or `0` to disable federation (default: `1`)
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled
@@ -100,6 +101,17 @@ well-known document is staged in
 `$XDG_CONFIG_HOME/potato-mesh/well-known/potato-mesh`.
 
 The database can be found in `$XDG_DATA_HOME/potato-mesh`.
+
+### Federation
+
+PotatoMesh instances can optionally federate by publishing signed metadata and
+discovering peers. Federation is enabled by default and controlled with the
+`FEDERATION` environment variable. Set `FEDERATION=1` (default) to announce your
+instance, respond to remote crawlers, and crawl the wider network. Set
+`FEDERATION=0` to keep your deployment isolated—federation requests will be
+ignored and the ingestor will skip discovery tasks. Private mode still takes
+precedence; when `PRIVATE=1`, federation features remain disabled regardless of
+the `FEDERATION` value.
 
 ### API
 

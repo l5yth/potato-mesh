@@ -70,6 +70,7 @@ update_env() {
 SITE_NAME=$(grep "^SITE_NAME=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "PotatoMesh Demo")
 CHANNEL=$(grep "^CHANNEL=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#LongFast")
 FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "915MHz")
+FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
 MAP_CENTER=$(grep "^MAP_CENTER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944,-27.090833")
 MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
 CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
@@ -93,6 +94,13 @@ echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
 read_with_default "Chat link or Matrix room (optional)" "$CONTACT_LINK" CONTACT_LINK
+
+echo ""
+echo "🤝 Federation Settings"
+echo "----------------------"
+echo "Federation shares instance metadata with other PotatoMesh deployments."
+echo "Set to 1 to enable discovery or 0 to keep your instance isolated."
+read_with_default "Enable federation (1=yes, 0=no)" "$FEDERATION" FEDERATION
 
 echo ""
 echo "🛠 Docker Settings"
@@ -150,6 +158,7 @@ update_env "MAX_DISTANCE" "$MAX_DISTANCE"
 update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
+update_env "FEDERATION" "$FEDERATION"
 if [ -n "$INSTANCE_DOMAIN" ]; then
     update_env "INSTANCE_DOMAIN" "$INSTANCE_DOMAIN"
 else
@@ -190,6 +199,11 @@ echo "   Chat: ${CONTACT_LINK:-'Not set'}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo "   Instance Domain: ${INSTANCE_DOMAIN:-'Auto-detected'}"
+if [ "${FEDERATION:-1}" = "0" ]; then
+    echo "   Federation: Disabled"
+else
+    echo "   Federation: Enabled"
+fi
 echo ""
 echo "🚀 You can now start PotatoMesh with:"
 echo "   docker-compose up -d"
