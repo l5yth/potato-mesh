@@ -749,22 +749,22 @@ module PotatoMesh
 
             key = name.to_s
             value = if data.key?(key)
-                      data[key]
-                    else
-                      sym_key = key.to_sym
-                      data.key?(sym_key) ? data[sym_key] : nil
-                    end
+                data[key]
+              else
+                sym_key = key.to_sym
+                data.key?(sym_key) ? data[sym_key] : nil
+              end
 
             next if value.nil?
 
             coerced = case type
-                      when :float
-                        coerce_float(value)
-                      when :integer
-                        coerce_integer(value)
-                      else
-                        value
-                      end
+              when :float
+                coerce_float(value)
+              when :integer
+                coerce_integer(value)
+              else
+                value
+              end
 
             return coerced unless coerced.nil?
           end
