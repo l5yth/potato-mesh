@@ -62,6 +62,7 @@ module PotatoMesh
                           contact_link_url: sanitized_contact_link_url,
                           version: app_constant(:APP_VERSION),
                           private_mode: private_mode?,
+                          federation_enabled: federation_enabled?,
                           refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,
                           app_config_json: JSON.generate(config),
                           initial_theme: theme,

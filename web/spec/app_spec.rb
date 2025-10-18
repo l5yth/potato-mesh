@@ -1062,6 +1062,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('class="footer-content"')
     end
 
+    it "renders the federation instance selector when federation is enabled" do
+      get "/"
+
+      expect(last_response.body).to include('id="instanceSelect"')
+      expect(last_response.body).to include("Select region ...")
+    end
+
+    it "omits the instance selector when private mode is active" do
+      allow(PotatoMesh::Config).to receive(:private_mode_enabled?).and_return(true)
+
+      get "/"
+
+      expect(last_response.body).not_to include('id="instanceSelect"')
+    end
+
+    it "omits the instance selector when federation is disabled" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(false)
+
+      get "/"
+
+      expect(last_response.body).not_to include('id="instanceSelect"')
+    end
+
     it "includes SEO metadata from configuration" do
       allow(PotatoMesh::Config).to receive(:site_name).and_return("Spec Mesh Title")
       allow(PotatoMesh::Config).to receive(:channel).and_return("#SpecChannel")

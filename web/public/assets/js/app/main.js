@@ -27,6 +27,7 @@ import {
   formatChatChannelTag,
   formatNodeAnnouncementPrefix
 } from './chat-format.js';
+import { initializeInstanceSelector } from './instance-selector.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -63,6 +64,7 @@ export function initializeApp(config) {
   const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
   const chatEl = document.getElementById('chat');
   const refreshInfo = document.getElementById('refreshInfo');
+  const instanceSelect = document.getElementById('instanceSelect');
   const baseTitle = document.title;
   const nodesTable = document.getElementById('nodes');
   const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
@@ -123,7 +125,18 @@ export function initializeApp(config) {
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
+  const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
   refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+
+  if (instanceSelectorEnabled && instanceSelect) {
+    void initializeInstanceSelector({
+      selectElement: instanceSelect,
+      instanceDomain: config.instanceDomain,
+      defaultLabel: 'Select region ...',
+    }).catch(error => {
+      console.warn('Instance selector initialisation failed', error);
+    });
+  }
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;

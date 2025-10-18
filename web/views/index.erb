@@ -76,10 +76,20 @@
   <% body_classes = [] %>
   <% body_classes << "dark" if initial_theme == "dark" %>
 <body class="<%= body_classes.join(" ") %>" data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>" data-theme="<%= initial_theme %>">
-  <h1 class="site-title">
-    <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
-    <span class="site-title-text"><%= site_name %></span>
-  </h1>
+  <div class="site-header">
+    <h1 class="site-title">
+      <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
+      <span class="site-title-text"><%= site_name %></span>
+    </h1>
+    <% if !private_mode && federation_enabled %>
+      <div class="instance-selector">
+        <label class="visually-hidden" for="instanceSelect">Select a region</label>
+        <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
+          <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
+        </select>
+      </div>
+    <% end %>
+  </div>
   <div class="row meta">
     <div class="meta-info">
       <div class="refresh-row">
