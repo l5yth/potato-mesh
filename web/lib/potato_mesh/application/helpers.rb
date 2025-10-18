@@ -337,7 +337,7 @@ module PotatoMesh
       #
       # @return [Boolean] true when federation configuration allows it.
       def federation_enabled?
-        ENV.fetch("FEDERATION", "1") != "0" && !private_mode?
+        PotatoMesh::Config.federation_enabled?
       end
 
       # Determine whether federation announcements should run asynchronously.
