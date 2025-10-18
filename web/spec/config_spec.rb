@@ -190,14 +190,22 @@ RSpec.describe PotatoMesh::Config do
   end
 
   describe ".remote_instance_http_timeout" do
-    it "returns the baked-in connect timeout" do
-      expect(described_class.remote_instance_http_timeout).to eq(
-        PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT,
-      )
+    it "returns the baked-in connect timeout when unset" do
+      within_env("REMOTE_INSTANCE_CONNECT_TIMEOUT" => nil) do
+        expect(described_class.remote_instance_http_timeout).to eq(
+          PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT,
+        )
+      end
     end
 
-    it "ignores environment overrides" do
+    it "accepts positive environment overrides" do
       within_env("REMOTE_INSTANCE_CONNECT_TIMEOUT" => "27") do
+        expect(described_class.remote_instance_http_timeout).to eq(27)
+      end
+    end
+
+    it "rejects non-positive overrides" do
+      within_env("REMOTE_INSTANCE_CONNECT_TIMEOUT" => "0") do
         expect(described_class.remote_instance_http_timeout).to eq(
           PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT,
         )
@@ -206,14 +214,22 @@ RSpec.describe PotatoMesh::Config do
   end
 
   describe ".remote_instance_read_timeout" do
-    it "returns the baked-in read timeout" do
-      expect(described_class.remote_instance_read_timeout).to eq(
-        PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT,
-      )
+    it "returns the baked-in read timeout when unset" do
+      within_env("REMOTE_INSTANCE_READ_TIMEOUT" => nil) do
+        expect(described_class.remote_instance_read_timeout).to eq(
+          PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT,
+        )
+      end
     end
 
-    it "ignores environment overrides" do
+    it "accepts positive overrides" do
       within_env("REMOTE_INSTANCE_READ_TIMEOUT" => "20") do
+        expect(described_class.remote_instance_read_timeout).to eq(20)
+      end
+    end
+
+    it "rejects non-positive overrides" do
+      within_env("REMOTE_INSTANCE_READ_TIMEOUT" => "-5") do
         expect(described_class.remote_instance_read_timeout).to eq(
           PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT,
         )

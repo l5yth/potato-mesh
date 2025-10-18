@@ -32,8 +32,8 @@ module PotatoMesh
     DEFAULT_FREQUENCY = "915MHz"
     DEFAULT_CONTACT_LINK = "#potatomesh:dod.ngo"
     DEFAULT_MAX_DISTANCE_KM = 42.0
-    DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 5
-    DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 12
+    DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 15
+    DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 60
     DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE = 64
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
@@ -298,16 +298,28 @@ module PotatoMesh
 
     # Connection timeout used when establishing federation HTTP sockets.
     #
+    # The timeout can be customised with the REMOTE_INSTANCE_CONNECT_TIMEOUT
+    # environment variable to accommodate slower or distant federation peers.
+    #
     # @return [Integer] connect timeout in seconds.
     def remote_instance_http_timeout
-      DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT
+      fetch_positive_integer(
+        "REMOTE_INSTANCE_CONNECT_TIMEOUT",
+        DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT,
+      )
     end
 
     # Read timeout used when streaming federation HTTP responses.
     #
+    # The timeout can be customised with the REMOTE_INSTANCE_READ_TIMEOUT
+    # environment variable to accommodate slower or distant federation peers.
+    #
     # @return [Integer] read timeout in seconds.
     def remote_instance_read_timeout
-      DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT
+      fetch_positive_integer(
+        "REMOTE_INSTANCE_READ_TIMEOUT",
+        DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT,
+      )
     end
 
     # Limit the number of remote instances processed from a single response.
