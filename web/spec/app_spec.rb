@@ -3323,30 +3323,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expected = expected_node_row(node)
         actual_row = actual_by_id.fetch(node["node_id"])
 
-        expect(actual_row["short_name"]).to eq(expected["short_name"])
-        expect(actual_row["long_name"]).to eq(expected["long_name"])
-        expect(actual_row["hw_model"]).to eq(expected["hw_model"])
-        expect(actual_row["role"]).to eq(expected["role"])
-        expect_same_value(actual_row["snr"], expected["snr"])
-        expect_same_value(actual_row["battery_level"], expected["battery_level"])
-        expect_same_value(actual_row["voltage"], expected["voltage"])
-        expect(actual_row["last_heard"]).to eq(expected["last_heard"])
-        expect(actual_row["first_heard"]).to eq(expected["first_heard"])
-        expect_same_value(actual_row["uptime_seconds"], expected["uptime_seconds"])
-        expect_same_value(actual_row["channel_utilization"], expected["channel_utilization"])
-        expect_same_value(actual_row["air_util_tx"], expected["air_util_tx"])
-        expect_same_value(actual_row["position_time"], expected["position_time"])
-        expect(actual_row["location_source"]).to eq(expected["location_source"])
-        expect_same_value(actual_row["precision_bits"], expected["precision_bits"])
-        expect_same_value(actual_row["latitude"], expected["latitude"])
-        expect_same_value(actual_row["longitude"], expected["longitude"])
-        expect_same_value(actual_row["altitude"], expected["altitude"])
+        expected.each do |key, value|
+          if value.nil?
+            expect(actual_row).not_to have_key(key), "expected #{key} to be omitted"
+          else
+            expect_same_value(actual_row[key], value)
+          end
+        end
 
         if expected["last_heard"]
           expected_last_seen_iso = Time.at(expected["last_heard"]).utc.iso8601
           expect(actual_row["last_seen_iso"]).to eq(expected_last_seen_iso)
         else
-          expect(actual_row["last_seen_iso"]).to be_nil
+          expect(actual_row).not_to have_key("last_seen_iso")
         end
 
         if node["position_time"]
@@ -3390,6 +3379,64 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
       expect(payload["node_id"]).to eq("!fresh-node")
+    end
+
+    it "omits blank values from node responses" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, battery_level, voltage, last_heard, first_heard, uptime_seconds, channel_utilization, air_util_tx, position_time, location_source, precision_bits, latitude, longitude, altitude) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [
+            "!blank",
+            " ",
+            nil,
+            "",
+            nil,
+            nil,
+            nil,
+            nil,
+            now,
+            now,
+            nil,
+            nil,
+            nil,
+            nil,
+            " ",
+            nil,
+            nil,
+            nil,
+            nil,
+          ],
+        )
+      end
+
+      get "/api/nodes"
+
+      expect(last_response).to be_ok
+      nodes = JSON.parse(last_response.body)
+      expect(nodes.length).to eq(1)
+      entry = nodes.first
+      expect(entry["node_id"]).to eq("!blank")
+      %w[short_name long_name hw_model snr battery_level voltage uptime_seconds channel_utilization air_util_tx position_time location_source precision_bits latitude longitude altitude].each do |attribute|
+        expect(entry).not_to have_key(attribute), "expected #{attribute} to be omitted"
+      end
+
+      expect(entry["role"]).to eq("CLIENT")
+      expect(entry["last_heard"]).to eq(now)
+      expect(entry["first_heard"]).to eq(now)
+      expect(entry["last_seen_iso"]).to eq(Time.at(now).utc.iso8601)
+      expect(entry).not_to have_key("pos_time_iso")
+
+      get "/api/nodes/!blank"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload["node_id"]).to eq("!blank")
+      expect(payload).not_to have_key("short_name")
+      expect(payload).not_to have_key("hw_model")
     end
   end
 
@@ -3680,6 +3727,55 @@ RSpec.describe "Potato Mesh Sinatra app" do
       filtered = JSON.parse(last_response.body)
       expect(filtered.map { |row| row["id"] }).to eq([2])
     end
+
+    it "omits blank values from position responses" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude, altitude, location_source, precision_bits, sats_in_view, pdop, payload_b64) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [
+            7,
+            "!pos-blank",
+            nil,
+            now,
+            " ",
+            nil,
+            nil,
+            nil,
+            nil,
+            " ",
+            nil,
+            nil,
+            nil,
+            "",
+          ],
+        )
+      end
+
+      get "/api/positions"
+
+      expect(last_response).to be_ok
+      rows = JSON.parse(last_response.body)
+      expect(rows.length).to eq(1)
+      entry = rows.first
+      expect(entry["node_id"]).to eq("!pos-blank")
+      expect(entry["rx_time"]).to eq(now)
+      expect(entry["rx_iso"]).to eq(Time.at(now).utc.iso8601)
+      %w[position_time latitude longitude altitude location_source precision_bits sats_in_view pdop payload_b64].each do |attribute|
+        expect(entry).not_to have_key(attribute), "expected #{attribute} to be omitted"
+      end
+
+      get "/api/positions/!pos-blank"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.length).to eq(1)
+      expect(filtered.first).not_to have_key("payload_b64")
+      expect(filtered.first).not_to have_key("location_source")
+    end
   end
 
   describe "GET /api/neighbors" do
@@ -3728,6 +3824,45 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.length).to eq(1)
       expect(filtered.first["neighbor_id"]).to eq("!neighbor-new")
       expect(filtered.first["rx_time"]).to eq(fresh_rx)
+    end
+
+    it "omits blank values from neighbor responses" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!origin", "orig", "Origin", "TBEAM", "CLIENT", 0.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!neighbor", "neig", "Neighbor", "TBEAM", "CLIENT", 0.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
+          ["!origin", "!neighbor", nil, now],
+        )
+      end
+
+      get "/api/neighbors"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.length).to eq(1)
+      entry = payload.first
+      expect(entry["node_id"]).to eq("!origin")
+      expect(entry["neighbor_id"]).to eq("!neighbor")
+      expect(entry["rx_time"]).to eq(now)
+      expect(entry).not_to have_key("snr")
+
+      get "/api/neighbors/!origin"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.length).to eq(1)
+      expect(filtered.first).not_to have_key("snr")
     end
   end
 
@@ -3818,6 +3953,61 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
       expect(filtered.map { |row| row["id"] }).to eq([2])
+    end
+
+    it "omits blank values from telemetry responses" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, node_num, rx_time, rx_iso, telemetry_time, channel, portnum, hop_limit, snr, rssi, bitfield, payload_b64, battery_level, voltage, channel_utilization, air_util_tx, uptime_seconds, temperature, relative_humidity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [
+            77,
+            "!tele-blank",
+            nil,
+            now,
+            " ",
+            nil,
+            nil,
+            "",
+            nil,
+            nil,
+            nil,
+            nil,
+            "",
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+          ],
+        )
+      end
+
+      get "/api/telemetry"
+
+      expect(last_response).to be_ok
+      rows = JSON.parse(last_response.body)
+      expect(rows.length).to eq(1)
+      entry = rows.first
+      expect(entry["node_id"]).to eq("!tele-blank")
+      expect(entry["rx_time"]).to eq(now)
+      expect(entry["rx_iso"]).to eq(Time.at(now).utc.iso8601)
+      %w[telemetry_time channel portnum hop_limit snr rssi bitfield payload_b64 battery_level voltage channel_utilization air_util_tx uptime_seconds temperature relative_humidity].each do |attribute|
+        expect(entry).not_to have_key(attribute), "expected #{attribute} to be omitted"
+      end
+
+      get "/api/telemetry/!tele-blank"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.length).to eq(1)
+      expect(filtered.first).not_to have_key("battery_level")
+      expect(filtered.first).not_to have_key("portnum")
     end
   end
 end
