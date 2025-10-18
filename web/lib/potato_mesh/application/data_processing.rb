@@ -738,10 +738,7 @@ module PotatoMesh
       # @param type [Symbol] coercion strategy, ``:float`` or ``:integer``.
       # @return [Numeric, nil] coerced metric value or nil when no candidates exist.
       def resolve_numeric_metric(key_map, sources, type)
-        value = nil
-
         key_map.each do |source, keys|
-          break unless value.nil?
           next if keys.nil? || keys.empty?
 
           data = sources[source]
@@ -751,29 +748,29 @@ module PotatoMesh
             next if name.nil?
 
             key = name.to_s
-            if data.key?(key)
-              value = data[key]
-              break
-            end
+            value = if data.key?(key)
+                      data[key]
+                    else
+                      sym_key = key.to_sym
+                      data.key?(sym_key) ? data[sym_key] : nil
+                    end
 
-            sym_key = key.to_sym
-            if data.key?(sym_key)
-              value = data[sym_key]
-              break
-            end
+            next if value.nil?
+
+            coerced = case type
+                      when :float
+                        coerce_float(value)
+                      when :integer
+                        coerce_integer(value)
+                      else
+                        value
+                      end
+
+            return coerced unless coerced.nil?
           end
         end
 
-        return nil if value.nil?
-
-        case type
-        when :float
-          coerce_float(value)
-        when :integer
-          coerce_integer(value)
-        else
-          value
-        end
+        nil
       end
 
       private :resolve_numeric_metric
