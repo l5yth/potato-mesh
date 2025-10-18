@@ -89,13 +89,18 @@ export async function initializeInstanceSelector(options) {
   const doc = documentObject || windowObject?.document || null;
 
   if (selectElement.options.length === 0) {
-    if (doc && typeof doc.createElement === 'function') {
-      const placeholderOption = doc.createElement('option');
+    const optionFactory =
+      (doc && typeof doc.createElement === 'function')
+        ? doc.createElement.bind(doc)
+        : (typeof selectElement.ownerDocument?.createElement === 'function'
+            ? selectElement.ownerDocument.createElement.bind(selectElement.ownerDocument)
+            : null);
+
+    if (optionFactory) {
+      const placeholderOption = optionFactory('option');
       placeholderOption.value = '';
       placeholderOption.textContent = defaultLabel;
       selectElement.appendChild(placeholderOption);
-    } else {
-      selectElement.insertAdjacentHTML?.('beforeend', `<option value="">${defaultLabel}</option>`);
     }
   } else if (selectElement.options[0]) {
     selectElement.options[0].textContent = defaultLabel;
