@@ -17,6 +17,33 @@ module PotatoMesh
     module Queries
       MAX_QUERY_LIMIT = 1000
 
+      # Remove nil or empty values from an API response hash to reduce payload size.
+      # Integer keys emitted by SQLite are ignored because the JSON representation
+      # only exposes symbolic keys. Strings containing only whitespace are treated
+      # as empty to mirror sanitisation elsewhere in the application.
+      #
+      # @param row [Hash] raw database row to compact.
+      # @return [Hash] cleaned hash without blank values.
+      def compact_api_row(row)
+        return {} unless row.is_a?(Hash)
+
+        row.each_with_object({}) do |(key, value), acc|
+          next if key.is_a?(Integer)
+          next if value.nil?
+
+          if value.is_a?(String)
+            trimmed = value.strip
+            next if trimmed.empty?
+            acc[key] = value
+            next
+          end
+
+          next if value.respond_to?(:empty?) && value.empty?
+
+          acc[key] = value
+        end
+      end
+
       # Normalise a caller-provided limit to a sane, positive integer.
       #
       # @param limit [Object] value coerced to an integer.
@@ -179,7 +206,7 @@ module PotatoMesh
           pb = r["precision_bits"]
           r["precision_bits"] = pb.to_i if pb
         end
-        rows
+        rows.map { |row| compact_api_row(row) }
       ensure
         db&.close
       end
@@ -301,7 +328,7 @@ module PotatoMesh
           r["pdop"] = coerce_float(r["pdop"])
           r["snr"] = coerce_float(r["snr"])
         end
-        rows
+        rows.map { |row| compact_api_row(row) }
       ensure
         db&.close
       end
@@ -341,7 +368,7 @@ module PotatoMesh
           r["rx_iso"] = Time.at(rx_time).utc.iso8601 if rx_time
           r["snr"] = coerce_float(r["snr"])
         end
-        rows
+        rows.map { |row| compact_api_row(row) }
       ensure
         db&.close
       end
@@ -419,7 +446,7 @@ module PotatoMesh
           r["soil_moisture"] = coerce_integer(r["soil_moisture"])
           r["soil_temperature"] = coerce_float(r["soil_temperature"])
         end
-        rows
+        rows.map { |row| compact_api_row(row) }
       ensure
         db&.close
       end
