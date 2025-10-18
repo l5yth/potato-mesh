@@ -128,10 +128,17 @@ module PotatoMesh
 
         db = open_database(readonly: true)
         db.results_as_hash = false
-        rows = with_busy_retry {
-          db.execute("SELECT domain FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != ''")
-        }
-        rows.flatten.compact.each do |raw_domain|
+        cutoff = Time.now.to_i - PotatoMesh::Config.week_seconds
+        rows = with_busy_retry do
+          db.execute(
+            "SELECT domain, last_update_time FROM instances WHERE domain IS NOT NULL AND TRIM(domain) != ''",
+          )
+        end
+        rows.each do |row|
+          raw_domain = row[0]
+          last_update_time = coerce_integer(row[1])
+          next unless last_update_time && last_update_time >= cutoff
+
           sanitized = sanitize_instance_domain(raw_domain)&.downcase
           next unless sanitized
           next if normalized_self && sanitized == normalized_self
@@ -162,8 +169,7 @@ module PotatoMesh
           begin
             http = build_remote_http_client(uri)
             response = http.start do |connection|
-              request = Net::HTTP::Post.new(uri)
-              request["Content-Type"] = "application/json"
+              request = build_federation_http_request(Net::HTTP::Post, uri)
               request.body = payload_json
               connection.request(request)
             end
@@ -349,7 +355,8 @@ module PotatoMesh
       def perform_instance_http_request(uri)
         http = build_remote_http_client(uri)
         http.start do |connection|
-          response = connection.request(Net::HTTP::Get.new(uri))
+          request = build_federation_http_request(Net::HTTP::Get, uri)
+          response = connection.request(request)
           case response
           when Net::HTTPSuccess
             response.body
@@ -359,6 +366,32 @@ module PotatoMesh
         end
       rescue StandardError => e
         raise_instance_fetch_error(e)
+      end
+
+      # Build an HTTP request decorated with the headers required for federation peers.
+      #
+      # @param request_class [Class<Net::HTTPRequest>] HTTP request class such as {Net::HTTP::Get}.
+      # @param uri [URI::Generic] target URI describing the remote endpoint.
+      # @return [Net::HTTPRequest] configured HTTP request including standard headers.
+      def build_federation_http_request(request_class, uri)
+        request = request_class.new(uri)
+        request["User-Agent"] = federation_user_agent_header
+        request["Accept"] = "application/json"
+        request["Content-Type"] = "application/json" if request.request_body_permitted?
+        request
+      end
+
+      # Compose the User-Agent string used when communicating with federation peers.
+      #
+      # @return [String] descriptive identifier for PotatoMesh federation requests.
+      def federation_user_agent_header
+        version = app_constant(:APP_VERSION).to_s
+        version = "unknown" if version.empty?
+        sanitized_domain = sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN), downcase: true)
+        base = "PotatoMesh/#{version}"
+        return base unless sanitized_domain && !sanitized_domain.empty?
+
+        "#{base} (+https://#{sanitized_domain})"
       end
 
       # Build a human readable error message for a failed instance request.

@@ -892,6 +892,34 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(targets).to eq(["potatomesh.net"])
     end
+
+    it "ignores remote instances that have not updated within a week" do
+      with_db do |db|
+        db.execute("DELETE FROM instances")
+        stale_time = (Time.now.to_i - PotatoMesh::Config.week_seconds - 60)
+        db.execute(
+          "INSERT INTO instances (id, domain, pubkey, name, version, channel, frequency, latitude, longitude, last_update_time, is_private, signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            "stale-id",
+            "stale.mesh",
+            "pubkey",
+            "Stale",
+            "1.0.0",
+            nil,
+            nil,
+            nil,
+            nil,
+            stale_time,
+            0,
+            "signature",
+          ],
+        )
+      end
+
+      targets = application_class.federation_target_domains("self.mesh")
+
+      expect(targets).to eq(["potatomesh.net"])
+    end
   end
 
   describe ".latest_node_update_timestamp" do

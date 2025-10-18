@@ -298,6 +298,38 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
+  describe ".federation_user_agent_header" do
+    it "combines the version and sanitized domain" do
+      allow(federation_helpers).to receive(:app_constant).and_call_original
+      allow(federation_helpers).to receive(:app_constant).with(:APP_VERSION).and_return("9.9.9")
+      allow(federation_helpers).to receive(:app_constant).with(:INSTANCE_DOMAIN).and_return("Example.Mesh")
+
+      header = federation_helpers.federation_user_agent_header
+
+      expect(header).to eq("PotatoMesh/9.9.9 (+https://example.mesh)")
+    end
+
+    it "falls back to the product name when the domain is unavailable" do
+      allow(federation_helpers).to receive(:app_constant).and_call_original
+      allow(federation_helpers).to receive(:app_constant).with(:APP_VERSION).and_return("1.2.3")
+      allow(federation_helpers).to receive(:app_constant).with(:INSTANCE_DOMAIN).and_return(nil)
+
+      header = federation_helpers.federation_user_agent_header
+
+      expect(header).to eq("PotatoMesh/1.2.3")
+    end
+
+    it "uses an explicit unknown marker when the version is blank" do
+      allow(federation_helpers).to receive(:app_constant).and_call_original
+      allow(federation_helpers).to receive(:app_constant).with(:APP_VERSION).and_return("")
+      allow(federation_helpers).to receive(:app_constant).with(:INSTANCE_DOMAIN).and_return("Example.Mesh")
+
+      header = federation_helpers.federation_user_agent_header
+
+      expect(header).to eq("PotatoMesh/unknown (+https://example.mesh)")
+    end
+  end
+
   describe ".perform_instance_http_request" do
     let(:uri) { URI.parse("https://remote.example.com/api") }
     let(:http_client) { instance_double(Net::HTTP) }
@@ -350,6 +382,30 @@ RSpec.describe PotatoMesh::App::Federation do
         federation_helpers.send(:perform_instance_http_request, uri)
       end.to raise_error(PotatoMesh::App::InstanceFetchError, "ArgumentError: restricted domain")
     end
+
+    it "applies federation headers to instance fetch requests" do
+      connection = instance_double("Net::HTTPConnection")
+      success_response = Net::HTTPOK.new("1.1", "200", "OK")
+      allow(success_response).to receive(:body).and_return("{}")
+      allow(success_response).to receive(:code).and_return("200")
+
+      captured_request = nil
+      allow(http_client).to receive(:start) do |&block|
+        block.call(connection)
+      end
+      allow(connection).to receive(:request) do |request|
+        captured_request = request
+        success_response
+      end
+
+      result = federation_helpers.send(:perform_instance_http_request, uri)
+
+      expect(result).to eq("{}")
+      expect(captured_request).not_to be_nil
+      expect(captured_request["Accept"]).to eq("application/json")
+      expect(captured_request["User-Agent"]).to eq(federation_helpers.send(:federation_user_agent_header))
+      expect(captured_request["Content-Type"]).to be_nil
+    end
   end
 
   describe ".announce_instance_to_domain" do
@@ -398,6 +454,26 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(
         federation_helpers.warn_messages.count { |message| message.include?("Federation announcement raised exception") },
       ).to eq(2)
+    end
+
+    it "applies federation headers to announcement requests" do
+      https_client = instance_double(Net::HTTP)
+      allow(federation_helpers).to receive(:build_remote_http_client).with(https_uri).and_return(https_client)
+
+      captured_request = nil
+      allow(https_client).to receive(:start).and_yield(http_connection).and_return(success_response)
+      allow(http_connection).to receive(:request) do |request|
+        captured_request = request
+        success_response
+      end
+
+      result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
+
+      expect(result).to be(true)
+      expect(captured_request).not_to be_nil
+      expect(captured_request["Content-Type"]).to eq("application/json")
+      expect(captured_request["Accept"]).to eq("application/json")
+      expect(captured_request["User-Agent"]).to eq(federation_helpers.send(:federation_user_agent_header))
     end
   end
 end
