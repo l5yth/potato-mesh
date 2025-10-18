@@ -46,6 +46,20 @@ module PotatoMesh
       value.to_s.strip == "1"
     end
 
+    # Determine whether federation features are permitted for the instance.
+    #
+    # Federation is disabled when ``PRIVATE=1`` regardless of the
+    # ``FEDERATION`` environment variable to ensure a private deployment does
+    # not announce itself or crawl peers.
+    #
+    # @return [Boolean] true when federation should remain active.
+    def federation_enabled?
+      return false if private_mode_enabled?
+
+      value = ENV.fetch("FEDERATION", "1")
+      value.to_s.strip != "0"
+    end
+
     # Resolve the absolute path to the web application root directory.
     #
     # @return [String] absolute filesystem path of the web folder.

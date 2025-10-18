@@ -141,6 +141,32 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".federation_enabled?" do
+    it "returns true when FEDERATION is unset" do
+      within_env("FEDERATION" => nil, "PRIVATE" => "0") do
+        expect(described_class.federation_enabled?).to be(true)
+      end
+    end
+
+    it "returns false when FEDERATION=0" do
+      within_env("FEDERATION" => "0", "PRIVATE" => "0") do
+        expect(described_class.federation_enabled?).to be(false)
+      end
+    end
+
+    it "returns false when PRIVATE=1" do
+      within_env("FEDERATION" => "1", "PRIVATE" => "1") do
+        expect(described_class.federation_enabled?).to be(false)
+      end
+    end
+
+    it "ignores surrounding whitespace" do
+      within_env("FEDERATION" => " 0 ", "PRIVATE" => "0") do
+        expect(described_class.federation_enabled?).to be(false)
+      end
+    end
+  end
+
   describe ".legacy_well_known_candidates" do
     it "includes repository config directories" do
       Dir.mktmpdir do |dir|
