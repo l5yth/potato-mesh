@@ -1575,6 +1575,7 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
                     "channelUtilization": 0.59666663,
                     "airUtilTx": 0.03908333,
                     "uptimeSeconds": 305044,
+                    "current": 0.0715,
                 },
                 "localStats": {
                     "numPacketsTx": 1280,
@@ -1606,6 +1607,7 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     assert payload["channel_utilization"] == pytest.approx(0.59666663)
     assert payload["air_util_tx"] == pytest.approx(0.03908333)
     assert payload["uptime_seconds"] == 305044
+    assert payload["current"] == pytest.approx(0.0715)
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
 
@@ -1634,6 +1636,23 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
                     "temperature": 21.98,
                     "relativeHumidity": 39.475586,
                     "barometricPressure": 1017.8353,
+                    "gasResistance": 1456.0,
+                    "iaq": 83,
+                    "distance": 12.5,
+                    "lux": 100.25,
+                    "whiteLux": 64.5,
+                    "irLux": 12.75,
+                    "uvLux": 1.6,
+                    "windDirection": 270,
+                    "windSpeed": 5.9,
+                    "windGust": 7.4,
+                    "windLull": 4.8,
+                    "weight": 32.7,
+                    "radiation": 0.45,
+                    "rainfall1h": 0.18,
+                    "rainfall24h": 1.42,
+                    "soilMoisture": 3100,
+                    "soilTemperature": 18.9,
                 },
             },
         },
@@ -1651,6 +1670,23 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["temperature"] == pytest.approx(21.98)
     assert payload["relative_humidity"] == pytest.approx(39.475586)
     assert payload["barometric_pressure"] == pytest.approx(1017.8353)
+    assert payload["gas_resistance"] == pytest.approx(1456.0)
+    assert payload["iaq"] == 83
+    assert payload["distance"] == pytest.approx(12.5)
+    assert payload["lux"] == pytest.approx(100.25)
+    assert payload["white_lux"] == pytest.approx(64.5)
+    assert payload["ir_lux"] == pytest.approx(12.75)
+    assert payload["uv_lux"] == pytest.approx(1.6)
+    assert payload["wind_direction"] == 270
+    assert payload["wind_speed"] == pytest.approx(5.9)
+    assert payload["wind_gust"] == pytest.approx(7.4)
+    assert payload["wind_lull"] == pytest.approx(4.8)
+    assert payload["weight"] == pytest.approx(32.7)
+    assert payload["radiation"] == pytest.approx(0.45)
+    assert payload["rainfall_1h"] == pytest.approx(0.18)
+    assert payload["rainfall_24h"] == pytest.approx(1.42)
+    assert payload["soil_moisture"] == 3100
+    assert payload["soil_temperature"] == pytest.approx(18.9)
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
 

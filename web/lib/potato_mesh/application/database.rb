@@ -15,6 +15,30 @@
 module PotatoMesh
   module App
     module Database
+      # Column definitions required for environment telemetry support. Each
+      # entry pairs the column name with the SQL type used when backfilling
+      # legacy databases that pre-date the extended telemetry schema.
+      TELEMETRY_COLUMN_DEFINITIONS = [
+        ["gas_resistance", "REAL"],
+        ["current", "REAL"],
+        ["iaq", "INTEGER"],
+        ["distance", "REAL"],
+        ["lux", "REAL"],
+        ["white_lux", "REAL"],
+        ["ir_lux", "REAL"],
+        ["uv_lux", "REAL"],
+        ["wind_direction", "INTEGER"],
+        ["wind_speed", "REAL"],
+        ["weight", "REAL"],
+        ["wind_gust", "REAL"],
+        ["wind_lull", "REAL"],
+        ["radiation", "REAL"],
+        ["rainfall_1h", "REAL"],
+        ["rainfall_24h", "REAL"],
+        ["soil_moisture", "INTEGER"],
+        ["soil_temperature", "REAL"],
+      ].freeze
+
       # Open a connection to the application database applying common pragmas.
       #
       # @param readonly [Boolean] whether to open the database in read-only mode.
@@ -118,6 +142,21 @@ module PotatoMesh
         if tables.empty?
           sql_file = File.expand_path("../../../../data/instances.sql", __dir__)
           db.execute_batch(File.read(sql_file))
+        end
+
+        telemetry_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telemetry'").flatten
+        if telemetry_tables.empty?
+          telemetry_schema = File.expand_path("../../../../data/telemetry.sql", __dir__)
+          db.execute_batch(File.read(telemetry_schema))
+        end
+
+        telemetry_columns = db.execute("PRAGMA table_info(telemetry)").map { |row| row[1] }
+        TELEMETRY_COLUMN_DEFINITIONS.each do |name, type|
+          next if telemetry_columns.include?(name)
+
+          db.execute("ALTER TABLE telemetry ADD COLUMN #{name} #{type}")
+          telemetry_columns << name
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

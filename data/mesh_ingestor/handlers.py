@@ -460,6 +460,189 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         )
     )
 
+    current = _coerce_float(
+        _first(
+            telemetry_section,
+            "current",
+            "deviceMetrics.current",
+            "deviceMetrics.current_ma",
+            "deviceMetrics.currentMa",
+            "environmentMetrics.current",
+            default=None,
+        )
+    )
+    gas_resistance = _coerce_float(
+        _first(
+            telemetry_section,
+            "gasResistance",
+            "gas_resistance",
+            "environmentMetrics.gasResistance",
+            "environmentMetrics.gas_resistance",
+            default=None,
+        )
+    )
+    iaq = _coerce_int(
+        _first(
+            telemetry_section,
+            "iaq",
+            "environmentMetrics.iaq",
+            "environmentMetrics.iaqIndex",
+            "environmentMetrics.iaq_index",
+            default=None,
+        )
+    )
+    distance = _coerce_float(
+        _first(
+            telemetry_section,
+            "distance",
+            "environmentMetrics.distance",
+            "environmentMetrics.range",
+            "environmentMetrics.rangeMeters",
+            default=None,
+        )
+    )
+    lux = _coerce_float(
+        _first(
+            telemetry_section,
+            "lux",
+            "environmentMetrics.lux",
+            "environmentMetrics.illuminance",
+            default=None,
+        )
+    )
+    white_lux = _coerce_float(
+        _first(
+            telemetry_section,
+            "whiteLux",
+            "white_lux",
+            "environmentMetrics.whiteLux",
+            "environmentMetrics.white_lux",
+            default=None,
+        )
+    )
+    ir_lux = _coerce_float(
+        _first(
+            telemetry_section,
+            "irLux",
+            "ir_lux",
+            "environmentMetrics.irLux",
+            "environmentMetrics.ir_lux",
+            default=None,
+        )
+    )
+    uv_lux = _coerce_float(
+        _first(
+            telemetry_section,
+            "uvLux",
+            "uv_lux",
+            "environmentMetrics.uvLux",
+            "environmentMetrics.uv_lux",
+            "environmentMetrics.uvIndex",
+            default=None,
+        )
+    )
+    wind_direction = _coerce_int(
+        _first(
+            telemetry_section,
+            "windDirection",
+            "wind_direction",
+            "environmentMetrics.windDirection",
+            "environmentMetrics.wind_direction",
+            default=None,
+        )
+    )
+    wind_speed = _coerce_float(
+        _first(
+            telemetry_section,
+            "windSpeed",
+            "wind_speed",
+            "environmentMetrics.windSpeed",
+            "environmentMetrics.wind_speed",
+            "environmentMetrics.windSpeedMps",
+            default=None,
+        )
+    )
+    wind_gust = _coerce_float(
+        _first(
+            telemetry_section,
+            "windGust",
+            "wind_gust",
+            "environmentMetrics.windGust",
+            "environmentMetrics.wind_gust",
+            default=None,
+        )
+    )
+    wind_lull = _coerce_float(
+        _first(
+            telemetry_section,
+            "windLull",
+            "wind_lull",
+            "environmentMetrics.windLull",
+            "environmentMetrics.wind_lull",
+            default=None,
+        )
+    )
+    weight = _coerce_float(
+        _first(
+            telemetry_section,
+            "weight",
+            "environmentMetrics.weight",
+            "environmentMetrics.mass",
+            default=None,
+        )
+    )
+    radiation = _coerce_float(
+        _first(
+            telemetry_section,
+            "radiation",
+            "environmentMetrics.radiation",
+            "environmentMetrics.radiationLevel",
+            default=None,
+        )
+    )
+    rainfall_1h = _coerce_float(
+        _first(
+            telemetry_section,
+            "rainfall1h",
+            "rainfall_1h",
+            "environmentMetrics.rainfall1h",
+            "environmentMetrics.rainfall_1h",
+            "environmentMetrics.rainfallOneHour",
+            default=None,
+        )
+    )
+    rainfall_24h = _coerce_float(
+        _first(
+            telemetry_section,
+            "rainfall24h",
+            "rainfall_24h",
+            "environmentMetrics.rainfall24h",
+            "environmentMetrics.rainfall_24h",
+            "environmentMetrics.rainfallTwentyFourHour",
+            default=None,
+        )
+    )
+    soil_moisture = _coerce_int(
+        _first(
+            telemetry_section,
+            "soilMoisture",
+            "soil_moisture",
+            "environmentMetrics.soilMoisture",
+            "environmentMetrics.soil_moisture",
+            default=None,
+        )
+    )
+    soil_temperature = _coerce_float(
+        _first(
+            telemetry_section,
+            "soilTemperature",
+            "soil_temperature",
+            "environmentMetrics.soilTemperature",
+            "environmentMetrics.soil_temperature",
+            default=None,
+        )
+    )
+
     telemetry_payload = {
         "id": pkt_id,
         "node_id": node_id,
@@ -494,6 +677,42 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         telemetry_payload["relative_humidity"] = relative_humidity
     if barometric_pressure is not None:
         telemetry_payload["barometric_pressure"] = barometric_pressure
+    if current is not None:
+        telemetry_payload["current"] = current
+    if gas_resistance is not None:
+        telemetry_payload["gas_resistance"] = gas_resistance
+    if iaq is not None:
+        telemetry_payload["iaq"] = iaq
+    if distance is not None:
+        telemetry_payload["distance"] = distance
+    if lux is not None:
+        telemetry_payload["lux"] = lux
+    if white_lux is not None:
+        telemetry_payload["white_lux"] = white_lux
+    if ir_lux is not None:
+        telemetry_payload["ir_lux"] = ir_lux
+    if uv_lux is not None:
+        telemetry_payload["uv_lux"] = uv_lux
+    if wind_direction is not None:
+        telemetry_payload["wind_direction"] = wind_direction
+    if wind_speed is not None:
+        telemetry_payload["wind_speed"] = wind_speed
+    if wind_gust is not None:
+        telemetry_payload["wind_gust"] = wind_gust
+    if wind_lull is not None:
+        telemetry_payload["wind_lull"] = wind_lull
+    if weight is not None:
+        telemetry_payload["weight"] = weight
+    if radiation is not None:
+        telemetry_payload["radiation"] = radiation
+    if rainfall_1h is not None:
+        telemetry_payload["rainfall_1h"] = rainfall_1h
+    if rainfall_24h is not None:
+        telemetry_payload["rainfall_24h"] = rainfall_24h
+    if soil_moisture is not None:
+        telemetry_payload["soil_moisture"] = soil_moisture
+    if soil_temperature is not None:
+        telemetry_payload["soil_temperature"] = soil_temperature
 
     _queue_post_json(
         "/api/telemetry",
