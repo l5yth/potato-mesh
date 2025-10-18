@@ -33,12 +33,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe ".resolve_port" do
-    it "always returns the baked-in default port" do
-      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
-      ENV["PORT"] = "51515"
-      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
-    ensure
+    around do |example|
+      original_port = ENV["PORT"]
+      begin
+        example.run
+      ensure
+        if original_port
+          ENV["PORT"] = original_port
+        else
+          ENV.delete("PORT")
+        end
+      end
+    end
+
+    it "returns the baked-in default port when PORT is not provided" do
       ENV.delete("PORT")
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
+    end
+
+    it "honours a valid PORT override" do
+      ENV["PORT"] = "51515"
+      expect(application_class.resolve_port).to eq(51_515)
+    end
+
+    it "falls back to the default for invalid PORT values" do
+      ENV["PORT"] = "abc"
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
+
+      ENV["PORT"] = "70000"
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
+
+      ENV["PORT"] = "0"
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
     end
   end
 
