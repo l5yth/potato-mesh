@@ -100,12 +100,30 @@ module PotatoMesh
       logger.level = PotatoMesh::Config.debug? ? Logger::DEBUG : Logger::WARN
     end
 
-    # Determine the port the application should listen on.
+    # Determine the port the application should listen on by honouring the
+    # conventional +PORT+ environment variable used by hosting platforms. Any
+    # non-numeric or out-of-range values fall back to the provided default to
+    # keep the application bootable in misconfigured environments.
     #
-    # @param default_port [Integer] fallback port when ENV['PORT'] is absent or invalid.
+    # @param default_port [Integer] fallback port when +ENV['PORT']+ is absent or invalid.
     # @return [Integer] port number for the HTTP server.
     def self.resolve_port(default_port: DEFAULT_PORT)
-      default_port
+      raw_port = ENV["PORT"]
+      return default_port if raw_port.nil?
+
+      trimmed = raw_port.to_s.strip
+      return default_port if trimmed.empty?
+
+      begin
+        port = Integer(trimmed, 10)
+      rescue ArgumentError
+        return default_port
+      end
+
+      return default_port unless port.positive?
+      return default_port unless PotatoMesh::Sanitizer.valid_port?(trimmed)
+
+      port
     end
 
     configure do
