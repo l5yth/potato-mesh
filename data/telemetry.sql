@@ -35,7 +35,25 @@ CREATE TABLE IF NOT EXISTS telemetry (
     uptime_seconds          INTEGER,
     temperature             REAL,
     relative_humidity       REAL,
-    barometric_pressure     REAL
+    barometric_pressure     REAL,
+    gas_resistance          REAL,
+    current                 REAL,
+    iaq                     INTEGER,
+    distance                REAL,
+    lux                     REAL,
+    white_lux               REAL,
+    ir_lux                  REAL,
+    uv_lux                  REAL,
+    wind_direction          INTEGER,
+    wind_speed              REAL,
+    weight                  REAL,
+    wind_gust               REAL,
+    wind_lull               REAL,
+    radiation               REAL,
+    rainfall_1h             REAL,
+    rainfall_24h            REAL,
+    soil_moisture           INTEGER,
+    soil_temperature        REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_rx_time ON telemetry(rx_time);

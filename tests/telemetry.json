@@ -12,12 +12,31 @@
     "battery_level": 101,
     "bitfield": 1,
     "payload_b64": "DTVr0mgSFQhlFQIrh0AdJb8YPyXYFSA9KJTPEg==",
+    "current": 0.0715,
+    "gas_resistance": 1456.0,
+    "iaq": 83,
+    "distance": 12.5,
+    "lux": 100.25,
+    "white_lux": 64.5,
+    "ir_lux": 12.75,
+    "uv_lux": 1.6,
+    "wind_direction": 270,
+    "wind_speed": 5.9,
+    "wind_gust": 7.4,
+    "wind_lull": 4.8,
+    "weight": 32.7,
+    "radiation": 0.45,
+    "rainfall_1h": 0.18,
+    "rainfall_24h": 1.42,
+    "soil_moisture": 3100,
+    "soil_temperature": 18.9,
     "device_metrics": {
       "batteryLevel": 101,
       "voltage": 4.224,
       "channelUtilization": 0.59666663,
       "airUtilTx": 0.03908333,
-      "uptimeSeconds": 305044
+      "uptimeSeconds": 305044,
+      "current": 0.0715
     },
     "raw": {
       "device_metrics": {
@@ -43,7 +62,24 @@
     "environment_metrics": {
       "temperature": 21.98,
       "relativeHumidity": 39.475586,
-      "barometricPressure": 1017.8353
+      "barometricPressure": 1017.8353,
+      "gasResistance": 1456.0,
+      "iaq": 83,
+      "distance": 12.5,
+      "lux": 100.25,
+      "whiteLux": 64.5,
+      "irLux": 12.75,
+      "uvLux": 1.6,
+      "windDirection": 270,
+      "windSpeed": 5.9,
+      "windGust": 7.4,
+      "windLull": 4.8,
+      "weight": 32.7,
+      "radiation": 0.45,
+      "rainfall1h": 0.18,
+      "rainfall24h": 1.42,
+      "soilMoisture": 3100,
+      "soilTemperature": 18.9
     },
     "raw": {
       "environment_metrics": {
@@ -70,7 +106,22 @@
       "voltage": 3.92,
       "channel_utilization": 0.284,
       "air_util_tx": 0.051,
-      "uptime_seconds": 86400
+      "uptime_seconds": 86400,
+      "current": 0.033
+    },
+    "environment_metrics": {
+      "temperature": 19.5,
+      "relative_humidity": 48.2,
+      "barometric_pressure": 1013.1,
+      "distance": 7.25,
+      "lux": 75.5,
+      "whiteLux": 40.0,
+      "windDirection": 180,
+      "windSpeed": 4.3,
+      "weight": 28.4,
+      "rainfall24h": 0.75,
+      "soilMoisture": 2850,
+      "soilTemperature": 17.1
     },
     "local_stats": {
       "numPacketsTx": 1280,
