@@ -131,7 +131,15 @@ body {
 }
 
 h1 {
-  margin: 0 0 8px;
+  margin: 0;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .site-title {
@@ -150,6 +158,63 @@ h1 {
 .meta {
   color: #555;
   margin-bottom: 12px;
+}
+
+.instance-selector {
+  display: flex;
+  align-items: center;
+}
+
+.instance-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--input-bg);
+  color: var(--input-fg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding: 6px 32px 6px 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  min-width: 220px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) calc(50% - 4px), calc(100% - 12px) calc(50% - 4px);
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+}
+
+.instance-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 900px) {
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .instance-selector,
+  .instance-select {
+    width: 100%;
+  }
+
+  .instance-select {
+    min-width: 0;
+  }
 }
 
 .pill {
