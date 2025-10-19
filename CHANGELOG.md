@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## v0.5.3
+
+* Add telemetry formatting utilities and extend node overlay by @l5yth in <https://github.com/l5yth/potato-mesh/pull/387>
+* Prune blank values from API responses by @l5yth in <https://github.com/l5yth/potato-mesh/pull/386>
+* Add full support to telemetry schema and API by @l5yth in <https://github.com/l5yth/potato-mesh/pull/385>
+* Respect PORT environment override by @l5yth in <https://github.com/l5yth/potato-mesh/pull/384>
+* Add instance selector dropdown for federation deployments by @l5yth in <https://github.com/l5yth/potato-mesh/pull/382>
+* Harden federation announcements by @l5yth in <https://github.com/l5yth/potato-mesh/pull/381>
+* Ensure private mode disables federation by @l5yth in <https://github.com/l5yth/potato-mesh/pull/380>
+* Ensure private mode disables chat messaging by @l5yth in <https://github.com/l5yth/potato-mesh/pull/378>
+* Disable federation features when FEDERATION=0 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/379>
+* Expose PRIVATE environment configuration across tooling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/377>
+* Fix frontend coverage export for Codecov by @l5yth in <https://github.com/l5yth/potato-mesh/pull/376>
+* Restrict /api/instances results to recent records by @l5yth in <https://github.com/l5yth/potato-mesh/pull/374>
+* Expose FEDERATION environment option across tooling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/375>
+* Chore: bump version to 0.5.3 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/372>
+
 ## v0.5.2
 
 * Align theme and info controls by @l5yth in <https://github.com/l5yth/potato-mesh/pull/371>
