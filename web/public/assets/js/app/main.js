@@ -20,6 +20,16 @@ import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
+import {
+  TELEMETRY_FIELDS,
+  buildTelemetryDisplayEntries,
+  collectTelemetryMetrics,
+  fmtAlt,
+  fmtHumidity,
+  fmtPressure,
+  fmtTemperature,
+  fmtTx,
+} from './short-info-telemetry.js';
 import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
@@ -1637,24 +1647,17 @@ export function initializeApp(config) {
     const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
     const roleValue = normalizeRole(role != null && role !== '' ? role : (nodeData && nodeData.role));
     let infoAttr = '';
-    if (nodeData && typeof nodeData === 'object') {
-      const info = {
-        nodeId: nodeData.node_id ?? nodeData.nodeId ?? '',
-        nodeNum: nodeData.num ?? nodeData.node_num ?? nodeData.nodeNum ?? null,
-        shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
-        longName: nodeData.long_name ?? longName ?? '',
-        role: roleValue,
-        hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
-        battery: nodeData.battery_level ?? nodeData.battery ?? null,
-        voltage: nodeData.voltage ?? null,
-        uptime: nodeData.uptime_seconds ?? nodeData.uptime ?? null,
-        channel: nodeData.channel_utilization ?? nodeData.channel ?? null,
-        airUtil: nodeData.air_util_tx ?? nodeData.airUtil ?? null,
-        temperature: nodeData.temperature ?? nodeData.temp ?? null,
-        humidity: nodeData.relative_humidity ?? nodeData.relativeHumidity ?? nodeData.humidity ?? null,
-        pressure: nodeData.barometric_pressure ?? nodeData.barometricPressure ?? nodeData.pressure ?? null,
-        telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
-      };
+      if (nodeData && typeof nodeData === 'object') {
+        const info = {
+          nodeId: nodeData.node_id ?? nodeData.nodeId ?? '',
+          nodeNum: nodeData.num ?? nodeData.node_num ?? nodeData.nodeNum ?? null,
+          shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
+          longName: nodeData.long_name ?? longName ?? '',
+          role: roleValue,
+          hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
+          telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
+        };
+        Object.assign(info, collectTelemetryMetrics(nodeData));
       const attrParts = [` data-node-info="${escapeHtml(JSON.stringify(info))}"`];
       const attrNodeIdRaw = info.nodeId != null ? String(info.nodeId).trim() : '';
       if (attrNodeIdRaw) {
@@ -1863,23 +1866,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Append telemetry information to the short-info overlay payload.
-   *
-   * @param {Array<string>} lines Output accumulator.
-   * @param {string} label Field label.
-   * @param {*} rawValue Raw telemetry value.
-   * @param {Function} formatter Optional formatter callback.
-   * @returns {void}
-   */
-  function appendTelemetryLine(lines, label, rawValue, formatter) {
-    if (!Array.isArray(lines)) return;
-    if (rawValue == null || rawValue === '') return;
-    const formatted = formatter ? formatter(rawValue) : rawValue;
-    if (formatted == null || formatted === '') return;
-    lines.push(`${escapeHtml(label)}: ${escapeHtml(String(formatted))}`);
-  }
-
-  /**
    * Transform a node-shaped payload into the overlay data format.
    *
    * @param {*} source Arbitrary node data.
@@ -1921,14 +1907,6 @@ export function initializeApp(config) {
     }
 
     const numericPairs = [
-      ['battery', source.battery ?? source.battery_level],
-      ['voltage', source.voltage],
-      ['uptime', source.uptime ?? source.uptime_seconds],
-      ['channel', source.channel ?? source.channel_utilization],
-      ['airUtil', source.airUtil ?? source.air_util_tx],
-      ['temperature', source.temperature],
-      ['humidity', source.humidity ?? source.relative_humidity],
-      ['pressure', source.pressure ?? source.barometric_pressure],
       ['telemetryTime', source.telemetryTime ?? source.telemetry_time],
       ['lastHeard', source.lastHeard ?? source.last_heard],
       ['latitude', source.latitude],
@@ -1942,6 +1920,14 @@ export function initializeApp(config) {
       if (Number.isFinite(num)) {
         normalized[key] = num;
       }
+    }
+
+    const telemetryMetrics = collectTelemetryMetrics(source);
+    for (const field of TELEMETRY_FIELDS) {
+      if (!Object.prototype.hasOwnProperty.call(telemetryMetrics, field.key)) {
+        continue;
+      }
+      normalized[field.key] = telemetryMetrics[field.key];
     }
 
     const lastSeenRaw = source.lastSeenIso ?? source.last_seen_iso;
@@ -2053,14 +2039,10 @@ export function initializeApp(config) {
     if (modelValue) {
       lines.push(`Model: ${escapeHtml(modelValue)}`);
     }
-    appendTelemetryLine(lines, 'Battery', overlayInfo.battery, value => fmtAlt(value, '%'));
-    appendTelemetryLine(lines, 'Voltage', overlayInfo.voltage, value => fmtAlt(value, 'V'));
-    appendTelemetryLine(lines, 'Uptime', overlayInfo.uptime, formatShortInfoUptime);
-    appendTelemetryLine(lines, 'Channel Util', overlayInfo.channel, fmtTx);
-    appendTelemetryLine(lines, 'Air Util Tx', overlayInfo.airUtil, fmtTx);
-    appendTelemetryLine(lines, 'Temperature', overlayInfo.temperature, fmtTemperature);
-    appendTelemetryLine(lines, 'Humidity', overlayInfo.humidity, fmtHumidity);
-    appendTelemetryLine(lines, 'Pressure', overlayInfo.pressure, fmtPressure);
+    const telemetryEntries = buildTelemetryDisplayEntries(overlayInfo, { formatUptime: formatShortInfoUptime });
+    for (const entry of telemetryEntries) {
+      lines.push(`${escapeHtml(entry.label)}: ${escapeHtml(entry.value)}`);
+    }
     if (neighborLineHtml) {
       lines.push(neighborLineHtml);
     }
@@ -2269,66 +2251,6 @@ export function initializeApp(config) {
     if (v == null || v === '') return "";
     const n = Number(v);
     return Number.isFinite(n) ? n.toFixed(d) : "";
-  }
-
-  /**
-   * Format altitude values with units.
-   *
-   * @param {*} v Raw altitude value.
-   * @param {string} s Unit suffix.
-   * @returns {string} Altitude string.
-   */
-  function fmtAlt(v, s) {
-    return (v == null || v === '') ? "" : `${v}${s}`;
-  }
-
-  /**
-   * Format transmission utilisation values as percentages.
-   *
-   * @param {*} v Raw utilisation value.
-   * @param {number} [d=3] Decimal precision.
-   * @returns {string} Percentage string.
-   */
-  function fmtTx(v, d = 3) {
-    if (v == null || v === '') return "";
-    const n = Number(v);
-    return Number.isFinite(n) ? `${n.toFixed(d)}%` : "";
-  }
-
-  /**
-   * Format temperature telemetry with a degree suffix.
-   *
-   * @param {*} v Raw temperature value.
-   * @returns {string} Temperature string.
-   */
-  function fmtTemperature(v) {
-    if (v == null || v === '') return "";
-    const n = Number(v);
-    return Number.isFinite(n) ? `${n.toFixed(1)}°C` : "";
-  }
-
-  /**
-   * Format humidity telemetry as a percentage.
-   *
-   * @param {*} v Raw humidity value.
-   * @returns {string} Humidity string.
-   */
-  function fmtHumidity(v) {
-    if (v == null || v === '') return "";
-    const n = Number(v);
-    return Number.isFinite(n) ? `${n.toFixed(1)}%` : "";
-  }
-
-  /**
-   * Format barometric pressure telemetry in hPa.
-   *
-   * @param {*} v Raw pressure value.
-   * @returns {string} Pressure string.
-   */
-  function fmtPressure(v) {
-    if (v == null || v === '') return "";
-    const n = Number(v);
-    return Number.isFinite(n) ? `${n.toFixed(1)} hPa` : "";
   }
 
   /**
