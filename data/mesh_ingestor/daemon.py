@@ -206,7 +206,7 @@ def _connected_state(candidate) -> bool | None:
         return None
 
 
-def main() -> None:
+def main(existing_interface=None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
     subscribed = _subscribe_receive_topics()
@@ -218,7 +218,7 @@ def main() -> None:
             topics=subscribed,
         )
 
-    iface = None
+    iface = existing_interface
     resolved_target = None
     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
 
@@ -254,8 +254,9 @@ def main() -> None:
             return
         stop.set()
 
-    signal.signal(signal.SIGINT, handle_sigint)
-    signal.signal(signal.SIGTERM, handle_sigterm)
+    if threading.current_thread() == threading.main_thread():
+        signal.signal(signal.SIGINT, handle_sigint)
+        signal.signal(signal.SIGTERM, handle_sigterm)
 
     target = config.INSTANCE or "(no POTATOMESH_INSTANCE)"
     configured_port = config.CONNECTION
