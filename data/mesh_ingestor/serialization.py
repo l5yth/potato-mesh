@@ -120,7 +120,7 @@ def _iso(ts: int | float) -> str:
     import datetime
 
     return (
-        datetime.datetime.fromtimestamp(int(ts), datetime.UTC)
+        datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc)
         .isoformat()
         .replace("+00:00", "Z")
     )
