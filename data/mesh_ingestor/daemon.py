@@ -218,7 +218,7 @@ def main(existing_interface=None) -> None:
             topics=subscribed,
         )
 
-    iface = None if existing_interface is None else existing_interface
+    iface = existing_interface
     resolved_target = None
     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
 
