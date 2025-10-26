@@ -254,8 +254,9 @@ def main(existing_interface=None) -> None:
             return
         stop.set()
 
-    signal.signal(signal.SIGINT, handle_sigint)
-    signal.signal(signal.SIGTERM, handle_sigterm)
+    if threading.current_thread() == threading.main_thread():
+        signal.signal(signal.SIGINT, handle_sigint)
+        signal.signal(signal.SIGTERM, handle_sigterm)
 
     target = config.INSTANCE or "(no POTATOMESH_INSTANCE)"
     configured_port = config.CONNECTION
