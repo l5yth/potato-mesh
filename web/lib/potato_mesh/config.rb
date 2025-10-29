@@ -201,7 +201,7 @@ module PotatoMesh
     #
     # @return [String] comma separated list of report IDs.
     def prom_report_ids
-      ""
+      fetch_string("PROM_REPORT_IDS", "")
     end
 
     # Transform Prometheus report identifiers into a cleaned array.
