@@ -39,6 +39,7 @@ import {
 import { initializeInstanceSelector } from './instance-selector.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
+import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -2142,6 +2143,38 @@ export function initializeApp(config) {
     });
   }
 
+  /**
+   * Build a formatted suffix that enumerates highlight values.
+   *
+   * @param {Array<{label: string, value: string}>} highlights Highlight metadata entries.
+   * @returns {string} HTML suffix containing escaped highlight entries.
+   */
+  function buildHighlightSuffix(highlights) {
+    if (!Array.isArray(highlights) || highlights.length === 0) {
+      return '';
+    }
+    const parts = [];
+    for (const entry of highlights) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      const { label, value } = entry;
+      if (label == null || value == null || value === '') {
+        continue;
+      }
+      const labelText = String(label).trim();
+      const valueText = String(value).trim();
+      if (!labelText || !valueText) {
+        continue;
+      }
+      parts.push(`${escapeHtml(labelText)}: ${escapeHtml(valueText)}`);
+    }
+    if (!parts.length) {
+      return '';
+    }
+    return ` — ${parts.join(', ')}`;
+  }
+
   function createNodeInfoChatEntry(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
     return createAnnouncementEntry({
@@ -2151,12 +2184,13 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: '<em>Broadcasted node info</em>'
+      messageHtml: '<em>Updated node info</em>'
     });
   }
 
   function createTelemetryChatEntry(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    const highlightSuffix = buildHighlightSuffix(formatTelemetryHighlights(entry?.telemetry));
     return createAnnouncementEntry({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
@@ -2164,12 +2198,13 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: '<em>Broadcasted telemetry</em>'
+      messageHtml: `<em>Broadcasted telemetry${highlightSuffix}</em>`
     });
   }
 
   function createPositionChatEntry(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    const highlightSuffix = buildHighlightSuffix(formatPositionHighlights(entry?.position));
     return createAnnouncementEntry({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
@@ -2177,7 +2212,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: '<em>Broadcasted position info</em>'
+      messageHtml: `<em>Broadcasted position info${highlightSuffix}</em>`
     });
   }
 
