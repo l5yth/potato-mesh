@@ -41,6 +41,9 @@ export const MAX_CHANNEL_INDEX = 9;
 export function buildChatTabModel({
   nodes = [],
   messages = [],
+  telemetry = [],
+  positions = [],
+  neighbors = [],
   nowSeconds,
   windowSeconds,
   maxChannelIndex = MAX_CHANNEL_INDEX
@@ -48,12 +51,68 @@ export function buildChatTabModel({
   const cutoff = (Number.isFinite(nowSeconds) ? nowSeconds : 0) - (Number.isFinite(windowSeconds) ? windowSeconds : 0);
   const logEntries = [];
   const channelBuckets = new Map();
+  const nodeLookup = buildNodeLookup(nodes);
+  const includeEntry = entry => {
+    if (!entry || typeof entry.ts !== 'number' || !Number.isFinite(entry.ts)) {
+      return;
+    }
+    if (entry.ts < cutoff) {
+      return;
+    }
+    logEntries.push(entry);
+  };
 
   for (const node of nodes || []) {
     if (!node) continue;
     const ts = resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
-    if (ts == null || ts < cutoff) continue;
-    logEntries.push({ ts, node });
+    if (ts == null) continue;
+    includeEntry({ ts, kind: 'node', node, record: node });
+  }
+
+  for (const entry of telemetry || []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const ts = resolveLogTimestamp(entry, ['rx_time', 'rxTime', 'telemetry_time', 'telemetryTime'], [
+      'rx_iso',
+      'rxIso',
+      'telemetry_time_iso',
+      'telemetryTimeIso'
+    ]);
+    if (ts == null) continue;
+    includeEntry({
+      ts,
+      kind: 'telemetry',
+      record: entry,
+      node: resolveNodeForRecord(entry, nodeLookup)
+    });
+  }
+
+  for (const entry of positions || []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const ts = resolveLogTimestamp(entry, ['rx_time', 'rxTime', 'position_time', 'positionTime'], [
+      'rx_iso',
+      'rxIso',
+      'position_time_iso',
+      'positionTimeIso'
+    ]);
+    if (ts == null) continue;
+    includeEntry({
+      ts,
+      kind: 'position',
+      record: entry,
+      node: resolveNodeForRecord(entry, nodeLookup)
+    });
+  }
+
+  for (const entry of neighbors || []) {
+    if (!entry || typeof entry !== 'object') continue;
+    const ts = resolveLogTimestamp(entry, ['rx_time', 'rxTime'], ['rx_iso', 'rxIso']);
+    if (ts == null) continue;
+    includeEntry({
+      ts,
+      kind: 'neighbor',
+      record: entry,
+      node: resolveNodeForRecord(entry, nodeLookup)
+    });
   }
 
   logEntries.sort((a, b) => a.ts - b.ts);
@@ -107,6 +166,103 @@ export function buildChatTabModel({
   }
 
   return { logEntries, channels };
+}
+
+/**
+ * Resolve the primary node metadata associated with an auxiliary record.
+ *
+ * @param {Object} record Telemetry, position, or neighbor record.
+ * @param {{ byId: Map<string, Object>, byNum: Map<number, Object> }} lookup Node caches.
+ * @returns {?Object} Matching node payload when available.
+ */
+function resolveNodeForRecord(record, lookup) {
+  if (!record || typeof record !== 'object' || !lookup) {
+    return null;
+  }
+  const idCandidates = [record.node_id, record.nodeId, record.id];
+  for (const candidate of idCandidates) {
+    if (typeof candidate === 'string' && candidate.length && lookup.byId.has(candidate)) {
+      return lookup.byId.get(candidate);
+    }
+  }
+  const numCandidates = [record.node_num, record.nodeNum, record.num];
+  for (const candidate of numCandidates) {
+    const numeric = typeof candidate === 'number' ? candidate : Number(candidate);
+    if (Number.isFinite(numeric) && lookup.byNum.has(numeric)) {
+      return lookup.byNum.get(numeric);
+    }
+  }
+  return null;
+}
+
+/**
+ * Construct lookup tables for nodes keyed by identifier and numeric index.
+ *
+ * @param {Array<Object>} nodes Node collection.
+ * @returns {{ byId: Map<string, Object>, byNum: Map<number, Object> }}
+ *   Node lookup maps.
+ */
+function buildNodeLookup(nodes) {
+  const byId = new Map();
+  const byNum = new Map();
+  if (!Array.isArray(nodes)) {
+    return { byId, byNum };
+  }
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    const idCandidates = [node.node_id, node.nodeId, node.id];
+    for (const candidate of idCandidates) {
+      if (typeof candidate === 'string' && candidate.length) {
+        byId.set(candidate, node);
+        break;
+      }
+    }
+    const numCandidates = [node.node_num, node.nodeNum, node.num];
+    for (const candidate of numCandidates) {
+      const numeric = typeof candidate === 'number' ? candidate : Number(candidate);
+      if (Number.isFinite(numeric)) {
+        byNum.set(numeric, node);
+        break;
+      }
+    }
+  }
+  return { byId, byNum };
+}
+
+/**
+ * Determine the timestamp for a record prioritising receive time when present.
+ *
+ * @param {Object} record Data record containing time metadata.
+ * @param {Array<string>} numericFields Ordered numeric timestamp candidates.
+ * @param {Array<string>} isoFields Ordered ISO timestamp candidates.
+ * @returns {?number} Timestamp in seconds.
+ */
+function resolveLogTimestamp(record, numericFields, isoFields) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const numeric = firstPresent(...numericFields.map(field => record[field]));
+  const iso = firstPresent(...isoFields.map(field => record[field]));
+  return resolveTimestampSeconds(numeric, iso);
+}
+
+/**
+ * Return the first non-nullish, non-empty value from ``candidates``.
+ *
+ * @param {...*} candidates Candidate values ordered by preference.
+ * @returns {*} First present value or ``null`` when all are blank.
+ */
+function firstPresent(...candidates) {
+  for (const value of candidates) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    if (typeof value === 'string' && value.trim().length === 0) {
+      continue;
+    }
+    return value;
+  }
+  return null;
 }
 
 /**

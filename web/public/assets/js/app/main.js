@@ -2158,18 +2158,198 @@ export function initializeApp(config) {
   }
 
   /**
+   * Render a chat log entry for node, telemetry, position, or neighbor events.
+   *
+   * @param {{ kind: string, ts: number, node?: Object, record?: Object }} entry Chat model entry.
+   * @returns {?HTMLElement} Rendered DOM node.
+   */
+  function renderChatLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return null;
+    }
+    switch (entry.kind) {
+      case 'node':
+        return createNodeChatEntry(entry.node);
+      case 'telemetry':
+        return createBroadcastChatEntry(entry, 'broadcasted telemetry');
+      case 'position':
+        return createBroadcastChatEntry(entry, 'broadcasted position info');
+      case 'neighbor':
+        return createBroadcastChatEntry(entry, 'broadcasted neighbor info');
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Build a chat log entry describing auxiliary broadcasts.
+   *
+   * @param {{ kind: string, ts: number, node?: Object, record?: Object }} entry Chat log model entry.
+   * @param {string} label Event label appended to the entry.
+   * @returns {HTMLElement} Chat log element.
+   */
+  function createBroadcastChatEntry(entry, label) {
+    const div = document.createElement('div');
+    div.className = `chat-entry-event chat-entry-${entry.kind}`;
+    const tsSeconds = Number.isFinite(entry.ts) ? entry.ts : null;
+    const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
+    const timestamp = tsDate ? formatTime(tsDate) : '--:--:--';
+    const frequency = resolveFrequencyForEntry(entry);
+    const prefix = formatNodeAnnouncementPrefix({
+      timestamp: escapeHtml(timestamp),
+      frequency: frequency ? escapeHtml(frequency) : ''
+    });
+    const nodeData = resolveNodeDisplayData(entry);
+    const shortHtml = renderShortHtml(
+      nodeData.shortName,
+      nodeData.role,
+      nodeData.longName,
+      nodeData.nodePayload ?? entry.record ?? null
+    );
+    div.innerHTML = `${prefix} ${shortHtml} `;
+    const labelEl = document.createElement('span');
+    labelEl.className = 'chat-entry-event-label';
+    labelEl.textContent = label;
+    div.appendChild(labelEl);
+    return div;
+  }
+
+  /**
+   * Resolve the most relevant frequency metadata for a chat log entry.
+   *
+   * @param {{ node?: Object, record?: Object }} entry Chat log entry.
+   * @returns {string} Frequency value or empty string when unknown.
+   */
+  function resolveFrequencyForEntry(entry) {
+    const sources = [entry?.record, entry?.node];
+    for (const source of sources) {
+      if (!source || typeof source !== 'object') {
+        continue;
+      }
+      const metadata = extractChatMessageMetadata(source);
+      if (metadata.frequency) {
+        return metadata.frequency;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Determine display metadata for a chat event entry.
+   *
+   * @param {{ node?: Object, record?: Object }} entry Chat log entry.
+   * @returns {{ shortName: ?string, longName: string, role: ?string, nodePayload: ?Object }}
+   *   Normalised display data.
+   */
+  function resolveNodeDisplayData(entry) {
+    const node = entry?.node && typeof entry.node === 'object' ? entry.node : null;
+    const record = entry?.record && typeof entry.record === 'object' ? entry.record : null;
+    const shortName = firstPresentValue([
+      node?.short_name,
+      node?.shortName,
+      record?.short_name,
+      record?.shortName
+    ]);
+    const longName = firstPresentValue([
+      node?.long_name,
+      node?.longName,
+      record?.long_name,
+      record?.longName
+    ]);
+    const role = firstPresentValue([node?.role, record?.role]);
+    const nodePayload = node || buildFallbackNode(record);
+    return {
+      shortName: shortName != null ? shortName : null,
+      longName: longName != null ? String(longName) : '',
+      role: role != null ? role : null,
+      nodePayload
+    };
+  }
+
+  /**
+   * Create a minimal node payload from an auxiliary record when required.
+   *
+   * @param {?Object} record Telemetry, position, or neighbor record.
+   * @returns {?Object} Fallback node representation.
+   */
+  function buildFallbackNode(record) {
+    if (!record || typeof record !== 'object') {
+      return null;
+    }
+    const fallback = {};
+    const nodeId = firstPresentValue([record.node_id, record.nodeId, record.id]);
+    if (nodeId != null) {
+      fallback.node_id = nodeId;
+    }
+    const nodeNumRaw = firstPresentValue([record.node_num, record.nodeNum, record.num]);
+    const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+    if (Number.isFinite(nodeNum)) {
+      fallback.node_num = nodeNum;
+    }
+    const shortName = firstPresentValue([record.short_name, record.shortName]);
+    if (shortName != null) {
+      fallback.short_name = shortName;
+    }
+    const longName = firstPresentValue([record.long_name, record.longName]);
+    if (longName != null) {
+      fallback.long_name = longName;
+    }
+    const role = firstPresentValue([record.role]);
+    if (role != null) {
+      fallback.role = role;
+    }
+    return Object.keys(fallback).length > 0 ? fallback : null;
+  }
+
+  /**
+   * Return the first candidate value that is neither null nor an empty string.
+   *
+   * @param {Array<*>} candidates Ordered candidate values.
+   * @returns {*} First present value or ``null`` when absent.
+   */
+  function firstPresentValue(candidates) {
+    if (!Array.isArray(candidates)) {
+      return null;
+    }
+    for (const value of candidates) {
+      if (value === null || value === undefined) {
+        continue;
+      }
+      if (typeof value === 'string' && value.trim().length === 0) {
+        continue;
+      }
+      return value;
+    }
+    return null;
+  }
+
+  /**
    * Render the chat history panel with nodes and messages.
    *
-   * @param {Array<Object>} nodes Collection of node payloads.
-   * @param {Array<Object>} messages Collection of message payloads.
+   * @param {{
+   *   nodes?: Array<Object>,
+   *   messages?: Array<Object>,
+   *   telemetry?: Array<Object>,
+   *   positions?: Array<Object>,
+   *   neighbors?: Array<Object>
+   * }} data Chat rendering data.
    * @returns {void}
    */
-  function renderChatLog(nodes, messages) {
+  function renderChatLog({
+    nodes = [],
+    messages = [],
+    telemetry = [],
+    positions = [],
+    neighbors = []
+  }) {
     if (!CHAT_ENABLED || !chatEl) return;
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { logEntries, channels } = buildChatTabModel({
       nodes,
       messages,
+      telemetry,
+      positions,
+      neighbors,
       nowSeconds,
       windowSeconds: CHAT_RECENT_WINDOW_SECONDS,
       maxChannelIndex: MAX_CHANNEL_INDEX
@@ -2177,8 +2357,8 @@ export function initializeApp(config) {
 
     const logContent = buildChatFragment({
       entries: logEntries,
-      renderEntry: entry => createNodeChatEntry(entry.node),
-      emptyLabel: 'No recent node announcements.'
+      renderEntry: entry => renderChatLogEntry(entry),
+      emptyLabel: 'No recent activity.'
     });
 
     const channelTabs = channels.map(channel => ({
@@ -3070,7 +3250,13 @@ export function initializeApp(config) {
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
       const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
-      renderChatLog(nodes, chatMessages);
+      renderChatLog({
+        nodes,
+        messages: chatMessages,
+        telemetry: telemetryEntries,
+        positions,
+        neighbors: neighborTuples
+      });
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
       statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();

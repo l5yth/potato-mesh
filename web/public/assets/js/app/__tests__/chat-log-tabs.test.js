@@ -30,9 +30,31 @@ const WINDOW = 60 * 60; // one hour
 
 function fixtureNodes() {
   return [
-    { id: 'recent-node', first_heard: NOW - 120 },
-    { id: 'stale-node', first_heard: NOW - WINDOW - 1 },
-    { id: 'iso-node', firstHeard: null, first_heard_iso: new Date((NOW - 30) * 1000).toISOString() }
+    { node_id: 'recent-node', short_name: 'RCNT', first_heard: NOW - 120 },
+    { node_id: 'stale-node', short_name: 'STAL', first_heard: NOW - WINDOW - 1 },
+    { node_id: 'iso-node', short_name: 'ISON', firstHeard: null, first_heard_iso: new Date((NOW - 30) * 1000).toISOString() }
+  ];
+}
+
+function fixtureTelemetry() {
+  return [
+    { node_id: 'recent-node', rx_time: NOW - 15 },
+    { node_id: 'iso-node', rx_time: NOW - 6 },
+    { node_id: 'stale-node', rx_time: NOW - WINDOW - 5 }
+  ];
+}
+
+function fixturePositions() {
+  return [
+    { node_id: 'recent-node', rx_time: NOW - 10 },
+    { node_id: 'unknown-node', rx_time: NOW - 12 }
+  ];
+}
+
+function fixtureNeighbors() {
+  return [
+    { node_id: 'iso-node', rx_time: NOW - 8 },
+    { node_id: 'stale-node', rx_time: NOW - WINDOW - 2 }
   ];
 }
 
@@ -52,6 +74,9 @@ function buildModel(overrides = {}) {
   return buildChatTabModel({
     nodes: fixtureNodes(),
     messages: fixtureMessages(),
+    telemetry: fixtureTelemetry(),
+    positions: fixturePositions(),
+    neighbors: fixtureNeighbors(),
     nowSeconds: NOW,
     windowSeconds: WINDOW,
     ...overrides
@@ -60,8 +85,24 @@ function buildModel(overrides = {}) {
 
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
-  assert.equal(model.logEntries.length, 2);
-  assert.deepEqual(model.logEntries.map(entry => entry.node.id), ['recent-node', 'iso-node']);
+  assert.equal(model.logEntries.length, 7);
+  assert.deepEqual(
+    model.logEntries.map(entry => entry.kind),
+    ['node', 'node', 'telemetry', 'position', 'position', 'neighbor', 'telemetry']
+  );
+  const [firstNode, secondNode] = model.logEntries;
+  assert.equal(firstNode.node.node_id, 'recent-node');
+  assert.equal(secondNode.node.node_id, 'iso-node');
+  const telemetryEntry = model.logEntries[2];
+  assert.equal(telemetryEntry.record.node_id, 'recent-node');
+  assert.equal(telemetryEntry.node.node_id, 'recent-node');
+  const orphanPosition = model.logEntries[3];
+  assert.equal(orphanPosition.record.node_id, 'unknown-node');
+  assert.equal(orphanPosition.node, null);
+  const positionEntry = model.logEntries[4];
+  assert.equal(positionEntry.record.node_id, 'recent-node');
+  const neighborEntry = model.logEntries[5];
+  assert.equal(neighborEntry.record.node_id, 'iso-node');
 
   assert.equal(model.channels.length, 2);
   const [channel0, channel1] = model.channels;
