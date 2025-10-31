@@ -70,15 +70,20 @@ exec ruby app.rb -p 41447 -o 0.0.0.0
 
 The web app can be configured with environment variables (defaults shown):
 
-* `SITE_NAME` - title and header shown in the UI (default: "PotatoMesh Demo")
-* `CHANNEL` - default channel shown in the UI (default: "#LongFast")
-* `FREQUENCY` - default frequency shown in the UI (default: "915MHz")
-* `MAP_CENTER` - default map center coordinates (default: `38.761944,-27.090833`)
-* `MAX_DISTANCE` - hide nodes farther than this distance from the center (default: `42`)
-* `CONTACT_LINK` - chat link or Matrix alias for footer and overlay (default: `#potatomesh:dod.ngo`)
-* `PRIVATE` - set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients (default: unset)
-* `INSTANCE_DOMAIN` - public hostname (optionally with port) used for metadata, federation, and API links (default: auto-detected)
-* `FEDERATION` - set to `1` to announce your instance and crawl peers, or `0` to disable federation (default: `1`)
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
+| `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) used for metadata, federation, and generated API links. |
+| `SITE_NAME` | `"PotatoMesh Demo"` | Title and header displayed in the UI. |
+| `CHANNEL` | `"#LongFast"` | Default channel name displayed in the UI. |
+| `FREQUENCY` | `"915MHz"` | Default frequency description displayed in the UI. |
+| `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer and overlays. |
+| `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map on load. |
+| `MAX_DISTANCE` | `42` | Maximum distance (km) before node relationships are hidden on the map. |
+| `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
+| `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
+| `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
+| `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the Meshtastic radio. |
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled
@@ -113,6 +118,12 @@ ignored and the ingestor will skip discovery tasks. Private mode still takes
 precedence; when `PRIVATE=1`, federation features remain disabled regardless of
 the `FEDERATION` value.
 
+When federation is enabled, PotatoMesh automatically refreshes entries from
+known peers every eight hours to keep the directory current. Instances that
+stop responding are considered stale and are removed from the web frontend after
+72 hours, ensuring visitors only see active deployments in the public
+directory.
+
 ### API
 
 The web app contains an API:
@@ -132,6 +143,12 @@ The web app contains an API:
 * POST `/api/neighbors` - appends neighbor tuples provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
+
+### Observability
+
+PotatoMesh ships with a Prometheus exporter mounted at `/metrics`. Consult
+[`PROMETHEUS.md`](./PROMETHEUS.md) for deployment guidance, metric details, and
+scrape configuration examples.
 
 ## Python Ingestor
 

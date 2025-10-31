@@ -56,10 +56,14 @@ read_with_default() {
 update_env() {
     local key="$1"
     local value="$2"
-    
+    local escaped_value
+
+    # Escape characters that would break the sed replacement delimiter or introduce backreferences
+    escaped_value=$(printf '%s' "$value" | sed -e 's/[&|]/\\&/g')
+
     if grep -q "^$key=" .env; then
         # Update existing value
-        sed -i.bak "s/^$key=.*/$key=$value/" .env
+        sed -i.bak "s|^$key=.*|$key=$escaped_value|" .env
     else
         # Add new value
         echo "$key=$value" >> .env
@@ -79,6 +83,8 @@ API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || 
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
 POTATOMESH_IMAGE_TAG=$(grep "^POTATOMESH_IMAGE_TAG=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "latest")
 INSTANCE_DOMAIN=$(grep "^INSTANCE_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+DEBUG=$(grep "^DEBUG=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
+CONNECTION=$(grep "^CONNECTION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "/dev/ttyACM0")
 
 echo "📍 Location Settings"
 echo "-------------------"
@@ -96,6 +102,7 @@ echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
 read_with_default "Chat link or Matrix room (optional)" "$CONTACT_LINK" CONTACT_LINK
+read_with_default "Debug logging (1=enabled, 0=disabled)" "$DEBUG" DEBUG
 
 echo ""
 echo "🤝 Federation Settings"
@@ -118,6 +125,14 @@ echo "Specify the Docker image architecture for your host (linux-amd64, linux-ar
 read_with_default "Docker image architecture" "$POTATOMESH_IMAGE_ARCH" POTATOMESH_IMAGE_ARCH
 echo "Enter the Docker image tag to deploy (use 'latest' for the newest release or pin a version such as v3.0)."
 read_with_default "Docker image tag (latest, vX.Y, etc.)" "$POTATOMESH_IMAGE_TAG" POTATOMESH_IMAGE_TAG
+
+echo ""
+echo "🔌 Ingestor Connection"
+echo "----------------------"
+echo "Define how the mesh ingestor connects to your Meshtastic device."
+echo "Use serial devices like /dev/ttyACM0, TCP endpoints such as tcp://host:port,"
+echo "or Bluetooth addresses when supported."
+read_with_default "Connection target" "$CONNECTION" CONNECTION
 
 echo ""
 echo "🌐 Domain Settings"
@@ -167,11 +182,13 @@ update_env "FREQUENCY" "\"$FREQUENCY\""
 update_env "MAP_CENTER" "\"$MAP_CENTER\""
 update_env "MAX_DISTANCE" "$MAX_DISTANCE"
 update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
+update_env "DEBUG" "$DEBUG"
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
 update_env "POTATOMESH_IMAGE_TAG" "$POTATOMESH_IMAGE_TAG"
 update_env "FEDERATION" "$FEDERATION"
 update_env "PRIVATE" "$PRIVATE"
+update_env "CONNECTION" "$CONNECTION"
 if [ -n "$INSTANCE_DOMAIN" ]; then
     update_env "INSTANCE_DOMAIN" "$INSTANCE_DOMAIN"
 else
@@ -209,6 +226,8 @@ echo "   Max Distance: ${MAX_DISTANCE}km"
 echo "   Channel: $CHANNEL"
 echo "   Frequency: $FREQUENCY"
 echo "   Chat: ${CONTACT_LINK:-'Not set'}"
+echo "   Debug Logging: ${DEBUG}" 
+echo "   Connection: ${CONNECTION}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo "   Docker Image Tag: $POTATOMESH_IMAGE_TAG"
