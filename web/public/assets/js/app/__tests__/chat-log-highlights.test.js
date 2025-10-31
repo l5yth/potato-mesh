@@ -31,6 +31,17 @@ test('formatTelemetryHighlights includes formatted numeric metrics', () => {
   ]);
 });
 
+test('formatTelemetryHighlights prefers nested telemetry when top-level values are stale', () => {
+  const highlights = formatTelemetryHighlights({
+    channel_utilization: 0,
+    device_metrics: { channelUtilization: 0.561 },
+  });
+
+  assert.deepEqual(highlights, [
+    { label: 'Channel Util', value: '0.561%' },
+  ]);
+});
+
 test('formatPositionHighlights renders coordinate and movement data', () => {
   const highlights = formatPositionHighlights({
     latitude: 52.1234567,

@@ -2139,7 +2139,7 @@ export function initializeApp(config) {
       role: roleDisplay,
       metadataSource: node,
       nodeData: node,
-      messageHtml: `<em>☀️ New node: ${escapeHtml(longNameDisplay)}</em>`
+      messageHtml: `${renderEmojiHtml('☀️')} <em>New node: ${escapeHtml(longNameDisplay)}</em>`
     });
   }
 
@@ -2175,6 +2175,23 @@ export function initializeApp(config) {
     return ` — ${parts.join(', ')}`;
   }
 
+  /**
+   * Render a non-italicised emoji span suitable for announcement entries.
+   *
+   * @param {string} symbol Emoji or short textual marker.
+   * @returns {string} HTML span wrapping the escaped symbol.
+   */
+  function renderEmojiHtml(symbol) {
+    if (symbol == null) {
+      return '';
+    }
+    const trimmed = String(symbol).trim();
+    if (!trimmed) {
+      return '';
+    }
+    return `<span class="chat-entry-emoji" aria-hidden="true">${escapeHtml(trimmed)}</span>`;
+  }
+
   function createNodeInfoChatEntry(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
     return createAnnouncementEntry({
@@ -2184,7 +2201,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: '<em>💾 Updated node info</em>'
+      messageHtml: `${renderEmojiHtml('💾')} <em>Updated node info</em>`
     });
   }
 
@@ -2198,7 +2215,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `<em>🔋 Broadcasted telemetry${highlightSuffix}</em>`
+      messageHtml: `${renderEmojiHtml('🔋')} <em>Broadcasted telemetry${highlightSuffix}</em>`
     });
   }
 
@@ -2212,7 +2229,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `<em>📍 Broadcasted position info${highlightSuffix}</em>`
+      messageHtml: `${renderEmojiHtml('📍')} <em>Broadcasted position info${highlightSuffix}</em>`
     });
   }
 
@@ -2237,7 +2254,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `<em>🏘️ Broadcasted neighbor info${detail}</em>`
+      messageHtml: `${renderEmojiHtml('🏘️')} <em>Broadcasted neighbor info${detail}</em>`
     });
   }
 
