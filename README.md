@@ -113,6 +113,12 @@ ignored and the ingestor will skip discovery tasks. Private mode still takes
 precedence; when `PRIVATE=1`, federation features remain disabled regardless of
 the `FEDERATION` value.
 
+When federation is enabled, PotatoMesh automatically refreshes entries from
+known peers every eight hours to keep the directory current. Instances that
+stop responding are considered stale and are removed from the web frontend after
+72 hours, ensuring visitors only see active deployments in the public
+directory.
+
 ### API
 
 The web app contains an API:
