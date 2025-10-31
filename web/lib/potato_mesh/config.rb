@@ -38,6 +38,20 @@ module PotatoMesh
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
 
+    # Retrieve the configured API token used for authenticated requests.
+    #
+    # @return [String, nil] API token when provided, otherwise nil.
+    def api_token
+      fetch_string("API_TOKEN", nil)
+    end
+
+    # Retrieve an explicit instance domain override when present.
+    #
+    # @return [String, nil] hostname or host:port pair supplied via ENV.
+    def instance_domain
+      fetch_string("INSTANCE_DOMAIN", nil)
+    end
+
     # Determine whether private mode should be activated.
     #
     # @return [Boolean] true when PRIVATE=1 in the environment.
@@ -445,6 +459,13 @@ module PotatoMesh
     # @return [String] contact URI or identifier.
     def contact_link
       fetch_string("CONTACT_LINK", DEFAULT_CONTACT_LINK)
+    end
+
+    # Retrieve the configured connection target for the ingestor service.
+    #
+    # @return [String] serial device, TCP endpoint, or Bluetooth target.
+    def connection_target
+      fetch_string("CONNECTION", "/dev/ttyACM0")
     end
 
     # Determine the best URL to represent the configured contact link.

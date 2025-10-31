@@ -78,6 +78,8 @@ CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
 INSTANCE_DOMAIN=$(grep "^INSTANCE_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+DEBUG=$(grep "^DEBUG=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
+CONNECTION=$(grep "^CONNECTION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "/dev/ttyACM0")
 
 echo "📍 Location Settings"
 echo "-------------------"
@@ -95,6 +97,7 @@ echo ""
 echo "💬 Optional Settings"
 echo "-------------------"
 read_with_default "Chat link or Matrix room (optional)" "$CONTACT_LINK" CONTACT_LINK
+read_with_default "Debug logging (1=enabled, 0=disabled)" "$DEBUG" DEBUG
 
 echo ""
 echo "🤝 Federation Settings"
@@ -115,6 +118,14 @@ echo "🛠 Docker Settings"
 echo "------------------"
 echo "Specify the Docker image architecture for your host (linux-amd64, linux-arm64, linux-armv7)."
 read_with_default "Docker image architecture" "$POTATOMESH_IMAGE_ARCH" POTATOMESH_IMAGE_ARCH
+
+echo ""
+echo "🔌 Ingestor Connection"
+echo "----------------------"
+echo "Define how the mesh ingestor connects to your Meshtastic device."
+echo "Use serial devices like /dev/ttyACM0, TCP endpoints such as tcp://host:port,"
+echo "or Bluetooth addresses when supported."
+read_with_default "Connection target" "$CONNECTION" CONNECTION
 
 echo ""
 echo "🌐 Domain Settings"
@@ -164,10 +175,12 @@ update_env "FREQUENCY" "\"$FREQUENCY\""
 update_env "MAP_CENTER" "\"$MAP_CENTER\""
 update_env "MAX_DISTANCE" "$MAX_DISTANCE"
 update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
+update_env "DEBUG" "$DEBUG"
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
 update_env "FEDERATION" "$FEDERATION"
 update_env "PRIVATE" "$PRIVATE"
+update_env "CONNECTION" "$CONNECTION"
 if [ -n "$INSTANCE_DOMAIN" ]; then
     update_env "INSTANCE_DOMAIN" "$INSTANCE_DOMAIN"
 else
@@ -205,6 +218,8 @@ echo "   Max Distance: ${MAX_DISTANCE}km"
 echo "   Channel: $CHANNEL"
 echo "   Frequency: $FREQUENCY"
 echo "   Chat: ${CONTACT_LINK:-'Not set'}"
+echo "   Debug Logging: ${DEBUG}" 
+echo "   Connection: ${CONNECTION}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo "   Private Mode: ${PRIVATE}"
