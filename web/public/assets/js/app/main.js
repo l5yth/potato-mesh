@@ -34,10 +34,11 @@ import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
   formatChatMessagePrefix,
-  formatChatChannelTag,
   formatNodeAnnouncementPrefix
 } from './chat-format.js';
 import { initializeInstanceSelector } from './instance-selector.js';
+import { buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
+import { renderChatTabs } from './chat-tabs.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -128,8 +129,6 @@ export function initializeApp(config) {
     applyNodeFallback: applyNodeNameFallback,
     logger: console,
   });
-  /** @type {string|undefined} */
-  let lastChatDate;
   const NODE_LIMIT = 1000;
   const CHAT_LIMIT = 1000;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
@@ -2087,20 +2086,23 @@ export function initializeApp(config) {
    * @param {number} ts Unix timestamp in seconds.
    * @returns {HTMLElement} Divider element.
    */
-  function maybeCreateDateDivider(ts) {
-    if (!ts) return null;
-    const d = new Date(ts * 1000);
-    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-    if (lastChatDate !== key) {
-      lastChatDate = key;
-      const midnight = new Date(d);
-      midnight.setHours(0, 0, 0, 0);
-      const div = document.createElement('div');
-      div.className = 'chat-entry-date';
-      div.textContent = `-- ${formatDate(midnight)} --`;
-      return div;
-    }
-    return null;
+  function createDateDividerFactory() {
+    let lastChatDate = null;
+    return ts => {
+      if (!ts) return null;
+      const d = new Date(ts * 1000);
+      const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      if (lastChatDate !== key) {
+        lastChatDate = key;
+        const midnight = new Date(d);
+        midnight.setHours(0, 0, 0, 0);
+        const div = document.createElement('div');
+        div.className = 'chat-entry-date';
+        div.textContent = `-- ${formatDate(midnight)} --`;
+        return div;
+      }
+      return null;
+    };
   }
 
   /**
@@ -2111,7 +2113,12 @@ export function initializeApp(config) {
    */
   function createNodeChatEntry(n) {
     const div = document.createElement('div');
-    const ts = formatTime(new Date(n.first_heard * 1000));
+    const tsSeconds = resolveTimestampSeconds(
+      n.first_heard ?? n.firstHeard,
+      n.first_heard_iso ?? n.firstHeardIso
+    );
+    const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
+    const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     div.className = 'chat-entry-node';
     const short = renderShortHtml(n.short_name, n.role, n.long_name, n);
     const longName = escapeHtml(n.long_name || '');
@@ -2132,7 +2139,12 @@ export function initializeApp(config) {
    */
   function createMessageChatEntry(m) {
     const div = document.createElement('div');
-    const ts = formatTime(new Date(m.rx_time * 1000));
+    const tsSeconds = resolveTimestampSeconds(
+      m.rx_time ?? m.rxTime,
+      m.rx_iso ?? m.rxIso
+    );
+    const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
+    const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     const text = escapeHtml(m.text || '');
     const metadata = extractChatMessageMetadata(m);
@@ -2140,11 +2152,8 @@ export function initializeApp(config) {
       timestamp: escapeHtml(ts),
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
-    const channelTag = formatChatChannelTag({
-      channelName: metadata.channelName ? escapeHtml(metadata.channelName) : ''
-    });
     div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefix} ${short} ${channelTag} ${text}`;
+    div.innerHTML = `${prefix} ${short} ${text}`;
     return div;
   }
 
@@ -2157,45 +2166,85 @@ export function initializeApp(config) {
    */
   function renderChatLog(nodes, messages) {
     if (!CHAT_ENABLED || !chatEl) return;
-    const entries = [];
-    for (const n of nodes || []) {
-      entries.push({ type: 'node', ts: n.first_heard ?? 0, item: n });
-    }
-    for (const m of messages || []) {
-      if (!m || m.encrypted) continue;
-      entries.push({ type: 'msg', ts: m.rx_time ?? 0, item: m });
-    }
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const cutoff = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
-    const recentEntries = entries.filter(entry => {
-      if (entry == null) return false;
-      const rawTs = entry.ts;
-      if (rawTs == null) return false;
-      const ts = typeof rawTs === 'number' ? rawTs : Number(rawTs);
-      if (!Number.isFinite(ts)) return false;
-      entry.ts = ts;
-      return ts >= cutoff;
+    const { logEntries, channels } = buildChatTabModel({
+      nodes,
+      messages,
+      nowSeconds,
+      windowSeconds: CHAT_RECENT_WINDOW_SECONDS,
+      maxChannelIndex: MAX_CHANNEL_INDEX
     });
-    recentEntries.sort((a, b) => {
-      if (a.ts !== b.ts) return a.ts - b.ts;
-      return a.type === 'node' && b.type === 'msg' ? -1 : a.type === 'msg' && b.type === 'node' ? 1 : 0;
+
+    const logContent = buildChatFragment({
+      entries: logEntries,
+      renderEntry: entry => createNodeChatEntry(entry.node),
+      emptyLabel: 'No recent node announcements.'
     });
-    const frag = document.createDocumentFragment();
-    lastChatDate = null;
-    for (const entry of recentEntries) {
-      const divider = maybeCreateDateDivider(entry.ts);
-      if (divider) frag.appendChild(divider);
-      if (entry.type === 'node') {
-        frag.appendChild(createNodeChatEntry(entry.item));
-      } else {
-        frag.appendChild(createMessageChatEntry(entry.item));
+
+    const channelTabs = channels.map(channel => ({
+      id: `channel-${channel.index}`,
+      label: channel.label,
+      content: buildChatFragment({
+        entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
+        renderEntry: entry => createMessageChatEntry(entry.item),
+        emptyLabel: 'No messages on this channel.'
+      })
+    }));
+
+    const tabs = [
+      { id: 'log', label: 'Log', content: logContent },
+      ...channelTabs
+    ];
+
+    const previousActive = chatEl.dataset?.activeTab || null;
+    const defaultActive = channelTabs.find(tab => tab.id === 'channel-0')?.id || channelTabs[0]?.id || 'log';
+    renderChatTabs({
+      document,
+      container: chatEl,
+      tabs,
+      previousActiveTabId: previousActive,
+      defaultActiveTabId: defaultActive
+    });
+  }
+
+  /**
+   * Construct a document fragment for chat entries, inserting date dividers
+   * and optional empty-state labels.
+   *
+   * @param {{
+   *   entries: Array<{ ts: number, item: Object }>,
+   *   renderEntry: Function,
+   *   emptyLabel?: string
+   * }} params Fragment construction parameters.
+   * @returns {DocumentFragment} Populated fragment.
+   */
+  function buildChatFragment({ entries = [], renderEntry, emptyLabel }) {
+    const fragment = document.createDocumentFragment();
+    if (!entries || entries.length === 0) {
+      if (emptyLabel) {
+        const empty = document.createElement('p');
+        empty.className = 'chat-empty';
+        empty.textContent = emptyLabel;
+        fragment.appendChild(empty);
+      }
+      return fragment;
+    }
+    const getDivider = createDateDividerFactory();
+    const limitedEntries = entries.slice(Math.max(entries.length - CHAT_LIMIT, 0));
+    for (const entry of limitedEntries) {
+      if (!entry || typeof entry.ts !== 'number') {
+        continue;
+      }
+      const divider = getDivider(entry.ts);
+      if (divider) fragment.appendChild(divider);
+      if (typeof renderEntry === 'function') {
+        const node = renderEntry(entry);
+        if (node) {
+          fragment.appendChild(node);
+        }
       }
     }
-    chatEl.replaceChildren(frag);
-    while (chatEl.childElementCount > CHAT_LIMIT) {
-      chatEl.removeChild(chatEl.firstChild);
-    }
-    chatEl.scrollTop = chatEl.scrollHeight;
+    return fragment;
   }
 
   /**

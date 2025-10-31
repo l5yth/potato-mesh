@@ -470,9 +470,58 @@ th {
   height: 60vh;
   border: 1px solid #ddd;
   border-radius: 8px;
-  overflow-y: auto;
-  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   font-size: 12px;
+  background: var(--bg2);
+}
+
+.chat-tablist {
+  display: flex;
+  gap: 4px;
+  padding: 6px 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 6px 8px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.chat-tab:is(:focus-visible, :hover) {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.chat-tab.is-active {
+  background: var(--bg2);
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+
+.chat-tabpanels {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.chat-tabpanel {
+  flex: 1;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.chat-empty {
+  margin: 12px 0;
+  color: var(--muted);
+  font-style: italic;
 }
 
 .chat-entry-node {
@@ -630,7 +679,7 @@ body.dark .filter-clear:hover {
   outline-offset: 2px;
 }
 
-button {
+button:not(.chat-tab) {
   padding: 6px 10px;
   border: 1px solid #ccc;
   background: #fff;
@@ -649,7 +698,7 @@ button {
   line-height: 1;
 }
 
-button:hover {
+button:not(.chat-tab):hover {
   background: #f6f6f6;
 }
 
@@ -1101,17 +1150,41 @@ body.dark #chat {
   color: #eee;
 }
 
+body.dark .chat-tablist {
+  border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+
+body.dark .chat-tab {
+  color: #ddd;
+  background: transparent;
+  border-color: transparent;
+}
+
+body.dark .chat-tab:is(:focus-visible, :hover) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+body.dark .chat-tab.is-active {
+  background: #222;
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+body.dark .chat-empty {
+  color: #888;
+}
+
 body.dark th {
   background: #222;
 }
 
-body.dark button {
+body.dark button:not(.chat-tab) {
   background: #333;
   border-color: #444;
   color: #eee;
 }
 
-body.dark button:hover {
+body.dark button:not(.chat-tab):hover {
   background: #444;
 }
 
