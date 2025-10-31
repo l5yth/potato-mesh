@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CHAT_LOG_ENTRY_TYPES,
   buildChatTabModel,
   MAX_CHANNEL_INDEX,
   normaliseChannelIndex,
@@ -61,6 +62,10 @@ function buildModel(overrides = {}) {
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
   assert.equal(model.logEntries.length, 2);
+  assert.deepEqual(model.logEntries.map(entry => entry.type), [
+    CHAT_LOG_ENTRY_TYPES.NODE_NEW,
+    CHAT_LOG_ENTRY_TYPES.NODE_NEW
+  ]);
   assert.deepEqual(model.logEntries.map(entry => entry.node.id), ['recent-node', 'iso-node']);
 
   assert.equal(model.channels.length, 2);
@@ -102,4 +107,35 @@ test('resolveTimestampSeconds prefers numeric but falls back to ISO parsing', ()
   const iso = '1970-01-01T00:10:00Z';
   assert.equal(resolveTimestampSeconds('not-numeric', iso), 600);
   assert.equal(resolveTimestampSeconds('bad', 'invalid'), null);
+});
+
+test('buildChatTabModel includes telemetry, position, and neighbor events', () => {
+  const nodeId = '!node';
+  const neighborId = '!peer';
+  const model = buildChatTabModel({
+    nodes: [{
+      node_id: nodeId,
+      first_heard: NOW - 50,
+      last_heard: NOW - 40,
+      short_name: 'NODE',
+      long_name: 'Node Example'
+    }],
+    telemetry: [{ node_id: nodeId, rx_time: NOW - 30 }],
+    positions: [{ node_id: nodeId, rx_time: NOW - 20 }],
+    neighbors: [{ node_id: nodeId, neighbor_id: neighborId, rx_time: NOW - 10 }],
+    messages: [],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  assert.deepEqual(model.logEntries.map(entry => entry.type), [
+    CHAT_LOG_ENTRY_TYPES.NODE_NEW,
+    CHAT_LOG_ENTRY_TYPES.NODE_INFO,
+    CHAT_LOG_ENTRY_TYPES.TELEMETRY,
+    CHAT_LOG_ENTRY_TYPES.POSITION,
+    CHAT_LOG_ENTRY_TYPES.NEIGHBOR
+  ]);
+  assert.equal(model.logEntries[0].nodeId, nodeId);
+  const lastEntry = model.logEntries[model.logEntries.length - 1];
+  assert.equal(lastEntry.neighborId, neighborId);
 });
