@@ -1,5 +1,5 @@
 x-web-base: &web-base
-  image: ghcr.io/l5yth/potato-mesh-web-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
+  image: ghcr.io/l5yth/potato-mesh-web-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:${POTATOMESH_IMAGE_TAG:-latest}
   environment:
     APP_ENV: ${APP_ENV:-production}
     RACK_ENV: ${RACK_ENV:-production}
@@ -30,7 +30,7 @@ x-web-base: &web-base
         cpus: '0.25'
 
 x-ingestor-base: &ingestor-base
-  image: ghcr.io/l5yth/potato-mesh-ingestor-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:latest
+  image: ghcr.io/l5yth/potato-mesh-ingestor-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:${POTATOMESH_IMAGE_TAG:-latest}
   environment:
     CONNECTION: ${CONNECTION:-/dev/ttyACM0}
     CHANNEL_INDEX: ${CHANNEL_INDEX:-0}

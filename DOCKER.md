@@ -13,13 +13,15 @@ will pull the latest release images for you.
 
 ## Images on GHCR
 
-| Service  | Image                                                             |
-|----------|-------------------------------------------------------------------|
-| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest`                |
-| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest`           |
+| Service  | Image                                                                                                         |
+|----------|---------------------------------------------------------------------------------------------------------------|
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                           |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                      |
 
-Images are published for every tagged release. Replace `latest` with a
-specific version tag if you prefer pinned deployments.
+Images are published for every tagged release. Each build receives both semantic
+version tags (for example `3.0`) and a matching `v`-prefixed tag (for example
+`v3.0`). `latest` always points to the newest release, so pin one of the version
+tags when you need a specific build.
 
 ## Configure environment
 
@@ -38,6 +40,9 @@ Additional environment variables are optional:
 
 - `CHANNEL`, `FREQUENCY`, `MAP_CENTER`, `MAX_DISTANCE`, and `CONTACT_LINK`
   customise the UI.
+- `POTATOMESH_IMAGE_TAG` pins the Docker images to a specific release (defaults
+  to `latest`). Set values such as `v3.0` to deploy historical versions while
+  keeping newer releases available under `latest`.
 - `POTATOMESH_INSTANCE` (defaults to `http://web:41447`) lets the ingestor post
   to a remote PotatoMesh instance if you do not run both services together.
 - `CONNECTION` overrides the default serial device or network endpoint used by

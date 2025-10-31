@@ -185,11 +185,14 @@ Post your nodes here:
 Docker images are published on Github for each release:
 
 ```bash
-docker pull ghcr.io/l5yth/potato-mesh/web:latest
+docker pull ghcr.io/l5yth/potato-mesh/web:latest    # newest release
+docker pull ghcr.io/l5yth/potato-mesh/web:v3.0      # pinned historical release
 docker pull ghcr.io/l5yth/potato-mesh/ingestor:latest
 ```
 
-See the [Docker guide](DOCKER.md) for more details and custome deployment instructions.
+Set `POTATOMESH_IMAGE_TAG` in your `.env` (or environment) to deploy a specific
+tagged release with Docker Compose. See the [Docker guide](DOCKER.md) for more
+details and custom deployment instructions.
 
 ## License
 
