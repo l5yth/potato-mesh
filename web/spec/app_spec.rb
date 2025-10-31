@@ -813,6 +813,52 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe ".self_instance_domain" do
+      around do |example|
+        original_app_env = ENV["APP_ENV"]
+        original_rack_env = ENV["RACK_ENV"]
+        begin
+          example.run
+        ensure
+          if original_app_env
+            ENV["APP_ENV"] = original_app_env
+          else
+            ENV.delete("APP_ENV")
+          end
+
+          if original_rack_env
+            ENV["RACK_ENV"] = original_rack_env
+          else
+            ENV.delete("RACK_ENV")
+          end
+        end
+      end
+
+      it "returns the sanitized domain when configuration is present" do
+        ENV.delete("APP_ENV")
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", " Example.Org ") do
+          expect(application_class.self_instance_domain).to eq("example.org")
+        end
+      end
+
+      it "returns nil when the domain is unavailable outside production" do
+        ENV["APP_ENV"] = "development"
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil) do
+          expect(application_class.self_instance_domain).to be_nil
+        end
+      end
+
+      it "raises when the domain is unavailable in production" do
+        ENV["APP_ENV"] = "production"
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil) do
+          expect { application_class.self_instance_domain }.to raise_error(
+            RuntimeError,
+            "INSTANCE_DOMAIN could not be determined",
+          )
+        end
+      end
+    end
+
     describe ".self_instance_registration_decision" do
       let(:domain) { "spec.mesh.test" }
 

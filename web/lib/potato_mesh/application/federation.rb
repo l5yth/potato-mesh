@@ -15,9 +15,24 @@
 module PotatoMesh
   module App
     module Federation
+      # Resolve the canonical domain for the running instance.
+      #
+      # @return [String, nil] sanitized instance domain or nil outside production.
+      # @raise [RuntimeError] when the domain cannot be determined in production.
       def self_instance_domain
         sanitized = sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN))
         return sanitized if sanitized
+
+        unless production_environment?
+          debug_log(
+            "INSTANCE_DOMAIN unavailable; skipping self instance domain",
+            context: "federation.instances",
+            app_env: string_or_nil(ENV["APP_ENV"]),
+            rack_env: string_or_nil(ENV["RACK_ENV"]),
+            source: app_constant(:INSTANCE_DOMAIN_SOURCE),
+          )
+          return nil
+        end
 
         raise "INSTANCE_DOMAIN could not be determined"
       end
