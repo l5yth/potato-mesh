@@ -36,17 +36,24 @@ INSTANCE_DOMAIN=mesh.example.org
 
 Additional environment variables are optional:
 
-- `CHANNEL`, `FREQUENCY`, `MAP_CENTER`, `MAX_DISTANCE`, and `CONTACT_LINK`
-  customise the UI.
-- `POTATOMESH_INSTANCE` (defaults to `http://web:41447`) lets the ingestor post
-  to a remote PotatoMesh instance if you do not run both services together.
-- `CONNECTION` overrides the default serial device or network endpoint used by
-  the ingestor.
-- `CHANNEL_INDEX` selects the LoRa channel when using serial or Bluetooth
-  connections.
-- `INSTANCE_DOMAIN` pins the public hostname advertised by the web UI and API
-  responses, bypassing reverse DNS detection when set.
-- `DEBUG` enables verbose logging across the stack.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `API_TOKEN` | _required_ | Shared secret used by the ingestor and API clients for authenticated `POST` requests. |
+| `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) advertised by the web UI, metadata, and API responses. |
+| `SITE_NAME` | `"PotatoMesh Demo"` | Title and branding surfaced in the web UI. |
+| `CHANNEL` | `"#LongFast"` | Default LoRa channel label displayed on the dashboard. |
+| `FREQUENCY` | `"915MHz"` | Default LoRa frequency description shown in the UI. |
+| `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix room alias rendered in UI footers and overlays. |
+| `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map view. |
+| `MAX_DISTANCE` | `42` | Maximum relationship distance (km) before edges are hidden. |
+| `DEBUG` | `0` | Enables verbose logging across services when set to `1`. |
+| `FEDERATION` | `1` | Controls whether the instance announces itself and crawls peers (`1`) or stays isolated (`0`). |
+| `PRIVATE` | `0` | Restricts public visibility and disables chat/message endpoints when set to `1`. |
+| `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the radio. |
+
+The ingestor also respects supporting variables such as `POTATOMESH_INSTANCE`
+(defaults to `http://web:41447`) for remote posting and `CHANNEL_INDEX` when
+selecting a LoRa channel on serial or Bluetooth connections.
 
 ## Docker Compose file
 
