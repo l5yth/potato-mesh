@@ -2139,7 +2139,7 @@ export function initializeApp(config) {
       role: roleDisplay,
       metadataSource: node,
       nodeData: node,
-      messageHtml: `<em>New node: ${escapeHtml(longNameDisplay)}</em>`
+      messageHtml: `<em>☀️ New node: ${escapeHtml(longNameDisplay)}</em>`
     });
   }
 
@@ -2184,7 +2184,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: '<em>Updated node info</em>'
+      messageHtml: '<em>💾 Updated node info</em>'
     });
   }
 
@@ -2198,7 +2198,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `<em>Broadcasted telemetry${highlightSuffix}</em>`
+      messageHtml: `<em>🔋 Broadcasted telemetry${highlightSuffix}</em>`
     });
   }
 
@@ -2212,7 +2212,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `<em>Broadcasted position info${highlightSuffix}</em>`
+      messageHtml: `<em>📍 Broadcasted position info${highlightSuffix}</em>`
     });
   }
 
@@ -2237,7 +2237,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `<em>Broadcasted neighbor info${detail}</em>`
+      messageHtml: `<em>🏘️ Broadcasted neighbor info${detail}</em>`
     });
   }
 
