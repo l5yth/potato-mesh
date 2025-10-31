@@ -58,6 +58,44 @@ function buildModel(overrides = {}) {
   });
 }
 
+test('buildChatTabModel merges telemetry, positions, and neighbors into log entries', () => {
+  const nodeId = '!tele';
+  const baseNode = { node_id: nodeId, short_name: 'tele', first_heard: NOW - 120 };
+  const telemetry = [
+    { node_id: nodeId, rx_time: NOW - 30, lora_freq: 915.0 }
+  ];
+  const positions = [
+    { node_id: nodeId, rx_time: NOW - 20 }
+  ];
+  const neighbors = [
+    { node_id: nodeId, rx_time: NOW - 10 }
+  ];
+  const model = buildChatTabModel({
+    nodes: [baseNode],
+    messages: [],
+    telemetry,
+    positions,
+    neighbors,
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  assert.equal(model.logEntries.length, 4);
+  assert.deepEqual(
+    model.logEntries.map(entry => [entry.kind, entry.entry.node_id ?? null]),
+    [
+      ['node', nodeId],
+      ['telemetry', nodeId],
+      ['position', nodeId],
+      ['neighbor', nodeId]
+    ]
+  );
+  for (const entry of model.logEntries) {
+    assert.ok(entry.node, 'expected node reference for log entry');
+    assert.equal(entry.node.node_id, nodeId);
+  }
+});
+
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
   assert.equal(model.logEntries.length, 2);

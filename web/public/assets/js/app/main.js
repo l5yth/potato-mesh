@@ -39,6 +39,7 @@ import {
 import { initializeInstanceSelector } from './instance-selector.js';
 import { buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
+import { createBroadcastLogEntryElement } from './chat-log-entry-renderer.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -2158,27 +2159,58 @@ export function initializeApp(config) {
   }
 
   /**
-   * Render the chat history panel with nodes and messages.
+   * Create a chat log entry for a generic mesh event.
+   *
+   * @param {{ ts: number, kind: string, node?: ?Object, entry: Object }} logEntry
+   *   Aggregated log entry metadata.
+   * @returns {?HTMLElement} Rendered DOM element or ``null`` when unsupported.
+   */
+  function createLogChatEntry(logEntry) {
+    if (!logEntry || typeof logEntry !== 'object') {
+      return null;
+    }
+    if (logEntry.kind === 'node') {
+      return createNodeChatEntry(logEntry.node);
+    }
+    return createBroadcastLogEntryElement({
+      document,
+      logEntry,
+      renderShortHtml,
+      extractChatMessageMetadata,
+      formatNodeAnnouncementPrefix,
+      escapeHtml,
+      formatTime
+    });
+  }
+
+  /**
+   * Render the chat history panel with nodes, messages, and mesh broadcast events.
    *
    * @param {Array<Object>} nodes Collection of node payloads.
    * @param {Array<Object>} messages Collection of message payloads.
+   * @param {Array<Object>} telemetryEntries Telemetry packets fetched from the API.
+   * @param {Array<Object>} positionEntries Position packets fetched from the API.
+   * @param {Array<Object>} neighborEntries Neighbor announcements fetched from the API.
    * @returns {void}
    */
-  function renderChatLog(nodes, messages) {
+  function renderChatLog(nodes, messages, telemetryEntries, positionEntries, neighborEntries) {
     if (!CHAT_ENABLED || !chatEl) return;
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { logEntries, channels } = buildChatTabModel({
       nodes,
       messages,
+      telemetry: telemetryEntries,
+      positions: positionEntries,
+      neighbors: neighborEntries,
       nowSeconds,
       windowSeconds: CHAT_RECENT_WINDOW_SECONDS,
       maxChannelIndex: MAX_CHANNEL_INDEX
     });
 
     const logContent = buildChatFragment({
-      entries: logEntries,
-      renderEntry: entry => createNodeChatEntry(entry.node),
-      emptyLabel: 'No recent node announcements.'
+      entries: logEntries.map(entry => ({ ts: entry.ts, item: entry })),
+      renderEntry: entry => createLogChatEntry(entry.item),
+      emptyLabel: 'No recent mesh activity.'
     });
 
     const channelTabs = channels.map(channel => ({
@@ -3070,7 +3102,7 @@ export function initializeApp(config) {
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
       const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
-      renderChatLog(nodes, chatMessages);
+      renderChatLog(nodes, chatMessages, telemetryEntries, positions, neighborTuples);
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
       statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();

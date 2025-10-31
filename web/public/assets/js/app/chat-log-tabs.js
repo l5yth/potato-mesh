@@ -29,18 +29,29 @@ export const MAX_CHANNEL_INDEX = 9;
  * @param {{
  *   nodes?: Array<Object>,
  *   messages?: Array<Object>,
+ *   telemetry?: Array<Object>,
+ *   positions?: Array<Object>,
+ *   neighbors?: Array<Object>,
  *   nowSeconds: number,
  *   windowSeconds: number,
  *   maxChannelIndex?: number
  * }} params Aggregation inputs.
  * @returns {{
- *   logEntries: Array<{ ts: number, node: Object }>,
+ *   logEntries: Array<{
+ *     ts: number,
+ *     kind: 'node' | 'telemetry' | 'position' | 'neighbor',
+ *     node: ?Object,
+ *     entry: Object
+ *   }>,
  *   channels: Array<{ index: number, label: string, entries: Array<{ ts: number, message: Object }> }>
  * }} Sorted tab model data.
  */
 export function buildChatTabModel({
   nodes = [],
   messages = [],
+  telemetry = [],
+  positions = [],
+  neighbors = [],
   nowSeconds,
   windowSeconds,
   maxChannelIndex = MAX_CHANNEL_INDEX
@@ -49,11 +60,83 @@ export function buildChatTabModel({
   const logEntries = [];
   const channelBuckets = new Map();
 
+  const { nodesById, nodesByNum } = buildNodeLookup(nodes);
+
+  const selectNodeRecord = entry => {
+    if (!entry || typeof entry !== 'object') {
+      return null;
+    }
+    const nodeId = typeof entry.node_id === 'string'
+      ? entry.node_id
+      : (typeof entry.nodeId === 'string' ? entry.nodeId : null);
+    if (nodeId && nodesById.has(nodeId)) {
+      return nodesById.get(nodeId);
+    }
+    const nodeNumRaw = entry.node_num ?? entry.nodeNum ?? entry.num;
+    if (nodeNumRaw != null) {
+      const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+      if (Number.isFinite(nodeNum) && nodesByNum.has(nodeNum)) {
+        return nodesByNum.get(nodeNum);
+      }
+    }
+    return null;
+  };
+
   for (const node of nodes || []) {
     if (!node) continue;
     const ts = resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
     if (ts == null || ts < cutoff) continue;
-    logEntries.push({ ts, node });
+    logEntries.push({ ts, node, entry: node, kind: 'node' });
+  }
+
+  const telemetryEntries = Array.isArray(telemetry) ? telemetry : [];
+  for (const telemetryEntry of telemetryEntries) {
+    if (!telemetryEntry || typeof telemetryEntry !== 'object') continue;
+    const ts = selectBestTimestamp([
+      { numeric: telemetryEntry.rx_time ?? telemetryEntry.rxTime, iso: telemetryEntry.rx_iso ?? telemetryEntry.rxIso },
+      {
+        numeric: telemetryEntry.telemetry_time ?? telemetryEntry.telemetryTime,
+        iso: telemetryEntry.telemetry_time_iso ?? telemetryEntry.telemetryTimeIso
+      }
+    ]);
+    if (ts == null || ts < cutoff) continue;
+    logEntries.push({
+      ts,
+      kind: 'telemetry',
+      node: selectNodeRecord(telemetryEntry),
+      entry: telemetryEntry
+    });
+  }
+
+  const positionEntries = Array.isArray(positions) ? positions : [];
+  for (const positionEntry of positionEntries) {
+    if (!positionEntry || typeof positionEntry !== 'object') continue;
+    const ts = selectBestTimestamp([
+      { numeric: positionEntry.rx_time ?? positionEntry.rxTime, iso: positionEntry.rx_iso ?? positionEntry.rxIso },
+      { numeric: positionEntry.position_time ?? positionEntry.positionTime, iso: positionEntry.position_time_iso ?? positionEntry.positionTimeIso }
+    ]);
+    if (ts == null || ts < cutoff) continue;
+    logEntries.push({
+      ts,
+      kind: 'position',
+      node: selectNodeRecord(positionEntry),
+      entry: positionEntry
+    });
+  }
+
+  const neighborEntries = Array.isArray(neighbors) ? neighbors : [];
+  for (const neighborEntry of neighborEntries) {
+    if (!neighborEntry || typeof neighborEntry !== 'object') continue;
+    const ts = selectBestTimestamp([
+      { numeric: neighborEntry.rx_time ?? neighborEntry.rxTime, iso: neighborEntry.rx_iso ?? neighborEntry.rxIso }
+    ]);
+    if (ts == null || ts < cutoff) continue;
+    logEntries.push({
+      ts,
+      kind: 'neighbor',
+      node: selectNodeRecord(neighborEntry),
+      entry: neighborEntry
+    });
   }
 
   logEntries.sort((a, b) => a.ts - b.ts);
@@ -107,6 +190,60 @@ export function buildChatTabModel({
   }
 
   return { logEntries, channels };
+}
+
+/**
+ * Construct lookup tables that map node identifiers and numeric references to
+ * their corresponding node records.
+ *
+ * @param {Array<Object>} nodes Node payloads returned by the API.
+ * @returns {{ nodesById: Map<string, Object>, nodesByNum: Map<number, Object> }}
+ *   Aggregated lookup tables for ``node_id`` and ``node_num`` fields.
+ */
+function buildNodeLookup(nodes) {
+  const nodesById = new Map();
+  const nodesByNum = new Map();
+  if (!Array.isArray(nodes)) {
+    return { nodesById, nodesByNum };
+  }
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    const nodeId = typeof node.node_id === 'string'
+      ? node.node_id
+      : (typeof node.nodeId === 'string' ? node.nodeId : null);
+    if (nodeId) {
+      nodesById.set(nodeId, node);
+    }
+    const nodeNumRaw = node.node_num ?? node.nodeNum ?? node.num;
+    if (nodeNumRaw != null) {
+      const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+      if (Number.isFinite(nodeNum)) {
+        nodesByNum.set(nodeNum, node);
+      }
+    }
+  }
+  return { nodesById, nodesByNum };
+}
+
+/**
+ * Select the first valid timestamp from ``candidates`` using
+ * {@link resolveTimestampSeconds} for conversion.
+ *
+ * @param {Array<{numeric: *, iso: *}>} candidates Timestamp value pairs.
+ * @returns {?number} Timestamp in seconds when available.
+ */
+function selectBestTimestamp(candidates) {
+  if (!Array.isArray(candidates)) {
+    return null;
+  }
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const ts = resolveTimestampSeconds(candidate.numeric, candidate.iso);
+    if (ts != null) {
+      return ts;
+    }
+  }
+  return null;
 }
 
 /**
