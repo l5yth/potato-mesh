@@ -56,10 +56,14 @@ read_with_default() {
 update_env() {
     local key="$1"
     local value="$2"
-    
+    local escaped_value
+
+    # Escape characters that would break the sed replacement delimiter or introduce backreferences
+    escaped_value=$(printf '%s' "$value" | sed -e 's/[&|]/\\&/g')
+
     if grep -q "^$key=" .env; then
         # Update existing value
-        sed -i.bak "s/^$key=.*/$key=$value/" .env
+        sed -i.bak "s|^$key=.*|$key=$escaped_value|" .env
     else
         # Add new value
         echo "$key=$value" >> .env
