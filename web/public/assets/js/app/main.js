@@ -34,7 +34,6 @@ import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
   formatChatMessagePrefix,
-  formatChatChannelTag,
   formatNodeAnnouncementPrefix
 } from './chat-format.js';
 import { initializeInstanceSelector } from './instance-selector.js';
@@ -2153,11 +2152,8 @@ export function initializeApp(config) {
       timestamp: escapeHtml(ts),
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
-    const channelTag = formatChatChannelTag({
-      channelName: metadata.channelName ? escapeHtml(metadata.channelName) : ''
-    });
     div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefix} ${short} ${channelTag} ${text}`;
+    div.innerHTML = `${prefix} ${short} ${text}`;
     return div;
   }
 
