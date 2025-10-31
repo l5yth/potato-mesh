@@ -133,6 +133,12 @@ The web app contains an API:
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
+### Observability
+
+PotatoMesh ships with a Prometheus exporter mounted at `/metrics`. Consult
+[`PROMETHEUS.md`](./PROMETHEUS.md) for deployment guidance, metric details, and
+scrape configuration examples.
+
 ## Python Ingestor
 
 The web app is not meant to be run locally connected to a Meshtastic node but rather
