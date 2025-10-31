@@ -37,7 +37,7 @@ import {
   formatNodeAnnouncementPrefix
 } from './chat-format.js';
 import { initializeInstanceSelector } from './instance-selector.js';
-import { buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
+import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
 
 /**
@@ -124,6 +124,7 @@ export function initializeApp(config) {
   let allNeighbors = [];
   /** @type {Map<string, Object>} */
   let nodesById = new Map();
+  let nodesByNum = new Map();
   const messageNodeHydrator = createMessageNodeHydrator({
     fetchNodeById,
     applyNodeFallback: applyNodeNameFallback,
@@ -1684,14 +1685,21 @@ export function initializeApp(config) {
    */
   function rebuildNodeIndex(nodes) {
     nodesById = new Map();
+    nodesByNum = new Map();
     if (!Array.isArray(nodes)) return;
     for (const node of nodes) {
       if (!node || typeof node !== 'object') continue;
-      const nodeId = typeof node.node_id === 'string'
+      const nodeIdRaw = typeof node.node_id === 'string'
         ? node.node_id
         : (typeof node.nodeId === 'string' ? node.nodeId : null);
-      if (!nodeId) continue;
-      nodesById.set(nodeId, node);
+      if (nodeIdRaw) {
+        nodesById.set(nodeIdRaw.trim(), node);
+      }
+      const nodeNumRaw = node.num ?? node.node_num ?? node.nodeNum;
+      const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+      if (Number.isFinite(nodeNum)) {
+        nodesByNum.set(nodeNum, node);
+      }
     }
   }
 
@@ -2111,24 +2119,288 @@ export function initializeApp(config) {
    * @param {Object} n Node payload.
    * @returns {HTMLElement} Chat log element.
    */
-  function createNodeChatEntry(n) {
+  function createNodeChatEntry(node, timestampOverride = null) {
+    if (!node || typeof node !== 'object') return null;
+    const nodeIdRaw = pickFirstProperty([node], ['node_id', 'nodeId']);
+    const fallbackId = nodeIdRaw || 'Unknown node';
+    const longNameRaw = pickFirstProperty([node], ['long_name', 'longName']);
+    const longNameDisplay = longNameRaw ? String(longNameRaw) : fallbackId;
+    const shortNameRaw = pickFirstProperty([node], ['short_name', 'shortName']);
+    const shortNameDisplay = shortNameRaw ? String(shortNameRaw) : (nodeIdRaw ? nodeIdRaw.slice(-4) : null);
+    const roleDisplay = pickFirstProperty([node], ['role']);
+    const tsSeconds = timestampOverride != null
+      ? timestampOverride
+      : resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
+    return createAnnouncementEntry({
+      timestampSeconds: tsSeconds,
+      shortName: shortNameDisplay,
+      longName: longNameDisplay,
+      role: roleDisplay,
+      metadataSource: node,
+      nodeData: node,
+      messageHtml: `<em>New node: ${escapeHtml(longNameDisplay)}</em>`
+    });
+  }
+
+  function createNodeInfoChatEntry(entry, context) {
+    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    return createAnnouncementEntry({
+      timestampSeconds: entry?.ts ?? null,
+      shortName: context.shortName,
+      longName: label,
+      role: context.role,
+      metadataSource: context.metadataSource,
+      nodeData: context.nodeData,
+      messageHtml: '<em>Broadcasted node info</em>'
+    });
+  }
+
+  function createTelemetryChatEntry(entry, context) {
+    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    return createAnnouncementEntry({
+      timestampSeconds: entry?.ts ?? null,
+      shortName: context.shortName,
+      longName: label,
+      role: context.role,
+      metadataSource: context.metadataSource,
+      nodeData: context.nodeData,
+      messageHtml: '<em>Broadcasted telemetry</em>'
+    });
+  }
+
+  function createPositionChatEntry(entry, context) {
+    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    return createAnnouncementEntry({
+      timestampSeconds: entry?.ts ?? null,
+      shortName: context.shortName,
+      longName: label,
+      role: context.role,
+      metadataSource: context.metadataSource,
+      nodeData: context.nodeData,
+      messageHtml: '<em>Broadcasted position info</em>'
+    });
+  }
+
+  function createNeighborChatEntry(entry, context) {
+    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    const neighborId = entry?.neighborId ?? pickFirstProperty([entry?.neighbor], ['neighbor_id', 'neighborId']);
+    let neighborLabel = null;
+    if (neighborId) {
+      const trimmed = String(neighborId).trim();
+      if (trimmed && nodesById.has(trimmed)) {
+        const neighborNode = nodesById.get(trimmed);
+        neighborLabel = pickFirstProperty([neighborNode], ['long_name', 'longName', 'short_name', 'shortName']) ?? trimmed;
+      } else {
+        neighborLabel = trimmed;
+      }
+    }
+    const detail = neighborLabel ? `: ${escapeHtml(String(neighborLabel))}` : '';
+    return createAnnouncementEntry({
+      timestampSeconds: entry?.ts ?? null,
+      shortName: context.shortName,
+      longName: label,
+      role: context.role,
+      metadataSource: context.metadataSource,
+      nodeData: context.nodeData,
+      messageHtml: `<em>Broadcasted neighbor info${detail}</em>`
+    });
+  }
+
+  function createChatLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    if (entry.type === CHAT_LOG_ENTRY_TYPES.NODE_NEW) {
+      return createNodeChatEntry(entry.node ?? resolveNodeForLogEntry(entry) ?? null, entry?.ts ?? null);
+    }
+    const context = buildDisplayContext(entry);
+    switch (entry.type) {
+      case CHAT_LOG_ENTRY_TYPES.NODE_INFO:
+        return createNodeInfoChatEntry(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.TELEMETRY:
+        return createTelemetryChatEntry(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.POSITION:
+        return createPositionChatEntry(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
+        return createNeighborChatEntry(entry, context);
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Create a consistently formatted chat log entry for node-centric events.
+   *
+   * @param {{
+   *   timestampSeconds: ?number,
+   *   shortName: ?string,
+   *   longName: ?string,
+   *   role: ?string,
+   *   metadataSource: Object|null,
+   *   nodeData: Object|null,
+   *   messageHtml: string
+   * }} params Rendering parameters.
+   * @returns {HTMLElement} Chat log element.
+   */
+  function createAnnouncementEntry({
+    timestampSeconds,
+    shortName,
+    longName,
+    role,
+    metadataSource,
+    nodeData,
+    messageHtml
+  }) {
     const div = document.createElement('div');
-    const tsSeconds = resolveTimestampSeconds(
-      n.first_heard ?? n.firstHeard,
-      n.first_heard_iso ?? n.firstHeardIso
-    );
-    const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
+    const tsDate = timestampSeconds != null ? new Date(timestampSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
-    div.className = 'chat-entry-node';
-    const short = renderShortHtml(n.short_name, n.role, n.long_name, n);
-    const longName = escapeHtml(n.long_name || '');
-    const metadata = extractChatMessageMetadata(n);
+    const metadata = extractChatMessageMetadata(metadataSource || nodeData || {});
     const prefix = formatNodeAnnouncementPrefix({
       timestamp: escapeHtml(ts),
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
-    div.innerHTML = `${prefix} ${short} <em>New node: ${longName}</em>`;
+    const longNameDisplay = longName != null ? String(longName) : '';
+    const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {});
+    div.className = 'chat-entry-node';
+    div.innerHTML = `${prefix} ${shortHtml} ${messageHtml}`;
     return div;
+  }
+
+  /**
+   * Derive display context for a chat log entry by inspecting node payloads.
+   *
+   * @param {Object} entry Chat log entry payload.
+   * @returns {{
+   *   nodeId: ?string,
+   *   nodeNum: ?number,
+   *   shortName: ?string,
+   *   longName: ?string,
+   *   role: ?string,
+   *   metadataSource: Object|null,
+   *   nodeData: Object|null
+   * }} Normalised display metadata.
+   */
+  function buildDisplayContext(entry) {
+    const resolvedNode = resolveNodeForLogEntry(entry);
+    const candidateSources = [resolvedNode, entry?.node, entry?.telemetry, entry?.position, entry?.neighbor]
+      .filter(source => source && typeof source === 'object');
+    const nodeId = typeof entry?.nodeId === 'string' && entry.nodeId.trim().length
+      ? entry.nodeId.trim()
+      : pickFirstProperty(candidateSources, ['node_id', 'nodeId']);
+    const nodeNum = Number.isFinite(entry?.nodeNum)
+      ? entry.nodeNum
+      : pickNumericProperty(candidateSources, ['node_num', 'nodeNum', 'num']);
+    let shortName = pickFirstProperty(candidateSources, ['short_name', 'shortName']);
+    if ((!shortName || String(shortName).trim().length === 0) && nodeId) {
+      shortName = nodeId.slice(-4);
+    }
+    let longName = pickFirstProperty(candidateSources, ['long_name', 'longName']);
+    if ((!longName || String(longName).trim().length === 0) && nodeId) {
+      longName = nodeId;
+    }
+    const role = pickFirstProperty(candidateSources, ['role']);
+    const metadataSource = resolvedNode || candidateSources[0] || {};
+    const nodeData = resolvedNode || candidateSources[0] || {};
+    return { nodeId, nodeNum, shortName, longName, role, metadataSource, nodeData };
+  }
+
+  /**
+   * Locate the canonical node object associated with a chat log entry.
+   *
+   * @param {Object} entry Chat log entry payload.
+   * @returns {?Object} Matched node payload when available.
+   */
+  function resolveNodeForLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    if (entry.node && typeof entry.node === 'object') {
+      return entry.node;
+    }
+    const idCandidates = [];
+    if (typeof entry?.nodeId === 'string') {
+      idCandidates.push(entry.nodeId);
+    }
+    for (const source of [entry?.node, entry?.telemetry, entry?.position, entry?.neighbor]) {
+      const candidate = pickFirstProperty([source], ['node_id', 'nodeId']);
+      if (candidate) {
+        idCandidates.push(candidate);
+      }
+    }
+    for (const rawId of idCandidates) {
+      const trimmed = typeof rawId === 'string' ? rawId.trim() : String(rawId);
+      if (trimmed && nodesById.has(trimmed)) {
+        return nodesById.get(trimmed);
+      }
+    }
+    const numCandidates = [];
+    if (Number.isFinite(entry?.nodeNum)) {
+      numCandidates.push(entry.nodeNum);
+    }
+    for (const source of [entry?.node, entry?.telemetry, entry?.position, entry?.neighbor]) {
+      const candidate = pickNumericProperty([source], ['node_num', 'nodeNum', 'num']);
+      if (Number.isFinite(candidate)) {
+        numCandidates.push(candidate);
+      }
+    }
+    for (const num of numCandidates) {
+      if (Number.isFinite(num) && nodesByNum.has(num)) {
+        return nodesByNum.get(num);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Retrieve the first present property value from a collection of objects.
+   *
+   * @param {Array<Object>} sources Candidate objects.
+   * @param {Array<string>} keys Ordered property names to inspect.
+   * @returns {*} First present non-blank value or ``null`` when absent.
+   */
+  function pickFirstProperty(sources, keys) {
+    if (!Array.isArray(sources) || !Array.isArray(keys)) {
+      return null;
+    }
+    for (const source of sources) {
+      if (!source || typeof source !== 'object') continue;
+      for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+        const value = source[key];
+        if (value == null) continue;
+        if (typeof value === 'string') {
+          const trimmed = value.trim();
+          if (trimmed.length === 0) {
+            continue;
+          }
+          return trimmed;
+        }
+        return value;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Retrieve the first finite numeric property from candidate objects.
+   *
+   * @param {Array<Object>} sources Candidate objects.
+   * @param {Array<string>} keys Ordered property names to inspect.
+   * @returns {?number} First finite number when available.
+   */
+  function pickNumericProperty(sources, keys) {
+    if (!Array.isArray(sources) || !Array.isArray(keys)) {
+      return null;
+    }
+    for (const source of sources) {
+      if (!source || typeof source !== 'object') continue;
+      for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+        const raw = source[key];
+        if (raw == null || raw === '') continue;
+        const num = typeof raw === 'number' ? raw : Number(raw);
+        if (Number.isFinite(num)) {
+          return num;
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -2164,11 +2436,20 @@ export function initializeApp(config) {
    * @param {Array<Object>} messages Collection of message payloads.
    * @returns {void}
    */
-  function renderChatLog(nodes, messages) {
+  function renderChatLog({
+    nodes = [],
+    messages = [],
+    telemetryEntries = [],
+    positionEntries = [],
+    neighborEntries = []
+  }) {
     if (!CHAT_ENABLED || !chatEl) return;
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { logEntries, channels } = buildChatTabModel({
       nodes,
+      telemetry: telemetryEntries,
+      positions: positionEntries,
+      neighbors: neighborEntries,
       messages,
       nowSeconds,
       windowSeconds: CHAT_RECENT_WINDOW_SECONDS,
@@ -2177,8 +2458,8 @@ export function initializeApp(config) {
 
     const logContent = buildChatFragment({
       entries: logEntries,
-      renderEntry: entry => createNodeChatEntry(entry.node),
-      emptyLabel: 'No recent node announcements.'
+      renderEntry: createChatLogEntry,
+      emptyLabel: 'No recent mesh activity.'
     });
 
     const channelTabs = channels.map(channel => ({
@@ -3070,7 +3351,13 @@ export function initializeApp(config) {
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
       const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
-      renderChatLog(nodes, chatMessages);
+      renderChatLog({
+        nodes,
+        messages: chatMessages,
+        telemetryEntries,
+        positionEntries: positions,
+        neighborEntries: neighborTuples
+      });
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
       statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
