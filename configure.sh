@@ -81,6 +81,7 @@ MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '
 CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 POTATOMESH_IMAGE_ARCH=$(grep "^POTATOMESH_IMAGE_ARCH=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "linux-amd64")
+POTATOMESH_IMAGE_TAG=$(grep "^POTATOMESH_IMAGE_TAG=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "latest")
 INSTANCE_DOMAIN=$(grep "^INSTANCE_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 DEBUG=$(grep "^DEBUG=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 CONNECTION=$(grep "^CONNECTION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "/dev/ttyACM0")
@@ -122,6 +123,8 @@ echo "🛠 Docker Settings"
 echo "------------------"
 echo "Specify the Docker image architecture for your host (linux-amd64, linux-arm64, linux-armv7)."
 read_with_default "Docker image architecture" "$POTATOMESH_IMAGE_ARCH" POTATOMESH_IMAGE_ARCH
+echo "Enter the Docker image tag to deploy (use 'latest' for the newest release or pin a version such as v3.0)."
+read_with_default "Docker image tag (latest, vX.Y, etc.)" "$POTATOMESH_IMAGE_TAG" POTATOMESH_IMAGE_TAG
 
 echo ""
 echo "🔌 Ingestor Connection"
@@ -182,6 +185,7 @@ update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
 update_env "DEBUG" "$DEBUG"
 update_env "API_TOKEN" "$API_TOKEN"
 update_env "POTATOMESH_IMAGE_ARCH" "$POTATOMESH_IMAGE_ARCH"
+update_env "POTATOMESH_IMAGE_TAG" "$POTATOMESH_IMAGE_TAG"
 update_env "FEDERATION" "$FEDERATION"
 update_env "PRIVATE" "$PRIVATE"
 update_env "CONNECTION" "$CONNECTION"
@@ -226,6 +230,7 @@ echo "   Debug Logging: ${DEBUG}"
 echo "   Connection: ${CONNECTION}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
+echo "   Docker Image Tag: $POTATOMESH_IMAGE_TAG"
 echo "   Private Mode: ${PRIVATE}"
 echo "   Instance Domain: ${INSTANCE_DOMAIN:-'Auto-detected'}"
 if [ "${FEDERATION:-1}" = "0" ]; then
