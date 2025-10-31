@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+import enum
 import importlib
 import re
 import sys
@@ -2189,6 +2190,44 @@ def test_nodeinfo_helpers_cover_fallbacks(mesh_module, monkeypatch):
     user = mesh._nodeinfo_user_dict(node_info, DummyProto())
 
     assert user["id"] == "!11223344"
+
+
+def test_nodeinfo_user_role_falls_back_to_cli_enum(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh._reset_cli_role_cache()
+
+    cli_module = types.ModuleType("meshtastic.cli")
+    cli_common = types.ModuleType("meshtastic.cli.common")
+
+    class DummyRole(enum.IntEnum):
+        CLIENT = 0
+        CLIENT_BASE = 12
+
+    cli_common.Role = DummyRole
+    cli_module.common = cli_common
+
+    monkeypatch.setitem(sys.modules, "meshtastic.cli", cli_module)
+    monkeypatch.setitem(sys.modules, "meshtastic.cli.common", cli_common)
+
+    user = mesh._nodeinfo_user_dict(None, {"id": "!11223344", "role": 12})
+
+    assert user["role"] == "CLIENT_BASE"
+
+    mesh._reset_cli_role_cache()
+
+    cli_dict_module = types.ModuleType("meshtastic.cli")
+    cli_dict_common = types.ModuleType("meshtastic.cli.common")
+    cli_dict_common.ClientRoles = {12: "client_hidden"}
+    cli_dict_module.common = cli_dict_common
+
+    monkeypatch.setitem(sys.modules, "meshtastic.cli", cli_dict_module)
+    monkeypatch.setitem(sys.modules, "meshtastic.cli.common", cli_dict_common)
+
+    user = mesh._nodeinfo_user_dict(None, {"id": "!11223344", "role": 12})
+
+    assert user["role"] == "CLIENT_HIDDEN"
+
+    mesh._reset_cli_role_cache()
 
 
 def test_store_position_packet_defaults(mesh_module, monkeypatch):
