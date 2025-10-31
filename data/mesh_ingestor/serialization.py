@@ -229,12 +229,16 @@ def _normalize_user_role(value) -> str | None:
 
     role_name = None
 
-    try:  # pragma: no branch - minimal control flow
-        from meshtastic.protobuf import mesh_pb2
+    cli_lookup = _load_cli_role_lookup()
+    role_name = cli_lookup.get(numeric)
 
-        role_name = mesh_pb2.User.Role.Name(numeric)
-    except Exception:  # pragma: no cover - depends on protobuf version
-        role_name = None
+    if not role_name:
+        try:  # pragma: no branch - minimal control flow
+            from meshtastic.protobuf import mesh_pb2
+
+            role_name = mesh_pb2.User.Role.Name(numeric)
+        except Exception:  # pragma: no cover - depends on protobuf version
+            role_name = None
 
     if not role_name:
         try:
@@ -243,10 +247,6 @@ def _normalize_user_role(value) -> str | None:
             role_name = config_pb2.Config.DeviceConfig.Role.Name(numeric)
         except Exception:  # pragma: no cover - depends on protobuf version
             role_name = None
-
-    if not role_name:
-        cli_lookup = _load_cli_role_lookup()
-        role_name = cli_lookup.get(numeric)
 
     if role_name:
         return role_name.strip().upper()
