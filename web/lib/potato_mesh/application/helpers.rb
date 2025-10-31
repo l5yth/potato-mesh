@@ -334,6 +334,16 @@ module PotatoMesh
         ENV["RACK_ENV"] == "test"
       end
 
+      # Determine whether the application is running in a production environment.
+      #
+      # @return [Boolean] true when APP_ENV or RACK_ENV resolves to "production".
+      def production_environment?
+        app_env = string_or_nil(ENV["APP_ENV"])&.downcase
+        rack_env = string_or_nil(ENV["RACK_ENV"])&.downcase
+
+        app_env == "production" || rack_env == "production"
+      end
+
       # Determine whether federation features should be active.
       #
       # @return [Boolean] true when federation configuration allows it.
