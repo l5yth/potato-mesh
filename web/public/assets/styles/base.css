@@ -529,6 +529,10 @@ th {
   color: #555;
 }
 
+.chat-entry-copy {
+  font-style: normal;
+}
+
 .chat-entry-msg {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }

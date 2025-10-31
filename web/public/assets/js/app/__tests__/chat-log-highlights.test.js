@@ -83,3 +83,18 @@ test('formatters return empty arrays when payloads are missing', () => {
   assert.deepEqual(formatPositionHighlights(undefined), []);
   assert.deepEqual(formatPositionHighlights({}), []);
 });
+
+test('formatPositionHighlights omits zero-valued movement metrics while keeping coordinates', () => {
+  const highlights = formatPositionHighlights({
+    latitude: 0,
+    longitude: 0,
+    altitude: 0,
+    speed: '0',
+    accuracy: 0,
+  });
+
+  assert.deepEqual(highlights, [
+    { label: 'Lat', value: '0.00000' },
+    { label: 'Lon', value: '0.00000' },
+  ]);
+});

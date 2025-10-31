@@ -22,18 +22,24 @@ import { buildTelemetryDisplayEntries, collectTelemetryMetrics, fmtAlt } from '.
  * Each entry describes a label, possible property names to inspect within a
  * position payload, and a formatter that converts the raw value into a string.
  *
- * @type {Array<{label: string, sources: Array<string>, formatter: (value: *) => string}>}
+ * @type {Array<{
+ *   label: string,
+ *   sources: Array<string>,
+ *   formatter: (value: *) => string,
+ *   suppressZero?: boolean
+ * }>}
  */
 const POSITION_HIGHLIGHT_FIELDS = Object.freeze([
   { label: 'Lat', sources: ['latitude', 'lat', 'latitude_i'], formatter: value => formatCoordinate(value, 5) },
   { label: 'Lon', sources: ['longitude', 'lon', 'longitude_i'], formatter: value => formatCoordinate(value, 5) },
-  { label: 'Alt', sources: ['altitude', 'alt'], formatter: value => fmtAlt(value, 'm') },
+  { label: 'Alt', sources: ['altitude', 'alt'], formatter: value => fmtAlt(value, 'm'), suppressZero: true },
   {
     label: 'Accuracy',
     sources: ['accuracy', 'pos_accuracy', 'position_accuracy', 'horizontal_accuracy', 'horz_accuracy'],
     formatter: value => fmtAlt(value, 'm'),
+    suppressZero: true,
   },
-  { label: 'Speed', sources: ['speed', 'ground_speed', 'groundSpeed'], formatter: formatSpeed },
+  { label: 'Speed', sources: ['speed', 'ground_speed', 'groundSpeed'], formatter: formatSpeed, suppressZero: true },
   { label: 'Heading', sources: ['heading', 'course', 'bearing'], formatter: formatHeading },
   { label: 'Sats', sources: ['satellites', 'sats', 'num_sats', 'numSats'], formatter: formatInteger },
 ]);
@@ -227,6 +233,12 @@ export function formatPositionHighlights(positionPayload) {
       continue;
     }
     const rawValue = normalizePositionValue(extracted.value, extracted.key);
+    if (field.suppressZero) {
+      const numeric = toFiniteNumber(rawValue);
+      if (numeric === 0) {
+        continue;
+      }
+    }
     let formatted = field.formatter(rawValue);
     if (formatted == null) {
       continue;

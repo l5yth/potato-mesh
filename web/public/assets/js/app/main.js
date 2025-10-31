@@ -2139,7 +2139,7 @@ export function initializeApp(config) {
       role: roleDisplay,
       metadataSource: node,
       nodeData: node,
-      messageHtml: `${renderEmojiHtml('☀️')} <em>New node: ${escapeHtml(longNameDisplay)}</em>`
+      messageHtml: `${renderEmojiHtml('☀️')} ${renderAnnouncementCopy(`New node: ${longNameDisplay}`)}`
     });
   }
 
@@ -2192,6 +2192,19 @@ export function initializeApp(config) {
     return `<span class="chat-entry-emoji" aria-hidden="true">${escapeHtml(trimmed)}</span>`;
   }
 
+  /**
+   * Render chat announcement copy without italic styling.
+   *
+   * @param {string} baseText Base message content before any suffix.
+   * @param {string} [suffix=''] Optional HTML-safe suffix appended to the base copy.
+   * @returns {string} Escaped HTML span containing the announcement copy.
+   */
+  function renderAnnouncementCopy(baseText, suffix = '') {
+    const safeBase = baseText != null ? String(baseText) : '';
+    const safeSuffix = suffix != null ? String(suffix) : '';
+    return `<span class="chat-entry-copy">${escapeHtml(safeBase)}${safeSuffix}</span>`;
+  }
+
   function createNodeInfoChatEntry(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
     return createAnnouncementEntry({
@@ -2201,7 +2214,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `${renderEmojiHtml('💾')} <em>Updated node info</em>`
+      messageHtml: `${renderEmojiHtml('💾')} ${renderAnnouncementCopy('Updated node info')}`
     });
   }
 
@@ -2215,7 +2228,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `${renderEmojiHtml('🔋')} <em>Broadcasted telemetry${highlightSuffix}</em>`
+      messageHtml: `${renderEmojiHtml('🔋')} ${renderAnnouncementCopy('Broadcasted telemetry', highlightSuffix)}`
     });
   }
 
@@ -2229,7 +2242,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `${renderEmojiHtml('📍')} <em>Broadcasted position info${highlightSuffix}</em>`
+      messageHtml: `${renderEmojiHtml('📍')} ${renderAnnouncementCopy('Broadcasted position info', highlightSuffix)}`
     });
   }
 
@@ -2254,7 +2267,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
-      messageHtml: `${renderEmojiHtml('🏘️')} <em>Broadcasted neighbor info${detail}</em>`
+      messageHtml: `${renderEmojiHtml('🏘️')} ${renderAnnouncementCopy('Broadcasted neighbor info', detail)}`
     });
   }
 
