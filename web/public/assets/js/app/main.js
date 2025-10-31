@@ -2114,7 +2114,12 @@ export function initializeApp(config) {
    */
   function createNodeChatEntry(n) {
     const div = document.createElement('div');
-    const ts = formatTime(new Date(n.first_heard * 1000));
+    const tsSeconds = resolveTimestampSeconds(
+      n.first_heard ?? n.firstHeard,
+      n.first_heard_iso ?? n.firstHeardIso
+    );
+    const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
+    const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     div.className = 'chat-entry-node';
     const short = renderShortHtml(n.short_name, n.role, n.long_name, n);
     const longName = escapeHtml(n.long_name || '');
@@ -2135,7 +2140,12 @@ export function initializeApp(config) {
    */
   function createMessageChatEntry(m) {
     const div = document.createElement('div');
-    const ts = formatTime(new Date(m.rx_time * 1000));
+    const tsSeconds = resolveTimestampSeconds(
+      m.rx_time ?? m.rxTime,
+      m.rx_iso ?? m.rxIso
+    );
+    const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
+    const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     const text = escapeHtml(m.text || '');
     const metadata = extractChatMessageMetadata(m);
