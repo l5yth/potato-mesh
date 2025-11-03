@@ -529,6 +529,10 @@ th {
   color: #555;
 }
 
+.chat-entry-copy {
+  font-style: normal;
+}
+
 .chat-entry-msg {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
@@ -679,7 +683,7 @@ body.dark .filter-clear:hover {
   outline-offset: 2px;
 }
 
-button:not(.chat-tab) {
+button:not(.chat-tab):not(.sort-button) {
   padding: 6px 10px;
   border: 1px solid #ccc;
   background: #fff;
@@ -698,7 +702,7 @@ button:not(.chat-tab) {
   line-height: 1;
 }
 
-button:not(.chat-tab):hover {
+button:not(.chat-tab):not(.sort-button):hover {
   background: #f6f6f6;
 }
 
@@ -1178,13 +1182,13 @@ body.dark th {
   background: #222;
 }
 
-body.dark button:not(.chat-tab) {
+body.dark button:not(.chat-tab):not(.sort-button) {
   background: #333;
   border-color: #444;
   color: #eee;
 }
 
-body.dark button:not(.chat-tab):hover {
+body.dark button:not(.chat-tab):not(.sort-button):hover {
   background: #444;
 }
 

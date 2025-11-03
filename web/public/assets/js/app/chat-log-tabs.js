@@ -21,6 +21,25 @@
 export const MAX_CHANNEL_INDEX = 9;
 
 /**
+ * Discrete event types that can appear in the chat activity log.
+ *
+ * @type {{
+ *   NODE_NEW: 'node-new',
+ *   NODE_INFO: 'node-info',
+ *   TELEMETRY: 'telemetry',
+ *   POSITION: 'position',
+ *   NEIGHBOR: 'neighbor'
+ * }}
+ */
+export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
+  NODE_NEW: 'node-new',
+  NODE_INFO: 'node-info',
+  TELEMETRY: 'telemetry',
+  POSITION: 'position',
+  NEIGHBOR: 'neighbor'
+});
+
+/**
  * Build a data model describing the content for chat tabs.
  *
  * Entries outside the recent activity window, encrypted messages, and
@@ -28,18 +47,24 @@ export const MAX_CHANNEL_INDEX = 9;
  *
  * @param {{
  *   nodes?: Array<Object>,
+ *   telemetry?: Array<Object>,
+ *   positions?: Array<Object>,
+ *   neighbors?: Array<Object>,
  *   messages?: Array<Object>,
  *   nowSeconds: number,
  *   windowSeconds: number,
  *   maxChannelIndex?: number
  * }} params Aggregation inputs.
  * @returns {{
- *   logEntries: Array<{ ts: number, node: Object }>,
+ *   logEntries: Array<{ ts: number, type: string, nodeId?: string, nodeNum?: number }>,
  *   channels: Array<{ index: number, label: string, entries: Array<{ ts: number, message: Object }> }>
  * }} Sorted tab model data.
  */
 export function buildChatTabModel({
   nodes = [],
+  telemetry = [],
+  positions = [],
+  neighbors = [],
   messages = [],
   nowSeconds,
   windowSeconds,
@@ -51,9 +76,50 @@ export function buildChatTabModel({
 
   for (const node of nodes || []) {
     if (!node) continue;
-    const ts = resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
+    const nodeId = normaliseNodeId(node);
+    const nodeNum = normaliseNodeNum(node);
+    const firstTs = resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
+    if (firstTs != null && firstTs >= cutoff) {
+      logEntries.push({ ts: firstTs, type: CHAT_LOG_ENTRY_TYPES.NODE_NEW, node, nodeId, nodeNum });
+    }
+    const lastTs = resolveTimestampSeconds(node.last_heard ?? node.lastHeard, node.last_seen_iso ?? node.lastSeenIso);
+    if (lastTs != null && lastTs >= cutoff) {
+      logEntries.push({ ts: lastTs, type: CHAT_LOG_ENTRY_TYPES.NODE_INFO, node, nodeId, nodeNum });
+    }
+  }
+
+  for (const telemetryEntry of telemetry || []) {
+    if (!telemetryEntry) continue;
+    const ts = resolveTimestampSeconds(
+      telemetryEntry.rx_time ?? telemetryEntry.rxTime ?? telemetryEntry.telemetry_time ?? telemetryEntry.telemetryTime,
+      telemetryEntry.rx_iso ?? telemetryEntry.rxIso ?? telemetryEntry.telemetry_time_iso ?? telemetryEntry.telemetryTimeIso
+    );
     if (ts == null || ts < cutoff) continue;
-    logEntries.push({ ts, node });
+    const nodeId = normaliseNodeId(telemetryEntry);
+    const nodeNum = normaliseNodeNum(telemetryEntry);
+    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.TELEMETRY, telemetry: telemetryEntry, nodeId, nodeNum });
+  }
+
+  for (const positionEntry of positions || []) {
+    if (!positionEntry) continue;
+    const ts = resolveTimestampSeconds(
+      positionEntry.rx_time ?? positionEntry.rxTime ?? positionEntry.position_time ?? positionEntry.positionTime,
+      positionEntry.rx_iso ?? positionEntry.rxIso ?? positionEntry.position_time_iso ?? positionEntry.positionTimeIso
+    );
+    if (ts == null || ts < cutoff) continue;
+    const nodeId = normaliseNodeId(positionEntry);
+    const nodeNum = normaliseNodeNum(positionEntry);
+    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.POSITION, position: positionEntry, nodeId, nodeNum });
+  }
+
+  for (const neighborEntry of neighbors || []) {
+    if (!neighborEntry) continue;
+    const ts = resolveTimestampSeconds(neighborEntry.rx_time ?? neighborEntry.rxTime, neighborEntry.rx_iso ?? neighborEntry.rxIso);
+    if (ts == null || ts < cutoff) continue;
+    const nodeId = normaliseNodeId(neighborEntry);
+    const nodeNum = normaliseNodeNum(neighborEntry);
+    const neighborId = normaliseNeighborId(neighborEntry);
+    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: neighborEntry, nodeId, nodeNum, neighborId });
   }
 
   logEntries.sort((a, b) => a.ts - b.ts);
@@ -107,6 +173,50 @@ export function buildChatTabModel({
   }
 
   return { logEntries, channels };
+}
+
+/**
+ * Extract a canonical node identifier from a payload when available.
+ *
+ * @param {*} value Arbitrary payload candidate.
+ * @returns {?string} Canonical node identifier.
+ */
+function normaliseNodeId(value) {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value.node_id ?? value.nodeId ?? null;
+  return typeof raw === 'string' && raw.trim().length ? raw.trim() : null;
+}
+
+/**
+ * Extract a canonical neighbour identifier from a payload when available.
+ *
+ * @param {*} value Arbitrary payload candidate.
+ * @returns {?string} Canonical neighbour identifier.
+ */
+function normaliseNeighborId(value) {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value.neighbor_id ?? value.neighborId ?? null;
+  if (typeof raw === 'string' && raw.trim().length) {
+    return raw.trim();
+  }
+  return null;
+}
+
+/**
+ * Extract a finite node number from a payload when available.
+ *
+ * @param {*} value Arbitrary payload candidate.
+ * @returns {?number} Canonical numeric identifier.
+ */
+function normaliseNodeNum(value) {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value.node_num ?? value.nodeNum ?? value.num;
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) ? raw : null;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**

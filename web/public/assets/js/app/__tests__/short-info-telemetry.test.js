@@ -81,6 +81,37 @@ test('collectTelemetryMetrics extracts values from nested payloads', () => {
   assert.equal(metrics.soilTemperature, 18.9);
 });
 
+test('collectTelemetryMetrics prefers latest nested telemetry values over stale top-level metrics', () => {
+  const payload = {
+    channel_utilization: 0,
+    device_metrics: {
+      channel_utilization: 0.561,
+      air_util_tx: 0.0091,
+    },
+    telemetry: {
+      channel: 0.563,
+    },
+    raw: {
+      device_metrics: {
+        channelUtilization: 0.562,
+      },
+    },
+  };
+
+  const metrics = collectTelemetryMetrics(payload);
+  assert.equal(metrics.channel, 0.563);
+  assert.equal(metrics.airUtil, 0.0091);
+});
+
+test('collectTelemetryMetrics prefers utilisation metrics over channel indices', () => {
+  const metrics = collectTelemetryMetrics({
+    channel: 0,
+    channel_utilization: 0.013,
+  });
+
+  assert.equal(metrics.channel, 0.013);
+});
+
 test('collectTelemetryMetrics ignores non-numeric values', () => {
   const metrics = collectTelemetryMetrics({
     battery: '',

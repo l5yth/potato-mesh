@@ -280,7 +280,7 @@ export const TELEMETRY_FIELDS = [
   {
     key: 'channel',
     label: 'Channel Util',
-    sources: ['channel', 'channel_utilization', 'channelUtilization'],
+    sources: ['channel_utilization', 'channelUtilization', 'channel'],
     formatter: value => fmtTx(value),
   },
   {
@@ -325,14 +325,27 @@ export function collectTelemetryMetrics(source) {
   if (!source || typeof source !== 'object') {
     return metrics;
   }
-  const containers = [
-    source,
+
+  const potentialContainers = [
+    source.telemetry,
     source.device_metrics,
     source.deviceMetrics,
     source.environment_metrics,
     source.environmentMetrics,
-    source.telemetry,
-  ].filter(container => container && typeof container === 'object');
+    source.raw && typeof source.raw === 'object' ? source.raw.device_metrics : null,
+    source.raw && typeof source.raw === 'object' ? source.raw.deviceMetrics : null,
+    source,
+  ];
+
+  const containers = [];
+  for (const container of potentialContainers) {
+    if (!container || typeof container !== 'object') {
+      continue;
+    }
+    if (!containers.includes(container)) {
+      containers.push(container);
+    }
+  }
 
   for (const field of TELEMETRY_FIELDS) {
     const keys = Array.isArray(field.sources) && field.sources.length > 0
