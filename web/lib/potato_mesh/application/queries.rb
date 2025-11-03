@@ -216,7 +216,7 @@ module PotatoMesh
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
-        where_clauses = ["COALESCE(TRIM(m.encrypted), '') = ''"]
+        where_clauses = ["(COALESCE(TRIM(m.text), '') != '' OR COALESCE(TRIM(m.encrypted), '') != '')"]
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
         where_clauses << "m.rx_time >= ?"

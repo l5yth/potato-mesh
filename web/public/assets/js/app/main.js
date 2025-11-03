@@ -2286,6 +2286,8 @@ export function initializeApp(config) {
         return createPositionChatEntry(entry, context);
       case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
         return createNeighborChatEntry(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
+        return entry?.message ? createMessageChatEntry(entry.message) : null;
       default:
         return null;
     }
@@ -2469,6 +2471,97 @@ export function initializeApp(config) {
   }
 
   /**
+   * Describe an encrypted message when the payload cannot be decrypted.
+   *
+   * @param {Object} message Raw message payload.
+   * @returns {{content: string, isHtml: boolean}} Renderable notice payload.
+   */
+  function formatEncryptedMessageNotice(message) {
+    const recipient = pickFirstProperty([message], ['to_id', 'toId']);
+    const recipientText = recipient != null && recipient !== ''
+      ? String(recipient).trim()
+      : '';
+    if (recipientText && recipientText.toLowerCase() !== '^all') {
+      const targetNode = resolveRecipientNode(recipientText);
+      if (targetNode) {
+        const badge = renderShortHtml(
+          targetNode.short_name ?? targetNode.shortName,
+          targetNode.role,
+          targetNode.long_name ?? targetNode.longName,
+          targetNode
+        );
+        const idSpan = `<span class="mono">${escapeHtml(recipientText)}</span>`;
+        return { content: `🔒 encrypted message to ${badge} ${idSpan}`, isHtml: true };
+      }
+      return { content: `🔒 encrypted message to ${recipientText}`, isHtml: false };
+    }
+
+    const channelCandidate = pickFirstProperty([message], ['channel', 'channel_index', 'channelIndex']);
+    let channelLabel = null;
+    if (channelCandidate != null && channelCandidate !== '') {
+      if (typeof channelCandidate === 'number' && Number.isFinite(channelCandidate)) {
+        channelLabel = String(Math.round(channelCandidate));
+      } else {
+        const trimmedChannel = String(channelCandidate).trim();
+        if (trimmedChannel.length > 0) {
+          const numericChannel = Number(trimmedChannel);
+          channelLabel = Number.isFinite(numericChannel) ? String(Math.round(numericChannel)) : trimmedChannel;
+        }
+      }
+    }
+
+    if (!channelLabel) {
+      const channelName = pickFirstProperty([message], ['channel_name', 'channelName']);
+      if (channelName != null) {
+        const trimmedName = String(channelName).trim();
+        if (trimmedName.length > 0) {
+          channelLabel = trimmedName;
+        }
+      }
+    }
+
+    if (!channelLabel) {
+      channelLabel = 'unknown channel';
+    }
+
+    return { content: `🔒 encrypted message on channel ${channelLabel}`, isHtml: false };
+  }
+
+  /**
+   * Resolve a recipient node using identifier or numeric references.
+   *
+   * @param {string} recipientId Target node reference.
+   * @returns {?Object} Node metadata when available.
+   */
+  function resolveRecipientNode(recipientId) {
+    if (typeof recipientId !== 'string' || recipientId.length === 0) {
+      return null;
+    }
+
+    if (nodesById instanceof Map && nodesById.size > 0) {
+      const direct = nodesById.get(recipientId);
+      if (direct) {
+        return direct;
+      }
+    }
+
+    if (nodesByNum instanceof Map && nodesByNum.size > 0) {
+      const decimal = Number(recipientId);
+      if (Number.isFinite(decimal) && nodesByNum.has(decimal)) {
+        return nodesByNum.get(decimal);
+      }
+      if (/^0x[0-9a-f]+$/i.test(recipientId)) {
+        const hexValue = Number.parseInt(recipientId, 16);
+        if (Number.isFinite(hexValue) && nodesByNum.has(hexValue)) {
+          return nodesByNum.get(hexValue);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Build a chat log entry for a text message.
    *
    * @param {Object} m Message payload.
@@ -2483,7 +2576,18 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
-    const text = escapeHtml(m.text || '');
+    let messageCopy = m?.text || '';
+    let copyIsHtml = false;
+    if (m && m.encrypted) {
+      const notice = formatEncryptedMessageNotice(m);
+      if (notice && typeof notice === 'object') {
+        messageCopy = notice.content ?? '';
+        copyIsHtml = Boolean(notice.isHtml);
+      } else {
+        messageCopy = '';
+      }
+    }
+    const text = copyIsHtml ? messageCopy : escapeHtml(messageCopy);
     const metadata = extractChatMessageMetadata(m);
     const prefix = formatChatMessagePrefix({
       timestamp: escapeHtml(ts),
