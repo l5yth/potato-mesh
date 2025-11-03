@@ -112,6 +112,17 @@ test('collectTelemetryMetrics prefers utilisation metrics over channel indices',
   assert.equal(metrics.channel, 0.013);
 });
 
+test('collectTelemetryMetrics prefers air util tx metrics over derived ratios', () => {
+  const metrics = collectTelemetryMetrics({
+    airUtil: 0,
+    device_metrics: {
+      air_util_tx: 0.0293
+    }
+  });
+
+  assert.equal(metrics.airUtil, 0.0293);
+});
+
 test('collectTelemetryMetrics ignores non-numeric values', () => {
   const metrics = collectTelemetryMetrics({
     battery: '',

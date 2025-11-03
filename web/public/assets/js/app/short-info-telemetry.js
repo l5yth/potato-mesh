@@ -286,7 +286,7 @@ export const TELEMETRY_FIELDS = [
   {
     key: 'airUtil',
     label: 'Air Util Tx',
-    sources: ['airUtil', 'air_util_tx', 'airUtilTx'],
+    sources: ['air_util_tx', 'airUtilTx', 'airUtil'],
     formatter: value => fmtTx(value),
   },
   { key: 'temperature', label: 'Temperature', sources: ['temperature', 'temp'], formatter: fmtTemperature },
