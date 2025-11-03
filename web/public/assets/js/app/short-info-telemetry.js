@@ -280,7 +280,7 @@ export const TELEMETRY_FIELDS = [
   {
     key: 'channel',
     label: 'Channel Util',
-    sources: ['channel', 'channel_utilization', 'channelUtilization'],
+    sources: ['channel_utilization', 'channelUtilization', 'channel'],
     formatter: value => fmtTx(value),
   },
   {

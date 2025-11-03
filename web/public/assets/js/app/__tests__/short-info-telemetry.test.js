@@ -103,6 +103,15 @@ test('collectTelemetryMetrics prefers latest nested telemetry values over stale 
   assert.equal(metrics.airUtil, 0.0091);
 });
 
+test('collectTelemetryMetrics prefers utilisation metrics over channel indices', () => {
+  const metrics = collectTelemetryMetrics({
+    channel: 0,
+    channel_utilization: 0.013,
+  });
+
+  assert.equal(metrics.channel, 0.013);
+});
+
 test('collectTelemetryMetrics ignores non-numeric values', () => {
   const metrics = collectTelemetryMetrics({
     battery: '',
