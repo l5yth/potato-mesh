@@ -3204,7 +3204,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       messages = JSON.parse(last_response.body)
       expect(messages).to be_an(Array)
-      expect(messages).to be_empty
+
+      encrypted_entry = messages.find { |row| row["id"] == payload["packet_id"] }
+      expect(encrypted_entry).not_to be_nil
+      expect(encrypted_entry["encrypted"]).to eq(encrypted_b64)
+      expect(encrypted_entry["text"]).to be_nil
+      expect(encrypted_entry["from_id"]).to eq(sender_id)
+      expect(encrypted_entry["to_id"]).to eq(receiver_id)
     end
 
     it "updates node last_heard for plaintext messages" do

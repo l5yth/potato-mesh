@@ -2286,6 +2286,8 @@ export function initializeApp(config) {
         return createPositionChatEntry(entry, context);
       case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
         return createNeighborChatEntry(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
+        return entry?.message ? createMessageChatEntry(entry.message) : null;
       default:
         return null;
     }
@@ -2469,6 +2471,54 @@ export function initializeApp(config) {
   }
 
   /**
+   * Describe an encrypted message when the payload cannot be decrypted.
+   *
+   * @param {Object} message Raw message payload.
+   * @returns {string} Human-readable notice string.
+   */
+  function formatEncryptedMessageNotice(message) {
+    const recipient = pickFirstProperty([message], ['to_id', 'toId']);
+    if (recipient != null && recipient !== '') {
+      const recipientText = typeof recipient === 'string' ? recipient.trim() : String(recipient).trim();
+      if (recipientText.length > 0) {
+        if (recipientText.toLowerCase() !== '^all') {
+          return `🔒 encrypted message to ${recipientText}`;
+        }
+      }
+    }
+
+    const channelCandidate = pickFirstProperty([message], ['channel', 'channel_index', 'channelIndex']);
+    let channelLabel = null;
+    if (channelCandidate != null && channelCandidate !== '') {
+      if (typeof channelCandidate === 'number' && Number.isFinite(channelCandidate)) {
+        channelLabel = String(Math.round(channelCandidate));
+      } else {
+        const trimmedChannel = String(channelCandidate).trim();
+        if (trimmedChannel.length > 0) {
+          const numericChannel = Number(trimmedChannel);
+          channelLabel = Number.isFinite(numericChannel) ? String(Math.round(numericChannel)) : trimmedChannel;
+        }
+      }
+    }
+
+    if (!channelLabel) {
+      const channelName = pickFirstProperty([message], ['channel_name', 'channelName']);
+      if (channelName != null) {
+        const trimmedName = String(channelName).trim();
+        if (trimmedName.length > 0) {
+          channelLabel = trimmedName;
+        }
+      }
+    }
+
+    if (!channelLabel) {
+      channelLabel = 'unknown channel';
+    }
+
+    return `🔒 encrypted message on channel ${channelLabel}`;
+  }
+
+  /**
    * Build a chat log entry for a text message.
    *
    * @param {Object} m Message payload.
@@ -2483,7 +2533,8 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
-    const text = escapeHtml(m.text || '');
+    const copy = m && m.encrypted ? formatEncryptedMessageNotice(m) : (m?.text || '');
+    const text = escapeHtml(copy);
     const metadata = extractChatMessageMetadata(m);
     const prefix = formatChatMessagePrefix({
       timestamp: escapeHtml(ts),

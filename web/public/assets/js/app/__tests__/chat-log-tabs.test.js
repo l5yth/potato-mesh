@@ -61,12 +61,16 @@ function buildModel(overrides = {}) {
 
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
-  assert.equal(model.logEntries.length, 2);
+  assert.equal(model.logEntries.length, 3);
   assert.deepEqual(model.logEntries.map(entry => entry.type), [
     CHAT_LOG_ENTRY_TYPES.NODE_NEW,
-    CHAT_LOG_ENTRY_TYPES.NODE_NEW
+    CHAT_LOG_ENTRY_TYPES.NODE_NEW,
+    CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED
   ]);
-  assert.deepEqual(model.logEntries.map(entry => entry.node.id), ['recent-node', 'iso-node']);
+  assert.deepEqual(
+    model.logEntries.map(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED ? entry.message.id : entry.node.id),
+    ['recent-node', 'iso-node', 'encrypted']
+  );
 
   assert.equal(model.channels.length, 2);
   const [channel0, channel1] = model.channels;

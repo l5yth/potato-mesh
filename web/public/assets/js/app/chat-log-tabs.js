@@ -36,7 +36,8 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
   NODE_INFO: 'node-info',
   TELEMETRY: 'telemetry',
   POSITION: 'position',
-  NEIGHBOR: 'neighbor'
+  NEIGHBOR: 'neighbor',
+  MESSAGE_ENCRYPTED: 'message-encrypted'
 });
 
 /**
@@ -122,12 +123,15 @@ export function buildChatTabModel({
     logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: neighborEntry, nodeId, nodeNum, neighborId });
   }
 
-  logEntries.sort((a, b) => a.ts - b.ts);
-
   for (const message of messages || []) {
-    if (!message || message.encrypted) continue;
+    if (!message) continue;
     const ts = resolveTimestampSeconds(message.rx_time ?? message.rxTime, message.rx_iso ?? message.rxIso);
     if (ts == null || ts < cutoff) continue;
+
+    if (message.encrypted) {
+      logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
+      continue;
+    }
 
     const rawIndex = message.channel ?? message.channel_index ?? message.channelIndex;
     const channelIndex = normaliseChannelIndex(rawIndex);
@@ -157,6 +161,8 @@ export function buildChatTabModel({
 
     bucket.entries.push({ ts, message });
   }
+
+  logEntries.sort((a, b) => a.ts - b.ts);
 
   if (!channelBuckets.has(0)) {
     channelBuckets.set(0, {
