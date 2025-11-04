@@ -1051,15 +1051,47 @@ def store_packet_dict(packet: Mapping) -> None:
         store_neighborinfo_packet(packet, decoded)
         return
 
-    text = _first(decoded, "payload.text", "text", default=None)
+    text = _first(decoded, "payload.text", "text", "data.text", default=None)
     encrypted = _first(decoded, "payload.encrypted", "encrypted", default=None)
     if encrypted is None:
         encrypted = _first(packet, "encrypted", default=None)
-    if not text and not encrypted:
+    reply_id_raw = _first(
+        decoded,
+        "payload.replyId",
+        "payload.reply_id",
+        "data.replyId",
+        "data.reply_id",
+        "replyId",
+        "reply_id",
+        default=None,
+    )
+    reply_id = _coerce_int(reply_id_raw)
+    emoji_raw = _first(
+        decoded,
+        "payload.emoji",
+        "data.emoji",
+        "emoji",
+        default=None,
+    )
+    emoji = None
+    if emoji_raw is not None:
+        try:
+            emoji_text = str(emoji_raw)
+        except Exception:
+            emoji_text = None
+        else:
+            emoji_text = emoji_text.strip()
+            if emoji_text:
+                emoji = emoji_text
+
+    encrypted_flag = _is_encrypted_flag(encrypted)
+    if not any([text, encrypted_flag, emoji is not None, reply_id is not None]):
         return
 
-    if portnum and portnum not in {"1", "TEXT_MESSAGE_APP"}:
-        return
+    allowed_port_values = {"1", "TEXT_MESSAGE_APP", "REACTION_APP"}
+    if portnum and portnum not in allowed_port_values:
+        if portnum_int not in {1}:
+            return
 
     channel = _first(decoded, "channel", default=None)
     if channel is None:
@@ -1091,8 +1123,6 @@ def store_packet_dict(packet: Mapping) -> None:
     rssi = _first(packet, "rssi", "rx_rssi", "rxRssi", default=None)
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
 
-    encrypted_flag = _is_encrypted_flag(encrypted)
-
     message_payload = {
         "id": int(pkt_id),
         "rx_time": rx_time,
@@ -1106,6 +1136,8 @@ def store_packet_dict(packet: Mapping) -> None:
         "snr": float(snr) if snr is not None else None,
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
+        "reply_id": reply_id,
+        "emoji": emoji,
     }
 
     channel_name_value = None

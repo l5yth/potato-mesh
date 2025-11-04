@@ -138,6 +138,24 @@ module PotatoMesh
           db.execute("ALTER TABLE messages ADD COLUMN channel_name TEXT")
         end
 
+        unless message_columns.include?("reply_id")
+          db.execute("ALTER TABLE messages ADD COLUMN reply_id INTEGER")
+          message_columns << "reply_id"
+        end
+
+        unless message_columns.include?("emoji")
+          db.execute("ALTER TABLE messages ADD COLUMN emoji TEXT")
+          message_columns << "emoji"
+        end
+
+        reply_index_exists =
+          db.get_first_value(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_reply_id'",
+          ).to_i > 0
+        unless reply_index_exists
+          db.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_id ON messages(reply_id)")
+        end
+
         tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='instances'").flatten
         if tables.empty?
           sql_file = File.expand_path("../../../../data/instances.sql", __dir__)

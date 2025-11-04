@@ -533,6 +533,12 @@ th {
   font-style: normal;
 }
 
+.chat-entry-reply {
+  color: var(--muted);
+  font-style: italic;
+  margin-right: 4px;
+}
+
 .chat-entry-msg {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
@@ -1255,6 +1261,10 @@ body.dark .chat-entry-node {
 
 body.dark .chat-entry-msg {
   color: #bbb;
+}
+
+body.dark .chat-entry-reply {
+  color: #999;
 }
 
 body.dark .short-name {

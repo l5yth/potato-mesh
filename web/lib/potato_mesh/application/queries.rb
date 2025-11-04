@@ -216,7 +216,9 @@ module PotatoMesh
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
-        where_clauses = ["(COALESCE(TRIM(m.text), '') != '' OR COALESCE(TRIM(m.encrypted), '') != '')"]
+        where_clauses = [
+          "(COALESCE(TRIM(m.text), '') != '' OR COALESCE(TRIM(m.encrypted), '') != '' OR m.reply_id IS NOT NULL OR COALESCE(TRIM(m.emoji), '') != '')",
+        ]
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
         where_clauses << "m.rx_time >= ?"
@@ -232,7 +234,8 @@ module PotatoMesh
         sql = <<~SQL
           SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
                  m.portnum, m.text, m.encrypted, m.rssi, m.hop_limit,
-                 m.lora_freq, m.modem_preset, m.channel_name, m.snr
+                 m.lora_freq, m.modem_preset, m.channel_name, m.snr,
+                 m.reply_id, m.emoji
           FROM messages m
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n"
@@ -244,6 +247,8 @@ module PotatoMesh
         rows = db.execute(sql, params)
         rows.each do |r|
           r.delete_if { |key, _| key.is_a?(Integer) }
+          r["reply_id"] = coerce_integer(r["reply_id"]) if r.key?("reply_id")
+          r["emoji"] = string_or_nil(r["emoji"]) if r.key?("emoji")
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.strip.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(
