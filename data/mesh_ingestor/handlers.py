@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import importlib
 import json
+import sys
 import time
 from collections.abc import Mapping
 
@@ -1089,8 +1092,44 @@ def store_packet_dict(packet: Mapping) -> None:
         return
 
     allowed_port_values = {"1", "TEXT_MESSAGE_APP", "REACTION_APP"}
+    allowed_port_ints = {1}
+
+    reaction_port_candidates: set[int] = set()
+    for module_name in (
+        "meshtastic.portnums_pb2",
+        "meshtastic.protobuf.portnums_pb2",
+    ):
+        module = sys.modules.get(module_name)
+        if module is None:
+            with contextlib.suppress(ModuleNotFoundError):
+                module = importlib.import_module(module_name)
+        if module is None:
+            continue
+        portnum_enum = getattr(module, "PortNum", None)
+        value_lookup = getattr(portnum_enum, "Value", None) if portnum_enum else None
+        if callable(value_lookup):
+            with contextlib.suppress(Exception):
+                candidate = _coerce_int(value_lookup("REACTION_APP"))
+                if candidate is not None:
+                    reaction_port_candidates.add(candidate)
+        constant_value = getattr(module, "REACTION_APP", None)
+        candidate = _coerce_int(constant_value)
+        if candidate is not None:
+            reaction_port_candidates.add(candidate)
+
+    for candidate in reaction_port_candidates:
+        allowed_port_ints.add(candidate)
+        allowed_port_values.add(str(candidate))
+
+    is_reaction_packet = portnum == "REACTION_APP" or (
+        reply_id is not None and emoji is not None
+    )
+    if is_reaction_packet and portnum_int is not None:
+        allowed_port_ints.add(portnum_int)
+        allowed_port_values.add(str(portnum_int))
+
     if portnum and portnum not in allowed_port_values:
-        if portnum_int not in {1}:
+        if portnum_int not in allowed_port_ints:
             return
 
     channel = _first(decoded, "channel", default=None)
