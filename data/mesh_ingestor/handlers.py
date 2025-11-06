@@ -1162,6 +1162,26 @@ def store_packet_dict(packet: Mapping) -> None:
     rssi = _first(packet, "rssi", "rx_rssi", "rxRssi", default=None)
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
 
+    encrypted_flag = _is_encrypted_flag(encrypted)
+
+    to_id_normalized = str(to_id).strip() if to_id is not None else ""
+
+    if (
+        channel == 0
+        and not encrypted_flag
+        and to_id_normalized
+        and to_id_normalized.lower() != "^all"
+    ):
+        if config.DEBUG:
+            config._debug_log(
+                "Skipped direct message on primary channel",
+                context="handlers.store_packet_dict",
+                from_id=_canonical_node_id(from_id) or from_id,
+                to_id=_canonical_node_id(to_id) or to_id,
+                channel=channel,
+            )
+        return
+
     message_payload = {
         "id": int(pkt_id),
         "rx_time": rx_time,
