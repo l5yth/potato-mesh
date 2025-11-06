@@ -40,6 +40,7 @@ import { initializeInstanceSelector } from './instance-selector.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
+import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -124,7 +125,8 @@ export function initializeApp(config) {
   /** @type {Array<Object>} */
   let allNeighbors = [];
   /** @type {Map<string, Object>} */
-  let nodesById = new Map();
+let nodesById = new Map();
+let messagesById = new Map();
   let nodesByNum = new Map();
   const messageNodeHydrator = createMessageNodeHydrator({
     fetchNodeById,
@@ -2576,18 +2578,35 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
-    let messageCopy = m?.text || '';
-    let copyIsHtml = false;
+    const replyPrefix = resolveReplyPrefix({
+      message: m,
+      messagesById,
+      nodesById,
+      renderShortHtml,
+      escapeHtml
+    });
+
+    let messageBodyHtml = '';
     if (m && m.encrypted) {
       const notice = formatEncryptedMessageNotice(m);
       if (notice && typeof notice === 'object') {
-        messageCopy = notice.content ?? '';
-        copyIsHtml = Boolean(notice.isHtml);
+        const content = notice.content ?? '';
+        messageBodyHtml = notice.isHtml ? content : escapeHtml(content);
       } else {
-        messageCopy = '';
+        messageBodyHtml = '';
       }
+    } else {
+      messageBodyHtml = buildMessageBody({
+        message: m || {},
+        escapeHtml,
+        renderEmojiHtml
+      });
     }
-    const text = copyIsHtml ? messageCopy : escapeHtml(messageCopy);
+
+    const combinedSegments = [];
+    if (replyPrefix) combinedSegments.push(replyPrefix);
+    if (messageBodyHtml) combinedSegments.push(messageBodyHtml);
+    const text = combinedSegments.length > 0 ? combinedSegments.join(' ') : '';
     const metadata = extractChatMessageMetadata(m);
     const prefix = formatChatMessagePrefix({
       timestamp: escapeHtml(ts),
@@ -2613,6 +2632,7 @@ export function initializeApp(config) {
     neighborEntries = []
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
+    messagesById = buildMessageIndex(messages);
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { logEntries, channels } = buildChatTabModel({
       nodes,

@@ -2481,7 +2481,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         rows = db.execute(<<~SQL)
           SELECT id, rx_time, rx_iso, from_id, to_id, channel,
                  portnum, text, snr, rssi, hop_limit,
-                 lora_freq, modem_preset, channel_name
+                 lora_freq, modem_preset, channel_name,
+                 reply_id, emoji
           FROM messages
           ORDER BY id
         SQL
@@ -2503,8 +2504,51 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(row["lora_freq"]).to eq(expected["lora_freq"])
           expect(row["modem_preset"]).to eq(expected["modem_preset"])
           expect(row["channel_name"]).to eq(expected["channel_name"])
+          expect(row["reply_id"]).to eq(expected["reply_id"])
+          expect(row["emoji"]).to eq(expected["emoji"])
         end
       end
+    end
+
+    it "persists reply metadata and emoji reactions" do
+      parent_payload = {
+        "id" => 42,
+        "rx_time" => reference_time.to_i - 10,
+        "from_id" => "!parent",
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "source message",
+      }
+
+      reaction_payload = {
+        "id" => 108,
+        "rx_time" => reference_time.to_i,
+        "from_id" => "!reactor",
+        "channel" => 0,
+        "portnum" => "REACTION_APP",
+        "reply_id" => parent_payload["id"],
+        "emoji" => " 🔥 ",
+      }
+
+      post "/api/messages", parent_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+      post "/api/messages", reaction_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row("SELECT reply_id, emoji FROM messages WHERE id = ?", [reaction_payload["id"]])
+        expect(row["reply_id"]).to eq(parent_payload["id"])
+        expect(row["emoji"]).to eq("🔥")
+      end
+
+      get "/api/messages"
+      expect(last_response).to be_ok
+      body = JSON.parse(last_response.body)
+      reaction_row = body.find { |entry| entry["id"] == reaction_payload["id"] }
+      expect(reaction_row).not_to be_nil
+      expect(reaction_row["reply_id"]).to eq(parent_payload["id"])
+      expect(reaction_row["emoji"]).to eq("🔥")
     end
 
     it "creates hidden nodes for unknown message senders" do
@@ -3570,6 +3614,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(actual_row["lora_freq"]).to eq(expected["lora_freq"])
         expect(actual_row["modem_preset"]).to eq(expected["modem_preset"])
         expect(actual_row["channel_name"]).to eq(expected["channel_name"])
+        expect(actual_row["reply_id"]).to eq(expected["reply_id"])
+        expect(actual_row["emoji"]).to eq(expected["emoji"])
         expect(actual_row["rx_time"]).to eq(expected["rx_time"])
         expect(actual_row["rx_iso"]).to eq(expected["rx_iso"])
         expect(actual_row).not_to have_key("node")

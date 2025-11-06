@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import base64
+import contextlib
+import importlib
 import json
+import sys
 import time
 from collections.abc import Mapping
 
@@ -1051,15 +1054,83 @@ def store_packet_dict(packet: Mapping) -> None:
         store_neighborinfo_packet(packet, decoded)
         return
 
-    text = _first(decoded, "payload.text", "text", default=None)
+    text = _first(decoded, "payload.text", "text", "data.text", default=None)
     encrypted = _first(decoded, "payload.encrypted", "encrypted", default=None)
     if encrypted is None:
         encrypted = _first(packet, "encrypted", default=None)
-    if not text and not encrypted:
+    reply_id_raw = _first(
+        decoded,
+        "payload.replyId",
+        "payload.reply_id",
+        "data.replyId",
+        "data.reply_id",
+        "replyId",
+        "reply_id",
+        default=None,
+    )
+    reply_id = _coerce_int(reply_id_raw)
+    emoji_raw = _first(
+        decoded,
+        "payload.emoji",
+        "data.emoji",
+        "emoji",
+        default=None,
+    )
+    emoji = None
+    if emoji_raw is not None:
+        try:
+            emoji_text = str(emoji_raw)
+        except Exception:
+            emoji_text = None
+        else:
+            emoji_text = emoji_text.strip()
+            if emoji_text:
+                emoji = emoji_text
+
+    encrypted_flag = _is_encrypted_flag(encrypted)
+    if not any([text, encrypted_flag, emoji is not None, reply_id is not None]):
         return
 
-    if portnum and portnum not in {"1", "TEXT_MESSAGE_APP"}:
-        return
+    allowed_port_values = {"1", "TEXT_MESSAGE_APP", "REACTION_APP"}
+    allowed_port_ints = {1}
+
+    reaction_port_candidates: set[int] = set()
+    for module_name in (
+        "meshtastic.portnums_pb2",
+        "meshtastic.protobuf.portnums_pb2",
+    ):
+        module = sys.modules.get(module_name)
+        if module is None:
+            with contextlib.suppress(ModuleNotFoundError):
+                module = importlib.import_module(module_name)
+        if module is None:
+            continue
+        portnum_enum = getattr(module, "PortNum", None)
+        value_lookup = getattr(portnum_enum, "Value", None) if portnum_enum else None
+        if callable(value_lookup):
+            with contextlib.suppress(Exception):
+                candidate = _coerce_int(value_lookup("REACTION_APP"))
+                if candidate is not None:
+                    reaction_port_candidates.add(candidate)
+        constant_value = getattr(module, "REACTION_APP", None)
+        candidate = _coerce_int(constant_value)
+        if candidate is not None:
+            reaction_port_candidates.add(candidate)
+
+    for candidate in reaction_port_candidates:
+        allowed_port_ints.add(candidate)
+        allowed_port_values.add(str(candidate))
+
+    is_reaction_packet = portnum == "REACTION_APP" or (
+        reply_id is not None and emoji is not None
+    )
+    if is_reaction_packet and portnum_int is not None:
+        allowed_port_ints.add(portnum_int)
+        allowed_port_values.add(str(portnum_int))
+
+    if portnum and portnum not in allowed_port_values:
+        if portnum_int not in allowed_port_ints:
+            return
 
     channel = _first(decoded, "channel", default=None)
     if channel is None:
@@ -1096,7 +1167,8 @@ def store_packet_dict(packet: Mapping) -> None:
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
     if (
-        channel == 0
+        not is_reaction_packet
+        and channel == 0
         and not encrypted_flag
         and to_id_normalized
         and to_id_normalized.lower() != "^all"
@@ -1124,6 +1196,8 @@ def store_packet_dict(packet: Mapping) -> None:
         "snr": float(snr) if snr is not None else None,
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
+        "reply_id": reply_id,
+        "emoji": emoji,
     }
 
     channel_name_value = None

@@ -34,6 +34,7 @@ _RECEIVE_TOPICS = (
     "meshtastic.receive.NODEINFO_APP",
     "meshtastic.receive.NEIGHBORINFO_APP",
     "meshtastic.receive.TEXT_MESSAGE_APP",
+    "meshtastic.receive.REACTION_APP",
     "meshtastic.receive.TELEMETRY_APP",
 )
 

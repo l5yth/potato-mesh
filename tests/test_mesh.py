@@ -602,8 +602,50 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert payload["hop_limit"] == 3
     assert payload["snr"] == pytest.approx(1.25)
     assert payload["rssi"] == -70
+    assert payload["reply_id"] is None
+    assert payload["emoji"] is None
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_store_packet_dict_posts_reaction_message(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 999,
+        "rxTime": 1_700_100_000,
+        "fromId": "!reply",
+        "toId": "!root",
+        "decoded": {
+            "portnum": "REACTION_APP",
+            "data": {
+                "reply_id": "123",
+                "emoji": " 👍 ",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST to be triggered for reaction message"
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["id"] == 999
+    assert payload["from_id"] == "!reply"
+    assert payload["to_id"] == "!root"
+    assert payload["portnum"] == "REACTION_APP"
+    assert payload["text"] is None
+    assert payload["reply_id"] == 123
+    assert payload["emoji"] == "👍"
+    assert payload["rx_time"] == 1_700_100_000
+    assert payload["rx_iso"] == mesh._iso(1_700_100_000)
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
@@ -1564,6 +1606,8 @@ def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys
     assert payload["channel"] == 5
     assert payload["text"] == "hi"
     assert payload["encrypted"] is None
+    assert payload["reply_id"] is None
+    assert payload["emoji"] is None
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
     log_output = capsys.readouterr().out
@@ -1601,6 +1645,8 @@ def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):
     assert payload["text"] is None
     assert payload["from_id"] == 2988082812
     assert payload["to_id"] == "!receiver"
+    assert payload["reply_id"] is None
+    assert payload["emoji"] is None
     assert "channel_name" not in payload
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"

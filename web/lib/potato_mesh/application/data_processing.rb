@@ -1262,6 +1262,8 @@ module PotatoMesh
         lora_freq = coerce_integer(message["lora_freq"] || message["loraFrequency"])
         modem_preset = string_or_nil(message["modem_preset"] || message["modemPreset"])
         channel_name = string_or_nil(message["channel_name"] || message["channelName"])
+        reply_id = coerce_integer(message["reply_id"] || message["replyId"])
+        emoji = string_or_nil(message["emoji"])
 
         row = [
           msg_id,
@@ -1279,11 +1281,13 @@ module PotatoMesh
           lora_freq,
           modem_preset,
           channel_name,
+          reply_id,
+          emoji,
         ]
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, encrypted, lora_freq, modem_preset, channel_name FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -1334,6 +1338,19 @@ module PotatoMesh
               updates["channel_name"] = channel_name if should_update
             end
 
+            unless reply_id.nil?
+              existing_reply = existing.is_a?(Hash) ? existing["reply_id"] : existing[6]
+              updates["reply_id"] = reply_id if existing_reply != reply_id
+            end
+
+            if emoji
+              existing_emoji = existing.is_a?(Hash) ? existing["emoji"] : existing[7]
+              existing_emoji_str = existing_emoji&.to_s
+              should_update = existing_emoji_str.nil? || existing_emoji_str.strip.empty?
+              should_update ||= existing_emoji != emoji
+              updates["emoji"] = emoji if should_update
+            end
+
             unless updates.empty?
               assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
               db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
@@ -1343,8 +1360,8 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name,reply_id,emoji)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               fallback_updates = {}
@@ -1354,6 +1371,8 @@ module PotatoMesh
               fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
               fallback_updates["modem_preset"] = modem_preset if modem_preset
               fallback_updates["channel_name"] = channel_name if channel_name
+              fallback_updates["reply_id"] = reply_id unless reply_id.nil?
+              fallback_updates["emoji"] = emoji if emoji
               unless fallback_updates.empty?
                 assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
                 db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])
