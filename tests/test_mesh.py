@@ -1454,7 +1454,9 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
-def test_store_packet_dict_skips_direct_message_on_primary_channel(mesh_module, monkeypatch):
+def test_store_packet_dict_skips_direct_message_on_primary_channel(
+    mesh_module, monkeypatch
+):
     mesh = mesh_module
     captured = []
     monkeypatch.setattr(
