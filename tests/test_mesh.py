@@ -1454,6 +1454,63 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_skips_direct_message_on_primary_channel(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 111,
+        "rxTime": 777,
+        "fromId": "!sender",
+        "toId": "!recipient",
+        "channel": 0,
+        "decoded": {"text": "secret dm", "portnum": "TEXT_MESSAGE_APP"},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert not captured
+
+
+def test_store_packet_dict_allows_primary_channel_broadcast(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    mesh.config.LORA_FREQ = 915
+    mesh.config.MODEM_PRESET = "LongSlow"
+
+    packet = {
+        "id": 222,
+        "rxTime": 888,
+        "from": "!relay",
+        "to": "^all",
+        "channel": 0,
+        "decoded": {"text": "announcement", "portnum": "TEXT_MESSAGE_APP"},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["text"] == "announcement"
+    assert payload["to_id"] == "^all"
+    assert payload["channel"] == 0
+    assert payload["lora_freq"] == 915
+    assert payload["modem_preset"] == "LongSlow"
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
 def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
     mesh.channels._reset_channel_cache()
