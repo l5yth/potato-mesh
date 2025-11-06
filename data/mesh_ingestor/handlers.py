@@ -1167,7 +1167,8 @@ def store_packet_dict(packet: Mapping) -> None:
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
     if (
-        channel == 0
+        not is_reaction_packet
+        and channel == 0
         and not encrypted_flag
         and to_id_normalized
         and to_id_normalized.lower() != "^all"
