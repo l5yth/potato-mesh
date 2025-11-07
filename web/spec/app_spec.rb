@@ -1318,7 +1318,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     before do
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
+      fetch_stub = lambda do |host, path|
         case path
         when "/.well-known/potato-mesh"
           [well_known_document, URI("https://#{host}#{path}")]
@@ -1327,6 +1327,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
         else
           [nil, []]
         end
+      end
+
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
+        fetch_stub.call(host, path)
+      end
+
+      allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
+        fetch_stub.call(host, path)
+      end
+
+      allow_any_instance_of(Sinatra::Application).to receive(:enqueue_federation_crawl) do |instance, domain, per_response_limit:, overall_limit:|
+        db = instance.open_database
+        begin
+          instance.ingest_known_instances_from!(
+            db,
+            domain,
+            per_response_limit: per_response_limit,
+            overall_limit: overall_limit,
+          )
+        ensure
+          db&.close
+        end
+        true
       end
     end
 

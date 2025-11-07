@@ -36,6 +36,9 @@ module PotatoMesh
     DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 60
     DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE = 64
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
+    DEFAULT_FEDERATION_WORKER_POOL_SIZE = 4
+    DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY = 128
+    DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS = 120
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
 
     # Retrieve the configured API token used for authenticated requests.
@@ -353,6 +356,36 @@ module PotatoMesh
       fetch_positive_integer(
         "FEDERATION_MAX_DOMAINS_PER_CRAWL",
         DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL,
+      )
+    end
+
+    # Determine the worker pool size used for federation tasks.
+    #
+    # @return [Integer] number of worker threads dedicated to federation jobs.
+    def federation_worker_pool_size
+      fetch_positive_integer(
+        "FEDERATION_WORKERS",
+        DEFAULT_FEDERATION_WORKER_POOL_SIZE,
+      )
+    end
+
+    # Determine the queue capacity for pending federation jobs.
+    #
+    # @return [Integer] maximum number of queued tasks before rejecting work.
+    def federation_worker_queue_capacity
+      fetch_positive_integer(
+        "FEDERATION_WORK_QUEUE",
+        DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY,
+      )
+    end
+
+    # Determine the timeout applied when awaiting federation worker tasks.
+    #
+    # @return [Integer] seconds to wait for asynchronous jobs to complete.
+    def federation_task_timeout_seconds
+      fetch_positive_integer(
+        "FEDERATION_TASK_TIMEOUT",
+        DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS,
       )
     end
 
