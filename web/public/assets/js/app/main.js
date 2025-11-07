@@ -2743,13 +2743,15 @@ let messagesById = new Map();
     });
 
     const channelTabs = filteredChannels.map(channel => ({
-      id: `channel-${channel.index}`,
+      id: channel.id || `channel-${channel.index}`,
       label: channel.label,
       content: buildChatFragment({
         entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
         renderEntry: entry => createMessageChatEntry(entry.item),
         emptyLabel: 'No messages on this channel.'
-      })
+      }),
+      index: channel.index,
+      isPrimaryFallback: Boolean(channel.isPrimaryFallback)
     }));
 
     const tabs = [
@@ -2758,7 +2760,11 @@ let messagesById = new Map();
     ];
 
     const previousActive = chatEl.dataset?.activeTab || null;
-    const defaultActive = channelTabs.find(tab => tab.id === 'channel-0')?.id || channelTabs[0]?.id || 'log';
+    const defaultActive =
+      channelTabs.find(tab => tab.isPrimaryFallback)?.id ||
+      channelTabs.find(tab => tab.index === 0)?.id ||
+      channelTabs[0]?.id ||
+      'log';
     renderChatTabs({
       document,
       container: chatEl,
