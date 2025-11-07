@@ -40,6 +40,7 @@ import { initializeInstanceSelector } from './instance-selector.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
+import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
 
 /**
@@ -124,6 +125,12 @@ export function initializeApp(config) {
   let allNodes = [];
   /** @type {Array<Object>} */
   let allNeighbors = [];
+  /** @type {Array<Object>} */
+  let allMessages = [];
+  /** @type {Array<Object>} */
+  let allTelemetryEntries = [];
+  /** @type {Array<Object>} */
+  let allPositionEntries = [];
   /** @type {Map<string, Object>} */
 let nodesById = new Map();
 let messagesById = new Map();
@@ -2618,10 +2625,84 @@ let messagesById = new Map();
   }
 
   /**
+   * Attach node context to chat log entries when identifier metadata exists.
+   *
+   * @param {Array<Object>} entries Chat log entries.
+   * @returns {Array<Object>} Enriched entries.
+   */
+  function attachNodeContextToLogEntries(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return Array.isArray(entries) ? entries : [];
+    }
+    return entries.map(entry => {
+      if (!entry || typeof entry !== 'object') {
+        return entry;
+      }
+      const hasNode = entry.node && typeof entry.node === 'object';
+      const hasNeighborNode = entry.neighborNode && typeof entry.neighborNode === 'object';
+      const resolvedNode = hasNode ? entry.node : resolveNodeForLogEntryContext(entry);
+      const resolvedNeighbor = hasNeighborNode ? entry.neighborNode : resolveNeighborForLogEntry(entry);
+      if (resolvedNode === entry.node && resolvedNeighbor === entry.neighborNode) {
+        return entry;
+      }
+      const enriched = { ...entry };
+      if (resolvedNode && !hasNode) {
+        enriched.node = resolvedNode;
+      }
+      if (resolvedNeighbor && !hasNeighborNode) {
+        enriched.neighborNode = resolvedNeighbor;
+      }
+      return enriched;
+    });
+  }
+
+  /**
+   * Locate the canonical node associated with a chat log entry for filtering.
+   *
+   * @param {Object} entry Chat log entry.
+   * @returns {?Object} Node payload when available.
+   */
+  function resolveNodeForLogEntryContext(entry) {
+    if (!entry || typeof entry !== 'object') {
+      return null;
+    }
+    if (nodesById instanceof Map && typeof entry.nodeId === 'string' && nodesById.has(entry.nodeId)) {
+      return nodesById.get(entry.nodeId);
+    }
+    if (nodesByNum instanceof Map && Number.isFinite(entry.nodeNum) && nodesByNum.has(entry.nodeNum)) {
+      return nodesByNum.get(entry.nodeNum);
+    }
+    return null;
+  }
+
+  /**
+   * Locate the neighbor node metadata for a chat log entry when available.
+   *
+   * @param {Object} entry Chat log entry.
+   * @returns {?Object} Neighbor node payload when available.
+   */
+  function resolveNeighborForLogEntry(entry) {
+    if (!entry || typeof entry !== 'object' || !(nodesById instanceof Map)) {
+      return null;
+    }
+    const neighborId = typeof entry.neighborId === 'string' ? entry.neighborId : null;
+    if (neighborId && nodesById.has(neighborId)) {
+      return nodesById.get(neighborId);
+    }
+    return null;
+  }
+
+  /**
    * Render the chat history panel with nodes and messages.
    *
-   * @param {Array<Object>} nodes Collection of node payloads.
-   * @param {Array<Object>} messages Collection of message payloads.
+   * @param {{
+   *   nodes?: Array<Object>,
+   *   messages?: Array<Object>,
+   *   telemetryEntries?: Array<Object>,
+   *   positionEntries?: Array<Object>,
+   *   neighborEntries?: Array<Object>,
+   *   filterQuery?: string
+   * }} params Render inputs.
    * @returns {void}
    */
   function renderChatLog({
@@ -2629,7 +2710,8 @@ let messagesById = new Map();
     messages = [],
     telemetryEntries = [],
     positionEntries = [],
-    neighborEntries = []
+    neighborEntries = [],
+    filterQuery = ''
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
     messagesById = buildMessageIndex(messages);
@@ -2645,13 +2727,19 @@ let messagesById = new Map();
       maxChannelIndex: MAX_CHANNEL_INDEX
     });
 
+    const enrichedLogEntries = attachNodeContextToLogEntries(logEntries);
+    const { logEntries: filteredLogEntries, channels: filteredChannels } = filterChatModel(
+      { logEntries: enrichedLogEntries, channels },
+      filterQuery
+    );
+
     const logContent = buildChatFragment({
-      entries: logEntries,
+      entries: filteredLogEntries,
       renderEntry: createChatLogEntry,
       emptyLabel: 'No recent mesh activity.'
     });
 
-    const channelTabs = channels.map(channel => ({
+    const channelTabs = filteredChannels.map(channel => ({
       id: `channel-${channel.index}`,
       label: channel.label,
       content: buildChatFragment({
@@ -3472,8 +3560,8 @@ let messagesById = new Map();
    */
   function applyFilter() {
     updateFilterClearVisibility();
-    const rawQuery = filterInput ? filterInput.value : '';
-    const q = rawQuery.trim().toLowerCase();
+    const filterQuery = filterInput ? filterInput.value : '';
+    const q = normaliseChatFilterQuery(filterQuery);
     const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n));
     const sortedNodes = sortNodes(filteredNodes);
     const nowSec = Date.now()/1000;
@@ -3482,6 +3570,14 @@ let messagesById = new Map();
     updateCount(sortedNodes, nowSec);
     updateRefreshInfo(sortedNodes, nowSec);
     updateSortIndicators();
+    renderChatLog({
+      nodes: allNodes,
+      messages: allMessages,
+      telemetryEntries: allTelemetryEntries,
+      positionEntries: allPositionEntries,
+      neighborEntries: allNeighbors,
+      filterQuery
+    });
   }
 
   if (filterInput) {
@@ -3540,13 +3636,9 @@ let messagesById = new Map();
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
       const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
-      renderChatLog({
-        nodes,
-        messages: chatMessages,
-        telemetryEntries,
-        positionEntries: positions,
-        neighborEntries: neighborTuples
-      });
+      allMessages = Array.isArray(chatMessages) ? chatMessages : [];
+      allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
+      allPositionEntries = Array.isArray(positions) ? positions : [];
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
       statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
