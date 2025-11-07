@@ -316,13 +316,14 @@ module PotatoMesh
         pool = federation_worker_pool
         scheduled = []
 
-        if pool
-          domains.each do |domain|
+        domains.each do |domain|
+          if pool
             begin
               task = pool.schedule do
                 announce_instance_to_domain(domain, payload_json)
               end
               scheduled << [domain, task]
+              next
             rescue PotatoMesh::App::WorkerPool::QueueFullError
               warn_log(
                 "Skipped asynchronous federation announcement",
@@ -330,7 +331,6 @@ module PotatoMesh
                 domain: domain,
                 reason: "worker queue saturated",
               )
-              announce_instance_to_domain(domain, payload_json)
             rescue PotatoMesh::App::WorkerPool::ShutdownError
               warn_log(
                 "Worker pool unavailable, falling back to synchronous announcement",
@@ -338,16 +338,13 @@ module PotatoMesh
                 domain: domain,
               )
               pool = nil
-              announce_instance_to_domain(domain, payload_json)
             end
           end
 
-          wait_for_federation_tasks(scheduled)
-        else
-          domains.each do |domain|
-            announce_instance_to_domain(domain, payload_json)
-          end
+          announce_instance_to_domain(domain, payload_json)
         end
+
+        wait_for_federation_tasks(scheduled)
 
         unless domains.empty?
           debug_log(
