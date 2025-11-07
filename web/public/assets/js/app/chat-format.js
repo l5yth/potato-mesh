@@ -18,12 +18,12 @@
  * Extract channel metadata from a message payload for chat display.
  *
  * @param {Object} message Raw message payload from the API.
- * @returns {{ frequency: string|null, channelName: string|null }}
+ * @returns {{ frequency: string|null, channelName: string|null, presetCode: string|null }}
  *   Normalized metadata values.
  */
 export function extractChatMessageMetadata(message) {
   if (!message || typeof message !== 'object') {
-    return { frequency: null, channelName: null };
+    return { frequency: null, channelName: null, presetCode: null };
   }
 
   const frequency = normalizeFrequency(
@@ -40,7 +40,10 @@ export function extractChatMessageMetadata(message) {
     firstNonNull(message.channel_name, message.channelName)
   );
 
-  return { frequency, channelName };
+  const modemPreset = normalizePresetString(resolveModemPresetCandidate(message));
+  const presetCode = modemPreset ? abbreviatePreset(modemPreset) : null;
+
+  return { frequency, channelName, presetCode };
 }
 
 /**
@@ -93,6 +96,17 @@ export function formatNodeAnnouncementPrefix({ timestamp, frequency }) {
 }
 
 /**
+ * Render the preset hint bracket inserted between the prefix and short name.
+ *
+ * @param {{ presetCode: string|null }} params Normalized preset abbreviation.
+ * @returns {string} HTML-ready bracket slot.
+ */
+export function formatChatPresetTag({ presetCode }) {
+  const slot = normalizePresetSlot(presetCode);
+  return `[${slot}]`;
+}
+
+/**
  * Produce a consistently formatted frequency slot for chat prefixes.
  *
  * A missing or empty frequency is rendered as three HTML non-breaking spaces to
@@ -118,6 +132,28 @@ function normalizeFrequencySlot(value) {
  * @type {string}
  */
 const FREQUENCY_PLACEHOLDER = '&nbsp;&nbsp;&nbsp;';
+
+/**
+ * HTML placeholder for missing preset abbreviations.
+ * @type {string}
+ */
+const PRESET_PLACEHOLDER = '&nbsp;&nbsp;';
+
+/**
+ * Canonical preset abbreviations keyed by a normalized preset token.
+ * @type {Record<string, string>}
+ */
+const PRESET_ABBREVIATIONS = {
+  verylongslow: 'VL',
+  longslow: 'LS',
+  longmoderate: 'LM',
+  longfast: 'LF',
+  mediumslow: 'MS',
+  mediumfast: 'MF',
+  shortslow: 'SS',
+  shortfast: 'SF',
+  shortturbo: 'ST',
+};
 
 /**
  * Return the first value in ``candidates`` that is not ``null`` or ``undefined``.
@@ -182,6 +218,126 @@ function normalizeFrequency(value) {
   return null;
 }
 
+/**
+ * Resolve a modem preset candidate from the provided source object.
+ *
+ * @param {*} source Source payload potentially containing modem metadata.
+ * @param {Set<object>} [visited] Visited references to avoid recursion loops.
+ * @returns {*|null} Raw modem preset candidate.
+ */
+function resolveModemPresetCandidate(source, visited = new Set()) {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+  if (visited.has(source)) {
+    return null;
+  }
+  visited.add(source);
+
+  const candidate = firstNonNull(
+    source.modemPreset,
+    source.modem_preset,
+    source.modempreset,
+    source.ModemPreset
+  );
+  if (candidate != null) {
+    return candidate;
+  }
+
+  if (source.node && typeof source.node === 'object') {
+    const nested = resolveModemPresetCandidate(source.node, visited);
+    if (nested != null) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Convert arbitrary preset input to a trimmed string.
+ *
+ * @param {*} value Raw preset candidate.
+ * @returns {string|null} Clean preset string.
+ */
+function normalizePresetString(value) {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return null;
+}
+
+/**
+ * Produce a two-character abbreviation for a modem preset.
+ *
+ * @param {string} preset Normalized preset string.
+ * @returns {string|null} Uppercase abbreviation or ``null``.
+ */
+function abbreviatePreset(preset) {
+  if (!preset) {
+    return null;
+  }
+  const token = preset.replace(/[^A-Za-z]/g, '').toLowerCase();
+  if (token && PRESET_ABBREVIATIONS[token]) {
+    return PRESET_ABBREVIATIONS[token];
+  }
+  return derivePresetInitials(preset);
+}
+
+/**
+ * Generate fallback initials for unmapped presets.
+ *
+ * @param {string} preset Raw preset string.
+ * @returns {string|null} Derived initials.
+ */
+function derivePresetInitials(preset) {
+  if (!preset) {
+    return null;
+  }
+  const spaced = preset.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  const tokens = spaced
+    .split(/[\s_-]+/)
+    .map(part => part.replace(/[^A-Za-z]/g, ''))
+    .filter(Boolean);
+  if (tokens.length === 0) {
+    return null;
+  }
+  if (tokens.length === 1) {
+    const upper = tokens[0].toUpperCase();
+    if (upper.length >= 2) {
+      return upper.slice(0, 2);
+    }
+    if (upper.length === 1) {
+      return `${upper}?`;
+    }
+    return null;
+  }
+  const initials = tokens.map(part => part[0].toUpperCase());
+  if (initials.length >= 2) {
+    return `${initials[0]}${initials[1]}`;
+  }
+  return null;
+}
+
+/**
+ * Normalise the preset slot contents for the bracket display.
+ *
+ * @param {*} value Raw preset code.
+ * @returns {string} HTML-ready preset slot.
+ */
+function normalizePresetSlot(value) {
+  if (value == null) {
+    return PRESET_PLACEHOLDER;
+  }
+  const trimmed = String(value).trim().toUpperCase();
+  return trimmed.length > 0 ? trimmed.slice(0, 2) : PRESET_PLACEHOLDER;
+}
+
 export const __test__ = {
   firstNonNull,
   normalizeString,
@@ -190,5 +346,11 @@ export const __test__ = {
   formatNodeAnnouncementPrefix,
   normalizeFrequencySlot,
   FREQUENCY_PLACEHOLDER,
-  formatChatChannelTag
+  formatChatChannelTag,
+  resolveModemPresetCandidate,
+  normalizePresetString,
+  abbreviatePreset,
+  derivePresetInitials,
+  normalizePresetSlot,
+  PRESET_PLACEHOLDER
 };
