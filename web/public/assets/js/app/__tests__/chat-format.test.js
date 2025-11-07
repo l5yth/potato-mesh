@@ -19,6 +19,7 @@ import {
   extractChatMessageMetadata,
   formatChatMessagePrefix,
   formatChatChannelTag,
+  formatChatPresetTag,
   formatNodeAnnouncementPrefix,
   __test__
 } from '../chat-format.js';
@@ -28,7 +29,13 @@ const {
   normalizeString,
   normalizeFrequency,
   normalizeFrequencySlot,
-  FREQUENCY_PLACEHOLDER
+  FREQUENCY_PLACEHOLDER,
+  resolveModemPresetCandidate,
+  normalizePresetString,
+  abbreviatePreset,
+  derivePresetInitials,
+  normalizePresetSlot,
+  PRESET_PLACEHOLDER
 } = __test__;
 
 test('extractChatMessageMetadata prefers explicit region_frequency and channel_name', () => {
@@ -39,21 +46,32 @@ test('extractChatMessageMetadata prefers explicit region_frequency and channel_n
     channelName: 'Ignored'
   };
   const result = extractChatMessageMetadata(payload);
-  assert.deepEqual(result, { frequency: '868', channelName: 'Test Channel' });
+  assert.deepEqual(result, { frequency: '868', channelName: 'Test Channel', presetCode: null });
 });
 
 test('extractChatMessageMetadata falls back to LoRa metadata', () => {
   const payload = {
     lora_freq: 915,
-    channelName: 'SpecChannel'
+    channelName: 'SpecChannel',
+    modem_preset: 'MediumFast'
   };
   const result = extractChatMessageMetadata(payload);
-  assert.deepEqual(result, { frequency: '915', channelName: 'SpecChannel' });
+  assert.deepEqual(result, { frequency: '915', channelName: 'SpecChannel', presetCode: 'MF' });
 });
 
 test('extractChatMessageMetadata returns null metadata for invalid input', () => {
-  assert.deepEqual(extractChatMessageMetadata(null), { frequency: null, channelName: null });
-  assert.deepEqual(extractChatMessageMetadata(undefined), { frequency: null, channelName: null });
+  assert.deepEqual(extractChatMessageMetadata(null), { frequency: null, channelName: null, presetCode: null });
+  assert.deepEqual(extractChatMessageMetadata(undefined), { frequency: null, channelName: null, presetCode: null });
+});
+
+test('extractChatMessageMetadata inspects nested node payloads for modem presets', () => {
+  const payload = {
+    node: {
+      modem_preset: 'ShortTurbo'
+    }
+  };
+  const result = extractChatMessageMetadata(payload);
+  assert.equal(result.presetCode, 'ST');
 });
 
 test('firstNonNull returns the first non-null candidate', () => {
@@ -107,6 +125,11 @@ test('formatChatChannelTag wraps channel names after the short name slot', () =>
   );
 });
 
+test('formatChatPresetTag renders preset hints with placeholders', () => {
+  assert.equal(formatChatPresetTag({ presetCode: 'MF' }), '[MF]');
+  assert.equal(formatChatPresetTag({ presetCode: null }), `[${PRESET_PLACEHOLDER}]`);
+});
+
 test('formatNodeAnnouncementPrefix includes optional frequency bracket', () => {
   assert.equal(
     formatNodeAnnouncementPrefix({ timestamp: '12:34:56', frequency: '868' }),
@@ -123,4 +146,33 @@ test('normalizeFrequencySlot returns placeholder when frequency is missing', () 
   assert.equal(normalizeFrequencySlot(''), FREQUENCY_PLACEHOLDER);
   assert.equal(normalizeFrequencySlot(undefined), FREQUENCY_PLACEHOLDER);
   assert.equal(normalizeFrequencySlot('915'), '915');
+});
+
+test('resolveModemPresetCandidate walks nested payloads', () => {
+  const nested = { node: { modemPreset: 'LongFast' } };
+  assert.equal(resolveModemPresetCandidate(nested), 'LongFast');
+});
+
+test('normalizePresetString trims strings and ignores empties', () => {
+  assert.equal(normalizePresetString(' MediumSlow '), 'MediumSlow');
+  assert.equal(normalizePresetString('   '), null);
+  assert.equal(normalizePresetString(null), null);
+});
+
+test('abbreviatePreset maps known presets to codes', () => {
+  assert.equal(abbreviatePreset('VeryLongSlow'), 'VL');
+  assert.equal(abbreviatePreset('customPreset'), 'CP');
+  assert.equal(abbreviatePreset('X'), 'X?');
+});
+
+test('derivePresetInitials falls back to segmented tokens', () => {
+  assert.equal(derivePresetInitials('Long Moderate'), 'LM');
+  assert.equal(derivePresetInitials('ShortTurbo'), 'ST');
+  assert.equal(derivePresetInitials('Z'), 'Z?');
+});
+
+test('normalizePresetSlot enforces placeholders and uppercase output', () => {
+  assert.equal(normalizePresetSlot('mf'), 'MF');
+  assert.equal(normalizePresetSlot(''), PRESET_PLACEHOLDER);
+  assert.equal(normalizePresetSlot(null), PRESET_PLACEHOLDER);
 });

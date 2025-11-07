@@ -34,7 +34,8 @@ import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
   formatChatMessagePrefix,
-  formatNodeAnnouncementPrefix
+  formatNodeAnnouncementPrefix,
+  formatChatPresetTag
 } from './chat-format.js';
 import { initializeInstanceSelector } from './instance-selector.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
@@ -2333,10 +2334,11 @@ let messagesById = new Map();
       timestamp: escapeHtml(ts),
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
+    const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     const longNameDisplay = longName != null ? String(longName) : '';
     const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {});
     div.className = 'chat-entry-node';
-    div.innerHTML = `${prefix} ${shortHtml} ${messageHtml}`;
+    div.innerHTML = `${prefix}${presetTag} ${shortHtml} ${messageHtml}`;
     return div;
   }
 
@@ -2619,8 +2621,9 @@ let messagesById = new Map();
       timestamp: escapeHtml(ts),
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
+    const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefix} ${short} ${text}`;
+    div.innerHTML = `${prefix}${presetTag} ${short} ${text}`;
     return div;
   }
 
