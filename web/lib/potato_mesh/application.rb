@@ -43,6 +43,7 @@ require_relative "application/errors"
 require_relative "application/database"
 require_relative "application/networking"
 require_relative "application/identity"
+require_relative "application/worker_pool"
 require_relative "application/federation"
 require_relative "application/prometheus"
 require_relative "application/queries"
@@ -130,6 +131,7 @@ module PotatoMesh
       set :public_folder, File.expand_path("../../public", __dir__)
       set :views, File.expand_path("../../views", __dir__)
       set :federation_thread, nil
+      set :federation_worker_pool, nil
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
 
@@ -152,6 +154,12 @@ module PotatoMesh
       refresh_well_known_document_if_stale
       ensure_self_instance_record!
       update_all_prometheus_metrics_from_nodes
+
+      if federation_enabled?
+        ensure_federation_worker_pool!
+      else
+        shutdown_federation_worker_pool!
+      end
 
       if federation_announcements_active?
         start_initial_federation_announcement!

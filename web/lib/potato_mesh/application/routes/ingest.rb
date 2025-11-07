@@ -240,8 +240,7 @@ module PotatoMesh
 
             db = open_database
             upsert_instance_record(db, attributes, signature)
-            ingest_known_instances_from!(
-              db,
+            enqueued = enqueue_federation_crawl(
               attributes[:domain],
               per_response_limit: PotatoMesh::Config.federation_max_instances_per_response,
               overall_limit: PotatoMesh::Config.federation_max_domains_per_crawl,
@@ -251,6 +250,7 @@ module PotatoMesh
               context: "ingest.register",
               domain: attributes[:domain],
               instance_id: attributes[:id],
+              crawl_enqueued: enqueued,
             )
             status 201
             { status: "registered" }.to_json

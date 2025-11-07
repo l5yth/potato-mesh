@@ -285,6 +285,78 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".federation_worker_pool_size" do
+    it "returns the baked-in pool size when unset" do
+      within_env("FEDERATION_WORKERS" => nil) do
+        expect(described_class.federation_worker_pool_size).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_WORKER_POOL_SIZE,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_WORKERS" => "9") do
+        expect(described_class.federation_worker_pool_size).to eq(9)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_WORKERS" => "0") do
+        expect(described_class.federation_worker_pool_size).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_WORKER_POOL_SIZE,
+        )
+      end
+    end
+  end
+
+  describe ".federation_worker_queue_capacity" do
+    it "returns the baked-in queue capacity when unset" do
+      within_env("FEDERATION_WORK_QUEUE" => nil) do
+        expect(described_class.federation_worker_queue_capacity).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_WORK_QUEUE" => "33") do
+        expect(described_class.federation_worker_queue_capacity).to eq(33)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_WORK_QUEUE" => "-1") do
+        expect(described_class.federation_worker_queue_capacity).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY,
+        )
+      end
+    end
+  end
+
+  describe ".federation_task_timeout_seconds" do
+    it "returns the baked-in timeout when unset" do
+      within_env("FEDERATION_TASK_TIMEOUT" => nil) do
+        expect(described_class.federation_task_timeout_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_TASK_TIMEOUT" => "47") do
+        expect(described_class.federation_task_timeout_seconds).to eq(47)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_TASK_TIMEOUT" => "-7") do
+        expect(described_class.federation_task_timeout_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS,
+        )
+      end
+    end
+  end
+
   describe ".db_path" do
     it "returns the default path inside the data directory" do
       expect(described_class.db_path).to eq(described_class.default_db_path)

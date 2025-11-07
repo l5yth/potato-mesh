@@ -126,6 +126,61 @@ module PotatoMesh
         db&.close
       end
 
+      # Retrieve or initialize the worker pool servicing federation jobs.
+      #
+      # @return [PotatoMesh::App::WorkerPool, nil] active worker pool or nil when disabled.
+      def federation_worker_pool
+        ensure_federation_worker_pool!
+      end
+
+      # Ensure the federation worker pool exists when federation remains enabled.
+      #
+      # @return [PotatoMesh::App::WorkerPool, nil] active worker pool if created.
+      def ensure_federation_worker_pool!
+        return nil unless federation_enabled?
+
+        existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
+        return existing if existing&.alive?
+
+        pool = PotatoMesh::App::WorkerPool.new(
+          size: PotatoMesh::Config.federation_worker_pool_size,
+          max_queue: PotatoMesh::Config.federation_worker_queue_capacity,
+          name: "potato-mesh-fed",
+        )
+
+        at_exit do
+          begin
+            pool.shutdown(timeout: PotatoMesh::Config.federation_task_timeout_seconds)
+          rescue StandardError
+            # Suppress shutdown errors during interpreter teardown.
+          end
+        end
+
+        set(:federation_worker_pool, pool) if respond_to?(:set)
+        pool
+      end
+
+      # Shutdown and clear the federation worker pool if present.
+      #
+      # @return [void]
+      def shutdown_federation_worker_pool!
+        existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
+        return unless existing
+
+        begin
+          existing.shutdown(timeout: PotatoMesh::Config.federation_task_timeout_seconds)
+        rescue StandardError => e
+          warn_log(
+            "Failed to shut down federation worker pool",
+            context: "federation",
+            error_class: e.class.name,
+            error_message: e.message,
+          )
+        ensure
+          set(:federation_worker_pool, nil) if respond_to?(:set)
+        end
+      end
+
       def federation_target_domains(self_domain)
         normalized_self = sanitize_instance_domain(self_domain)&.downcase
         ordered = []
@@ -258,15 +313,77 @@ module PotatoMesh
         attributes, signature = ensure_self_instance_record!
         payload_json = JSON.generate(instance_announcement_payload(attributes, signature))
         domains = federation_target_domains(attributes[:domain])
+        pool = federation_worker_pool
+        scheduled = []
+
         domains.each do |domain|
+          if pool
+            begin
+              task = pool.schedule do
+                announce_instance_to_domain(domain, payload_json)
+              end
+              scheduled << [domain, task]
+              next
+            rescue PotatoMesh::App::WorkerPool::QueueFullError
+              warn_log(
+                "Skipped asynchronous federation announcement",
+                context: "federation.announce",
+                domain: domain,
+                reason: "worker queue saturated",
+              )
+            rescue PotatoMesh::App::WorkerPool::ShutdownError
+              warn_log(
+                "Worker pool unavailable, falling back to synchronous announcement",
+                context: "federation.announce",
+                domain: domain,
+              )
+              pool = nil
+            end
+          end
+
           announce_instance_to_domain(domain, payload_json)
         end
+
+        wait_for_federation_tasks(scheduled)
+
         unless domains.empty?
           debug_log(
             "Federation announcement cycle complete",
             context: "federation.announce",
             targets: domains,
           )
+        end
+      end
+
+      # Wait for scheduled federation tasks to complete while logging failures.
+      #
+      # @param scheduled [Array<(String, PotatoMesh::App::WorkerPool::Task)>] pairs of domains and tasks.
+      # @return [void]
+      def wait_for_federation_tasks(scheduled)
+        return if scheduled.empty?
+
+        timeout = PotatoMesh::Config.federation_task_timeout_seconds
+        scheduled.each do |domain, task|
+          begin
+            task.wait(timeout: timeout)
+          rescue PotatoMesh::App::WorkerPool::TaskTimeoutError => e
+            warn_log(
+              "Federation announcement task timed out",
+              context: "federation.announce",
+              domain: domain,
+              timeout: timeout,
+              error_class: e.class.name,
+              error_message: e.message,
+            )
+          rescue StandardError => e
+            warn_log(
+              "Federation announcement task failed",
+              context: "federation.announce",
+              domain: domain,
+              error_class: e.class.name,
+              error_message: e.message,
+            )
+          end
         end
       end
 
@@ -497,6 +614,58 @@ module PotatoMesh
         [attributes, signature, nil]
       rescue StandardError => e
         [nil, nil, e.message]
+      end
+
+      # Enqueue a federation crawl for the supplied domain using the worker pool.
+      #
+      # @param domain [String] sanitized remote domain to crawl.
+      # @param per_response_limit [Integer, nil] maximum entries processed per response.
+      # @param overall_limit [Integer, nil] maximum unique domains visited.
+      # @return [Boolean] true when the crawl was scheduled successfully.
+      def enqueue_federation_crawl(domain, per_response_limit:, overall_limit:)
+        pool = federation_worker_pool
+        unless pool
+          debug_log(
+            "Skipped remote instance crawl",
+            context: "federation.instances",
+            domain: domain,
+            reason: "federation disabled",
+          )
+          return false
+        end
+
+        application = is_a?(Class) ? self : self.class
+        pool.schedule do
+          db = application.open_database
+          begin
+            application.ingest_known_instances_from!(
+              db,
+              domain,
+              per_response_limit: per_response_limit,
+              overall_limit: overall_limit,
+            )
+          ensure
+            db&.close
+          end
+        end
+
+        true
+      rescue PotatoMesh::App::WorkerPool::QueueFullError
+        warn_log(
+          "Skipped remote instance crawl",
+          context: "federation.instances",
+          domain: domain,
+          reason: "worker queue saturated",
+        )
+        false
+      rescue PotatoMesh::App::WorkerPool::ShutdownError
+        warn_log(
+          "Skipped remote instance crawl",
+          context: "federation.instances",
+          domain: domain,
+          reason: "worker pool shut down",
+        )
+        false
       end
 
       # Recursively ingest federation records exposed by the supplied domain.

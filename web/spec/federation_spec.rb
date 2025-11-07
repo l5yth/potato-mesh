@@ -48,6 +48,23 @@ RSpec.describe PotatoMesh::App::Federation do
         def reset_warn_messages
           @warn_messages = []
         end
+
+        def settings
+          @settings ||= Struct.new(
+            :federation_thread,
+            :initial_federation_thread,
+            :federation_worker_pool,
+          ).new
+        end
+
+        def set(key, value)
+          writer = "#{key}="
+          if settings.respond_to?(writer)
+            settings.public_send(writer, value)
+          else
+            raise ArgumentError, "unsupported setting #{key}"
+          end
+        end
       end
     end
   end
@@ -57,6 +74,11 @@ RSpec.describe PotatoMesh::App::Federation do
     federation_helpers.instance_variable_set(:@remote_instance_verify_callback, nil)
     federation_helpers.reset_debug_messages
     federation_helpers.reset_warn_messages
+    federation_helpers.shutdown_federation_worker_pool!
+  end
+
+  after do
+    federation_helpers.shutdown_federation_worker_pool!
   end
 
   describe ".remote_instance_cert_store" do
@@ -474,6 +496,201 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(captured_request["Content-Type"]).to eq("application/json")
       expect(captured_request["Accept"]).to eq("application/json")
       expect(captured_request["User-Agent"]).to eq(federation_helpers.send(:federation_user_agent_header))
+    end
+  end
+
+  describe ".ensure_federation_worker_pool!" do
+    before do
+      allow(PotatoMesh::Config).to receive(:federation_worker_pool_size).and_return(1)
+      allow(PotatoMesh::Config).to receive(:federation_worker_queue_capacity).and_return(1)
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(0.05)
+    end
+
+    it "returns nil when federation is disabled" do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(false)
+
+      expect(federation_helpers.ensure_federation_worker_pool!).to be_nil
+    end
+
+    it "creates and memoizes the worker pool" do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+
+      pool = federation_helpers.ensure_federation_worker_pool!
+      expect(pool).to be_a(PotatoMesh::App::WorkerPool)
+      expect(federation_helpers.ensure_federation_worker_pool!).to equal(pool)
+    ensure
+      pool&.shutdown(timeout: 0.05)
+      federation_helpers.set(:federation_worker_pool, nil)
+    end
+  end
+
+  describe ".shutdown_federation_worker_pool!" do
+    it "logs an error when shutdown fails" do
+      pool = instance_double(PotatoMesh::App::WorkerPool)
+      allow(pool).to receive(:shutdown).and_raise(StandardError, "boom")
+
+      federation_helpers.set(:federation_worker_pool, pool)
+      federation_helpers.shutdown_federation_worker_pool!
+
+      expect(federation_helpers.warn_messages.last).to include("Failed to shut down federation worker pool")
+      expect(federation_helpers.send(:settings).federation_worker_pool).to be_nil
+    end
+  end
+
+  describe ".enqueue_federation_crawl" do
+    let(:pool) { instance_double(PotatoMesh::App::WorkerPool) }
+
+    it "returns false and logs when the pool is unavailable" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(nil)
+
+      result = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+
+      expect(result).to be(false)
+      expect(federation_helpers.debug_messages.last).to include("Skipped remote instance crawl")
+    end
+
+    it "schedules ingestion work on the pool" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      db = instance_double(SQLite3::Database)
+      allow(db).to receive(:close)
+
+      expect(federation_helpers).to receive(:open_database).and_return(db)
+      expect(federation_helpers).to receive(:ingest_known_instances_from!).with(
+        db,
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+
+      task = instance_double(PotatoMesh::App::WorkerPool::Task)
+      expect(pool).to receive(:schedule) do |&block|
+        block.call
+        task
+      end
+
+      result = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+
+      expect(result).to be(true)
+      expect(db).to have_received(:close)
+    end
+
+    it "logs when the worker queue is saturated" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::QueueFullError, "full")
+      expect(federation_helpers).to receive(:warn_log).with(
+        "Skipped remote instance crawl",
+        hash_including(
+          context: "federation.instances",
+          domain: "remote.mesh",
+          reason: "worker queue saturated",
+        ),
+      ).and_call_original
+
+      result = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 1,
+        overall_limit: 2,
+      )
+
+      expect(result).to be(false)
+    end
+
+    it "logs when the worker pool is shutting down" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::ShutdownError, "closed")
+      expect(federation_helpers).to receive(:warn_log).with(
+        "Skipped remote instance crawl",
+        hash_including(
+          context: "federation.instances",
+          domain: "remote.mesh",
+          reason: "worker pool shut down",
+        ),
+      ).and_call_original
+
+      result = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 1,
+        overall_limit: 2,
+      )
+
+      expect(result).to be(false)
+    end
+  end
+
+  describe ".wait_for_federation_tasks" do
+    it "does nothing for empty input" do
+      federation_helpers.wait_for_federation_tasks([])
+      expect(federation_helpers.warn_messages).to be_empty
+    end
+
+    it "logs timeouts" do
+      task = instance_double(PotatoMesh::App::WorkerPool::Task)
+      allow(task).to receive(:wait).and_raise(PotatoMesh::App::WorkerPool::TaskTimeoutError, "late")
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(0.01)
+
+      federation_helpers.wait_for_federation_tasks([["remote.mesh", task]])
+
+      expect(federation_helpers.warn_messages.last).to include("task timed out")
+    end
+
+    it "logs unexpected failures" do
+      task = instance_double(PotatoMesh::App::WorkerPool::Task)
+      allow(task).to receive(:wait).and_raise(RuntimeError, "boom")
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(0.01)
+
+      federation_helpers.wait_for_federation_tasks([["remote.mesh", task]])
+
+      expect(federation_helpers.warn_messages.last).to include("task failed")
+    end
+  end
+
+  describe ".announce_instance_to_all_domains" do
+    let(:pool) { instance_double(PotatoMesh::App::WorkerPool) }
+
+    before do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:ensure_self_instance_record!).and_return([
+        { domain: "self.mesh" },
+        "signature",
+      ])
+      allow(federation_helpers).to receive(:instance_announcement_payload).and_return({})
+      allow(JSON).to receive(:generate).and_return("payload-json")
+      allow(federation_helpers).to receive(:federation_target_domains).and_return(%w[alpha.mesh beta.mesh])
+    end
+
+    it "schedules announcements on the worker pool" do
+      task = instance_double(PotatoMesh::App::WorkerPool::Task)
+      allow(federation_helpers).to receive(:wait_for_federation_tasks)
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      expect(pool).to receive(:schedule).twice.and_return(task)
+
+      federation_helpers.announce_instance_to_all_domains
+    end
+
+    it "falls back to synchronous announcements when the queue is saturated" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::QueueFullError, "full")
+      allow(federation_helpers).to receive(:wait_for_federation_tasks)
+      expect(federation_helpers).to receive(:announce_instance_to_domain).with("alpha.mesh", "payload-json").once
+      expect(federation_helpers).to receive(:announce_instance_to_domain).with("beta.mesh", "payload-json").once
+
+      federation_helpers.announce_instance_to_all_domains
+    end
+
+    it "runs synchronously when the worker pool is unavailable" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(nil)
+      expect(federation_helpers).to receive(:announce_instance_to_domain).with("alpha.mesh", "payload-json")
+      expect(federation_helpers).to receive(:announce_instance_to_domain).with("beta.mesh", "payload-json")
+
+      federation_helpers.announce_instance_to_all_domains
     end
   end
 end
