@@ -72,17 +72,26 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
     ['recent-node', 'iso-node', 'encrypted']
   );
 
-  assert.equal(model.channels.length, 2);
-  const [channel0, channel1] = model.channels;
-  assert.equal(channel0.index, 0);
-  assert.equal(channel0.label, 'MediumFast');
-  assert.equal(channel0.entries.length, 2);
-  assert.deepEqual(channel0.entries.map(entry => entry.message.id), ['no-index', 'recent-default']);
+  assert.equal(model.channels.length, 3);
+  const [fallbackChannel, namedPrimaryChannel, secondaryChannel] = model.channels;
 
-  assert.equal(channel1.index, 1);
-  assert.equal(channel1.label, 'BerlinMesh');
-  assert.equal(channel1.entries.length, 2);
-  assert.deepEqual(channel1.entries.map(entry => entry.message.id), ['iso-ts', 'recent-alt']);
+  assert.equal(fallbackChannel.index, 0);
+  assert.equal(fallbackChannel.label, 'Fallback');
+  assert.equal(fallbackChannel.id, 'channel-0-fallback');
+  assert.equal(fallbackChannel.entries.length, 1);
+  assert.deepEqual(fallbackChannel.entries.map(entry => entry.message.id), ['no-index']);
+
+  assert.equal(namedPrimaryChannel.index, 0);
+  assert.equal(namedPrimaryChannel.label, 'MediumFast');
+  assert.equal(namedPrimaryChannel.id, 'channel-0-mediumfast');
+  assert.equal(namedPrimaryChannel.entries.length, 1);
+  assert.deepEqual(namedPrimaryChannel.entries.map(entry => entry.message.id), ['recent-default']);
+
+  assert.equal(secondaryChannel.index, 1);
+  assert.equal(secondaryChannel.label, 'BerlinMesh');
+  assert.equal(secondaryChannel.id, 'channel-1');
+  assert.equal(secondaryChannel.entries.length, 2);
+  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['iso-ts', 'recent-alt']);
 });
 
 test('buildChatTabModel always includes channel zero bucket', () => {

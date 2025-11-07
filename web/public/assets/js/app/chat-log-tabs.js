@@ -58,7 +58,7 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
  * }} params Aggregation inputs.
  * @returns {{
  *   logEntries: Array<{ ts: number, type: string, nodeId?: string, nodeNum?: number }>,
- *   channels: Array<{ index: number, label: string, entries: Array<{ ts: number, message: Object }> }>
+ *   channels: Array<{ id: string, index: number, label: string, entries: Array<{ ts: number, message: Object }> }>
  * }} Sorted tab model data.
  */
 export function buildChatTabModel({
@@ -138,23 +138,24 @@ export function buildChatTabModel({
     if (channelIndex != null && channelIndex > maxChannelIndex) {
       continue;
     }
-    const safeIndex = channelIndex != null && channelIndex >= 0 ? channelIndex : 0;
-    const bucketKey = safeIndex;
-    let bucket = channelBuckets.get(bucketKey);
-    if (!bucket) {
-      bucket = {
-        index: safeIndex,
-        label: String(safeIndex),
-        entries: [],
-        hasExplicitName: false
-      };
-      channelBuckets.set(bucketKey, bucket);
-    }
-
     const channelName = normaliseChannelName(
       message.channel_name ?? message.channelName ?? message.channel_display ?? message.channelDisplay
     );
-    if (channelName && !bucket.hasExplicitName) {
+    const safeIndex = channelIndex != null && channelIndex >= 0 ? channelIndex : 0;
+    const bucketKey = buildChannelBucketKey(safeIndex, channelName);
+    let bucket = channelBuckets.get(bucketKey);
+    if (!bucket) {
+      bucket = {
+        key: bucketKey,
+        id: buildChannelTabId(bucketKey),
+        index: safeIndex,
+        label: channelName || String(safeIndex),
+        entries: [],
+        hasExplicitName: Boolean(channelName),
+        isPrimaryFallback: bucketKey === '0'
+      };
+      channelBuckets.set(bucketKey, bucket);
+    } else if (channelName && !bucket.hasExplicitName) {
       bucket.label = channelName;
       bucket.hasExplicitName = true;
     }
@@ -164,16 +165,32 @@ export function buildChatTabModel({
 
   logEntries.sort((a, b) => a.ts - b.ts);
 
-  if (!channelBuckets.has(0)) {
-    channelBuckets.set(0, {
+  let hasPrimaryBucket = false;
+  for (const bucket of channelBuckets.values()) {
+    if (bucket.index === 0) {
+      hasPrimaryBucket = true;
+      break;
+    }
+  }
+  if (!hasPrimaryBucket) {
+    const bucketKey = '0';
+    channelBuckets.set(bucketKey, {
+      key: bucketKey,
+      id: buildChannelTabId(bucketKey),
       index: 0,
       label: '0',
       entries: [],
-      hasExplicitName: false
+      hasExplicitName: false,
+      isPrimaryFallback: true
     });
   }
 
-  const channels = Array.from(channelBuckets.values()).sort((a, b) => a.index - b.index);
+  const channels = Array.from(channelBuckets.values()).sort((a, b) => {
+    if (a.index !== b.index) {
+      return a.index - b.index;
+    }
+    return a.label.localeCompare(b.label);
+  });
   for (const channel of channels) {
     channel.entries.sort((a, b) => a.ts - b.ts);
   }
@@ -288,6 +305,52 @@ export function normaliseChannelName(value) {
     return String(value);
   }
   return null;
+}
+
+function buildChannelBucketKey(index, channelName) {
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+  if (safeIndex === 0 && channelName) {
+    return `0::${channelName.toLowerCase()}`;
+  }
+  return String(safeIndex);
+}
+
+function buildChannelTabId(bucketKey) {
+  if (bucketKey === '0') {
+    return 'channel-0';
+  }
+  const slug = slugify(bucketKey);
+  if (slug) {
+    if (slug !== '0') {
+      return `channel-${slug}`;
+    }
+    return `channel-${slug}-${hashChannelKey(bucketKey)}`;
+  }
+  return `channel-${hashChannelKey(bucketKey)}`;
+}
+
+function slugify(value) {
+  if (value == null) return '';
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function hashChannelKey(value) {
+  const input = String(value ?? '');
+  if (!input) {
+    return '0';
+  }
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash * 31 + input.charCodeAt(i)) | 0;
+  }
+  if (hash < 0) {
+    hash = (hash * -1) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 export const __test__ = {
