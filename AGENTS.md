@@ -1,16 +1,16 @@
 # Repository Guidelines
 
-Keep code well structured, modular, and not monolithic. If modules get to big, consider submodules structure.
+Keep code well structured, modular, and not monolithic; if modules grow too large, split them into submodules.
 
 Make sure all tests pass for Python (`pytest`), Ruby (`rspec`), and JavaScript (`npm test`).
 
 Make sure all code is properly inline documented (PDoc, RDoc, JSDoc, et.c). We do not want any undocumented code.
 
-Make sure all code is 100% unit tested. We want all lines, units, and branches to be thouroughly covered by tests.
+Make sure all code is 100% unit tested. We want every line, unit, and branch thoroughly covered—treat this as a hard gate, and add matching test lines for every new line of code you author.
 
 New source files should have Apache v2 license headers using the exact string `Copyright © 2025-26 l5yth & contributors`.
 
-Run linters for Python (`black`) and Ruby (`rufo`) to ensure consistent code formatting.
+Run linters for Python (`black`) and Ruby (`rufo`) to ensure consistent code formatting; default commands are `black .` and `rufo .`.
 
 ## Project Structure & Module Organization
 The repository splits runtime and ingestion logic. `web/` holds the Sinatra dashboard (Ruby code in `lib/potato_mesh`, views in `views/`, static bundles in `public/`).

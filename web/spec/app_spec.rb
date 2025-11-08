@@ -66,6 +66,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       ENV["PORT"] = "0"
       expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
     end
+
+    it "accepts numeric strings with surrounding whitespace" do
+      ENV["PORT"] = "  42424  "
+      expect(application_class.resolve_port).to eq(42_424)
+    end
+
+    it "rejects ports that fail sanitizer validation" do
+      ENV["PORT"] = "41447"
+      allow(PotatoMesh::Sanitizer).to receive(:valid_port?).and_return(false)
+
+      expect(application_class.resolve_port).to eq(PotatoMesh::Application::DEFAULT_PORT)
+    end
   end
 
   # Return the absolute filesystem path to the requested fixture.
@@ -1076,6 +1088,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       Sinatra::Application.apply_logger_level!
 
       expect(Sinatra::Application.settings.logger.level).to eq(Logger::DEBUG)
+    end
+
+    it "does nothing when the logger is not configured" do
+      original_logger = Sinatra::Application.settings.logger
+      Sinatra::Application.set :logger, nil
+
+      expect { Sinatra::Application.apply_logger_level! }.not_to raise_error
+    ensure
+      Sinatra::Application.set :logger, original_logger
     end
   end
 

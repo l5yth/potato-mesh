@@ -15,6 +15,7 @@
 import base64
 import enum
 import importlib
+import runpy
 import re
 import sys
 import threading
@@ -2467,3 +2468,157 @@ def test_on_receive_skips_seen_packets(mesh_module):
     mesh.on_receive(packet, interface=None)
 
     assert packet["_potatomesh_seen"] is True
+
+
+def test_mesh_ingestor_module_syncs_connection_and_port(mesh_module):
+    mesh = mesh_module
+    original_connection = mesh.CONNECTION
+    original_port = mesh.PORT
+
+    try:
+        mesh.CONNECTION = "/dev/ttyUSB-test"
+        assert mesh.config.CONNECTION == "/dev/ttyUSB-test"
+        assert mesh.PORT == "/dev/ttyUSB-test"
+        assert mesh.config.PORT == "/dev/ttyUSB-test"
+
+        mesh.PORT = "tcp://radio.local:4403"
+        assert mesh.CONNECTION == "tcp://radio.local:4403"
+        assert mesh.config.CONNECTION == "tcp://radio.local:4403"
+    finally:
+        mesh.CONNECTION = original_connection
+        mesh.PORT = original_port
+
+
+def test_mesh_ingestor_module_updates_interface_exports(mesh_module):
+    mesh = mesh_module
+    original_ble = mesh.BLEInterface
+
+    class DummyBLE:
+        pass
+
+    try:
+        mesh.BLEInterface = DummyBLE
+        assert mesh.interfaces.BLEInterface is DummyBLE
+        assert mesh.BLEInterface is DummyBLE
+    finally:
+        mesh.BLEInterface = original_ble
+
+
+def test_mesh_ingestor_module_exports_queue_utilities(mesh_module):
+    mesh = mesh_module
+
+    assert mesh.json is mesh.queue.json
+    assert mesh.urllib is mesh.queue.urllib
+    assert mesh.glob is mesh.interfaces.glob
+
+
+def test_legacy_mesh_module_aliases_ingestor(mesh_module):
+    module_name = "data.mesh"
+    original_module = sys.modules.pop(module_name, None)
+
+    try:
+        alias = importlib.import_module(module_name)
+        assert alias is mesh_module
+    finally:
+        if original_module is not None:
+            sys.modules[module_name] = original_module
+        else:
+            sys.modules.pop(module_name, None)
+
+
+def test_data_mesh_entrypoint_invokes_main(monkeypatch):
+    module_path = Path(__file__).resolve().parents[1] / "data" / "mesh.py"
+    called = {"value": 0}
+
+    def stub_main():
+        called["value"] += 1
+
+    stub_module = types.ModuleType("data.mesh_ingestor")
+    stub_module.main = stub_main
+
+    original_ingestor = sys.modules.get("data.mesh_ingestor")
+    original_main = sys.modules.get("__main__")
+    original_sys_path = list(sys.path)
+
+    sys.modules["data.mesh_ingestor"] = stub_module
+
+    try:
+        runpy.run_path(str(module_path), run_name="__main__")
+    finally:
+        if original_ingestor is not None:
+            sys.modules["data.mesh_ingestor"] = original_ingestor
+        else:
+            sys.modules.pop("data.mesh_ingestor", None)
+        if original_main is not None:
+            sys.modules["__main__"] = original_main
+        else:  # pragma: no cover - pytest always runs under __main__
+            sys.modules.pop("__main__", None)
+        sys.path[:] = original_sys_path
+
+    assert called["value"] == 1
+
+
+def test_config_debug_log_respects_flags(mesh_module, capsys):
+    mesh = mesh_module
+    original_debug = mesh.config.DEBUG
+
+    try:
+        mesh.config.DEBUG = False
+        mesh.config._debug_log("hidden message", context="test")
+        assert capsys.readouterr().out == ""
+
+        mesh.config._debug_log(
+            "always on",
+            context="always",
+            severity="INFO",
+            always=True,
+            foo="bar",
+        )
+        output = capsys.readouterr().out
+        assert "always on" in output
+        assert "context=always" in output
+        assert "foo='bar'" in output
+        assert "[info]" in output
+
+        mesh.config.DEBUG = True
+        mesh.config._debug_log("visible", context="enabled")
+        output = capsys.readouterr().out
+        assert "visible" in output
+        assert "context=enabled" in output
+    finally:
+        mesh.config.DEBUG = original_debug
+
+
+def test_clear_post_queue_resets_state(mesh_module):
+    mesh = mesh_module
+    mesh._clear_post_queue()
+    mesh.STATE.active = True
+
+    mesh._enqueue_post_json("/api/test", {"id": 1}, mesh._MESSAGE_POST_PRIORITY)
+    assert mesh.STATE.queue, "Queue should contain the enqueued item"
+
+    mesh._clear_post_queue()
+    assert not mesh.STATE.queue
+    assert mesh.STATE.active is False
+
+
+def test_queue_post_json_resets_active_on_failure(mesh_module):
+    mesh = mesh_module
+    mesh._clear_post_queue()
+
+    class Boom(RuntimeError):
+        pass
+
+    def failing_send(*_, **__):
+        raise Boom("nope")
+
+    with pytest.raises(Boom):
+        mesh._queue_post_json(
+            "/api/fail",
+            {"id": 1},
+            state=mesh.STATE,
+            send=failing_send,
+        )
+
+    assert mesh.STATE.active is False
+    assert not mesh.STATE.queue
