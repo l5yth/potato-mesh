@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## v0.5.4
+
+* Handle naming when primary channel has a name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/422>
+* Handle edge case when primary channel has a name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/421>
+* Add preset mode to logs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/420>
+* Parallelize federation tasks with worker pool by @l5yth in <https://github.com/l5yth/potato-mesh/pull/419>
+* Allow filtering chat and logs by node name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/417>
+* Gem: Add erb as dependency removed from std by @l5yth in <https://github.com/l5yth/potato-mesh/pull/416>
+* Implement support for replies and reactions app by @l5yth in <https://github.com/l5yth/potato-mesh/pull/411>
+* Ingestor: Ignore direct messages on default channel by @l5yth in <https://github.com/l5yth/potato-mesh/pull/414>
+* Agents: Add instructions by @l5yth in <https://github.com/l5yth/potato-mesh/pull/410>
+* Display encrypted messages in frontend log window by @l5yth in <https://github.com/l5yth/potato-mesh/pull/409>
+* Add chat log entries for telemetry, position, and neighbor events by @l5yth in <https://github.com/l5yth/potato-mesh/pull/408>
+* Handle missing instance domain outside production by @l5yth in <https://github.com/l5yth/potato-mesh/pull/405>
+* Add tabbed chat panel with channel grouping by @l5yth in <https://github.com/l5yth/potato-mesh/pull/404>
+* Normalize numeric client roles using Meshtastic CLI enums by @l5yth in <https://github.com/l5yth/potato-mesh/pull/402>
+* Ensure Docker images publish versioned tags by @l5yth in <https://github.com/l5yth/potato-mesh/pull/403>
+* Document environment configuration variables by @l5yth in <https://github.com/l5yth/potato-mesh/pull/400>
+* Document federation refresh cadence by @l5yth in <https://github.com/l5yth/potato-mesh/pull/401>
+* Add Prometheus monitoring documentation by @l5yth in <https://github.com/l5yth/potato-mesh/pull/399>
+* Config: Read PROM_REPORT_IDS from environment by @nicjansma in <https://github.com/l5yth/potato-mesh/pull/398>
+* Feat: Mesh-Ingestor: Ability to provide already-existing interface instance by @KenADev in <https://github.com/l5yth/potato-mesh/pull/395>
+* Fix: Mesh-Ingestor: Fix error for non-existing datetime.UTC reference by @KenADev in <https://github.com/l5yth/potato-mesh/pull/396>
+* Chore: bump version to 0.5.4 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/388>
+
 ## v0.5.3
 
 * Add telemetry formatting utilities and extend node overlay by @l5yth in <https://github.com/l5yth/potato-mesh/pull/387>
