@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { extractModemMetadata } from './node-modem-metadata.js';
+
 /**
  * Highest channel index that should be represented within the tab view.
  * @type {number}
@@ -54,7 +56,8 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
  *   messages?: Array<Object>,
  *   nowSeconds: number,
  *   windowSeconds: number,
- *   maxChannelIndex?: number
+ *   maxChannelIndex?: number,
+ *   primaryChannelFallbackLabel?: string|null
  * }} params Aggregation inputs.
  * @returns {{
  *   logEntries: Array<{ ts: number, type: string, nodeId?: string, nodeNum?: number }>,
@@ -69,11 +72,13 @@ export function buildChatTabModel({
   messages = [],
   nowSeconds,
   windowSeconds,
-  maxChannelIndex = MAX_CHANNEL_INDEX
+  maxChannelIndex = MAX_CHANNEL_INDEX,
+  primaryChannelFallbackLabel = null
 }) {
   const cutoff = (Number.isFinite(nowSeconds) ? nowSeconds : 0) - (Number.isFinite(windowSeconds) ? windowSeconds : 0);
   const logEntries = [];
   const channelBuckets = new Map();
+  const primaryChannelEnvLabel = normalisePrimaryChannelEnvLabel(primaryChannelFallbackLabel);
 
   for (const node of nodes || []) {
     if (!node) continue;
@@ -142,22 +147,32 @@ export function buildChatTabModel({
       message.channel_name ?? message.channelName ?? message.channel_display ?? message.channelDisplay
     );
     const safeIndex = channelIndex != null && channelIndex >= 0 ? channelIndex : 0;
-    const bucketKey = buildChannelBucketKey(safeIndex, channelName);
+    const modemPreset = safeIndex === 0 ? extractModemMetadata(message).modemPreset : null;
+    const labelInfo = resolveChannelLabel({
+      index: safeIndex,
+      channelName,
+      modemPreset,
+      envFallbackLabel: primaryChannelEnvLabel
+    });
+    const bucketKey = buildChannelBucketKey(safeIndex, safeIndex === 0 && labelInfo.label !== '0' ? labelInfo.label : null);
     let bucket = channelBuckets.get(bucketKey);
     if (!bucket) {
       bucket = {
         key: bucketKey,
         id: buildChannelTabId(bucketKey),
         index: safeIndex,
-        label: channelName || String(safeIndex),
+        label: labelInfo.label,
         entries: [],
-        hasExplicitName: Boolean(channelName),
+        labelPriority: labelInfo.priority,
         isPrimaryFallback: bucketKey === '0'
       };
       channelBuckets.set(bucketKey, bucket);
-    } else if (channelName && !bucket.hasExplicitName) {
-      bucket.label = channelName;
-      bucket.hasExplicitName = true;
+    } else {
+      const existingPriority = bucket.labelPriority ?? CHANNEL_LABEL_PRIORITY.INDEX;
+      if ((labelInfo.priority ?? CHANNEL_LABEL_PRIORITY.INDEX) > existingPriority) {
+        bucket.label = labelInfo.label;
+        bucket.labelPriority = labelInfo.priority;
+      }
     }
 
     bucket.entries.push({ ts, message });
@@ -180,7 +195,7 @@ export function buildChatTabModel({
       index: 0,
       label: '0',
       entries: [],
-      hasExplicitName: false,
+      labelPriority: CHANNEL_LABEL_PRIORITY.INDEX,
       isPrimaryFallback: true
     });
   }
@@ -307,10 +322,13 @@ export function normaliseChannelName(value) {
   return null;
 }
 
-function buildChannelBucketKey(index, channelName) {
+function buildChannelBucketKey(index, primaryChannelLabel) {
   const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
-  if (safeIndex === 0 && channelName) {
-    return `0::${channelName.toLowerCase()}`;
+  if (safeIndex === 0 && primaryChannelLabel) {
+    const trimmed = primaryChannelLabel.trim();
+    if (trimmed.length > 0 && trimmed !== '0') {
+      return `0::${trimmed.toLowerCase()}`;
+    }
   }
   return String(safeIndex);
 }
@@ -351,6 +369,42 @@ function hashChannelKey(value) {
     hash = (hash * -1) >>> 0;
   }
   return hash.toString(36);
+}
+
+const CHANNEL_LABEL_PRIORITY = Object.freeze({
+  INDEX: 0,
+  ENV: 1,
+  MODEM: 2,
+  NAME: 3
+});
+
+function resolveChannelLabel({ index, channelName, modemPreset, envFallbackLabel }) {
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+  if (safeIndex === 0) {
+    if (channelName) {
+      return { label: channelName, priority: CHANNEL_LABEL_PRIORITY.NAME };
+    }
+    if (modemPreset) {
+      return { label: modemPreset, priority: CHANNEL_LABEL_PRIORITY.MODEM };
+    }
+    if (envFallbackLabel) {
+      return { label: envFallbackLabel, priority: CHANNEL_LABEL_PRIORITY.ENV };
+    }
+    return { label: '0', priority: CHANNEL_LABEL_PRIORITY.INDEX };
+  }
+  if (channelName) {
+    return { label: channelName, priority: CHANNEL_LABEL_PRIORITY.NAME };
+  }
+  return { label: String(safeIndex), priority: CHANNEL_LABEL_PRIORITY.INDEX };
+}
+
+function normalisePrimaryChannelEnvLabel(value) {
+  const trimmed = normaliseChannelName(value);
+  if (!trimmed) {
+    return null;
+  }
+  const withoutHash = trimmed.replace(/^#+/, '').trim();
+  return withoutHash.length > 0 ? withoutHash : null;
 }
 
 export const __test__ = {

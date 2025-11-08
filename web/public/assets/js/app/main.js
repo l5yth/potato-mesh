@@ -2727,7 +2727,8 @@ let messagesById = new Map();
       messages,
       nowSeconds,
       windowSeconds: CHAT_RECENT_WINDOW_SECONDS,
-      maxChannelIndex: MAX_CHANNEL_INDEX
+      maxChannelIndex: MAX_CHANNEL_INDEX,
+      primaryChannelFallbackLabel: config.channel
     });
 
     const enrichedLogEntries = attachNodeContextToLogEntries(logEntries);

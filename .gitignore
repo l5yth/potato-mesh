@@ -69,3 +69,7 @@ ai_docs/
 
 # Generated credentials for the instance
 web/.config
+
+# JavaScript dependencies
+node_modules/
+web/node_modules/
