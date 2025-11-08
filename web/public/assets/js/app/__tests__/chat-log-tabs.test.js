@@ -40,6 +40,8 @@ function fixtureNodes() {
 function fixtureMessages() {
   return [
     { id: 'recent-default', rx_time: NOW - 5, channel: 0, channel_name: ' MediumFast ' },
+    { id: 'primary-preset', rx_time: NOW - 8, channel: 0, modem_preset: ' ShortFast ' },
+    { id: 'env-default', rx_time: NOW - 12, channel: 0 },
     { id: 'recent-alt', rx_time: NOW - 10, channel_index: '1', channel_name: ' BerlinMesh ' },
     { id: 'stale', rx_time: NOW - WINDOW - 5, channel: 2 },
     { id: 'encrypted', rx_time: NOW - 20, channel: 3, encrypted: true },
@@ -55,6 +57,7 @@ function buildModel(overrides = {}) {
     messages: fixtureMessages(),
     nowSeconds: NOW,
     windowSeconds: WINDOW,
+    primaryChannelFallbackLabel: '#EnvDefault',
     ...overrides
   });
 }
@@ -72,23 +75,39 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
     ['recent-node', 'iso-node', 'encrypted']
   );
 
-  assert.equal(model.channels.length, 3);
-  const [fallbackChannel, namedPrimaryChannel, secondaryChannel] = model.channels;
+  assert.equal(model.channels.length, 5);
+  assert.deepEqual(model.channels.map(channel => channel.label), [
+    'EnvDefault',
+    'Fallback',
+    'MediumFast',
+    'ShortFast',
+    'BerlinMesh'
+  ]);
 
+  const channelByLabel = Object.fromEntries(model.channels.map(channel => [channel.label, channel]));
+
+  const envChannel = channelByLabel.EnvDefault;
+  assert.equal(envChannel.index, 0);
+  assert.equal(envChannel.id, 'channel-0-envdefault');
+  assert.deepEqual(envChannel.entries.map(entry => entry.message.id), ['env-default']);
+
+  const fallbackChannel = channelByLabel.Fallback;
   assert.equal(fallbackChannel.index, 0);
-  assert.equal(fallbackChannel.label, 'Fallback');
   assert.equal(fallbackChannel.id, 'channel-0-fallback');
-  assert.equal(fallbackChannel.entries.length, 1);
   assert.deepEqual(fallbackChannel.entries.map(entry => entry.message.id), ['no-index']);
 
+  const namedPrimaryChannel = channelByLabel.MediumFast;
   assert.equal(namedPrimaryChannel.index, 0);
-  assert.equal(namedPrimaryChannel.label, 'MediumFast');
   assert.equal(namedPrimaryChannel.id, 'channel-0-mediumfast');
-  assert.equal(namedPrimaryChannel.entries.length, 1);
   assert.deepEqual(namedPrimaryChannel.entries.map(entry => entry.message.id), ['recent-default']);
 
+  const presetChannel = channelByLabel.ShortFast;
+  assert.equal(presetChannel.index, 0);
+  assert.equal(presetChannel.id, 'channel-0-shortfast');
+  assert.deepEqual(presetChannel.entries.map(entry => entry.message.id), ['primary-preset']);
+
+  const secondaryChannel = channelByLabel.BerlinMesh;
   assert.equal(secondaryChannel.index, 1);
-  assert.equal(secondaryChannel.label, 'BerlinMesh');
   assert.equal(secondaryChannel.id, 'channel-1');
   assert.equal(secondaryChannel.entries.length, 2);
   assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['iso-ts', 'recent-alt']);
@@ -99,6 +118,19 @@ test('buildChatTabModel always includes channel zero bucket', () => {
   assert.equal(model.channels.length, 1);
   assert.equal(model.channels[0].index, 0);
   assert.equal(model.channels[0].entries.length, 0);
+});
+
+test('buildChatTabModel falls back to numeric label when no metadata provided', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [{ id: 'plain', rx_time: NOW - 5, channel: 0 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+    primaryChannelFallbackLabel: ''
+  });
+  assert.equal(model.channels.length, 1);
+  assert.equal(model.channels[0].label, '0');
+  assert.equal(model.channels[0].id, 'channel-0');
 });
 
 test('normaliseChannelIndex handles numeric and textual input', () => {
