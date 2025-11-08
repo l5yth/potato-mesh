@@ -1,4 +1,4 @@
--- Copyright (C) 2025 l5yth
+-- Copyright © 2025-26 l5yth & contributors
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -11,8 +11,9 @@
 -- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
---
+
 -- Extend the nodes and messages tables with LoRa metadata columns.
+
 BEGIN;
 ALTER TABLE nodes ADD COLUMN lora_freq INTEGER;
 ALTER TABLE nodes ADD COLUMN modem_preset TEXT;

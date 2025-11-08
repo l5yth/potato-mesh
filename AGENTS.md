@@ -8,7 +8,7 @@ Make sure all code is properly inline documented (PDoc, RDoc, JSDoc, et.c). We d
 
 Make sure all code is 100% unit tested. We want all lines, units, and branches to be thouroughly covered by tests.
 
-New source files should have Apache v2 license headers.
+New source files should have Apache v2 license headers using the exact string `Copyright © 2025-26 l5yth & contributors`.
 
 Run linters for Python (`black`) and Ruby (`rufo`) to ensure consistent code formatting.
 
