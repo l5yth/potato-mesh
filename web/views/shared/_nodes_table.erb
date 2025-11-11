@@ -1,0 +1,44 @@
+<!--
+  Copyright © 2025-26 l5yth & contributors
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<% wrapper_classes = ["nodes-table-wrapper"]
+   wrapper_classes << "nodes-table-wrapper--full" if defined?(full_screen) && full_screen %>
+<div class="<%= wrapper_classes.join(" ") %>">
+  <table id="nodes">
+    <thead>
+      <tr>
+        <th class="nodes-col nodes-col--node-id"><button type="button" class="sort-button" data-sort-key="node_id" data-sort-label="Node ID">Node ID <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--short-name"><button type="button" class="sort-button" data-sort-key="short_name" data-sort-label="Short Name">Short <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--long-name"><button type="button" class="sort-button" data-sort-key="long_name" data-sort-label="Long Name">Long Name <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--last-seen"><button type="button" class="sort-button" data-sort-key="last_heard" data-sort-label="Last Seen">Last Seen <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--role"><button type="button" class="sort-button" data-sort-key="role" data-sort-label="Role">Role <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--hw-model"><button type="button" class="sort-button" data-sort-key="hw_model" data-sort-label="Hardware Model">HW Model <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--battery"><button type="button" class="sort-button" data-sort-key="battery_level" data-sort-label="Battery Level">Battery <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--voltage"><button type="button" class="sort-button" data-sort-key="voltage" data-sort-label="Voltage">Voltage <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--uptime"><button type="button" class="sort-button" data-sort-key="uptime_seconds" data-sort-label="Uptime">Uptime <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--channel-util"><button type="button" class="sort-button" data-sort-key="channel_utilization" data-sort-label="Channel Utilization">Channel Util <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--air-util-tx"><button type="button" class="sort-button" data-sort-key="air_util_tx" data-sort-label="Air Utilization (Tx)">Air Util Tx <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--temperature"><button type="button" class="sort-button" data-sort-key="temperature" data-sort-label="Temperature">Temperature <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--humidity"><button type="button" class="sort-button" data-sort-key="relative_humidity" data-sort-label="Humidity">Humidity <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--pressure"><button type="button" class="sort-button" data-sort-key="barometric_pressure" data-sort-label="Barometric Pressure">Pressure <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--latitude"><button type="button" class="sort-button" data-sort-key="latitude" data-sort-label="Latitude">Latitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--longitude"><button type="button" class="sort-button" data-sort-key="longitude" data-sort-label="Longitude">Longitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--altitude"><button type="button" class="sort-button" data-sort-key="altitude" data-sort-label="Altitude">Altitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--last-position"><button type="button" class="sort-button" data-sort-key="position_time" data-sort-label="Last Position">Last Position <span class="sort-indicator" aria-hidden="true"></span></button></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>

@@ -1175,6 +1175,47 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /map" do
+    it "renders the map in full-screen mode with filter controls" do
+      get "/map"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('class="map-panel map-panel--full"')
+      expect(last_response.body).to include('id="map"')
+      expect(last_response.body).to include('id="filterInput"')
+    end
+  end
+
+  describe "GET /chat" do
+    it "renders the chat container when chat is enabled" do
+      get "/chat"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('class="chat-panel chat-panel--full"')
+      expect(last_response.body).to include('id="filterInput"')
+    end
+
+    it "shows a disabled message when private mode is active" do
+      allow(PotatoMesh::Config).to receive(:private_mode_enabled?).and_return(true)
+
+      get "/chat"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include("Chat is unavailable while private mode is enabled.")
+    end
+  end
+
+  describe "GET /nodes" do
+    it "renders the nodes table in full-screen mode" do
+      get "/nodes"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('class="nodes-table-wrapper nodes-table-wrapper--full"')
+      expect(last_response.body).to include('id="nodes"')
+      expect(last_response.body).to include('id="filterInput"')
+    end
+  end
+
   describe "database initialization" do
     it "creates the schema when booting" do
       expect(File).to exist(PotatoMesh::Config.db_path)

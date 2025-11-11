@@ -13,11 +13,6 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<div class="map-row">
-  <% unless private_mode %>
-    <%= erb :"shared/_chat_panel", locals: { full_screen: false } %>
-  <% end %>
-  <%= erb :"shared/_map_panel", locals: { full_screen: false } %>
-</div>
-
-<%= erb :"shared/_nodes_table", locals: { full_screen: false } %>
+<% chat_classes = ["chat-panel"]
+   chat_classes << "chat-panel--full" if defined?(full_screen) && full_screen %>
+<div id="chat" class="<%= chat_classes.join(" ") %>" aria-label="Chat log"></div>

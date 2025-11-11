@@ -125,9 +125,63 @@ tbody tr:nth-child(even) td {
 
 body {
   font-family: system-ui, Segoe UI, Roboto, Ubuntu, Arial, sans-serif;
-  margin: var(--pad);
-  padding-bottom: 96px;
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   --map-tiles-filter: var(--map-tile-filter-light);
+}
+
+.page-shell {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: var(--pad);
+  padding-bottom: calc(96px + var(--pad));
+  gap: var(--pad);
+}
+
+.page-shell--full-screen {
+  padding: 0;
+  padding-bottom: 0;
+}
+
+.page-shell--full-screen .site-header,
+.page-shell--full-screen .row.meta,
+.page-shell--full-screen .app-footer {
+  padding-left: var(--pad);
+  padding-right: var(--pad);
+}
+
+.page-shell--full-screen .site-header {
+  padding-top: var(--pad);
+}
+
+.page-shell--full-screen .row.meta {
+  padding-bottom: var(--pad);
+}
+
+.page-shell--full-screen .app-footer {
+  padding-top: var(--pad);
+  padding-bottom: var(--pad);
+}
+
+.page-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad);
+  min-height: 0;
+}
+
+.page-main--dashboard {
+  padding: 0;
+}
+
+.page-main--full-screen {
+  padding: 0;
+  gap: var(--pad);
 }
 
 h1 {
@@ -408,6 +462,65 @@ th {
   align-items: stretch;
 }
 
+.full-screen-section {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
+
+.map-panel--full {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.map-panel--full #map {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
+
+.chat-panel--full {
+  flex: 1 1 auto;
+  max-width: 100%;
+  width: 100%;
+  height: 100%;
+}
+
+.full-screen-section--chat .chat-panel {
+  height: 100%;
+}
+
+.chat-panel--disabled {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--pad) calc(var(--pad) * 2);
+  min-height: 50vh;
+}
+
+.chat-disabled-message {
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.nodes-table-wrapper {
+  width: 100%;
+}
+
+.nodes-table-wrapper--full {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.nodes-table-wrapper--full table {
+  min-width: 100%;
+}
+
 .map-panel {
   position: relative;
   flex: 1 1 0%;
@@ -464,7 +577,7 @@ th {
   display: none;
 }
 
-#chat {
+.chat-panel {
   flex: 0 0 33%;
   max-width: 33%;
   height: 60vh;
@@ -1074,7 +1187,7 @@ input[type="radio"] {
     height: 50vh;
   }
 
-  #chat {
+  .chat-panel {
     order: 2;
     flex: none;
     max-width: 100%;
@@ -1154,7 +1267,7 @@ body.dark #map {
   border-color: #444;
 }
 
-body.dark #chat {
+body.dark .chat-panel {
   border-color: #444;
   background: #222;
   color: #eee;
