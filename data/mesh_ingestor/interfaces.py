@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import ipaddress
 import re
@@ -48,39 +49,97 @@ def _patch_meshtastic_nodeinfo_handler() -> None:
     if getattr(original, "_potato_mesh_safe_wrapper", False):
         return
 
-    def _safe_on_node_info_receive(iface, packet):  # type: ignore[override]
-        candidate_mapping: Mapping | None = None
-        if isinstance(packet, Mapping):
-            candidate_mapping = packet
-        elif hasattr(packet, "__dict__") and isinstance(packet.__dict__, Mapping):
-            candidate_mapping = packet.__dict__
+    def _ensure_mapping(value) -> Mapping | None:
+        """Return ``value`` as a mapping when conversion is possible."""
 
-        node_id = None
-        if candidate_mapping is not None:
-            node_id = serialization._canonical_node_id(candidate_mapping.get("id"))
-            if node_id is None:
-                user_section = candidate_mapping.get("user")
-                if isinstance(user_section, Mapping):
-                    node_id = serialization._canonical_node_id(user_section.get("id"))
-            if node_id is None:
-                for key in ("fromId", "from_id", "from", "num", "nodeId", "node_id"):
-                    node_id = serialization._canonical_node_id(
-                        candidate_mapping.get(key)
-                    )
-                    if node_id:
-                        break
+        if isinstance(value, Mapping):
+            return value
+        if hasattr(value, "__dict__") and isinstance(value.__dict__, Mapping):
+            return value.__dict__
+        with contextlib.suppress(Exception):
+            converted = serialization._node_to_dict(value)
+            if isinstance(converted, Mapping):
+                return converted
+        return None
 
+    def _candidate_node_id(mapping: Mapping | None) -> str | None:
+        """Extract a canonical node identifier from ``mapping`` when present."""
+
+        if mapping is None:
+            return None
+
+        primary_keys = (
+            "id",
+            "userId",
+            "user_id",
+            "fromId",
+            "from_id",
+            "from",
+            "nodeId",
+            "node_id",
+            "nodeNum",
+            "node_num",
+            "num",
+        )
+
+        for key in primary_keys:
+            node_id = serialization._canonical_node_id(mapping.get(key))
             if node_id:
-                if not isinstance(candidate_mapping, dict):
-                    try:
-                        candidate_mapping = dict(candidate_mapping)
-                    except Exception:
-                        candidate_mapping = {
-                            k: candidate_mapping[k] for k in candidate_mapping
-                        }
-                if candidate_mapping.get("id") != node_id:
-                    candidate_mapping["id"] = node_id
-                packet = candidate_mapping
+                return node_id
+
+        user_section = _ensure_mapping(mapping.get("user"))
+        if user_section is not None:
+            for key in ("id", "userId", "user_id", "num", "nodeNum", "node_num"):
+                node_id = serialization._canonical_node_id(user_section.get(key))
+                if node_id:
+                    return node_id
+
+        decoded_section = _ensure_mapping(mapping.get("decoded"))
+        if decoded_section is not None:
+            node_id = _candidate_node_id(decoded_section)
+            if node_id:
+                return node_id
+
+        payload_section = _ensure_mapping(mapping.get("payload"))
+        if payload_section is not None:
+            node_id = _candidate_node_id(payload_section)
+            if node_id:
+                return node_id
+
+        for key in ("packet", "meta", "info"):
+            node_id = _candidate_node_id(_ensure_mapping(mapping.get(key)))
+            if node_id:
+                return node_id
+
+        for value in mapping.values():
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    node_id = _candidate_node_id(_ensure_mapping(item))
+                    if node_id:
+                        return node_id
+            else:
+                node_id = _candidate_node_id(_ensure_mapping(value))
+                if node_id:
+                    return node_id
+
+        return None
+
+    def _safe_on_node_info_receive(iface, packet):  # type: ignore[override]
+        candidate_mapping = _ensure_mapping(packet)
+
+        node_id = _candidate_node_id(candidate_mapping)
+
+        if node_id and candidate_mapping is not None:
+            if not isinstance(candidate_mapping, dict):
+                try:
+                    candidate_mapping = dict(candidate_mapping)
+                except Exception:
+                    candidate_mapping = {
+                        k: candidate_mapping[k] for k in candidate_mapping
+                    }
+            if candidate_mapping.get("id") != node_id:
+                candidate_mapping["id"] = node_id
+            packet = candidate_mapping
 
         try:
             return original(iface, packet)

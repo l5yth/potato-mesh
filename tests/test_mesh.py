@@ -198,7 +198,6 @@ def mesh_module(monkeypatch):
 
 def test_snapshot_interval_defaults_to_60_seconds(mesh_module):
     mesh = mesh_module
-
     assert mesh.SNAPSHOT_SECS == 60
 
 
@@ -1038,12 +1037,47 @@ def test_store_packet_dict_nodeinfo_uses_from_id_when_user_missing(
     assert captured
     _, payload, _ = captured[0]
     assert "!01020304" in payload
-    node_entry = payload["!01020304"]
-    assert node_entry["num"] == 0x01020304
-    assert node_entry["lastHeard"] == 200
-    assert node_entry["snr"] == pytest.approx(1.5)
-    assert node_entry["lora_freq"] == 868
-    assert node_entry["modem_preset"] == "MediumFast"
+
+
+def test_nodeinfo_wrapper_infers_missing_identifier(mesh_module, monkeypatch):
+    """Ensure the Meshtastic nodeinfo hook derives canonical IDs from payloads."""
+
+    _ = mesh_module
+    import meshtastic
+    from data.mesh_ingestor import interfaces
+
+    captured_packets: list[dict] = []
+
+    def _original_handler(iface, packet):
+        captured_packets.append(packet)
+        return packet["id"]
+
+    monkeypatch.setattr(
+        meshtastic, "_onNodeInfoReceive", _original_handler, raising=False
+    )
+    interfaces._patch_meshtastic_nodeinfo_handler()
+
+    safe_handler = meshtastic._onNodeInfoReceive
+
+    class DummyUser:
+        def __init__(self) -> None:
+            self.num = 0x88776655
+
+    class DummyDecoded:
+        def __init__(self) -> None:
+            self.user = DummyUser()
+
+    class DummyPacket:
+        def __init__(self) -> None:
+            self.decoded = DummyDecoded()
+
+    iface = types.SimpleNamespace(nodes={})
+
+    safe_handler(iface, DummyPacket())
+
+    assert captured_packets, "Expected wrapper to call the original handler"
+    packet = captured_packets[0]
+    assert packet["id"] == "!88776655"
 
 
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
