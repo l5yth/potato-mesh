@@ -38,6 +38,7 @@ import {
   formatChatPresetTag
 } from './chat-format.js';
 import { initializeInstanceSelector } from './instance-selector.js';
+import { MESSAGE_LIMIT, normaliseMessageLimit } from './message-limit.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
@@ -142,7 +143,7 @@ let messagesById = new Map();
     logger: console,
   });
   const NODE_LIMIT = 1000;
-  const CHAT_LIMIT = 1000;
+  const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
@@ -2997,9 +2998,10 @@ let messagesById = new Map();
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
    * @returns {Promise<Array<Object>>} Parsed message payloads.
    */
-  async function fetchMessages(limit = NODE_LIMIT) {
+  async function fetchMessages(limit = MESSAGE_LIMIT) {
     if (!CHAT_ENABLED) return [];
-    const r = await fetch(`/api/messages?limit=${limit}`, { cache: 'no-store' });
+    const safeLimit = normaliseMessageLimit(limit);
+    const r = await fetch(`/api/messages?limit=${safeLimit}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3636,7 +3638,7 @@ let messagesById = new Map();
         fetchNodes(),
         positionsPromise,
         neighborPromise,
-        fetchMessages(),
+        fetchMessages(MESSAGE_LIMIT),
         telemetryPromise,
       ]);
       nodes.forEach(applyNodeNameFallback);
