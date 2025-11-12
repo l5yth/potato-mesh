@@ -230,3 +230,22 @@ test('buildChatTabModel de-duplicates encrypted messages across feeds', () => {
   assert.equal(encryptedEntries.length, 1);
   assert.equal(encryptedEntries[0]?.message?.id, 'dup');
 });
+
+test('buildChatTabModel ignores plaintext log-only entries', () => {
+  const logOnlyMessages = [
+    { id: 'plain', encrypted: false, rx_time: NOW - 5 },
+    { id: 'enc', encrypted: true, rx_time: NOW - 4 }
+  ];
+
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [],
+    logOnlyMessages,
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  const encryptedEntries = model.logEntries.filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED);
+  assert.equal(encryptedEntries.length, 1);
+  assert.equal(encryptedEntries[0]?.message?.id, 'enc');
+});

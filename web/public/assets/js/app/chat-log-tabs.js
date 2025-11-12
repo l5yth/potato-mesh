@@ -189,7 +189,7 @@ export function buildChatTabModel({
 
   const extraLogMessages = Array.isArray(logOnlyMessages) ? logOnlyMessages : [];
   for (const message of extraLogMessages) {
-    if (!message) continue;
+    if (!message || !message.encrypted) continue;
     const ts = resolveTimestampSeconds(message.rx_time ?? message.rxTime, message.rx_iso ?? message.rxIso);
     if (ts == null || ts < cutoff) continue;
     const key = buildEncryptedMessageKey(message);
