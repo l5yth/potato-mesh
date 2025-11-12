@@ -3323,6 +3323,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/api/messages"
       expect(last_response).to be_ok
 
+      default_messages = JSON.parse(last_response.body)
+      expect(default_messages).to be_an(Array)
+      expect(default_messages.map { |row| row["id"] }).not_to include(payload["packet_id"])
+
+      get "/api/messages?encrypted=1"
+      expect(last_response).to be_ok
+
       messages = JSON.parse(last_response.body)
       expect(messages).to be_an(Array)
 
@@ -3332,6 +3339,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(encrypted_entry["text"]).to be_nil
       expect(encrypted_entry["from_id"]).to eq(sender_id)
       expect(encrypted_entry["to_id"]).to eq(receiver_id)
+
+      get "/api/messages/#{receiver_id}"
+      expect(last_response).to be_ok
+
+      node_default = JSON.parse(last_response.body)
+      expect(node_default.map { |row| row["id"] }).not_to include(payload["packet_id"])
+
+      get "/api/messages/#{receiver_id}?encrypted=1"
+      expect(last_response).to be_ok
+
+      node_messages = JSON.parse(last_response.body)
+      node_entry = node_messages.find { |row| row["id"] == payload["packet_id"] }
+      expect(node_entry).not_to be_nil
+      expect(node_entry["encrypted"]).to eq(encrypted_b64)
+      expect(node_entry["text"]).to be_nil
+      expect(node_entry["from_id"]).to eq(sender_id)
+      expect(node_entry["to_id"]).to eq(receiver_id)
     end
 
     it "updates node last_heard for plaintext messages" do
@@ -3614,11 +3638,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/messages" do
-    it "returns the stored messages with canonical node references" do
+    it "returns the stored messages with canonical node references when encrypted messages are included" do
       import_nodes_fixture
       import_messages_fixture
 
-      get "/api/messages"
+      get "/api/messages?encrypted=1"
       expect(last_response).to be_ok
 
       actual = JSON.parse(last_response.body)

@@ -213,7 +213,7 @@ module PotatoMesh
         db&.close
       end
 
-      def query_messages(limit, node_ref: nil)
+      def query_messages(limit, node_ref: nil, include_encrypted: false)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -221,10 +221,15 @@ module PotatoMesh
         where_clauses = [
           "(COALESCE(TRIM(m.text), '') != '' OR COALESCE(TRIM(m.encrypted), '') != '' OR m.reply_id IS NOT NULL OR COALESCE(TRIM(m.emoji), '') != '')",
         ]
+        include_encrypted = !!include_encrypted
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
         where_clauses << "m.rx_time >= ?"
         params << min_rx_time
+
+        unless include_encrypted
+          where_clauses << "COALESCE(TRIM(m.encrypted), '') = ''"
+        end
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["m.from_id", "m.to_id"])
