@@ -88,6 +88,7 @@ export function initializeApp(config) {
     : null;
   const bodyClassList = document.body ? document.body.classList : null;
   const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
+  const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
   /**
    * Column sorter configuration for the node table.
    *
@@ -190,6 +191,30 @@ let messagesById = new Map();
         continue;
       }
       overlayStack.close(entry.anchor);
+    }
+  }
+
+  /**
+   * Scroll the active chat tab panel to its most recent entry when the
+   * dedicated chat view is displayed.
+   *
+   * @returns {void}
+   */
+  function scrollActiveChatPanelToBottom() {
+    if (!chatEl || !isChatView) {
+      return;
+    }
+    const activeTabId = chatEl.dataset?.activeTab;
+    if (!activeTabId) {
+      return;
+    }
+    const escapedId = cssEscape(activeTabId);
+    if (!escapedId) {
+      return;
+    }
+    const panel = chatEl.querySelector(`#chat-panel-${escapedId}`);
+    if (panel && typeof panel.scrollHeight === 'number' && typeof panel.scrollTop === 'number') {
+      panel.scrollTop = panel.scrollHeight;
     }
   }
 
@@ -1697,6 +1722,23 @@ let messagesById = new Map();
   }
 
   /**
+   * Escape a CSS selector fragment with a defensive fallback for
+   * environments lacking ``CSS.escape`` support.
+   *
+   * @param {string} value Raw selector fragment.
+   * @returns {string} Escaped selector fragment safe for interpolation.
+   */
+  function cssEscape(value) {
+    if (typeof value !== 'string' || value.length === 0) {
+      return '';
+    }
+    if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(value);
+    }
+    return value.replace(/[^a-zA-Z0-9_-]/g, chr => `\\${chr}`);
+  }
+
+  /**
    * Populate the ``nodesById`` index for quick lookups.
    *
    * @param {Array<Object>} nodes Collection of node payloads.
@@ -2781,6 +2823,7 @@ let messagesById = new Map();
       previousActiveTabId: previousActive,
       defaultActiveTabId: defaultActive
     });
+    scrollActiveChatPanelToBottom();
   }
 
   /**

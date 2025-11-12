@@ -145,6 +145,7 @@ body {
 .page-shell--full-screen {
   padding: 0;
   padding-bottom: 0;
+  gap: 0;
 }
 
 .page-shell--full-screen .site-header,
@@ -160,6 +161,7 @@ body {
 
 .page-shell--full-screen .row.meta {
   padding-bottom: var(--pad);
+  margin-bottom: 0;
 }
 
 .page-shell--full-screen .app-footer {
@@ -498,6 +500,10 @@ th {
   gap: 0;
 }
 
+.view-nodes .page-main--full-screen {
+  gap: 0;
+}
+
 .view-map .full-screen-section--map {
   flex: 1 1 auto;
   display: flex;
@@ -513,6 +519,18 @@ th {
 .view-map .full-screen-section--map .map-panel #map {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.view-nodes .full-screen-section--nodes {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+body.view-map .map-panel--full #map {
+  height: 100%;
+  min-height: 100%;
 }
 
 .chat-panel--full {
@@ -672,13 +690,16 @@ th {
 .chat-tabpanels {
   flex: 1;
   display: flex;
+  flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .chat-tabpanel {
-  flex: 1;
+  flex: 1 1 auto;
   padding: 6px;
   overflow-y: auto;
+  min-height: 0;
 }
 
 .chat-empty {

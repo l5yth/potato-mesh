@@ -1187,6 +1187,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
       expect(last_response.body).to include('id="fitBounds"')
+      expect(last_response.body).not_to include('<footer class="app-footer">')
     end
   end
 
@@ -1200,6 +1201,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="autoRefresh"')
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
+      expect(last_response.body).not_to include('<footer class="app-footer">')
     end
 
     it "shows a disabled message when private mode is active" do
@@ -1223,6 +1225,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="autoRefresh"')
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
+      expect(last_response.body).not_to include('<footer class="app-footer">')
     end
   end
 
