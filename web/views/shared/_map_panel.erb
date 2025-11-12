@@ -1,0 +1,44 @@
+<!--
+  Copyright © 2025-26 l5yth & contributors
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<% map_classes = ["map-panel"]
+   map_classes << "map-panel--full" if defined?(full_screen) && full_screen %>
+<div class="<%= map_classes.join(" ") %>" id="mapPanel">
+  <div id="map" role="region" aria-label="Nodes map"></div>
+  <div class="map-toolbar" role="group" aria-label="Map view controls">
+    <button id="mapFullscreenToggle" type="button" aria-pressed="false" aria-label="Enter full screen map view">
+      <svg class="icon-fullscreen-enter" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M4 8V4h4m12 4V4h-4M4 16v4h4m12-4v4h-4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+      <svg class="icon-fullscreen-exit" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M9 9L5 5m0 4V5m4 0H5m10 4 4-4m0 4V5m-4 0h4M9 15l-4 4m0-4v4m4 0H5m10-4 4 4m0-4v4m-4 0h4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+    </button>
+  </div>
+</div>

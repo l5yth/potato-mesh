@@ -13,11 +13,6 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<div class="map-row">
-  <% unless private_mode %>
-    <%= erb :"shared/_chat_panel", locals: { full_screen: false } %>
-  <% end %>
-  <%= erb :"shared/_map_panel", locals: { full_screen: false } %>
-</div>
-
-<%= erb :"shared/_nodes_table", locals: { full_screen: false } %>
+<section class="full-screen-section full-screen-section--map">
+  <%= erb :"shared/_map_panel", locals: { full_screen: true } %>
+</section>

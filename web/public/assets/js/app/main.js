@@ -87,6 +87,9 @@ export function initializeApp(config) {
   const infoOverlayHome = infoOverlay
     ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
     : null;
+  const bodyClassList = document.body ? document.body.classList : null;
+  const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
+  const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
   /**
    * Column sorter configuration for the node table.
    *
@@ -148,7 +151,13 @@ let messagesById = new Map();
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
-  refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+  if (refreshInfo) {
+    if (isDashboardView) {
+      refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+    } else {
+      refreshInfo.textContent = '';
+    }
+  }
 
   if (instanceSelectorEnabled && instanceSelect) {
     void initializeInstanceSelector({
@@ -183,6 +192,30 @@ let messagesById = new Map();
         continue;
       }
       overlayStack.close(entry.anchor);
+    }
+  }
+
+  /**
+   * Scroll the active chat tab panel to its most recent entry when the
+   * dedicated chat view is displayed.
+   *
+   * @returns {void}
+   */
+  function scrollActiveChatPanelToBottom() {
+    if (!chatEl || !isChatView) {
+      return;
+    }
+    const activeTabId = chatEl.dataset?.activeTab;
+    if (!activeTabId) {
+      return;
+    }
+    const escapedId = cssEscape(activeTabId);
+    if (!escapedId) {
+      return;
+    }
+    const panel = chatEl.querySelector(`#chat-panel-${escapedId}`);
+    if (panel && typeof panel.scrollHeight === 'number' && typeof panel.scrollTop === 'number') {
+      panel.scrollTop = panel.scrollHeight;
     }
   }
 
@@ -1690,6 +1723,23 @@ let messagesById = new Map();
   }
 
   /**
+   * Escape a CSS selector fragment with a defensive fallback for
+   * environments lacking ``CSS.escape`` support.
+   *
+   * @param {string} value Raw selector fragment.
+   * @returns {string} Escaped selector fragment safe for interpolation.
+   */
+  function cssEscape(value) {
+    if (typeof value !== 'string' || value.length === 0) {
+      return '';
+    }
+    if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(value);
+    }
+    return value.replace(/[^a-zA-Z0-9_-]/g, chr => `\\${chr}`);
+  }
+
+  /**
    * Populate the ``nodesById`` index for quick lookups.
    *
    * @param {Array<Object>} nodes Collection of node payloads.
@@ -2774,6 +2824,7 @@ let messagesById = new Map();
       previousActiveTabId: previousActive,
       defaultActiveTabId: defaultActive
     });
+    scrollActiveChatPanelToBottom();
   }
 
   /**
@@ -3272,6 +3323,10 @@ let messagesById = new Map();
    */
   function renderTable(nodes, nowSec) {
     const tb = document.querySelector('#nodes tbody');
+    if (!tb) {
+      overlayStack.cleanupOrphans();
+      return;
+    }
     const frag = document.createDocumentFragment();
     for (const n of nodes) {
       const tr = document.createElement('tr');
@@ -3621,7 +3676,9 @@ let messagesById = new Map();
    */
   async function refresh() {
     try {
-      statusEl.textContent = 'refreshing…';
+      if (statusEl) {
+        statusEl.textContent = 'refreshing…';
+      }
       const neighborPromise = fetchNeighbors().catch(err => {
         console.warn('neighbor refresh failed; continuing without connections', err);
         return [];
@@ -3653,16 +3710,22 @@ let messagesById = new Map();
       allPositionEntries = Array.isArray(positions) ? positions : [];
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
-      statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+      if (statusEl) {
+        statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+      }
     } catch (e) {
-      statusEl.textContent = 'error: ' + e.message;
+      if (statusEl) {
+        statusEl.textContent = 'error: ' + e.message;
+      }
       console.error(e);
     }
   }
 
   refresh();
   restartAutoRefresh();
-  refreshBtn.addEventListener('click', refresh);
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', refresh);
+  }
 
   if (autoRefreshEl) {
     autoRefreshEl.addEventListener('change', () => {
@@ -3700,6 +3763,9 @@ let messagesById = new Map();
    * @returns {void}
    */
   function updateRefreshInfo(nodes, nowSec) {
+    if (!refreshInfo || !isDashboardView) {
+      return;
+    }
     const windows = [
       { label: 'hour', secs: 3600 },
       { label: 'day', secs: 86400 },

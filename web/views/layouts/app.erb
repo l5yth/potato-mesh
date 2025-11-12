@@ -1,0 +1,213 @@
+<!doctype html>
+<!--
+  Copyright © 2025-26 l5yth & contributors
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<html lang="en" data-theme="<%= initial_theme %>">
+<head>
+  <meta name="color-scheme" content="dark light">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <% meta_title_html = Rack::Utils.escape_html(meta_title) %>
+  <% meta_name_html = Rack::Utils.escape_html(meta_name) %>
+  <% meta_description_html = Rack::Utils.escape_html(meta_description) %>
+  <% request_path = request.path.to_s.empty? ? "/" : request.path %>
+  <% canonical_url = "#{request.base_url}#{request_path}" %>
+  <% canonical_html = Rack::Utils.escape_html(canonical_url) %>
+  <% logo_url = "#{request.base_url}/potatomesh-logo.svg" %>
+  <% logo_url_html = Rack::Utils.escape_html(logo_url) %>
+  <% logo_alt_html = Rack::Utils.escape_html("#{meta_name} logo") %>
+  <title><%= meta_title_html %></title>
+  <meta name="application-name" content="<%= meta_name_html %>" />
+  <meta name="apple-mobile-web-app-title" content="<%= meta_name_html %>" />
+  <meta name="description" content="<%= meta_description_html %>" />
+  <link rel="canonical" href="<%= canonical_html %>" />
+  <meta property="og:title" content="<%= meta_title_html %>" />
+  <meta property="og:site_name" content="<%= meta_name_html %>" />
+  <meta property="og:description" content="<%= meta_description_html %>" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="<%= canonical_html %>" />
+  <meta property="og:image" content="<%= logo_url_html %>" />
+  <meta property="og:image:alt" content="<%= logo_alt_html %>" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="<%= meta_title_html %>" />
+  <meta name="twitter:description" content="<%= meta_description_html %>" />
+  <meta name="twitter:image" content="<%= logo_url_html %>" />
+  <meta name="twitter:image:alt" content="<%= logo_alt_html %>" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <link rel="icon" type="image/svg+xml" href="/potatomesh-logo.svg" />
+  <link rel="stylesheet" href="/assets/styles/base.css" />
+  <script src="/assets/js/theme.js" defer></script>
+  <script src="/assets/js/background.js" defer></script>
+
+  <!-- Leaflet CSS/JS (CDN) -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+</head>
+<% body_classes = []
+   body_classes << "dark" if initial_theme == "dark"
+   view_mode = (defined?(current_view_mode) && current_view_mode) ? current_view_mode.to_sym : :dashboard
+   full_screen_view = view_mode != :dashboard
+   body_classes << "view-#{view_mode}"
+   shell_classes = ["page-shell"]
+   shell_classes << "page-shell--full-screen" if full_screen_view
+   main_classes = ["page-main"]
+   main_classes << "page-main--dashboard" if view_mode == :dashboard
+   main_classes << "page-main--full-screen" if full_screen_view
+   show_header = !full_screen_view
+   show_meta_info = true
+   show_auto_refresh_controls = true
+   show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
+   show_info_button = !full_screen_view
+   show_footer = !full_screen_view
+   controls_classes = ["controls"]
+   controls_classes << "controls--full-screen" if full_screen_view
+   refresh_row_classes = ["refresh-row"]
+   refresh_info_text = full_screen_view ? nil : "#{channel} (#{frequency}) — active nodes: …"
+   refresh_row_classes << "refresh-row--no-info" if refresh_info_text.nil?
+   refresh_info_classes = ["refresh-info"]
+   refresh_info_classes << "refresh-info--hidden" if refresh_info_text.nil? %>
+<body class="<%= body_classes.join(" ") %>" data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>" data-theme="<%= initial_theme %>">
+  <div class="<%= shell_classes.join(" ") %>">
+    <% if show_header %>
+      <header class="site-header">
+        <h1 class="site-title">
+          <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
+          <span class="site-title-text"><%= site_name %></span>
+        </h1>
+        <% if !private_mode && federation_enabled %>
+          <div class="instance-selector">
+            <label class="visually-hidden" for="instanceSelect">Select a region</label>
+            <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
+              <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
+            </select>
+          </div>
+        <% end %>
+      </header>
+    <% end %>
+
+    <div class="row meta">
+      <% if show_meta_info %>
+        <div class="meta-info">
+          <div class="<%= refresh_row_classes.join(" ") %>">
+            <% if refresh_info_text %>
+              <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= refresh_info_text %></p>
+            <% else %>
+              <p id="refreshInfo" class="<%= refresh_info_classes.join(" ") %>" aria-live="polite"></p>
+            <% end %>
+            <% if show_auto_refresh_controls %>
+              <div class="refresh-actions">
+                <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
+                <button id="refreshBtn" type="button">Refresh now</button>
+                <span id="status" class="pill">loading…</span>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+      <div class="<%= controls_classes.join(" ") %>">
+        <% if show_auto_fit_toggle %>
+          <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+        <% end %>
+        <div class="filter-input">
+          <input type="text" id="filterInput" placeholder="Filter nodes" />
+          <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
+        </div>
+        <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle dark mode"><span aria-hidden="true">🌙</span></button>
+        <% if show_info_button %>
+          <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>
+        <% end %>
+      </div>
+    </div>
+
+    <div id="infoOverlay" class="info-overlay" role="dialog" aria-modal="true" aria-labelledby="infoTitle" hidden>
+      <div class="info-dialog" tabindex="-1">
+        <button type="button" class="info-close" id="infoClose" aria-label="Close site information">×</button>
+        <h2 id="infoTitle" class="info-title">About <%= site_name %></h2>
+        <dl class="info-details">
+          <dt>Channel</dt>
+          <dd><%= channel %></dd>
+          <dt>Frequency</dt>
+          <dd><%= frequency %></dd>
+          <dt>Map center</dt>
+          <dd><%= format("%.5f, %.5f", map_center_lat, map_center_lon) %></dd>
+          <dt>Visible range</dt>
+          <dd>Nodes within roughly <%= max_distance_km %> km of the center are shown.</dd>
+          <% if contact_link && !contact_link.empty? %>
+            <dt>Chat</dt>
+            <% if contact_link_url %>
+              <dd><a href="<%= contact_link_url %>" target="_blank" rel="noreferrer noopener"><%= contact_link %></a></dd>
+            <% else %>
+              <dd><%= contact_link %></dd>
+            <% end %>
+          <% end %>
+        </dl>
+      </div>
+    </div>
+
+    <main class="<%= main_classes.join(" ") %>">
+      <%= yield %>
+    </main>
+
+    <% if show_footer %>
+      <footer class="app-footer">
+        <div class="footer-content">
+          <span class="footer-brand">PotatoMesh</span>
+          <% if version && !version.empty? %>
+            <span class="mono"><%= version %></span>
+          <% end %>
+          <span class="footer-separator" aria-hidden="true">—</span>
+          <span class="footer-links">
+            GitHub:
+            <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
+            <% if contact_link && !contact_link.empty? %>
+              <span class="footer-separator" aria-hidden="true">—</span>
+              <span class="footer-contact">
+                <%= site_name %> chat:
+                <% if contact_link_url %>
+                  <a href="<%= contact_link_url %>" target="_blank"><%= contact_link %></a>
+                <% else %>
+                  <%= contact_link %>
+                <% end %>
+              </span>
+            <% end %>
+          </span>
+        </div>
+      </footer>
+    <% end %>
+  </div>
+
+  <template id="shortInfoOverlayTemplate">
+    <div class="short-info-overlay" role="dialog" aria-modal="false">
+      <button type="button" class="short-info-close" aria-label="Close node details">×</button>
+      <div class="short-info-content"></div>
+    </div>
+  </template>
+
+  <script>
+    const CHAT_ENABLED = <%= private_mode ? "false" : "true" %>;
+    const current_view_mode = '<%= view_mode %>';
+  </script>
+  <script type="module" src="/assets/js/app/index.js"></script>
+</body>
+</html>
