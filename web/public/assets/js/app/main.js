@@ -3047,12 +3047,17 @@ let messagesById = new Map();
    * Fetch recent messages from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+   * @param {{ encrypted?: boolean }} [options] Optional request flags.
    * @returns {Promise<Array<Object>>} Parsed message payloads.
    */
-  async function fetchMessages(limit = MESSAGE_LIMIT) {
+  async function fetchMessages(limit = MESSAGE_LIMIT, { encrypted = false } = {}) {
     if (!CHAT_ENABLED) return [];
     const safeLimit = normaliseMessageLimit(limit);
-    const r = await fetch(`/api/messages?limit=${safeLimit}`, { cache: 'no-store' });
+    const params = new URLSearchParams({ limit: String(safeLimit) });
+    if (encrypted) {
+      params.set('encrypted', 'true');
+    }
+    const r = await fetch(`/api/messages?${params.toString()}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3691,12 +3696,23 @@ let messagesById = new Map();
         console.warn('position refresh failed; continuing without updates', err);
         return [];
       });
-      const [nodes, positions, neighborTuples, messages, telemetryEntries] = await Promise.all([
+      const [
+        nodes,
+        positions,
+        neighborTuples,
+        messages,
+        telemetryEntries,
+        encryptedMessages
+      ] = await Promise.all([
         fetchNodes(),
         positionsPromise,
         neighborPromise,
         fetchMessages(MESSAGE_LIMIT),
         telemetryPromise,
+        fetchMessages(MESSAGE_LIMIT, { encrypted: true }).catch(err => {
+          console.warn('encrypted message refresh failed; continuing without encrypted messages', err);
+          return [];
+        })
       ]);
       nodes.forEach(applyNodeNameFallback);
       mergePositionsIntoNodes(nodes, positions);
@@ -3704,7 +3720,10 @@ let messagesById = new Map();
       mergeTelemetryIntoNodes(nodes, telemetryEntries);
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
-      const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
+      const normalMessages = Array.isArray(messages) ? messages : [];
+      const encryptedLogMessages = Array.isArray(encryptedMessages) ? encryptedMessages : [];
+      const combinedMessages = normalMessages.concat(encryptedLogMessages);
+      const chatMessages = await messageNodeHydrator.hydrate(combinedMessages, nodesById);
       allMessages = Array.isArray(chatMessages) ? chatMessages : [];
       allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
       allPositionEntries = Array.isArray(positions) ? positions : [];
