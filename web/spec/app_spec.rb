@@ -1183,6 +1183,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('class="map-panel map-panel--full"')
       expect(last_response.body).to include('id="map"')
       expect(last_response.body).to include('id="filterInput"')
+      expect(last_response.body).to include('id="autoRefresh"')
+      expect(last_response.body).to include('id="refreshBtn"')
+      expect(last_response.body).to include('id="status"')
+      expect(last_response.body).to include('id="fitBounds"')
     end
   end
 
@@ -1193,6 +1197,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       expect(last_response.body).to include('class="chat-panel chat-panel--full"')
       expect(last_response.body).to include('id="filterInput"')
+      expect(last_response.body).to include('id="autoRefresh"')
+      expect(last_response.body).to include('id="refreshBtn"')
+      expect(last_response.body).to include('id="status"')
     end
 
     it "shows a disabled message when private mode is active" do
@@ -1210,9 +1217,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/nodes"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include('class="nodes-table-wrapper nodes-table-wrapper--full"')
+      expect(last_response.body).to include('class="nodes-table-wrapper"')
       expect(last_response.body).to include('id="nodes"')
       expect(last_response.body).to include('id="filterInput"')
+      expect(last_response.body).to include('id="autoRefresh"')
+      expect(last_response.body).to include('id="refreshBtn"')
+      expect(last_response.body).to include('id="status"')
     end
   end
 

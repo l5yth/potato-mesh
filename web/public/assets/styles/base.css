@@ -480,7 +480,17 @@ th {
 .map-panel--full #map {
   flex: 1 1 auto;
   height: 100%;
+  min-height: 60vh;
+}
+
+.full-screen-section--map {
+  flex: 1 1 auto;
   min-height: 0;
+  align-items: stretch;
+}
+
+.full-screen-section--map .map-panel {
+  flex: 1 1 auto;
 }
 
 .chat-panel--full {
@@ -509,22 +519,6 @@ th {
 
 .nodes-table-wrapper {
   width: 100%;
-}
-
-.nodes-table-wrapper--full {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.nodes-table-wrapper--full table {
-  min-width: 100%;
-  flex: 1 1 auto;
-  width: 100%;
-  height: 100%;
 }
 
 .map-panel {

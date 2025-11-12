@@ -75,9 +75,9 @@
    main_classes << "page-main--dashboard" if view_mode == :dashboard
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = !full_screen_view
-   show_meta_info = !full_screen_view
-   show_auto_refresh_controls = !full_screen_view
-   show_auto_fit_toggle = !full_screen_view
+   show_meta_info = true
+   show_auto_refresh_controls = true
+   show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
    show_info_button = !full_screen_view
    controls_classes = ["controls"]
    controls_classes << "controls--full-screen" if full_screen_view %>
