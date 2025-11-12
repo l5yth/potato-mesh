@@ -54,6 +54,7 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
  *   positions?: Array<Object>,
  *   neighbors?: Array<Object>,
  *   messages?: Array<Object>,
+ *   logOnlyMessages?: Array<Object>,
  *   nowSeconds: number,
  *   windowSeconds: number,
  *   maxChannelIndex?: number,
@@ -70,6 +71,7 @@ export function buildChatTabModel({
   positions = [],
   neighbors = [],
   messages = [],
+  logOnlyMessages = [],
   nowSeconds,
   windowSeconds,
   maxChannelIndex = MAX_CHANNEL_INDEX,
@@ -128,13 +130,20 @@ export function buildChatTabModel({
     logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: neighborEntry, nodeId, nodeNum, neighborId });
   }
 
+  const encryptedLogEntries = [];
+  const encryptedLogKeys = new Set();
+
   for (const message of messages || []) {
     if (!message) continue;
     const ts = resolveTimestampSeconds(message.rx_time ?? message.rxTime, message.rx_iso ?? message.rxIso);
     if (ts == null || ts < cutoff) continue;
 
     if (message.encrypted) {
-      logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
+      const key = buildEncryptedMessageKey(message);
+      if (!encryptedLogKeys.has(key)) {
+        encryptedLogKeys.add(key);
+        encryptedLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
+      }
       continue;
     }
 
@@ -178,6 +187,23 @@ export function buildChatTabModel({
     bucket.entries.push({ ts, message });
   }
 
+  const extraLogMessages = Array.isArray(logOnlyMessages) ? logOnlyMessages : [];
+  for (const message of extraLogMessages) {
+    if (!message || !message.encrypted) continue;
+    const ts = resolveTimestampSeconds(message.rx_time ?? message.rxTime, message.rx_iso ?? message.rxIso);
+    if (ts == null || ts < cutoff) continue;
+    const key = buildEncryptedMessageKey(message);
+    if (encryptedLogKeys.has(key)) {
+      continue;
+    }
+    encryptedLogKeys.add(key);
+    encryptedLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
+  }
+
+  if (encryptedLogEntries.length > 0) {
+    logEntries.push(...encryptedLogEntries);
+  }
+
   logEntries.sort((a, b) => a.ts - b.ts);
 
   let hasPrimaryBucket = false;
@@ -211,6 +237,57 @@ export function buildChatTabModel({
   }
 
   return { logEntries, channels };
+}
+
+/**
+ * Build a stable key for encrypted message de-duplication when merging feeds.
+ *
+ * @param {?Object} message Chat message payload.
+ * @returns {string} Stable deduplication key.
+ */
+function buildEncryptedMessageKey(message) {
+  if (!message || typeof message !== 'object') {
+    return 'encrypted:unknown';
+  }
+  const rawId = pickFirstPropertyValue(message, ['id', 'packet_id', 'packetId']);
+  if (rawId != null && rawId !== '') {
+    const id = String(rawId).trim();
+    if (id) {
+      return `encrypted:id:${id}`;
+    }
+  }
+  const rx = pickFirstPropertyValue(message, ['rx_time', 'rxTime', 'rx_iso', 'rxIso']);
+  const fromId = pickFirstPropertyValue(message, ['from_id', 'fromId']);
+  const toId = pickFirstPropertyValue(message, ['to_id', 'toId']);
+  const replyId = pickFirstPropertyValue(message, ['reply_id', 'replyId']);
+  return `encrypted:fallback:${String(rx ?? '')}|${String(fromId ?? '')}|${String(toId ?? '')}|${String(replyId ?? '')}`;
+}
+
+/**
+ * Retrieve the first present property value from the provided source object.
+ *
+ * @param {?Object} source Candidate data source.
+ * @param {Array<string>} keys Preferred property order.
+ * @returns {*|null} First matching property value, otherwise null.
+ */
+function pickFirstPropertyValue(source, keys) {
+  if (!source || typeof source !== 'object' || !Array.isArray(keys)) {
+    return null;
+  }
+  for (const key of keys) {
+    if (typeof key !== 'string' || key.length === 0) {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(source, key)) {
+      continue;
+    }
+    const value = source[key];
+    if (value == null || value === '') {
+      continue;
+    }
+    return value;
+  }
+  return null;
 }
 
 /**
