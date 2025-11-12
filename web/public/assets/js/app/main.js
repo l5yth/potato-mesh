@@ -133,6 +133,8 @@ export function initializeApp(config) {
   /** @type {Array<Object>} */
   let allMessages = [];
   /** @type {Array<Object>} */
+  let allEncryptedMessages = [];
+  /** @type {Array<Object>} */
   let allTelemetryEntries = [];
   /** @type {Array<Object>} */
   let allPositionEntries = [];
@@ -2752,6 +2754,7 @@ let messagesById = new Map();
    * @param {{
    *   nodes?: Array<Object>,
    *   messages?: Array<Object>,
+   *   encryptedMessages?: Array<Object>,
    *   telemetryEntries?: Array<Object>,
    *   positionEntries?: Array<Object>,
    *   neighborEntries?: Array<Object>,
@@ -2762,13 +2765,18 @@ let messagesById = new Map();
   function renderChatLog({
     nodes = [],
     messages = [],
+    encryptedMessages = [],
     telemetryEntries = [],
     positionEntries = [],
     neighborEntries = [],
     filterQuery = ''
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
-    messagesById = buildMessageIndex(messages);
+    const combinedMessages = Array.isArray(messages) ? [...messages] : [];
+    if (Array.isArray(encryptedMessages) && encryptedMessages.length > 0) {
+      combinedMessages.push(...encryptedMessages);
+    }
+    messagesById = buildMessageIndex(combinedMessages);
     const nowSeconds = Math.floor(Date.now() / 1000);
     const { logEntries, channels } = buildChatTabModel({
       nodes,
@@ -2776,6 +2784,7 @@ let messagesById = new Map();
       positions: positionEntries,
       neighbors: neighborEntries,
       messages,
+      logOnlyMessages: encryptedMessages,
       nowSeconds,
       windowSeconds: CHAT_RECENT_WINDOW_SECONDS,
       maxChannelIndex: MAX_CHANNEL_INDEX,
@@ -3047,12 +3056,18 @@ let messagesById = new Map();
    * Fetch recent messages from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+   * @param {{ encrypted?: boolean }} [options] Optional retrieval flags.
    * @returns {Promise<Array<Object>>} Parsed message payloads.
    */
-  async function fetchMessages(limit = MESSAGE_LIMIT) {
+  async function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
     if (!CHAT_ENABLED) return [];
     const safeLimit = normaliseMessageLimit(limit);
-    const r = await fetch(`/api/messages?limit=${safeLimit}`, { cache: 'no-store' });
+    const params = new URLSearchParams({ limit: String(safeLimit) });
+    if (options && options.encrypted) {
+      params.set('encrypted', 'true');
+    }
+    const query = params.toString();
+    const r = await fetch(`/api/messages?${query}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3640,6 +3655,7 @@ let messagesById = new Map();
     renderChatLog({
       nodes: allNodes,
       messages: allMessages,
+      encryptedMessages: allEncryptedMessages,
       telemetryEntries: allTelemetryEntries,
       positionEntries: allPositionEntries,
       neighborEntries: allNeighbors,
@@ -3691,12 +3707,17 @@ let messagesById = new Map();
         console.warn('position refresh failed; continuing without updates', err);
         return [];
       });
-      const [nodes, positions, neighborTuples, messages, telemetryEntries] = await Promise.all([
+      const encryptedMessagesPromise = fetchMessages(MESSAGE_LIMIT, { encrypted: true }).catch(err => {
+        console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
+        return [];
+      });
+      const [nodes, positions, neighborTuples, messages, telemetryEntries, encryptedMessages] = await Promise.all([
         fetchNodes(),
         positionsPromise,
         neighborPromise,
         fetchMessages(MESSAGE_LIMIT),
         telemetryPromise,
+        encryptedMessagesPromise
       ]);
       nodes.forEach(applyNodeNameFallback);
       mergePositionsIntoNodes(nodes, positions);
@@ -3704,8 +3725,12 @@ let messagesById = new Map();
       mergeTelemetryIntoNodes(nodes, telemetryEntries);
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
-      const chatMessages = await messageNodeHydrator.hydrate(messages, nodesById);
+      const [chatMessages, encryptedChatMessages] = await Promise.all([
+        messageNodeHydrator.hydrate(messages, nodesById),
+        messageNodeHydrator.hydrate(encryptedMessages, nodesById)
+      ]);
       allMessages = Array.isArray(chatMessages) ? chatMessages : [];
+      allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
       allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
       allPositionEntries = Array.isArray(positions) ? positions : [];
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];

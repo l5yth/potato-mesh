@@ -184,3 +184,49 @@ test('buildChatTabModel includes telemetry, position, and neighbor events', () =
   const lastEntry = model.logEntries[model.logEntries.length - 1];
   assert.equal(lastEntry.neighborId, neighborId);
 });
+
+test('buildChatTabModel merges dedicated encrypted log feed without altering channels', () => {
+  const regularMessages = fixtureMessages().filter(message => !message.encrypted);
+  const encryptedOnly = [
+    { id: 'log-only', encrypted: true, rx_time: NOW - 3, channel: 7 }
+  ];
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: regularMessages,
+    logOnlyMessages: encryptedOnly,
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  const encryptedEntries = model.logEntries.filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED);
+  assert.equal(encryptedEntries.length, 1);
+  assert.equal(encryptedEntries[0]?.message?.id, 'log-only');
+
+  const channelMessageIds = model.channels.reduce((acc, channel) => {
+    if (!channel || !Array.isArray(channel.entries)) {
+      return acc;
+    }
+    for (const entry of channel.entries) {
+      if (entry && entry.message && entry.message.id) {
+        acc.push(entry.message.id);
+      }
+    }
+    return acc;
+  }, []);
+  assert.ok(!channelMessageIds.includes('log-only'));
+});
+
+test('buildChatTabModel de-duplicates encrypted messages across feeds', () => {
+  const duplicateMessage = { id: 'dup', encrypted: true, rx_time: NOW - 4 };
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [duplicateMessage],
+    logOnlyMessages: [duplicateMessage],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  const encryptedEntries = model.logEntries.filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED);
+  assert.equal(encryptedEntries.length, 1);
+  assert.equal(encryptedEntries[0]?.message?.id, 'dup');
+});
