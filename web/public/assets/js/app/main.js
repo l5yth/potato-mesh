@@ -147,7 +147,9 @@ let messagesById = new Map();
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
-  refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+  if (refreshInfo) {
+    refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+  }
 
   if (instanceSelectorEnabled && instanceSelect) {
     void initializeInstanceSelector({
@@ -3270,6 +3272,10 @@ let messagesById = new Map();
    */
   function renderTable(nodes, nowSec) {
     const tb = document.querySelector('#nodes tbody');
+    if (!tb) {
+      overlayStack.cleanupOrphans();
+      return;
+    }
     const frag = document.createDocumentFragment();
     for (const n of nodes) {
       const tr = document.createElement('tr');
@@ -3619,7 +3625,9 @@ let messagesById = new Map();
    */
   async function refresh() {
     try {
-      statusEl.textContent = 'refreshing…';
+      if (statusEl) {
+        statusEl.textContent = 'refreshing…';
+      }
       const neighborPromise = fetchNeighbors().catch(err => {
         console.warn('neighbor refresh failed; continuing without connections', err);
         return [];
@@ -3651,16 +3659,22 @@ let messagesById = new Map();
       allPositionEntries = Array.isArray(positions) ? positions : [];
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
       applyFilter();
-      statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+      if (statusEl) {
+        statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+      }
     } catch (e) {
-      statusEl.textContent = 'error: ' + e.message;
+      if (statusEl) {
+        statusEl.textContent = 'error: ' + e.message;
+      }
       console.error(e);
     }
   }
 
   refresh();
   restartAutoRefresh();
-  refreshBtn.addEventListener('click', refresh);
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', refresh);
+  }
 
   if (autoRefreshEl) {
     autoRefreshEl.addEventListener('change', () => {
@@ -3698,6 +3712,9 @@ let messagesById = new Map();
    * @returns {void}
    */
   function updateRefreshInfo(nodes, nowSec) {
+    if (!refreshInfo) {
+      return;
+    }
     const windows = [
       { label: 'hour', secs: 3600 },
       { label: 'day', secs: 86400 },

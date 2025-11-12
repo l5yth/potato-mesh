@@ -67,48 +67,66 @@
 <% body_classes = []
    body_classes << "dark" if initial_theme == "dark"
    view_mode = (defined?(current_view_mode) && current_view_mode) ? current_view_mode.to_sym : :dashboard
+   full_screen_view = view_mode != :dashboard
    body_classes << "view-#{view_mode}"
    shell_classes = ["page-shell"]
-   shell_classes << "page-shell--full-screen" if view_mode != :dashboard
+   shell_classes << "page-shell--full-screen" if full_screen_view
    main_classes = ["page-main"]
    main_classes << "page-main--dashboard" if view_mode == :dashboard
-   main_classes << "page-main--full-screen" if view_mode != :dashboard %>
+   main_classes << "page-main--full-screen" if full_screen_view
+   show_header = !full_screen_view
+   show_meta_info = !full_screen_view
+   show_auto_refresh_controls = !full_screen_view
+   show_auto_fit_toggle = !full_screen_view
+   show_info_button = !full_screen_view
+   controls_classes = ["controls"]
+   controls_classes << "controls--full-screen" if full_screen_view %>
 <body class="<%= body_classes.join(" ") %>" data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>" data-theme="<%= initial_theme %>">
   <div class="<%= shell_classes.join(" ") %>">
-    <header class="site-header">
-      <h1 class="site-title">
-        <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
-        <span class="site-title-text"><%= site_name %></span>
-      </h1>
-      <% if !private_mode && federation_enabled %>
-        <div class="instance-selector">
-          <label class="visually-hidden" for="instanceSelect">Select a region</label>
-          <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
-            <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
-          </select>
-        </div>
-      <% end %>
-    </header>
+    <% if show_header %>
+      <header class="site-header">
+        <h1 class="site-title">
+          <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
+          <span class="site-title-text"><%= site_name %></span>
+        </h1>
+        <% if !private_mode && federation_enabled %>
+          <div class="instance-selector">
+            <label class="visually-hidden" for="instanceSelect">Select a region</label>
+            <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
+              <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
+            </select>
+          </div>
+        <% end %>
+      </header>
+    <% end %>
 
     <div class="row meta">
-      <div class="meta-info">
-        <div class="refresh-row">
-          <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= channel %> (<%= frequency %>) — active nodes: …</p>
-          <div class="refresh-actions">
-            <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
-            <button id="refreshBtn" type="button">Refresh now</button>
-            <span id="status" class="pill">loading…</span>
+      <% if show_meta_info %>
+        <div class="meta-info">
+          <div class="refresh-row">
+            <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= channel %> (<%= frequency %>) — active nodes: …</p>
+            <% if show_auto_refresh_controls %>
+              <div class="refresh-actions">
+                <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
+                <button id="refreshBtn" type="button">Refresh now</button>
+                <span id="status" class="pill">loading…</span>
+              </div>
+            <% end %>
           </div>
         </div>
-      </div>
-      <div class="controls">
-        <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+      <% end %>
+      <div class="<%= controls_classes.join(" ") %>">
+        <% if show_auto_fit_toggle %>
+          <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+        <% end %>
         <div class="filter-input">
           <input type="text" id="filterInput" placeholder="Filter nodes" />
           <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
         </div>
         <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle dark mode"><span aria-hidden="true">🌙</span></button>
-        <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>
+        <% if show_info_button %>
+          <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>
+        <% end %>
       </div>
     </div>
 

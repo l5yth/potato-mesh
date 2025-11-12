@@ -50,25 +50,25 @@ module PotatoMesh
             view_mode_sym = view_mode.respond_to?(:to_sym) ? view_mode.to_sym : view_mode
 
             erb template, layout: :"layouts/app", locals: {
-                        site_name: meta[:name],
-                        meta_title: meta[:title],
-                        meta_name: meta[:name],
-                        meta_description: meta[:description],
-                        channel: sanitized_channel,
-                        frequency: sanitized_frequency,
-                        map_center_lat: PotatoMesh::Config.map_center_lat,
-                        map_center_lon: PotatoMesh::Config.map_center_lon,
-                        max_distance_km: PotatoMesh::Config.max_distance_km,
-                        contact_link: sanitized_contact_link,
-                        contact_link_url: sanitized_contact_link_url,
-                        version: app_constant(:APP_VERSION),
-                        private_mode: private_mode?,
-                        federation_enabled: federation_enabled?,
-                        refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,
-                        app_config_json: JSON.generate(config),
-                        initial_theme: theme,
-                        current_view_mode: view_mode_sym,
-                      }
+                            site_name: meta[:name],
+                            meta_title: meta[:title],
+                            meta_name: meta[:name],
+                            meta_description: meta[:description],
+                            channel: sanitized_channel,
+                            frequency: sanitized_frequency,
+                            map_center_lat: PotatoMesh::Config.map_center_lat,
+                            map_center_lon: PotatoMesh::Config.map_center_lon,
+                            max_distance_km: PotatoMesh::Config.max_distance_km,
+                            contact_link: sanitized_contact_link,
+                            contact_link_url: sanitized_contact_link_url,
+                            version: app_constant(:APP_VERSION),
+                            private_mode: private_mode?,
+                            federation_enabled: federation_enabled?,
+                            refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,
+                            app_config_json: JSON.generate(config),
+                            initial_theme: theme,
+                            current_view_mode: view_mode_sym,
+                          }
           end
         end
 
