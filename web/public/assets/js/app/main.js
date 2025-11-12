@@ -86,6 +86,8 @@ export function initializeApp(config) {
   const infoOverlayHome = infoOverlay
     ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
     : null;
+  const bodyClassList = document.body ? document.body.classList : null;
+  const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
   /**
    * Column sorter configuration for the node table.
    *
@@ -148,7 +150,11 @@ let messagesById = new Map();
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
   if (refreshInfo) {
-    refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+    if (isDashboardView) {
+      refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
+    } else {
+      refreshInfo.textContent = '';
+    }
   }
 
   if (instanceSelectorEnabled && instanceSelect) {
@@ -3712,7 +3718,7 @@ let messagesById = new Map();
    * @returns {void}
    */
   function updateRefreshInfo(nodes, nowSec) {
-    if (!refreshInfo) {
+    if (!refreshInfo || !isDashboardView) {
       return;
     }
     const windows = [

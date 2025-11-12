@@ -80,7 +80,12 @@
    show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
    show_info_button = !full_screen_view
    controls_classes = ["controls"]
-   controls_classes << "controls--full-screen" if full_screen_view %>
+   controls_classes << "controls--full-screen" if full_screen_view
+   refresh_row_classes = ["refresh-row"]
+   refresh_info_text = full_screen_view ? nil : "#{channel} (#{frequency}) — active nodes: …"
+   refresh_row_classes << "refresh-row--no-info" if refresh_info_text.nil?
+   refresh_info_classes = ["refresh-info"]
+   refresh_info_classes << "refresh-info--hidden" if refresh_info_text.nil? %>
 <body class="<%= body_classes.join(" ") %>" data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>" data-theme="<%= initial_theme %>">
   <div class="<%= shell_classes.join(" ") %>">
     <% if show_header %>
@@ -103,8 +108,12 @@
     <div class="row meta">
       <% if show_meta_info %>
         <div class="meta-info">
-          <div class="refresh-row">
-            <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= channel %> (<%= frequency %>) — active nodes: …</p>
+          <div class="<%= refresh_row_classes.join(" ") %>">
+            <% if refresh_info_text %>
+              <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= refresh_info_text %></p>
+            <% else %>
+              <p id="refreshInfo" class="<%= refresh_info_classes.join(" ") %>" aria-live="polite"></p>
+            <% end %>
             <% if show_auto_refresh_controls %>
               <div class="refresh-actions">
                 <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
