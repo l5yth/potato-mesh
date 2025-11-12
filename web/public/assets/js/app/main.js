@@ -44,6 +44,7 @@ import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
+import { mergeChatMessages } from './chat-message-merge.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -3720,9 +3721,7 @@ let messagesById = new Map();
       mergeTelemetryIntoNodes(nodes, telemetryEntries);
       allNodes = nodes;
       rebuildNodeIndex(allNodes);
-      const normalMessages = Array.isArray(messages) ? messages : [];
-      const encryptedLogMessages = Array.isArray(encryptedMessages) ? encryptedMessages : [];
-      const combinedMessages = normalMessages.concat(encryptedLogMessages);
+      const combinedMessages = mergeChatMessages(messages, encryptedMessages);
       const chatMessages = await messageNodeHydrator.hydrate(combinedMessages, nodesById);
       allMessages = Array.isArray(chatMessages) ? chatMessages : [];
       allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
