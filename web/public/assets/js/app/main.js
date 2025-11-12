@@ -16,6 +16,7 @@
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
+import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
@@ -394,6 +395,10 @@ let messagesById = new Map();
     ? config.maxDistanceKm
     : null;
   const LIMIT_DISTANCE = Number.isFinite(MAX_DISTANCE_KM);
+  const autoFitBoundsConfig = resolveAutoFitBoundsConfig({
+    hasDistanceLimit: LIMIT_DISTANCE,
+    maxDistanceKm: MAX_DISTANCE_KM
+  });
   const INITIAL_VIEW_PADDING_PX = 12;
   const AUTO_FIT_PADDING_PX = 12;
   const MAX_INITIAL_ZOOM = 13;
@@ -3587,12 +3592,7 @@ let messagesById = new Map();
       });
     }
     if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
-      const bounds = computeBoundsForPoints(pts, {
-        paddingFraction: 0.2,
-        minimumRangeKm: LIMIT_DISTANCE
-          ? Math.min(Math.max(MAX_DISTANCE_KM * 0.1, 1), MAX_DISTANCE_KM)
-          : 1
-      });
+      const bounds = computeBoundsForPoints(pts, { ...autoFitBoundsConfig });
       fitMapToBounds(bounds, { animate: false, paddingPx: AUTO_FIT_PADDING_PX });
     }
     overlayStack.cleanupOrphans();
