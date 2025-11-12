@@ -129,6 +129,32 @@ def mesh_module(monkeypatch):
     meshtastic_mod.serial_interface = serial_interface_mod
     meshtastic_mod.tcp_interface = tcp_interface_mod
     meshtastic_mod.ble_interface = ble_interface_mod
+
+    mesh_interface_mod = types.ModuleType("meshtastic.mesh_interface")
+
+    def _default_nodeinfo_callback(iface, packet):
+        iface.nodes[packet["id"]] = packet
+        return packet["id"]
+
+    class DummyNodeInfoHandler:
+        """Stub that mimics Meshtastic's NodeInfo handler semantics."""
+
+        def __init__(self):
+            self.callback = getattr(
+                meshtastic_mod, "_onNodeInfoReceive", _default_nodeinfo_callback
+            )
+
+        def onReceive(self, iface, packet):
+            nodes = getattr(iface, "nodes", None)
+            if isinstance(nodes, dict):
+                nodes[packet["id"]] = packet
+            return self.callback(iface, packet)
+
+    mesh_interface_mod.NodeInfoHandler = DummyNodeInfoHandler
+    meshtastic_mod.mesh_interface = mesh_interface_mod
+    monkeypatch.setitem(sys.modules, "meshtastic.mesh_interface", mesh_interface_mod)
+
+    meshtastic_mod._onNodeInfoReceive = _default_nodeinfo_callback
     if real_protobuf is not None:
         meshtastic_mod.protobuf = real_protobuf
     else:
@@ -1078,6 +1104,31 @@ def test_nodeinfo_wrapper_infers_missing_identifier(mesh_module, monkeypatch):
     assert captured_packets, "Expected wrapper to call the original handler"
     packet = captured_packets[0]
     assert packet["id"] == "!88776655"
+
+
+def test_nodeinfo_handler_wrapper_prevents_key_error(mesh_module):
+    """The NodeInfo handler should operate safely when the ID field is absent."""
+
+    import meshtastic
+    from data.mesh_ingestor import interfaces
+
+    interfaces._patch_meshtastic_nodeinfo_handler()
+
+    assert getattr(
+        meshtastic.mesh_interface.NodeInfoHandler,
+        "_potato_mesh_safe_wrapper",
+        False,
+    ), "Expected NodeInfoHandler to be replaced with a safe subclass"
+
+    handler = meshtastic.mesh_interface.NodeInfoHandler()
+    iface = types.SimpleNamespace(nodes={})
+
+    packet = {"decoded": {"user": {"id": "!01020304"}}}
+
+    result = handler.onReceive(iface, packet)
+
+    assert iface.nodes["!01020304"]["id"] == "!01020304"
+    assert result == "!01020304"
 
 
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
