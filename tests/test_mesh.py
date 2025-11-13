@@ -15,6 +15,7 @@
 import base64
 import enum
 import importlib
+import json
 import re
 import sys
 import threading
@@ -2158,6 +2159,24 @@ def test_post_json_logs_failures(mesh_module, monkeypatch, capsys):
     assert "POST request failed" in captured.out
 
 
+def test_queue_post_json_logs_payload_details(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+
+    mesh._clear_post_queue()
+    monkeypatch.setattr(mesh, "DEBUG", True)
+
+    mesh._queue_post_json(
+        "/api/test",
+        {"alpha": "beta", "count": 7},
+        send=lambda *_: None,
+    )
+
+    out = capsys.readouterr().out
+    assert "Forwarding payload to API" in out
+    assert 'alpha="beta"' in out
+    assert "count=7" in out
+
+
 def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
     mesh = mesh_module
 
@@ -2211,6 +2230,25 @@ def test_upsert_node_logs_in_debug(mesh_module, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "context=handlers.upsert_node" in out
     assert "Queued node upsert payload" in out
+
+
+def test_store_packet_dict_records_ignored_packets(mesh_module, monkeypatch, tmp_path):
+    mesh = mesh_module
+
+    monkeypatch.setattr(mesh, "DEBUG", True)
+    ignored_path = tmp_path / "ingored.txt"
+    monkeypatch.setattr(mesh.handlers, "_IGNORED_PACKET_LOG_PATH", ignored_path)
+    monkeypatch.setattr(mesh.handlers, "_IGNORED_PACKET_LOCK", threading.Lock())
+
+    packet = {"decoded": {"portnum": "UNKNOWN"}}
+    mesh.store_packet_dict(packet)
+
+    assert ignored_path.exists()
+    lines = ignored_path.read_text(encoding="utf-8").strip().splitlines()
+    assert lines
+    payload = json.loads(lines[-1])
+    assert payload["reason"] == "unsupported-port"
+    assert payload["packet"]["decoded"]["portnum"] == "UNKNOWN"
 
 
 def test_coerce_int_and_float_cover_edge_cases(mesh_module):
