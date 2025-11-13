@@ -15,10 +15,17 @@
  */
 
 import { extractModemMetadata } from './node-modem-metadata.js';
+import {
+  SNAPSHOT_WINDOW,
+  aggregateNeighborSnapshots,
+  aggregateNodeSnapshots,
+  aggregatePositionSnapshots,
+  aggregateTelemetrySnapshots,
+} from './snapshot-aggregator.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
-const TELEMETRY_LIMIT = 1;
-const POSITION_LIMIT = 1;
+const TELEMETRY_LIMIT = SNAPSHOT_WINDOW;
+const POSITION_LIMIT = SNAPSHOT_WINDOW;
 const NEIGHBOR_LIMIT = 1000;
 
 /**
@@ -351,7 +358,7 @@ export async function refreshNodeInformation(reference, options = {}) {
 
   const [nodeRecord, telemetryRecords, positionRecords, neighborRecords] = await Promise.all([
     (async () => {
-      const response = await fetchImpl(`/api/nodes/${encodedId}`, DEFAULT_FETCH_OPTIONS);
+      const response = await fetchImpl(`/api/nodes/${encodedId}?limit=${SNAPSHOT_WINDOW}`, DEFAULT_FETCH_OPTIONS);
       if (response.status === 404) return null;
       if (!response.ok) {
         throw new Error(`Failed to load node information (HTTP ${response.status})`);
@@ -384,17 +391,36 @@ export async function refreshNodeInformation(reference, options = {}) {
     })(),
   ]);
 
-  const telemetryEntry = Array.isArray(telemetryRecords) ? telemetryRecords[0] ?? null : telemetryRecords ?? null;
-  const positionEntry = Array.isArray(positionRecords) ? positionRecords[0] ?? null : positionRecords ?? null;
-  const neighborEntries = Array.isArray(neighborRecords) ? neighborRecords.filter(isObject) : [];
+  const nodeCandidates = Array.isArray(nodeRecord)
+    ? nodeRecord.filter(isObject)
+    : (isObject(nodeRecord) ? [nodeRecord] : []);
+  const aggregatedNodeRecords = aggregateNodeSnapshots(nodeCandidates);
+  const nodeRecordEntry = aggregatedNodeRecords[0] ?? null;
+
+  const telemetryCandidates = Array.isArray(telemetryRecords)
+    ? telemetryRecords
+    : (isObject(telemetryRecords) ? [telemetryRecords] : []);
+  const aggregatedTelemetry = aggregateTelemetrySnapshots(telemetryCandidates);
+  const telemetryEntry = aggregatedTelemetry[0] ?? null;
+
+  const positionCandidates = Array.isArray(positionRecords)
+    ? positionRecords
+    : (isObject(positionRecords) ? [positionRecords] : []);
+  const aggregatedPositions = aggregatePositionSnapshots(positionCandidates);
+  const positionEntry = aggregatedPositions[0] ?? null;
+
+  const neighborCandidates = Array.isArray(neighborRecords)
+    ? neighborRecords
+    : (isObject(neighborRecords) ? [neighborRecords] : []);
+  const neighborEntries = aggregateNeighborSnapshots(neighborCandidates);
 
   const node = { neighbors: neighborEntries };
 
   if (normalized.fallback) {
     mergeNodeFields(node, normalized.fallback);
   }
-  if (nodeRecord) {
-    mergeNodeFields(node, nodeRecord);
+  if (nodeRecordEntry) {
+    mergeNodeFields(node, nodeRecordEntry);
   }
   if (normalized.nodeId && !node.nodeId) {
     node.nodeId = normalized.nodeId;
@@ -420,7 +446,7 @@ export async function refreshNodeInformation(reference, options = {}) {
   }
 
   node.rawSources = {
-    node: nodeRecord,
+    node: nodeRecordEntry,
     telemetry: telemetryEntry,
     position: positionEntry,
     neighbors: neighborEntries,

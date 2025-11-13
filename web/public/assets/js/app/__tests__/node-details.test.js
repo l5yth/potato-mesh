@@ -45,7 +45,7 @@ function createResponse(status, body) {
 test('refreshNodeInformation merges telemetry metrics when the base node lacks them', async () => {
   const calls = [];
   const responses = new Map([
-    ['/api/nodes/!test', createResponse(200, {
+    ['/api/nodes/!test?limit=7', createResponse(200, {
       node_id: '!test',
       short_name: 'TST',
       battery_level: null,
@@ -53,14 +53,14 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
       modem_preset: 'MediumFast',
       lora_freq: '868.1',
     })],
-    ['/api/telemetry/!test?limit=1', createResponse(200, [{
+    ['/api/telemetry/!test?limit=7', createResponse(200, [{
       node_id: '!test',
       battery_level: 73.5,
       rx_time: 1_200,
       telemetry_time: 1_180,
       voltage: 4.1,
     }])],
-    ['/api/positions/!test?limit=1', createResponse(200, [{
+    ['/api/positions/!test?limit=7', createResponse(200, [{
       node_id: '!test',
       latitude: 52.5,
       longitude: 13.4,
@@ -115,12 +115,12 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
 
 test('refreshNodeInformation preserves fallback metrics when telemetry is unavailable', async () => {
   const responses = new Map([
-    ['/api/nodes/42', createResponse(200, {
+    ['/api/nodes/42?limit=7', createResponse(200, {
       node_id: '!num',
       short_name: 'NUM',
     })],
-    ['/api/telemetry/42?limit=1', createResponse(404, { error: 'not found' })],
-    ['/api/positions/42?limit=1', createResponse(404, { error: 'not found' })],
+    ['/api/telemetry/42?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/positions/42?limit=7', createResponse(404, { error: 'not found' })],
     ['/api/neighbors/42?limit=1000', createResponse(404, { error: 'not found' })],
   ]);
   const fetchImpl = async (url, options) => {
@@ -147,15 +147,15 @@ test('refreshNodeInformation requires a node identifier', async () => {
 
 test('refreshNodeInformation handles missing node records by falling back to telemetry data', async () => {
   const responses = new Map([
-    ['/api/nodes/!missing', createResponse(404, { error: 'not found' })],
-    ['/api/telemetry/!missing?limit=1', createResponse(200, [{
+    ['/api/nodes/!missing?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/telemetry/!missing?limit=7', createResponse(200, [{
       node_id: '!missing',
       node_num: 77,
       battery_level: 66,
       rx_time: 2_000,
       telemetry_time: 1_950,
     }])],
-    ['/api/positions/!missing?limit=1', createResponse(200, [{
+    ['/api/positions/!missing?limit=7', createResponse(200, [{
       node_id: '!missing',
       latitude: 1.23,
       longitude: 3.21,
