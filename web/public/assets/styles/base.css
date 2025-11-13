@@ -833,7 +833,7 @@ body.view-map .map-panel--full #map {
   display: grid;
   gap: 16px;
   padding: 0 16px;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   align-items: stretch;
 }
 
@@ -864,8 +864,8 @@ body.dark .node-detail__chart {
 
 .telemetry-chart__svg {
   width: 100%;
-  max-width: 480px;
-  max-height: 320px;
+  max-width: 560px;
+  max-height: 360px;
   height: auto;
   font-family: inherit;
   color: inherit;

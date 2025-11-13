@@ -17,8 +17,8 @@
 const SECONDS_IN_DAY = 86_400;
 const LOOKBACK_DAYS = 7;
 const LOOKBACK_SECONDS = SECONDS_IN_DAY * LOOKBACK_DAYS;
-const DEFAULT_WIDTH = 480;
-const DEFAULT_HEIGHT = 320;
+const DEFAULT_WIDTH = 560;
+const DEFAULT_HEIGHT = 360;
 const DEFAULT_MARGIN = Object.freeze({ top: 16, right: 64, bottom: 48, left: 64 });
 const POINT_RADIUS = 2;
 const TIME_TICK_COUNT = 5;
@@ -50,21 +50,28 @@ function startOfDaySeconds(timestampSeconds) {
 }
 
 /**
- * Compute a fixed seven-day time domain aligned to midnight boundaries with
- * human-readable tick labels.
+ * Compute a rolling seven-day time domain anchored at the reference timestamp
+ * with midnight-aligned tick labels.
  *
  * @param {number} nowSeconds Reference timestamp in seconds since the epoch.
  * @returns {{ domain: { min: number, max: number }, ticks: Array<{ value: number, label: string }> }}
  *   Static domain and tick descriptors.
  */
 function buildStaticTimeAxis(nowSeconds) {
-  const reference = startOfDaySeconds(nowSeconds);
-  const domainStart = reference - LOOKBACK_SECONDS;
+  const reference = Math.floor(Number(nowSeconds));
+  if (!Number.isFinite(reference)) {
+    return { domain: { min: 0, max: LOOKBACK_SECONDS }, ticks: [] };
+  }
   const domainEnd = reference;
+  const domainStart = domainEnd - LOOKBACK_SECONDS;
+  let tickCursor = startOfDaySeconds(domainStart);
+  if (tickCursor < domainStart) {
+    tickCursor += SECONDS_IN_DAY;
+  }
   const ticks = [];
-  for (let offset = 0; offset <= LOOKBACK_DAYS; offset += 1) {
-    const value = domainStart + offset * SECONDS_IN_DAY;
-    ticks.push({ value, label: dateFormatter.format(new Date(value * 1_000)) });
+  while (tickCursor <= domainEnd) {
+    ticks.push({ value: tickCursor, label: dateFormatter.format(new Date(tickCursor * 1_000)) });
+    tickCursor += SECONDS_IN_DAY;
   }
   return { domain: { min: domainStart, max: domainEnd }, ticks };
 }
@@ -126,6 +133,7 @@ function normaliseTelemetryEntry(entry, minTimestamp) {
     temperature: toFiniteNumber(entry.temperature),
     humidity: toFiniteNumber(entry.relative_humidity ?? entry.relativeHumidity),
     pressure: toFiniteNumber(entry.barometric_pressure ?? entry.barometricPressure),
+    gasResistance: toFiniteNumber(entry.gas_resistance ?? entry.gasResistance),
   };
 }
 
@@ -264,6 +272,88 @@ function generateTimeTicks(min, max, count) {
 }
 
 /**
+ * Generate logarithmic ticks between the provided bounds.
+ *
+ * @param {number} min Minimum domain value (must be greater than zero).
+ * @param {number} max Maximum domain value (must be greater than zero).
+ * @param {(value: number) => string} formatter Tick label formatter.
+ * @returns {Array<{ value: number, label: string }>} Tick descriptors.
+ */
+function generateLogTicks(min, max, formatter) {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= 0) {
+    return [];
+  }
+  const ticks = [];
+  const logMin = Math.log10(min);
+  const logMax = Math.log10(max);
+  if (!Number.isFinite(logMin) || !Number.isFinite(logMax)) {
+    return [];
+  }
+  const lower = Math.ceil(logMin);
+  const upper = Math.floor(logMax);
+  if (lower > upper) {
+    ticks.push({ value: min, label: formatter(min) });
+    if (min !== max) {
+      ticks.push({ value: max, label: formatter(max) });
+    }
+    return ticks;
+  }
+  if (min !== 10 ** lower) {
+    ticks.push({ value: min, label: formatter(min) });
+  }
+  for (let exponent = lower; exponent <= upper; exponent += 1) {
+    const value = 10 ** exponent;
+    if (value >= min && value <= max) {
+      ticks.push({ value, label: formatter(value) });
+    }
+  }
+  if (max !== 10 ** upper) {
+    ticks.push({ value: max, label: formatter(max) });
+  }
+  return ticks;
+}
+
+/**
+ * Create a logarithmic scaling function between the specified domain and range.
+ *
+ * @param {{ min: number, max: number }} domain Domain in source units.
+ * @param {{ min: number, max: number }} range Range in target units.
+ * @returns {(value: number) => number} Scaling function.
+ */
+function scaleLogarithmic(domain, range) {
+  let min = Number(domain.min);
+  let max = Number(domain.max);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= 0) {
+    const midpoint = (range.min + range.max) / 2;
+    return () => midpoint;
+  }
+  if (min <= 0) {
+    min = Math.min(max, Math.max(1, max / 1_000));
+  }
+  if (min === max) {
+    const midpoint = (range.min + range.max) / 2;
+    return () => midpoint;
+  }
+  const logMin = Math.log10(min);
+  const logMax = Math.log10(max);
+  const span = logMax - logMin;
+  if (!Number.isFinite(span) || span === 0) {
+    const midpoint = (range.min + range.max) / 2;
+    return () => midpoint;
+  }
+  const rangeSpan = range.max - range.min;
+  return value => {
+    let candidate = Number(value);
+    if (!Number.isFinite(candidate) || candidate <= 0) {
+      candidate = min;
+    }
+    const clamped = Math.min(Math.max(candidate, min), max);
+    const position = (Math.log10(clamped) - logMin) / span;
+    return range.min + position * rangeSpan;
+  };
+}
+
+/**
  * Compose legend markup for the supplied series.
  *
  * @param {Array<Object>} series Chart series definitions.
@@ -381,6 +471,8 @@ function createScatterChart(config) {
         renderTicks: axis.renderTicks !== false,
         renderLabel: axis.renderLabel !== false,
         domain: normaliseDomain(axis.domain),
+        scaleType: axis.scaleType === 'log' ? 'log' : 'linear',
+        ticks: Array.isArray(axis.ticks) ? axis.ticks : null,
       });
     }
   } else {
@@ -392,6 +484,7 @@ function createScatterChart(config) {
       offset: 0,
       drawGridLines: true,
       showAxisLine: true,
+      scaleType: 'linear',
     });
     const hasRightSeries = activeSeries.some(item => item.axis === 'right');
     if (hasRightSeries) {
@@ -403,6 +496,7 @@ function createScatterChart(config) {
         offset: 0,
         drawGridLines: false,
         showAxisLine: true,
+        scaleType: 'linear',
       });
     }
   }
@@ -449,20 +543,69 @@ function createScatterChart(config) {
       }
       domain = computeDomain(values);
     }
+    domain = normaliseDomain(domain);
     if (!domain) {
       continue;
     }
-    const scale = scaleLinear(domain, { min: height - margin.bottom, max: margin.top });
-    axisScales.set(definition.id, scale);
 
+    const range = { min: height - margin.bottom, max: margin.top };
     const axisX = definition.position === 'right'
       ? width - margin.right + (definition.offset ?? 0)
       : margin.left + (definition.offset ?? 0);
     const tickFormatter = definition.formatter
       || (definition.position === 'right' ? rightTickFormatter : leftTickFormatter);
-    const ticks = definition.renderTicks === false
-      ? []
-      : generateNumericTicks(domain.min, domain.max, VALUE_TICK_COUNT, tickFormatter);
+
+    let effectiveDomain = domain;
+    let scale;
+    if (definition.scaleType === 'log') {
+      if (effectiveDomain.min <= 0) {
+        const positiveValues = [];
+        for (const seriesEntry of axisSeries) {
+          if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
+          for (const point of seriesEntry.points) {
+            if (Number.isFinite(point.value) && point.value > 0) {
+              positiveValues.push(point.value);
+            }
+          }
+        }
+        if (positiveValues.length > 0) {
+          effectiveDomain = {
+            min: Math.min(...positiveValues),
+            max: effectiveDomain.max,
+          };
+        } else {
+          effectiveDomain = {
+            min: Math.min(effectiveDomain.max, Math.max(1, effectiveDomain.max / 1_000)),
+            max: effectiveDomain.max,
+          };
+        }
+      }
+      scale = scaleLogarithmic(effectiveDomain, range);
+    } else {
+      scale = scaleLinear(effectiveDomain, range);
+    }
+    axisScales.set(definition.id, scale);
+
+    let ticks = [];
+    if (definition.renderTicks !== false) {
+      if (Array.isArray(definition.ticks) && definition.ticks.length > 0) {
+        ticks = definition.ticks
+          .map(tick => {
+            if (!tick || !Number.isFinite(tick.value)) {
+              return null;
+            }
+            const label = typeof tick.label === 'string'
+              ? tick.label
+              : tickFormatter(tick.value);
+            return { value: tick.value, label };
+          })
+          .filter(item => item != null);
+      } else if (definition.scaleType === 'log') {
+        ticks = generateLogTicks(effectiveDomain.min, effectiveDomain.max, tickFormatter);
+      } else {
+        ticks = generateNumericTicks(effectiveDomain.min, effectiveDomain.max, VALUE_TICK_COUNT, tickFormatter);
+      }
+    }
     const tickPadding = Number.isFinite(definition.tickPadding) ? definition.tickPadding : 8;
     const labelOffset = Number.isFinite(definition.labelOffset) ? definition.labelOffset : 36;
     const textAnchor = definition.textAnchor
@@ -733,12 +876,22 @@ export function renderTelemetryChartSections(records, options = {}) {
     {
       id: 'pressure',
       label: 'Pressure',
-      color: '#ffffbf',
+      color: '#c51b8a',
       axis: 'pressure',
       line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.pressure != null)
         .map(point => ({ time: point.time, value: point.pressure, iso: point.iso })),
+    },
+    {
+      id: 'gas-resistance',
+      label: 'Gas resistance',
+      color: '#fa9fb5',
+      axis: 'gas-resistance',
+      line: { opacity: 0.5, width: 1 },
+      points: points
+        .filter(point => point.gasResistance != null && point.gasResistance >= 0)
+        .map(point => ({ time: point.time, value: point.gasResistance, iso: point.iso })),
     },
   ];
 
@@ -832,7 +985,7 @@ export function renderTelemetryChartSections(records, options = {}) {
   const pressureSection = renderChartSection({
     id: 'pressure',
     title: 'Barometric pressure',
-    description: 'Barometric pressure readings from the last seven days.',
+    description: 'Barometric pressure and gas resistance from the last seven days.',
     xLabel: 'Date',
     xDomain: timeAxis.domain,
     xTicks: timeAxis.ticks,
@@ -845,6 +998,16 @@ export function renderTelemetryChartSections(records, options = {}) {
         formatter: value => value.toFixed(0),
         drawGridLines: true,
         domain: { min: 800, max: 1_100 },
+      },
+      {
+        id: 'gas-resistance',
+        position: 'right',
+        label: 'Gas resistance (Ω, log scale)',
+        formatter: value => numberFormatter.format(value),
+        drawGridLines: false,
+        domain: { min: 0, max: 500_000 },
+        scaleType: 'log',
+        tickPadding: 10,
       },
     ],
   });
@@ -864,9 +1027,11 @@ export const __testUtils = {
   scaleLinear,
   generateNumericTicks,
   generateTimeTicks,
+  generateLogTicks,
   startOfDaySeconds,
   buildStaticTimeAxis,
   createScatterChart,
   renderChartSection,
+  scaleLogarithmic,
 };
 
