@@ -19,10 +19,12 @@ module PotatoMesh
     module Queries
       MAX_QUERY_LIMIT = 1000
 
-      # Remove nil or empty values from an API response hash to reduce payload size.
+      # Remove nil or empty values from an API response hash to reduce payload size
+      # while preserving legitimate zero-valued measurements.
       # Integer keys emitted by SQLite are ignored because the JSON representation
       # only exposes symbolic keys. Strings containing only whitespace are treated
-      # as empty to mirror sanitisation elsewhere in the application.
+      # as empty to mirror sanitisation elsewhere in the application, and any other
+      # objects responding to `empty?` are dropped when they contain no data.
       #
       # @param row [Hash] raw database row to compact.
       # @return [Hash] cleaned hash without blank values.
@@ -289,7 +291,7 @@ module PotatoMesh
             )
           end
         end
-        rows
+        rows.map { |row| compact_api_row(row) }
       ensure
         db&.close
       end

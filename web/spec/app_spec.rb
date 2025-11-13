@@ -219,6 +219,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Assert that an API response either omits blank values or matches the
+  # expected non-blank value.
+  #
+  # @param row [Hash] API response payload.
+  # @param key [String] attribute to inspect.
+  # @param expected [Object] canonical value from fixtures.
+  # @return [void]
+  def expect_api_value(row, key, expected)
+    if expected.is_a?(String) && expected.strip.empty?
+      expect(row).not_to have_key(key), "expected #{key} to be omitted"
+    elsif expected.nil?
+      expect(row).not_to have_key(key), "expected #{key} to be omitted"
+    else
+      expect_same_value(row[key], expected)
+    end
+  end
+
   # Import all nodes defined in the fixture file via the HTTP API.
   #
   # @return [void]
@@ -3521,11 +3538,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         actual_row = actual_by_id.fetch(node["node_id"])
 
         expected.each do |key, value|
-          if value.nil?
-            expect(actual_row).not_to have_key(key), "expected #{key} to be omitted"
-          else
-            expect_same_value(actual_row[key], value)
-          end
+          expect_api_value(actual_row, key, value)
         end
 
         if expected["last_heard"]
@@ -3705,18 +3718,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
         expect(actual_row["to_id"]).to eq(expected_to_id)
 
-        expect(actual_row["channel"]).to eq(expected["channel"])
-        expect(actual_row["portnum"]).to eq(expected["portnum"])
-        expect(actual_row["text"]).to eq(expected["text"])
-        expect(actual_row["encrypted"]).to eq(expected["encrypted"])
-        expect_same_value(actual_row["snr"], expected["snr"])
-        expect(actual_row["rssi"]).to eq(expected["rssi"])
-        expect(actual_row["hop_limit"]).to eq(expected["hop_limit"])
-        expect(actual_row["lora_freq"]).to eq(expected["lora_freq"])
-        expect(actual_row["modem_preset"]).to eq(expected["modem_preset"])
-        expect(actual_row["channel_name"]).to eq(expected["channel_name"])
-        expect(actual_row["reply_id"]).to eq(expected["reply_id"])
-        expect(actual_row["emoji"]).to eq(expected["emoji"])
+        %w[channel portnum text encrypted].each do |attribute|
+          expect_api_value(actual_row, attribute, expected[attribute])
+        end
+
+        expect_api_value(actual_row, "snr", expected["snr"])
+        expect_api_value(actual_row, "rssi", expected["rssi"])
+        expect_api_value(actual_row, "hop_limit", expected["hop_limit"])
+        expect_api_value(actual_row, "lora_freq", expected["lora_freq"])
+        expect_api_value(actual_row, "modem_preset", expected["modem_preset"])
+        expect_api_value(actual_row, "channel_name", expected["channel_name"])
+        expect_api_value(actual_row, "reply_id", expected["reply_id"])
+        expect_api_value(actual_row, "emoji", expected["emoji"])
         expect(actual_row["rx_time"]).to eq(expected["rx_time"])
         expect(actual_row["rx_iso"]).to eq(expected["rx_iso"])
         expect(actual_row).not_to have_key("node")
@@ -3963,7 +3976,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["node_id"]).to eq("!pos-blank")
       expect(entry["rx_time"]).to eq(now)
       expect(entry["rx_iso"]).to eq(Time.at(now).utc.iso8601)
-      %w[position_time latitude longitude altitude location_source precision_bits sats_in_view pdop payload_b64].each do |attribute|
+      %w[node_num position_time latitude longitude altitude location_source precision_bits sats_in_view pdop payload_b64].each do |attribute|
         expect(entry).not_to have_key(attribute), "expected #{attribute} to be omitted"
       end
 
@@ -4196,7 +4209,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["node_id"]).to eq("!tele-blank")
       expect(entry["rx_time"]).to eq(now)
       expect(entry["rx_iso"]).to eq(Time.at(now).utc.iso8601)
-      %w[telemetry_time channel portnum hop_limit snr rssi bitfield payload_b64 battery_level voltage channel_utilization air_util_tx uptime_seconds temperature relative_humidity].each do |attribute|
+      %w[node_num telemetry_time channel portnum hop_limit snr rssi bitfield payload_b64 battery_level voltage channel_utilization air_util_tx uptime_seconds temperature relative_humidity].each do |attribute|
         expect(entry).not_to have_key(attribute), "expected #{attribute} to be omitted"
       end
 
