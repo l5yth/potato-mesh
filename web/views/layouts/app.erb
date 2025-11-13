@@ -80,6 +80,7 @@
    show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
    show_info_button = !full_screen_view
    show_footer = !full_screen_view
+   show_filter_input = !%i[node_detail].include?(view_mode)
    controls_classes = ["controls"]
    controls_classes << "controls--full-screen" if full_screen_view
    refresh_row_classes = ["refresh-row"]
@@ -129,10 +130,12 @@
         <% if show_auto_fit_toggle %>
           <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
         <% end %>
-        <div class="filter-input">
-          <input type="text" id="filterInput" placeholder="Filter nodes" />
-          <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
-        </div>
+        <% if show_filter_input %>
+          <div class="filter-input">
+            <input type="text" id="filterInput" placeholder="Filter nodes" />
+            <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
+          </div>
+        <% end %>
         <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle dark mode"><span aria-hidden="true">🌙</span></button>
         <% if show_info_button %>
           <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>

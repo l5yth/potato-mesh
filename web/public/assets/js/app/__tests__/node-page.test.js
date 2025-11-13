@@ -27,11 +27,22 @@ const {
   formatVoltage,
   formatUptime,
   formatTimestamp,
-  buildConfigurationEntries,
-  buildTelemetryEntries,
-  buildPositionEntries,
-  renderDefinitionList,
-  renderNeighbors,
+  formatMessageTimestamp,
+  formatHardwareModel,
+  formatCoordinate,
+  formatRelativeSeconds,
+  formatDurationSeconds,
+  formatSnr,
+  padTwo,
+  normalizeNodeId,
+  registerRoleCandidate,
+  lookupRole,
+  lookupNeighborDetails,
+  seedNeighborRoleIndex,
+  buildNeighborRoleIndex,
+  categoriseNeighbors,
+  renderNeighborGroups,
+  renderSingleNodeTable,
   renderMessages,
   renderNodeDetailHtml,
   parseReferencePayload,
@@ -51,155 +62,238 @@ test('format helpers normalise values as expected', () => {
   assert.equal(formatVoltage(4.105), '4.11 V');
   assert.equal(formatUptime(3661), '1h 1m 1s');
   assert.match(formatTimestamp(1_700_000_000), /T/);
+  assert.equal(padTwo(3), '03');
+  assert.equal(normalizeNodeId('!NODE'), '!node');
+  const messageTimestamp = formatMessageTimestamp(1_700_000_000);
+  assert.equal(messageTimestamp.startsWith('2023-'), true);
 });
 
-test('buildConfigurationEntries collects modem and role details', () => {
-  const entries = buildConfigurationEntries({
-    modemPreset: 'LongFast',
-    loraFreq: 915,
+test('role lookup helpers normalise identifiers and register candidates', () => {
+  const index = { byId: new Map(), byNum: new Map() };
+  registerRoleCandidate(index, {
+    identifier: '!NODE',
+    numericId: 77,
     role: 'ROUTER',
-    hwModel: 'T-Beam',
-    nodeNum: 7,
-    snr: 9.42,
-    lastHeard: 1_700_000_001,
+    shortName: 'NODE',
+    longName: 'Node Long',
   });
-  assert.deepEqual(entries.map(entry => entry.label), [
-    'Modem preset',
-    'LoRa frequency',
-    'Role',
-    'Hardware model',
-    'Node number',
-    'SNR',
-    'Last heard',
-  ]);
+  assert.equal(index.byId.get('!node'), 'ROUTER');
+  assert.equal(index.byNum.get(77), 'ROUTER');
+  assert.equal(lookupRole(index, { identifier: '!node' }), 'ROUTER');
+  assert.equal(lookupRole(index, { identifier: '!NODE' }), 'ROUTER');
+  assert.equal(lookupRole(index, { numericId: 77 }), 'ROUTER');
+  assert.equal(lookupRole(index, { identifier: '!missing' }), null);
+  const metadata = lookupNeighborDetails(index, { identifier: '!node', numericId: 77 });
+  assert.deepEqual(metadata, { role: 'ROUTER', shortName: 'NODE', longName: 'Node Long' });
 });
 
-test('buildTelemetryEntries merges additional metrics', () => {
-  const entries = buildTelemetryEntries({
-    battery: 75.2,
-    voltage: 4.12,
-    uptime: 12_345,
-    channel: 1.23,
-    airUtil: 0.45,
-    temperature: 21.5,
-    humidity: 55.5,
-    pressure: 1013.4,
-    telemetry: {
-      current: 0.53,
-      gas_resistance: 10_000,
-      iaq: 42,
-      distance: 1.23,
-      lux: 35,
-      uv_lux: 3.5,
-      wind_direction: 180,
-      wind_speed: 2.5,
-      wind_gust: 4.1,
-      rainfall_1h: 0.12,
-      rainfall_24h: 1.02,
-      telemetry_time: 1_700_000_123,
-    },
-  });
-  const labels = entries.map(entry => entry.label);
-  assert.ok(labels.includes('Battery'));
-  assert.ok(labels.includes('Voltage'));
-  assert.ok(labels.includes('Uptime'));
-  assert.ok(labels.includes('Channel utilisation'));
-  assert.ok(labels.includes('Air util (TX)'));
-  assert.ok(labels.includes('Temperature'));
-  assert.ok(labels.includes('Humidity'));
-  assert.ok(labels.includes('Pressure'));
-  assert.ok(labels.includes('Current'));
-  assert.ok(labels.includes('Gas resistance'));
-  assert.ok(labels.includes('IAQ'));
-  assert.ok(labels.includes('Distance'));
-  assert.ok(labels.includes('Lux'));
-  assert.ok(labels.includes('UV index'));
-  assert.ok(labels.includes('Wind direction'));
-  assert.ok(labels.includes('Wind speed'));
-  assert.ok(labels.includes('Wind gust'));
-  assert.ok(labels.includes('Rainfall (1h)'));
-  assert.ok(labels.includes('Rainfall (24h)'));
-  assert.ok(labels.includes('Telemetry time'));
+test('seedNeighborRoleIndex captures known roles and missing identifiers', () => {
+  const index = { byId: new Map(), byNum: new Map() };
+  const missing = seedNeighborRoleIndex(index, [
+    { neighbor_id: '!ALLY', neighbor_role: 'CLIENT', neighbor_short_name: 'ALLY' },
+    { node_id: '!self', node_role: 'ROUTER' },
+    { neighbor_id: '!unknown' },
+  ]);
+  assert.equal(index.byId.get('!ally'), 'CLIENT');
+  assert.equal(index.byId.get('!self'), 'ROUTER');
+  assert.equal(missing.has('!unknown'), true);
+  const allyDetails = lookupNeighborDetails(index, { identifier: '!ally' });
+  assert.equal(allyDetails.shortName, 'ALLY');
 });
 
-test('buildPositionEntries includes precision metadata', () => {
-  const entries = buildPositionEntries({
-    latitude: 52.52,
-    longitude: 13.405,
-    altitude: 42,
-    position: {
-      sats_in_view: 12,
-      precision_bits: 7,
-      location_source: 'GPS',
-      position_time: 1_700_000_050,
-      rx_time: 1_700_000_055,
-    },
-  });
-  const labels = entries.map(entry => entry.label);
-  assert.ok(labels.includes('Latitude'));
-  assert.ok(labels.includes('Longitude'));
-  assert.ok(labels.includes('Altitude'));
-  assert.ok(labels.includes('Satellites'));
-  assert.ok(labels.includes('Precision bits'));
-  assert.ok(labels.includes('Location source'));
-  assert.ok(labels.includes('Position time'));
-  assert.ok(labels.includes('RX time'));
-});
+test('additional format helpers provide table friendly output', () => {
+  assert.equal(formatHardwareModel('UNSET'), '');
+  assert.equal(formatHardwareModel('T-Beam'), 'T-Beam');
+  assert.equal(formatCoordinate(52.123456), '52.12346');
+  assert.equal(formatCoordinate(null), '');
+  assert.equal(formatRelativeSeconds(1_000, 1_060), '1m');
+  assert.equal(formatRelativeSeconds(1_000, 1_120), '2m');
+  assert.equal(formatRelativeSeconds(1_000, 1_000 + 3_700), '1h 1m');
+  assert.equal(formatRelativeSeconds(1_000, 1_000 + 90_000).startsWith('1d'), true);
+  assert.equal(formatDurationSeconds(59), '59s');
+  assert.equal(formatDurationSeconds(61), '1m 1s');
+  assert.equal(formatDurationSeconds(3_661), '1h 1m');
+  assert.equal(formatDurationSeconds(172_800), '2d');
+  assert.equal(formatSnr(12.345), '12.3 dB');
+  assert.equal(formatSnr(null), '');
 
-test('render helpers ignore empty values', () => {
-  const listHtml = renderDefinitionList([
-    { label: 'Valid', value: 'ok' },
-    { label: 'Empty', value: '' },
-  ]);
-  assert.equal(listHtml.includes('Valid'), true);
-  assert.equal(listHtml.includes('Empty'), false);
-
-  const neighborsHtml = renderNeighbors([
-    { neighbor_id: '!ally', snr: 9.5, rx_time: 1_700_000_321 },
-    null,
-  ]);
-  assert.equal(neighborsHtml.includes('!ally'), true);
-
-  const messagesHtml = renderMessages([
-    { text: 'hello', rx_time: 1_700_000_400, from_id: '!src', to_id: '!dst' },
-    { emoji: '😊', rx_time: 1_700_000_401 },
-  ]);
+  const renderShortHtml = (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`;
+  const nodeContext = {
+    shortName: 'NODE',
+    longName: 'Node Long',
+    role: 'CLIENT',
+    nodeId: '!node',
+    nodeNum: 77,
+    rawSources: { node: { node_id: '!node', role: 'CLIENT', short_name: 'NODE' } },
+  };
+  const messagesHtml = renderMessages(
+    [
+      {
+        text: 'hello',
+        rx_time: 1_700_000_400,
+        region_frequency: 868,
+        modem_preset: 'MediumFast',
+        channel_name: 'Primary',
+        node: { short_name: 'SRCE', role: 'ROUTER', node_id: '!src' },
+      },
+      { emoji: '😊', rx_time: 1_700_000_401 },
+    ],
+    renderShortHtml,
+    nodeContext,
+  );
   assert.equal(messagesHtml.includes('hello'), true);
   assert.equal(messagesHtml.includes('😊'), true);
+  assert.equal(messagesHtml.includes('[2023-'), true);
+  assert.equal(messagesHtml.includes('[868]'), true);
+  assert.equal(messagesHtml.includes('[MF]'), true);
+  assert.equal(messagesHtml.includes('[Primary]'), true);
+  assert.equal(messagesHtml.includes('data-role="ROUTER"'), true);
+  assert.equal(messagesHtml.includes('&nbsp;&nbsp;&nbsp;'), true);
+  assert.equal(messagesHtml.includes('&nbsp;&nbsp;'), true);
+  assert.equal(messagesHtml.includes('data-role="CLIENT"'), true);
+  assert.equal(messagesHtml.includes(', hello'), false);
 });
 
-test('renderNodeDetailHtml composes sections when data exists', () => {
+test('categoriseNeighbors splits inbound and outbound records', () => {
+  const node = { nodeId: '!self', nodeNum: 42 };
+  const neighbors = [
+    { node_id: '!self', neighbor_id: '!ally-one' },
+    { node_id: '!peer', neighbor_id: '!SELF' },
+    { node_num: 42, neighbor_id: '!ally-two' },
+    { node_id: '!friend', neighbor_num: 42 },
+    null,
+  ];
+  const { heardBy, weHear } = categoriseNeighbors(node, neighbors);
+  assert.equal(heardBy.length, 2);
+  assert.equal(weHear.length, 2);
+});
+
+test('renderNeighborGroups renders grouped neighbour lists', () => {
+  const node = { nodeId: '!self', nodeNum: 77 };
+  const neighbors = [
+    {
+      node_id: '!peer',
+      node_short_name: 'PEER',
+      neighbor_id: '!self',
+      snr: 9.5,
+      node: { short_name: 'PEER', role: 'ROUTER' },
+    },
+    {
+      node_id: '!self',
+      neighbor_id: '!ally',
+      neighbor_short_name: 'ALLY',
+      snr: 5.25,
+      neighbor: { short_name: 'ALLY', role: 'REPEATER' },
+    },
+  ];
+  const html = renderNeighborGroups(
+    node,
+    neighbors,
+    (short, role) => `<span class="badge" data-role="${role}">${short}</span>`,
+  );
+  assert.equal(html.includes('Neighbors'), true);
+  assert.equal(html.includes('Heard by'), true);
+  assert.equal(html.includes('We hear'), true);
+  assert.equal(html.includes('PEER'), true);
+  assert.equal(html.includes('ALLY'), true);
+  assert.equal(html.includes('9.5 dB'), true);
+  assert.equal(html.includes('5.3 dB'), true);
+  assert.equal(html.includes('data-role="ROUTER"'), true);
+  assert.equal(html.includes('data-role="REPEATER"'), true);
+});
+
+test('buildNeighborRoleIndex fetches missing neighbor metadata from the API', async () => {
+  const neighbors = [
+    { neighbor_id: '!ally', neighbor_short_name: 'ALLY' },
+  ];
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    return {
+      status: 200,
+      ok: true,
+      json: async () => ({ node_id: '!ally', role: 'ROUTER', node_num: 99, short_name: 'ALLY-API' }),
+    };
+  };
+  const index = await buildNeighborRoleIndex({ nodeId: '!self', role: 'CLIENT' }, neighbors, { fetchImpl });
+  assert.equal(index.byId.get('!self'), 'CLIENT');
+  assert.equal(index.byId.get('!ally'), 'ROUTER');
+  assert.equal(index.byNum.get(99), 'ROUTER');
+  assert.equal(calls.some(url => url.startsWith('/api/nodes/')), true);
+  const allyMetadata = lookupNeighborDetails(index, { identifier: '!ally', numericId: 99 });
+  assert.equal(allyMetadata.shortName, 'ALLY-API');
+});
+
+test('renderSingleNodeTable renders a condensed table for the node', () => {
+  const node = {
+    shortName: 'NODE',
+    longName: 'Example Node',
+    nodeId: '!abcd',
+    role: 'CLIENT',
+    hwModel: 'T-Beam',
+    battery: 66,
+    voltage: 4.12,
+    uptime: 3_700,
+    channel: 1.23,
+    airUtil: 0.45,
+    temperature: 22.5,
+    humidity: 55.5,
+    pressure: 1_013.2,
+    latitude: 52.52,
+    longitude: 13.405,
+    altitude: 40,
+    lastHeard: 9_900,
+    positionTime: 9_850,
+    rawSources: { node: { node_id: '!abcd', role: 'CLIENT' } },
+  };
+  const html = renderSingleNodeTable(
+    node,
+    (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`,
+    10_000,
+  );
+  assert.equal(html.includes('<table'), true);
+  assert.equal(html.includes('Example Node'), true);
+  assert.equal(html.includes('66.0%'), true);
+  assert.equal(html.includes('1.230%'), true);
+  assert.equal(html.includes('52.52000'), true);
+  assert.equal(html.includes('1m 40s'), true);
+  assert.equal(html.includes('2m 30s'), true);
+});
+
+test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   const html = renderNodeDetailHtml(
     {
       shortName: 'NODE',
       longName: 'Example Node',
       nodeId: '!abcd',
+      nodeNum: 77,
       role: 'CLIENT',
-      modemPreset: 'LongFast',
-      loraFreq: 915,
       battery: 60,
       voltage: 4.1,
       uptime: 1_000,
-      temperature: 22,
-      humidity: 50,
-      pressure: 1005,
       latitude: 52.5,
       longitude: 13.4,
       altitude: 40,
     },
     {
-      neighbors: [{ neighbor_id: '!ally', snr: 7.5 }],
+      neighbors: [
+        { node_id: '!peer', node_short_name: 'PEER', neighbor_id: '!abcd', snr: 7.5 },
+        { node_id: '!abcd', neighbor_id: '!ally', neighbor_short_name: 'ALLY', snr: 5.1 },
+      ],
       messages: [{ text: 'Hello', rx_time: 1_700_000_111 }],
       renderShortHtml: (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`,
     },
   );
-  assert.equal(html.includes('Configuration'), true);
-  assert.equal(html.includes('Telemetry'), true);
-  assert.equal(html.includes('Position'), true);
+  assert.equal(html.includes('node-detail__table'), true);
   assert.equal(html.includes('Neighbors'), true);
+  assert.equal(html.includes('Heard by'), true);
+  assert.equal(html.includes('We hear'), true);
   assert.equal(html.includes('Messages'), true);
   assert.equal(html.includes('Example Node'), true);
-  assert.equal(html.includes('!ally'), true);
+  assert.equal(html.includes('PEER'), true);
+  assert.equal(html.includes('ALLY'), true);
+  assert.equal(html.includes('[2023'), true);
+  assert.equal(html.includes('data-role="CLIENT"'), true);
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {
@@ -277,15 +371,27 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
       latitude: 52.5,
       longitude: 13.4,
       altitude: 42,
-      neighbors: [{ neighbor_id: '!ally', snr: 5.5 }],
+      neighbors: [{ node_id: '!node', neighbor_id: '!ally', snr: 5.5 }],
       rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
     };
   };
-  const fetchImpl = async () => ({
-    status: 200,
-    ok: true,
-    json: async () => [{ text: 'hello', rx_time: 1_700_000_222 }],
-  });
+  const fetchImpl = async url => {
+    if (url.startsWith('/api/messages/')) {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => [{ text: 'hello', rx_time: 1_700_000_222 }],
+      };
+    }
+    if (url.startsWith('/api/nodes/')) {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ node_id: '!ally', role: 'ROUTER', short_name: 'ALLY-API' }),
+      };
+    }
+    return { status: 404, ok: false, json: async () => ({}) };
+  };
   const renderShortHtml = short => `<span class="short-name">${short}</span>`;
   const result = await initializeNodeDetailPage({
     document: documentStub,
@@ -295,8 +401,85 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   });
   assert.equal(result, true);
   assert.equal(element.innerHTML.includes('Node Long'), true);
+  assert.equal(element.innerHTML.includes('node-detail__table'), true);
   assert.equal(element.innerHTML.includes('Neighbors'), true);
   assert.equal(element.innerHTML.includes('Messages'), true);
+  assert.equal(element.innerHTML.includes('ALLY-API'), true);
+});
+
+test('initializeNodeDetailPage removes legacy filter controls when supported', async () => {
+  const element = {
+    dataset: {
+      nodeReference: JSON.stringify({ nodeId: '!node', fallback: { short_name: 'NODE' } }),
+      privateMode: 'false',
+    },
+    innerHTML: '',
+  };
+  const filterContainer = {
+    removed: false,
+    remove() {
+      this.removed = true;
+    },
+  };
+  const documentStub = {
+    querySelector: selector => {
+      if (selector === '#nodeDetail') return element;
+      if (selector === '.filter-input') return filterContainer;
+      return null;
+    },
+  };
+  const refreshImpl = async () => ({
+    shortName: 'NODE',
+    nodeId: '!node',
+    role: 'CLIENT',
+    neighbors: [],
+    rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
+  });
+  const fetchImpl = async () => ({ status: 404, ok: false });
+  const renderShortHtml = short => `<span class="short-name">${short}</span>`;
+  const result = await initializeNodeDetailPage({
+    document: documentStub,
+    refreshImpl,
+    fetchImpl,
+    renderShortHtml,
+  });
+  assert.equal(result, true);
+  assert.equal(filterContainer.removed, true);
+});
+
+test('initializeNodeDetailPage hides legacy filter controls when removal is unavailable', async () => {
+  const element = {
+    dataset: {
+      nodeReference: JSON.stringify({ nodeId: '!node', fallback: { short_name: 'NODE' } }),
+      privateMode: 'false',
+    },
+    innerHTML: '',
+  };
+  const filterContainer = { hidden: false };
+  const documentStub = {
+    querySelector: selector => {
+      if (selector === '#nodeDetail') return element;
+      if (selector === '.filter-input') return filterContainer;
+      return null;
+    },
+  };
+  const refreshImpl = async () => ({
+    shortName: 'NODE',
+    nodeId: '!node',
+    role: 'CLIENT',
+    neighbors: [],
+    rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
+  });
+  const fetchImpl = async () => ({ status: 404, ok: false });
+  const renderShortHtml = short => `<span class="short-name">${short}</span>`;
+  const result = await initializeNodeDetailPage({
+    document: documentStub,
+    refreshImpl,
+    fetchImpl,
+    renderShortHtml,
+  });
+  assert.equal(result, true);
+  assert.equal(filterContainer.hidden, true);
 });
 
 test('initializeNodeDetailPage reports an error when refresh fails', async () => {
