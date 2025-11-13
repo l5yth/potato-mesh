@@ -74,7 +74,7 @@ test('resolveReplyPrefix renders reply badge and buildMessageBody joins emoji', 
   assert.equal(body, 'ESC(Hello) EMOJI(🔥)');
 });
 
-test('buildMessageBody suppresses reaction slot numerals', () => {
+test('buildMessageBody formats reaction counts with a multiplication symbol', () => {
   const body = buildMessageBody({
     message: {
       text: '1',
@@ -86,5 +86,35 @@ test('buildMessageBody suppresses reaction slot numerals', () => {
     renderEmojiHtml: value => `EMOJI(${value})`
   });
 
-  assert.equal(body, 'EMOJI(👍)');
+  assert.equal(body, 'ESC(×1) EMOJI(👍)');
+});
+
+test('buildMessageBody preserves non-numeric reaction text', () => {
+  const body = buildMessageBody({
+    message: {
+      text: 'Thanks!',
+      emoji: '🙏',
+      portnum: 'REACTION_APP',
+      reply_id: 42
+    },
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'ESC(Thanks!) EMOJI(🙏)');
+});
+
+test('buildMessageBody accepts multi-digit reaction counts', () => {
+  const body = buildMessageBody({
+    message: {
+      text: ' 12 ',
+      emoji: '🎉',
+      portnum: 'REACTION_APP',
+      reply_id: 108
+    },
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'ESC(×12) EMOJI(🎉)');
 });

@@ -306,6 +306,26 @@ function isReactionPacket(message, normalisedEmoji = normaliseEmojiValue(message
 }
 
 /**
+ * Extract a numeric reaction count from the provided value.
+ *
+ * Reaction packets overload the ``text`` field with the ordinal representing
+ * the emoji slot. The same field doubles as the aggregate count when the
+ * reaction packet includes tally information.
+ *
+ * @param {*} value Potential count value sourced from the message payload.
+ * @returns {?number} Parsed integer when present and finite.
+ */
+function extractReactionCount(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  if (trimmed.length === 0 || /[^0-9]/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
  * Build the rendered message body containing text and optional emoji.
  *
  * @param {{
@@ -333,13 +353,27 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   if (message.text != null) {
     const textString = String(message.text);
     const trimmed = textString.trim();
-    const isSlotIndicator = reactionPacket && trimmed.length === 1 && /\d/.test(trimmed);
-    if (trimmed.length > 0 && !isSlotIndicator) {
-      segments.push(escapeHtml(textString));
+    let displayText = textString;
+    let shouldRenderText = false;
+
+    if (reactionPacket) {
+      const reactionCount = extractReactionCount(textString);
+      if (reactionCount != null) {
+        displayText = `×${reactionCount}`;
+        shouldRenderText = true;
+      } else if (trimmed.length > 0) {
+        shouldRenderText = true;
+      }
+    } else if (trimmed.length > 0) {
+      shouldRenderText = true;
+    }
+
+    if (shouldRenderText) {
+      segments.push(escapeHtml(displayText));
     }
   }
 
-  if (emoji && emoji !== '1') {
+  if (emoji) {
     segments.push(renderEmojiHtml(emoji));
   }
 
