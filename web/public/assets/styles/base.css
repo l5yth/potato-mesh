@@ -780,13 +780,14 @@ body.view-map .map-panel--full #map {
 }
 
 .node-detail {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 20px 40px;
+  width: 100%;
+  margin: 0;
+  padding: 24px 0 40px;
 }
 
 .node-detail__header {
   margin-bottom: 12px;
+  padding: 0 20px;
 }
 
 .node-detail__title {
@@ -808,7 +809,7 @@ body.view-map .map-panel--full #map {
 }
 
 .node-detail__table table {
-  min-width: 720px;
+  width: 100%;
 }
 
 .node-detail__identifier {
@@ -820,6 +821,7 @@ body.view-map .map-panel--full #map {
 .node-detail__error,
 .node-detail__noscript {
   margin: 16px 0;
+  padding: 0 20px;
 }
 
 .node-detail__error {
@@ -829,6 +831,7 @@ body.view-map .map-panel--full #map {
 .node-detail__content {
   display: grid;
   gap: 24px;
+  padding: 0 20px;
 }
 
 .node-detail__neighbors-grid {

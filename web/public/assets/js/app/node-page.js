@@ -314,6 +314,67 @@ function categoriseNeighbors(node, neighbors) {
 }
 
 /**
+ * Render a short-name badge with consistent role-aware styling.
+ *
+ * @param {Function} renderShortHtml Badge rendering implementation.
+ * @param {{
+ *   shortName?: string|null,
+ *   longName?: string|null,
+ *   role?: string|null,
+ *   identifier?: string|null,
+ *   numericId?: number|null,
+ *   source?: Object|null,
+ * }} payload Badge rendering payload.
+ * @returns {string} HTML snippet describing the badge.
+ */
+function renderRoleAwareBadge(renderShortHtml, {
+  shortName = null,
+  longName = null,
+  role = null,
+  identifier = null,
+  numericId = null,
+  source = null,
+} = {}) {
+  const resolvedIdentifier = stringOrNull(identifier);
+  let resolvedShort = stringOrNull(shortName);
+  const resolvedLong = stringOrNull(longName);
+  const resolvedRole = stringOrNull(role) ?? 'CLIENT';
+  const resolvedNumericId = numberOrNull(numericId);
+  let fallbackShort = resolvedShort;
+  if (!fallbackShort && resolvedIdentifier) {
+    const trimmed = resolvedIdentifier.replace(/^!+/, '');
+    fallbackShort = trimmed.slice(-4).toUpperCase();
+  }
+  if (!fallbackShort) {
+    fallbackShort = '?';
+  }
+
+  const badgeSource = source && typeof source === 'object' ? { ...source } : {};
+  if (resolvedIdentifier) {
+    if (!badgeSource.node_id) badgeSource.node_id = resolvedIdentifier;
+    if (!badgeSource.nodeId) badgeSource.nodeId = resolvedIdentifier;
+  }
+  if (resolvedNumericId != null) {
+    if (!badgeSource.node_num) badgeSource.node_num = resolvedNumericId;
+    if (!badgeSource.nodeNum) badgeSource.nodeNum = resolvedNumericId;
+  }
+  if (resolvedShort) {
+    if (!badgeSource.short_name) badgeSource.short_name = resolvedShort;
+    if (!badgeSource.shortName) badgeSource.shortName = resolvedShort;
+  }
+  if (resolvedLong) {
+    if (!badgeSource.long_name) badgeSource.long_name = resolvedLong;
+    if (!badgeSource.longName) badgeSource.longName = resolvedLong;
+  }
+  badgeSource.role = badgeSource.role ?? resolvedRole;
+
+  if (typeof renderShortHtml === 'function') {
+    return renderShortHtml(resolvedShort ?? fallbackShort, resolvedRole, resolvedLong, badgeSource);
+  }
+  return `<span class="short-name">${escapeHtml(resolvedShort ?? fallbackShort)}</span>`;
+}
+
+/**
  * Generate a badge HTML fragment for a neighbour entry.
  *
  * @param {Object} entry Raw neighbour entry.
@@ -346,37 +407,33 @@ function renderNeighborBadge(entry, perspective, renderShortHtml) {
   const numericId = numKeys.map(key => numberOrNull(entry[key])).find(value => value != null) ?? null;
   let shortName = shortKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
   const longName = longKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
-  const role = roleKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? 'CLIENT';
+  let role = roleKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
   if (!shortName) {
     const trimmed = identifier.replace(/^!+/, '');
     shortName = trimmed.slice(-4).toUpperCase();
   }
 
   const source = perspective === 'heardBy' ? entry.node : entry.neighbor;
-  const badgeSource = source && typeof source === 'object'
-    ? { ...source }
-    : {};
-  if (!badgeSource.node_id && !badgeSource.nodeId) {
-    badgeSource.node_id = identifier;
-    badgeSource.nodeId = identifier;
-  }
-  if (!badgeSource.node_num && !badgeSource.nodeNum && numericId != null) {
-    badgeSource.node_num = numericId;
-    badgeSource.nodeNum = numericId;
-  }
-  if (!badgeSource.short_name && !badgeSource.shortName) {
-    badgeSource.short_name = shortName;
-    badgeSource.shortName = shortName;
-  }
-  if (!badgeSource.long_name && !badgeSource.longName && longName) {
-    badgeSource.long_name = longName;
-    badgeSource.longName = longName;
-  }
-  if (!badgeSource.role) {
-    badgeSource.role = role;
+  if (!role && source && typeof source === 'object') {
+    role = stringOrNull(
+      source.role
+        ?? source.node_role
+        ?? source.nodeRole
+        ?? source.neighbor_role
+        ?? source.neighborRole
+        ?? source.roleName
+        ?? null,
+    );
   }
 
-  return renderShortHtml(shortName, role, longName, badgeSource);
+  return renderRoleAwareBadge(renderShortHtml, {
+    shortName,
+    longName,
+    role: role ?? 'CLIENT',
+    identifier,
+    numericId,
+    source,
+  });
 }
 
 /**
@@ -452,17 +509,18 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
   const shortName = stringOrNull(node.shortName ?? node.short_name) ?? null;
   const longName = stringOrNull(node.longName ?? node.long_name) ?? '';
   const role = stringOrNull(node.role) ?? 'CLIENT';
+  const numericId = numberOrNull(node.nodeNum ?? node.node_num ?? node.num);
   const badgeSource = node.rawSources?.node && typeof node.rawSources.node === 'object'
     ? node.rawSources.node
-    : {
-        node_id: nodeId,
-        nodeId,
-        node_num: numberOrNull(node.nodeNum ?? node.node_num ?? node.num) ?? undefined,
-        short_name: shortName ?? undefined,
-        long_name: longName ?? undefined,
-        role,
-      };
-  const badgeHtml = renderShortHtml(shortName, role, longName, badgeSource);
+    : node;
+  const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
+    shortName,
+    longName,
+    role,
+    identifier: nodeId || null,
+    numericId,
+    source: badgeSource,
+  });
   const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
   const battery = formatBattery(node.battery ?? node.battery_level);
   const voltage = formatVoltage(node.voltage ?? node.voltageReading);
@@ -531,29 +589,70 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
 }
 
 /**
- * Render a message list using basic formatting.
+ * Render a message list using structured metadata formatting.
  *
  * @param {Array<Object>} messages Message records.
+ * @param {Function} renderShortHtml Badge rendering implementation.
+ * @param {Object} node Node context used when message metadata is incomplete.
  * @returns {string} HTML string for the messages section.
  */
-function renderMessages(messages) {
+function renderMessages(messages, renderShortHtml, node) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
+
+  const fallbackNode = node && typeof node === 'object' ? node : null;
+
   const items = messages
     .map(message => {
       if (!message || typeof message !== 'object') return null;
       const text = stringOrNull(message.text) || stringOrNull(message.emoji);
       if (!text) return null;
-      const rx = formatTimestamp(message.rx_time, message.rx_iso);
-      const fromId = stringOrNull(message.from_id ?? message.fromId);
-      const toId = stringOrNull(message.to_id ?? message.toId);
-      const parts = [];
-      if (rx) parts.push(escapeHtml(rx));
-      if (fromId || toId) {
-        const route = [fromId, toId].filter(Boolean).map(escapeHtml).join(' → ');
-        if (route) parts.push(route);
+
+      const timestamp = stringOrNull(formatTimestamp(message.rx_time, message.rx_iso));
+      const frequency = stringOrNull(
+        formatFrequency(message.lora_freq ?? message.loraFreq ?? message.frequency ?? message.loraFrequency),
+      );
+      const preset = stringOrNull(
+        message.modem_preset ?? message.modemPreset ?? message.preset ?? message.modemPresetCode ?? null,
+      );
+      let channel = stringOrNull(message.channel_name ?? message.channelName ?? message.channel_label ?? null);
+      if (!channel) {
+        const numericChannel = numberOrNull(message.channel);
+        if (numericChannel != null) {
+          channel = String(numericChannel);
+        } else {
+          channel = stringOrNull(message.channel);
+        }
       }
-      parts.push(escapeHtml(text));
-      return `<li>${parts.join(' — ')}</li>`;
+
+      const metadataSegments = [timestamp, frequency, preset, channel]
+        .map(value => `[${value ? escapeHtml(value) : '—'}]`)
+        .join('');
+
+      const messageNode = message.node && typeof message.node === 'object' ? message.node : null;
+      const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
+        shortName: messageNode?.short_name ?? messageNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
+        longName: messageNode?.long_name ?? messageNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
+        role: messageNode?.role ?? fallbackNode?.role ?? null,
+        identifier:
+          message.node_id
+            ?? message.nodeId
+            ?? message.from_id
+            ?? message.fromId
+            ?? fallbackNode?.nodeId
+            ?? fallbackNode?.node_id
+            ?? null,
+        numericId:
+          message.node_num
+            ?? message.nodeNum
+            ?? message.from_num
+            ?? message.fromNum
+            ?? fallbackNode?.nodeNum
+            ?? fallbackNode?.node_num
+            ?? null,
+        source: messageNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
+      });
+
+      return `<li>${metadataSegments} ${badgeHtml}, ${escapeHtml(text)}</li>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
@@ -572,19 +671,19 @@ function renderMessages(messages) {
  * @returns {string} HTML fragment representing the detail view.
  */
 function renderNodeDetailHtml(node, { neighbors = [], messages = [], renderShortHtml }) {
-  const roleAwareBadge = typeof renderShortHtml === 'function'
-    ? renderShortHtml(
-        node.shortName ?? node.short_name,
-        node.role,
-        node.longName ?? node.long_name,
-        node.rawSources?.node ?? node,
-      )
-    : escapeHtml(node.shortName ?? node.short_name ?? '?');
+  const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
+    shortName: node.shortName ?? node.short_name,
+    longName: node.longName ?? node.long_name,
+    role: node.role,
+    identifier: node.nodeId ?? node.node_id ?? null,
+    numericId: node.nodeNum ?? node.node_num ?? node.num ?? null,
+    source: node.rawSources?.node ?? node,
+  });
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml);
-  const messagesHtml = renderMessages(messages);
+  const messagesHtml = renderMessages(messages, renderShortHtml, node);
 
   const sections = [];
   if (neighborsHtml) {
@@ -690,6 +789,17 @@ export async function initializeNodeDetailPage(options = {}) {
   }
   const root = documentRef.querySelector('#nodeDetail');
   if (!root) return false;
+
+  const filterContainer = typeof documentRef.querySelector === 'function'
+    ? documentRef.querySelector('.filter-input')
+    : null;
+  if (filterContainer) {
+    if (typeof filterContainer.remove === 'function') {
+      filterContainer.remove();
+    } else {
+      filterContainer.hidden = true;
+    }
+  }
 
   const referenceData = parseReferencePayload(root.dataset?.nodeReference ?? null);
   if (!referenceData) {

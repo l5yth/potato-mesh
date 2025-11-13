@@ -72,12 +72,39 @@ test('additional format helpers provide table friendly output', () => {
   assert.equal(formatSnr(12.345), '12.3 dB');
   assert.equal(formatSnr(null), '');
 
-  const messagesHtml = renderMessages([
-    { text: 'hello', rx_time: 1_700_000_400, from_id: '!src', to_id: '!dst' },
-    { emoji: '😊', rx_time: 1_700_000_401 },
-  ]);
+  const renderShortHtml = (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`;
+  const nodeContext = {
+    shortName: 'NODE',
+    longName: 'Node Long',
+    role: 'CLIENT',
+    nodeId: '!node',
+    nodeNum: 77,
+    rawSources: { node: { node_id: '!node', role: 'CLIENT', short_name: 'NODE' } },
+  };
+  const messagesHtml = renderMessages(
+    [
+      {
+        text: 'hello',
+        rx_time: 1_700_000_400,
+        lora_freq: 915_000_000,
+        modem_preset: 'LongFast',
+        channel_name: 'Primary',
+        node: { short_name: 'SRCE', role: 'ROUTER', node_id: '!src' },
+      },
+      { emoji: '😊', rx_time: 1_700_000_401 },
+    ],
+    renderShortHtml,
+    nodeContext,
+  );
   assert.equal(messagesHtml.includes('hello'), true);
   assert.equal(messagesHtml.includes('😊'), true);
+  assert.equal(messagesHtml.includes('[2023'), true);
+  assert.equal(messagesHtml.includes('[915.000 MHz]'), true);
+  assert.equal(messagesHtml.includes('[LongFast]'), true);
+  assert.equal(messagesHtml.includes('[Primary]'), true);
+  assert.equal(messagesHtml.includes('data-role="ROUTER"'), true);
+  assert.equal(messagesHtml.includes('[—][—][—]'), true);
+  assert.equal(messagesHtml.includes('data-role="CLIENT"'), true);
 });
 
 test('categoriseNeighbors splits inbound and outbound records', () => {
@@ -100,16 +127,16 @@ test('renderNeighborGroups renders grouped neighbour lists', () => {
     {
       node_id: '!peer',
       node_short_name: 'PEER',
-      node_role: 'ROUTER',
       neighbor_id: '!self',
       snr: 9.5,
+      node: { short_name: 'PEER', role: 'ROUTER' },
     },
     {
       node_id: '!self',
       neighbor_id: '!ally',
       neighbor_short_name: 'ALLY',
-      neighbor_role: 'CLIENT',
       snr: 5.25,
+      neighbor: { short_name: 'ALLY', role: 'REPEATER' },
     },
   ];
   const html = renderNeighborGroups(
@@ -124,6 +151,8 @@ test('renderNeighborGroups renders grouped neighbour lists', () => {
   assert.equal(html.includes('ALLY'), true);
   assert.equal(html.includes('9.5 dB'), true);
   assert.equal(html.includes('5.3 dB'), true);
+  assert.equal(html.includes('data-role="ROUTER"'), true);
+  assert.equal(html.includes('data-role="REPEATER"'), true);
 });
 
 test('renderSingleNodeTable renders a condensed table for the node', () => {
@@ -194,6 +223,8 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('Example Node'), true);
   assert.equal(html.includes('PEER'), true);
   assert.equal(html.includes('ALLY'), true);
+  assert.equal(html.includes('[2023'), true);
+  assert.equal(html.includes('data-role="CLIENT"'), true);
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {
@@ -292,6 +323,81 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   assert.equal(element.innerHTML.includes('node-detail__table'), true);
   assert.equal(element.innerHTML.includes('Neighbors'), true);
   assert.equal(element.innerHTML.includes('Messages'), true);
+});
+
+test('initializeNodeDetailPage removes legacy filter controls when supported', async () => {
+  const element = {
+    dataset: {
+      nodeReference: JSON.stringify({ nodeId: '!node', fallback: { short_name: 'NODE' } }),
+      privateMode: 'false',
+    },
+    innerHTML: '',
+  };
+  const filterContainer = {
+    removed: false,
+    remove() {
+      this.removed = true;
+    },
+  };
+  const documentStub = {
+    querySelector: selector => {
+      if (selector === '#nodeDetail') return element;
+      if (selector === '.filter-input') return filterContainer;
+      return null;
+    },
+  };
+  const refreshImpl = async () => ({
+    shortName: 'NODE',
+    nodeId: '!node',
+    role: 'CLIENT',
+    neighbors: [],
+    rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
+  });
+  const fetchImpl = async () => ({ status: 404, ok: false });
+  const renderShortHtml = short => `<span class="short-name">${short}</span>`;
+  const result = await initializeNodeDetailPage({
+    document: documentStub,
+    refreshImpl,
+    fetchImpl,
+    renderShortHtml,
+  });
+  assert.equal(result, true);
+  assert.equal(filterContainer.removed, true);
+});
+
+test('initializeNodeDetailPage hides legacy filter controls when removal is unavailable', async () => {
+  const element = {
+    dataset: {
+      nodeReference: JSON.stringify({ nodeId: '!node', fallback: { short_name: 'NODE' } }),
+      privateMode: 'false',
+    },
+    innerHTML: '',
+  };
+  const filterContainer = { hidden: false };
+  const documentStub = {
+    querySelector: selector => {
+      if (selector === '#nodeDetail') return element;
+      if (selector === '.filter-input') return filterContainer;
+      return null;
+    },
+  };
+  const refreshImpl = async () => ({
+    shortName: 'NODE',
+    nodeId: '!node',
+    role: 'CLIENT',
+    neighbors: [],
+    rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
+  });
+  const fetchImpl = async () => ({ status: 404, ok: false });
+  const renderShortHtml = short => `<span class="short-name">${short}</span>`;
+  const result = await initializeNodeDetailPage({
+    document: documentStub,
+    refreshImpl,
+    fetchImpl,
+    renderShortHtml,
+  });
+  assert.equal(result, true);
+  assert.equal(filterContainer.hidden, true);
 });
 
 test('initializeNodeDetailPage reports an error when refresh fails', async () => {
