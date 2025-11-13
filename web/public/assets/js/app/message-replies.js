@@ -308,7 +308,7 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
     }
   }
   const emoji = normaliseEmojiValue(message.emoji);
-  if (emoji) {
+  if (emoji && emoji!=='1') {
     segments.push(renderEmojiHtml(emoji));
   }
 
