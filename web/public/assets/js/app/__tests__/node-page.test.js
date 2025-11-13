@@ -309,7 +309,8 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('data-role="CLIENT"'), true);
   assert.equal(html.includes('Power metrics'), true);
   assert.equal(html.includes('Channel utilisation'), true);
-  assert.equal(html.includes('Environmental metrics'), true);
+  assert.equal(html.includes('Temperature and humidity'), true);
+  assert.equal(html.includes('Barometric pressure'), true);
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {

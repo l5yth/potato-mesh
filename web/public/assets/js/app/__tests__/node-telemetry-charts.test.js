@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 
 import { renderTelemetryChartSections, normalizeTelemetryRecords, __testUtils } from '../node-telemetry-charts.js';
 
-const { createScatterChart } = __testUtils;
+const { createScatterChart, buildStaticTimeAxis } = __testUtils;
 
 test('normalizeTelemetryRecords filters records outside the lookback window and sorts chronologically', () => {
   const now = Date.UTC(2024, 0, 15, 12, 0, 0);
@@ -38,6 +38,17 @@ test('normalizeTelemetryRecords filters records outside the lookback window and 
   assert.ok(points[0].time < points[1].time);
   assert.equal(points[0].battery, 85.5);
   assert.equal(points[1].battery, 90);
+});
+
+test('buildStaticTimeAxis yields midnight-aligned ticks for seven-day span', () => {
+  const nowSeconds = Math.floor(Date.UTC(2024, 0, 15, 12, 0, 0) / 1_000);
+  const { domain, ticks } = buildStaticTimeAxis(nowSeconds);
+
+  assert.equal(domain.min, Math.floor(Date.UTC(2024, 0, 8, 0, 0, 0) / 1_000));
+  assert.equal(domain.max, Math.floor(Date.UTC(2024, 0, 15, 0, 0, 0) / 1_000));
+  assert.equal(ticks.length, 8);
+  assert.equal(ticks[0].label, '2024-01-08');
+  assert.equal(ticks[ticks.length - 1].label, '2024-01-15');
 });
 
 test('renderTelemetryChartSections returns chart markup for available metrics', () => {
@@ -60,14 +71,17 @@ test('renderTelemetryChartSections returns chart markup for available metrics', 
   );
 
   assert.equal(Array.isArray(sections), true);
-  assert.equal(sections.length, 3);
+  assert.equal(sections.length, 4);
   assert.equal(sections[0].includes('data-chart="power"'), true);
   assert.equal(sections[1].includes('data-chart="channel"'), true);
   assert.equal(sections[2].includes('data-chart="environment"'), true);
+  assert.equal(sections[3].includes('data-chart="pressure"'), true);
   assert.equal(sections[0].includes('Battery level (%)'), true);
   assert.equal(sections[1].includes('Utilisation (%)'), true);
+  assert.equal(sections[2].includes('data-series="humidity"'), true);
   assert.equal(sections[2].includes('Humidity (%)'), true);
-  assert.equal(sections[0].includes('Date'), true);
+  assert.equal(sections[3].includes('Pressure (hPa)'), true);
+  assert.equal(sections[0].includes('2024-01-08'), true);
 });
 
 test('createScatterChart renders points with single-axis datasets', () => {
@@ -156,7 +170,47 @@ test('createScatterChart renders dual axis plots when both series are present', 
   assert.equal(svg.includes('fill="#fedcba"'), true);
 });
 
-test('environment chart adds humidity axis and shared utilisation axis', () => {
+test('createScatterChart applies explicit time ticks and domains', () => {
+  const svg = createScatterChart({
+    id: 'explicit',
+    description: 'Explicit domain test',
+    xLabel: 'Date',
+    xDomain: { min: 0, max: 10 },
+    xTicks: [
+      { value: 0, label: 'Day 0' },
+      { value: 5, label: 'Day 5' },
+      { value: 10, label: 'Day 10' },
+    ],
+    series: [
+      {
+        id: 'series',
+        label: 'Series',
+        color: '#abcdef',
+        axis: 'axis',
+        points: [
+          { time: 2, value: 1 },
+          { time: 8, value: 2 },
+        ],
+        line: { opacity: 0.5, width: 1 },
+      },
+    ],
+    axes: [
+      {
+        id: 'axis',
+        position: 'left',
+        label: 'Axis',
+        formatter: value => value.toFixed(0),
+        domain: { min: 0, max: 5 },
+      },
+    ],
+  });
+
+  assert.equal(svg.includes('Day 0'), true);
+  assert.equal(svg.includes('Day 5'), true);
+  assert.equal(svg.includes('Day 10'), true);
+});
+
+test('environment and pressure charts expose fixed domains with overlays', () => {
   const now = Date.UTC(2024, 0, 15, 12, 0, 0);
   const timestamp = Math.floor(now / 1_000) - 120;
   const sections = renderTelemetryChartSections(
@@ -189,11 +243,20 @@ test('environment chart adds humidity axis and shared utilisation axis', () => {
   assert.ok(environment);
   assert.equal(environment.includes('Humidity (%)'), true);
   assert.equal(environment.includes('data-series="humidity"'), true);
-  assert.equal(environment.includes('stroke-opacity="0.5"'), true);
+  const humidityDotCount = (environment.match(/data-series="humidity"/g) ?? []).length;
+  assert.ok(humidityDotCount >= 2);
+  assert.equal(environment.includes('data-series="pressure"'), false);
+
+  const pressureChart = sections.find(section => section.includes('data-chart="pressure"'));
+  assert.ok(pressureChart);
+  const pressureLineCount = (pressureChart.match(/stroke-opacity="0.5"/g) ?? []).length;
+  assert.ok(pressureLineCount >= 1);
+  assert.equal(pressureChart.includes('Pressure (hPa)'), true);
 
   const channel = sections.find(section => section.includes('data-chart="channel"'));
   assert.ok(channel);
   const utilisationAxisCount = (channel.match(/Utilisation \(%\)/g) ?? []).length;
   assert.equal(utilisationAxisCount, 1);
+  assert.ok(channel.includes('0.0'));
 });
 

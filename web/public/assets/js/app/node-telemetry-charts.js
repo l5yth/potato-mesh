@@ -15,7 +15,8 @@
  */
 
 const SECONDS_IN_DAY = 86_400;
-const LOOKBACK_SECONDS = SECONDS_IN_DAY * 7;
+const LOOKBACK_DAYS = 7;
+const LOOKBACK_SECONDS = SECONDS_IN_DAY * LOOKBACK_DAYS;
 const DEFAULT_WIDTH = 480;
 const DEFAULT_HEIGHT = 320;
 const DEFAULT_MARGIN = Object.freeze({ top: 16, right: 64, bottom: 48, left: 64 });
@@ -33,6 +34,40 @@ const dateFormatter = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit',
 });
+
+/**
+ * Determine the midnight boundary (00:00) in seconds for the provided timestamp.
+ *
+ * @param {number} timestampSeconds Timestamp expressed in seconds since the epoch.
+ * @returns {number} Timestamp clamped to midnight in seconds.
+ */
+function startOfDaySeconds(timestampSeconds) {
+  const normalized = Math.floor(Number(timestampSeconds));
+  if (!Number.isFinite(normalized)) {
+    return 0;
+  }
+  return normalized - (normalized % SECONDS_IN_DAY);
+}
+
+/**
+ * Compute a fixed seven-day time domain aligned to midnight boundaries with
+ * human-readable tick labels.
+ *
+ * @param {number} nowSeconds Reference timestamp in seconds since the epoch.
+ * @returns {{ domain: { min: number, max: number }, ticks: Array<{ value: number, label: string }> }}
+ *   Static domain and tick descriptors.
+ */
+function buildStaticTimeAxis(nowSeconds) {
+  const reference = startOfDaySeconds(nowSeconds);
+  const domainStart = reference - LOOKBACK_SECONDS;
+  const domainEnd = reference;
+  const ticks = [];
+  for (let offset = 0; offset <= LOOKBACK_DAYS; offset += 1) {
+    const value = domainStart + offset * SECONDS_IN_DAY;
+    ticks.push({ value, label: dateFormatter.format(new Date(value * 1_000)) });
+  }
+  return { domain: { min: domainStart, max: domainEnd }, ticks };
+}
 
 /**
  * Safely escape HTML-sensitive characters.
@@ -133,6 +168,23 @@ function computeDomain(values) {
     const padding = (max - min) * 0.05;
     min -= padding;
     max += padding;
+  }
+  return { min, max };
+}
+
+/**
+ * Validate a provided numeric domain.
+ *
+ * @param {{ min: number, max: number }|null|undefined} candidate Domain candidate.
+ * @returns {{ min: number, max: number }|null} Normalised domain or ``null`` when invalid.
+ */
+function normaliseDomain(candidate) {
+  if (!candidate || typeof candidate !== 'object') {
+    return null;
+  }
+  const { min, max } = candidate;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
+    return null;
   }
   return { min, max };
 }
@@ -285,19 +337,24 @@ function createScatterChart(config) {
     margin = DEFAULT_MARGIN,
     leftTickFormatter = value => numberFormatter.format(value),
     rightTickFormatter = value => numberFormatter.format(value),
+    xDomain: explicitXDomain = null,
+    xTicks: explicitXTicks = null,
   } = config;
 
   const activeSeries = series.filter(item => Array.isArray(item.points) && item.points.length > 0);
   if (activeSeries.length === 0) return '';
 
-  const xValues = [];
-  for (const seriesEntry of activeSeries) {
-    if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
-    for (const point of seriesEntry.points) {
-      xValues.push(point.time);
+  let xDomain = normaliseDomain(explicitXDomain);
+  if (!xDomain) {
+    const xValues = [];
+    for (const seriesEntry of activeSeries) {
+      if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
+      for (const point of seriesEntry.points) {
+        xValues.push(point.time);
+      }
     }
+    xDomain = computeDomain(xValues);
   }
-  const xDomain = computeDomain(xValues);
   if (!xDomain) return '';
 
   const axisDefinitions = [];
@@ -312,9 +369,18 @@ function createScatterChart(config) {
         offset: Number.isFinite(axis.offset) ? axis.offset : 0,
         tickPadding: Number.isFinite(axis.tickPadding) ? axis.tickPadding : undefined,
         labelOffset: Number.isFinite(axis.labelOffset) ? axis.labelOffset : undefined,
-        textAnchor: axis.textAnchor === 'middle' ? 'middle' : axis.textAnchor === 'start' ? 'start' : axis.textAnchor === 'end' ? 'end' : undefined,
+        textAnchor: axis.textAnchor === 'middle'
+          ? 'middle'
+          : axis.textAnchor === 'start'
+            ? 'start'
+            : axis.textAnchor === 'end'
+              ? 'end'
+              : undefined,
         drawGridLines: axis.drawGridLines !== false,
         showAxisLine: axis.showAxisLine !== false,
+        renderTicks: axis.renderTicks !== false,
+        renderLabel: axis.renderLabel !== false,
+        domain: normaliseDomain(axis.domain),
       });
     }
   } else {
@@ -372,14 +438,17 @@ function createScatterChart(config) {
 
   for (const axis of resolvedAxes) {
     const { definition, series: axisSeries } = axis;
-    const values = [];
-    for (const seriesEntry of axisSeries) {
-      if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
-      for (const point of seriesEntry.points) {
-        values.push(point.value);
+    let domain = definition.domain;
+    if (!domain) {
+      const values = [];
+      for (const seriesEntry of axisSeries) {
+        if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
+        for (const point of seriesEntry.points) {
+          values.push(point.value);
+        }
       }
+      domain = computeDomain(values);
     }
-    const domain = computeDomain(values);
     if (!domain) {
       continue;
     }
@@ -391,7 +460,9 @@ function createScatterChart(config) {
       : margin.left + (definition.offset ?? 0);
     const tickFormatter = definition.formatter
       || (definition.position === 'right' ? rightTickFormatter : leftTickFormatter);
-    const ticks = generateNumericTicks(domain.min, domain.max, VALUE_TICK_COUNT, tickFormatter);
+    const ticks = definition.renderTicks === false
+      ? []
+      : generateNumericTicks(domain.min, domain.max, VALUE_TICK_COUNT, tickFormatter);
     const tickPadding = Number.isFinite(definition.tickPadding) ? definition.tickPadding : 8;
     const labelOffset = Number.isFinite(definition.labelOffset) ? definition.labelOffset : 36;
     const textAnchor = definition.textAnchor
@@ -415,13 +486,15 @@ function createScatterChart(config) {
           );
         }
       }
-      const tickX = definition.position === 'right' ? axisX + tickPadding : axisX - tickPadding;
-      axisTicks.push(
-        `<text class="telemetry-chart__tick telemetry-chart__tick--y" x="${tickX}" y="${y}" text-anchor="${textAnchor}" dominant-baseline="middle">${escapeHtml(tick.label)}</text>`,
-      );
+      if (definition.renderTicks !== false) {
+        const tickX = definition.position === 'right' ? axisX + tickPadding : axisX - tickPadding;
+        axisTicks.push(
+          `<text class="telemetry-chart__tick telemetry-chart__tick--y" x="${tickX}" y="${y}" text-anchor="${textAnchor}" dominant-baseline="middle">${escapeHtml(tick.label)}</text>`,
+        );
+      }
     }
 
-    if (definition.label && definition.label.trim()) {
+    if (definition.renderLabel !== false && definition.label && definition.label.trim()) {
       const labelX = definition.position === 'right'
         ? axisX + labelOffset
         : axisX - labelOffset;
@@ -438,7 +511,9 @@ function createScatterChart(config) {
 
   const xScale = scaleLinear(xDomain, { min: margin.left, max: width - margin.right });
   const xAxisY = height - margin.bottom;
-  const xTicks = generateTimeTicks(xDomain.min, xDomain.max, TIME_TICK_COUNT);
+  const xTicks = Array.isArray(explicitXTicks) && explicitXTicks.length > 0
+    ? explicitXTicks
+    : generateTimeTicks(xDomain.min, xDomain.max, TIME_TICK_COUNT);
   const xTickMarkup = xTicks
     .map(tick => {
       const x = xScale(tick.value);
@@ -579,7 +654,10 @@ function renderChartSection(definition) {
  * @returns {Array<string>} Rendered telemetry sections.
  */
 export function renderTelemetryChartSections(records, options = {}) {
-  const points = normalizeTelemetryRecords(records, options);
+  const referenceNow = options && Number.isFinite(options.now) ? options.now : Date.now();
+  const nowSeconds = Math.floor(referenceNow / 1_000);
+  const timeAxis = buildStaticTimeAxis(nowSeconds);
+  const points = normalizeTelemetryRecords(records, { now: referenceNow });
   if (points.length === 0) return [];
 
   const powerSeries = [
@@ -598,6 +676,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       label: 'Voltage',
       color: '#9ebcda',
       axis: 'power-voltage',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.voltage != null)
         .map(point => ({ time: point.time, value: point.voltage, iso: point.iso })),
@@ -610,6 +689,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       label: 'Channel utilisation',
       color: '#2ca25f',
       axis: 'channel-utilisation',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.channelUtilization != null)
         .map(point => ({ time: point.time, value: point.channelUtilization, iso: point.iso })),
@@ -619,6 +699,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       label: 'Air utilisation (TX)',
       color: '#99d8c9',
       axis: 'channel-utilisation',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.airUtilTx != null)
         .map(point => ({ time: point.time, value: point.airUtilTx, iso: point.iso })),
@@ -646,11 +727,15 @@ export function renderTelemetryChartSections(records, options = {}) {
         .filter(point => point.humidity != null)
         .map(point => ({ time: point.time, value: point.humidity, iso: point.iso })),
     },
+  ];
+
+  const pressureSeries = [
     {
       id: 'pressure',
       label: 'Pressure',
       color: '#ffffbf',
-      axis: 'environment-pressure',
+      axis: 'pressure',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.pressure != null)
         .map(point => ({ time: point.time, value: point.pressure, iso: point.iso })),
@@ -664,6 +749,8 @@ export function renderTelemetryChartSections(records, options = {}) {
     title: 'Power metrics',
     description: 'Battery level and voltage readings from the last seven days.',
     xLabel: 'Date',
+    xDomain: timeAxis.domain,
+    xTicks: timeAxis.ticks,
     series: powerSeries,
     axes: [
       {
@@ -672,6 +759,7 @@ export function renderTelemetryChartSections(records, options = {}) {
         label: 'Battery level (%)',
         formatter: value => value.toFixed(1),
         drawGridLines: true,
+        domain: { min: 0, max: 100 },
       },
       {
         id: 'power-voltage',
@@ -679,6 +767,7 @@ export function renderTelemetryChartSections(records, options = {}) {
         label: 'Voltage (V)',
         formatter: value => value.toFixed(2),
         drawGridLines: false,
+        domain: { min: 0, max: 6 },
       },
     ],
   });
@@ -691,6 +780,8 @@ export function renderTelemetryChartSections(records, options = {}) {
     title: 'Channel utilisation',
     description: 'Channel and air utilisation for the last seven days.',
     xLabel: 'Date',
+    xDomain: timeAxis.domain,
+    xTicks: timeAxis.ticks,
     series: channelSeries,
     axes: [
       {
@@ -699,6 +790,7 @@ export function renderTelemetryChartSections(records, options = {}) {
         label: 'Utilisation (%)',
         formatter: value => value.toFixed(1),
         drawGridLines: true,
+        domain: { min: 0, max: 100 },
       },
     ],
   });
@@ -708,9 +800,11 @@ export function renderTelemetryChartSections(records, options = {}) {
 
   const environmentSection = renderChartSection({
     id: 'environment',
-    title: 'Environmental metrics',
-    description: 'Temperature, humidity, and pressure over the last seven days.',
+    title: 'Temperature and humidity',
+    description: 'Temperature and humidity over the last seven days.',
     xLabel: 'Date',
+    xDomain: timeAxis.domain,
+    xTicks: timeAxis.ticks,
     series: environmentSeries,
     axes: [
       {
@@ -719,30 +813,43 @@ export function renderTelemetryChartSections(records, options = {}) {
         label: 'Temperature (°C)',
         formatter: value => value.toFixed(1),
         drawGridLines: true,
+        domain: { min: -20, max: 40 },
       },
       {
         id: 'environment-humidity',
         position: 'right',
-        offset: -48,
         label: 'Humidity (%)',
         formatter: value => value.toFixed(0),
-        tickPadding: -6,
-        labelOffset: -28,
-        textAnchor: 'end',
         drawGridLines: false,
-        showAxisLine: false,
-      },
-      {
-        id: 'environment-pressure',
-        position: 'right',
-        label: 'Pressure (hPa)',
-        formatter: value => value.toFixed(0),
-        drawGridLines: false,
+        domain: { min: 0, max: 100 },
       },
     ],
   });
   if (environmentSection) {
     sections.push(environmentSection);
+  }
+
+  const pressureSection = renderChartSection({
+    id: 'pressure',
+    title: 'Barometric pressure',
+    description: 'Barometric pressure readings from the last seven days.',
+    xLabel: 'Date',
+    xDomain: timeAxis.domain,
+    xTicks: timeAxis.ticks,
+    series: pressureSeries,
+    axes: [
+      {
+        id: 'pressure',
+        position: 'left',
+        label: 'Pressure (hPa)',
+        formatter: value => value.toFixed(0),
+        drawGridLines: true,
+        domain: { min: 800, max: 1_100 },
+      },
+    ],
+  });
+  if (pressureSection) {
+    sections.push(pressureSection);
   }
 
   return sections;
@@ -753,9 +860,12 @@ export const __testUtils = {
   normaliseTelemetryEntry,
   normalizeTelemetryRecords,
   computeDomain,
+  normaliseDomain,
   scaleLinear,
   generateNumericTicks,
   generateTimeTicks,
+  startOfDaySeconds,
+  buildStaticTimeAxis,
   createScatterChart,
   renderChartSection,
 };
