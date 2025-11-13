@@ -27,11 +27,18 @@ const {
   formatVoltage,
   formatUptime,
   formatTimestamp,
+  formatMessageTimestamp,
   formatHardwareModel,
   formatCoordinate,
   formatRelativeSeconds,
   formatDurationSeconds,
   formatSnr,
+  padTwo,
+  normalizeNodeId,
+  registerRoleCandidate,
+  lookupRole,
+  seedNeighborRoleIndex,
+  buildNeighborRoleIndex,
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
@@ -54,6 +61,33 @@ test('format helpers normalise values as expected', () => {
   assert.equal(formatVoltage(4.105), '4.11 V');
   assert.equal(formatUptime(3661), '1h 1m 1s');
   assert.match(formatTimestamp(1_700_000_000), /T/);
+  assert.equal(padTwo(3), '03');
+  assert.equal(normalizeNodeId('!NODE'), '!node');
+  const messageTimestamp = formatMessageTimestamp(1_700_000_000);
+  assert.equal(messageTimestamp.startsWith('2023-'), true);
+});
+
+test('role lookup helpers normalise identifiers and register candidates', () => {
+  const index = { byId: new Map(), byNum: new Map() };
+  registerRoleCandidate(index, { identifier: '!NODE', numericId: 77, role: 'ROUTER' });
+  assert.equal(index.byId.get('!node'), 'ROUTER');
+  assert.equal(index.byNum.get(77), 'ROUTER');
+  assert.equal(lookupRole(index, { identifier: '!node' }), 'ROUTER');
+  assert.equal(lookupRole(index, { identifier: '!NODE' }), 'ROUTER');
+  assert.equal(lookupRole(index, { numericId: 77 }), 'ROUTER');
+  assert.equal(lookupRole(index, { identifier: '!missing' }), null);
+});
+
+test('seedNeighborRoleIndex captures known roles and missing identifiers', () => {
+  const index = { byId: new Map(), byNum: new Map() };
+  const missing = seedNeighborRoleIndex(index, [
+    { neighbor_id: '!ALLY', neighbor_role: 'CLIENT' },
+    { node_id: '!self', node_role: 'ROUTER' },
+    { neighbor_id: '!unknown' },
+  ]);
+  assert.equal(index.byId.get('!ally'), 'CLIENT');
+  assert.equal(index.byId.get('!self'), 'ROUTER');
+  assert.equal(missing.has('!unknown'), true);
 });
 
 test('additional format helpers provide table friendly output', () => {
@@ -86,8 +120,8 @@ test('additional format helpers provide table friendly output', () => {
       {
         text: 'hello',
         rx_time: 1_700_000_400,
-        lora_freq: 915_000_000,
-        modem_preset: 'LongFast',
+        region_frequency: 868,
+        modem_preset: 'MediumFast',
         channel_name: 'Primary',
         node: { short_name: 'SRCE', role: 'ROUTER', node_id: '!src' },
       },
@@ -98,12 +132,13 @@ test('additional format helpers provide table friendly output', () => {
   );
   assert.equal(messagesHtml.includes('hello'), true);
   assert.equal(messagesHtml.includes('😊'), true);
-  assert.equal(messagesHtml.includes('[2023'), true);
-  assert.equal(messagesHtml.includes('[915.000 MHz]'), true);
-  assert.equal(messagesHtml.includes('[LongFast]'), true);
+  assert.equal(messagesHtml.includes('[2023-'), true);
+  assert.equal(messagesHtml.includes('[868]'), true);
+  assert.equal(messagesHtml.includes('[MF]'), true);
   assert.equal(messagesHtml.includes('[Primary]'), true);
   assert.equal(messagesHtml.includes('data-role="ROUTER"'), true);
-  assert.equal(messagesHtml.includes('[—][—][—]'), true);
+  assert.equal(messagesHtml.includes('&nbsp;&nbsp;&nbsp;'), true);
+  assert.equal(messagesHtml.includes('&nbsp;&nbsp;'), true);
   assert.equal(messagesHtml.includes('data-role="CLIENT"'), true);
 });
 
@@ -153,6 +188,26 @@ test('renderNeighborGroups renders grouped neighbour lists', () => {
   assert.equal(html.includes('5.3 dB'), true);
   assert.equal(html.includes('data-role="ROUTER"'), true);
   assert.equal(html.includes('data-role="REPEATER"'), true);
+});
+
+test('buildNeighborRoleIndex fetches missing neighbor roles from the API', async () => {
+  const neighbors = [
+    { neighbor_id: '!ally', neighbor_short_name: 'ALLY' },
+  ];
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    return {
+      status: 200,
+      ok: true,
+      json: async () => ({ node_id: '!ally', role: 'ROUTER', node_num: 99 }),
+    };
+  };
+  const index = await buildNeighborRoleIndex({ nodeId: '!self', role: 'CLIENT' }, neighbors, { fetchImpl });
+  assert.equal(index.byId.get('!self'), 'CLIENT');
+  assert.equal(index.byId.get('!ally'), 'ROUTER');
+  assert.equal(index.byNum.get(99), 'ROUTER');
+  assert.equal(calls.some(url => url.startsWith('/api/nodes/')), true);
 });
 
 test('renderSingleNodeTable renders a condensed table for the node', () => {
@@ -306,11 +361,23 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
       rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
     };
   };
-  const fetchImpl = async () => ({
-    status: 200,
-    ok: true,
-    json: async () => [{ text: 'hello', rx_time: 1_700_000_222 }],
-  });
+  const fetchImpl = async url => {
+    if (url.startsWith('/api/messages/')) {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => [{ text: 'hello', rx_time: 1_700_000_222 }],
+      };
+    }
+    if (url.startsWith('/api/nodes/')) {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ node_id: '!ally', role: 'ROUTER' }),
+      };
+    }
+    return { status: 404, ok: false, json: async () => ({}) };
+  };
   const renderShortHtml = short => `<span class="short-name">${short}</span>`;
   const result = await initializeNodeDetailPage({
     document: documentStub,

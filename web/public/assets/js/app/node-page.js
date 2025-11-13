@@ -16,6 +16,12 @@
 
 import { refreshNodeInformation } from './node-details.js';
 import {
+  extractChatMessageMetadata,
+  formatChatChannelTag,
+  formatChatMessagePrefix,
+  formatChatPresetTag,
+} from './chat-format.js';
+import {
   fmtAlt,
   fmtHumidity,
   fmtPressure,
@@ -27,6 +33,7 @@ const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
 const MESSAGE_LIMIT = 50;
 const RENDER_WAIT_INTERVAL_MS = 20;
 const RENDER_WAIT_TIMEOUT_MS = 500;
+const NEIGHBOR_ROLE_FETCH_CONCURRENCY = 4;
 
 /**
  * Convert a candidate value into a trimmed string.
@@ -162,6 +169,50 @@ function formatTimestamp(value, isoFallback = null) {
 }
 
 /**
+ * Pad a numeric value with leading zeros.
+ *
+ * @param {number} value Numeric value to pad.
+ * @returns {string} Padded string representation.
+ */
+function padTwo(value) {
+  return String(Math.trunc(Math.abs(Number(value)))).padStart(2, '0');
+}
+
+/**
+ * Format a timestamp for the message log using ``YYYY-MM-DD HH:MM:SS``.
+ *
+ * @param {*} value Seconds since the epoch.
+ * @param {string|null} isoFallback ISO timestamp to prefer when available.
+ * @returns {string|null} Formatted timestamp string or ``null``.
+ */
+function formatMessageTimestamp(value, isoFallback = null) {
+  const iso = stringOrNull(isoFallback);
+  let date = null;
+  if (iso) {
+    const candidate = new Date(iso);
+    if (!Number.isNaN(candidate.getTime())) {
+      date = candidate;
+    }
+  }
+  if (!date) {
+    const numeric = numberOrNull(value);
+    if (numeric == null) return null;
+    const candidate = new Date(numeric * 1000);
+    if (Number.isNaN(candidate.getTime())) {
+      return null;
+    }
+    date = candidate;
+  }
+  const year = date.getFullYear();
+  const month = padTwo(date.getMonth() + 1);
+  const day = padTwo(date.getDate());
+  const hours = padTwo(date.getHours());
+  const minutes = padTwo(date.getMinutes());
+  const seconds = padTwo(date.getSeconds());
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+/**
 /**
  * Format a hardware model string while hiding unset placeholders.
  *
@@ -255,6 +306,227 @@ function formatSnr(value) {
   const numeric = numberOrNull(value);
   if (numeric == null) return '';
   return `${numeric.toFixed(1)} dB`;
+}
+
+/**
+ * Normalise a node identifier for consistent lookups.
+ *
+ * @param {*} identifier Candidate identifier.
+ * @returns {string|null} Lower-case identifier or ``null`` when invalid.
+ */
+function normalizeNodeId(identifier) {
+  const value = stringOrNull(identifier);
+  return value ? value.toLowerCase() : null;
+}
+
+/**
+ * Register a role candidate within the supplied index.
+ *
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
+ * @param {{ identifier?: *, numericId?: *, role?: * }} payload Role candidate payload.
+ * @returns {void}
+ */
+function registerRoleCandidate(index, { identifier = null, numericId = null, role = null } = {}) {
+  if (!index || typeof index !== 'object') return;
+  const resolvedRole = stringOrNull(role);
+  if (!resolvedRole) return;
+  const idKey = normalizeNodeId(identifier);
+  if (idKey && !index.byId.has(idKey)) {
+    index.byId.set(idKey, resolvedRole);
+  }
+  const numKey = numberOrNull(numericId);
+  if (numKey != null && !index.byNum.has(numKey)) {
+    index.byNum.set(numKey, resolvedRole);
+  }
+}
+
+/**
+ * Resolve a role from the provided index using identifier or numeric keys.
+ *
+ * @param {{byId?: Map<string, string>, byNum?: Map<number, string>}|null} index Role lookup maps.
+ * @param {{ identifier?: *, numericId?: * }} payload Lookup payload.
+ * @returns {string|null} Resolved role string or ``null`` when unavailable.
+ */
+function lookupRole(index, { identifier = null, numericId = null } = {}) {
+  if (!index || typeof index !== 'object') return null;
+  const idKey = normalizeNodeId(identifier);
+  if (idKey && index.byId instanceof Map && index.byId.has(idKey)) {
+    return index.byId.get(idKey) ?? null;
+  }
+  const numKey = numberOrNull(numericId);
+  if (numKey != null && index.byNum instanceof Map && index.byNum.has(numKey)) {
+    return index.byNum.get(numKey) ?? null;
+  }
+  return null;
+}
+
+/**
+ * Gather role hints from neighbor entries into the provided index.
+ *
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
+ * @param {Array<Object>} neighbors Raw neighbor entries.
+ * @returns {Set<string>} Normalized identifiers missing from the index.
+ */
+function seedNeighborRoleIndex(index, neighbors) {
+  const missing = new Set();
+  if (!Array.isArray(neighbors)) {
+    return missing;
+  }
+  neighbors.forEach(entry => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    registerRoleCandidate(index, {
+      identifier: entry.neighbor_id ?? entry.neighborId,
+      numericId: entry.neighbor_num ?? entry.neighborNum,
+      role: entry.neighbor_role ?? entry.neighborRole,
+    });
+    registerRoleCandidate(index, {
+      identifier: entry.node_id ?? entry.nodeId,
+      numericId: entry.node_num ?? entry.nodeNum,
+      role: entry.node_role ?? entry.nodeRole,
+    });
+    if (entry.neighbor && typeof entry.neighbor === 'object') {
+      registerRoleCandidate(index, {
+        identifier: entry.neighbor.node_id ?? entry.neighbor.nodeId ?? entry.neighbor.id,
+        numericId: entry.neighbor.node_num ?? entry.neighbor.nodeNum ?? entry.neighbor.num,
+        role: entry.neighbor.role ?? entry.neighbor.roleName,
+      });
+    }
+    if (entry.node && typeof entry.node === 'object') {
+      registerRoleCandidate(index, {
+        identifier: entry.node.node_id ?? entry.node.nodeId ?? entry.node.id,
+        numericId: entry.node.node_num ?? entry.node.nodeNum ?? entry.node.num,
+        role: entry.node.role ?? entry.node.roleName,
+      });
+    }
+    const candidateIds = [
+      entry.neighbor_id,
+      entry.neighborId,
+      entry.node_id,
+      entry.nodeId,
+      entry.neighbor?.node_id,
+      entry.neighbor?.nodeId,
+      entry.node?.node_id,
+      entry.node?.nodeId,
+    ];
+    candidateIds.forEach(identifier => {
+      const normalized = normalizeNodeId(identifier);
+      if (normalized && !index.byId.has(normalized)) {
+        missing.add(normalized);
+      }
+    });
+  });
+  return missing;
+}
+
+/**
+ * Fetch missing neighbor role assignments using the nodes API.
+ *
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
+ * @param {Map<string, string>} fetchIdMap Mapping of normalized identifiers to raw fetch identifiers.
+ * @param {Function} fetchImpl Fetch implementation.
+ * @returns {Promise<void>} Completion promise.
+ */
+async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
+  if (!(fetchIdMap instanceof Map) || fetchIdMap.size === 0) {
+    return;
+  }
+  const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
+  if (typeof fetchFn !== 'function') {
+    return;
+  }
+  const tasks = [];
+  for (const [normalized, raw] of fetchIdMap.entries()) {
+    const task = (async () => {
+      try {
+        const response = await fetchFn(`/api/nodes/${encodeURIComponent(raw)}`, DEFAULT_FETCH_OPTIONS);
+        if (response.status === 404) {
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load node information for ${raw} (HTTP ${response.status})`);
+        }
+        const payload = await response.json();
+        registerRoleCandidate(index, {
+          identifier:
+            payload?.node_id
+            ?? payload?.nodeId
+            ?? payload?.id
+            ?? raw,
+          numericId: payload?.node_num ?? payload?.nodeNum ?? payload?.num ?? null,
+          role: payload?.role ?? payload?.node_role ?? payload?.nodeRole ?? null,
+        });
+      } catch (error) {
+        console.warn('Failed to resolve neighbor role', error);
+      }
+    })();
+    tasks.push(task);
+  }
+  if (tasks.length === 0) return;
+  const batches = [];
+  for (let i = 0; i < tasks.length; i += NEIGHBOR_ROLE_FETCH_CONCURRENCY) {
+    batches.push(tasks.slice(i, i + NEIGHBOR_ROLE_FETCH_CONCURRENCY));
+  }
+  for (const batch of batches) {
+    // eslint-disable-next-line no-await-in-loop
+    await Promise.all(batch);
+  }
+}
+
+/**
+ * Build an index of neighbor roles using cached data and API lookups.
+ *
+ * @param {Object} node Normalised node payload.
+ * @param {Array<Object>} neighbors Neighbor entries for the node.
+ * @param {{ fetchImpl?: Function }} [options] Fetch overrides.
+ * @returns {Promise<{byId: Map<string, string>, byNum: Map<number, string>}>>} Role index maps.
+ */
+async function buildNeighborRoleIndex(node, neighbors, { fetchImpl } = {}) {
+  const index = { byId: new Map(), byNum: new Map() };
+  registerRoleCandidate(index, {
+    identifier: node?.nodeId ?? node?.node_id ?? node?.id ?? null,
+    numericId: node?.nodeNum ?? node?.node_num ?? node?.num ?? null,
+    role: node?.role ?? node?.rawSources?.node?.role ?? null,
+  });
+  if (node?.rawSources?.node && typeof node.rawSources.node === 'object') {
+    registerRoleCandidate(index, {
+      identifier: node.rawSources.node.node_id ?? node.rawSources.node.nodeId ?? null,
+      numericId: node.rawSources.node.node_num ?? node.rawSources.node.nodeNum ?? null,
+      role: node.rawSources.node.role ?? node.rawSources.node.node_role ?? null,
+    });
+  }
+
+  const missingNormalized = seedNeighborRoleIndex(index, neighbors);
+  if (missingNormalized.size === 0) {
+    return index;
+  }
+
+  const fetchIdMap = new Map();
+  if (Array.isArray(neighbors)) {
+    neighbors.forEach(entry => {
+      if (!entry || typeof entry !== 'object') return;
+      const candidates = [
+        entry.neighbor_id,
+        entry.neighborId,
+        entry.node_id,
+        entry.nodeId,
+        entry.neighbor?.node_id,
+        entry.neighbor?.nodeId,
+        entry.node?.node_id,
+        entry.node?.nodeId,
+      ];
+      candidates.forEach(identifier => {
+        const normalized = normalizeNodeId(identifier);
+        if (normalized && missingNormalized.has(normalized) && !fetchIdMap.has(normalized)) {
+          fetchIdMap.set(normalized, identifier);
+        }
+      });
+    });
+  }
+
+  await fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl);
+  return index;
 }
 
 /**
@@ -382,7 +654,7 @@ function renderRoleAwareBadge(renderShortHtml, {
  * @param {Function} renderShortHtml Badge rendering implementation.
  * @returns {string} HTML snippet for the badge or an empty string.
  */
-function renderNeighborBadge(entry, perspective, renderShortHtml) {
+function renderNeighborBadge(entry, perspective, renderShortHtml, roleIndex = null) {
   if (!entry || typeof entry !== 'object' || typeof renderShortHtml !== 'function') {
     return '';
   }
@@ -426,6 +698,19 @@ function renderNeighborBadge(entry, perspective, renderShortHtml) {
     );
   }
 
+  if (!role) {
+    const sourceId = source && typeof source === 'object'
+      ? source.node_id ?? source.nodeId ?? source.id ?? null
+      : null;
+    const sourceNum = source && typeof source === 'object'
+      ? source.node_num ?? source.nodeNum ?? source.num ?? null
+      : null;
+    role = lookupRole(roleIndex, {
+      identifier: identifier ?? sourceId,
+      numericId: numericId ?? sourceNum,
+    });
+  }
+
   return renderRoleAwareBadge(renderShortHtml, {
     shortName,
     longName,
@@ -445,13 +730,13 @@ function renderNeighborBadge(entry, perspective, renderShortHtml) {
  * @param {Function} renderShortHtml Badge rendering implementation.
  * @returns {string} HTML markup or an empty string when no entries render.
  */
-function renderNeighborGroup(title, entries, perspective, renderShortHtml) {
+function renderNeighborGroup(title, entries, perspective, renderShortHtml, roleIndex = null) {
   if (!Array.isArray(entries) || entries.length === 0) {
     return '';
   }
   const items = entries
     .map(entry => {
-      const badgeHtml = renderNeighborBadge(entry, perspective, renderShortHtml);
+      const badgeHtml = renderNeighborBadge(entry, perspective, renderShortHtml, roleIndex);
       if (!badgeHtml) {
         return null;
       }
@@ -477,10 +762,10 @@ function renderNeighborGroup(title, entries, perspective, renderShortHtml) {
  * @param {Function} renderShortHtml Badge rendering implementation.
  * @returns {string} HTML markup for the neighbour section.
  */
-function renderNeighborGroups(node, neighbors, renderShortHtml) {
+function renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex = null } = {}) {
   const { heardBy, weHear } = categoriseNeighbors(node, neighbors);
-  const heardByHtml = renderNeighborGroup('Heard by', heardBy, 'heardBy', renderShortHtml);
-  const weHearHtml = renderNeighborGroup('We hear', weHear, 'weHear', renderShortHtml);
+  const heardByHtml = renderNeighborGroup('Heard by', heardBy, 'heardBy', renderShortHtml, roleIndex);
+  const weHearHtml = renderNeighborGroup('We hear', weHear, 'weHear', renderShortHtml, roleIndex);
   const groups = [heardByHtml, weHearHtml].filter(section => stringOrNull(section));
   if (groups.length === 0) {
     return '';
@@ -607,26 +892,33 @@ function renderMessages(messages, renderShortHtml, node) {
       const text = stringOrNull(message.text) || stringOrNull(message.emoji);
       if (!text) return null;
 
-      const timestamp = stringOrNull(formatTimestamp(message.rx_time, message.rx_iso));
-      const frequency = stringOrNull(
-        formatFrequency(message.lora_freq ?? message.loraFreq ?? message.frequency ?? message.loraFrequency),
-      );
-      const preset = stringOrNull(
-        message.modem_preset ?? message.modemPreset ?? message.preset ?? message.modemPresetCode ?? null,
-      );
-      let channel = stringOrNull(message.channel_name ?? message.channelName ?? message.channel_label ?? null);
-      if (!channel) {
-        const numericChannel = numberOrNull(message.channel);
-        if (numericChannel != null) {
-          channel = String(numericChannel);
+      const timestamp = formatMessageTimestamp(message.rx_time, message.rx_iso);
+      const metadata = extractChatMessageMetadata(message);
+      if (!metadata.channelName) {
+        const fallbackChannel = stringOrNull(
+          message.channel_name
+            ?? message.channelName
+            ?? message.channel_label
+            ?? null,
+        );
+        if (fallbackChannel) {
+          metadata.channelName = fallbackChannel;
         } else {
-          channel = stringOrNull(message.channel);
+          const numericChannel = numberOrNull(message.channel);
+          if (numericChannel != null) {
+            metadata.channelName = String(numericChannel);
+          } else if (stringOrNull(message.channel)) {
+            metadata.channelName = stringOrNull(message.channel);
+          }
         }
       }
 
-      const metadataSegments = [timestamp, frequency, preset, channel]
-        .map(value => `[${value ? escapeHtml(value) : '—'}]`)
-        .join('');
+      const prefix = formatChatMessagePrefix({
+        timestamp: escapeHtml(timestamp ?? ''),
+        frequency: metadata.frequency ? escapeHtml(metadata.frequency) : null,
+      });
+      const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
+      const channelTag = formatChatChannelTag({ channelName: metadata.channelName });
 
       const messageNode = message.node && typeof message.node === 'object' ? message.node : null;
       const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
@@ -652,7 +944,7 @@ function renderMessages(messages, renderShortHtml, node) {
         source: messageNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<li>${metadataSegments} ${badgeHtml}, ${escapeHtml(text)}</li>`;
+      return `<li>${prefix}${presetTag}${channelTag} ${badgeHtml}, ${escapeHtml(text)}</li>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
@@ -670,7 +962,12 @@ function renderMessages(messages, renderShortHtml, node) {
  * }} options Rendering options.
  * @returns {string} HTML fragment representing the detail view.
  */
-function renderNodeDetailHtml(node, { neighbors = [], messages = [], renderShortHtml }) {
+function renderNodeDetailHtml(node, {
+  neighbors = [],
+  messages = [],
+  renderShortHtml,
+  neighborRoleIndex = null,
+}) {
   const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
     shortName: node.shortName ?? node.short_name,
     longName: node.longName ?? node.long_name,
@@ -682,7 +979,7 @@ function renderNodeDetailHtml(node, { neighbors = [], messages = [], renderShort
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
-  const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml);
+  const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex: neighborRoleIndex });
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
 
   const sections = [];
@@ -820,6 +1117,9 @@ export async function initializeNodeDetailPage(options = {}) {
 
   try {
     const node = await refreshImpl(referenceData, { fetchImpl: options.fetchImpl });
+    const neighborRoleIndex = await buildNeighborRoleIndex(node, node.neighbors, {
+      fetchImpl: options.fetchImpl,
+    });
     const messages = await fetchMessages(identifier ?? node.nodeId ?? node.node_id ?? nodeNum, {
       fetchImpl: options.fetchImpl,
       privateMode,
@@ -828,6 +1128,7 @@ export async function initializeNodeDetailPage(options = {}) {
       neighbors: node.neighbors,
       messages,
       renderShortHtml,
+      neighborRoleIndex,
     });
     root.innerHTML = html;
     return true;
@@ -847,11 +1148,18 @@ export const __testUtils = {
   formatVoltage,
   formatUptime,
   formatTimestamp,
+  formatMessageTimestamp,
   formatHardwareModel,
   formatCoordinate,
   formatRelativeSeconds,
   formatDurationSeconds,
   formatSnr,
+  padTwo,
+  normalizeNodeId,
+  registerRoleCandidate,
+  lookupRole,
+  seedNeighborRoleIndex,
+  buildNeighborRoleIndex,
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
