@@ -73,3 +73,18 @@ test('resolveReplyPrefix renders reply badge and buildMessageBody joins emoji', 
 
   assert.equal(body, 'ESC(Hello) EMOJI(🔥)');
 });
+
+test('buildMessageBody suppresses reaction slot numerals', () => {
+  const body = buildMessageBody({
+    message: {
+      text: '1',
+      emoji: '👍',
+      portnum: 'REACTION_APP',
+      reply_id: 42
+    },
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(👍)');
+});

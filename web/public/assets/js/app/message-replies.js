@@ -280,6 +280,32 @@ function normaliseEmojiValue(value) {
 }
 
 /**
+ * Determine whether the provided payload represents a reaction packet.
+ *
+ * Reaction packets are published via the dedicated ``REACTION_APP`` port or
+ * include both a ``reply_id`` and a normalised emoji payload. These packets
+ * reuse the ``text`` slot to encode an ordinal identifying the emoji slot,
+ * which should not be rendered verbatim in the chat log.
+ *
+ * @param {?Object} message Message payload under inspection.
+ * @param {?string} normalisedEmoji Emoji value pre-processed by
+ *   {@link normaliseEmojiValue}. When omitted the emoji will be derived from
+ *   ``message.emoji``.
+ * @returns {boolean} ``true`` when the payload should be treated as a reaction.
+ */
+function isReactionPacket(message, normalisedEmoji = normaliseEmojiValue(message?.emoji)) {
+  if (!message || typeof message !== 'object') {
+    return false;
+  }
+  const port = toTrimmedString(message.portnum);
+  if (port && port.toUpperCase() === 'REACTION_APP') {
+    return true;
+  }
+  const hasReplyId = message.reply_id != null || message.replyId != null;
+  return Boolean(hasReplyId && normalisedEmoji);
+}
+
+/**
  * Build the rendered message body containing text and optional emoji.
  *
  * @param {{
@@ -301,14 +327,19 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   }
 
   const segments = [];
+  const emoji = normaliseEmojiValue(message.emoji);
+  const reactionPacket = isReactionPacket(message, emoji);
+
   if (message.text != null) {
     const textString = String(message.text);
-    if (textString.length > 0) {
+    const trimmed = textString.trim();
+    const isSlotIndicator = reactionPacket && trimmed.length === 1 && /\d/.test(trimmed);
+    if (trimmed.length > 0 && !isSlotIndicator) {
       segments.push(escapeHtml(textString));
     }
   }
-  const emoji = normaliseEmojiValue(message.emoji);
-  if (emoji && emoji!=='1') {
+
+  if (emoji && emoji !== '1') {
     segments.push(renderEmojiHtml(emoji));
   }
 
