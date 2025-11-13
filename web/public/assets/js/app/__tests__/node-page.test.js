@@ -261,6 +261,7 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
 });
 
 test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
   const html = renderNodeDetailHtml(
     {
       shortName: 'NODE',
@@ -274,6 +275,18 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
       latitude: 52.5,
       longitude: 13.4,
       altitude: 40,
+      telemetryHistory: [
+        {
+          rx_time: nowSeconds - 60,
+          battery_level: 60,
+          voltage: 4.1,
+          channel_utilization: 12.5,
+          air_util_tx: 0.42,
+          temperature: 23.1,
+          relative_humidity: 55.2,
+          barometric_pressure: 1_012.5,
+        },
+      ],
     },
     {
       neighbors: [
@@ -294,6 +307,9 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('ALLY'), true);
   assert.equal(html.includes('[2023'), true);
   assert.equal(html.includes('data-role="CLIENT"'), true);
+  assert.equal(html.includes('Power metrics'), true);
+  assert.equal(html.includes('Channel utilisation'), true);
+  assert.equal(html.includes('Environmental metrics'), true);
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {
@@ -356,6 +372,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   const documentStub = {
     querySelector: selector => (selector === '#nodeDetail' ? element : null),
   };
+  const nowSeconds = Math.floor(Date.now() / 1_000);
   const refreshImpl = async reference => {
     assert.equal(reference.nodeId, '!node');
     return {
@@ -372,6 +389,18 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
       longitude: 13.4,
       altitude: 42,
       neighbors: [{ node_id: '!node', neighbor_id: '!ally', snr: 5.5 }],
+      telemetryHistory: [
+        {
+          rx_time: nowSeconds - 90,
+          battery_level: 66,
+          voltage: 4.1,
+          channel_utilization: 11.2,
+          air_util_tx: 0.35,
+          temperature: 21.5,
+          relative_humidity: 60,
+          barometric_pressure: 1_011.2,
+        },
+      ],
       rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
     };
   };
@@ -405,6 +434,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   assert.equal(element.innerHTML.includes('Neighbors'), true);
   assert.equal(element.innerHTML.includes('Messages'), true);
   assert.equal(element.innerHTML.includes('ALLY-API'), true);
+  assert.equal(element.innerHTML.includes('Power metrics'), true);
 });
 
 test('initializeNodeDetailPage removes legacy filter controls when supported', async () => {

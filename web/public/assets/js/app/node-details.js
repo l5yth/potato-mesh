@@ -17,7 +17,7 @@
 import { extractModemMetadata } from './node-modem-metadata.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
-const TELEMETRY_LIMIT = 1;
+const TELEMETRY_HISTORY_LIMIT = 500;
 const POSITION_LIMIT = 1;
 const NEIGHBOR_LIMIT = 1000;
 
@@ -359,7 +359,10 @@ export async function refreshNodeInformation(reference, options = {}) {
       return response.json();
     })(),
     (async () => {
-      const response = await fetchImpl(`/api/telemetry/${encodedId}?limit=${TELEMETRY_LIMIT}`, DEFAULT_FETCH_OPTIONS);
+      const response = await fetchImpl(
+        `/api/telemetry/${encodedId}?limit=${TELEMETRY_HISTORY_LIMIT}`,
+        DEFAULT_FETCH_OPTIONS,
+      );
       if (response.status === 404) return [];
       if (!response.ok) {
         throw new Error(`Failed to load telemetry information (HTTP ${response.status})`);
@@ -384,7 +387,12 @@ export async function refreshNodeInformation(reference, options = {}) {
     })(),
   ]);
 
-  const telemetryEntry = Array.isArray(telemetryRecords) ? telemetryRecords[0] ?? null : telemetryRecords ?? null;
+  const telemetryEntries = Array.isArray(telemetryRecords)
+    ? telemetryRecords.filter(isObject)
+    : telemetryRecords && typeof telemetryRecords === 'object'
+      ? [telemetryRecords]
+      : [];
+  const telemetryEntry = telemetryEntries[0] ?? null;
   const positionEntry = Array.isArray(positionRecords) ? positionRecords[0] ?? null : positionRecords ?? null;
   const neighborEntries = Array.isArray(neighborRecords) ? neighborRecords.filter(isObject) : [];
 
@@ -404,6 +412,7 @@ export async function refreshNodeInformation(reference, options = {}) {
   }
 
   mergeTelemetry(node, telemetryEntry);
+  node.telemetryHistory = telemetryEntries;
   mergePosition(node, positionEntry);
 
   const derivedLastHeardValues = [

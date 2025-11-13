@@ -15,6 +15,7 @@
  */
 
 import { refreshNodeInformation } from './node-details.js';
+import { renderTelemetryChartSections } from './node-telemetry-charts.js';
 import {
   extractChatMessageMetadata,
   formatChatChannelTag,
@@ -1146,6 +1147,10 @@ function renderNodeDetailHtml(node, {
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
 
   const sections = [];
+  const telemetrySections = renderTelemetryChartSections(Array.isArray(node.telemetryHistory) ? node.telemetryHistory : []);
+  if (telemetrySections.length > 0) {
+    sections.push(...telemetrySections);
+  }
   if (neighborsHtml) {
     sections.push(neighborsHtml);
   }

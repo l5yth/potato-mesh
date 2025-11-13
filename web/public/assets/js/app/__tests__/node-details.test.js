@@ -53,7 +53,7 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
       modem_preset: 'MediumFast',
       lora_freq: '868.1',
     })],
-    ['/api/telemetry/!test?limit=1', createResponse(200, [{
+    ['/api/telemetry/!test?limit=500', createResponse(200, [{
       node_id: '!test',
       battery_level: 73.5,
       rx_time: 1_200,
@@ -106,6 +106,9 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
   assert.ok(node.rawSources.node);
   assert.ok(node.rawSources.telemetry);
   assert.ok(node.rawSources.position);
+  assert.equal(Array.isArray(node.telemetryHistory), true);
+  assert.equal(node.telemetryHistory.length, 1);
+  assert.equal(node.telemetryHistory[0].battery_level, 73.5);
 
   assert.equal(calls.length, 4);
   calls.forEach(call => {
@@ -119,7 +122,7 @@ test('refreshNodeInformation preserves fallback metrics when telemetry is unavai
       node_id: '!num',
       short_name: 'NUM',
     })],
-    ['/api/telemetry/42?limit=1', createResponse(404, { error: 'not found' })],
+    ['/api/telemetry/42?limit=500', createResponse(404, { error: 'not found' })],
     ['/api/positions/42?limit=1', createResponse(404, { error: 'not found' })],
     ['/api/neighbors/42?limit=1000', createResponse(404, { error: 'not found' })],
   ]);
@@ -139,6 +142,7 @@ test('refreshNodeInformation preserves fallback metrics when telemetry is unavai
   assert.equal(node.modemPreset, 'FallbackPreset');
   assert.equal(node.loraFreq, 915);
   assert.equal(Array.isArray(node.neighbors) && node.neighbors.length, 0);
+  assert.deepEqual(node.telemetryHistory, []);
 });
 
 test('refreshNodeInformation requires a node identifier', async () => {
@@ -148,7 +152,7 @@ test('refreshNodeInformation requires a node identifier', async () => {
 test('refreshNodeInformation handles missing node records by falling back to telemetry data', async () => {
   const responses = new Map([
     ['/api/nodes/!missing', createResponse(404, { error: 'not found' })],
-    ['/api/telemetry/!missing?limit=1', createResponse(200, [{
+    ['/api/telemetry/!missing?limit=500', createResponse(200, [{
       node_id: '!missing',
       node_num: 77,
       battery_level: 66,

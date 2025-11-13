@@ -834,6 +834,95 @@ body.view-map .map-panel--full #map {
   padding: 0 20px;
 }
 
+.node-detail__chart {
+  background-color: var(--bg2);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(12, 15, 18, 0.08);
+  margin-bottom: 24px;
+  padding: 16px;
+}
+
+body.dark .node-detail__chart {
+  box-shadow: 0 1px 2px rgba(12, 15, 18, 0.32);
+}
+
+.telemetry-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.telemetry-chart__svg {
+  width: 100%;
+  height: auto;
+  font-family: inherit;
+  color: inherit;
+}
+
+.telemetry-chart__axis-line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.telemetry-chart__grid-line {
+  stroke: rgba(12, 15, 18, 0.08);
+  stroke-width: 1;
+}
+
+body.dark .telemetry-chart__grid-line {
+  stroke: rgba(230, 235, 240, 0.08);
+}
+
+.telemetry-chart__tick {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.telemetry-chart__axis-label {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.telemetry-chart__axis-label--left,
+.telemetry-chart__axis-label--right {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.telemetry-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.telemetry-chart__legend-item {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.telemetry-chart__legend-swatch {
+  background-color: var(--series-color, var(--muted));
+  border-radius: 999px;
+  display: inline-block;
+  height: 12px;
+  width: 12px;
+}
+
+.telemetry-chart__legend-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.telemetry-chart__caption {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}
+
 .node-detail__neighbors-grid {
   display: grid;
   gap: 16px;
