@@ -16,11 +16,11 @@
 
 const SECONDS_IN_DAY = 86_400;
 const LOOKBACK_SECONDS = SECONDS_IN_DAY * 7;
-const DEFAULT_WIDTH = 640;
-const DEFAULT_HEIGHT = 280;
-const DEFAULT_MARGIN = Object.freeze({ top: 24, right: 72, bottom: 56, left: 72 });
+const DEFAULT_WIDTH = 480;
+const DEFAULT_HEIGHT = 320;
+const DEFAULT_MARGIN = Object.freeze({ top: 16, right: 64, bottom: 48, left: 64 });
 const POINT_RADIUS = 2;
-const TIME_TICK_COUNT = 6;
+const TIME_TICK_COUNT = 5;
 const VALUE_TICK_COUNT = 5;
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
@@ -28,11 +28,10 @@ const numberFormatter = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 0,
 });
 
-const timeFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
+const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
   day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
 });
 
 /**
@@ -198,7 +197,7 @@ function generateTimeTicks(min, max, count) {
     return [
       {
         value: min,
-        label: timeFormatter.format(new Date(min * 1_000)),
+        label: dateFormatter.format(new Date(min * 1_000)),
       },
     ];
   }
@@ -207,7 +206,7 @@ function generateTimeTicks(min, max, count) {
   const ticks = [];
   for (let index = 0; index < count; index += 1) {
     const value = min + step * index;
-    ticks.push({ value, label: timeFormatter.format(new Date(value * 1_000)) });
+    ticks.push({ value, label: dateFormatter.format(new Date(value * 1_000)) });
   }
   return ticks;
 }
@@ -236,21 +235,34 @@ function renderLegend(series) {
 }
 
 /**
- * Render a scatter plot with optional dual y-axes.
+ * Render a scatter plot with support for multiple y-axes.
  *
  * @param {{
  *   id: string,
  *   description: string,
  *   xLabel: string,
- *   leftLabel?: string,
- *   rightLabel?: string,
  *   series: Array<{
  *     id: string,
  *     label: string,
  *     color: string,
- *     axis: 'left'|'right',
+ *     axis: string,
  *     points: Array<{ time: number, value: number, iso?: string|null }>,
+ *     line?: { opacity?: number, width?: number },
  *   }>,
+ *   axes?: Array<{
+ *     id: string,
+ *     position: 'left'|'right',
+ *     label?: string,
+ *     formatter?: (value: number) => string,
+ *     offset?: number,
+ *     tickPadding?: number,
+ *     labelOffset?: number,
+ *     textAnchor?: 'start'|'middle'|'end',
+ *     drawGridLines?: boolean,
+ *     showAxisLine?: boolean,
+ *   }>,
+ *   leftLabel?: string,
+ *   rightLabel?: string,
  *   width?: number,
  *   height?: number,
  *   margin?: { top: number, right: number, bottom: number, left: number },
@@ -264,9 +276,10 @@ function createScatterChart(config) {
     id,
     description,
     xLabel,
+    series = [],
+    axes = [],
     leftLabel = '',
     rightLabel = '',
-    series = [],
     width = DEFAULT_WIDTH,
     height = DEFAULT_HEIGHT,
     margin = DEFAULT_MARGIN,
@@ -287,50 +300,188 @@ function createScatterChart(config) {
   const xDomain = computeDomain(xValues);
   if (!xDomain) return '';
 
-  const leftSeries = activeSeries.filter(item => item.axis === 'left');
-  const rightSeries = activeSeries.filter(item => item.axis === 'right');
+  const axisDefinitions = [];
+  if (Array.isArray(axes) && axes.length > 0) {
+    for (const axis of axes) {
+      if (!axis || typeof axis !== 'object' || !axis.id) continue;
+      axisDefinitions.push({
+        id: axis.id,
+        position: axis.position === 'right' ? 'right' : 'left',
+        label: axis.label ?? '',
+        formatter: typeof axis.formatter === 'function' ? axis.formatter : null,
+        offset: Number.isFinite(axis.offset) ? axis.offset : 0,
+        tickPadding: Number.isFinite(axis.tickPadding) ? axis.tickPadding : undefined,
+        labelOffset: Number.isFinite(axis.labelOffset) ? axis.labelOffset : undefined,
+        textAnchor: axis.textAnchor === 'middle' ? 'middle' : axis.textAnchor === 'start' ? 'start' : axis.textAnchor === 'end' ? 'end' : undefined,
+        drawGridLines: axis.drawGridLines !== false,
+        showAxisLine: axis.showAxisLine !== false,
+      });
+    }
+  } else {
+    axisDefinitions.push({
+      id: 'left',
+      position: 'left',
+      label: leftLabel,
+      formatter: leftTickFormatter,
+      offset: 0,
+      drawGridLines: true,
+      showAxisLine: true,
+    });
+    const hasRightSeries = activeSeries.some(item => item.axis === 'right');
+    if (hasRightSeries) {
+      axisDefinitions.push({
+        id: 'right',
+        position: 'right',
+        label: rightLabel,
+        formatter: rightTickFormatter,
+        offset: 0,
+        drawGridLines: false,
+        showAxisLine: true,
+      });
+    }
+  }
 
-  const leftDomain = leftSeries.length > 0
-    ? computeDomain(leftSeries.reduce((values, seriesEntry) => {
-      if (!seriesEntry || !Array.isArray(seriesEntry.points)) {
-        return values;
-      }
+  const axisMap = new Map();
+  for (const axis of axisDefinitions) {
+    axisMap.set(axis.id, { definition: axis, series: [] });
+  }
+
+  for (const seriesEntry of activeSeries) {
+    const fallbackAxisId = axisDefinitions.length > 0 ? axisDefinitions[0].id : null;
+    const axisId = seriesEntry.axis ?? fallbackAxisId;
+    const targetAxis = axisMap.get(axisId);
+    if (targetAxis) {
+      targetAxis.series.push(seriesEntry);
+    }
+  }
+
+  const resolvedAxes = [];
+  for (const axis of axisMap.values()) {
+    if (axis.series.length > 0) {
+      resolvedAxes.push(axis);
+    }
+  }
+  if (resolvedAxes.length === 0) return '';
+
+  const axisScales = new Map();
+  const axisTicks = [];
+  const axisLines = [];
+  const axisLabels = [];
+  const horizontalLines = [];
+  const horizontalLineKeys = new Set();
+
+  for (const axis of resolvedAxes) {
+    const { definition, series: axisSeries } = axis;
+    const values = [];
+    for (const seriesEntry of axisSeries) {
+      if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
       for (const point of seriesEntry.points) {
         values.push(point.value);
       }
-      return values;
-    }, []))
-    : null;
-  const rightDomain = rightSeries.length > 0
-    ? computeDomain(rightSeries.reduce((values, seriesEntry) => {
-      if (!seriesEntry || !Array.isArray(seriesEntry.points)) {
-        return values;
+    }
+    const domain = computeDomain(values);
+    if (!domain) {
+      continue;
+    }
+    const scale = scaleLinear(domain, { min: height - margin.bottom, max: margin.top });
+    axisScales.set(definition.id, scale);
+
+    const axisX = definition.position === 'right'
+      ? width - margin.right + (definition.offset ?? 0)
+      : margin.left + (definition.offset ?? 0);
+    const tickFormatter = definition.formatter
+      || (definition.position === 'right' ? rightTickFormatter : leftTickFormatter);
+    const ticks = generateNumericTicks(domain.min, domain.max, VALUE_TICK_COUNT, tickFormatter);
+    const tickPadding = Number.isFinite(definition.tickPadding) ? definition.tickPadding : 8;
+    const labelOffset = Number.isFinite(definition.labelOffset) ? definition.labelOffset : 36;
+    const textAnchor = definition.textAnchor
+      || (definition.position === 'right' ? 'start' : 'end');
+
+    if (definition.showAxisLine) {
+      axisLines.push(
+        `<line x1="${axisX}" x2="${axisX}" y1="${margin.top}" y2="${height - margin.bottom}" class="telemetry-chart__axis-line"></line>`,
+      );
+    }
+
+    for (const tick of ticks) {
+      const y = scale(tick.value);
+      if (!Number.isFinite(y)) continue;
+      if (definition.drawGridLines) {
+        const key = y.toFixed(2);
+        if (!horizontalLineKeys.has(key)) {
+          horizontalLineKeys.add(key);
+          horizontalLines.push(
+            `<line x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}" class="telemetry-chart__grid-line telemetry-chart__grid-line--horizontal"></line>`,
+          );
+        }
       }
-      for (const point of seriesEntry.points) {
-        values.push(point.value);
-      }
-      return values;
-    }, []))
-    : null;
+      const tickX = definition.position === 'right' ? axisX + tickPadding : axisX - tickPadding;
+      axisTicks.push(
+        `<text class="telemetry-chart__tick telemetry-chart__tick--y" x="${tickX}" y="${y}" text-anchor="${textAnchor}" dominant-baseline="middle">${escapeHtml(tick.label)}</text>`,
+      );
+    }
+
+    if (definition.label && definition.label.trim()) {
+      const labelX = definition.position === 'right'
+        ? axisX + labelOffset
+        : axisX - labelOffset;
+      const labelClass = definition.position === 'right'
+        ? 'telemetry-chart__axis-label telemetry-chart__axis-label--right'
+        : 'telemetry-chart__axis-label telemetry-chart__axis-label--left';
+      axisLabels.push(
+        `<text class="${labelClass}" x="${labelX}" y="${margin.top + (height - margin.top - margin.bottom) / 2}" dominant-baseline="middle">${escapeHtml(definition.label)}</text>`,
+      );
+    }
+  }
+
+  if (axisScales.size === 0) return '';
 
   const xScale = scaleLinear(xDomain, { min: margin.left, max: width - margin.right });
-  const yLeftScale = leftDomain
-    ? scaleLinear(leftDomain, { min: height - margin.bottom, max: margin.top })
-    : null;
-  const yRightScale = rightDomain
-    ? scaleLinear(rightDomain, { min: height - margin.bottom, max: margin.top })
-    : null;
-
   const xAxisY = height - margin.bottom;
   const xTicks = generateTimeTicks(xDomain.min, xDomain.max, TIME_TICK_COUNT);
-  const leftTicks = leftDomain ? generateNumericTicks(leftDomain.min, leftDomain.max, VALUE_TICK_COUNT, leftTickFormatter) : [];
-  const rightTicks = rightDomain
-    ? generateNumericTicks(rightDomain.min, rightDomain.max, VALUE_TICK_COUNT, rightTickFormatter)
-    : [];
+  const xTickMarkup = xTicks
+    .map(tick => {
+      const x = xScale(tick.value);
+      if (!Number.isFinite(x)) return '';
+      return `
+        <line x1="${x}" x2="${x}" y1="${margin.top}" y2="${height - margin.bottom}" class="telemetry-chart__grid-line"></line>
+        <text class="telemetry-chart__tick telemetry-chart__tick--x" x="${x}" y="${xAxisY + 20}" text-anchor="middle">${escapeHtml(tick.label)}</text>
+      `;
+    })
+    .join('');
+
+  const lineMarkup = [];
+  for (const seriesEntry of activeSeries) {
+    if (!seriesEntry.line) continue;
+    const scale = axisScales.get(seriesEntry.axis);
+    if (!scale) continue;
+    const pathPoints = [];
+    for (const point of seriesEntry.points) {
+      const cx = xScale(point.time);
+      const cy = scale(point.value);
+      if (Number.isFinite(cx) && Number.isFinite(cy)) {
+        pathPoints.push({ x: cx, y: cy });
+      }
+    }
+    if (pathPoints.length >= 2) {
+      const strokeOpacity = Number.isFinite(seriesEntry.line.opacity)
+        ? seriesEntry.line.opacity
+        : 0.5;
+      const strokeWidth = Number.isFinite(seriesEntry.line.width)
+        ? seriesEntry.line.width
+        : 1;
+      const path = pathPoints
+        .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`)
+        .join(' ');
+      lineMarkup.push(
+        `<path d="${path}" fill="none" stroke="${seriesEntry.color}" stroke-opacity="${strokeOpacity}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" data-series="${escapeHtml(seriesEntry.id)}"></path>`,
+      );
+    }
+  }
 
   const circles = activeSeries
     .map(seriesEntry => {
-      const scale = seriesEntry.axis === 'left' ? yLeftScale : yRightScale;
+      const scale = axisScales.get(seriesEntry.axis);
       if (!scale) return '';
       return seriesEntry.points
         .map(point => {
@@ -346,56 +497,9 @@ function createScatterChart(config) {
     })
     .join('');
 
-  if (!circles.trim()) return '';
+  if (!circles.trim() && lineMarkup.length === 0) return '';
 
-  const leftAxisLine = yLeftScale
-    ? `<line x1="${margin.left}" x2="${margin.left}" y1="${margin.top}" y2="${height - margin.bottom}" class="telemetry-chart__axis-line"></line>`
-    : '';
-  const rightAxisLine = yRightScale
-    ? `<line x1="${width - margin.right}" x2="${width - margin.right}" y1="${margin.top}" y2="${height - margin.bottom}" class="telemetry-chart__axis-line"></line>`
-    : '';
-
-  const xTickMarkup = xTicks
-    .map(tick => {
-      const x = xScale(tick.value);
-      if (!Number.isFinite(x)) return '';
-      return `
-        <line x1="${x}" x2="${x}" y1="${margin.top}" y2="${height - margin.bottom}" class="telemetry-chart__grid-line"></line>
-        <text class="telemetry-chart__tick telemetry-chart__tick--x" x="${x}" y="${xAxisY + 24}" text-anchor="middle">${escapeHtml(tick.label)}</text>
-      `;
-    })
-    .join('');
-
-  const leftTickMarkup = leftTicks
-    .map(tick => {
-      if (!yLeftScale) return '';
-      const y = yLeftScale(tick.value);
-      if (!Number.isFinite(y)) return '';
-      return `
-        <line x1="${margin.left}" x2="${width - margin.right}" y1="${y}" y2="${y}" class="telemetry-chart__grid-line telemetry-chart__grid-line--horizontal"></line>
-        <text class="telemetry-chart__tick telemetry-chart__tick--y" x="${margin.left - 8}" y="${y}" text-anchor="end" dominant-baseline="middle">${escapeHtml(tick.label)}</text>
-      `;
-    })
-    .join('');
-
-  const rightTickMarkup = rightTicks
-    .map(tick => {
-      if (!yRightScale) return '';
-      const y = yRightScale(tick.value);
-      if (!Number.isFinite(y)) return '';
-      return `
-        <text class="telemetry-chart__tick telemetry-chart__tick--y" x="${width - margin.right + 8}" y="${y}" text-anchor="start" dominant-baseline="middle">${escapeHtml(tick.label)}</text>
-      `;
-    })
-    .join('');
-
-  const leftLabelMarkup = yLeftScale
-    ? `<text class="telemetry-chart__axis-label telemetry-chart__axis-label--left" x="${margin.left - 48}" y="${margin.top + (height - margin.top - margin.bottom) / 2}" dominant-baseline="middle">${escapeHtml(leftLabel)}</text>`
-    : '';
-  const rightLabelMarkup = yRightScale
-    ? `<text class="telemetry-chart__axis-label telemetry-chart__axis-label--right" x="${width - margin.right + 48}" y="${margin.top + (height - margin.top - margin.bottom) / 2}" dominant-baseline="middle">${escapeHtml(rightLabel)}</text>`
-    : '';
-  const bottomLabelMarkup = `<text class="telemetry-chart__axis-label telemetry-chart__axis-label--bottom" x="${margin.left + (width - margin.left - margin.right) / 2}" y="${height - margin.bottom + 44}" text-anchor="middle">${escapeHtml(xLabel)}</text>`;
+  const bottomLabelMarkup = `<text class="telemetry-chart__axis-label telemetry-chart__axis-label--bottom" x="${margin.left + (width - margin.left - margin.right) / 2}" y="${height - margin.bottom + 32}" text-anchor="middle">${escapeHtml(xLabel)}</text>`;
 
   const svg = `
     <svg
@@ -408,14 +512,13 @@ function createScatterChart(config) {
       <desc id="${escapeHtml(id)}-description">${escapeHtml(description)}</desc>
       <rect x="0" y="0" width="${width}" height="${height}" fill="none"></rect>
       <line x1="${margin.left}" x2="${width - margin.right}" y1="${xAxisY}" y2="${xAxisY}" class="telemetry-chart__axis-line"></line>
-      ${leftAxisLine}
-      ${rightAxisLine}
-      ${leftTickMarkup}
-      ${rightTickMarkup}
+      ${axisLines.join('')}
+      ${horizontalLines.join('')}
+      ${axisTicks.join('')}
       ${xTickMarkup}
-      ${leftLabelMarkup}
-      ${rightLabelMarkup}
+      ${axisLabels.join('')}
       ${bottomLabelMarkup}
+      ${lineMarkup.join('')}
       ${circles}
     </svg>
   `;
@@ -430,17 +533,25 @@ function createScatterChart(config) {
  *   title: string,
  *   description: string,
  *   xLabel: string,
- *   leftLabel?: string,
- *   rightLabel?: string,
  *   series: Array<{
  *     id: string,
  *     label: string,
  *     color: string,
- *     axis: 'left'|'right',
+ *     axis: string,
  *     points: Array<{ time: number, value: number, iso?: string|null }>,
  *   }>,
- *   leftTickFormatter?: (value: number) => string,
- *   rightTickFormatter?: (value: number) => string,
+ *   axes?: Array<{
+ *     id: string,
+ *     position: 'left'|'right',
+ *     label?: string,
+ *     formatter?: (value: number) => string,
+ *     offset?: number,
+ *     tickPadding?: number,
+ *     labelOffset?: number,
+ *     textAnchor?: 'start'|'middle'|'end',
+ *     drawGridLines?: boolean,
+ *     showAxisLine?: boolean,
+ *   }>,
  * }} definition Chart definition.
  * @returns {string|null} Section markup or ``null`` when the chart has no data.
  */
@@ -476,7 +587,8 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'battery',
       label: 'Battery level',
       color: '#8856a7',
-      axis: 'left',
+      axis: 'power-battery',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.battery != null)
         .map(point => ({ time: point.time, value: point.battery, iso: point.iso })),
@@ -485,7 +597,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'voltage',
       label: 'Voltage',
       color: '#9ebcda',
-      axis: 'right',
+      axis: 'power-voltage',
       points: points
         .filter(point => point.voltage != null)
         .map(point => ({ time: point.time, value: point.voltage, iso: point.iso })),
@@ -497,7 +609,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'channel-utilization',
       label: 'Channel utilisation',
       color: '#2ca25f',
-      axis: 'left',
+      axis: 'channel-utilisation',
       points: points
         .filter(point => point.channelUtilization != null)
         .map(point => ({ time: point.time, value: point.channelUtilization, iso: point.iso })),
@@ -506,7 +618,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'air-util-tx',
       label: 'Air utilisation (TX)',
       color: '#99d8c9',
-      axis: 'right',
+      axis: 'channel-utilisation',
       points: points
         .filter(point => point.airUtilTx != null)
         .map(point => ({ time: point.time, value: point.airUtilTx, iso: point.iso })),
@@ -518,7 +630,8 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'temperature',
       label: 'Temperature',
       color: '#fc8d59',
-      axis: 'left',
+      axis: 'environment-temperature',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.temperature != null)
         .map(point => ({ time: point.time, value: point.temperature, iso: point.iso })),
@@ -527,7 +640,8 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'humidity',
       label: 'Humidity',
       color: '#91bfdb',
-      axis: 'left',
+      axis: 'environment-humidity',
+      line: { opacity: 0.5, width: 1 },
       points: points
         .filter(point => point.humidity != null)
         .map(point => ({ time: point.time, value: point.humidity, iso: point.iso })),
@@ -536,7 +650,7 @@ export function renderTelemetryChartSections(records, options = {}) {
       id: 'pressure',
       label: 'Pressure',
       color: '#ffffbf',
-      axis: 'right',
+      axis: 'environment-pressure',
       points: points
         .filter(point => point.pressure != null)
         .map(point => ({ time: point.time, value: point.pressure, iso: point.iso })),
@@ -549,12 +663,24 @@ export function renderTelemetryChartSections(records, options = {}) {
     id: 'power',
     title: 'Power metrics',
     description: 'Battery level and voltage readings from the last seven days.',
-    xLabel: 'Time',
-    leftLabel: 'Battery level (%)',
-    rightLabel: 'Voltage (V)',
+    xLabel: 'Date',
     series: powerSeries,
-    leftTickFormatter: value => value.toFixed(1),
-    rightTickFormatter: value => value.toFixed(2),
+    axes: [
+      {
+        id: 'power-battery',
+        position: 'left',
+        label: 'Battery level (%)',
+        formatter: value => value.toFixed(1),
+        drawGridLines: true,
+      },
+      {
+        id: 'power-voltage',
+        position: 'right',
+        label: 'Voltage (V)',
+        formatter: value => value.toFixed(2),
+        drawGridLines: false,
+      },
+    ],
   });
   if (powerSection) {
     sections.push(powerSection);
@@ -564,12 +690,17 @@ export function renderTelemetryChartSections(records, options = {}) {
     id: 'channel',
     title: 'Channel utilisation',
     description: 'Channel and air utilisation for the last seven days.',
-    xLabel: 'Time',
-    leftLabel: 'Channel utilisation (%)',
-    rightLabel: 'Air utilisation (TX)',
+    xLabel: 'Date',
     series: channelSeries,
-    leftTickFormatter: value => value.toFixed(1),
-    rightTickFormatter: value => value.toFixed(2),
+    axes: [
+      {
+        id: 'channel-utilisation',
+        position: 'left',
+        label: 'Utilisation (%)',
+        formatter: value => value.toFixed(1),
+        drawGridLines: true,
+      },
+    ],
   });
   if (channelSection) {
     sections.push(channelSection);
@@ -579,12 +710,36 @@ export function renderTelemetryChartSections(records, options = {}) {
     id: 'environment',
     title: 'Environmental metrics',
     description: 'Temperature, humidity, and pressure over the last seven days.',
-    xLabel: 'Time',
-    leftLabel: 'Temperature (°C) / Humidity (%)',
-    rightLabel: 'Pressure (hPa)',
+    xLabel: 'Date',
     series: environmentSeries,
-    leftTickFormatter: value => value.toFixed(1),
-    rightTickFormatter: value => value.toFixed(0),
+    axes: [
+      {
+        id: 'environment-temperature',
+        position: 'left',
+        label: 'Temperature (°C)',
+        formatter: value => value.toFixed(1),
+        drawGridLines: true,
+      },
+      {
+        id: 'environment-humidity',
+        position: 'right',
+        offset: -48,
+        label: 'Humidity (%)',
+        formatter: value => value.toFixed(0),
+        tickPadding: -6,
+        labelOffset: -28,
+        textAnchor: 'end',
+        drawGridLines: false,
+        showAxisLine: false,
+      },
+      {
+        id: 'environment-pressure',
+        position: 'right',
+        label: 'Pressure (hPa)',
+        formatter: value => value.toFixed(0),
+        drawGridLines: false,
+      },
+    ],
   });
   if (environmentSection) {
     sections.push(environmentSection);
