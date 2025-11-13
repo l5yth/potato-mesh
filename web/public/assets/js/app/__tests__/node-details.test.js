@@ -32,6 +32,12 @@ const {
   mergePosition,
   parseFallback,
   normalizeReference,
+  normaliseSnapshotId,
+  buildSnapshotNodeKey,
+  buildSnapshotNodeKeyFromValues,
+  aggregateTelemetryForNode,
+  aggregatePositionForNode,
+  aggregateNeighborSnapshotsForNode,
 } = __testUtils;
 
 function createResponse(status, body) {
@@ -53,14 +59,14 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
       modem_preset: 'MediumFast',
       lora_freq: '868.1',
     })],
-    ['/api/telemetry/!test?limit=1', createResponse(200, [{
+    ['/api/telemetry/!test?limit=7', createResponse(200, [{
       node_id: '!test',
       battery_level: 73.5,
       rx_time: 1_200,
       telemetry_time: 1_180,
       voltage: 4.1,
     }])],
-    ['/api/positions/!test?limit=1', createResponse(200, [{
+    ['/api/positions/!test?limit=7', createResponse(200, [{
       node_id: '!test',
       latitude: 52.5,
       longitude: 13.4,
@@ -119,8 +125,8 @@ test('refreshNodeInformation preserves fallback metrics when telemetry is unavai
       node_id: '!num',
       short_name: 'NUM',
     })],
-    ['/api/telemetry/42?limit=1', createResponse(404, { error: 'not found' })],
-    ['/api/positions/42?limit=1', createResponse(404, { error: 'not found' })],
+    ['/api/telemetry/42?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/positions/42?limit=7', createResponse(404, { error: 'not found' })],
     ['/api/neighbors/42?limit=1000', createResponse(404, { error: 'not found' })],
   ]);
   const fetchImpl = async (url, options) => {
@@ -148,14 +154,14 @@ test('refreshNodeInformation requires a node identifier', async () => {
 test('refreshNodeInformation handles missing node records by falling back to telemetry data', async () => {
   const responses = new Map([
     ['/api/nodes/!missing', createResponse(404, { error: 'not found' })],
-    ['/api/telemetry/!missing?limit=1', createResponse(200, [{
+    ['/api/telemetry/!missing?limit=7', createResponse(200, [{
       node_id: '!missing',
       node_num: 77,
       battery_level: 66,
       rx_time: 2_000,
       telemetry_time: 1_950,
     }])],
-    ['/api/positions/!missing?limit=1', createResponse(200, [{
+    ['/api/positions/!missing?limit=7', createResponse(200, [{
       node_id: '!missing',
       latitude: 1.23,
       longitude: 3.21,
@@ -294,6 +300,38 @@ test('merge helpers combine node, telemetry, and position data', () => {
   assert.equal(node.altitude, 80);
   assert.ok(node.telemetry);
   assert.ok(node.position);
+});
+
+test('snapshot aggregation retains historical readings across packets', () => {
+  const fallbackKey = buildSnapshotNodeKeyFromValues('!snap', null);
+
+  const telemetry = aggregateTelemetryForNode([
+    { node_id: '!snap', rx_time: 3_000, voltage: 4.25 },
+    { node_id: '!snap', rx_time: 2_900, battery_level: 81.5, voltage: null },
+  ], fallbackKey);
+
+  assert.ok(telemetry);
+  assert.equal(telemetry.voltage, 4.25);
+  assert.equal(telemetry.battery_level, 81.5);
+
+  const position = aggregatePositionForNode([
+    { node_id: '!snap', position_time: 4_000, latitude: null, longitude: null },
+    { node_id: '!snap', position_time: 3_950, latitude: 51.5, longitude: -0.13 },
+  ], fallbackKey);
+
+  assert.ok(position);
+  assert.equal(position.latitude, 51.5);
+  assert.equal(position.longitude, -0.13);
+
+  const neighbors = aggregateNeighborSnapshotsForNode([
+    { node_id: '!snap', neighbor_id: '!ally', snr: null, rx_time: 5_000 },
+    { node_id: '!snap', neighbor_id: '!ally', snr: 6.5, rx_time: 4_950 },
+  ], fallbackKey);
+
+  assert.equal(neighbors.length, 1);
+  assert.equal(neighbors[0].snr, 6.5);
+  assert.equal(normaliseSnapshotId('!ally'), '!ALLY');
+  assert.ok(buildSnapshotNodeKey({ node_id: '!ally' }));
 });
 
 test('normalizeReference extracts identifiers and tolerates malformed fallback payloads', () => {

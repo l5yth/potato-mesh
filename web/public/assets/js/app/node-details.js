@@ -15,10 +15,11 @@
  */
 
 import { extractModemMetadata } from './node-modem-metadata.js';
+import { aggregateSnapshotSeries, SNAPSHOT_DEPTH } from './snapshot-aggregator.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
-const TELEMETRY_LIMIT = 1;
-const POSITION_LIMIT = 1;
+const TELEMETRY_LIMIT = SNAPSHOT_DEPTH;
+const POSITION_LIMIT = SNAPSHOT_DEPTH;
 const NEIGHBOR_LIMIT = 1000;
 
 /**
@@ -130,6 +131,137 @@ function assignNumber(target, key, value, { preferExisting = false } = {}) {
     if (existing != null) return;
   }
   target[key] = numericValue;
+}
+
+/**
+ * Normalise an identifier string for use in snapshot grouping keys.
+ *
+ * @param {*} value Candidate identifier.
+ * @returns {string|null} Uppercase identifier string or ``null`` when blank.
+ */
+function normaliseSnapshotId(value) {
+  const str = toTrimmedString(value);
+  return str ? str.toUpperCase() : null;
+}
+
+/**
+ * Build a stable key representing a node snapshot using canonical identifiers
+ * or numeric node numbers.
+ *
+ * @param {Object} record Snapshot record containing node identifiers.
+ * @returns {string|null} Stable node key or ``null`` when insufficient data.
+ */
+function buildSnapshotNodeKey(record) {
+  if (!isObject(record)) return null;
+  const nodeId = normaliseSnapshotId(extractString(record, ['node_id', 'nodeId']));
+  if (nodeId) return `id:${nodeId}`;
+  const nodeNum = extractNumber(record, ['node_num', 'nodeNum', 'num']);
+  return nodeNum != null ? `num:${nodeNum}` : null;
+}
+
+/**
+ * Construct a snapshot key from raw node identifier values.
+ *
+ * @param {*} nodeId Canonical node identifier.
+ * @param {*} nodeNum Numeric node reference.
+ * @returns {string|null} Stable node key or ``null``.
+ */
+function buildSnapshotNodeKeyFromValues(nodeId, nodeNum) {
+  const normalisedId = normaliseSnapshotId(nodeId);
+  if (normalisedId) return `id:${normalisedId}`;
+  const numeric = toFiniteNumber(nodeNum);
+  return numeric != null ? `num:${numeric}` : null;
+}
+
+/**
+ * Select the best aggregate record from a series using a preferred key when
+ * available.
+ *
+ * @param {Array<{key: string, aggregate: Object}>} series Aggregated snapshots.
+ * @param {string|null} preferredKey Preferred key string.
+ * @returns {Object|null} Aggregate record or ``null`` when none exist.
+ */
+function selectAggregate(series, preferredKey) {
+  if (!Array.isArray(series) || series.length === 0) return null;
+  if (preferredKey) {
+    const match = series.find(entry => entry && entry.key === preferredKey);
+    if (match && match.aggregate) {
+      return match.aggregate;
+    }
+  }
+  const first = series[0];
+  return first ? first.aggregate : null;
+}
+
+/**
+ * Aggregate telemetry snapshots for a single node.
+ *
+ * @param {Array<Object>} records Raw telemetry records.
+ * @param {string|null} fallbackKey Preferred snapshot grouping key.
+ * @returns {Object|null} Aggregated telemetry payload or ``null`` when absent.
+ */
+function aggregateTelemetryForNode(records, fallbackKey) {
+  const telemetryRecords = Array.isArray(records) ? records.filter(isObject) : [];
+  if (!telemetryRecords.length) return null;
+  const series = aggregateSnapshotSeries(telemetryRecords, {
+    depth: SNAPSHOT_DEPTH,
+    keyFn: entry => buildSnapshotNodeKey(entry) ?? fallbackKey,
+    timestampFn: entry => {
+      const rx = extractNumber(entry, ['rx_time', 'rxTime']);
+      const telemetryTime = extractNumber(entry, ['telemetry_time', 'telemetryTime']);
+      if (rx != null && telemetryTime != null) return Math.max(rx, telemetryTime);
+      return rx ?? telemetryTime ?? Number.NEGATIVE_INFINITY;
+    },
+  });
+  return selectAggregate(series, fallbackKey);
+}
+
+/**
+ * Aggregate position snapshots for a single node.
+ *
+ * @param {Array<Object>} records Raw position records.
+ * @param {string|null} fallbackKey Preferred snapshot grouping key.
+ * @returns {Object|null} Aggregated position payload or ``null`` when absent.
+ */
+function aggregatePositionForNode(records, fallbackKey) {
+  const positionRecords = Array.isArray(records) ? records.filter(isObject) : [];
+  if (!positionRecords.length) return null;
+  const series = aggregateSnapshotSeries(positionRecords, {
+    depth: SNAPSHOT_DEPTH,
+    keyFn: entry => buildSnapshotNodeKey(entry) ?? fallbackKey,
+    timestampFn: entry => {
+      const rx = extractNumber(entry, ['rx_time', 'rxTime']);
+      const positionTime = extractNumber(entry, ['position_time', 'positionTime']);
+      if (rx != null && positionTime != null) return Math.max(rx, positionTime);
+      return rx ?? positionTime ?? Number.NEGATIVE_INFINITY;
+    },
+  });
+  return selectAggregate(series, fallbackKey);
+}
+
+/**
+ * Aggregate neighbour snapshots for a single node, producing one record per
+ * neighbour identifier.
+ *
+ * @param {Array<Object>} records Raw neighbour records.
+ * @param {string|null} fallbackKey Preferred snapshot grouping key for the node.
+ * @returns {Array<Object>} Aggregated neighbour payloads.
+ */
+function aggregateNeighborSnapshotsForNode(records, fallbackKey) {
+  const neighborRecords = Array.isArray(records) ? records.filter(isObject) : [];
+  if (!neighborRecords.length) return [];
+  const series = aggregateSnapshotSeries(neighborRecords, {
+    depth: SNAPSHOT_DEPTH,
+    keyFn: entry => {
+      const neighborId = normaliseSnapshotId(extractString(entry, ['neighbor_id', 'neighborId']));
+      if (!neighborId) return null;
+      const nodeKey = buildSnapshotNodeKey(entry) ?? fallbackKey;
+      if (!nodeKey) return null;
+      return `${nodeKey}::neighbor:${neighborId}`;
+    },
+    timestampFn: entry => extractNumber(entry, ['rx_time', 'rxTime']) ?? Number.NEGATIVE_INFINITY,
+  });
+  return series.map(item => ({ ...item.aggregate }));
 }
 
 /**
@@ -384,9 +516,13 @@ export async function refreshNodeInformation(reference, options = {}) {
     })(),
   ]);
 
-  const telemetryEntry = Array.isArray(telemetryRecords) ? telemetryRecords[0] ?? null : telemetryRecords ?? null;
-  const positionEntry = Array.isArray(positionRecords) ? positionRecords[0] ?? null : positionRecords ?? null;
-  const neighborEntries = Array.isArray(neighborRecords) ? neighborRecords.filter(isObject) : [];
+  const canonicalNodeId = nodeRecord?.node_id ?? nodeRecord?.nodeId ?? normalized.nodeId;
+  const canonicalNodeNum = nodeRecord?.node_num ?? nodeRecord?.nodeNum ?? normalized.nodeNum;
+  const snapshotKey = buildSnapshotNodeKeyFromValues(canonicalNodeId, canonicalNodeNum);
+
+  const telemetryEntry = aggregateTelemetryForNode(telemetryRecords, snapshotKey);
+  const positionEntry = aggregatePositionForNode(positionRecords, snapshotKey);
+  const neighborEntries = aggregateNeighborSnapshotsForNode(neighborRecords, snapshotKey);
 
   const node = { neighbors: neighborEntries };
 
@@ -442,4 +578,10 @@ export const __testUtils = {
   mergePosition,
   parseFallback,
   normalizeReference,
+  normaliseSnapshotId,
+  buildSnapshotNodeKey,
+  buildSnapshotNodeKeyFromValues,
+  aggregateTelemetryForNode,
+  aggregatePositionForNode,
+  aggregateNeighborSnapshotsForNode,
 };

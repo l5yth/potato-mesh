@@ -47,6 +47,7 @@ import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
+import { aggregateSnapshotSeries, SNAPSHOT_DEPTH } from './snapshot-aggregator.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -142,8 +143,9 @@ export function initializeApp(config) {
   /** @type {Array<Object>} */
   let allPositionEntries = [];
   /** @type {Map<string, Object>} */
-let nodesById = new Map();
-let messagesById = new Map();
+  let nodesById = new Map();
+  /** @type {Map<string, Object>} */
+  let messagesById = new Map();
   let nodesByNum = new Map();
   const messageNodeHydrator = createMessageNodeHydrator({
     fetchNodeById,
@@ -151,6 +153,15 @@ let messagesById = new Map();
     logger: console,
   });
   const NODE_LIMIT = 1000;
+  /**
+   * Baseline number of entries requested per snapshot endpoint when building
+   * aggregated node datasets. The value is multiplied by
+   * {@link SNAPSHOT_DEPTH} so each node has enough history to assemble a
+   * complete record even as the network grows.
+   *
+   * @type {number}
+   */
+  const SNAPSHOT_FETCH_BASE = 200;
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
@@ -3163,6 +3174,145 @@ let messagesById = new Map();
   }
 
   /**
+   * Normalise identifier strings used to build stable snapshot keys.
+   *
+   * @param {*} value Candidate identifier.
+   * @returns {string|null} Uppercase identifier string or ``null`` when blank.
+   */
+  function normaliseSnapshotId(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed.toUpperCase() : null;
+  }
+
+  /**
+   * Generate a stable key for node-centric payloads using canonical IDs when
+   * available and falling back to numeric node numbers.
+   *
+   * @param {Object} record Snapshot record containing node identifiers.
+   * @returns {string|null} Stable key or ``null`` when insufficient data.
+   */
+  function buildNodeSnapshotKey(record) {
+    if (!record || typeof record !== 'object') return null;
+    const idCandidates = [record.node_id, record.nodeId];
+    for (const candidate of idCandidates) {
+      const normalised = normaliseSnapshotId(candidate);
+      if (normalised) {
+        return `id:${normalised}`;
+      }
+    }
+    const numCandidates = [record.node_num, record.nodeNum, record.num];
+    for (const candidate of numCandidates) {
+      const numeric = toFiniteNumber(candidate);
+      if (numeric != null) {
+        return `num:${numeric}`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Produce a stable key for neighbour connectivity snapshots.
+   *
+   * @param {Object} record Snapshot record containing neighbour identifiers.
+   * @returns {string|null} Stable neighbour key or ``null`` when identifiers are missing.
+   */
+  function buildNeighborSnapshotKey(record) {
+    if (!record || typeof record !== 'object') return null;
+    const neighborCandidates = [record.neighbor_id, record.neighborId];
+    let neighborId = null;
+    for (const candidate of neighborCandidates) {
+      const normalised = normaliseSnapshotId(candidate);
+      if (normalised) {
+        neighborId = normalised;
+        break;
+      }
+    }
+    if (!neighborId) return null;
+    const nodeKey = buildNodeSnapshotKey(record) ?? 'node:unknown';
+    return `${nodeKey}::neighbor:${neighborId}`;
+  }
+
+  /**
+   * Aggregate node snapshots into a single record per node using recent history.
+   *
+   * @param {Array<Object>} entries Raw node snapshots.
+   * @returns {Array<Object>} Aggregated node payloads.
+   */
+  function aggregateNodeSnapshots(entries) {
+    const series = aggregateSnapshotSeries(entries, {
+      depth: SNAPSHOT_DEPTH,
+      keyFn: buildNodeSnapshotKey,
+      timestampFn: entry => {
+        const times = [
+          toFiniteNumber(entry.last_heard ?? entry.lastHeard),
+          toFiniteNumber(entry.position_time ?? entry.positionTime),
+          toFiniteNumber(entry.first_heard ?? entry.firstHeard),
+        ].filter(value => value != null);
+        return times.length ? Math.max(...times) : Number.NEGATIVE_INFINITY;
+      },
+    });
+    return series
+      .sort((a, b) => b.latestTimestamp - a.latestTimestamp)
+      .map(item => ({ ...item.aggregate }));
+  }
+
+  /**
+   * Aggregate telemetry snapshots to preserve historical metrics per node.
+   *
+   * @param {Array<Object>} entries Raw telemetry snapshots.
+   * @returns {Array<Object>} Aggregated telemetry payloads.
+   */
+  function aggregateTelemetrySnapshots(entries) {
+    const series = aggregateSnapshotSeries(entries, {
+      depth: SNAPSHOT_DEPTH,
+      keyFn: buildNodeSnapshotKey,
+      timestampFn: entry => {
+        const rx = toFiniteNumber(entry.rx_time ?? entry.rxTime);
+        const tele = toFiniteNumber(entry.telemetry_time ?? entry.telemetryTime);
+        if (rx != null && tele != null) return Math.max(rx, tele);
+        return rx ?? tele ?? Number.NEGATIVE_INFINITY;
+      },
+    });
+    return series.map(item => ({ ...item.aggregate }));
+  }
+
+  /**
+   * Aggregate position snapshots to retain the most complete coordinate data.
+   *
+   * @param {Array<Object>} entries Raw position snapshots.
+   * @returns {Array<Object>} Aggregated position payloads.
+   */
+  function aggregatePositionSnapshots(entries) {
+    const series = aggregateSnapshotSeries(entries, {
+      depth: SNAPSHOT_DEPTH,
+      keyFn: buildNodeSnapshotKey,
+      timestampFn: entry => {
+        const rx = resolveTimestampSeconds(entry.rx_time ?? entry.rxTime, entry.rx_iso ?? entry.rxIso);
+        const pos = resolveTimestampSeconds(entry.position_time ?? entry.positionTime, entry.position_time_iso ?? entry.positionTimeIso);
+        if (rx != null && pos != null) return Math.max(rx, pos);
+        return rx ?? pos ?? Number.NEGATIVE_INFINITY;
+      },
+    });
+    return series.map(item => ({ ...item.aggregate }));
+  }
+
+  /**
+   * Aggregate neighbour snapshots to produce richer link information.
+   *
+   * @param {Array<Object>} entries Raw neighbour snapshots.
+   * @returns {Array<Object>} Aggregated neighbour payloads.
+   */
+  function aggregateNeighborSnapshots(entries) {
+    const series = aggregateSnapshotSeries(entries, {
+      depth: SNAPSHOT_DEPTH,
+      keyFn: buildNeighborSnapshotKey,
+      timestampFn: entry => resolveTimestampSeconds(entry.rx_time ?? entry.rxTime, entry.rx_iso ?? entry.rxIso) ?? Number.NEGATIVE_INFINITY,
+    });
+    return series.map(item => ({ ...item.aggregate }));
+  }
+
+  /**
    * Merge recent position packets into the node list.
    *
    * @param {Array<Object>} nodes Node payloads.
@@ -3739,15 +3889,16 @@ let messagesById = new Map();
       if (statusEl) {
         statusEl.textContent = 'refreshing…';
       }
-      const neighborPromise = fetchNeighbors().catch(err => {
+      const snapshotLimit = Math.min(NODE_LIMIT, SNAPSHOT_FETCH_BASE * SNAPSHOT_DEPTH);
+      const neighborPromise = fetchNeighbors(snapshotLimit).catch(err => {
         console.warn('neighbor refresh failed; continuing without connections', err);
         return [];
       });
-      const telemetryPromise = fetchTelemetry().catch(err => {
+      const telemetryPromise = fetchTelemetry(snapshotLimit).catch(err => {
         console.warn('telemetry refresh failed; continuing without telemetry', err);
         return [];
       });
-      const positionsPromise = fetchPositions().catch(err => {
+      const positionsPromise = fetchPositions(snapshotLimit).catch(err => {
         console.warn('position refresh failed; continuing without updates', err);
         return [];
       });
@@ -3755,14 +3906,18 @@ let messagesById = new Map();
         console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
         return [];
       });
-      const [nodes, positions, neighborTuples, messages, telemetryEntries, encryptedMessages] = await Promise.all([
-        fetchNodes(),
+      const [nodeSnapshots, positionSnapshots, neighborSnapshots, messages, telemetrySnapshots, encryptedMessages] = await Promise.all([
+        fetchNodes(snapshotLimit),
         positionsPromise,
         neighborPromise,
         fetchMessages(MESSAGE_LIMIT),
         telemetryPromise,
         encryptedMessagesPromise
       ]);
+      const nodes = aggregateNodeSnapshots(nodeSnapshots);
+      const positions = aggregatePositionSnapshots(positionSnapshots);
+      const neighborTuples = aggregateNeighborSnapshots(neighborSnapshots);
+      const telemetryEntries = aggregateTelemetrySnapshots(telemetrySnapshots);
       nodes.forEach(applyNodeNameFallback);
       mergePositionsIntoNodes(nodes, positions);
       computeDistances(nodes);
@@ -3775,9 +3930,9 @@ let messagesById = new Map();
       ]);
       allMessages = Array.isArray(chatMessages) ? chatMessages : [];
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
-      allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
-      allPositionEntries = Array.isArray(positions) ? positions : [];
-      allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
+      allTelemetryEntries = telemetryEntries;
+      allPositionEntries = positions;
+      allNeighbors = neighborTuples;
       applyFilter();
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
