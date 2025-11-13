@@ -4209,4 +4209,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.first).not_to have_key("portnum")
     end
   end
+
+  describe "GET /nodes/:id" do
+    before do
+      import_nodes_fixture
+    end
+
+    it "renders the node detail page with embedded reference data" do
+      node = nodes_fixture.first
+      get "/nodes/#{node["node_id"]}"
+      expect(last_response).to be_ok
+      expect(last_response.body).to include("data-node-reference=")
+      expect(last_response.body).to include(node["node_id"])
+    end
+
+    it "returns 404 when the node cannot be located" do
+      get "/nodes/!deadbeef"
+      expect(last_response.status).to eq(404)
+    end
+  end
 end

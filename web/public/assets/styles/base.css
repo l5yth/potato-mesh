@@ -779,6 +779,83 @@ body.view-map .map-panel--full #map {
   background: rgba(0, 0, 0, 0.08);
 }
 
+.node-detail {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+}
+
+.node-detail__header {
+  margin-bottom: 12px;
+}
+
+.node-detail__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 1.4rem;
+}
+
+.node-detail__badge {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 1.2rem;
+}
+
+.node-detail__identifier {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--muted);
+}
+
+.node-detail__status,
+.node-detail__error,
+.node-detail__noscript {
+  margin: 16px 0;
+}
+
+.node-detail__error {
+  color: #b00020;
+}
+
+.node-detail__content {
+  display: grid;
+  gap: 24px;
+}
+
+.node-detail__section h3 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+.node-detail__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.node-detail__row {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.node-detail__row dt {
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0;
+}
+
+.node-detail__row dd {
+  margin: 0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.node-detail__list li {
+  margin-bottom: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
 .short-info-content {
   margin: 0;
 }
