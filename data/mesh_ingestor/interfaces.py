@@ -17,16 +17,19 @@
 from __future__ import annotations
 
 import contextlib
-import importlib
 import glob
+import importlib
 import ipaddress
 import re
+import sys
 import urllib.parse
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from meshtastic.serial_interface import SerialInterface
-from meshtastic.tcp_interface import TCPInterface
+try:  # pragma: no cover - dependency optional in tests
+    import meshtastic  # type: ignore
+except Exception:  # pragma: no cover - dependency optional in tests
+    meshtastic = None  # type: ignore[assignment]
 
 from . import channels, config, serialization
 
@@ -141,24 +144,27 @@ BLEInterface = None
 def _patch_meshtastic_nodeinfo_handler() -> None:
     """Ensure Meshtastic nodeinfo packets always include an ``id`` field."""
 
-    try:
-        import meshtastic  # type: ignore
-    except Exception:  # pragma: no cover - dependency optional in tests
+    module = sys.modules.get("meshtastic", meshtastic)
+    if module is None:
+        with contextlib.suppress(Exception):
+            module = importlib.import_module("meshtastic")
+    if module is None:
         return
+    globals()["meshtastic"] = module
 
-    original = getattr(meshtastic, "_onNodeInfoReceive", None)
+    original = getattr(module, "_onNodeInfoReceive", None)
     if not callable(original):
         return
 
-    mesh_interface_module = getattr(meshtastic, "mesh_interface", None)
+    mesh_interface_module = getattr(module, "mesh_interface", None)
     if mesh_interface_module is None:
         with contextlib.suppress(Exception):
             mesh_interface_module = importlib.import_module("meshtastic.mesh_interface")
 
     if not getattr(original, "_potato_mesh_safe_wrapper", False):
-        meshtastic._onNodeInfoReceive = _build_safe_nodeinfo_callback(original)
+        module._onNodeInfoReceive = _build_safe_nodeinfo_callback(original)
 
-    _patch_nodeinfo_handler_class(mesh_interface_module)
+    _patch_nodeinfo_handler_class(mesh_interface_module, module)
 
 
 def _build_safe_nodeinfo_callback(original):
@@ -180,7 +186,20 @@ def _build_safe_nodeinfo_callback(original):
     return _safe_on_node_info_receive
 
 
-def _patch_nodeinfo_handler_class(mesh_interface_module) -> None:
+def _update_nodeinfo_handler_aliases(original, replacement) -> None:
+    """Ensure Meshtastic modules reference the patched ``NodeInfoHandler``."""
+
+    for module_name, module in list(sys.modules.items()):
+        if not module_name.startswith("meshtastic"):
+            continue
+        existing = getattr(module, "NodeInfoHandler", None)
+        if existing is original:
+            setattr(module, "NodeInfoHandler", replacement)
+
+
+def _patch_nodeinfo_handler_class(
+    mesh_interface_module, meshtastic_module=None
+) -> None:
     """Wrap ``NodeInfoHandler.onReceive`` to normalise packets before callbacks."""
 
     if mesh_interface_module is None:
@@ -224,9 +243,27 @@ def _patch_nodeinfo_handler_class(mesh_interface_module) -> None:
     _SafeNodeInfoHandler._potato_mesh_safe_wrapper = True  # type: ignore[attr-defined]
 
     setattr(mesh_interface_module, "NodeInfoHandler", _SafeNodeInfoHandler)
+    if meshtastic_module is None:
+        meshtastic_module = globals().get("meshtastic")
+    if meshtastic_module is not None:
+        existing_top = getattr(meshtastic_module, "NodeInfoHandler", None)
+        if existing_top is handler_class:
+            setattr(meshtastic_module, "NodeInfoHandler", _SafeNodeInfoHandler)
+    _update_nodeinfo_handler_aliases(handler_class, _SafeNodeInfoHandler)
 
 
 _patch_meshtastic_nodeinfo_handler()
+
+
+try:  # pragma: no cover - optional dependency may be unavailable
+    from meshtastic.serial_interface import SerialInterface  # type: ignore
+except Exception:  # pragma: no cover - optional dependency may be unavailable
+    SerialInterface = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional dependency may be unavailable
+    from meshtastic.tcp_interface import TCPInterface  # type: ignore
+except Exception:  # pragma: no cover - optional dependency may be unavailable
+    TCPInterface = None  # type: ignore[assignment]
 
 
 def _patch_meshtastic_ble_receive_loop() -> None:
