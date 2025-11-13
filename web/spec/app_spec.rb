@@ -229,7 +229,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   def expect_api_value(row, key, expected)
     if expected.is_a?(String) && expected.strip.empty?
       expect(row).not_to have_key(key), "expected #{key} to be omitted"
-    elsif expected.nil? || (expected.is_a?(Numeric) && expected.respond_to?(:zero?) && expected.zero?)
+    elsif expected.nil?
       expect(row).not_to have_key(key), "expected #{key} to be omitted"
     else
       expect_same_value(row[key], expected)
@@ -3538,11 +3538,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         actual_row = actual_by_id.fetch(node["node_id"])
 
         expected.each do |key, value|
-          if value.nil? || (value.is_a?(Numeric) && value.respond_to?(:zero?) && value.zero?)
-            expect(actual_row).not_to have_key(key), "expected #{key} to be omitted"
-          else
-            expect_same_value(actual_row[key], value)
-          end
+          expect_api_value(actual_row, key, value)
         end
 
         if expected["last_heard"]
@@ -3609,20 +3605,20 @@ RSpec.describe "Potato Mesh Sinatra app" do
             nil,
             "",
             nil,
-            0.0,
-            0.0,
-            0.0,
+            nil,
+            nil,
+            nil,
             now,
             now,
-            0,
-            0.0,
-            0.0,
+            nil,
+            nil,
+            nil,
             nil,
             " ",
-            0,
-            0.0,
-            0.0,
-            0.0,
+            nil,
+            nil,
+            nil,
+            nil,
           ],
         )
       end
@@ -3955,17 +3951,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [
             7,
             "!pos-blank",
-            0,
+            nil,
             now,
             " ",
             nil,
-            0.0,
-            0.0,
-            0.0,
+            nil,
+            nil,
+            nil,
             " ",
-            0,
-            0,
-            0.0,
+            nil,
+            nil,
+            nil,
             "",
           ],
         )
@@ -4058,7 +4054,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         )
         db.execute(
           "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
-          ["!origin", "!neighbor", 0.0, now],
+          ["!origin", "!neighbor", nil, now],
         )
       end
 
@@ -4182,24 +4178,24 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [
             77,
             "!tele-blank",
-            0,
+            nil,
             now,
             " ",
             nil,
-            0,
+            nil,
             "",
-            0,
-            0.0,
-            0,
-            0,
+            nil,
+            nil,
+            nil,
+            nil,
             "",
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0,
-            0.0,
-            0.0,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
+            nil,
           ],
         )
       end
