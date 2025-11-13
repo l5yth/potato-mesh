@@ -27,11 +27,14 @@ const {
   formatVoltage,
   formatUptime,
   formatTimestamp,
-  buildConfigurationEntries,
-  buildTelemetryEntries,
-  buildPositionEntries,
-  renderDefinitionList,
-  renderNeighbors,
+  formatHardwareModel,
+  formatCoordinate,
+  formatRelativeSeconds,
+  formatDurationSeconds,
+  formatSnr,
+  categoriseNeighbors,
+  renderNeighborGroups,
+  renderSingleNodeTable,
   renderMessages,
   renderNodeDetailHtml,
   parseReferencePayload,
@@ -53,112 +56,21 @@ test('format helpers normalise values as expected', () => {
   assert.match(formatTimestamp(1_700_000_000), /T/);
 });
 
-test('buildConfigurationEntries collects modem and role details', () => {
-  const entries = buildConfigurationEntries({
-    modemPreset: 'LongFast',
-    loraFreq: 915,
-    role: 'ROUTER',
-    hwModel: 'T-Beam',
-    nodeNum: 7,
-    snr: 9.42,
-    lastHeard: 1_700_000_001,
-  });
-  assert.deepEqual(entries.map(entry => entry.label), [
-    'Modem preset',
-    'LoRa frequency',
-    'Role',
-    'Hardware model',
-    'Node number',
-    'SNR',
-    'Last heard',
-  ]);
-});
-
-test('buildTelemetryEntries merges additional metrics', () => {
-  const entries = buildTelemetryEntries({
-    battery: 75.2,
-    voltage: 4.12,
-    uptime: 12_345,
-    channel: 1.23,
-    airUtil: 0.45,
-    temperature: 21.5,
-    humidity: 55.5,
-    pressure: 1013.4,
-    telemetry: {
-      current: 0.53,
-      gas_resistance: 10_000,
-      iaq: 42,
-      distance: 1.23,
-      lux: 35,
-      uv_lux: 3.5,
-      wind_direction: 180,
-      wind_speed: 2.5,
-      wind_gust: 4.1,
-      rainfall_1h: 0.12,
-      rainfall_24h: 1.02,
-      telemetry_time: 1_700_000_123,
-    },
-  });
-  const labels = entries.map(entry => entry.label);
-  assert.ok(labels.includes('Battery'));
-  assert.ok(labels.includes('Voltage'));
-  assert.ok(labels.includes('Uptime'));
-  assert.ok(labels.includes('Channel utilisation'));
-  assert.ok(labels.includes('Air util (TX)'));
-  assert.ok(labels.includes('Temperature'));
-  assert.ok(labels.includes('Humidity'));
-  assert.ok(labels.includes('Pressure'));
-  assert.ok(labels.includes('Current'));
-  assert.ok(labels.includes('Gas resistance'));
-  assert.ok(labels.includes('IAQ'));
-  assert.ok(labels.includes('Distance'));
-  assert.ok(labels.includes('Lux'));
-  assert.ok(labels.includes('UV index'));
-  assert.ok(labels.includes('Wind direction'));
-  assert.ok(labels.includes('Wind speed'));
-  assert.ok(labels.includes('Wind gust'));
-  assert.ok(labels.includes('Rainfall (1h)'));
-  assert.ok(labels.includes('Rainfall (24h)'));
-  assert.ok(labels.includes('Telemetry time'));
-});
-
-test('buildPositionEntries includes precision metadata', () => {
-  const entries = buildPositionEntries({
-    latitude: 52.52,
-    longitude: 13.405,
-    altitude: 42,
-    position: {
-      sats_in_view: 12,
-      precision_bits: 7,
-      location_source: 'GPS',
-      position_time: 1_700_000_050,
-      rx_time: 1_700_000_055,
-    },
-  });
-  const labels = entries.map(entry => entry.label);
-  assert.ok(labels.includes('Latitude'));
-  assert.ok(labels.includes('Longitude'));
-  assert.ok(labels.includes('Altitude'));
-  assert.ok(labels.includes('Satellites'));
-  assert.ok(labels.includes('Precision bits'));
-  assert.ok(labels.includes('Location source'));
-  assert.ok(labels.includes('Position time'));
-  assert.ok(labels.includes('RX time'));
-});
-
-test('render helpers ignore empty values', () => {
-  const listHtml = renderDefinitionList([
-    { label: 'Valid', value: 'ok' },
-    { label: 'Empty', value: '' },
-  ]);
-  assert.equal(listHtml.includes('Valid'), true);
-  assert.equal(listHtml.includes('Empty'), false);
-
-  const neighborsHtml = renderNeighbors([
-    { neighbor_id: '!ally', snr: 9.5, rx_time: 1_700_000_321 },
-    null,
-  ]);
-  assert.equal(neighborsHtml.includes('!ally'), true);
+test('additional format helpers provide table friendly output', () => {
+  assert.equal(formatHardwareModel('UNSET'), '');
+  assert.equal(formatHardwareModel('T-Beam'), 'T-Beam');
+  assert.equal(formatCoordinate(52.123456), '52.12346');
+  assert.equal(formatCoordinate(null), '');
+  assert.equal(formatRelativeSeconds(1_000, 1_060), '1m');
+  assert.equal(formatRelativeSeconds(1_000, 1_120), '2m');
+  assert.equal(formatRelativeSeconds(1_000, 1_000 + 3_700), '1h 1m');
+  assert.equal(formatRelativeSeconds(1_000, 1_000 + 90_000).startsWith('1d'), true);
+  assert.equal(formatDurationSeconds(59), '59s');
+  assert.equal(formatDurationSeconds(61), '1m 1s');
+  assert.equal(formatDurationSeconds(3_661), '1h 1m');
+  assert.equal(formatDurationSeconds(172_800), '2d');
+  assert.equal(formatSnr(12.345), '12.3 dB');
+  assert.equal(formatSnr(null), '');
 
   const messagesHtml = renderMessages([
     { text: 'hello', rx_time: 1_700_000_400, from_id: '!src', to_id: '!dst' },
@@ -168,38 +80,120 @@ test('render helpers ignore empty values', () => {
   assert.equal(messagesHtml.includes('😊'), true);
 });
 
-test('renderNodeDetailHtml composes sections when data exists', () => {
+test('categoriseNeighbors splits inbound and outbound records', () => {
+  const node = { nodeId: '!self', nodeNum: 42 };
+  const neighbors = [
+    { node_id: '!self', neighbor_id: '!ally-one' },
+    { node_id: '!peer', neighbor_id: '!SELF' },
+    { node_num: 42, neighbor_id: '!ally-two' },
+    { node_id: '!friend', neighbor_num: 42 },
+    null,
+  ];
+  const { heardBy, weHear } = categoriseNeighbors(node, neighbors);
+  assert.equal(heardBy.length, 2);
+  assert.equal(weHear.length, 2);
+});
+
+test('renderNeighborGroups renders grouped neighbour lists', () => {
+  const node = { nodeId: '!self', nodeNum: 77 };
+  const neighbors = [
+    {
+      node_id: '!peer',
+      node_short_name: 'PEER',
+      node_role: 'ROUTER',
+      neighbor_id: '!self',
+      snr: 9.5,
+    },
+    {
+      node_id: '!self',
+      neighbor_id: '!ally',
+      neighbor_short_name: 'ALLY',
+      neighbor_role: 'CLIENT',
+      snr: 5.25,
+    },
+  ];
+  const html = renderNeighborGroups(
+    node,
+    neighbors,
+    (short, role) => `<span class="badge" data-role="${role}">${short}</span>`,
+  );
+  assert.equal(html.includes('Neighbors'), true);
+  assert.equal(html.includes('Heard by'), true);
+  assert.equal(html.includes('We hear'), true);
+  assert.equal(html.includes('PEER'), true);
+  assert.equal(html.includes('ALLY'), true);
+  assert.equal(html.includes('9.5 dB'), true);
+  assert.equal(html.includes('5.3 dB'), true);
+});
+
+test('renderSingleNodeTable renders a condensed table for the node', () => {
+  const node = {
+    shortName: 'NODE',
+    longName: 'Example Node',
+    nodeId: '!abcd',
+    role: 'CLIENT',
+    hwModel: 'T-Beam',
+    battery: 66,
+    voltage: 4.12,
+    uptime: 3_700,
+    channel: 1.23,
+    airUtil: 0.45,
+    temperature: 22.5,
+    humidity: 55.5,
+    pressure: 1_013.2,
+    latitude: 52.52,
+    longitude: 13.405,
+    altitude: 40,
+    lastHeard: 9_900,
+    positionTime: 9_850,
+    rawSources: { node: { node_id: '!abcd', role: 'CLIENT' } },
+  };
+  const html = renderSingleNodeTable(
+    node,
+    (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`,
+    10_000,
+  );
+  assert.equal(html.includes('<table'), true);
+  assert.equal(html.includes('Example Node'), true);
+  assert.equal(html.includes('66.0%'), true);
+  assert.equal(html.includes('1.230%'), true);
+  assert.equal(html.includes('52.52000'), true);
+  assert.equal(html.includes('1m 40s'), true);
+  assert.equal(html.includes('2m 30s'), true);
+});
+
+test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   const html = renderNodeDetailHtml(
     {
       shortName: 'NODE',
       longName: 'Example Node',
       nodeId: '!abcd',
+      nodeNum: 77,
       role: 'CLIENT',
-      modemPreset: 'LongFast',
-      loraFreq: 915,
       battery: 60,
       voltage: 4.1,
       uptime: 1_000,
-      temperature: 22,
-      humidity: 50,
-      pressure: 1005,
       latitude: 52.5,
       longitude: 13.4,
       altitude: 40,
     },
     {
-      neighbors: [{ neighbor_id: '!ally', snr: 7.5 }],
+      neighbors: [
+        { node_id: '!peer', node_short_name: 'PEER', neighbor_id: '!abcd', snr: 7.5 },
+        { node_id: '!abcd', neighbor_id: '!ally', neighbor_short_name: 'ALLY', snr: 5.1 },
+      ],
       messages: [{ text: 'Hello', rx_time: 1_700_000_111 }],
       renderShortHtml: (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`,
     },
   );
-  assert.equal(html.includes('Configuration'), true);
-  assert.equal(html.includes('Telemetry'), true);
-  assert.equal(html.includes('Position'), true);
+  assert.equal(html.includes('node-detail__table'), true);
   assert.equal(html.includes('Neighbors'), true);
+  assert.equal(html.includes('Heard by'), true);
+  assert.equal(html.includes('We hear'), true);
   assert.equal(html.includes('Messages'), true);
   assert.equal(html.includes('Example Node'), true);
-  assert.equal(html.includes('!ally'), true);
+  assert.equal(html.includes('PEER'), true);
+  assert.equal(html.includes('ALLY'), true);
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {
@@ -277,7 +271,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
       latitude: 52.5,
       longitude: 13.4,
       altitude: 42,
-      neighbors: [{ neighbor_id: '!ally', snr: 5.5 }],
+      neighbors: [{ node_id: '!node', neighbor_id: '!ally', neighbor_short_name: 'ALLY', snr: 5.5 }],
       rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
     };
   };
@@ -295,6 +289,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   });
   assert.equal(result, true);
   assert.equal(element.innerHTML.includes('Node Long'), true);
+  assert.equal(element.innerHTML.includes('node-detail__table'), true);
   assert.equal(element.innerHTML.includes('Neighbors'), true);
   assert.equal(element.innerHTML.includes('Messages'), true);
 });

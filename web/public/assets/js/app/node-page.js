@@ -21,12 +21,6 @@ import {
   fmtPressure,
   fmtTemperature,
   fmtTx,
-  fmtCurrent,
-  fmtGasResistance,
-  fmtDistance,
-  fmtLux,
-  fmtWindDirection,
-  fmtWindSpeed,
 } from './short-info-telemetry.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
@@ -168,166 +162,372 @@ function formatTimestamp(value, isoFallback = null) {
 }
 
 /**
- * Build the configuration definition list entries for the provided node.
+/**
+ * Format a hardware model string while hiding unset placeholders.
  *
- * @param {Object} node Normalised node payload.
- * @returns {Array<{label: string, value: string}>} Configuration entries.
+ * @param {*} value Raw hardware model value.
+ * @returns {string} Sanitised hardware model string.
  */
-function buildConfigurationEntries(node) {
-  const entries = [];
-  if (!node || typeof node !== 'object') return entries;
-  const modem = stringOrNull(node.modemPreset ?? node.modem_preset);
-  if (modem) entries.push({ label: 'Modem preset', value: modem });
-  const freq = formatFrequency(node.loraFreq ?? node.lora_freq);
-  if (freq) entries.push({ label: 'LoRa frequency', value: freq });
-  const role = stringOrNull(node.role);
-  if (role) entries.push({ label: 'Role', value: role });
-  const hwModel = stringOrNull(node.hwModel ?? node.hw_model);
-  if (hwModel) entries.push({ label: 'Hardware model', value: hwModel });
-  const nodeNum = numberOrNull(node.nodeNum ?? node.node_num ?? node.num);
-  if (nodeNum != null) entries.push({ label: 'Node number', value: String(nodeNum) });
-  const snr = numberOrNull(node.snr);
-  if (snr != null) entries.push({ label: 'SNR', value: `${snr.toFixed(1)} dB` });
-  const lastSeen = formatTimestamp(node.lastHeard, node.lastSeenIso ?? node.last_seen_iso);
-  if (lastSeen) entries.push({ label: 'Last heard', value: lastSeen });
-  return entries;
+function formatHardwareModel(value) {
+  const text = stringOrNull(value);
+  if (!text || text.toUpperCase() === 'UNSET') {
+    return '';
+  }
+  return text;
 }
 
 /**
- * Build telemetry entries incorporating additional environmental metrics.
+ * Format a coordinate with consistent precision.
  *
- * @param {Object} node Normalised node payload.
- * @returns {Array<{label: string, value: string}>} Telemetry entries.
+ * @param {*} value Raw coordinate value.
+ * @param {number} [precision=5] Decimal precision applied to the coordinate.
+ * @returns {string} Formatted coordinate string.
  */
-function buildTelemetryEntries(node) {
-  const entries = [];
-  if (!node || typeof node !== 'object') return entries;
-  const battery = formatBattery(node.battery ?? node.battery_level);
-  if (battery) entries.push({ label: 'Battery', value: battery });
-  const voltage = formatVoltage(node.voltage);
-  if (voltage) entries.push({ label: 'Voltage', value: voltage });
-  const uptime = formatUptime(node.uptime ?? node.uptime_seconds);
-  if (uptime) entries.push({ label: 'Uptime', value: uptime });
-  const channel = fmtTx(node.channel ?? node.channel_utilization ?? node.channelUtilization ?? null, 3);
-  if (channel) entries.push({ label: 'Channel utilisation', value: channel });
-  const airUtil = fmtTx(node.airUtil ?? node.air_util_tx ?? node.airUtilTx ?? null, 3);
-  if (airUtil) entries.push({ label: 'Air util (TX)', value: airUtil });
-  const temperature = fmtTemperature(node.temperature ?? node.temp);
-  if (temperature) entries.push({ label: 'Temperature', value: temperature });
-  const humidity = fmtHumidity(node.humidity ?? node.relative_humidity ?? node.relativeHumidity);
-  if (humidity) entries.push({ label: 'Humidity', value: humidity });
-  const pressure = fmtPressure(node.pressure ?? node.barometric_pressure ?? node.barometricPressure);
-  if (pressure) entries.push({ label: 'Pressure', value: pressure });
-
-  const telemetry = node.telemetry && typeof node.telemetry === 'object' ? node.telemetry : {};
-  const current = fmtCurrent(telemetry.current);
-  if (current) entries.push({ label: 'Current', value: current });
-  const gas = fmtGasResistance(telemetry.gas_resistance ?? telemetry.gasResistance);
-  if (gas) entries.push({ label: 'Gas resistance', value: gas });
-  const iaq = numberOrNull(telemetry.iaq);
-  if (iaq != null) entries.push({ label: 'IAQ', value: String(Math.round(iaq)) });
-  const distance = fmtDistance(telemetry.distance);
-  if (distance) entries.push({ label: 'Distance', value: distance });
-  const lux = fmtLux(telemetry.lux);
-  if (lux) entries.push({ label: 'Lux', value: lux });
-  const uv = fmtLux(telemetry.uv_lux ?? telemetry.uvLux);
-  if (uv) entries.push({ label: 'UV index', value: uv });
-  const windDir = fmtWindDirection(telemetry.wind_direction ?? telemetry.windDirection);
-  if (windDir) entries.push({ label: 'Wind direction', value: windDir });
-  const windSpeed = fmtWindSpeed(telemetry.wind_speed ?? telemetry.windSpeed);
-  if (windSpeed) entries.push({ label: 'Wind speed', value: windSpeed });
-  const windGust = fmtWindSpeed(telemetry.wind_gust ?? telemetry.windGust);
-  if (windGust) entries.push({ label: 'Wind gust', value: windGust });
-  const rainfallHour = fmtDistance(telemetry.rainfall_1h ?? telemetry.rainfall1h);
-  if (rainfallHour) entries.push({ label: 'Rainfall (1h)', value: rainfallHour });
-  const rainfallDay = fmtDistance(telemetry.rainfall_24h ?? telemetry.rainfall24h);
-  if (rainfallDay) entries.push({ label: 'Rainfall (24h)', value: rainfallDay });
-
-  const telemetryTimestamp = formatTimestamp(
-    telemetry.telemetry_time ?? node.telemetryTime,
-    telemetry.telemetry_time_iso ?? node.telemetryTimeIso,
-  );
-  if (telemetryTimestamp) entries.push({ label: 'Telemetry time', value: telemetryTimestamp });
-
-  return entries;
+function formatCoordinate(value, precision = 5) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  return numeric.toFixed(precision);
 }
 
 /**
- * Build the positional metadata entries for the provided node.
+ * Convert an absolute timestamp into a relative time description.
  *
- * @param {Object} node Normalised node payload.
- * @returns {Array<{label: string, value: string}>} Position entries.
+ * @param {*} value Raw timestamp expressed in seconds since the epoch.
+ * @param {number} [referenceSeconds] Optional reference timestamp in seconds.
+ * @returns {string} Relative time string or an empty string when unavailable.
  */
-function buildPositionEntries(node) {
-  const entries = [];
-  if (!node || typeof node !== 'object') return entries;
-  const latitude = numberOrNull(node.latitude ?? node.lat);
-  if (latitude != null) entries.push({ label: 'Latitude', value: latitude.toFixed(6) });
-  const longitude = numberOrNull(node.longitude ?? node.lon);
-  if (longitude != null) entries.push({ label: 'Longitude', value: longitude.toFixed(6) });
-  const altitude = fmtAlt(node.altitude ?? node.alt, ' m');
-  if (altitude) entries.push({ label: 'Altitude', value: altitude });
-
-  const position = node.position && typeof node.position === 'object' ? node.position : {};
-  const sats = numberOrNull(position.sats_in_view ?? position.satsInView);
-  if (sats != null) entries.push({ label: 'Satellites', value: String(sats) });
-  const precision = numberOrNull(position.precision_bits ?? position.precisionBits);
-  if (precision != null) entries.push({ label: 'Precision bits', value: String(precision) });
-  const source = stringOrNull(position.location_source ?? position.locationSource);
-  if (source) entries.push({ label: 'Location source', value: source });
-  const positionTimestamp = formatTimestamp(
-    node.positionTime ?? position.position_time,
-    node.positionTimeIso ?? position.position_time_iso,
-  );
-  if (positionTimestamp) entries.push({ label: 'Position time', value: positionTimestamp });
-  const rxTimestamp = formatTimestamp(position.rx_time, position.rx_iso);
-  if (rxTimestamp) entries.push({ label: 'RX time', value: rxTimestamp });
-  return entries;
+function formatRelativeSeconds(value, referenceSeconds = Date.now() / 1000) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  const reference = numberOrNull(referenceSeconds);
+  const base = reference != null ? reference : Date.now() / 1000;
+  const diff = Math.floor(base - numeric);
+  const safeDiff = Number.isFinite(diff) ? Math.max(diff, 0) : 0;
+  if (safeDiff < 60) return `${safeDiff}s`;
+  if (safeDiff < 3_600) {
+    const minutes = Math.floor(safeDiff / 60);
+    const seconds = safeDiff % 60;
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  if (safeDiff < 86_400) {
+    const hours = Math.floor(safeDiff / 3_600);
+    const minutes = Math.floor((safeDiff % 3_600) / 60);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(safeDiff / 86_400);
+  const hours = Math.floor((safeDiff % 86_400) / 3_600);
+  return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
 }
 
 /**
- * Render a definition list as HTML.
+ * Format a duration expressed in seconds using a compact human readable form.
  *
- * @param {Array<{label: string, value: string}>} entries Definition entries.
- * @returns {string} HTML string for the definition list.
+ * @param {*} value Raw duration in seconds.
+ * @returns {string} Human readable duration string or an empty string.
  */
-function renderDefinitionList(entries) {
+function formatDurationSeconds(value) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  const duration = Math.max(Math.floor(numeric), 0);
+  if (duration < 60) return `${duration}s`;
+  if (duration < 3_600) {
+    const minutes = Math.floor(duration / 60);
+    const seconds = duration % 60;
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  if (duration < 86_400) {
+    const hours = Math.floor(duration / 3_600);
+    const minutes = Math.floor((duration % 3_600) / 60);
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(duration / 86_400);
+  const hours = Math.floor((duration % 86_400) / 3_600);
+  return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+}
+
+/**
+ * Format an SNR reading with a decibel suffix.
+ *
+ * @param {*} value Raw SNR value.
+ * @returns {string} Formatted SNR string or an empty string.
+ */
+function formatSnr(value) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  return `${numeric.toFixed(1)} dB`;
+}
+
+/**
+ * Determine whether a neighbour record references the current node.
+ *
+ * @param {Object} entry Raw neighbour entry.
+ * @param {string|null} ourId Canonical identifier for the current node.
+ * @param {number|null} ourNum Canonical numeric identifier for the current node.
+ * @param {Array<string>} idKeys Candidate identifier property names.
+ * @param {Array<string>} numKeys Candidate numeric identifier property names.
+ * @returns {boolean} ``true`` when the neighbour refers to the current node.
+ */
+function neighborMatches(entry, ourId, ourNum, idKeys, numKeys) {
+  if (!entry || typeof entry !== 'object') return false;
+  const ids = idKeys
+    .map(key => stringOrNull(entry[key]))
+    .filter(candidate => candidate != null)
+    .map(candidate => candidate.toLowerCase());
+  if (ourId && ids.includes(ourId.toLowerCase())) {
+    return true;
+  }
+  if (ourNum == null) return false;
+  return numKeys
+    .map(key => numberOrNull(entry[key]))
+    .some(candidate => candidate != null && candidate === ourNum);
+}
+
+/**
+ * Categorise neighbour entries by their relationship to the current node.
+ *
+ * @param {Object} node Normalised node payload.
+ * @param {Array<Object>} neighbors Raw neighbour entries.
+ * @returns {{heardBy: Array<Object>, weHear: Array<Object>}} Categorised neighbours.
+ */
+function categoriseNeighbors(node, neighbors) {
+  const heardBy = [];
+  const weHear = [];
+  if (!Array.isArray(neighbors) || neighbors.length === 0) {
+    return { heardBy, weHear };
+  }
+  const ourId = stringOrNull(node?.nodeId ?? node?.node_id) ?? null;
+  const ourNum = numberOrNull(node?.nodeNum ?? node?.node_num ?? node?.num);
+  neighbors.forEach(entry => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const matchesNeighbor = neighborMatches(entry, ourId, ourNum, ['neighbor_id', 'neighborId'], ['neighbor_num', 'neighborNum']);
+    const matchesNode = neighborMatches(entry, ourId, ourNum, ['node_id', 'nodeId'], ['node_num', 'nodeNum']);
+    if (matchesNeighbor) {
+      heardBy.push(entry);
+    }
+    if (matchesNode) {
+      weHear.push(entry);
+    }
+  });
+  return { heardBy, weHear };
+}
+
+/**
+ * Generate a badge HTML fragment for a neighbour entry.
+ *
+ * @param {Object} entry Raw neighbour entry.
+ * @param {'heardBy'|'weHear'} perspective Group perspective describing the relation.
+ * @param {Function} renderShortHtml Badge rendering implementation.
+ * @returns {string} HTML snippet for the badge or an empty string.
+ */
+function renderNeighborBadge(entry, perspective, renderShortHtml) {
+  if (!entry || typeof entry !== 'object' || typeof renderShortHtml !== 'function') {
+    return '';
+  }
+  const idKeys = perspective === 'heardBy'
+    ? ['node_id', 'nodeId', 'id']
+    : ['neighbor_id', 'neighborId', 'id'];
+  const numKeys = perspective === 'heardBy'
+    ? ['node_num', 'nodeNum']
+    : ['neighbor_num', 'neighborNum'];
+  const shortKeys = perspective === 'heardBy'
+    ? ['node_short_name', 'nodeShortName', 'short_name', 'shortName']
+    : ['neighbor_short_name', 'neighborShortName', 'short_name', 'shortName'];
+  const longKeys = perspective === 'heardBy'
+    ? ['node_long_name', 'nodeLongName', 'long_name', 'longName']
+    : ['neighbor_long_name', 'neighborLongName', 'long_name', 'longName'];
+  const roleKeys = perspective === 'heardBy'
+    ? ['node_role', 'nodeRole', 'role']
+    : ['neighbor_role', 'neighborRole', 'role'];
+
+  const identifier = idKeys.map(key => stringOrNull(entry[key])).find(value => value != null);
+  if (!identifier) return '';
+  const numericId = numKeys.map(key => numberOrNull(entry[key])).find(value => value != null) ?? null;
+  let shortName = shortKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
+  const longName = longKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
+  const role = roleKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? 'CLIENT';
+  if (!shortName) {
+    const trimmed = identifier.replace(/^!+/, '');
+    shortName = trimmed.slice(-4).toUpperCase();
+  }
+
+  const source = perspective === 'heardBy' ? entry.node : entry.neighbor;
+  const badgeSource = source && typeof source === 'object'
+    ? { ...source }
+    : {};
+  if (!badgeSource.node_id && !badgeSource.nodeId) {
+    badgeSource.node_id = identifier;
+    badgeSource.nodeId = identifier;
+  }
+  if (!badgeSource.node_num && !badgeSource.nodeNum && numericId != null) {
+    badgeSource.node_num = numericId;
+    badgeSource.nodeNum = numericId;
+  }
+  if (!badgeSource.short_name && !badgeSource.shortName) {
+    badgeSource.short_name = shortName;
+    badgeSource.shortName = shortName;
+  }
+  if (!badgeSource.long_name && !badgeSource.longName && longName) {
+    badgeSource.long_name = longName;
+    badgeSource.longName = longName;
+  }
+  if (!badgeSource.role) {
+    badgeSource.role = role;
+  }
+
+  return renderShortHtml(shortName, role, longName, badgeSource);
+}
+
+/**
+ * Render a neighbour group as a titled list.
+ *
+ * @param {string} title Section title for the group.
+ * @param {Array<Object>} entries Neighbour entries included in the group.
+ * @param {'heardBy'|'weHear'} perspective Group perspective.
+ * @param {Function} renderShortHtml Badge rendering implementation.
+ * @returns {string} HTML markup or an empty string when no entries render.
+ */
+function renderNeighborGroup(title, entries, perspective, renderShortHtml) {
   if (!Array.isArray(entries) || entries.length === 0) {
     return '';
   }
-  const rows = entries
-    .filter(entry => stringOrNull(entry?.label) && stringOrNull(entry?.value))
-    .map(entry =>
-      `<div class="node-detail__row"><dt>${escapeHtml(entry.label)}</dt><dd>${escapeHtml(entry.value)}</dd></div>`,
-    );
-  if (rows.length === 0) return '';
-  return `<dl class="node-detail__list">${rows.join('')}</dl>`;
-}
-
-/**
- * Render neighbor information as an unordered list.
- *
- * @param {Array<Object>} neighbors Neighbor records.
- * @returns {string} HTML string for the neighbor section.
- */
-function renderNeighbors(neighbors) {
-  if (!Array.isArray(neighbors) || neighbors.length === 0) return '';
-  const items = neighbors
+  const items = entries
     .map(entry => {
-      if (!entry || typeof entry !== 'object') return null;
-      const neighborId = stringOrNull(entry.neighbor_id ?? entry.neighborId ?? entry.node_id ?? entry.nodeId);
-      const snr = numberOrNull(entry.snr);
-      const rx = formatTimestamp(entry.rx_time, entry.rx_iso);
-      const parts = [];
-      if (neighborId) parts.push(escapeHtml(neighborId));
-      if (snr != null) parts.push(`${snr.toFixed(1)} dB`);
-      if (rx) parts.push(escapeHtml(rx));
-      if (parts.length === 0) return null;
-      return `<li>${parts.join(' — ')}</li>`;
+      const badgeHtml = renderNeighborBadge(entry, perspective, renderShortHtml);
+      if (!badgeHtml) {
+        return null;
+      }
+      const snrDisplay = formatSnr(entry?.snr);
+      const snrHtml = snrDisplay ? `<span class="node-detail__neighbor-snr">(${escapeHtml(snrDisplay)})</span>` : '';
+      return `<li>${badgeHtml}${snrHtml}</li>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
-  return `<ul class="node-detail__list">${items.join('')}</ul>`;
+  return `
+    <div class="node-detail__neighbors-group">
+      <h4 class="node-detail__neighbors-title">${escapeHtml(title)}</h4>
+      <ul class="node-detail__neighbors-list">${items.join('')}</ul>
+    </div>
+  `;
+}
+
+/**
+ * Render neighbour information grouped by signal direction.
+ *
+ * @param {Object} node Normalised node payload.
+ * @param {Array<Object>} neighbors Raw neighbour entries.
+ * @param {Function} renderShortHtml Badge rendering implementation.
+ * @returns {string} HTML markup for the neighbour section.
+ */
+function renderNeighborGroups(node, neighbors, renderShortHtml) {
+  const { heardBy, weHear } = categoriseNeighbors(node, neighbors);
+  const heardByHtml = renderNeighborGroup('Heard by', heardBy, 'heardBy', renderShortHtml);
+  const weHearHtml = renderNeighborGroup('We hear', weHear, 'weHear', renderShortHtml);
+  const groups = [heardByHtml, weHearHtml].filter(section => stringOrNull(section));
+  if (groups.length === 0) {
+    return '';
+  }
+  return `
+    <section class="node-detail__section node-detail__neighbors">
+      <h3>Neighbors</h3>
+      <div class="node-detail__neighbors-grid">${groups.join('')}</div>
+    </section>
+  `;
+}
+
+/**
+ * Render a condensed node table containing a single entry.
+ *
+ * @param {Object} node Normalised node payload.
+ * @param {Function} renderShortHtml Badge rendering implementation.
+ * @param {number} [referenceSeconds] Optional reference timestamp for relative metrics.
+ * @returns {string} HTML markup for the node table or an empty string.
+ */
+function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.now() / 1000) {
+  if (!node || typeof node !== 'object' || typeof renderShortHtml !== 'function') {
+    return '';
+  }
+  const nodeId = stringOrNull(node.nodeId ?? node.node_id) ?? '';
+  const shortName = stringOrNull(node.shortName ?? node.short_name) ?? null;
+  const longName = stringOrNull(node.longName ?? node.long_name) ?? '';
+  const role = stringOrNull(node.role) ?? 'CLIENT';
+  const badgeSource = node.rawSources?.node && typeof node.rawSources.node === 'object'
+    ? node.rawSources.node
+    : {
+        node_id: nodeId,
+        nodeId,
+        node_num: numberOrNull(node.nodeNum ?? node.node_num ?? node.num) ?? undefined,
+        short_name: shortName ?? undefined,
+        long_name: longName ?? undefined,
+        role,
+      };
+  const badgeHtml = renderShortHtml(shortName, role, longName, badgeSource);
+  const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
+  const battery = formatBattery(node.battery ?? node.battery_level);
+  const voltage = formatVoltage(node.voltage ?? node.voltageReading);
+  const uptime = formatDurationSeconds(node.uptime ?? node.uptime_seconds ?? node.uptimeSeconds);
+  const channel = fmtTx(node.channel ?? node.channel_utilization ?? node.channelUtilization ?? null, 3);
+  const airUtil = fmtTx(node.airUtil ?? node.air_util_tx ?? node.airUtilTx ?? null, 3);
+  const temperature = fmtTemperature(node.temperature ?? node.temp);
+  const humidity = fmtHumidity(node.humidity ?? node.relative_humidity ?? node.relativeHumidity);
+  const pressure = fmtPressure(node.pressure ?? node.barometric_pressure ?? node.barometricPressure);
+  const latitude = formatCoordinate(node.latitude ?? node.lat);
+  const longitude = formatCoordinate(node.longitude ?? node.lon);
+  const altitude = fmtAlt(node.altitude ?? node.alt, 'm');
+  const lastSeen = formatRelativeSeconds(node.lastHeard ?? node.last_heard, referenceSeconds);
+  const lastPosition = formatRelativeSeconds(node.positionTime ?? node.position_time, referenceSeconds);
+
+  return `
+    <div class="nodes-table-wrapper">
+      <table class="nodes-detail-table" aria-label="Selected node details">
+        <thead>
+          <tr>
+            <th class="nodes-col nodes-col--node-id">Node ID</th>
+            <th class="nodes-col nodes-col--short-name">Short</th>
+            <th class="nodes-col nodes-col--long-name">Long Name</th>
+            <th class="nodes-col nodes-col--last-seen">Last Seen</th>
+            <th class="nodes-col nodes-col--role">Role</th>
+            <th class="nodes-col nodes-col--hw-model">HW Model</th>
+            <th class="nodes-col nodes-col--battery">Battery</th>
+            <th class="nodes-col nodes-col--voltage">Voltage</th>
+            <th class="nodes-col nodes-col--uptime">Uptime</th>
+            <th class="nodes-col nodes-col--channel-util">Channel Util</th>
+            <th class="nodes-col nodes-col--air-util-tx">Air Util Tx</th>
+            <th class="nodes-col nodes-col--temperature">Temperature</th>
+            <th class="nodes-col nodes-col--humidity">Humidity</th>
+            <th class="nodes-col nodes-col--pressure">Pressure</th>
+            <th class="nodes-col nodes-col--latitude">Latitude</th>
+            <th class="nodes-col nodes-col--longitude">Longitude</th>
+            <th class="nodes-col nodes-col--altitude">Altitude</th>
+            <th class="nodes-col nodes-col--last-position">Last Position</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono nodes-col nodes-col--node-id">${escapeHtml(nodeId)}</td>
+            <td class="nodes-col nodes-col--short-name">${badgeHtml}</td>
+            <td class="nodes-col nodes-col--long-name">${escapeHtml(longName)}</td>
+            <td class="nodes-col nodes-col--last-seen">${escapeHtml(lastSeen)}</td>
+            <td class="nodes-col nodes-col--role">${escapeHtml(role)}</td>
+            <td class="nodes-col nodes-col--hw-model">${escapeHtml(hardware)}</td>
+            <td class="nodes-col nodes-col--battery">${escapeHtml(battery ?? '')}</td>
+            <td class="nodes-col nodes-col--voltage">${escapeHtml(voltage ?? '')}</td>
+            <td class="nodes-col nodes-col--uptime">${escapeHtml(uptime)}</td>
+            <td class="nodes-col nodes-col--channel-util">${escapeHtml(channel ?? '')}</td>
+            <td class="nodes-col nodes-col--air-util-tx">${escapeHtml(airUtil ?? '')}</td>
+            <td class="nodes-col nodes-col--temperature">${escapeHtml(temperature ?? '')}</td>
+            <td class="nodes-col nodes-col--humidity">${escapeHtml(humidity ?? '')}</td>
+            <td class="nodes-col nodes-col--pressure">${escapeHtml(pressure ?? '')}</td>
+            <td class="nodes-col nodes-col--latitude">${escapeHtml(latitude)}</td>
+            <td class="nodes-col nodes-col--longitude">${escapeHtml(longitude)}</td>
+            <td class="nodes-col nodes-col--altitude">${escapeHtml(altitude ?? '')}</td>
+            <td class="mono nodes-col nodes-col--last-position">${escapeHtml(lastPosition)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /**
@@ -373,29 +573,22 @@ function renderMessages(messages) {
  */
 function renderNodeDetailHtml(node, { neighbors = [], messages = [], renderShortHtml }) {
   const roleAwareBadge = typeof renderShortHtml === 'function'
-    ? renderShortHtml(node.shortName ?? node.short_name, node.role, node.longName ?? node.long_name, node.rawSources?.node ?? node)
+    ? renderShortHtml(
+        node.shortName ?? node.short_name,
+        node.role,
+        node.longName ?? node.long_name,
+        node.rawSources?.node ?? node,
+      )
     : escapeHtml(node.shortName ?? node.short_name ?? '?');
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
-
-  const configHtml = renderDefinitionList(buildConfigurationEntries(node));
-  const telemetryHtml = renderDefinitionList(buildTelemetryEntries(node));
-  const positionHtml = renderDefinitionList(buildPositionEntries(node));
-  const neighborsHtml = renderNeighbors(neighbors);
+  const tableHtml = renderSingleNodeTable(node, renderShortHtml);
+  const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml);
   const messagesHtml = renderMessages(messages);
 
   const sections = [];
-  if (configHtml) {
-    sections.push(`<section class="node-detail__section"><h3>Configuration</h3>${configHtml}</section>`);
-  }
-  if (telemetryHtml) {
-    sections.push(`<section class="node-detail__section"><h3>Telemetry</h3>${telemetryHtml}</section>`);
-  }
-  if (positionHtml) {
-    sections.push(`<section class="node-detail__section"><h3>Position</h3>${positionHtml}</section>`);
-  }
-  if (Array.isArray(neighbors) && neighbors.length > 0 && neighborsHtml) {
-    sections.push(`<section class="node-detail__section"><h3>Neighbors</h3>${neighborsHtml}</section>`);
+  if (neighborsHtml) {
+    sections.push(neighborsHtml);
   }
   if (Array.isArray(messages) && messages.length > 0 && messagesHtml) {
     sections.push(`<section class="node-detail__section"><h3>Messages</h3>${messagesHtml}</section>`);
@@ -403,14 +596,16 @@ function renderNodeDetailHtml(node, { neighbors = [], messages = [], renderShort
 
   const identifierHtml = identifier ? `<span class="node-detail__identifier">[${escapeHtml(identifier)}]</span>` : '';
   const nameHtml = longName ? `<span class="node-detail__name">${escapeHtml(longName)}</span>` : '';
+  const badgeHtml = `<span class="node-detail__badge">${roleAwareBadge}</span>`;
+  const tableSection = tableHtml ? `<div class="node-detail__table">${tableHtml}</div>` : '';
+  const contentHtml = sections.length > 0 ? `<div class="node-detail__content">${sections.join('')}</div>` : '';
 
   return `
     <header class="node-detail__header">
-      <h2 class="node-detail__title">${roleAwareBadge}${nameHtml}${identifierHtml}</h2>
+      <h2 class="node-detail__title">${badgeHtml}${nameHtml}${identifierHtml}</h2>
     </header>
-    <div class="node-detail__content">
-      ${sections.join('')}
-    </div>
+    ${tableSection}
+    ${contentHtml}
   `;
 }
 
@@ -542,11 +737,14 @@ export const __testUtils = {
   formatVoltage,
   formatUptime,
   formatTimestamp,
-  buildConfigurationEntries,
-  buildTelemetryEntries,
-  buildPositionEntries,
-  renderDefinitionList,
-  renderNeighbors,
+  formatHardwareModel,
+  formatCoordinate,
+  formatRelativeSeconds,
+  formatDurationSeconds,
+  formatSnr,
+  categoriseNeighbors,
+  renderNeighborGroups,
+  renderSingleNodeTable,
   renderMessages,
   renderNodeDetailHtml,
   parseReferencePayload,

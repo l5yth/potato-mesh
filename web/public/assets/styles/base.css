@@ -802,6 +802,15 @@ body.view-map .map-panel--full #map {
   font-size: 1.2rem;
 }
 
+.node-detail__table {
+  margin: 20px 0 32px;
+  overflow-x: auto;
+}
+
+.node-detail__table table {
+  min-width: 720px;
+}
+
 .node-detail__identifier {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   color: var(--muted);
@@ -820,6 +829,50 @@ body.view-map .map-panel--full #map {
 .node-detail__content {
   display: grid;
   gap: 24px;
+}
+
+.node-detail__neighbors-grid {
+  display: grid;
+  gap: 16px;
+}
+
+@media (min-width: 720px) {
+  .node-detail__neighbors-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.node-detail__neighbors-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.node-detail__neighbors-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.node-detail__neighbors-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.node-detail__neighbors-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.node-detail__neighbor-snr {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--muted);
+  font-size: 0.95rem;
 }
 
 .node-detail__section h3 {
