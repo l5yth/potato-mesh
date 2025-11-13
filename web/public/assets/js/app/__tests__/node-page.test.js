@@ -48,6 +48,9 @@ const {
   parseReferencePayload,
   resolveRenderShortHtml,
   fetchMessages,
+  buildNodeSnapshotKey,
+  resolveNodeSnapshotTimestamp,
+  aggregateNodeSnapshotsForDetail,
 } = __testUtils;
 
 test('format helpers normalise values as expected', () => {
@@ -66,6 +69,26 @@ test('format helpers normalise values as expected', () => {
   assert.equal(normalizeNodeId('!NODE'), '!node');
   const messageTimestamp = formatMessageTimestamp(1_700_000_000);
   assert.equal(messageTimestamp.startsWith('2023-'), true);
+});
+
+test('node snapshot helpers derive keys, timestamps, and aggregates', () => {
+  assert.equal(buildNodeSnapshotKey({ node_id: '!NODE' }), 'id:!node');
+  assert.equal(buildNodeSnapshotKey({ node_num: 77 }), 'num:77');
+  assert.equal(buildNodeSnapshotKey(null), null);
+
+  assert.equal(resolveNodeSnapshotTimestamp({ last_heard: 10, first_heard: 5 }), 10);
+  assert.equal(resolveNodeSnapshotTimestamp({ position_time: 22 }), 22);
+  assert.equal(resolveNodeSnapshotTimestamp({}), Number.NEGATIVE_INFINITY);
+
+  const aggregate = aggregateNodeSnapshotsForDetail([
+    { node_id: '!ally', short_name: 'ALLY-OLD', role: 'CLIENT', last_heard: 10, hw_model: 'T-Beam' },
+    { node_id: '!ally', long_name: 'Ally Long', role: 'ROUTER', last_heard: 15 },
+    { node_id: '!ally', short_name: 'ALLY-NEW', last_heard: 20 },
+  ]);
+  assert.equal(aggregate.short_name, 'ALLY-NEW');
+  assert.equal(aggregate.long_name, 'Ally Long');
+  assert.equal(aggregate.role, 'ROUTER');
+  assert.equal(aggregate.hw_model, 'T-Beam');
 });
 
 test('role lookup helpers normalise identifiers and register candidates', () => {
@@ -212,16 +235,36 @@ test('buildNeighborRoleIndex fetches missing neighbor metadata from the API', as
     return {
       status: 200,
       ok: true,
-      json: async () => ({ node_id: '!ally', role: 'ROUTER', node_num: 99, short_name: 'ALLY-API' }),
+      json: async () => [
+        { node_id: '!ally', node_num: 99, role: null, short_name: '' },
+        { node_id: '!ally', node_num: 99, long_name: 'Ally Aggregated', role: 'ROUTER', short_name: 'ALLY-API' },
+        { node_id: '!ally', node_num: 99, short_name: 'ALLY-FRESH' },
+      ],
     };
   };
   const index = await buildNeighborRoleIndex({ nodeId: '!self', role: 'CLIENT' }, neighbors, { fetchImpl });
   assert.equal(index.byId.get('!self'), 'CLIENT');
   assert.equal(index.byId.get('!ally'), 'ROUTER');
   assert.equal(index.byNum.get(99), 'ROUTER');
-  assert.equal(calls.some(url => url.startsWith('/api/nodes/')), true);
+  assert.equal(calls[0].includes('?limit=7'), true);
   const allyMetadata = lookupNeighborDetails(index, { identifier: '!ally', numericId: 99 });
-  assert.equal(allyMetadata.shortName, 'ALLY-API');
+  assert.equal(allyMetadata.shortName, 'ALLY-FRESH');
+  assert.equal(allyMetadata.longName, 'Ally Aggregated');
+});
+
+test('buildNeighborRoleIndex tolerates singleton node responses', async () => {
+  const neighbors = [
+    { neighbor_id: '!buddy' },
+  ];
+  const fetchImpl = async () => ({
+    status: 200,
+    ok: true,
+    json: async () => ({ node_id: '!buddy', role: 'REPEATER', node_num: 55, short_name: 'BUDDY' }),
+  });
+  const index = await buildNeighborRoleIndex({ nodeId: '!self', role: 'CLIENT' }, neighbors, { fetchImpl });
+  assert.equal(index.byId.get('!buddy'), 'REPEATER');
+  const details = lookupNeighborDetails(index, { identifier: '!buddy', numericId: 55 });
+  assert.equal(details.shortName, 'BUDDY');
 });
 
 test('renderSingleNodeTable renders a condensed table for the node', () => {

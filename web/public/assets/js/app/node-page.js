@@ -15,6 +15,7 @@
  */
 
 import { refreshNodeInformation } from './node-details.js';
+import { aggregateSnapshotSeries, SNAPSHOT_DEPTH } from './snapshot-aggregator.js';
 import {
   extractChatMessageMetadata,
   formatChatChannelTag,
@@ -568,7 +569,10 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
   for (const [normalized, raw] of fetchIdMap.entries()) {
     const task = (async () => {
       try {
-        const response = await fetchFn(`/api/nodes/${encodeURIComponent(raw)}`, DEFAULT_FETCH_OPTIONS);
+        const response = await fetchFn(
+          `/api/nodes/${encodeURIComponent(raw)}?limit=${SNAPSHOT_DEPTH}`,
+          DEFAULT_FETCH_OPTIONS,
+        );
         if (response.status === 404) {
           return;
         }
@@ -576,16 +580,43 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
           throw new Error(`Failed to load node information for ${raw} (HTTP ${response.status})`);
         }
         const payload = await response.json();
+        const snapshots = Array.isArray(payload)
+          ? payload.filter(item => item && typeof item === 'object')
+          : payload && typeof payload === 'object'
+            ? [payload]
+            : [];
+        const aggregated = aggregateNodeSnapshotsForDetail(snapshots, normalized);
+        if (!aggregated) {
+          return;
+        }
         registerRoleCandidate(index, {
           identifier:
-            payload?.node_id
-            ?? payload?.nodeId
-            ?? payload?.id
+            aggregated.node_id
+            ?? aggregated.nodeId
+            ?? aggregated.id
             ?? raw,
-          numericId: payload?.node_num ?? payload?.nodeNum ?? payload?.num ?? null,
-          role: payload?.role ?? payload?.node_role ?? payload?.nodeRole ?? null,
-          shortName: payload?.short_name ?? payload?.shortName ?? null,
-          longName: payload?.long_name ?? payload?.longName ?? null,
+          numericId:
+            aggregated.node_num
+            ?? aggregated.nodeNum
+            ?? aggregated.num
+            ?? aggregated.numeric_id
+            ?? aggregated.numericId
+            ?? null,
+          role: aggregated.role ?? aggregated.node_role ?? aggregated.nodeRole ?? null,
+          shortName:
+            aggregated.short_name
+            ?? aggregated.shortName
+            ?? aggregated.node_short_name
+            ?? aggregated.nodeShortName
+            ?? aggregated.neighbor_short_name
+            ?? aggregated.neighborShortName
+            ?? null,
+          longName:
+            aggregated.long_name
+            ?? aggregated.longName
+            ?? aggregated.node_long_name
+            ?? aggregated.nodeLongName
+            ?? null,
         });
       } catch (error) {
         console.warn('Failed to resolve neighbor role', error);
@@ -666,6 +697,69 @@ async function buildNeighborRoleIndex(node, neighbors, { fetchImpl } = {}) {
 
   await fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl);
   return index;
+}
+
+/**
+ * Compute a stable key for node snapshot aggregation.
+ *
+ * @param {Object|null|undefined} snapshot Raw node snapshot payload.
+ * @returns {string|null} Stable key or ``null`` when identifiers are unavailable.
+ */
+function buildNodeSnapshotKey(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return null;
+  }
+  const identifier = stringOrNull(
+    snapshot.node_id ?? snapshot.nodeId ?? snapshot.id ?? snapshot.identifier ?? null,
+  );
+  if (identifier) {
+    return `id:${identifier.toLowerCase()}`;
+  }
+  const numeric = numberOrNull(
+    snapshot.node_num ?? snapshot.nodeNum ?? snapshot.num ?? snapshot.numeric_id ?? snapshot.numericId,
+  );
+  if (numeric != null) {
+    return `num:${numeric}`;
+  }
+  return null;
+}
+
+/**
+ * Determine an ordering timestamp for a node snapshot.
+ *
+ * @param {Object} snapshot Raw node snapshot payload.
+ * @returns {number} Timestamp in seconds or ``Number.NEGATIVE_INFINITY`` when absent.
+ */
+function resolveNodeSnapshotTimestamp(snapshot) {
+  const candidates = [
+    numberOrNull(snapshot.last_heard ?? snapshot.lastHeard),
+    numberOrNull(snapshot.position_time ?? snapshot.positionTime),
+    numberOrNull(snapshot.first_heard ?? snapshot.firstHeard),
+  ].filter(value => value != null);
+  return candidates.length > 0 ? Math.max(...candidates) : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Aggregate multiple node snapshots into a single representation.
+ *
+ * @param {Array<Object>} snapshots Snapshot payloads retrieved from the API.
+ * @param {string|null} fallbackKey Preferred key when snapshots omit identifiers.
+ * @returns {Object|null} Aggregated payload or ``null`` when no snapshots are provided.
+ */
+function aggregateNodeSnapshotsForDetail(snapshots, fallbackKey = null) {
+  const records = Array.isArray(snapshots)
+    ? snapshots.filter(item => item && typeof item === 'object')
+    : [];
+  if (records.length === 0) {
+    return null;
+  }
+  const series = aggregateSnapshotSeries(records, {
+    depth: SNAPSHOT_DEPTH,
+    keyFn: entry => buildNodeSnapshotKey(entry) ?? fallbackKey ?? 'node-detail',
+    timestampFn: resolveNodeSnapshotTimestamp,
+  });
+  const preferred = series.find(entry => entry.key != null) ?? series[0];
+  return preferred && preferred.aggregate ? { ...preferred.aggregate } : null;
 }
 
 /**
@@ -1332,4 +1426,7 @@ export const __testUtils = {
   parseReferencePayload,
   resolveRenderShortHtml,
   fetchMessages,
+  buildNodeSnapshotKey,
+  resolveNodeSnapshotTimestamp,
+  aggregateNodeSnapshotsForDetail,
 };
