@@ -27,7 +27,7 @@ function toFiniteCoordinate(value) {
 }
 
 /**
- * Enhance a table cell so that it contains a clickable button capable of
+ * Enhance a table cell so that it contains a clickable link capable of
  * focusing the map on the provided coordinates.
  *
  * @param {{
@@ -40,9 +40,9 @@ function toFiniteCoordinate(value) {
  *   lon: *,
  *   nodeName?: string,
  *   onActivate?: (lat: number, lon: number) => boolean | void,
- *   buttonClassName?: string
+ *   linkClassName?: string
  * }} options Enhancement configuration.
- * @returns {HTMLElement|null} The created button when enhancement succeeds.
+ * @returns {HTMLElement|null} The created link when enhancement succeeds.
  */
 export function enhanceCoordinateCell({
   cell,
@@ -54,7 +54,7 @@ export function enhanceCoordinateCell({
   lon,
   nodeName,
   onActivate,
-  buttonClassName = 'nodes-coordinate-button'
+  linkClassName = 'nodes-coordinate-link'
 }) {
   if (!cell || typeof cell.replaceChildren !== 'function') return null;
   if (!displayText) return null;
@@ -64,23 +64,27 @@ export function enhanceCoordinateCell({
   const doc = document && typeof document.createElement === 'function' ? document : null;
   if (!doc) return null;
 
-  const button = doc.createElement('button');
-  button.type = 'button';
-  button.className = buttonClassName;
-  button.textContent = displayText;
-  if (!button.dataset) button.dataset = {};
-  button.dataset.lat = String(latNum);
-  button.dataset.lon = String(lonNum);
+  const link = doc.createElement('a');
+  link.className = linkClassName;
+  link.textContent = displayText;
+  if (typeof link.setAttribute === 'function') {
+    link.setAttribute('href', '#');
+  } else {
+    link.href = '#';
+  }
+  if (!link.dataset) link.dataset = {};
+  link.dataset.lat = String(latNum);
+  link.dataset.lon = String(lonNum);
 
   const coordsSummary = [formattedLatitude, formattedLongitude].filter(Boolean).join(', ');
   const displayName = nodeName ? String(nodeName) : 'node';
   const ariaLabelBase = `Center map on ${displayName}`;
   const ariaLabel = coordsSummary ? `${ariaLabelBase} at ${coordsSummary}` : ariaLabelBase;
-  if (typeof button.setAttribute === 'function') {
-    button.setAttribute('aria-label', ariaLabel);
+  if (typeof link.setAttribute === 'function') {
+    link.setAttribute('aria-label', ariaLabel);
   }
 
-  button.addEventListener('click', event => {
+  link.addEventListener('click', event => {
     if (event && typeof event.preventDefault === 'function') {
       event.preventDefault();
     }
@@ -92,8 +96,8 @@ export function enhanceCoordinateCell({
     }
   });
 
-  cell.replaceChildren(button);
-  return button;
+  cell.replaceChildren(link);
+  return link;
 }
 
 export const __testUtils = {

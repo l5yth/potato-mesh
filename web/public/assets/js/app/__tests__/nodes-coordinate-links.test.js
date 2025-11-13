@@ -21,17 +21,18 @@ import { enhanceCoordinateCell, __testUtils } from '../nodes-coordinate-links.js
 
 const { toFiniteCoordinate } = __testUtils;
 
-test('enhanceCoordinateCell renders an interactive button for valid coordinates', () => {
+test('enhanceCoordinateCell renders an interactive link for valid coordinates', () => {
   const cell = {
     replacedChildren: null,
     replaceChildren(...children) {
       this.replacedChildren = children;
     }
   };
-  const buttonStub = {
+  const linkStub = {
     dataset: {},
     attributes: new Map(),
     listeners: new Map(),
+    href: null,
     setAttribute(name, value) {
       this.attributes.set(name, value);
     },
@@ -41,12 +42,12 @@ test('enhanceCoordinateCell renders an interactive button for valid coordinates'
   };
   const documentStub = {
     createElement(tagName) {
-      assert.equal(tagName, 'button');
-      return buttonStub;
+      assert.equal(tagName, 'a');
+      return linkStub;
     }
   };
   const activations = [];
-  const button = enhanceCoordinateCell({
+  const link = enhanceCoordinateCell({
     cell,
     document: documentStub,
     displayText: '51.50000',
@@ -58,15 +59,16 @@ test('enhanceCoordinateCell renders an interactive button for valid coordinates'
     onActivate: (lat, lon) => activations.push({ lat, lon })
   });
 
-  assert.equal(button, buttonStub);
-  assert.deepEqual(cell.replacedChildren, [buttonStub]);
-  assert.equal(buttonStub.textContent, '51.50000');
-  assert.equal(buttonStub.dataset.lat, '51.5');
-  assert.equal(buttonStub.dataset.lon, '-0.12');
-  assert.equal(buttonStub.className, 'nodes-coordinate-button');
-  assert.equal(buttonStub.attributes.get('aria-label'), 'Center map on Alpha at 51.50000, -0.12000');
+  assert.equal(link, linkStub);
+  assert.deepEqual(cell.replacedChildren, [linkStub]);
+  assert.equal(linkStub.textContent, '51.50000');
+  assert.equal(linkStub.dataset.lat, '51.5');
+  assert.equal(linkStub.dataset.lon, '-0.12');
+  assert.equal(linkStub.className, 'nodes-coordinate-link');
+  assert.equal(linkStub.attributes.get('aria-label'), 'Center map on Alpha at 51.50000, -0.12000');
+  assert.equal(linkStub.attributes.get('href'), '#');
 
-  const clickHandler = buttonStub.listeners.get('click');
+  const clickHandler = linkStub.listeners.get('click');
   assert.equal(typeof clickHandler, 'function');
   const event = {
     prevented: false,
