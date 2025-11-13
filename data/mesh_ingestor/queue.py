@@ -22,9 +22,56 @@ import json
 import threading
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Tuple
+from typing import Callable, Iterable, Mapping, Tuple
 
 from . import config
+
+
+def _stringify_payload_value(value: object) -> str:
+    """Return a stable string representation for ``value``."""
+
+    if isinstance(value, Mapping):
+        try:
+            return json.dumps(
+                {
+                    str(key): value[key]
+                    for key in sorted(value, key=lambda item: str(item))
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:  # pragma: no cover - defensive guard
+            return str(value)
+    if isinstance(value, (list, tuple)):
+        try:
+            return json.dumps(list(value), ensure_ascii=False, default=str)
+        except Exception:  # pragma: no cover - defensive guard
+            return str(value)
+    if isinstance(value, set):
+        try:
+            return json.dumps(sorted(value, key=str), ensure_ascii=False, default=str)
+        except Exception:  # pragma: no cover - defensive guard
+            return str(value)
+    if isinstance(value, bytes):
+        return json.dumps(value.decode("utf-8", "replace"), ensure_ascii=False)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _payload_key_value_pairs(payload: Mapping[str, object]) -> str:
+    """Serialise ``payload`` into ``key=value`` pairs for debug logs."""
+
+    pairs: list[str] = []
+    for key in sorted(payload):
+        try:
+            formatted = _stringify_payload_value(payload[key])
+        except Exception:  # pragma: no cover - defensive guard
+            formatted = str(payload[key])
+        pairs.append(f"{key}={formatted}")
+    return " ".join(pairs)
+
 
 _MESSAGE_POST_PRIORITY = 10
 _NEIGHBOR_POST_PRIORITY = 20
@@ -172,6 +219,19 @@ def _queue_post_json(
 
     if send is None:
         send = _post_json
+
+    if config.DEBUG:
+        formatted_payload = (
+            _payload_key_value_pairs(payload)
+            if isinstance(payload, Mapping)
+            else str(payload)
+        )
+        config._debug_log(
+            f"Forwarding payload to API: {formatted_payload}",
+            context="queue.queue_post_json",
+            path=path,
+            priority=priority,
+        )
 
     _enqueue_post_json(path, payload, priority, state=state)
     with state.lock:

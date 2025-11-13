@@ -21,10 +21,55 @@ import contextlib
 import importlib
 import json
 import sys
+import threading
 import time
 from collections.abc import Mapping
+from datetime import datetime, timezone
+from pathlib import Path
 
 from . import channels, config, queue
+
+_IGNORED_PACKET_LOG_PATH = Path(__file__).resolve().parents[2] / "ingored.txt"
+"""Filesystem path that stores ignored packets when debugging."""
+
+_IGNORED_PACKET_LOCK = threading.Lock()
+"""Lock guarding writes to :data:`_IGNORED_PACKET_LOG_PATH`."""
+
+
+def _ignored_packet_default(value: object) -> object:
+    """Return a JSON-serialisable representation for ignored packet data."""
+
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    if isinstance(value, Mapping):
+        return {
+            str(key): _ignored_packet_default(sub_value)
+            for key, sub_value in value.items()
+        }
+    return str(value)
+
+
+def _record_ignored_packet(packet: Mapping | object, *, reason: str) -> None:
+    """Persist packet details to :data:`ingored.txt` during debugging."""
+
+    if not config.DEBUG:
+        return
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    entry = {
+        "timestamp": timestamp,
+        "reason": reason,
+        "packet": _ignored_packet_default(packet),
+    }
+    payload = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+    with _IGNORED_PACKET_LOCK:
+        _IGNORED_PACKET_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _IGNORED_PACKET_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"{payload}\n")
+
+
 from .serialization import (
     _canonical_node_id,
     _coerce_float,
@@ -1087,10 +1132,6 @@ def store_packet_dict(packet: Mapping) -> None:
             if emoji_text:
                 emoji = emoji_text
 
-    encrypted_flag = _is_encrypted_flag(encrypted)
-    if not any([text, encrypted_flag, emoji is not None, reply_id is not None]):
-        return
-
     allowed_port_values = {"1", "TEXT_MESSAGE_APP", "REACTION_APP"}
     allowed_port_ints = {1}
 
@@ -1130,7 +1171,13 @@ def store_packet_dict(packet: Mapping) -> None:
 
     if portnum and portnum not in allowed_port_values:
         if portnum_int not in allowed_port_ints:
+            _record_ignored_packet(packet, reason="unsupported-port")
             return
+
+    encrypted_flag = _is_encrypted_flag(encrypted)
+    if not any([text, encrypted_flag, emoji is not None, reply_id is not None]):
+        _record_ignored_packet(packet, reason="no-message-payload")
+        return
 
     channel = _first(decoded, "channel", default=None)
     if channel is None:
@@ -1142,6 +1189,7 @@ def store_packet_dict(packet: Mapping) -> None:
 
     pkt_id = _first(packet, "id", "packet_id", "packetId", default=None)
     if pkt_id is None:
+        _record_ignored_packet(packet, reason="missing-packet-id")
         return
     rx_time = int(_first(packet, "rxTime", "rx_time", default=time.time()))
     from_id = _first(packet, "fromId", "from_id", "from", default=None)
@@ -1181,6 +1229,7 @@ def store_packet_dict(packet: Mapping) -> None:
                 to_id=_canonical_node_id(to_id) or to_id,
                 channel=channel,
             )
+        _record_ignored_packet(packet, reason="skipped-direct-message")
         return
 
     message_payload = {
