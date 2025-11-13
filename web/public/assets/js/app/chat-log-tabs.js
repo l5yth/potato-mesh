@@ -43,6 +43,23 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
 });
 
 /**
+ * Resolve the chronological snapshots associated with an aggregated entry.
+ *
+ * @param {*} entry Candidate snapshot or aggregate.
+ * @returns {Array<Object>} Chronologically ordered snapshots.
+ */
+function resolveSnapshotList(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return [];
+  }
+  const snapshots = entry.snapshots;
+  if (Array.isArray(snapshots) && snapshots.length > 0) {
+    return snapshots;
+  }
+  return [entry];
+}
+
+/**
  * Build a data model describing the content for chat tabs.
  *
  * Entries outside the recent activity window, encrypted messages, and
@@ -97,37 +114,46 @@ export function buildChatTabModel({
   }
 
   for (const telemetryEntry of telemetry || []) {
-    if (!telemetryEntry) continue;
-    const ts = resolveTimestampSeconds(
-      telemetryEntry.rx_time ?? telemetryEntry.rxTime ?? telemetryEntry.telemetry_time ?? telemetryEntry.telemetryTime,
-      telemetryEntry.rx_iso ?? telemetryEntry.rxIso ?? telemetryEntry.telemetry_time_iso ?? telemetryEntry.telemetryTimeIso
-    );
-    if (ts == null || ts < cutoff) continue;
-    const nodeId = normaliseNodeId(telemetryEntry);
-    const nodeNum = normaliseNodeNum(telemetryEntry);
-    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.TELEMETRY, telemetry: telemetryEntry, nodeId, nodeNum });
+    const snapshots = resolveSnapshotList(telemetryEntry);
+    for (const snapshot of snapshots) {
+      if (!snapshot) continue;
+      const ts = resolveTimestampSeconds(
+        snapshot.rx_time ?? snapshot.rxTime ?? snapshot.telemetry_time ?? snapshot.telemetryTime,
+        snapshot.rx_iso ?? snapshot.rxIso ?? snapshot.telemetry_time_iso ?? snapshot.telemetryTimeIso
+      );
+      if (ts == null || ts < cutoff) continue;
+      const nodeId = normaliseNodeId(snapshot);
+      const nodeNum = normaliseNodeNum(snapshot);
+      logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.TELEMETRY, telemetry: snapshot, nodeId, nodeNum });
+    }
   }
 
   for (const positionEntry of positions || []) {
-    if (!positionEntry) continue;
-    const ts = resolveTimestampSeconds(
-      positionEntry.rx_time ?? positionEntry.rxTime ?? positionEntry.position_time ?? positionEntry.positionTime,
-      positionEntry.rx_iso ?? positionEntry.rxIso ?? positionEntry.position_time_iso ?? positionEntry.positionTimeIso
-    );
-    if (ts == null || ts < cutoff) continue;
-    const nodeId = normaliseNodeId(positionEntry);
-    const nodeNum = normaliseNodeNum(positionEntry);
-    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.POSITION, position: positionEntry, nodeId, nodeNum });
+    const snapshots = resolveSnapshotList(positionEntry);
+    for (const snapshot of snapshots) {
+      if (!snapshot) continue;
+      const ts = resolveTimestampSeconds(
+        snapshot.rx_time ?? snapshot.rxTime ?? snapshot.position_time ?? snapshot.positionTime,
+        snapshot.rx_iso ?? snapshot.rxIso ?? snapshot.position_time_iso ?? snapshot.positionTimeIso
+      );
+      if (ts == null || ts < cutoff) continue;
+      const nodeId = normaliseNodeId(snapshot);
+      const nodeNum = normaliseNodeNum(snapshot);
+      logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.POSITION, position: snapshot, nodeId, nodeNum });
+    }
   }
 
   for (const neighborEntry of neighbors || []) {
-    if (!neighborEntry) continue;
-    const ts = resolveTimestampSeconds(neighborEntry.rx_time ?? neighborEntry.rxTime, neighborEntry.rx_iso ?? neighborEntry.rxIso);
-    if (ts == null || ts < cutoff) continue;
-    const nodeId = normaliseNodeId(neighborEntry);
-    const nodeNum = normaliseNodeNum(neighborEntry);
-    const neighborId = normaliseNeighborId(neighborEntry);
-    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: neighborEntry, nodeId, nodeNum, neighborId });
+    const snapshots = resolveSnapshotList(neighborEntry);
+    for (const snapshot of snapshots) {
+      if (!snapshot) continue;
+      const ts = resolveTimestampSeconds(snapshot.rx_time ?? snapshot.rxTime, snapshot.rx_iso ?? snapshot.rxIso);
+      if (ts == null || ts < cutoff) continue;
+      const nodeId = normaliseNodeId(snapshot);
+      const nodeNum = normaliseNodeNum(snapshot);
+      const neighborId = normaliseNeighborId(snapshot);
+      logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: snapshot, nodeId, nodeNum, neighborId });
+    }
   }
 
   const encryptedLogEntries = [];

@@ -47,6 +47,13 @@ import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
+import {
+  SNAPSHOT_WINDOW,
+  aggregateNeighborSnapshots,
+  aggregateNodeSnapshots,
+  aggregatePositionSnapshots,
+  aggregateTelemetrySnapshots,
+} from './snapshot-aggregator.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -151,6 +158,7 @@ let messagesById = new Map();
     logger: console,
   });
   const NODE_LIMIT = 1000;
+  const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
@@ -3048,13 +3056,31 @@ let messagesById = new Map();
   }
 
   /**
+   * Determine how many snapshots should be requested from the API to build a
+   * richer aggregate.
+   *
+   * @param {number} requestedLimit Desired number of unique entities.
+   * @param {number} [maxLimit=NODE_LIMIT] Maximum rows accepted by the API.
+   * @returns {number} Effective request limit honouring {@link SNAPSHOT_LIMIT}.
+   */
+  function resolveSnapshotLimit(requestedLimit, maxLimit = NODE_LIMIT) {
+    const base = Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.floor(requestedLimit)
+      : maxLimit;
+    const expanded = base * SNAPSHOT_LIMIT;
+    const candidate = expanded > base ? expanded : base;
+    return Math.min(candidate, maxLimit);
+  }
+
+  /**
    * Fetch the latest nodes from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of records.
    * @returns {Promise<Array<Object>>} Parsed node payloads.
    */
   async function fetchNodes(limit = NODE_LIMIT) {
-    const r = await fetch(`/api/nodes?limit=${limit}`, { cache: 'no-store' });
+    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
+    const r = await fetch(`/api/nodes?limit=${effectiveLimit}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3102,7 +3128,8 @@ let messagesById = new Map();
    * @returns {Promise<Array<Object>>} Parsed neighbour payloads.
    */
   async function fetchNeighbors(limit = NODE_LIMIT) {
-    const r = await fetch(`/api/neighbors?limit=${limit}`, { cache: 'no-store' });
+    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
+    const r = await fetch(`/api/neighbors?limit=${effectiveLimit}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3114,7 +3141,8 @@ let messagesById = new Map();
    * @returns {Promise<Array<Object>>} Parsed telemetry payloads.
    */
   async function fetchTelemetry(limit = NODE_LIMIT) {
-    const r = await fetch(`/api/telemetry?limit=${limit}`, { cache: 'no-store' });
+    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
+    const r = await fetch(`/api/telemetry?limit=${effectiveLimit}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3126,7 +3154,8 @@ let messagesById = new Map();
    * @returns {Promise<Array<Object>>} Parsed position payloads.
    */
   async function fetchPositions(limit = NODE_LIMIT) {
-    const r = await fetch(`/api/positions?limit=${limit}`, { cache: 'no-store' });
+    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
+    const r = await fetch(`/api/positions?limit=${effectiveLimit}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3763,11 +3792,15 @@ let messagesById = new Map();
         telemetryPromise,
         encryptedMessagesPromise
       ]);
-      nodes.forEach(applyNodeNameFallback);
-      mergePositionsIntoNodes(nodes, positions);
-      computeDistances(nodes);
-      mergeTelemetryIntoNodes(nodes, telemetryEntries);
-      allNodes = nodes;
+      const aggregatedNodes = aggregateNodeSnapshots(nodes);
+      const aggregatedPositions = aggregatePositionSnapshots(positions);
+      const aggregatedNeighbors = aggregateNeighborSnapshots(neighborTuples);
+      const aggregatedTelemetry = aggregateTelemetrySnapshots(telemetryEntries);
+      aggregatedNodes.forEach(applyNodeNameFallback);
+      mergePositionsIntoNodes(aggregatedNodes, aggregatedPositions);
+      computeDistances(aggregatedNodes);
+      mergeTelemetryIntoNodes(aggregatedNodes, aggregatedTelemetry);
+      allNodes = aggregatedNodes;
       rebuildNodeIndex(allNodes);
       const [chatMessages, encryptedChatMessages] = await Promise.all([
         messageNodeHydrator.hydrate(messages, nodesById),
@@ -3775,9 +3808,9 @@ let messagesById = new Map();
       ]);
       allMessages = Array.isArray(chatMessages) ? chatMessages : [];
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
-      allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
-      allPositionEntries = Array.isArray(positions) ? positions : [];
-      allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
+      allTelemetryEntries = aggregatedTelemetry;
+      allPositionEntries = aggregatedPositions;
+      allNeighbors = aggregatedNeighbors;
       applyFilter();
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
