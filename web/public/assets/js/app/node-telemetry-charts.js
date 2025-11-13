@@ -277,7 +277,13 @@ function createScatterChart(config) {
   const activeSeries = series.filter(item => Array.isArray(item.points) && item.points.length > 0);
   if (activeSeries.length === 0) return '';
 
-  const xValues = activeSeries.flatMap(item => item.points.map(point => point.time));
+  const xValues = [];
+  for (const seriesEntry of activeSeries) {
+    if (!seriesEntry || !Array.isArray(seriesEntry.points)) continue;
+    for (const point of seriesEntry.points) {
+      xValues.push(point.time);
+    }
+  }
   const xDomain = computeDomain(xValues);
   if (!xDomain) return '';
 
@@ -285,10 +291,26 @@ function createScatterChart(config) {
   const rightSeries = activeSeries.filter(item => item.axis === 'right');
 
   const leftDomain = leftSeries.length > 0
-    ? computeDomain(leftSeries.flatMap(item => item.points.map(point => point.value)))
+    ? computeDomain(leftSeries.reduce((values, seriesEntry) => {
+      if (!seriesEntry || !Array.isArray(seriesEntry.points)) {
+        return values;
+      }
+      for (const point of seriesEntry.points) {
+        values.push(point.value);
+      }
+      return values;
+    }, []))
     : null;
   const rightDomain = rightSeries.length > 0
-    ? computeDomain(rightSeries.flatMap(item => item.points.map(point => point.value)))
+    ? computeDomain(rightSeries.reduce((values, seriesEntry) => {
+      if (!seriesEntry || !Array.isArray(seriesEntry.points)) {
+        return values;
+      }
+      for (const point of seriesEntry.points) {
+        values.push(point.value);
+      }
+      return values;
+    }, []))
     : null;
 
   const xScale = scaleLinear(xDomain, { min: margin.left, max: width - margin.right });
