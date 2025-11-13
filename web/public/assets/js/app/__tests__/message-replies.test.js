@@ -118,3 +118,16 @@ test('buildMessageBody accepts multi-digit reaction counts', () => {
 
   assert.equal(body, 'EMOJI(🎉) ESC(×12)');
 });
+
+test('buildMessageBody treats bare emoji counts as reactions when metadata is absent', () => {
+  const body = buildMessageBody({
+    message: {
+      text: 3,
+      emoji: '💡'
+    },
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(💡) ESC(×3)');
+});

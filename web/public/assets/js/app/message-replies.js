@@ -348,8 +348,10 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
 
   const segments = [];
   const emoji = normaliseEmojiValue(message.emoji);
-  const reactionPacket = isReactionPacket(message, emoji);
   const emojiHtml = emoji ? renderEmojiHtml(emoji) : null;
+  const reactionCount = message.text != null ? extractReactionCount(message.text) : null;
+  const reactionPacket = isReactionPacket(message, emoji);
+  const shouldFormatAsReaction = reactionPacket || (reactionCount != null && typeof emojiHtml === 'string' && emojiHtml.length > 0);
 
   let textHtml = null;
 
@@ -359,8 +361,7 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
     let displayText = textString;
     let shouldRenderText = false;
 
-    if (reactionPacket) {
-      const reactionCount = extractReactionCount(textString);
+    if (shouldFormatAsReaction) {
       if (reactionCount != null) {
         displayText = `×${reactionCount}`;
         shouldRenderText = true;
@@ -376,7 +377,7 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
     }
   }
 
-  if (reactionPacket) {
+  if (shouldFormatAsReaction) {
     if (typeof emojiHtml === 'string' && emojiHtml.length > 0) {
       segments.push(emojiHtml);
     }
