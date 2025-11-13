@@ -47,6 +47,7 @@ import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
+import { createNodesChartsController } from './nodes-charts.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -93,6 +94,10 @@ export function initializeApp(config) {
   const bodyClassList = document.body ? document.body.classList : null;
   const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
   const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
+  const isNodesView = bodyClassList ? bodyClassList.contains('view-nodes') : false;
+  const nodesChartsController = isNodesView
+    ? createNodesChartsController({ document, nowProvider: () => Date.now() })
+    : null;
   /**
    * Column sorter configuration for the node table.
    *
@@ -3778,6 +3783,9 @@ let messagesById = new Map();
       allTelemetryEntries = Array.isArray(telemetryEntries) ? telemetryEntries : [];
       allPositionEntries = Array.isArray(positions) ? positions : [];
       allNeighbors = Array.isArray(neighborTuples) ? neighborTuples : [];
+      if (nodesChartsController) {
+        nodesChartsController.update(allTelemetryEntries);
+      }
       applyFilter();
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();

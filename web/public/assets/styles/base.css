@@ -581,6 +581,128 @@ body.view-map .map-panel--full #map {
   width: 100%;
 }
 
+.nodes-charts {
+  display: grid;
+  gap: calc(var(--pad) * 1.25);
+  margin-bottom: calc(var(--pad) * 0.75);
+}
+
+.nodes-charts__title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.nodes-chart {
+  padding: calc(var(--pad) * 0.75);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--pad) * 0.5);
+}
+
+.nodes-chart__header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nodes-chart__chart-title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.nodes-chart__description {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.nodes-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nodes-chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.nodes-chart__legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--legend-color, currentColor);
+}
+
+body.dark .nodes-chart__legend-swatch {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.nodes-chart__plot {
+  width: 100%;
+  overflow: hidden;
+}
+
+.nodes-chart__plot[hidden] {
+  display: none;
+}
+
+.nodes-chart__empty {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.nodes-chart__svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.nodes-chart__axes line,
+.nodes-chart__axes path {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.nodes-chart__tick-label {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.nodes-chart__axis-label {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.nodes-chart__point {
+  stroke: none;
+  fill-opacity: 0.9;
+}
+
+.nodes-chart__point:hover {
+  fill-opacity: 1;
+}
+
+.nodes-chart__grid-line {
+  stroke: var(--line);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
 .map-panel {
   position: relative;
   flex: 1 1 0%;

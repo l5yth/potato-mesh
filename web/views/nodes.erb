@@ -14,5 +14,59 @@
   limitations under the License.
 -->
 <section class="full-screen-section full-screen-section--nodes">
+  <section
+    id="nodesCharts"
+    class="nodes-charts"
+    aria-labelledby="nodesChartsTitle"
+    role="region"
+  >
+    <h2 id="nodesChartsTitle" class="nodes-charts__title">Telemetry charts</h2>
+
+    <article class="nodes-chart" id="nodesChartPower">
+      <header class="nodes-chart__header">
+        <h3 class="nodes-chart__chart-title">Power</h3>
+        <p class="nodes-chart__description">Battery level and voltage readings across the last seven days.</p>
+        <ul class="nodes-chart__legend" data-role="legend" role="list"></ul>
+      </header>
+      <div
+        class="nodes-chart__plot"
+        data-role="plot"
+        role="img"
+        aria-label="Battery level and voltage measurements over the previous seven days"
+      ></div>
+      <p class="nodes-chart__empty" data-role="empty">No power telemetry recorded in the last seven days.</p>
+    </article>
+
+    <article class="nodes-chart" id="nodesChartChannel">
+      <header class="nodes-chart__header">
+        <h3 class="nodes-chart__chart-title">Channel utilisation</h3>
+        <p class="nodes-chart__description">Channel utilisation and air utilisation (Tx) for the last seven days.</p>
+        <ul class="nodes-chart__legend" data-role="legend" role="list"></ul>
+      </header>
+      <div
+        class="nodes-chart__plot"
+        data-role="plot"
+        role="img"
+        aria-label="Channel utilisation and air utilisation (Tx) across the previous seven days"
+      ></div>
+      <p class="nodes-chart__empty" data-role="empty">No channel telemetry recorded in the last seven days.</p>
+    </article>
+
+    <article class="nodes-chart" id="nodesChartEnvironment">
+      <header class="nodes-chart__header">
+        <h3 class="nodes-chart__chart-title">Environment</h3>
+        <p class="nodes-chart__description">Temperature, humidity, and pressure observations from the last seven days.</p>
+        <ul class="nodes-chart__legend" data-role="legend" role="list"></ul>
+      </header>
+      <div
+        class="nodes-chart__plot"
+        data-role="plot"
+        role="img"
+        aria-label="Temperature, humidity, and pressure observations over the previous seven days"
+      ></div>
+      <p class="nodes-chart__empty" data-role="empty">No environmental telemetry recorded in the last seven days.</p>
+    </article>
+  </section>
+
   <%= erb :"shared/_nodes_table", locals: { full_screen: true } %>
 </section>
