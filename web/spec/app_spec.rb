@@ -3589,6 +3589,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
       expect(payload["node_id"]).to eq("!fresh-node")
+
+      get "/api/nodes/!fresh-node?history=1&limit=5"
+      expect(last_response).to be_ok
+      history_payload = JSON.parse(last_response.body)
+      expect(history_payload).to be_a(Array)
+      expect(history_payload.length).to eq(1)
+      expect(history_payload.first["node_id"]).to eq("!fresh-node")
     end
 
     it "omits blank values from node responses" do

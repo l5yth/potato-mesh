@@ -18,6 +18,12 @@ import { extractModemMetadata } from './node-modem-metadata.js';
 import { aggregateSnapshotSeries, SNAPSHOT_DEPTH } from './snapshot-aggregator.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
+/**
+ * Number of historical node entries retrieved for a node detail view.
+ *
+ * @type {number}
+ */
+const NODE_HISTORY_LIMIT = SNAPSHOT_DEPTH;
 const TELEMETRY_LIMIT = SNAPSHOT_DEPTH;
 const POSITION_LIMIT = SNAPSHOT_DEPTH;
 const NEIGHBOR_LIMIT = 1000;
@@ -194,6 +200,30 @@ function selectAggregate(series, preferredKey) {
 }
 
 /**
+ * Aggregate node metadata snapshots for a single node.
+ *
+ * @param {Array<Object>} records Raw node records returned by the API.
+ * @param {string|null} fallbackKey Preferred snapshot grouping key.
+ * @returns {Object|null} Aggregated node payload or ``null`` when absent.
+ */
+function aggregateNodeSnapshotsForNode(records, fallbackKey) {
+  const nodeRecords = Array.isArray(records) ? records.filter(isObject) : [];
+  if (!nodeRecords.length) return null;
+  const series = aggregateSnapshotSeries(nodeRecords, {
+    depth: SNAPSHOT_DEPTH,
+    keyFn: entry => buildSnapshotNodeKey(entry) ?? fallbackKey,
+    timestampFn: entry => {
+      const lastHeard = extractNumber(entry, ['last_heard', 'lastHeard']);
+      const positionTime = extractNumber(entry, ['position_time', 'positionTime']);
+      const firstHeard = extractNumber(entry, ['first_heard', 'firstHeard']);
+      const candidates = [lastHeard, positionTime, firstHeard].filter(value => value != null);
+      return candidates.length ? Math.max(...candidates) : Number.NEGATIVE_INFINITY;
+    },
+  });
+  return selectAggregate(series, fallbackKey);
+}
+
+/**
  * Aggregate telemetry snapshots for a single node.
  *
  * @param {Array<Object>} records Raw telemetry records.
@@ -336,14 +366,14 @@ function mergeTelemetry(target, telemetry) {
   assignString(target, 'nodeId', extractString(telemetry, ['node_id', 'nodeId']), { preferExisting: true });
   assignNumber(target, 'nodeNum', extractNumber(telemetry, ['node_num', 'nodeNum']), { preferExisting: true });
   mergeModemMetadata(target, telemetry, { preferExisting: true });
-  assignNumber(target, 'battery', extractNumber(telemetry, ['battery_level', 'batteryLevel']), { preferExisting: true });
-  assignNumber(target, 'voltage', extractNumber(telemetry, ['voltage']), { preferExisting: true });
-  assignNumber(target, 'uptime', extractNumber(telemetry, ['uptime_seconds', 'uptimeSeconds']), { preferExisting: true });
-  assignNumber(target, 'channel', extractNumber(telemetry, ['channel', 'channel_utilization', 'channelUtilization']), { preferExisting: true });
-  assignNumber(target, 'airUtil', extractNumber(telemetry, ['air_util_tx', 'airUtilTx', 'airUtil']), { preferExisting: true });
-  assignNumber(target, 'temperature', extractNumber(telemetry, ['temperature']), { preferExisting: true });
-  assignNumber(target, 'humidity', extractNumber(telemetry, ['relative_humidity', 'relativeHumidity', 'humidity']), { preferExisting: true });
-  assignNumber(target, 'pressure', extractNumber(telemetry, ['barometric_pressure', 'barometricPressure', 'pressure']), { preferExisting: true });
+  assignNumber(target, 'battery', extractNumber(telemetry, ['battery_level', 'batteryLevel']));
+  assignNumber(target, 'voltage', extractNumber(telemetry, ['voltage']));
+  assignNumber(target, 'uptime', extractNumber(telemetry, ['uptime_seconds', 'uptimeSeconds']));
+  assignNumber(target, 'channel', extractNumber(telemetry, ['channel', 'channel_utilization', 'channelUtilization']));
+  assignNumber(target, 'airUtil', extractNumber(telemetry, ['air_util_tx', 'airUtilTx', 'airUtil']));
+  assignNumber(target, 'temperature', extractNumber(telemetry, ['temperature']));
+  assignNumber(target, 'humidity', extractNumber(telemetry, ['relative_humidity', 'relativeHumidity', 'humidity']));
+  assignNumber(target, 'pressure', extractNumber(telemetry, ['barometric_pressure', 'barometricPressure', 'pressure']));
 
   const telemetryTime = extractNumber(telemetry, ['telemetry_time', 'telemetryTime']);
   if (telemetryTime != null) {
@@ -377,9 +407,9 @@ function mergePosition(target, position) {
   target.position = position;
   assignString(target, 'nodeId', extractString(position, ['node_id', 'nodeId']), { preferExisting: true });
   assignNumber(target, 'nodeNum', extractNumber(position, ['node_num', 'nodeNum']), { preferExisting: true });
-  assignNumber(target, 'latitude', extractNumber(position, ['latitude']), { preferExisting: true });
-  assignNumber(target, 'longitude', extractNumber(position, ['longitude']), { preferExisting: true });
-  assignNumber(target, 'altitude', extractNumber(position, ['altitude']), { preferExisting: true });
+  assignNumber(target, 'latitude', extractNumber(position, ['latitude']));
+  assignNumber(target, 'longitude', extractNumber(position, ['longitude']));
+  assignNumber(target, 'altitude', extractNumber(position, ['altitude']));
 
   const positionTime = extractNumber(position, ['position_time', 'positionTime']);
   if (positionTime != null) {
@@ -481,9 +511,12 @@ export async function refreshNodeInformation(reference, options = {}) {
 
   const encodedId = encodeURIComponent(String(identifier));
 
-  const [nodeRecord, telemetryRecords, positionRecords, neighborRecords] = await Promise.all([
+  const [nodeResponse, telemetryRecordsRaw, positionRecordsRaw, neighborRecordsRaw] = await Promise.all([
     (async () => {
-      const response = await fetchImpl(`/api/nodes/${encodedId}`, DEFAULT_FETCH_OPTIONS);
+      const response = await fetchImpl(
+        `/api/nodes/${encodedId}?limit=${NODE_HISTORY_LIMIT}&history=1`,
+        DEFAULT_FETCH_OPTIONS,
+      );
       if (response.status === 404) return null;
       if (!response.ok) {
         throw new Error(`Failed to load node information (HTTP ${response.status})`);
@@ -516,21 +549,41 @@ export async function refreshNodeInformation(reference, options = {}) {
     })(),
   ]);
 
-  const canonicalNodeId = nodeRecord?.node_id ?? nodeRecord?.nodeId ?? normalized.nodeId;
-  const canonicalNodeNum = nodeRecord?.node_num ?? nodeRecord?.nodeNum ?? normalized.nodeNum;
-  const snapshotKey = buildSnapshotNodeKeyFromValues(canonicalNodeId, canonicalNodeNum);
+  const fallbackSnapshotKey = buildSnapshotNodeKeyFromValues(normalized.nodeId, normalized.nodeNum);
 
-  const telemetryEntry = aggregateTelemetryForNode(telemetryRecords, snapshotKey);
-  const positionEntry = aggregatePositionForNode(positionRecords, snapshotKey);
-  const neighborEntries = aggregateNeighborSnapshotsForNode(neighborRecords, snapshotKey);
+  const nodeHistoryRecords = Array.isArray(nodeResponse)
+    ? nodeResponse.filter(isObject)
+    : nodeResponse && typeof nodeResponse === 'object'
+      ? [nodeResponse]
+      : [];
+
+  const nodeAggregate = aggregateNodeSnapshotsForNode(nodeHistoryRecords, fallbackSnapshotKey);
+
+  const canonicalNodeId = nodeAggregate?.node_id ?? nodeAggregate?.nodeId ?? normalized.nodeId;
+  const canonicalNodeNum = nodeAggregate?.node_num ?? nodeAggregate?.nodeNum ?? normalized.nodeNum;
+  const snapshotKey = buildSnapshotNodeKeyFromValues(canonicalNodeId, canonicalNodeNum) ?? fallbackSnapshotKey;
+
+  const telemetryHistory = Array.isArray(telemetryRecordsRaw)
+    ? telemetryRecordsRaw.filter(isObject)
+    : [];
+  const positionHistory = Array.isArray(positionRecordsRaw)
+    ? positionRecordsRaw.filter(isObject)
+    : [];
+  const neighborHistory = Array.isArray(neighborRecordsRaw)
+    ? neighborRecordsRaw.filter(isObject)
+    : [];
+
+  const telemetryEntry = aggregateTelemetryForNode(telemetryHistory, snapshotKey);
+  const positionEntry = aggregatePositionForNode(positionHistory, snapshotKey);
+  const neighborEntries = aggregateNeighborSnapshotsForNode(neighborHistory, snapshotKey);
 
   const node = { neighbors: neighborEntries };
 
   if (normalized.fallback) {
     mergeNodeFields(node, normalized.fallback);
   }
-  if (nodeRecord) {
-    mergeNodeFields(node, nodeRecord);
+  if (nodeAggregate) {
+    mergeNodeFields(node, nodeAggregate);
   }
   if (normalized.nodeId && !node.nodeId) {
     node.nodeId = normalized.nodeId;
@@ -556,10 +609,14 @@ export async function refreshNodeInformation(reference, options = {}) {
   }
 
   node.rawSources = {
-    node: nodeRecord,
+    node: nodeAggregate ?? (nodeHistoryRecords[0] ?? null),
+    nodeHistory: nodeHistoryRecords,
     telemetry: telemetryEntry,
+    telemetryHistory,
     position: positionEntry,
+    positionHistory,
     neighbors: neighborEntries,
+    neighborHistory,
   };
 
   return node;
@@ -581,6 +638,7 @@ export const __testUtils = {
   normaliseSnapshotId,
   buildSnapshotNodeKey,
   buildSnapshotNodeKeyFromValues,
+  aggregateNodeSnapshotsForNode,
   aggregateTelemetryForNode,
   aggregatePositionForNode,
   aggregateNeighborSnapshotsForNode,

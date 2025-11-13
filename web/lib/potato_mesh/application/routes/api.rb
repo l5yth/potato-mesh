@@ -66,10 +66,17 @@ module PotatoMesh
             content_type :json
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
+
             limit = [params["limit"]&.to_i || 200, 1000].min
             rows = query_nodes(limit, node_ref: node_ref)
             halt 404, { error: "not found" }.to_json if rows.empty?
-            rows.first.to_json
+
+            history_requested = coerce_boolean(params["history"])
+            if history_requested
+              rows.to_json
+            else
+              rows.first.to_json
+            end
           end
 
           app.get "/api/messages" do

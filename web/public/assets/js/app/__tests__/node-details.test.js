@@ -35,6 +35,7 @@ const {
   normaliseSnapshotId,
   buildSnapshotNodeKey,
   buildSnapshotNodeKeyFromValues,
+  aggregateNodeSnapshotsForNode,
   aggregateTelemetryForNode,
   aggregatePositionForNode,
   aggregateNeighborSnapshotsForNode,
@@ -48,17 +49,49 @@ function createResponse(status, body) {
   };
 }
 
+test('aggregateNodeSnapshotsForNode merges newest node metadata', () => {
+  const fallbackKey = buildSnapshotNodeKeyFromValues('!node', null);
+  const aggregate = aggregateNodeSnapshotsForNode([
+    {
+      node_id: '!node',
+      short_name: 'OLD',
+      role: 'CLIENT',
+      last_heard: 1_000,
+    },
+    {
+      node_id: '!node',
+      short_name: 'NEW',
+      long_name: 'Newest Node',
+      role: 'ROUTER',
+      last_heard: 1_500,
+    },
+  ], fallbackKey);
+
+  assert.equal(aggregate.short_name, 'NEW');
+  assert.equal(aggregate.long_name, 'Newest Node');
+  assert.equal(aggregate.role, 'ROUTER');
+});
+
 test('refreshNodeInformation merges telemetry metrics when the base node lacks them', async () => {
   const calls = [];
   const responses = new Map([
-    ['/api/nodes/!test', createResponse(200, {
-      node_id: '!test',
-      short_name: 'TST',
-      battery_level: null,
-      last_heard: 1_000,
-      modem_preset: 'MediumFast',
-      lora_freq: '868.1',
-    })],
+    ['/api/nodes/!test?limit=7&history=1', createResponse(200, [
+      {
+        node_id: '!test',
+        short_name: 'OLD',
+        battery_level: 64.2,
+        last_heard: 900,
+        modem_preset: 'Legacy',
+      },
+      {
+        node_id: '!test',
+        short_name: 'TST',
+        battery_level: null,
+        last_heard: 1_000,
+        modem_preset: 'MediumFast',
+        lora_freq: '868.1',
+      },
+    ])],
     ['/api/telemetry/!test?limit=7', createResponse(200, [{
       node_id: '!test',
       battery_level: 73.5,
@@ -110,6 +143,14 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
   }]);
   assert.ok(node.rawSources);
   assert.ok(node.rawSources.node);
+  assert.ok(Array.isArray(node.rawSources.nodeHistory));
+  assert.equal(node.rawSources.nodeHistory.length, 2);
+  assert.ok(Array.isArray(node.rawSources.telemetryHistory));
+  assert.equal(node.rawSources.telemetryHistory.length, 1);
+  assert.ok(Array.isArray(node.rawSources.positionHistory));
+  assert.equal(node.rawSources.positionHistory.length, 1);
+  assert.ok(Array.isArray(node.rawSources.neighborHistory));
+  assert.equal(node.rawSources.neighborHistory.length, 1);
   assert.ok(node.rawSources.telemetry);
   assert.ok(node.rawSources.position);
 
@@ -119,12 +160,34 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
   });
 });
 
+test('refreshNodeInformation supports legacy single node payloads', async () => {
+  const responses = new Map([
+    ['/api/nodes/!legacy?limit=7&history=1', createResponse(200, {
+      node_id: '!legacy',
+      short_name: 'LEG',
+      last_heard: 1_234,
+    })],
+    ['/api/telemetry/!legacy?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/positions/!legacy?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/neighbors/!legacy?limit=1000', createResponse(404, { error: 'not found' })],
+  ]);
+
+  const fetchImpl = async url => responses.get(url) ?? createResponse(404, { error: 'not found' });
+
+  const node = await refreshNodeInformation('!legacy', { fetchImpl });
+
+  assert.equal(node.nodeId, '!legacy');
+  assert.equal(node.shortName, 'LEG');
+  assert.equal(node.rawSources.nodeHistory.length, 1);
+  assert.equal(node.rawSources.nodeHistory[0].short_name, 'LEG');
+});
+
 test('refreshNodeInformation preserves fallback metrics when telemetry is unavailable', async () => {
   const responses = new Map([
-    ['/api/nodes/42', createResponse(200, {
+    ['/api/nodes/42?limit=7&history=1', createResponse(200, [{
       node_id: '!num',
       short_name: 'NUM',
-    })],
+    }])],
     ['/api/telemetry/42?limit=7', createResponse(404, { error: 'not found' })],
     ['/api/positions/42?limit=7', createResponse(404, { error: 'not found' })],
     ['/api/neighbors/42?limit=1000', createResponse(404, { error: 'not found' })],
@@ -145,6 +208,9 @@ test('refreshNodeInformation preserves fallback metrics when telemetry is unavai
   assert.equal(node.modemPreset, 'FallbackPreset');
   assert.equal(node.loraFreq, 915);
   assert.equal(Array.isArray(node.neighbors) && node.neighbors.length, 0);
+  assert.deepEqual(node.rawSources.telemetryHistory, []);
+  assert.deepEqual(node.rawSources.positionHistory, []);
+  assert.deepEqual(node.rawSources.neighborHistory, []);
 });
 
 test('refreshNodeInformation requires a node identifier', async () => {
@@ -153,7 +219,7 @@ test('refreshNodeInformation requires a node identifier', async () => {
 
 test('refreshNodeInformation handles missing node records by falling back to telemetry data', async () => {
   const responses = new Map([
-    ['/api/nodes/!missing', createResponse(404, { error: 'not found' })],
+    ['/api/nodes/!missing?limit=7&history=1', createResponse(404, { error: 'not found' })],
     ['/api/telemetry/!missing?limit=7', createResponse(200, [{
       node_id: '!missing',
       node_num: 77,
@@ -195,6 +261,7 @@ test('refreshNodeInformation handles missing node records by falling back to tel
     neighbor_id: '!ally',
     snr: 8.5,
   }]);
+  assert.equal(node.rawSources.nodeHistory.length, 0);
 });
 
 test('refreshNodeInformation enforces a fetch implementation', async () => {
@@ -288,7 +355,7 @@ test('merge helpers combine node, telemetry, and position data', () => {
   assert.equal(node.nodeId, '!node');
   assert.equal(node.nodeNum, 55);
   assert.equal(node.shortName, 'NODE');
-  assert.equal(node.battery, 50);
+  assert.equal(node.battery, 75);
   assert.equal(node.voltage, 3.8);
   assert.equal(node.lastHeard, 1_200);
   assert.equal(node.lastSeenIso, '2025-01-01T00:00:00Z');
