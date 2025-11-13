@@ -1132,6 +1132,101 @@ def test_nodeinfo_handler_wrapper_prevents_key_error(mesh_module):
     assert result == "!01020304"
 
 
+def test_interfaces_patch_handles_preimported_serial():
+    """Regression: importing serial module before patch still updates handler."""
+
+    preserved_modules: dict[str, types.ModuleType | None] = {}
+    module_names = [
+        "data.mesh_ingestor.interfaces",
+        "data.mesh_ingestor",
+        "meshtastic.serial_interface",
+        "meshtastic.tcp_interface",
+        "meshtastic.mesh_interface",
+        "meshtastic",
+    ]
+    for name in module_names:
+        preserved_modules[name] = sys.modules.pop(name, None)
+
+    try:
+
+        def _default_nodeinfo_callback(_iface, packet):
+            return packet["id"]
+
+        mesh_interface_mod = types.ModuleType("meshtastic.mesh_interface")
+
+        class DummyNodeInfoHandler:
+            """Stub that mirrors Meshtastic's original handler semantics."""
+
+            def __init__(self) -> None:
+                self.callback = _default_nodeinfo_callback
+
+            def onReceive(self, iface, packet):  # noqa: D401 - simple passthrough
+                return self.callback(iface, packet)
+
+        mesh_interface_mod.NodeInfoHandler = DummyNodeInfoHandler
+
+        serial_interface_mod = types.ModuleType("meshtastic.serial_interface")
+
+        class DummySerialInterface:
+            def __init__(self, *_, **__):
+                self.nodes = {}
+
+            def close(self):  # noqa: D401 - mimic Meshtastic close API
+                self.nodes.clear()
+
+        serial_interface_mod.SerialInterface = DummySerialInterface
+        serial_interface_mod.NodeInfoHandler = DummyNodeInfoHandler
+
+        tcp_interface_mod = types.ModuleType("meshtastic.tcp_interface")
+
+        class DummyTCPInterface:
+            def __init__(self, *_, **__):
+                self.nodes = {}
+
+            def close(self):  # noqa: D401 - mimic Meshtastic close API
+                self.nodes.clear()
+
+        tcp_interface_mod.TCPInterface = DummyTCPInterface
+
+        meshtastic_mod = types.ModuleType("meshtastic")
+        meshtastic_mod.__path__ = []  # mark as package for import machinery
+        meshtastic_mod._onNodeInfoReceive = _default_nodeinfo_callback
+        meshtastic_mod.mesh_interface = mesh_interface_mod
+        meshtastic_mod.serial_interface = serial_interface_mod
+        meshtastic_mod.tcp_interface = tcp_interface_mod
+
+        sys.modules["meshtastic"] = meshtastic_mod
+        sys.modules["meshtastic.mesh_interface"] = mesh_interface_mod
+        sys.modules["meshtastic.serial_interface"] = serial_interface_mod
+        sys.modules["meshtastic.tcp_interface"] = tcp_interface_mod
+
+        serial_module = importlib.import_module("meshtastic.serial_interface")
+        assert serial_module.NodeInfoHandler is DummyNodeInfoHandler
+
+        interfaces = importlib.import_module("data.mesh_ingestor.interfaces")
+
+        patched_handler = serial_module.NodeInfoHandler
+        assert patched_handler is not DummyNodeInfoHandler
+        assert getattr(patched_handler, "_potato_mesh_safe_wrapper", False)
+
+        handler = patched_handler()
+        iface = types.SimpleNamespace(nodes={})
+
+        assert handler.onReceive(iface, {}) is None
+        assert iface.nodes == {}
+
+        patched_callback = getattr(meshtastic_mod, "_onNodeInfoReceive")
+        assert getattr(patched_callback, "_potato_mesh_safe_wrapper", False)
+
+        assert interfaces.SerialInterface is DummySerialInterface
+    finally:
+        for name in module_names:
+            sys.modules.pop(name, None)
+        for name, module in preserved_modules.items():
+            if module is not None:
+                sys.modules[name] = module
+
+
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
