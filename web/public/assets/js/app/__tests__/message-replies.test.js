@@ -86,7 +86,7 @@ test('buildMessageBody formats reaction counts with a multiplication symbol', ()
     renderEmojiHtml: value => `EMOJI(${value})`
   });
 
-  assert.equal(body, 'ESC(×1) EMOJI(👍)');
+  assert.equal(body, 'EMOJI(👍) ESC(×1)');
 });
 
 test('buildMessageBody preserves non-numeric reaction text', () => {
@@ -101,7 +101,7 @@ test('buildMessageBody preserves non-numeric reaction text', () => {
     renderEmojiHtml: value => `EMOJI(${value})`
   });
 
-  assert.equal(body, 'ESC(Thanks!) EMOJI(🙏)');
+  assert.equal(body, 'EMOJI(🙏) ESC(Thanks!)');
 });
 
 test('buildMessageBody accepts multi-digit reaction counts', () => {
@@ -116,5 +116,5 @@ test('buildMessageBody accepts multi-digit reaction counts', () => {
     renderEmojiHtml: value => `EMOJI(${value})`
   });
 
-  assert.equal(body, 'ESC(×12) EMOJI(🎉)');
+  assert.equal(body, 'EMOJI(🎉) ESC(×12)');
 });

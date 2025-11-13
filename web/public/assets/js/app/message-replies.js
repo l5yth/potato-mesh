@@ -349,6 +349,9 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   const segments = [];
   const emoji = normaliseEmojiValue(message.emoji);
   const reactionPacket = isReactionPacket(message, emoji);
+  const emojiHtml = emoji ? renderEmojiHtml(emoji) : null;
+
+  let textHtml = null;
 
   if (message.text != null) {
     const textString = String(message.text);
@@ -369,12 +372,24 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
     }
 
     if (shouldRenderText) {
-      segments.push(escapeHtml(displayText));
+      textHtml = escapeHtml(displayText);
     }
   }
 
-  if (emoji) {
-    segments.push(renderEmojiHtml(emoji));
+  if (reactionPacket) {
+    if (typeof emojiHtml === 'string' && emojiHtml.length > 0) {
+      segments.push(emojiHtml);
+    }
+    if (textHtml) {
+      segments.push(textHtml);
+    }
+  } else {
+    if (textHtml) {
+      segments.push(textHtml);
+    }
+    if (typeof emojiHtml === 'string' && emojiHtml.length > 0) {
+      segments.push(emojiHtml);
+    }
   }
 
   if (segments.length === 0) {
