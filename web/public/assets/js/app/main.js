@@ -18,6 +18,8 @@ import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from 
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
+import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
+import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
@@ -419,6 +421,16 @@ let messagesById = new Map();
     toggleEl: fitBoundsEl,
     windowObject: typeof window !== 'undefined' ? window : undefined,
     defaultPaddingPx: AUTO_FIT_PADDING_PX
+  });
+
+  const focusMapOnCoordinates = createMapFocusHandler({
+    getMap: () => map,
+    autoFitController,
+    leaflet: hasLeaflet ? window.L : null,
+    defaultZoom: DEFAULT_NODE_FOCUS_ZOOM,
+    setMapCenter: value => {
+      mapCenterLatLng = value;
+    }
   });
 
   /**
@@ -3306,7 +3318,7 @@ let messagesById = new Map();
    * @returns {number|null} Distance in kilometres.
    */
   function distanceFromCenterKm(lat, lon) {
-    if (hasLeaflet && mapCenterLatLng) {
+    if (hasLeaflet && mapCenterLatLng && typeof mapCenterLatLng.distanceTo === 'function') {
       try {
         return L.latLng(lat, lon).distanceTo(mapCenterLatLng) / 1000;
       } catch (err) {
@@ -3358,6 +3370,9 @@ let messagesById = new Map();
       const tr = document.createElement('tr');
       const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
+      const latitudeDisplay = fmtCoords(n.latitude);
+      const longitudeDisplay = fmtCoords(n.longitude);
+      const nodeDisplayName = getNodeDisplayNameForOverlay(n);
       tr.innerHTML = `
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
@@ -3373,10 +3388,33 @@ let messagesById = new Map();
         <td class="nodes-col nodes-col--temperature">${fmtTemperature(n.temperature)}</td>
         <td class="nodes-col nodes-col--humidity">${fmtHumidity(n.relative_humidity)}</td>
         <td class="nodes-col nodes-col--pressure">${fmtPressure(n.barometric_pressure)}</td>
-        <td class="nodes-col nodes-col--latitude">${fmtCoords(n.latitude)}</td>
-        <td class="nodes-col nodes-col--longitude">${fmtCoords(n.longitude)}</td>
+        <td class="nodes-col nodes-col--latitude">${latitudeDisplay}</td>
+        <td class="nodes-col nodes-col--longitude">${longitudeDisplay}</td>
         <td class="nodes-col nodes-col--altitude">${fmtAlt(n.altitude, "m")}</td>
         <td class="mono nodes-col nodes-col--last-position">${lastPositionCell}</td>`;
+
+      enhanceCoordinateCell({
+        cell: tr.querySelector('.nodes-col--latitude'),
+        document,
+        displayText: latitudeDisplay,
+        formattedLatitude: latitudeDisplay,
+        formattedLongitude: longitudeDisplay,
+        lat: n.latitude,
+        lon: n.longitude,
+        nodeName: nodeDisplayName,
+        onActivate: focusMapOnCoordinates
+      });
+      enhanceCoordinateCell({
+        cell: tr.querySelector('.nodes-col--longitude'),
+        document,
+        displayText: longitudeDisplay,
+        formattedLatitude: latitudeDisplay,
+        formattedLongitude: longitudeDisplay,
+        lat: n.latitude,
+        lon: n.longitude,
+        nodeName: nodeDisplayName,
+        onActivate: focusMapOnCoordinates
+      });
       frag.appendChild(tr);
     }
     tb.replaceChildren(frag);
