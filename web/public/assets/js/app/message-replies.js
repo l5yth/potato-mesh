@@ -280,6 +280,34 @@ function normaliseEmojiValue(value) {
 }
 
 /**
+ * Match any contiguous emoji run, covering variation selectors and joiners.
+ *
+ * @type {RegExp}
+ */
+const EMOJI_SEQUENCE_PATTERN = /[\p{Extended_Pictographic}\u200d\ufe0f]+/gu;
+
+/**
+ * Extract the first contiguous emoji sequence present in ``value``.
+ *
+ * The helper trims surrounding whitespace and returns ``null`` when no emoji
+ * characters are detected.
+ *
+ * @param {*} value Arbitrary value that may contain emoji glyphs.
+ * @returns {?string} Sanitised emoji sequence or ``null`` when absent.
+ */
+function extractEmojiSequence(value) {
+  if (value == null) {
+    return null;
+  }
+  const stringValue = String(value);
+  const match = stringValue.match(EMOJI_SEQUENCE_PATTERN);
+  if (!match || match.length === 0) {
+    return null;
+  }
+  return match[0].trim();
+}
+
+/**
  * Determine whether the provided payload represents a reaction packet.
  *
  * Reaction packets are published via the dedicated ``REACTION_APP`` port or
@@ -326,6 +354,58 @@ function extractReactionCount(value) {
 }
 
 /**
+ * Parse a combined emoji/count notation embedded in the ``text`` payload.
+ *
+ * Reaction packets originating from older firmware occasionally populate the
+ * ``text`` slot with both the emoji glyph and the raw ordinal (for example,
+ * ``"1 👍"``). This helper identifies the emoji and numeric fragments while
+ * ensuring no free-form text remains in the payload.
+ *
+ * @param {*} value Raw ``text`` field from the message payload.
+ * @returns {?{emoji: ?string, count: ?number, remainder: string}} Parsed
+ *   notation components when detected; otherwise ``null``.
+ */
+function parseReactionNotation(value) {
+  const trimmed = toTrimmedString(value);
+  if (!trimmed) {
+    return null;
+  }
+
+  const leadingCount = trimmed.match(/^(\d+)\s+([\p{Extended_Pictographic}\u200d\ufe0f]+)$/u);
+  if (leadingCount) {
+    const emojiSequence = extractEmojiSequence(leadingCount[2]);
+    if (emojiSequence) {
+      return {
+        emoji: emojiSequence,
+        count: Number.parseInt(leadingCount[1], 10),
+        remainder: ''
+      };
+    }
+  }
+
+  const trailingCount = trimmed.match(/^([\p{Extended_Pictographic}\u200d\ufe0f]+)\s*(?:×|x)?\s*(\d+)$/iu);
+  if (trailingCount) {
+    const emojiSequence = extractEmojiSequence(trailingCount[1]);
+    if (emojiSequence) {
+      return {
+        emoji: emojiSequence,
+        count: Number.parseInt(trailingCount[2], 10),
+        remainder: ''
+      };
+    }
+  }
+
+  if (/^[\p{Extended_Pictographic}\u200d\ufe0f]+$/u.test(trimmed)) {
+    const emojiSequence = extractEmojiSequence(trimmed);
+    if (emojiSequence) {
+      return { emoji: emojiSequence, count: null, remainder: '' };
+    }
+  }
+
+  return null;
+}
+
+/**
  * Build the rendered message body containing text and optional emoji.
  *
  * @param {{
@@ -347,16 +427,18 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   }
 
   const segments = [];
-  const emoji = normaliseEmojiValue(message.emoji);
+  const notation = parseReactionNotation(message.text);
+  const emoji = normaliseEmojiValue(message.emoji) ?? notation?.emoji ?? null;
   const emojiHtml = emoji ? renderEmojiHtml(emoji) : null;
-  const reactionCount = message.text != null ? extractReactionCount(message.text) : null;
+  const reactionCount = notation?.count ?? (message.text != null ? extractReactionCount(message.text) : null);
   const reactionPacket = isReactionPacket(message, emoji);
   const shouldFormatAsReaction = reactionPacket || (reactionCount != null && typeof emojiHtml === 'string' && emojiHtml.length > 0);
 
   let textHtml = null;
 
   if (message.text != null) {
-    const textString = String(message.text);
+    const textSource = notation?.remainder ?? String(message.text);
+    const textString = String(textSource);
     const trimmed = textString.trim();
     let displayText = textString;
     let shouldRenderText = false;

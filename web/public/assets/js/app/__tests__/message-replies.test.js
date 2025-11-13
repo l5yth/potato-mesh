@@ -131,3 +131,30 @@ test('buildMessageBody treats bare emoji counts as reactions when metadata is ab
 
   assert.equal(body, 'EMOJI(💡) ESC(×3)');
 });
+
+test('buildMessageBody normalises reactions encoded as "count emoji" text', () => {
+  const body = buildMessageBody({
+    message: {
+      text: '1 👍',
+      emoji: '👍',
+      portnum: 'TEXT_MESSAGE_APP'
+    },
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(👍) ESC(×1)');
+});
+
+test('buildMessageBody extracts emoji from combined reaction text when field is missing', () => {
+  const body = buildMessageBody({
+    message: {
+      text: '12 😂',
+      portnum: 'TEXT_MESSAGE_APP'
+    },
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(😂) ESC(×12)');
+});
