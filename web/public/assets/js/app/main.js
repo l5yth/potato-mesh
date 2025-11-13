@@ -1729,6 +1729,12 @@ let messagesById = new Map();
     return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
   }
 
+  const potatoMeshNamespace = globalThis.PotatoMesh || (globalThis.PotatoMesh = {});
+  potatoMeshNamespace.renderShortHtml = renderShortHtml;
+  potatoMeshNamespace.getRoleColor = getRoleColor;
+  potatoMeshNamespace.getRoleKey = getRoleKey;
+  potatoMeshNamespace.normalizeRole = normalizeRole;
+
   /**
    * Escape a CSS selector fragment with a defensive fallback for
    * environments lacking ``CSS.escape`` support.
