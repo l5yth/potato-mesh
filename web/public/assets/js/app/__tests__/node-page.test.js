@@ -37,6 +37,7 @@ const {
   normalizeNodeId,
   registerRoleCandidate,
   lookupRole,
+  lookupNeighborDetails,
   seedNeighborRoleIndex,
   buildNeighborRoleIndex,
   categoriseNeighbors,
@@ -69,25 +70,35 @@ test('format helpers normalise values as expected', () => {
 
 test('role lookup helpers normalise identifiers and register candidates', () => {
   const index = { byId: new Map(), byNum: new Map() };
-  registerRoleCandidate(index, { identifier: '!NODE', numericId: 77, role: 'ROUTER' });
+  registerRoleCandidate(index, {
+    identifier: '!NODE',
+    numericId: 77,
+    role: 'ROUTER',
+    shortName: 'NODE',
+    longName: 'Node Long',
+  });
   assert.equal(index.byId.get('!node'), 'ROUTER');
   assert.equal(index.byNum.get(77), 'ROUTER');
   assert.equal(lookupRole(index, { identifier: '!node' }), 'ROUTER');
   assert.equal(lookupRole(index, { identifier: '!NODE' }), 'ROUTER');
   assert.equal(lookupRole(index, { numericId: 77 }), 'ROUTER');
   assert.equal(lookupRole(index, { identifier: '!missing' }), null);
+  const metadata = lookupNeighborDetails(index, { identifier: '!node', numericId: 77 });
+  assert.deepEqual(metadata, { role: 'ROUTER', shortName: 'NODE', longName: 'Node Long' });
 });
 
 test('seedNeighborRoleIndex captures known roles and missing identifiers', () => {
   const index = { byId: new Map(), byNum: new Map() };
   const missing = seedNeighborRoleIndex(index, [
-    { neighbor_id: '!ALLY', neighbor_role: 'CLIENT' },
+    { neighbor_id: '!ALLY', neighbor_role: 'CLIENT', neighbor_short_name: 'ALLY' },
     { node_id: '!self', node_role: 'ROUTER' },
     { neighbor_id: '!unknown' },
   ]);
   assert.equal(index.byId.get('!ally'), 'CLIENT');
   assert.equal(index.byId.get('!self'), 'ROUTER');
   assert.equal(missing.has('!unknown'), true);
+  const allyDetails = lookupNeighborDetails(index, { identifier: '!ally' });
+  assert.equal(allyDetails.shortName, 'ALLY');
 });
 
 test('additional format helpers provide table friendly output', () => {
@@ -140,6 +151,7 @@ test('additional format helpers provide table friendly output', () => {
   assert.equal(messagesHtml.includes('&nbsp;&nbsp;&nbsp;'), true);
   assert.equal(messagesHtml.includes('&nbsp;&nbsp;'), true);
   assert.equal(messagesHtml.includes('data-role="CLIENT"'), true);
+  assert.equal(messagesHtml.includes(', hello'), false);
 });
 
 test('categoriseNeighbors splits inbound and outbound records', () => {
@@ -190,7 +202,7 @@ test('renderNeighborGroups renders grouped neighbour lists', () => {
   assert.equal(html.includes('data-role="REPEATER"'), true);
 });
 
-test('buildNeighborRoleIndex fetches missing neighbor roles from the API', async () => {
+test('buildNeighborRoleIndex fetches missing neighbor metadata from the API', async () => {
   const neighbors = [
     { neighbor_id: '!ally', neighbor_short_name: 'ALLY' },
   ];
@@ -200,7 +212,7 @@ test('buildNeighborRoleIndex fetches missing neighbor roles from the API', async
     return {
       status: 200,
       ok: true,
-      json: async () => ({ node_id: '!ally', role: 'ROUTER', node_num: 99 }),
+      json: async () => ({ node_id: '!ally', role: 'ROUTER', node_num: 99, short_name: 'ALLY-API' }),
     };
   };
   const index = await buildNeighborRoleIndex({ nodeId: '!self', role: 'CLIENT' }, neighbors, { fetchImpl });
@@ -208,6 +220,8 @@ test('buildNeighborRoleIndex fetches missing neighbor roles from the API', async
   assert.equal(index.byId.get('!ally'), 'ROUTER');
   assert.equal(index.byNum.get(99), 'ROUTER');
   assert.equal(calls.some(url => url.startsWith('/api/nodes/')), true);
+  const allyMetadata = lookupNeighborDetails(index, { identifier: '!ally', numericId: 99 });
+  assert.equal(allyMetadata.shortName, 'ALLY-API');
 });
 
 test('renderSingleNodeTable renders a condensed table for the node', () => {
@@ -357,7 +371,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
       latitude: 52.5,
       longitude: 13.4,
       altitude: 42,
-      neighbors: [{ node_id: '!node', neighbor_id: '!ally', neighbor_short_name: 'ALLY', snr: 5.5 }],
+      neighbors: [{ node_id: '!node', neighbor_id: '!ally', snr: 5.5 }],
       rawSources: { node: { node_id: '!node', role: 'CLIENT' } },
     };
   };
@@ -373,7 +387,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
       return {
         status: 200,
         ok: true,
-        json: async () => ({ node_id: '!ally', role: 'ROUTER' }),
+        json: async () => ({ node_id: '!ally', role: 'ROUTER', short_name: 'ALLY-API' }),
       };
     }
     return { status: 404, ok: false, json: async () => ({}) };
@@ -390,6 +404,7 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   assert.equal(element.innerHTML.includes('node-detail__table'), true);
   assert.equal(element.innerHTML.includes('Neighbors'), true);
   assert.equal(element.innerHTML.includes('Messages'), true);
+  assert.equal(element.innerHTML.includes('ALLY-API'), true);
 });
 
 test('initializeNodeDetailPage removes legacy filter controls when supported', async () => {

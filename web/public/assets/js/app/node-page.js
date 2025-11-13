@@ -322,21 +322,74 @@ function normalizeNodeId(identifier) {
 /**
  * Register a role candidate within the supplied index.
  *
- * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
- * @param {{ identifier?: *, numericId?: *, role?: * }} payload Role candidate payload.
+ * @param {{
+ *   byId: Map<string, string>,
+ *   byNum: Map<number, string>,
+ *   detailsById: Map<string, Object>,
+ *   detailsByNum: Map<number, Object>,
+ * }} index Role index maps.
+ * @param {{
+ *   identifier?: *,
+ *   numericId?: *,
+ *   role?: *,
+ *   shortName?: *,
+ *   longName?: *,
+ * }} payload Role candidate payload.
  * @returns {void}
  */
-function registerRoleCandidate(index, { identifier = null, numericId = null, role = null } = {}) {
+function registerRoleCandidate(
+  index,
+  { identifier = null, numericId = null, role = null, shortName = null, longName = null } = {},
+) {
   if (!index || typeof index !== 'object') return;
+
+  if (!(index.byId instanceof Map)) index.byId = new Map();
+  if (!(index.byNum instanceof Map)) index.byNum = new Map();
+  if (!(index.detailsById instanceof Map)) index.detailsById = new Map();
+  if (!(index.detailsByNum instanceof Map)) index.detailsByNum = new Map();
+
   const resolvedRole = stringOrNull(role);
-  if (!resolvedRole) return;
+  const resolvedShort = stringOrNull(shortName);
+  const resolvedLong = stringOrNull(longName);
+
   const idKey = normalizeNodeId(identifier);
-  if (idKey && !index.byId.has(idKey)) {
-    index.byId.set(idKey, resolvedRole);
-  }
   const numKey = numberOrNull(numericId);
-  if (numKey != null && !index.byNum.has(numKey)) {
-    index.byNum.set(numKey, resolvedRole);
+
+  if (resolvedRole) {
+    if (idKey && !index.byId.has(idKey)) {
+      index.byId.set(idKey, resolvedRole);
+    }
+    if (numKey != null && !index.byNum.has(numKey)) {
+      index.byNum.set(numKey, resolvedRole);
+    }
+  }
+
+  const applyDetails = (existing, keyType) => {
+    const current = existing instanceof Map && (keyType === 'id' ? idKey : numKey) != null
+      ? existing.get(keyType === 'id' ? idKey : numKey)
+      : null;
+    const merged = current && typeof current === 'object' ? { ...current } : {};
+    if (resolvedRole && !merged.role) merged.role = resolvedRole;
+    if (resolvedShort && !merged.shortName) merged.shortName = resolvedShort;
+    if (resolvedLong && !merged.longName) merged.longName = resolvedLong;
+    if (keyType === 'id' && idKey && merged.identifier == null) merged.identifier = idKey;
+    if (keyType === 'num' && numKey != null && merged.numericId == null) {
+      merged.numericId = numKey;
+    }
+    return merged;
+  };
+
+  if (idKey) {
+    const merged = applyDetails(index.detailsById, 'id');
+    if (Object.keys(merged).length > 0) {
+      index.detailsById.set(idKey, merged);
+    }
+  }
+  if (numKey != null) {
+    const merged = applyDetails(index.detailsByNum, 'num');
+    if (Object.keys(merged).length > 0) {
+      index.detailsByNum.set(numKey, merged);
+    }
   }
 }
 
@@ -361,9 +414,56 @@ function lookupRole(index, { identifier = null, numericId = null } = {}) {
 }
 
 /**
+ * Resolve neighbour metadata from the provided index.
+ *
+ * @param {{
+ *   detailsById?: Map<string, Object>,
+ *   detailsByNum?: Map<number, Object>,
+ *   byId?: Map<string, string>,
+ *   byNum?: Map<number, string>,
+ * }|null} index Role lookup maps.
+ * @param {{ identifier?: *, numericId?: * }} payload Lookup payload.
+ * @returns {{ role?: string|null, shortName?: string|null, longName?: string|null }|null}
+ *   Resolved metadata object or ``null`` when unavailable.
+ */
+function lookupNeighborDetails(index, { identifier = null, numericId = null } = {}) {
+  if (!index || typeof index !== 'object') return null;
+  const idKey = normalizeNodeId(identifier);
+  const numKey = numberOrNull(numericId);
+
+  const details = {};
+  if (idKey && index.detailsById instanceof Map && index.detailsById.has(idKey)) {
+    Object.assign(details, index.detailsById.get(idKey));
+  }
+  if (numKey != null && index.detailsByNum instanceof Map && index.detailsByNum.has(numKey)) {
+    Object.assign(details, index.detailsByNum.get(numKey));
+  }
+
+  if (!details.role) {
+    const role = lookupRole(index, { identifier, numericId });
+    if (role) details.role = role;
+  }
+
+  if (Object.keys(details).length === 0) {
+    return null;
+  }
+
+  return {
+    role: details.role ?? null,
+    shortName: details.shortName ?? null,
+    longName: details.longName ?? null,
+  };
+}
+
+/**
  * Gather role hints from neighbor entries into the provided index.
  *
- * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
+ * @param {{
+ *   byId: Map<string, string>,
+ *   byNum: Map<number, string>,
+ *   detailsById: Map<string, Object>,
+ *   detailsByNum: Map<number, Object>,
+ * }} index Role index maps.
  * @param {Array<Object>} neighbors Raw neighbor entries.
  * @returns {Set<string>} Normalized identifiers missing from the index.
  */
@@ -380,17 +480,43 @@ function seedNeighborRoleIndex(index, neighbors) {
       identifier: entry.neighbor_id ?? entry.neighborId,
       numericId: entry.neighbor_num ?? entry.neighborNum,
       role: entry.neighbor_role ?? entry.neighborRole,
+      shortName:
+        entry.neighbor_short_name
+          ?? entry.neighborShortName
+          ?? entry.neighbor?.short_name
+          ?? entry.neighbor?.shortName
+          ?? null,
+      longName:
+        entry.neighbor_long_name
+          ?? entry.neighborLongName
+          ?? entry.neighbor?.long_name
+          ?? entry.neighbor?.longName
+          ?? null,
     });
     registerRoleCandidate(index, {
       identifier: entry.node_id ?? entry.nodeId,
       numericId: entry.node_num ?? entry.nodeNum,
       role: entry.node_role ?? entry.nodeRole,
+      shortName:
+        entry.node_short_name
+          ?? entry.nodeShortName
+          ?? entry.node?.short_name
+          ?? entry.node?.shortName
+          ?? null,
+      longName:
+        entry.node_long_name
+          ?? entry.nodeLongName
+          ?? entry.node?.long_name
+          ?? entry.node?.longName
+          ?? null,
     });
     if (entry.neighbor && typeof entry.neighbor === 'object') {
       registerRoleCandidate(index, {
         identifier: entry.neighbor.node_id ?? entry.neighbor.nodeId ?? entry.neighbor.id,
         numericId: entry.neighbor.node_num ?? entry.neighbor.nodeNum ?? entry.neighbor.num,
         role: entry.neighbor.role ?? entry.neighbor.roleName,
+        shortName: entry.neighbor.short_name ?? entry.neighbor.shortName ?? null,
+        longName: entry.neighbor.long_name ?? entry.neighbor.longName ?? null,
       });
     }
     if (entry.node && typeof entry.node === 'object') {
@@ -398,6 +524,8 @@ function seedNeighborRoleIndex(index, neighbors) {
         identifier: entry.node.node_id ?? entry.node.nodeId ?? entry.node.id,
         numericId: entry.node.node_num ?? entry.node.nodeNum ?? entry.node.num,
         role: entry.node.role ?? entry.node.roleName,
+        shortName: entry.node.short_name ?? entry.node.shortName ?? null,
+        longName: entry.node.long_name ?? entry.node.longName ?? null,
       });
     }
     const candidateIds = [
@@ -456,6 +584,8 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
             ?? raw,
           numericId: payload?.node_num ?? payload?.nodeNum ?? payload?.num ?? null,
           role: payload?.role ?? payload?.node_role ?? payload?.nodeRole ?? null,
+          shortName: payload?.short_name ?? payload?.shortName ?? null,
+          longName: payload?.long_name ?? payload?.longName ?? null,
         });
       } catch (error) {
         console.warn('Failed to resolve neighbor role', error);
@@ -480,20 +610,29 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
  * @param {Object} node Normalised node payload.
  * @param {Array<Object>} neighbors Neighbor entries for the node.
  * @param {{ fetchImpl?: Function }} [options] Fetch overrides.
- * @returns {Promise<{byId: Map<string, string>, byNum: Map<number, string>}>>} Role index maps.
+ * @returns {Promise<{
+ *   byId: Map<string, string>,
+ *   byNum: Map<number, string>,
+ *   detailsById: Map<string, Object>,
+ *   detailsByNum: Map<number, Object>,
+ * }>>} Role index maps enriched with neighbour metadata.
  */
 async function buildNeighborRoleIndex(node, neighbors, { fetchImpl } = {}) {
-  const index = { byId: new Map(), byNum: new Map() };
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
   registerRoleCandidate(index, {
     identifier: node?.nodeId ?? node?.node_id ?? node?.id ?? null,
     numericId: node?.nodeNum ?? node?.node_num ?? node?.num ?? null,
     role: node?.role ?? node?.rawSources?.node?.role ?? null,
+    shortName: node?.shortName ?? node?.short_name ?? null,
+    longName: node?.longName ?? node?.long_name ?? null,
   });
   if (node?.rawSources?.node && typeof node.rawSources.node === 'object') {
     registerRoleCandidate(index, {
       identifier: node.rawSources.node.node_id ?? node.rawSources.node.nodeId ?? null,
       numericId: node.rawSources.node.node_num ?? node.rawSources.node.nodeNum ?? null,
       role: node.rawSources.node.role ?? node.rawSources.node.node_role ?? null,
+      shortName: node.rawSources.node.short_name ?? node.rawSources.node.shortName ?? null,
+      longName: node.rawSources.node.long_name ?? node.rawSources.node.longName ?? null,
     });
   }
 
@@ -678,14 +817,38 @@ function renderNeighborBadge(entry, perspective, renderShortHtml, roleIndex = nu
   if (!identifier) return '';
   const numericId = numKeys.map(key => numberOrNull(entry[key])).find(value => value != null) ?? null;
   let shortName = shortKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
-  const longName = longKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
+  let longName = longKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
   let role = roleKeys.map(key => stringOrNull(entry[key])).find(value => value != null) ?? null;
+  const source = perspective === 'heardBy' ? entry.node : entry.neighbor;
+
+  const metadata = lookupNeighborDetails(roleIndex, { identifier, numericId });
+  if (metadata) {
+    if (!shortName && metadata.shortName) {
+      shortName = metadata.shortName;
+    }
+    if (!role && metadata.role) {
+      role = metadata.role;
+    }
+    if (!longName && metadata.longName) {
+      longName = metadata.longName;
+    }
+    if (metadata.shortName && source && typeof source === 'object') {
+      if (!source.short_name) source.short_name = metadata.shortName;
+      if (!source.shortName) source.shortName = metadata.shortName;
+    }
+    if (metadata.longName && source && typeof source === 'object') {
+      if (!source.long_name) source.long_name = metadata.longName;
+      if (!source.longName) source.longName = metadata.longName;
+    }
+    if (metadata.role && source && typeof source === 'object' && !source.role) {
+      source.role = metadata.role;
+    }
+  }
   if (!shortName) {
     const trimmed = identifier.replace(/^!+/, '');
     shortName = trimmed.slice(-4).toUpperCase();
   }
 
-  const source = perspective === 'heardBy' ? entry.node : entry.neighbor;
   if (!role && source && typeof source === 'object') {
     role = stringOrNull(
       source.role
@@ -944,7 +1107,7 @@ function renderMessages(messages, renderShortHtml, node) {
         source: messageNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<li>${prefix}${presetTag}${channelTag} ${badgeHtml}, ${escapeHtml(text)}</li>`;
+      return `<li>${prefix}${presetTag}${channelTag} ${badgeHtml} ${escapeHtml(text)}</li>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
@@ -1158,6 +1321,7 @@ export const __testUtils = {
   normalizeNodeId,
   registerRoleCandidate,
   lookupRole,
+  lookupNeighborDetails,
   seedNeighborRoleIndex,
   buildNeighborRoleIndex,
   categoriseNeighbors,
