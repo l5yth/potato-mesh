@@ -43,6 +43,7 @@ const {
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
+  renderTelemetryCharts,
   renderMessages,
   renderNodeDetailHtml,
   parseReferencePayload,
@@ -260,6 +261,64 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
   assert.equal(html.includes('2m 30s'), true);
 });
 
+test('renderTelemetryCharts renders condensed scatter charts when telemetry exists', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const node = {
+    rawSources: {
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: nowSeconds - 60,
+            device_metrics: {
+              battery_level: 80,
+              voltage: 4.1,
+              channel_utilization: 40,
+              air_util_tx: 22,
+            },
+            environment_metrics: {
+              temperature: 19.5,
+              relative_humidity: 55,
+              barometric_pressure: 995,
+              gas_resistance: 1500,
+            },
+          },
+          {
+            rx_time: nowSeconds - 3_600,
+            deviceMetrics: {
+              batteryLevel: 78,
+              voltage: 4.05,
+              channelUtilization: 35,
+              airUtilTx: 20,
+            },
+            environmentMetrics: {
+              temperature: 18.4,
+              relativeHumidity: 52,
+              barometricPressure: 1000,
+              gasResistance: 2000,
+            },
+          },
+        ],
+      },
+    },
+  };
+  const html = renderTelemetryCharts(node, { nowMs });
+  const fmt = new Date(nowMs);
+  const expectedDate = `${fmt.getFullYear()}-${String(fmt.getMonth() + 1).padStart(2, '0')}-${String(fmt.getDate()).padStart(2, '0')}`;
+  assert.equal(html.includes('node-detail__charts'), true);
+  assert.equal(html.includes('Power metrics'), true);
+  assert.equal(html.includes('Environmental telemetry'), true);
+  assert.equal(html.includes('Battery (0-100%)'), true);
+  assert.equal(html.includes('Voltage (0-6V)'), true);
+  assert.equal(html.includes('Channel utilization (%)'), true);
+  assert.equal(html.includes('Air util TX (%)'), true);
+  assert.equal(html.includes('Utilization'), true);
+  assert.equal(html.includes('Gas resistance (10-100k Ω)'), true);
+  assert.equal(html.includes('Temperature (-20-40°C)'), true);
+  assert.equal(html.includes(expectedDate), true);
+  assert.equal(html.includes('node-detail__chart-point'), true);
+});
+
 test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   const html = renderNodeDetailHtml(
     {
@@ -294,6 +353,38 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('ALLY'), true);
   assert.equal(html.includes('[2023'), true);
   assert.equal(html.includes('data-role="CLIENT"'), true);
+});
+
+test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 7, 0, 0);
+  const node = {
+    shortName: 'NODE',
+    nodeId: '!abcd',
+    role: 'CLIENT',
+    rawSources: {
+      node: { node_id: '!abcd', role: 'CLIENT', short_name: 'NODE' },
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: Math.floor(nowMs / 1000) - 120,
+            battery_level: 75,
+            voltage: 4.08,
+            channel_utilization: 30,
+            temperature: 20,
+            relative_humidity: 45,
+            barometric_pressure: 990,
+            gas_resistance: 1800,
+          },
+        ],
+      },
+    },
+  };
+  const html = renderNodeDetailHtml(node, {
+    renderShortHtml: short => `<span class="short-name">${short}</span>`,
+    chartNowMs: nowMs,
+  });
+  assert.equal(html.includes('node-detail__charts'), true);
+  assert.equal(html.includes('Power metrics'), true);
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {
