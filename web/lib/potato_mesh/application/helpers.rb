@@ -167,7 +167,7 @@ module PotatoMesh
         return nil unless ident && !ident.empty?
         trimmed = ident.strip
         return nil if trimmed.empty?
-        body = trimmed.start_with?('!') ? trimmed[1..-1] : trimmed
+        body = trimmed.start_with?("!") ? trimmed[1..-1] : trimmed
         return nil unless body && !body.empty?
         escaped = Rack::Utils.escape_path(body)
         "/nodes/!#{escaped}"
@@ -179,13 +179,13 @@ module PotatoMesh
       # @param identifier [String, nil] canonical node identifier.
       # @param css_class [String, nil] optional CSS class applied to the anchor.
       # @return [String] escaped HTML snippet.
-      def node_long_name_link(long_name, identifier, css_class: 'node-long-link')
+      def node_long_name_link(long_name, identifier, css_class: "node-long-link")
         text = string_or_nil(long_name)
-        return '' unless text
+        return "" unless text
         href = node_detail_path(identifier)
         escaped_text = Rack::Utils.escape_html(text)
         return escaped_text unless href
-        class_attr = css_class ? %( class="#{css_class}") : ''
+        class_attr = css_class ? %( class="#{css_class}") : ""
         %(<a#{class_attr} href="#{href}" target="_blank" rel="noopener noreferrer">#{escaped_text}</a>)
       end
 
