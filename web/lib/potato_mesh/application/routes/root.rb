@@ -173,16 +173,12 @@ module PotatoMesh
             render_root_view(:index, view_mode: :dashboard)
           end
 
-          app.get "/map" do
+          app.get %r{/map/?} do
             render_root_view(:map, view_mode: :map)
           end
 
-          app.get "/chat" do
+          app.get %r{/chat/?} do
             render_root_view(:chat, view_mode: :chat)
-          end
-
-          app.get "/nodes" do
-            render_root_view(:nodes, view_mode: :nodes)
           end
 
           app.get "/nodes/:id" do
@@ -207,6 +203,10 @@ module PotatoMesh
                 node_page_identifier: canonical_id,
               },
             )
+          end
+
+          app.get %r{/nodes/?} do
+            render_root_view(:nodes, view_mode: :nodes)
           end
 
           app.get "/metrics" do

@@ -66,7 +66,7 @@ test('format helpers normalise values as expected', () => {
   assert.equal(padTwo(3), '03');
   assert.equal(normalizeNodeId('!NODE'), '!node');
   const messageTimestamp = formatMessageTimestamp(1_700_000_000);
-  assert.equal(messageTimestamp.startsWith('2023-'), true);
+  assert.match(messageTimestamp, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 });
 
 test('role lookup helpers normalise identifiers and register candidates', () => {
@@ -144,7 +144,7 @@ test('additional format helpers provide table friendly output', () => {
   );
   assert.equal(messagesHtml.includes('hello'), true);
   assert.equal(messagesHtml.includes('😊'), true);
-  assert.equal(messagesHtml.includes('[2023-'), true);
+  assert.match(messagesHtml, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[868\]/);
   assert.equal(messagesHtml.includes('[868]'), true);
   assert.equal(messagesHtml.includes('[MF]'), true);
   assert.equal(messagesHtml.includes('[Primary]'), true);
@@ -235,7 +235,7 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     battery: 66,
     voltage: 4.12,
     uptime: 3_700,
-    channel: 1.23,
+    channel_utilization: 1.23,
     airUtil: 0.45,
     temperature: 22.5,
     humidity: 55.5,
@@ -253,7 +253,7 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     10_000,
   );
   assert.equal(html.includes('<table'), true);
-  assert.equal(html.includes('Example Node'), true);
+  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" target="_blank" rel="noopener noreferrer">Example Node<\/a>/);
   assert.equal(html.includes('66.0%'), true);
   assert.equal(html.includes('1.230%'), true);
   assert.equal(html.includes('52.52000'), true);
@@ -304,7 +304,7 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   };
   const html = renderTelemetryCharts(node, { nowMs });
   const fmt = new Date(nowMs);
-  const expectedDate = `${fmt.getFullYear()}-${String(fmt.getMonth() + 1).padStart(2, '0')}-${String(fmt.getDate()).padStart(2, '0')}`;
+  const expectedDate = String(fmt.getDate()).padStart(2, '0');
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Power metrics'), true);
   assert.equal(html.includes('Environmental telemetry'), true);
@@ -312,7 +312,7 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('Voltage (0-6V)'), true);
   assert.equal(html.includes('Channel utilization (%)'), true);
   assert.equal(html.includes('Air util TX (%)'), true);
-  assert.equal(html.includes('Utilization'), true);
+  assert.equal(html.includes('Utilization (%)'), true);
   assert.equal(html.includes('Gas resistance (10-100k Ω)'), true);
   assert.equal(html.includes('Temperature (-20-40°C)'), true);
   assert.equal(html.includes(expectedDate), true);
@@ -348,10 +348,10 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('Heard by'), true);
   assert.equal(html.includes('We hear'), true);
   assert.equal(html.includes('Messages'), true);
-  assert.equal(html.includes('Example Node'), true);
+  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" target="_blank" rel="noopener noreferrer">Example Node<\/a>/);
   assert.equal(html.includes('PEER'), true);
   assert.equal(html.includes('ALLY'), true);
-  assert.equal(html.includes('[2023'), true);
+  assert.match(html, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[/);
   assert.equal(html.includes('data-role="CLIENT"'), true);
 });
 

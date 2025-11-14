@@ -2331,7 +2331,7 @@ def test_store_packet_dict_records_ignored_packets(mesh_module, monkeypatch, tmp
     mesh = mesh_module
 
     monkeypatch.setattr(mesh, "DEBUG", True)
-    ignored_path = tmp_path / "ingored.txt"
+    ignored_path = tmp_path / "ignored.txt"
     monkeypatch.setattr(mesh.handlers, "_IGNORED_PACKET_LOG_PATH", ignored_path)
     monkeypatch.setattr(mesh.handlers, "_IGNORED_PACKET_LOCK", threading.Lock())
 

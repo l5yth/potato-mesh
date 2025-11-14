@@ -1872,9 +1872,9 @@ let messagesById = new Map();
    */
   function buildMapPopupHtml(node, nowSec) {
     const lines = [];
-    const longName = node && node.long_name ? escapeHtml(String(node.long_name)) : '';
-    if (longName) {
-      lines.push(`<b>${longName}</b>`);
+    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id);
+    if (longNameLink) {
+      lines.push(`<b>${longNameLink}</b>`);
     }
 
     const shortHtml = renderShortHtml(node?.short_name, node?.role, node?.long_name, node);
@@ -2083,7 +2083,16 @@ let messagesById = new Map();
     if (!target) return;
     const normalized = normalizeOverlaySource(info || {});
     const heading = normalized.longName || normalized.shortName || normalized.nodeId || '';
-    const headingHtml = heading ? `<strong>${escapeHtml(heading)}</strong><br/>` : '';
+    let headingHtml = '';
+    if (normalized.longName) {
+      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId);
+      if (link) {
+        headingHtml = `<strong>${link}</strong><br/>`;
+      }
+    }
+    if (!headingHtml && heading) {
+      headingHtml = `<strong>${escapeHtml(heading)}</strong><br/>`;
+    }
     overlayStack.render(target, `${headingHtml}Loading…`);
   }
 
@@ -2101,9 +2110,14 @@ let messagesById = new Map();
       overlayInfo.role = 'CLIENT';
     }
     const lines = [];
-    const longNameValue = shortInfoValueOrDash(overlayInfo.longName ?? '');
-    if (longNameValue !== '—') {
-      lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
+    const longNameLink = renderNodeLongNameLink(overlayInfo.longName, overlayInfo.nodeId);
+    if (longNameLink) {
+      lines.push(`<strong>${longNameLink}</strong>`);
+    } else {
+      const longNameValue = shortInfoValueOrDash(overlayInfo.longName ?? '');
+      if (longNameValue !== '—') {
+        lines.push(`<strong>${escapeHtml(longNameValue)}</strong>`);
+      }
     }
     const shortParts = [];
     const shortHtml = renderShortHtml(overlayInfo.shortName, overlayInfo.role, overlayInfo.longName);
@@ -2175,9 +2189,16 @@ let messagesById = new Map();
     const sourceIdText = shortInfoValueOrDash(segment.sourceId || '');
     const neighborFullName = shortInfoValueOrDash(segment.targetDisplayName || segment.targetId || '');
     const lines = [];
-    lines.push(`<strong>${escapeHtml(nodeName)}</strong>`);
+    const sourceLongLink = renderNodeLongNameLink(segment.sourceDisplayName, segment.sourceId);
+    if (sourceLongLink) {
+      lines.push(`<strong>${sourceLongLink}</strong>`);
+    } else {
+      lines.push(`<strong>${escapeHtml(nodeName)}</strong>`);
+    }
     lines.push(`${sourceShortHtml} <span class="mono">${escapeHtml(sourceIdText)}</span>`);
-    const neighborLine = `${targetShortHtml} [${escapeHtml(neighborFullName)}]`;
+    const neighborLongLink = renderNodeLongNameLink(segment.targetDisplayName, segment.targetId);
+    const neighborLabel = neighborLongLink || escapeHtml(neighborFullName);
+    const neighborLine = `${targetShortHtml} [${neighborLabel}]`;
     lines.push(neighborLine);
     lines.push(`SNR: ${escapeHtml(snrText)}`);
     overlayStack.render(target, lines.join('<br/>'));
@@ -2220,6 +2241,8 @@ let messagesById = new Map();
     const fallbackId = nodeIdRaw || 'Unknown node';
     const longNameRaw = pickFirstProperty([node], ['long_name', 'longName']);
     const longNameDisplay = longNameRaw ? String(longNameRaw) : fallbackId;
+    const longNameLink = renderNodeLongNameLink(longNameRaw, nodeIdRaw);
+    const announcementName = longNameLink || escapeHtml(longNameDisplay);
     const shortNameRaw = pickFirstProperty([node], ['short_name', 'shortName']);
     const shortNameDisplay = shortNameRaw ? String(shortNameRaw) : (nodeIdRaw ? nodeIdRaw.slice(-4) : null);
     const roleDisplay = pickFirstProperty([node], ['role']);
@@ -2233,7 +2256,7 @@ let messagesById = new Map();
       role: roleDisplay,
       metadataSource: node,
       nodeData: node,
-      messageHtml: `${renderEmojiHtml('☀️')} ${renderAnnouncementCopy(`New node: ${longNameDisplay}`)}`
+      messageHtml: `${renderEmojiHtml('☀️')} ${renderAnnouncementCopy('New node:', ` ${announcementName}`)}`
     });
   }
 
@@ -2988,6 +3011,41 @@ let messagesById = new Map();
   }
 
   /**
+   * Compute the node detail path for a given identifier.
+   *
+   * @param {string|null} identifier Node identifier.
+   * @returns {string|null} Detail path.
+   */
+  function buildNodeDetailHref(identifier) {
+    if (identifier == null) return null;
+    const trimmed = String(identifier).trim();
+    if (!trimmed) return null;
+    const body = trimmed.startsWith('!') ? trimmed.slice(1) : trimmed;
+    if (!body) return null;
+    const encoded = encodeURIComponent(body);
+    return `/nodes/!${encoded}`;
+  }
+
+  /**
+   * Render a linked long name pointing to the node detail view.
+   *
+   * @param {string|null} longName Display name.
+   * @param {string|null} identifier Node identifier.
+   * @param {string} [className='node-long-link'] Optional class attribute.
+   * @returns {string} Escaped HTML snippet.
+   */
+  function renderNodeLongNameLink(longName, identifier, className = 'node-long-link') {
+    const text = normalizeNodeNameValue(longName);
+    if (!text) return '';
+    const href = buildNodeDetailHref(identifier);
+    if (!href) {
+      return escapeHtml(text);
+    }
+    const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
+    return `<a${classAttr} href="${href}">${escapeHtml(text)}</a>`;
+  }
+
+  /**
    * Determine the preferred display name for overlay content.
    *
    * @param {Object} node Node payload.
@@ -3401,11 +3459,12 @@ let messagesById = new Map();
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
       const latitudeDisplay = fmtCoords(n.latitude);
       const longitudeDisplay = fmtCoords(n.longitude);
-      const nodeDisplayName = getNodeDisplayNameForOverlay(n);
-      tr.innerHTML = `
+    const nodeDisplayName = getNodeDisplayNameForOverlay(n);
+    const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
+    tr.innerHTML = `
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
-        <td class="nodes-col nodes-col--long-name">${n.long_name || ""}</td>
+        <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
         <td class="nodes-col nodes-col--last-seen">${timeAgo(n.last_heard, nowSec)}</td>
         <td class="nodes-col nodes-col--role">${n.role || "CLIENT"}</td>
         <td class="nodes-col nodes-col--hw-model">${fmtHw(n.hw_model)}</td>

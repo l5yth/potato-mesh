@@ -183,7 +183,7 @@ function mergeNodeFields(target, record) {
   assignNumber(target, 'battery', extractNumber(record, ['battery', 'battery_level', 'batteryLevel']));
   assignNumber(target, 'voltage', extractNumber(record, ['voltage']));
   assignNumber(target, 'uptime', extractNumber(record, ['uptime', 'uptime_seconds', 'uptimeSeconds']));
-  assignNumber(target, 'channel', extractNumber(record, ['channel', 'channel_utilization', 'channelUtilization']));
+  assignNumber(target, 'channel', extractNumber(record, ['channel_utilization', 'channelUtilization']));
   assignNumber(target, 'airUtil', extractNumber(record, ['airUtil', 'air_util_tx', 'airUtilTx']));
   assignNumber(target, 'temperature', extractNumber(record, ['temperature']));
   assignNumber(target, 'humidity', extractNumber(record, ['humidity', 'relative_humidity', 'relativeHumidity']));
@@ -214,7 +214,7 @@ function mergeTelemetry(target, telemetry) {
   assignNumber(target, 'battery', extractNumber(telemetry, ['battery_level', 'batteryLevel']), { preferExisting: true });
   assignNumber(target, 'voltage', extractNumber(telemetry, ['voltage']), { preferExisting: true });
   assignNumber(target, 'uptime', extractNumber(telemetry, ['uptime_seconds', 'uptimeSeconds']), { preferExisting: true });
-  assignNumber(target, 'channel', extractNumber(telemetry, ['channel', 'channel_utilization', 'channelUtilization']), { preferExisting: true });
+  assignNumber(target, 'channel', extractNumber(telemetry, ['channel_utilization', 'channelUtilization']), { preferExisting: true });
   assignNumber(target, 'airUtil', extractNumber(telemetry, ['air_util_tx', 'airUtilTx', 'airUtil']), { preferExisting: true });
   assignNumber(target, 'temperature', extractNumber(telemetry, ['temperature']), { preferExisting: true });
   assignNumber(target, 'humidity', extractNumber(telemetry, ['relative_humidity', 'relativeHumidity', 'humidity']), { preferExisting: true });
@@ -398,7 +398,7 @@ export async function refreshNodeInformation(reference, options = {}) {
   const nodeRecordEntry = aggregatedNodeRecords[0] ?? null;
 
   const telemetryCandidates = Array.isArray(telemetryRecords)
-    ? telemetryRecords
+    ? telemetryRecords.filter(isObject)
     : (isObject(telemetryRecords) ? [telemetryRecords] : []);
   const aggregatedTelemetry = aggregateTelemetrySnapshots(telemetryCandidates);
   const telemetryEntry = aggregatedTelemetry[0] ?? null;
@@ -448,6 +448,7 @@ export async function refreshNodeInformation(reference, options = {}) {
   node.rawSources = {
     node: nodeRecordEntry,
     telemetry: telemetryEntry,
+    telemetrySnapshots: telemetryCandidates,
     position: positionEntry,
     neighbors: neighborEntries,
   };

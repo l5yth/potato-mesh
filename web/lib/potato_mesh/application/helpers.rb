@@ -158,6 +158,37 @@ module PotatoMesh
         PotatoMesh::Meta.formatted_distance_km(distance)
       end
 
+      # Build the canonical node detail path for the supplied identifier.
+      #
+      # @param identifier [String, nil] node identifier in ``!xxxx`` notation.
+      # @return [String, nil] detail path including the canonical ``!`` prefix.
+      def node_detail_path(identifier)
+        ident = string_or_nil(identifier)
+        return nil unless ident && !ident.empty?
+        trimmed = ident.strip
+        return nil if trimmed.empty?
+        body = trimmed.start_with?("!") ? trimmed[1..-1] : trimmed
+        return nil unless body && !body.empty?
+        escaped = Rack::Utils.escape_path(body)
+        "/nodes/!#{escaped}"
+      end
+
+      # Render a linked long name pointing to the node detail page.
+      #
+      # @param long_name [String] display name for the node.
+      # @param identifier [String, nil] canonical node identifier.
+      # @param css_class [String, nil] optional CSS class applied to the anchor.
+      # @return [String] escaped HTML snippet.
+      def node_long_name_link(long_name, identifier, css_class: "node-long-link")
+        text = string_or_nil(long_name)
+        return "" unless text
+        href = node_detail_path(identifier)
+        escaped_text = Rack::Utils.escape_html(text)
+        return escaped_text unless href
+        class_attr = css_class ? %( class="#{css_class}") : ""
+        %(<a#{class_attr} href="#{href}" target="_blank" rel="noopener noreferrer">#{escaped_text}</a>)
+      end
+
       # Generate the meta description used in SEO tags.
       #
       # @return [String] combined descriptive sentence.
