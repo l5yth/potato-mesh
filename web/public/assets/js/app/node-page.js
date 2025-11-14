@@ -34,6 +34,178 @@ const MESSAGE_LIMIT = 50;
 const RENDER_WAIT_INTERVAL_MS = 20;
 const RENDER_WAIT_TIMEOUT_MS = 500;
 const NEIGHBOR_ROLE_FETCH_CONCURRENCY = 4;
+const DAY_MS = 86_400_000;
+const TELEMETRY_WINDOW_MS = DAY_MS * 7;
+const DEFAULT_CHART_DIMENSIONS = Object.freeze({ width: 660, height: 300 });
+const DEFAULT_CHART_MARGIN = Object.freeze({ top: 20, right: 64, bottom: 40, left: 64 });
+/**
+ * Telemetry chart definitions describing axes and series metadata.
+ *
+ * @type {Array<Object>}
+ */
+const TELEMETRY_CHART_SPECS = Object.freeze([
+  {
+    id: 'power',
+    title: 'Power metrics',
+    axes: [
+      {
+        id: 'battery',
+        position: 'left',
+        label: 'Battery (0-100%)',
+        min: 0,
+        max: 100,
+        ticks: 4,
+        color: '#8856a7',
+      },
+      {
+        id: 'voltage',
+        position: 'right',
+        label: 'Voltage (0-6V)',
+        min: 0,
+        max: 6,
+        ticks: 3,
+        color: '#9ebcda',
+      },
+    ],
+    series: [
+      {
+        id: 'battery',
+        axis: 'battery',
+        color: '#8856a7',
+        label: 'Battery level',
+        legend: 'Battery (0-100%)',
+        fields: ['battery', 'battery_level', 'batteryLevel'],
+        valueFormatter: value => `${value.toFixed(1)}%`,
+      },
+      {
+        id: 'voltage',
+        axis: 'voltage',
+        color: '#9ebcda',
+        label: 'Voltage',
+        legend: 'Voltage (0-6V)',
+        fields: ['voltage', 'voltageReading'],
+        valueFormatter: value => `${value.toFixed(2)} V`,
+      },
+    ],
+  },
+  {
+    id: 'channel',
+    title: 'Channel utilization',
+    axes: [
+      {
+        id: 'channel',
+        position: 'left',
+        label: 'Utilization',
+        min: 0,
+        max: 100,
+        ticks: 4,
+        color: '#2ca25f',
+      },
+    ],
+    series: [
+      {
+        id: 'channel',
+        axis: 'channel',
+        color: '#2ca25f',
+        label: 'Channel util',
+        legend: 'Channel utilization (%)',
+        fields: ['channel', 'channel_utilization', 'channelUtilization'],
+        valueFormatter: value => `${value.toFixed(1)}%`,
+      },
+      {
+        id: 'air',
+        axis: 'channel',
+        color: '#99d8c9',
+        label: 'Air util tx',
+        legend: 'Air util TX (%)',
+        fields: ['airUtil', 'air_util_tx', 'airUtilTx'],
+        valueFormatter: value => `${value.toFixed(1)}%`,
+      },
+    ],
+  },
+  {
+    id: 'environment',
+    title: 'Environmental telemetry',
+    axes: [
+      {
+        id: 'temperature',
+        position: 'left',
+        label: 'Temperature (-20-40°C)',
+        min: -20,
+        max: 40,
+        ticks: 4,
+        color: '#fc8d59',
+      },
+      {
+        id: 'humidity',
+        position: 'left',
+        label: 'Humidity (0-100%)',
+        min: 0,
+        max: 100,
+        ticks: 4,
+        color: '#91bfdb',
+        visible: false,
+      },
+      {
+        id: 'pressure',
+        position: 'right',
+        label: 'Pressure (800-1100hPa)',
+        min: 800,
+        max: 1_100,
+        ticks: 4,
+        color: '#c51b8a',
+      },
+      {
+        id: 'gas',
+        position: 'rightSecondary',
+        label: 'Gas resistance (10-100k Ω)',
+        min: 10,
+        max: 100_000,
+        ticks: 5,
+        color: '#fa9fb5',
+        scale: 'log',
+      },
+    ],
+    series: [
+      {
+        id: 'temperature',
+        axis: 'temperature',
+        color: '#fc8d59',
+        label: 'Temperature',
+        legend: 'Temperature (-20-40\u00b0C)',
+        fields: ['temperature', 'temp'],
+        valueFormatter: value => `${value.toFixed(1)}\u00b0C`,
+      },
+      {
+        id: 'humidity',
+        axis: 'humidity',
+        color: '#91bfdb',
+        label: 'Humidity',
+        legend: 'Humidity (0-100%)',
+        fields: ['humidity', 'relative_humidity', 'relativeHumidity'],
+        valueFormatter: value => `${value.toFixed(1)}%`,
+      },
+      {
+        id: 'pressure',
+        axis: 'pressure',
+        color: '#c51b8a',
+        label: 'Pressure',
+        legend: 'Pressure (800-1100hPa)',
+        fields: ['pressure', 'barometric_pressure', 'barometricPressure'],
+        valueFormatter: value => `${value.toFixed(1)} hPa`,
+      },
+      {
+        id: 'gas',
+        axis: 'gas',
+        color: '#fa9fb5',
+        label: 'Gas resistance',
+        legend: 'Gas resistance (10-100k \u03a9)',
+        fields: ['gas_resistance', 'gasResistance'],
+        valueFormatter: value => formatGasResistance(value),
+      },
+    ],
+  },
+]);
 
 /**
  * Convert a candidate value into a trimmed string.
@@ -306,6 +478,624 @@ function formatSnr(value) {
   const numeric = numberOrNull(value);
   if (numeric == null) return '';
   return `${numeric.toFixed(1)} dB`;
+}
+
+/**
+ * Convert a timestamp that may be expressed in seconds or milliseconds into
+ * milliseconds.
+ *
+ * @param {*} value Candidate timestamp.
+ * @returns {number|null} Timestamp in milliseconds or ``null``.
+ */
+function toTimestampMs(value) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return null;
+  if (numeric > 1_000_000_000_000) {
+    return numeric;
+  }
+  return numeric * 1000;
+}
+
+/**
+ * Resolve the canonical telemetry timestamp for a snapshot record.
+ *
+ * @param {*} snapshot Telemetry snapshot payload.
+ * @returns {number|null} Timestamp in milliseconds.
+ */
+function resolveSnapshotTimestamp(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return null;
+  }
+  const isoCandidate = stringOrNull(
+    snapshot.rx_iso
+      ?? snapshot.rxIso
+      ?? snapshot.telemetry_time_iso
+      ?? snapshot.telemetryTimeIso
+      ?? snapshot.timestampIso,
+  );
+  if (isoCandidate) {
+    const parsed = new Date(isoCandidate);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.getTime();
+    }
+  }
+  const numericCandidates = [
+    snapshot.rx_time,
+    snapshot.rxTime,
+    snapshot.telemetry_time,
+    snapshot.telemetryTime,
+    snapshot.timestamp,
+    snapshot.ts,
+  ];
+  for (const candidate of numericCandidates) {
+    const ts = toTimestampMs(candidate);
+    if (ts != null) {
+      return ts;
+    }
+  }
+  return null;
+}
+
+/**
+ * Clamp a numeric value between ``min`` and ``max``.
+ *
+ * @param {number} value Value to clamp.
+ * @param {number} min Minimum bound.
+ * @param {number} max Maximum bound.
+ * @returns {number} Clamped numeric value.
+ */
+function clamp(value, min, max) {
+  if (!Number.isFinite(value)) return min;
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+/**
+ * Convert a hex colour into an rgba string with the specified alpha.
+ *
+ * @param {string} hex Hex colour string.
+ * @param {number} alpha Alpha component between 0 and 1.
+ * @returns {string} RGBA CSS string.
+ */
+function hexToRgba(hex, alpha = 1) {
+  const normalised = stringOrNull(hex)?.replace(/^#/, '') ?? '';
+  if (!(normalised.length === 6 || normalised.length === 3)) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+  const expanded = normalised.length === 3
+    ? normalised.split('').map(piece => piece + piece).join('')
+    : normalised;
+  const toComponent = (start, end) => parseInt(expanded.slice(start, end), 16);
+  const r = toComponent(0, 2);
+  const g = toComponent(2, 4);
+  const b = toComponent(4, 6);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * Format a timestamp as ``YYYY-MM-DD`` using the local time zone.
+ *
+ * @param {number} timestampMs Timestamp expressed in milliseconds.
+ * @returns {string} Compact date string.
+ */
+function formatCompactDate(timestampMs) {
+  const date = new Date(timestampMs);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = padTwo(date.getMonth() + 1);
+  const day = padTwo(date.getDate());
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Build midnight tick timestamps covering the floating telemetry window.
+ *
+ * @param {number} nowMs Reference timestamp in milliseconds.
+ * @returns {Array<number>} Midnight timestamps within the window.
+ */
+function buildMidnightTicks(nowMs) {
+  const ticks = [];
+  const domainStart = nowMs - TELEMETRY_WINDOW_MS;
+  const cursor = new Date(nowMs);
+  cursor.setHours(0, 0, 0, 0);
+  for (let ts = cursor.getTime(); ts >= domainStart; ts -= DAY_MS) {
+    ticks.push(ts);
+  }
+  return ticks.reverse();
+}
+
+/**
+ * Build evenly spaced ticks for linear axes.
+ *
+ * @param {number} min Axis minimum.
+ * @param {number} max Axis maximum.
+ * @param {number} [count=4] Number of tick segments.
+ * @returns {Array<number>} Tick values including the extrema.
+ */
+function buildLinearTicks(min, max, count = 4) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  if (max <= min) return [min];
+  const segments = Math.max(1, Math.floor(count));
+  const step = (max - min) / segments;
+  const ticks = [];
+  for (let idx = 0; idx <= segments; idx += 1) {
+    ticks.push(min + step * idx);
+  }
+  return ticks;
+}
+
+/**
+ * Build base-10 ticks for logarithmic axes.
+ *
+ * @param {number} min Minimum domain value.
+ * @param {number} max Maximum domain value.
+ * @returns {Array<number>} Tick values distributed across powers of 10.
+ */
+function buildLogTicks(min, max) {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= min) {
+    return [];
+  }
+  const ticks = [];
+  const minExp = Math.ceil(Math.log10(min));
+  const maxExp = Math.floor(Math.log10(max));
+  for (let exp = minExp; exp <= maxExp; exp += 1) {
+    ticks.push(10 ** exp);
+  }
+  if (!ticks.includes(min)) ticks.unshift(min);
+  if (!ticks.includes(max)) ticks.push(max);
+  return ticks;
+}
+
+/**
+ * Format tick labels using compact units for better readability.
+ *
+ * @param {number} value Tick value.
+ * @param {Object} axis Axis descriptor.
+ * @returns {string} Formatted label.
+ */
+function formatAxisTick(value, axis) {
+  if (!Number.isFinite(value)) return '';
+  if (axis.scale === 'log') {
+    if (value >= 1000) {
+      return `${Math.round(value / 1000)}k`;
+    }
+    return `${Math.round(value)}`;
+  }
+  if (Math.abs(axis.max - axis.min) <= 10) {
+    return value.toFixed(1);
+  }
+  return Math.round(value).toString();
+}
+
+/**
+ * Format a gas resistance reading using sensible prefixes with the Ω symbol.
+ *
+ * @param {number} value Resistance value in Ohms.
+ * @returns {string} Formatted resistance string.
+ */
+function formatGasResistance(value) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  const absValue = Math.abs(numeric);
+  if (absValue >= 1_000_000) {
+    return `${(numeric / 1_000_000).toFixed(2)} M\u03a9`;
+  }
+  if (absValue >= 1_000) {
+    return `${(numeric / 1_000).toFixed(2)} k\u03a9`;
+  }
+  if (absValue >= 100) {
+    return `${numeric.toFixed(1)} \u03a9`;
+  }
+  return `${numeric.toFixed(0)} \u03a9`;
+}
+
+/**
+ * Format a data point value for tooltip display.
+ *
+ * @param {Object} seriesConfig Series configuration.
+ * @param {number} value Numeric data point value.
+ * @returns {string} Formatted value string.
+ */
+function formatSeriesPointValue(seriesConfig, value) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  if (typeof seriesConfig.valueFormatter === 'function') {
+    return seriesConfig.valueFormatter(numeric);
+  }
+  return numeric.toString();
+}
+
+/**
+ * Determine the layout metrics for the provided chart specification.
+ *
+ * @param {Object} spec Chart specification.
+ * @returns {{width: number, height: number, margin: Object, innerWidth: number, innerHeight: number, chartTop: number, chartBottom: number}}
+ *   Chart dimensions.
+ */
+function createChartDimensions(spec) {
+  const margin = { ...DEFAULT_CHART_MARGIN };
+  if (spec.axes.some(axis => axis.position === 'leftSecondary')) {
+    margin.left += 36;
+  }
+  if (spec.axes.some(axis => axis.position === 'rightSecondary')) {
+    margin.right += 40;
+  }
+  const width = DEFAULT_CHART_DIMENSIONS.width;
+  const height = DEFAULT_CHART_DIMENSIONS.height;
+  const innerWidth = Math.max(1, width - margin.left - margin.right);
+  const innerHeight = Math.max(1, height - margin.top - margin.bottom);
+  return {
+    width,
+    height,
+    margin,
+    innerWidth,
+    innerHeight,
+    chartTop: margin.top,
+    chartBottom: height - margin.bottom,
+  };
+}
+
+/**
+ * Compute the horizontal drawing position for an axis descriptor.
+ *
+ * @param {string} position Axis position keyword.
+ * @param {Object} dims Chart dimensions.
+ * @returns {number} X coordinate for the axis baseline.
+ */
+function resolveAxisX(position, dims) {
+  switch (position) {
+    case 'leftSecondary':
+      return dims.margin.left - 32;
+    case 'right':
+      return dims.width - dims.margin.right;
+    case 'rightSecondary':
+      return dims.width - dims.margin.right + 32;
+    case 'left':
+    default:
+      return dims.margin.left;
+  }
+}
+
+/**
+ * Compute the X coordinate for a timestamp constrained to the rolling window.
+ *
+ * @param {number} timestamp Timestamp in milliseconds.
+ * @param {number} domainStart Start of the window in milliseconds.
+ * @param {number} domainEnd End of the window in milliseconds.
+ * @param {Object} dims Chart dimensions.
+ * @returns {number} X coordinate inside the SVG viewport.
+ */
+function scaleTimestamp(timestamp, domainStart, domainEnd, dims) {
+  const safeStart = Math.min(domainStart, domainEnd);
+  const safeEnd = Math.max(domainStart, domainEnd);
+  const span = Math.max(1, safeEnd - safeStart);
+  const clamped = clamp(timestamp, safeStart, safeEnd);
+  const ratio = (clamped - safeStart) / span;
+  return dims.margin.left + ratio * dims.innerWidth;
+}
+
+/**
+ * Convert a value bound to a specific axis into a Y coordinate.
+ *
+ * @param {number} value Series value.
+ * @param {Object} axis Axis descriptor.
+ * @param {Object} dims Chart dimensions.
+ * @returns {number} Y coordinate.
+ */
+function scaleValueToAxis(value, axis, dims) {
+  if (!axis) return dims.chartBottom;
+  if (axis.scale === 'log') {
+    const minLog = Math.log10(axis.min);
+    const maxLog = Math.log10(axis.max);
+    const safe = clamp(value, axis.min, axis.max);
+    const ratio = (Math.log10(safe) - minLog) / (maxLog - minLog);
+    return dims.chartBottom - ratio * dims.innerHeight;
+  }
+  const safe = clamp(value, axis.min, axis.max);
+  const ratio = (safe - axis.min) / (axis.max - axis.min || 1);
+  return dims.chartBottom - ratio * dims.innerHeight;
+}
+
+/**
+ * Collect candidate containers that may hold telemetry values for a snapshot.
+ *
+ * @param {Object} snapshot Telemetry snapshot payload.
+ * @returns {Array<Object>} Container objects inspected for telemetry fields.
+ */
+function collectSnapshotContainers(snapshot) {
+  const containers = [];
+  if (!snapshot || typeof snapshot !== 'object') {
+    return containers;
+  }
+  const seen = new Set();
+  const enqueue = value => {
+    if (!value || typeof value !== 'object') return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    containers.push(value);
+  };
+  enqueue(snapshot);
+  const directKeys = [
+    'device_metrics',
+    'deviceMetrics',
+    'environment_metrics',
+    'environmentMetrics',
+    'raw',
+  ];
+  directKeys.forEach(key => {
+    if (Object.prototype.hasOwnProperty.call(snapshot, key)) {
+      enqueue(snapshot[key]);
+    }
+  });
+  if (snapshot.raw && typeof snapshot.raw === 'object') {
+    ['device_metrics', 'deviceMetrics', 'environment_metrics', 'environmentMetrics'].forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(snapshot.raw, key)) {
+        enqueue(snapshot.raw[key]);
+      }
+    });
+  }
+  return containers;
+}
+
+/**
+ * Extract the first numeric telemetry value that matches one of the provided
+ * field names.
+ *
+ * @param {*} snapshot Telemetry payload.
+ * @param {Array<string>} fields Candidate property names.
+ * @returns {number|null} Extracted numeric value or ``null``.
+ */
+function extractSnapshotValue(snapshot, fields) {
+  if (!snapshot || typeof snapshot !== 'object' || !Array.isArray(fields)) {
+    return null;
+  }
+  const containers = collectSnapshotContainers(snapshot);
+  for (const container of containers) {
+    for (const field of fields) {
+      if (!Object.prototype.hasOwnProperty.call(container, field)) continue;
+      const numeric = numberOrNull(container[field]);
+      if (numeric != null) {
+        return numeric;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Build data points for a series constrained to the seven-day window.
+ *
+ * @param {Array<{timestamp: number, snapshot: Object}>} entries Telemetry entries.
+ * @param {Array<string>} fields Candidate metric names.
+ * @param {number} domainStart Window start in milliseconds.
+ * @param {number} domainEnd Window end in milliseconds.
+ * @returns {Array<{timestamp: number, value: number}>} Series points sorted by timestamp.
+ */
+function buildSeriesPoints(entries, fields, domainStart, domainEnd) {
+  const points = [];
+  entries.forEach(entry => {
+    if (!entry || typeof entry !== 'object') return;
+    const value = extractSnapshotValue(entry.snapshot, fields);
+    if (value == null) return;
+    if (entry.timestamp < domainStart || entry.timestamp > domainEnd) {
+      return;
+    }
+    points.push({ timestamp: entry.timestamp, value });
+  });
+  points.sort((a, b) => a.timestamp - b.timestamp);
+  return points;
+}
+
+/**
+ * Render a telemetry series as circles plus an optional translucent guide line.
+ *
+ * @param {Object} seriesConfig Series metadata.
+ * @param {Array<{timestamp: number, value: number}>} points Series points.
+ * @param {Object} axis Axis descriptor.
+ * @param {Object} dims Chart dimensions.
+ * @param {number} domainStart Window start timestamp.
+ * @param {number} domainEnd Window end timestamp.
+ * @returns {string} SVG markup for the series.
+ */
+function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, domainEnd) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return '';
+  }
+  const circles = [];
+  const coordinates = points.map(point => {
+    const cx = scaleTimestamp(point.timestamp, domainStart, domainEnd, dims);
+    const cy = scaleValueToAxis(point.value, axis, dims);
+    const tooltip = formatSeriesPointValue(seriesConfig, point.value);
+    const titleMarkup = tooltip ? `<title>${escapeHtml(tooltip)}</title>` : '';
+    circles.push(
+      `<circle class="node-detail__chart-point" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="2.4" fill="${seriesConfig.color}" aria-hidden="true">${titleMarkup}</circle>`,
+    );
+    return { cx, cy };
+  });
+  let line = '';
+  if (coordinates.length > 1) {
+    const path = coordinates
+      .map((coord, idx) => `${idx === 0 ? 'M' : 'L'}${coord.cx.toFixed(2)} ${coord.cy.toFixed(2)}`)
+      .join(' ');
+    line = `<path class="node-detail__chart-trend" d="${path}" fill="none" stroke="${hexToRgba(seriesConfig.color, 0.5)}" stroke-width="1" aria-hidden="true"></path>`;
+  }
+  return `${line}${circles.join('')}`;
+}
+
+/**
+ * Render a vertical axis when visible.
+ *
+ * @param {Object} axis Axis descriptor.
+ * @param {Object} dims Chart dimensions.
+ * @returns {string} SVG markup for the axis or an empty string.
+ */
+function renderYAxis(axis, dims) {
+  if (!axis || axis.visible === false) {
+    return '';
+  }
+  const x = resolveAxisX(axis.position, dims);
+  const ticks = axis.scale === 'log'
+    ? buildLogTicks(axis.min, axis.max)
+    : buildLinearTicks(axis.min, axis.max, axis.ticks);
+  const tickElements = ticks
+    .map(value => {
+      const y = scaleValueToAxis(value, axis, dims);
+      const tickLength = axis.position === 'left' || axis.position === 'leftSecondary' ? -4 : 4;
+      const textAnchor = axis.position === 'left' || axis.position === 'leftSecondary' ? 'end' : 'start';
+      const textOffset = axis.position === 'left' || axis.position === 'leftSecondary' ? -6 : 6;
+      return `
+        <g class="node-detail__chart-tick" aria-hidden="true">
+          <line x1="${x}" y1="${y.toFixed(2)}" x2="${(x + tickLength).toFixed(2)}" y2="${y.toFixed(2)}"></line>
+          <text x="${(x + textOffset).toFixed(2)}" y="${(y + 3).toFixed(2)}" text-anchor="${textAnchor}" dominant-baseline="middle">${escapeHtml(formatAxisTick(value, axis))}</text>
+        </g>
+      `;
+    })
+    .join('');
+  const labelPadding = axis.position === 'left' || axis.position === 'leftSecondary' ? -56 : 56;
+  const labelX = x + labelPadding;
+  const labelY = (dims.chartTop + dims.chartBottom) / 2;
+  const labelTransform = `rotate(-90 ${labelX.toFixed(2)} ${labelY.toFixed(2)})`;
+  return `
+    <g class="node-detail__chart-axis node-detail__chart-axis--y" aria-hidden="true">
+      <line x1="${x}" y1="${dims.chartTop}" x2="${x}" y2="${dims.chartBottom}"></line>
+      ${tickElements}
+      <text class="node-detail__chart-axis-label" x="${labelX.toFixed(2)}" y="${labelY.toFixed(2)}" text-anchor="middle" dominant-baseline="middle" transform="${labelTransform}">${escapeHtml(axis.label)}</text>
+    </g>
+  `;
+}
+
+/**
+ * Render the horizontal floating seven-day axis with midnight ticks.
+ *
+ * @param {Object} dims Chart dimensions.
+ * @param {number} domainStart Window start timestamp.
+ * @param {number} domainEnd Window end timestamp.
+ * @param {Array<number>} tickTimestamps Midnight tick timestamps.
+ * @returns {string} SVG markup for the X axis.
+ */
+function renderXAxis(dims, domainStart, domainEnd, tickTimestamps) {
+  const y = dims.chartBottom;
+  const ticks = tickTimestamps
+    .map(ts => {
+      const x = scaleTimestamp(ts, domainStart, domainEnd, dims);
+      const labelY = y + 18;
+      const xStr = x.toFixed(2);
+      const yStr = labelY.toFixed(2);
+      return `
+        <g class="node-detail__chart-tick" aria-hidden="true">
+          <line class="node-detail__chart-grid-line" x1="${xStr}" y1="${dims.chartTop}" x2="${xStr}" y2="${dims.chartBottom}"></line>
+          <text x="${xStr}" y="${yStr}" text-anchor="end" dominant-baseline="central" transform="rotate(-90 ${xStr} ${yStr})">${escapeHtml(formatCompactDate(ts))}</text>
+        </g>
+      `;
+    })
+    .join('');
+  return `
+    <g class="node-detail__chart-axis node-detail__chart-axis--x" aria-hidden="true">
+      <line x1="${dims.margin.left}" y1="${y}" x2="${dims.width - dims.margin.right}" y2="${y}"></line>
+      ${ticks}
+    </g>
+  `;
+}
+
+/**
+ * Render a single telemetry chart defined by ``spec``.
+ *
+ * @param {Object} spec Chart specification.
+ * @param {Array<{timestamp: number, snapshot: Object}>} entries Telemetry entries.
+ * @param {number} nowMs Reference timestamp.
+ * @returns {string} Rendered chart markup or an empty string.
+ */
+function renderTelemetryChart(spec, entries, nowMs) {
+  const domainEnd = nowMs;
+  const domainStart = nowMs - TELEMETRY_WINDOW_MS;
+  const dims = createChartDimensions(spec);
+  const axisMap = new Map(spec.axes.map(axis => [axis.id, axis]));
+  const seriesEntries = spec.series
+    .map(series => {
+      const axis = axisMap.get(series.axis);
+      if (!axis) return null;
+      const points = buildSeriesPoints(entries, series.fields, domainStart, domainEnd);
+      if (points.length === 0) return null;
+      return { config: series, axis, points };
+    })
+    .filter(entry => entry != null);
+  if (seriesEntries.length === 0) {
+    return '';
+  }
+  const axesMarkup = spec.axes.map(axis => renderYAxis(axis, dims)).join('');
+  const xAxisMarkup = renderXAxis(dims, domainStart, domainEnd, buildMidnightTicks(nowMs));
+  const seriesMarkup = seriesEntries
+    .map(series => renderTelemetrySeries(series.config, series.points, series.axis, dims, domainStart, domainEnd))
+    .join('');
+  const legendItems = seriesEntries
+    .map(series => {
+      const legendLabel = stringOrNull(series.config.legend) ?? series.config.label;
+      return `
+        <span class="node-detail__chart-legend-item">
+          <span class="node-detail__chart-legend-swatch" style="background:${series.config.color}"></span>
+          <span class="node-detail__chart-legend-text">${escapeHtml(legendLabel)}</span>
+        </span>
+      `;
+    })
+    .join('');
+  const legendMarkup = legendItems
+    ? `<div class="node-detail__chart-legend" aria-hidden="true">${legendItems}</div>`
+    : '';
+  return `
+    <figure class="node-detail__chart">
+      <figcaption class="node-detail__chart-header">
+        <h4>${escapeHtml(spec.title)}</h4>
+        <span>Last 7 days</span>
+      </figcaption>
+      <svg viewBox="0 0 ${dims.width} ${dims.height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(`${spec.title} over last seven days`)}">
+        ${axesMarkup}
+        ${xAxisMarkup}
+        ${seriesMarkup}
+      </svg>
+      ${legendMarkup}
+    </figure>
+  `;
+}
+
+/**
+ * Render the telemetry charts for the supplied node when telemetry snapshots
+ * exist.
+ *
+ * @param {Object} node Normalised node payload.
+ * @param {{ nowMs?: number }} [options] Rendering options.
+ * @returns {string} Chart grid markup or an empty string.
+ */
+function renderTelemetryCharts(node, { nowMs = Date.now() } = {}) {
+  const telemetrySource = node?.rawSources?.telemetry;
+  const rawSnapshots = telemetrySource?.snapshots;
+  if (!Array.isArray(rawSnapshots) || rawSnapshots.length === 0) {
+    return '';
+  }
+  const entries = rawSnapshots
+    .map(snapshot => {
+      const timestamp = resolveSnapshotTimestamp(snapshot);
+      if (timestamp == null) return null;
+      return { timestamp, snapshot };
+    })
+    .filter(entry => entry != null && entry.timestamp >= nowMs - TELEMETRY_WINDOW_MS && entry.timestamp <= nowMs)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  if (entries.length === 0) {
+    return '';
+  }
+  const charts = TELEMETRY_CHART_SPECS
+    .map(spec => renderTelemetryChart(spec, entries, nowMs))
+    .filter(chart => stringOrNull(chart));
+  if (charts.length === 0) {
+    return '';
+  }
+  return `
+    <section class="node-detail__charts">
+      <div class="node-detail__charts-grid">
+        ${charts.join('')}
+      </div>
+    </section>
+  `;
 }
 
 /**
@@ -1130,7 +1920,8 @@ function renderNodeDetailHtml(node, {
   messages = [],
   renderShortHtml,
   neighborRoleIndex = null,
-}) {
+  chartNowMs = Date.now(),
+} = {}) {
   const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
     shortName: node.shortName ?? node.short_name,
     longName: node.longName ?? node.long_name,
@@ -1142,6 +1933,7 @@ function renderNodeDetailHtml(node, {
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
+  const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex: neighborRoleIndex });
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
 
@@ -1163,6 +1955,7 @@ function renderNodeDetailHtml(node, {
     <header class="node-detail__header">
       <h2 class="node-detail__title">${badgeHtml}${nameHtml}${identifierHtml}</h2>
     </header>
+    ${chartsHtml ?? ''}
     ${tableSection}
     ${contentHtml}
   `;
@@ -1327,6 +2120,7 @@ export const __testUtils = {
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
+  renderTelemetryCharts,
   renderMessages,
   renderNodeDetailHtml,
   parseReferencePayload,
