@@ -118,7 +118,7 @@ export function overlayToPopupNode(source) {
     battery_level: toFiniteNumber(source.battery ?? source.battery_level),
     voltage: toFiniteNumber(source.voltage),
     uptime_seconds: toFiniteNumber(source.uptime ?? source.uptime_seconds),
-    channel_utilization: toFiniteNumber(source.channel ?? source.channel_utilization),
+    channel_utilization: toFiniteNumber(source.channel_utilization ?? source.channelUtilization),
     air_util_tx: toFiniteNumber(source.airUtil ?? source.air_util_tx),
     temperature: toFiniteNumber(source.temperature),
     relative_humidity: toFiniteNumber(source.humidity ?? source.relative_humidity),

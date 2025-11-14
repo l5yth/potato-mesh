@@ -36,8 +36,8 @@ const RENDER_WAIT_TIMEOUT_MS = 500;
 const NEIGHBOR_ROLE_FETCH_CONCURRENCY = 4;
 const DAY_MS = 86_400_000;
 const TELEMETRY_WINDOW_MS = DAY_MS * 7;
-const DEFAULT_CHART_DIMENSIONS = Object.freeze({ width: 660, height: 300 });
-const DEFAULT_CHART_MARGIN = Object.freeze({ top: 20, right: 64, bottom: 40, left: 64 });
+const DEFAULT_CHART_DIMENSIONS = Object.freeze({ width: 660, height: 360 });
+const DEFAULT_CHART_MARGIN = Object.freeze({ top: 28, right: 80, bottom: 64, left: 80 });
 /**
  * Telemetry chart definitions describing axes and series metadata.
  *
@@ -95,7 +95,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
       {
         id: 'channel',
         position: 'left',
-        label: 'Utilization',
+        label: 'Utilization (%)',
         min: 0,
         max: 100,
         ticks: 4,
@@ -109,7 +109,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         color: '#2ca25f',
         label: 'Channel util',
         legend: 'Channel utilization (%)',
-        fields: ['channel', 'channel_utilization', 'channelUtilization'],
+        fields: ['channel_utilization', 'channelUtilization'],
         valueFormatter: value => `${value.toFixed(1)}%`,
       },
       {
@@ -251,6 +251,42 @@ function escapeHtml(input) {
 }
 
 /**
+ * Build a canonical node detail path for hyperlinking long names.
+ *
+ * @param {string|null} identifier Node identifier.
+ * @returns {string|null} Node detail path.
+ */
+function buildNodeDetailHref(identifier) {
+  const value = stringOrNull(identifier);
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const body = trimmed.startsWith('!') ? trimmed.slice(1) : trimmed;
+  if (!body) return null;
+  const encoded = encodeURIComponent(body);
+  return `/nodes/!${encoded}`;
+}
+
+/**
+ * Render a linked long name pointing to the node detail page.
+ *
+ * @param {string|null} longName Long name text.
+ * @param {string|null} identifier Node identifier.
+ * @param {{ className?: string }} [options] Rendering options.
+ * @returns {string} Escaped HTML string.
+ */
+function renderNodeLongNameLink(longName, identifier, { className = 'node-long-link' } = {}) {
+  const text = stringOrNull(longName);
+  if (!text) return '';
+  const href = buildNodeDetailHref(identifier);
+  if (!href) {
+    return escapeHtml(text);
+  }
+  const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
+  return `<a${classAttr} href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
+}
+
+/**
  * Format a frequency value using MHz units when a numeric reading is
  * available. Non-numeric input is passed through unchanged.
  *
@@ -351,7 +387,8 @@ function padTwo(value) {
 }
 
 /**
- * Format a timestamp for the message log using ``YYYY-MM-DD HH:MM:SS``.
+ * Format a timestamp for the message log using ``YYYY-MM-DD HH:MM`` in the
+ * local time zone.
  *
  * @param {*} value Seconds since the epoch.
  * @param {string|null} isoFallback ISO timestamp to prefer when available.
@@ -380,8 +417,7 @@ function formatMessageTimestamp(value, isoFallback = null) {
   const day = padTwo(date.getDate());
   const hours = padTwo(date.getHours());
   const minutes = padTwo(date.getMinutes());
-  const seconds = padTwo(date.getSeconds());
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
 /**
@@ -574,7 +610,7 @@ function hexToRgba(hex, alpha = 1) {
 }
 
 /**
- * Format a timestamp as ``YYYY-MM-DD`` using the local time zone.
+ * Format a timestamp as a day-of-month string using the local time zone.
  *
  * @param {number} timestampMs Timestamp expressed in milliseconds.
  * @returns {string} Compact date string.
@@ -582,10 +618,8 @@ function hexToRgba(hex, alpha = 1) {
 function formatCompactDate(timestampMs) {
   const date = new Date(timestampMs);
   if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = padTwo(date.getMonth() + 1);
   const day = padTwo(date.getDate());
-  return `${year}-${month}-${day}`;
+  return day;
 }
 
 /**
@@ -909,7 +943,7 @@ function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, do
     const tooltip = formatSeriesPointValue(seriesConfig, point.value);
     const titleMarkup = tooltip ? `<title>${escapeHtml(tooltip)}</title>` : '';
     circles.push(
-      `<circle class="node-detail__chart-point" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="2.4" fill="${seriesConfig.color}" aria-hidden="true">${titleMarkup}</circle>`,
+      `<circle class="node-detail__chart-point" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="3.2" fill="${seriesConfig.color}" aria-hidden="true">${titleMarkup}</circle>`,
     );
     return { cx, cy };
   });
@@ -918,7 +952,7 @@ function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, do
     const path = coordinates
       .map((coord, idx) => `${idx === 0 ? 'M' : 'L'}${coord.cx.toFixed(2)} ${coord.cy.toFixed(2)}`)
       .join(' ');
-    line = `<path class="node-detail__chart-trend" d="${path}" fill="none" stroke="${hexToRgba(seriesConfig.color, 0.5)}" stroke-width="1" aria-hidden="true"></path>`;
+    line = `<path class="node-detail__chart-trend" d="${path}" fill="none" stroke="${hexToRgba(seriesConfig.color, 0.5)}" stroke-width="1.5" aria-hidden="true"></path>`;
   }
   return `${line}${circles.join('')}`;
 }
@@ -1068,7 +1102,12 @@ function renderTelemetryChart(spec, entries, nowMs) {
  */
 function renderTelemetryCharts(node, { nowMs = Date.now() } = {}) {
   const telemetrySource = node?.rawSources?.telemetry;
-  const rawSnapshots = telemetrySource?.snapshots;
+  const snapshotFallback = Array.isArray(node?.rawSources?.telemetrySnapshots)
+    ? node.rawSources.telemetrySnapshots
+    : null;
+  const rawSnapshots = Array.isArray(telemetrySource?.snapshots)
+    ? telemetrySource.snapshots
+    : snapshotFallback;
   if (!Array.isArray(rawSnapshots) || rawSnapshots.length === 0) {
     return '';
   }
@@ -1745,7 +1784,8 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
   }
   const nodeId = stringOrNull(node.nodeId ?? node.node_id) ?? '';
   const shortName = stringOrNull(node.shortName ?? node.short_name) ?? null;
-  const longName = stringOrNull(node.longName ?? node.long_name) ?? '';
+  const longName = stringOrNull(node.longName ?? node.long_name);
+  const longNameLink = renderNodeLongNameLink(longName, nodeId);
   const role = stringOrNull(node.role) ?? 'CLIENT';
   const numericId = numberOrNull(node.nodeNum ?? node.node_num ?? node.num);
   const badgeSource = node.rawSources?.node && typeof node.rawSources.node === 'object'
@@ -1763,7 +1803,8 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
   const battery = formatBattery(node.battery ?? node.battery_level);
   const voltage = formatVoltage(node.voltage ?? node.voltageReading);
   const uptime = formatDurationSeconds(node.uptime ?? node.uptime_seconds ?? node.uptimeSeconds);
-  const channel = fmtTx(node.channel ?? node.channel_utilization ?? node.channelUtilization ?? null, 3);
+  const channelUtil = node.channel_utilization ?? node.channelUtilization ?? null;
+  const channel = fmtTx(channelUtil, 3);
   const airUtil = fmtTx(node.airUtil ?? node.air_util_tx ?? node.airUtilTx ?? null, 3);
   const temperature = fmtTemperature(node.temperature ?? node.temp);
   const humidity = fmtHumidity(node.humidity ?? node.relative_humidity ?? node.relativeHumidity);
@@ -1803,7 +1844,7 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
           <tr>
             <td class="mono nodes-col nodes-col--node-id">${escapeHtml(nodeId)}</td>
             <td class="nodes-col nodes-col--short-name">${badgeHtml}</td>
-            <td class="nodes-col nodes-col--long-name">${escapeHtml(longName)}</td>
+            <td class="nodes-col nodes-col--long-name">${longNameLink}</td>
             <td class="nodes-col nodes-col--last-seen">${escapeHtml(lastSeen)}</td>
             <td class="nodes-col nodes-col--role">${escapeHtml(role)}</td>
             <td class="nodes-col nodes-col--hw-model">${escapeHtml(hardware)}</td>

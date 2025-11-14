@@ -89,7 +89,7 @@ test('collectTelemetryMetrics prefers latest nested telemetry values over stale 
       air_util_tx: 0.0091,
     },
     telemetry: {
-      channel: 0.563,
+      channel_utilization: 0.563,
     },
     raw: {
       device_metrics: {

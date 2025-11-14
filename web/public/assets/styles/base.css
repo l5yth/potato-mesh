@@ -819,18 +819,18 @@ body.view-map .map-panel--full #map {
 
 .node-detail__charts-grid {
   display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr));
 }
 
 .node-detail__chart {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--card);
-  padding: 12px;
+  padding: 18px 20px 20px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .node-detail__chart-header {
@@ -838,24 +838,24 @@ body.view-map .map-panel--full #map {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
-  font-size: 0.9rem;
+  font-size: 1rem;
   margin: 0;
 }
 
 .node-detail__chart-header h4 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.2rem;
 }
 
 .node-detail__chart-header span {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .node-detail__chart svg {
   width: 100%;
   height: auto;
-  max-height: 320px;
+  max-height: 420px;
 }
 
 .node-detail__chart-axis line {
@@ -866,7 +866,7 @@ body.view-map .map-panel--full #map {
 .node-detail__chart-axis text,
 .node-detail__chart-axis-label {
   fill: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.95rem;
 }
 
 .node-detail__chart-grid-line {
@@ -885,19 +885,19 @@ body.dark .node-detail__chart-grid-line {
 .node-detail__chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px 18px;
 }
 
 .node-detail__chart-legend-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .node-detail__chart-legend-swatch {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   flex: 0 0 auto;
 }
@@ -910,12 +910,23 @@ body.dark .node-detail__chart-grid-line {
 
 .node-detail__chart-legend-text small {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .node-detail__identifier {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   color: var(--muted);
+}
+
+.node-long-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+
+.node-long-link:focus,
+.node-long-link:hover {
+  text-decoration-thickness: 2px;
 }
 
 .node-detail__status,

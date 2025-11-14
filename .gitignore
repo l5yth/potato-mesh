@@ -73,3 +73,6 @@ web/.config
 # JavaScript dependencies
 node_modules/
 web/node_modules/
+
+# Debug symbols
+ignore.txt
