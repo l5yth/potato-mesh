@@ -29,7 +29,7 @@ from pathlib import Path
 
 from . import channels, config, queue
 
-_IGNORED_PACKET_LOG_PATH = Path(__file__).resolve().parents[2] / "ignore.txt"
+_IGNORED_PACKET_LOG_PATH = Path(__file__).resolve().parents[2] / "ignored.txt"
 """Filesystem path that stores ignored packets when debugging."""
 
 _IGNORED_PACKET_LOCK = threading.Lock()
@@ -52,7 +52,7 @@ def _ignored_packet_default(value: object) -> object:
 
 
 def _record_ignored_packet(packet: Mapping | object, *, reason: str) -> None:
-    """Persist packet details to :data:`ignore.txt` during debugging."""
+    """Persist packet details to :data:`ignored.txt` during debugging."""
 
     if not config.DEBUG:
         return
