@@ -54,6 +54,7 @@ import {
   aggregatePositionSnapshots,
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
+import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -3859,6 +3860,7 @@ let messagesById = new Map();
       mergePositionsIntoNodes(aggregatedNodes, aggregatedPositions);
       computeDistances(aggregatedNodes);
       mergeTelemetryIntoNodes(aggregatedNodes, aggregatedTelemetry);
+      normalizeNodeCollection(aggregatedNodes);
       allNodes = aggregatedNodes;
       rebuildNodeIndex(allNodes);
       const [chatMessages, encryptedChatMessages] = await Promise.all([

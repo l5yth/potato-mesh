@@ -53,7 +53,7 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
       modem_preset: 'MediumFast',
       lora_freq: '868.1',
     })],
-    ['/api/telemetry/!test?limit=7', createResponse(200, [{
+    ['/api/telemetry/!test?limit=1000', createResponse(200, [{
       node_id: '!test',
       battery_level: 73.5,
       rx_time: 1_200,
@@ -113,13 +113,37 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
   });
 });
 
+test('refreshNodeInformation normalizes telemetry aliases for downstream consumers', async () => {
+  const responses = new Map([
+    ['/api/nodes/!chan?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/telemetry/!chan?limit=1000', createResponse(200, [{
+      node_id: '!chan',
+      channel: '76.5',
+      air_util_tx: '12.25',
+    }])],
+    ['/api/positions/!chan?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/neighbors/!chan?limit=1000', createResponse(404, { error: 'not found' })],
+  ]);
+
+  const fetchImpl = async url => responses.get(url) ?? createResponse(404, { error: 'not found' });
+  const node = await refreshNodeInformation('!chan', { fetchImpl });
+
+  assert.equal(node.nodeId, '!chan');
+  assert.equal(node.channel_utilization, 76.5);
+  assert.equal(node.channelUtilization, 76.5);
+  assert.equal(node.channel, 76.5);
+  assert.equal(node.air_util_tx, 12.25);
+  assert.equal(node.airUtil, 12.25);
+  assert.equal(node.airUtilTx, 12.25);
+});
+
 test('refreshNodeInformation preserves fallback metrics when telemetry is unavailable', async () => {
   const responses = new Map([
     ['/api/nodes/42?limit=7', createResponse(200, {
       node_id: '!num',
       short_name: 'NUM',
     })],
-    ['/api/telemetry/42?limit=7', createResponse(404, { error: 'not found' })],
+    ['/api/telemetry/42?limit=1000', createResponse(404, { error: 'not found' })],
     ['/api/positions/42?limit=7', createResponse(404, { error: 'not found' })],
     ['/api/neighbors/42?limit=1000', createResponse(404, { error: 'not found' })],
   ]);
@@ -148,7 +172,7 @@ test('refreshNodeInformation requires a node identifier', async () => {
 test('refreshNodeInformation handles missing node records by falling back to telemetry data', async () => {
   const responses = new Map([
     ['/api/nodes/!missing?limit=7', createResponse(404, { error: 'not found' })],
-    ['/api/telemetry/!missing?limit=7', createResponse(200, [{
+    ['/api/telemetry/!missing?limit=1000', createResponse(200, [{
       node_id: '!missing',
       node_num: 77,
       battery_level: 66,

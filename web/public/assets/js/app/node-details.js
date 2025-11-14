@@ -15,6 +15,7 @@
  */
 
 import { extractModemMetadata } from './node-modem-metadata.js';
+import { normalizeNodeSnapshot } from './node-snapshot-normalizer.js';
 import {
   SNAPSHOT_WINDOW,
   aggregateNeighborSnapshots,
@@ -24,7 +25,7 @@ import {
 } from './snapshot-aggregator.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
-const TELEMETRY_LIMIT = SNAPSHOT_WINDOW;
+const TELEMETRY_LIMIT = 1000;
 const POSITION_LIMIT = SNAPSHOT_WINDOW;
 const NEIGHBOR_LIMIT = 1000;
 
@@ -183,7 +184,7 @@ function mergeNodeFields(target, record) {
   assignNumber(target, 'battery', extractNumber(record, ['battery', 'battery_level', 'batteryLevel']));
   assignNumber(target, 'voltage', extractNumber(record, ['voltage']));
   assignNumber(target, 'uptime', extractNumber(record, ['uptime', 'uptime_seconds', 'uptimeSeconds']));
-  assignNumber(target, 'channel', extractNumber(record, ['channel_utilization', 'channelUtilization']));
+  assignNumber(target, 'channel', extractNumber(record, ['channel_utilization', 'channelUtilization', 'channel']));
   assignNumber(target, 'airUtil', extractNumber(record, ['airUtil', 'air_util_tx', 'airUtilTx']));
   assignNumber(target, 'temperature', extractNumber(record, ['temperature']));
   assignNumber(target, 'humidity', extractNumber(record, ['humidity', 'relative_humidity', 'relativeHumidity']));
@@ -214,7 +215,7 @@ function mergeTelemetry(target, telemetry) {
   assignNumber(target, 'battery', extractNumber(telemetry, ['battery_level', 'batteryLevel']), { preferExisting: true });
   assignNumber(target, 'voltage', extractNumber(telemetry, ['voltage']), { preferExisting: true });
   assignNumber(target, 'uptime', extractNumber(telemetry, ['uptime_seconds', 'uptimeSeconds']), { preferExisting: true });
-  assignNumber(target, 'channel', extractNumber(telemetry, ['channel_utilization', 'channelUtilization']), { preferExisting: true });
+  assignNumber(target, 'channel', extractNumber(telemetry, ['channel_utilization', 'channelUtilization', 'channel']), { preferExisting: true });
   assignNumber(target, 'airUtil', extractNumber(telemetry, ['air_util_tx', 'airUtilTx', 'airUtil']), { preferExisting: true });
   assignNumber(target, 'temperature', extractNumber(telemetry, ['temperature']), { preferExisting: true });
   assignNumber(target, 'humidity', extractNumber(telemetry, ['relative_humidity', 'relativeHumidity', 'humidity']), { preferExisting: true });
@@ -452,6 +453,8 @@ export async function refreshNodeInformation(reference, options = {}) {
     position: positionEntry,
     neighbors: neighborEntries,
   };
+
+  normalizeNodeSnapshot(node);
 
   return node;
 }

@@ -1102,12 +1102,13 @@ function renderTelemetryChart(spec, entries, nowMs) {
  */
 function renderTelemetryCharts(node, { nowMs = Date.now() } = {}) {
   const telemetrySource = node?.rawSources?.telemetry;
-  const snapshotFallback = Array.isArray(node?.rawSources?.telemetrySnapshots)
+  const snapshotHistory = Array.isArray(node?.rawSources?.telemetrySnapshots) && node.rawSources.telemetrySnapshots.length > 0
     ? node.rawSources.telemetrySnapshots
     : null;
-  const rawSnapshots = Array.isArray(telemetrySource?.snapshots)
+  const aggregatedSnapshots = Array.isArray(telemetrySource?.snapshots)
     ? telemetrySource.snapshots
-    : snapshotFallback;
+    : null;
+  const rawSnapshots = snapshotHistory ?? aggregatedSnapshots;
   if (!Array.isArray(rawSnapshots) || rawSnapshots.length === 0) {
     return '';
   }
