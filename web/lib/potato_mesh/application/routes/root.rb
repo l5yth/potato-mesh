@@ -181,10 +181,6 @@ module PotatoMesh
             render_root_view(:chat, view_mode: :chat)
           end
 
-          app.get %r{/nodes/?} do
-            render_root_view(:nodes, view_mode: :nodes)
-          end
-
           app.get "/nodes/:id" do
             node_ref = params.fetch("id", nil)
             reference_payload = build_node_detail_reference(node_ref)
@@ -207,6 +203,10 @@ module PotatoMesh
                 node_page_identifier: canonical_id,
               },
             )
+          end
+
+          app.get %r{/nodes/?} do
+            render_root_view(:nodes, view_mode: :nodes)
           end
 
           app.get "/metrics" do
