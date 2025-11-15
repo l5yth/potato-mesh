@@ -268,6 +268,18 @@ function buildNodeDetailHref(identifier) {
 }
 
 /**
+ * Normalise a candidate identifier by enforcing the canonical ``!`` prefix.
+ *
+ * @param {*} identifier Candidate node identifier.
+ * @returns {string|null} Canonical identifier or ``null`` when blank.
+ */
+function canonicalNodeIdentifier(identifier) {
+  const value = stringOrNull(identifier);
+  if (!value) return null;
+  return value.startsWith('!') ? value : `!${value}`;
+}
+
+/**
  * Render a linked long name pointing to the node detail page.
  *
  * @param {string|null} longName Long name text.
@@ -283,7 +295,11 @@ function renderNodeLongNameLink(longName, identifier, { className = 'node-long-l
     return escapeHtml(text);
   }
   const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
-  return `<a${classAttr} href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
+  const canonicalIdentifier = canonicalNodeIdentifier(identifier);
+  const dataAttrs = canonicalIdentifier
+    ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalIdentifier)}"`
+    : ' data-node-detail-link="true"';
+  return `<a${classAttr} href="${href}"${dataAttrs}>${escapeHtml(text)}</a>`;
 }
 
 /**
@@ -1082,7 +1098,7 @@ function renderTelemetryChart(spec, entries, nowMs) {
         <h4>${escapeHtml(spec.title)}</h4>
         <span>Last 7 days</span>
       </figcaption>
-      <svg viewBox="0 0 ${dims.width} ${dims.height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(`${spec.title} over last seven days`)}">
+      <svg viewBox="0 0 ${dims.width} ${dims.height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(`${spec.title} over last seven days`)}">
         ${axesMarkup}
         ${xAxisMarkup}
         ${seriesMarkup}
@@ -2022,6 +2038,24 @@ function parseReferencePayload(raw) {
 }
 
 /**
+ * Normalise a node reference payload by extracting the canonical identifier or number.
+ *
+ * @param {*} reference Candidate reference object.
+ * @returns {{nodeId: (string|null), nodeNum: (number|null)}|null} Normalised reference.
+ */
+function normalizeNodeReference(reference) {
+  if (!reference || typeof reference !== 'object') {
+    return null;
+  }
+  const nodeId = stringOrNull(reference.nodeId ?? reference.node_id);
+  const nodeNum = numberOrNull(reference.nodeNum ?? reference.node_num ?? reference.num);
+  if (!nodeId && nodeNum == null) {
+    return null;
+  }
+  return { nodeId, nodeNum };
+}
+
+/**
  * Resolve the canonical renderShortHtml implementation, waiting briefly for
  * the dashboard to expose it when necessary.
  *
@@ -2077,6 +2111,38 @@ async function fetchMessages(identifier, { fetchImpl, includeEncrypted = false, 
  * }} options Optional overrides for testing.
  * @returns {Promise<boolean>} ``true`` when the node was rendered successfully.
  */
+export async function fetchNodeDetailHtml(referenceData, options = {}) {
+  if (!referenceData || typeof referenceData !== 'object') {
+    throw new TypeError('A node reference object is required to render node details');
+  }
+  const normalized = normalizeNodeReference(referenceData);
+  if (!normalized) {
+    throw new Error('Node identifier missing.');
+  }
+
+  const refreshImpl = typeof options.refreshImpl === 'function' ? options.refreshImpl : refreshNodeInformation;
+  const renderShortHtml = await resolveRenderShortHtml(options.renderShortHtml);
+
+  const node = await refreshImpl(referenceData, { fetchImpl: options.fetchImpl });
+  const neighborRoleIndex = await buildNeighborRoleIndex(node, node.neighbors, {
+    fetchImpl: options.fetchImpl,
+  });
+  const messageIdentifier =
+    normalized.nodeId ??
+    stringOrNull(node.nodeId ?? node.node_id) ??
+    (normalized.nodeNum != null ? normalized.nodeNum : null);
+  const messages = await fetchMessages(messageIdentifier, {
+    fetchImpl: options.fetchImpl,
+    privateMode: options.privateMode === true,
+  });
+  return renderNodeDetailHtml(node, {
+    neighbors: node.neighbors,
+    messages,
+    renderShortHtml,
+    neighborRoleIndex,
+  });
+}
+
 export async function initializeNodeDetailPage(options = {}) {
   const documentRef = options.document ?? globalThis.document;
   if (!documentRef || typeof documentRef.querySelector !== 'function') {
@@ -2110,23 +2176,14 @@ export async function initializeNodeDetailPage(options = {}) {
   }
 
   const refreshImpl = typeof options.refreshImpl === 'function' ? options.refreshImpl : refreshNodeInformation;
-  const renderShortHtml = await resolveRenderShortHtml(options.renderShortHtml);
   const privateMode = (root.dataset?.privateMode ?? '').toLowerCase() === 'true';
 
   try {
-    const node = await refreshImpl(referenceData, { fetchImpl: options.fetchImpl });
-    const neighborRoleIndex = await buildNeighborRoleIndex(node, node.neighbors, {
+    const html = await fetchNodeDetailHtml(referenceData, {
       fetchImpl: options.fetchImpl,
-    });
-    const messages = await fetchMessages(identifier ?? node.nodeId ?? node.node_id ?? nodeNum, {
-      fetchImpl: options.fetchImpl,
+      refreshImpl,
+      renderShortHtml: options.renderShortHtml,
       privateMode,
-    });
-    const html = renderNodeDetailHtml(node, {
-      neighbors: node.neighbors,
-      messages,
-      renderShortHtml,
-      neighborRoleIndex,
     });
     root.innerHTML = html;
     return true;
@@ -2168,4 +2225,6 @@ export const __testUtils = {
   parseReferencePayload,
   resolveRenderShortHtml,
   fetchMessages,
+  fetchNodeDetailHtml,
+  normalizeNodeReference,
 };

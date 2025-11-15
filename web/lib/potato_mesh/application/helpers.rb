@@ -185,8 +185,26 @@ module PotatoMesh
         href = node_detail_path(identifier)
         escaped_text = Rack::Utils.escape_html(text)
         return escaped_text unless href
+        canonical_identifier = canonical_node_identifier(identifier)
         class_attr = css_class ? %( class="#{css_class}") : ""
-        %(<a#{class_attr} href="#{href}" target="_blank" rel="noopener noreferrer">#{escaped_text}</a>)
+        data_attrs = %( data-node-detail-link="true")
+        if canonical_identifier
+          escaped_identifier = Rack::Utils.escape_html(canonical_identifier)
+          data_attrs = %(#{data_attrs} data-node-id="#{escaped_identifier}")
+        end
+        %(<a#{class_attr} href="#{href}"#{data_attrs}>#{escaped_text}</a>)
+      end
+
+      # Normalise a node identifier by ensuring the canonical ``!`` prefix.
+      #
+      # @param identifier [String, nil] raw identifier string.
+      # @return [String, nil] canonical identifier or ``nil`` when unavailable.
+      def canonical_node_identifier(identifier)
+        ident = string_or_nil(identifier)
+        return nil unless ident && !ident.empty?
+        trimmed = ident.strip
+        return nil if trimmed.empty?
+        trimmed.start_with?("!") ? trimmed : "!#{trimmed}"
       end
 
       # Generate the meta description used in SEO tags.

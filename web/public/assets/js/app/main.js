@@ -21,6 +21,7 @@ import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-
 import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
+import { createNodeDetailOverlayManager } from './node-detail-overlay.js';
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
 import {
@@ -99,6 +100,9 @@ export function initializeApp(config) {
     ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
     : null;
   const bodyClassList = document.body ? document.body.classList : null;
+  const isPrivateMode = document.body && document.body.dataset
+    ? String(document.body.dataset.privateMode).toLowerCase() === 'true'
+    : false;
   const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
   const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
   /**
@@ -1587,7 +1591,31 @@ let messagesById = new Map();
     });
   }
 
+  const nodeDetailOverlayManager = createNodeDetailOverlayManager({
+    document,
+    privateMode: isPrivateMode,
+  });
+
   document.addEventListener('click', event => {
+    const longNameLink = event.target.closest('.node-long-link');
+    if (
+      longNameLink &&
+      nodeDetailOverlayManager &&
+      shouldHandleNodeLongLink(longNameLink) &&
+      !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    ) {
+      const identifier = getNodeIdentifierFromLink(longNameLink);
+      if (identifier) {
+        event.preventDefault();
+        event.stopPropagation();
+        overlayStack.closeAll();
+        const label = typeof longNameLink.textContent === 'string' ? longNameLink.textContent.trim() : '';
+        nodeDetailOverlayManager.open({ nodeId: identifier }, { trigger: longNameLink, label })
+          .catch(err => console.error('Failed to open node detail overlay', err));
+        return;
+      }
+    }
+
     const shortTarget = event.target.closest('.short-name');
     if (
       shortTarget &&
@@ -3028,6 +3056,19 @@ let messagesById = new Map();
   }
 
   /**
+   * Ensure ``identifier`` includes the canonical ``!`` prefix.
+   *
+   * @param {*} identifier Candidate identifier.
+   * @returns {string|null} Canonical identifier or ``null``.
+   */
+  function canonicalNodeIdentifier(identifier) {
+    if (identifier == null) return null;
+    const trimmed = String(identifier).trim();
+    if (!trimmed) return null;
+    return trimmed.startsWith('!') ? trimmed : `!${trimmed}`;
+  }
+
+  /**
    * Render a linked long name pointing to the node detail view.
    *
    * @param {string|null} longName Display name.
@@ -3043,7 +3084,77 @@ let messagesById = new Map();
       return escapeHtml(text);
     }
     const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
-    return `<a${classAttr} href="${href}">${escapeHtml(text)}</a>`;
+    const canonicalIdentifier = canonicalNodeIdentifier(identifier);
+    const dataAttrs = canonicalIdentifier
+      ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalIdentifier)}"`
+      : ' data-node-detail-link="true"';
+    return `<a${classAttr} href="${href}"${dataAttrs}>${escapeHtml(text)}</a>`;
+  }
+
+  /**
+   * Determine whether a long name link should trigger the overlay behaviour.
+   *
+   * @param {?Element} link Anchor element.
+   * @returns {boolean} ``true`` when the link participates in overlays.
+   */
+  function shouldHandleNodeLongLink(link) {
+    if (!link || !link.dataset) return false;
+    if ('nodeDetailLink' in link.dataset && link.dataset.nodeDetailLink === 'false') {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Extract the canonical node identifier from the provided link element.
+   *
+   * @param {?Element} link Anchor element.
+   * @returns {string} Canonical node identifier or ``''`` when unavailable.
+   */
+  function getNodeIdentifierFromLink(link) {
+    if (!link) return '';
+    const datasetIdentifier = link.dataset && typeof link.dataset.nodeId === 'string'
+      ? canonicalNodeIdentifier(link.dataset.nodeId)
+      : null;
+    if (datasetIdentifier) {
+      return datasetIdentifier;
+    }
+    if (typeof link.getAttribute === 'function') {
+      const attrHref = link.getAttribute('href');
+      const canonicalFromAttr = extractIdentifierFromHref(attrHref);
+      if (canonicalFromAttr) {
+        return canonicalFromAttr;
+      }
+    }
+    if (typeof link.href === 'string') {
+      const canonicalFromProperty = extractIdentifierFromHref(link.href);
+      if (canonicalFromProperty) {
+        return canonicalFromProperty;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Extract the canonical identifier from a node detail hyperlink.
+   *
+   * @param {string} href Link href attribute.
+   * @returns {string} Canonical identifier or ``''``.
+   */
+  function extractIdentifierFromHref(href) {
+    if (typeof href !== 'string' || href.length === 0) {
+      return '';
+    }
+    const match = href.match(/\/nodes\/(![^/?#]+)/i);
+    if (!match || !match[1]) {
+      return '';
+    }
+    try {
+      const decoded = decodeURIComponent(match[1]);
+      return canonicalNodeIdentifier(decoded) ?? '';
+    } catch {
+      return canonicalNodeIdentifier(match[1]) ?? '';
+    }
   }
 
   /**
