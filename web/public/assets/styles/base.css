@@ -754,7 +754,7 @@ body.view-map .map-panel--full #map {
   line-height: 1.4;
   min-width: 200px;
   max-width: 240px;
-  z-index: 12000;
+  z-index: 20000;
 }
 
 .short-info-overlay[hidden] {
@@ -860,6 +860,41 @@ body.dark .node-detail-overlay__close {
 
 body.dark .node-detail-overlay__close:hover {
   background: rgba(255, 255, 255, 0.18);
+}
+
+.charts-page {
+  padding: 24px var(--pad) 48px;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.charts-page__intro {
+  padding: 0 4px 12px;
+}
+
+.charts-page__intro h2 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+}
+
+.charts-page__intro p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.charts-page__content {
+  min-height: 320px;
+}
+
+.charts-page__status {
+  margin: 18px 0;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.charts-page__status--error {
+  color: #c62828;
 }
 
 .node-detail {

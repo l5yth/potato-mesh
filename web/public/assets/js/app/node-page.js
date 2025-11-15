@@ -35,6 +35,7 @@ const RENDER_WAIT_INTERVAL_MS = 20;
 const RENDER_WAIT_TIMEOUT_MS = 500;
 const NEIGHBOR_ROLE_FETCH_CONCURRENCY = 4;
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 const TELEMETRY_WINDOW_MS = DAY_MS * 7;
 const DEFAULT_CHART_DIMENSIONS = Object.freeze({ width: 660, height: 360 });
 const DEFAULT_CHART_MARGIN = Object.freeze({ top: 28, right: 80, bottom: 64, left: 80 });
@@ -644,12 +645,32 @@ function formatCompactDate(timestampMs) {
  * @param {number} nowMs Reference timestamp in milliseconds.
  * @returns {Array<number>} Midnight timestamps within the window.
  */
-function buildMidnightTicks(nowMs) {
+function buildMidnightTicks(nowMs, windowMs = TELEMETRY_WINDOW_MS) {
   const ticks = [];
-  const domainStart = nowMs - TELEMETRY_WINDOW_MS;
+  const safeWindow = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : TELEMETRY_WINDOW_MS;
+  const domainStart = nowMs - safeWindow;
   const cursor = new Date(nowMs);
   cursor.setHours(0, 0, 0, 0);
   for (let ts = cursor.getTime(); ts >= domainStart; ts -= DAY_MS) {
+    ticks.push(ts);
+  }
+  return ticks.reverse();
+}
+
+/**
+ * Build hourly tick timestamps across the provided window.
+ *
+ * @param {number} nowMs Reference timestamp in milliseconds.
+ * @param {number} [windowMs=DAY_MS] Window size in milliseconds.
+ * @returns {Array<number>} Hourly tick timestamps.
+ */
+function buildHourlyTicks(nowMs, windowMs = DAY_MS) {
+  const ticks = [];
+  const safeWindow = Number.isFinite(windowMs) && windowMs > 0 ? windowMs : DAY_MS;
+  const domainStart = nowMs - safeWindow;
+  const cursor = new Date(nowMs);
+  cursor.setMinutes(0, 0, 0);
+  for (let ts = cursor.getTime(); ts >= domainStart; ts -= HOUR_MS) {
     ticks.push(ts);
   }
   return ticks.reverse();
@@ -948,21 +969,24 @@ function buildSeriesPoints(entries, fields, domainStart, domainEnd) {
  * @param {number} domainEnd Window end timestamp.
  * @returns {string} SVG markup for the series.
  */
-function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, domainEnd) {
+function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, domainEnd, { lineReducer } = {}) {
   if (!Array.isArray(points) || points.length === 0) {
     return '';
   }
-  const circles = [];
-  const coordinates = points.map(point => {
+  const convertPoint = point => {
     const cx = scaleTimestamp(point.timestamp, domainStart, domainEnd, dims);
     const cy = scaleValueToAxis(point.value, axis, dims);
+    return { cx, cy, value: point.value };
+  };
+  const circleEntries = points.map(point => {
+    const coords = convertPoint(point);
     const tooltip = formatSeriesPointValue(seriesConfig, point.value);
     const titleMarkup = tooltip ? `<title>${escapeHtml(tooltip)}</title>` : '';
-    circles.push(
-      `<circle class="node-detail__chart-point" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="3.2" fill="${seriesConfig.color}" aria-hidden="true">${titleMarkup}</circle>`,
-    );
-    return { cx, cy };
+    return `<circle class="node-detail__chart-point" cx="${coords.cx.toFixed(2)}" cy="${coords.cy.toFixed(2)}" r="3.2" fill="${seriesConfig.color}" aria-hidden="true">${titleMarkup}</circle>`;
   });
+  const lineSource = typeof lineReducer === 'function' ? lineReducer(points) : points;
+  const linePoints = Array.isArray(lineSource) && lineSource.length > 0 ? lineSource : points;
+  const coordinates = linePoints.map(convertPoint);
   let line = '';
   if (coordinates.length > 1) {
     const path = coordinates
@@ -970,7 +994,7 @@ function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, do
       .join(' ');
     line = `<path class="node-detail__chart-trend" d="${path}" fill="none" stroke="${hexToRgba(seriesConfig.color, 0.5)}" stroke-width="1.5" aria-hidden="true"></path>`;
   }
-  return `${line}${circles.join('')}`;
+  return `${line}${circleEntries.join('')}`;
 }
 
 /**
@@ -1024,7 +1048,7 @@ function renderYAxis(axis, dims) {
  * @param {Array<number>} tickTimestamps Midnight tick timestamps.
  * @returns {string} SVG markup for the X axis.
  */
-function renderXAxis(dims, domainStart, domainEnd, tickTimestamps) {
+function renderXAxis(dims, domainStart, domainEnd, tickTimestamps, { labelFormatter = formatCompactDate } = {}) {
   const y = dims.chartBottom;
   const ticks = tickTimestamps
     .map(ts => {
@@ -1032,10 +1056,11 @@ function renderXAxis(dims, domainStart, domainEnd, tickTimestamps) {
       const labelY = y + 18;
       const xStr = x.toFixed(2);
       const yStr = labelY.toFixed(2);
+      const label = labelFormatter(ts);
       return `
         <g class="node-detail__chart-tick" aria-hidden="true">
           <line class="node-detail__chart-grid-line" x1="${xStr}" y1="${dims.chartTop}" x2="${xStr}" y2="${dims.chartBottom}"></line>
-          <text x="${xStr}" y="${yStr}" text-anchor="end" dominant-baseline="central" transform="rotate(-90 ${xStr} ${yStr})">${escapeHtml(formatCompactDate(ts))}</text>
+          <text x="${xStr}" y="${yStr}" text-anchor="end" dominant-baseline="central" transform="rotate(-90 ${xStr} ${yStr})">${escapeHtml(label)}</text>
         </g>
       `;
     })
@@ -1056,9 +1081,11 @@ function renderXAxis(dims, domainStart, domainEnd, tickTimestamps) {
  * @param {number} nowMs Reference timestamp.
  * @returns {string} Rendered chart markup or an empty string.
  */
-function renderTelemetryChart(spec, entries, nowMs) {
+function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
+  const windowMs = Number.isFinite(chartOptions.windowMs) && chartOptions.windowMs > 0 ? chartOptions.windowMs : TELEMETRY_WINDOW_MS;
+  const timeRangeLabel = stringOrNull(chartOptions.timeRangeLabel) ?? 'Last 7 days';
   const domainEnd = nowMs;
-  const domainStart = nowMs - TELEMETRY_WINDOW_MS;
+  const domainStart = nowMs - windowMs;
   const dims = createChartDimensions(spec);
   const axisMap = new Map(spec.axes.map(axis => [axis.id, axis]));
   const seriesEntries = spec.series
@@ -1074,9 +1101,17 @@ function renderTelemetryChart(spec, entries, nowMs) {
     return '';
   }
   const axesMarkup = spec.axes.map(axis => renderYAxis(axis, dims)).join('');
-  const xAxisMarkup = renderXAxis(dims, domainStart, domainEnd, buildMidnightTicks(nowMs));
+  const tickBuilder = typeof chartOptions.xAxisTickBuilder === 'function' ? chartOptions.xAxisTickBuilder : buildMidnightTicks;
+  const tickFormatter = typeof chartOptions.xAxisTickFormatter === 'function' ? chartOptions.xAxisTickFormatter : formatCompactDate;
+  const ticks = tickBuilder(nowMs, windowMs);
+  const xAxisMarkup = renderXAxis(dims, domainStart, domainEnd, ticks, { labelFormatter: tickFormatter });
+
   const seriesMarkup = seriesEntries
-    .map(series => renderTelemetrySeries(series.config, series.points, series.axis, dims, domainStart, domainEnd))
+    .map(series =>
+      renderTelemetrySeries(series.config, series.points, series.axis, dims, domainStart, domainEnd, {
+        lineReducer: chartOptions.lineReducer,
+      }),
+    )
     .join('');
   const legendItems = seriesEntries
     .map(series => {
@@ -1096,7 +1131,7 @@ function renderTelemetryChart(spec, entries, nowMs) {
     <figure class="node-detail__chart">
       <figcaption class="node-detail__chart-header">
         <h4>${escapeHtml(spec.title)}</h4>
-        <span>Last 7 days</span>
+        <span>${escapeHtml(timeRangeLabel)}</span>
       </figcaption>
       <svg viewBox="0 0 ${dims.width} ${dims.height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(`${spec.title} over last seven days`)}">
         ${axesMarkup}
@@ -1116,7 +1151,7 @@ function renderTelemetryChart(spec, entries, nowMs) {
  * @param {{ nowMs?: number }} [options] Rendering options.
  * @returns {string} Chart grid markup or an empty string.
  */
-function renderTelemetryCharts(node, { nowMs = Date.now() } = {}) {
+export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions = {} } = {}) {
   const telemetrySource = node?.rawSources?.telemetry;
   const snapshotHistory = Array.isArray(node?.rawSources?.telemetrySnapshots) && node.rawSources.telemetrySnapshots.length > 0
     ? node.rawSources.telemetrySnapshots
@@ -1140,7 +1175,7 @@ function renderTelemetryCharts(node, { nowMs = Date.now() } = {}) {
     return '';
   }
   const charts = TELEMETRY_CHART_SPECS
-    .map(spec => renderTelemetryChart(spec, entries, nowMs))
+    .map(spec => renderTelemetryChart(spec, entries, nowMs, chartOptions))
     .filter(chart => stringOrNull(chart));
   if (charts.length === 0) {
     return '';
