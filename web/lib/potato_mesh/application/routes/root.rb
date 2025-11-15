@@ -181,6 +181,10 @@ module PotatoMesh
             render_root_view(:chat, view_mode: :chat)
           end
 
+          app.get %r{/charts/?} do
+            render_root_view(:charts, view_mode: :charts)
+          end
+
           app.get "/nodes/:id" do
             node_ref = params.fetch("id", nil)
             reference_payload = build_node_detail_reference(node_ref)
