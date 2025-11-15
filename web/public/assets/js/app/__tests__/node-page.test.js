@@ -17,7 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initializeNodeDetailPage, __testUtils } from '../node-page.js';
+import { initializeNodeDetailPage, fetchNodeDetailHtml, __testUtils } from '../node-page.js';
 
 const {
   stringOrNull,
@@ -253,7 +253,7 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     10_000,
   );
   assert.equal(html.includes('<table'), true);
-  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" target="_blank" rel="noopener noreferrer">Example Node<\/a>/);
+  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">Example Node<\/a>/);
   assert.equal(html.includes('66.0%'), true);
   assert.equal(html.includes('1.230%'), true);
   assert.equal(html.includes('52.52000'), true);
@@ -348,7 +348,7 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('Heard by'), true);
   assert.equal(html.includes('We hear'), true);
   assert.equal(html.includes('Messages'), true);
-  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" target="_blank" rel="noopener noreferrer">Example Node<\/a>/);
+  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">Example Node<\/a>/);
   assert.equal(html.includes('PEER'), true);
   assert.equal(html.includes('ALLY'), true);
   assert.match(html, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[/);
@@ -385,6 +385,47 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
   });
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Power metrics'), true);
+});
+
+test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
+  const reference = { nodeId: '!alpha' };
+  let fetchCalls = 0;
+  const fetchImpl = async url => {
+    fetchCalls += 1;
+    assert.match(url, /\/api\/messages\/!alpha/);
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return [{ text: 'Overlay hello', rx_time: 1_700_000_000 }];
+      },
+    };
+  };
+  const refreshImpl = async () => ({
+    nodeId: '!alpha',
+    nodeNum: 1,
+    shortName: 'ALPH',
+    longName: 'Example Alpha',
+    role: 'CLIENT',
+    neighbors: [],
+    rawSources: { node: { node_id: '!alpha', role: 'CLIENT', short_name: 'ALPH' } },
+  });
+  const html = await fetchNodeDetailHtml(reference, {
+    refreshImpl,
+    fetchImpl,
+    renderShortHtml: short => `<span class="short-name">${short}</span>`,
+  });
+  assert.equal(fetchCalls, 1);
+  assert.equal(html.includes('Example Alpha'), true);
+  assert.equal(html.includes('Overlay hello'), true);
+  assert.equal(html.includes('node-detail__table'), true);
+});
+
+test('fetchNodeDetailHtml requires a node identifier reference', async () => {
+  await assert.rejects(
+    () => fetchNodeDetailHtml({}, { refreshImpl: async () => ({}) }),
+    /identifier/i,
+  );
 });
 
 test('parseReferencePayload returns null for invalid JSON', () => {

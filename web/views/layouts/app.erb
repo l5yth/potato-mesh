@@ -88,7 +88,12 @@
    refresh_row_classes << "refresh-row--no-info" if refresh_info_text.nil?
    refresh_info_classes = ["refresh-info"]
    refresh_info_classes << "refresh-info--hidden" if refresh_info_text.nil? %>
-<body class="<%= body_classes.join(" ") %>" data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>" data-theme="<%= initial_theme %>">
+<body
+  class="<%= body_classes.join(" ") %>"
+  data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>"
+  data-theme="<%= initial_theme %>"
+  data-private-mode="<%= private_mode ? "true" : "false" %>"
+>
   <div class="<%= shell_classes.join(" ") %>">
     <% if show_header %>
       <header class="site-header">
@@ -165,6 +170,16 @@
             <% end %>
           <% end %>
         </dl>
+      </div>
+    </div>
+
+    <div id="nodeDetailOverlay" class="node-detail-overlay" hidden>
+      <div class="node-detail-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="nodeDetailOverlayHeader" tabindex="-1">
+        <h2 id="nodeDetailOverlayHeader" class="visually-hidden">Node details</h2>
+        <button type="button" class="node-detail-overlay__close" aria-label="Close node details">&times;</button>
+        <div class="node-detail-overlay__content" aria-live="polite">
+          <p class="node-detail-overlay__status">Select a node to view details.</p>
+        </div>
       </div>
     </div>
 
