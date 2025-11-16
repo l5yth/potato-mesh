@@ -18,6 +18,11 @@ module PotatoMesh
   module App
     module Routes
       module Ingest
+        # Register ingest endpoints used by the Python collector to persist
+        # nodes, messages, and federation announcements.
+        #
+        # @param app [Sinatra::Base] application instance receiving the routes.
+        # @return [void]
         def self.registered(app)
           app.post "/api/nodes" do
             require_token!
