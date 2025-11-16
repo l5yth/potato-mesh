@@ -1141,7 +1141,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "includes the application version in the footer" do
       get "/"
-      expect(last_response.body).to include("#{APP_VERSION}")
+      expected = APP_VERSION.to_s.start_with?("v") ? APP_VERSION : "v#{APP_VERSION}"
+      expect(last_response.body).to include(expected)
     end
 
     it "renders the responsive footer container" do
@@ -1190,6 +1191,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('<meta property="og:site_name" content="Spec Mesh Title" />')
       expect(last_response.body).to include('<meta name="twitter:image" content="http://example.org/potatomesh-logo.svg" />')
     end
+
+    it "disables the auto-fit toggle when a map zoom override is configured" do
+      allow(PotatoMesh::Config).to receive(:map_zoom).and_return(11.0)
+
+      get "/"
+
+      expect(last_response.body).to include('id="fitBounds" disabled="disabled"')
+      expect(last_response.body).not_to include('id="fitBounds" checked="checked"')
+    end
   end
 
   describe "GET /map" do
@@ -1205,6 +1215,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="status"')
       expect(last_response.body).to include('id="fitBounds"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
+    end
+
+    it "disables the auto-fit toggle when a map zoom override is configured" do
+      allow(PotatoMesh::Config).to receive(:map_zoom).and_return(9.5)
+
+      get "/map"
+
+      expect(last_response.body).to include('id="fitBounds" disabled="disabled"')
+      expect(last_response.body).not_to include('id="fitBounds" checked="checked"')
     end
   end
 

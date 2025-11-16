@@ -81,6 +81,7 @@ test('mergeConfig coerces numeric values and nested objects', () => {
     refreshMs: '45000',
     mapCenter: { lat: '10.5', lon: '20.1' },
     tileFilters: { dark: 'contrast(2)' },
+    mapZoom: '12',
     chatEnabled: 0,
     channel: '#Custom',
     frequency: '915MHz',
@@ -93,6 +94,7 @@ test('mergeConfig coerces numeric values and nested objects', () => {
   assert.equal(result.refreshMs, 45000);
   assert.deepEqual(result.mapCenter, { lat: 10.5, lon: 20.1 });
   assert.deepEqual(result.tileFilters, { light: DEFAULT_CONFIG.tileFilters.light, dark: 'contrast(2)' });
+  assert.equal(result.mapZoom, 12);
   assert.equal(result.chatEnabled, false);
   assert.equal(result.channel, '#Custom');
   assert.equal(result.frequency, '915MHz');
@@ -105,12 +107,19 @@ test('mergeConfig falls back to defaults for invalid numeric values', () => {
   const result = mergeConfig({
     refreshIntervalSeconds: 'NaN',
     refreshMs: 'NaN',
-    maxDistanceKm: 'oops'
+    maxDistanceKm: 'oops',
+    mapZoom: 'not-a-number'
   });
 
   assert.equal(result.refreshIntervalSeconds, DEFAULT_CONFIG.refreshIntervalSeconds);
   assert.equal(result.refreshMs, DEFAULT_CONFIG.refreshMs);
   assert.equal(result.maxDistanceKm, DEFAULT_CONFIG.maxDistanceKm);
+  assert.equal(result.mapZoom, null);
+});
+
+test('mergeConfig treats blank mapZoom as null', () => {
+  const result = mergeConfig({ mapZoom: '' });
+  assert.equal(result.mapZoom, null);
 });
 
 test('document stub returns null for unrelated selectors', () => {

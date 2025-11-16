@@ -79,6 +79,7 @@ The web app can be configured with environment variables (defaults shown):
 | `FREQUENCY` | `"915MHz"` | Default frequency description displayed in the UI. |
 | `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer and overlays. |
 | `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map on load. |
+| `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom applied on first load; disables auto-fit when provided. |
 | `MAX_DISTANCE` | `42` | Maximum distance (km) before node relationships are hidden on the map. |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
@@ -92,7 +93,7 @@ logo for Open Graph and Twitter cards.
 Example:
 
 ```bash
-SITE_NAME="PotatoMesh Demo" MAP_CENTER=38.761944,-27.090833 MAX_DISTANCE=42 CONTACT_LINK="#potatomesh:dod.ngo" ./app.sh
+SITE_NAME="PotatoMesh Demo" MAP_CENTER=38.761944,-27.090833 MAP_ZOOM=11 MAX_DISTANCE=42 CONTACT_LINK="#potatomesh:dod.ngo" ./app.sh
 ```
 
 ### Configuration & Storage

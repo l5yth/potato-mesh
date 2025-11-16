@@ -77,6 +77,7 @@ FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || 
 FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
 PRIVATE=$(grep "^PRIVATE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 MAP_CENTER=$(grep "^MAP_CENTER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944,-27.090833")
+MAP_ZOOM=$(grep "^MAP_ZOOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
 CONTACT_LINK=$(grep "^CONTACT_LINK=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "#potatomesh:dod.ngo")
 API_TOKEN=$(grep "^API_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
@@ -90,6 +91,7 @@ echo "📍 Location Settings"
 echo "-------------------"
 read_with_default "Site Name (your mesh network name)" "$SITE_NAME" SITE_NAME
 read_with_default "Map Center (lat,lon)" "$MAP_CENTER" MAP_CENTER
+read_with_default "Default map zoom (leave blank to auto-fit)" "$MAP_ZOOM" MAP_ZOOM
 read_with_default "Max Distance (km)" "$MAX_DISTANCE" MAX_DISTANCE
 
 echo ""
@@ -180,6 +182,11 @@ update_env "SITE_NAME" "\"$SITE_NAME\""
 update_env "CHANNEL" "\"$CHANNEL\""
 update_env "FREQUENCY" "\"$FREQUENCY\""
 update_env "MAP_CENTER" "\"$MAP_CENTER\""
+if [ -n "$MAP_ZOOM" ]; then
+    update_env "MAP_ZOOM" "$MAP_ZOOM"
+else
+    sed -i.bak '/^MAP_ZOOM=.*/d' .env
+fi
 update_env "MAX_DISTANCE" "$MAX_DISTANCE"
 update_env "CONTACT_LINK" "\"$CONTACT_LINK\""
 update_env "DEBUG" "$DEBUG"
@@ -222,6 +229,11 @@ echo ""
 echo "📋 Your settings:"
 echo "   Site Name: $SITE_NAME"
 echo "   Map Center: $MAP_CENTER"
+if [ -n "$MAP_ZOOM" ]; then
+    echo "   Map Zoom: $MAP_ZOOM"
+else
+    echo "   Map Zoom: Auto-fit"
+fi
 echo "   Max Distance: ${MAX_DISTANCE}km"
 echo "   Channel: $CHANNEL"
 echo "   Frequency: $FREQUENCY"

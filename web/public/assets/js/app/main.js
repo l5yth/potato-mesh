@@ -68,6 +68,7 @@ import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
  *   channel: string,
  *   frequency: string,
  *   mapCenter: { lat: number, lon: number },
+ *   mapZoom: number | null,
  *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string }
  * }} config Normalized application configuration.
@@ -105,6 +106,7 @@ export function initializeApp(config) {
     : false;
   const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
   const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
+  const mapZoomOverride = Number.isFinite(config.mapZoom) ? Number(config.mapZoom) : null;
   /**
    * Column sorter configuration for the node table.
    *
@@ -392,6 +394,12 @@ let messagesById = new Map();
     if (autoRefreshEl && autoRefreshEl.checked) {
       refreshTimer = setInterval(refresh, REFRESH_MS);
     }
+  }
+
+  if (fitBoundsEl && mapZoomOverride !== null) {
+    fitBoundsEl.checked = false;
+    fitBoundsEl.disabled = true;
+    fitBoundsEl.setAttribute('aria-disabled', 'true');
   }
 
   const MAP_CENTER_COORDS = Object.freeze({ lat: config.mapCenter.lat, lon: config.mapCenter.lon });
@@ -1252,7 +1260,9 @@ let messagesById = new Map();
       LIMIT_DISTANCE ? MAX_DISTANCE_KM : null,
       { minimumRangeKm: 1 }
     );
-    if (initialBounds) {
+    if (mapZoomOverride !== null) {
+      map.setView([MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon], mapZoomOverride);
+    } else if (initialBounds) {
       fitMapToBounds(initialBounds, { animate: false, paddingPx: INITIAL_VIEW_PADDING_PX, maxZoom: MAX_INITIAL_ZOOM });
     } else if (mapCenterLatLng) {
       map.setView(mapCenterLatLng, 10);

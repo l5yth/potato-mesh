@@ -477,6 +477,20 @@ module PotatoMesh
       map_center[:lon]
     end
 
+    # Retrieve an explicit map zoom override when provided.
+    #
+    # @return [Float, nil] positive zoom value or +nil+ when unset.
+    def map_zoom
+      raw = fetch_string("MAP_ZOOM", nil)
+      return nil unless raw
+
+      zoom = Float(raw, exception: false)
+      return nil unless zoom
+      return nil unless zoom.positive?
+
+      zoom
+    end
+
     # Maximum straight-line distance between nodes before relationships are
     # hidden.
     #

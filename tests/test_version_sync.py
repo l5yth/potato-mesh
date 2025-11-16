@@ -18,17 +18,18 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import data
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
 def _ruby_fallback_version() -> str:
-    config_path = _repo_root() / "web" / "lib" / "potato_mesh" / "config.rb"
+    config_path = REPO_ROOT / "web" / "lib" / "potato_mesh" / "config.rb"
     contents = config_path.read_text(encoding="utf-8")
     inside = False
     for line in contents.splitlines():
@@ -46,7 +47,7 @@ def _ruby_fallback_version() -> str:
 
 
 def _javascript_package_version() -> str:
-    package_path = _repo_root() / "web" / "package.json"
+    package_path = REPO_ROOT / "web" / "package.json"
     data = json.loads(package_path.read_text(encoding="utf-8"))
     version = data.get("version")
     if isinstance(version, str):
