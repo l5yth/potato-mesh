@@ -280,6 +280,63 @@ function normaliseEmojiValue(value) {
 }
 
 /**
+ * Identify whether ``message`` represents a reaction payload.
+ *
+ * @param {?Object} message Message payload.
+ * @returns {boolean} True when the payload is a reaction.
+ */
+function isReactionMessage(message) {
+  if (!message || typeof message !== 'object') {
+    return false;
+  }
+  const portnum = toTrimmedString(message.portnum ?? message.portNum);
+  if (portnum && portnum.toUpperCase() === 'REACTION_APP') {
+    return true;
+  }
+  const hasEmoji = !!normaliseEmojiValue(message.emoji);
+  if (!hasEmoji) {
+    return false;
+  }
+  return message.reply_id != null || message.replyId != null || !!portnum;
+}
+
+/**
+ * Derive the message text segment, suppressing reaction placeholders.
+ *
+ * @param {?Object} message Message payload.
+ * @param {boolean} isReaction Whether the payload is a reaction.
+ * @returns {?string} Text segment to render.
+ */
+function resolveMessageTextSegment(message, isReaction) {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+  if (message.text == null) {
+    return null;
+  }
+  const textString = String(message.text);
+  if (textString.length === 0) {
+    return null;
+  }
+  if (!isReaction) {
+    return textString;
+  }
+
+  const trimmed = textString.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(parsed)) {
+    if (parsed <= 1) {
+      return null;
+    }
+    return `×${parsed}`;
+  }
+  return trimmed;
+}
+
+/**
  * Build the rendered message body containing text and optional emoji.
  *
  * @param {{
@@ -301,14 +358,13 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   }
 
   const segments = [];
-  if (message.text != null) {
-    const textString = String(message.text);
-    if (textString.length > 0) {
-      segments.push(escapeHtml(textString));
-    }
+  const reaction = isReactionMessage(message);
+  const textSegment = resolveMessageTextSegment(message, reaction);
+  if (textSegment) {
+    segments.push(escapeHtml(textSegment));
   }
   const emoji = normaliseEmojiValue(message.emoji);
-  if (emoji && emoji!=='1') {
+  if (emoji) {
     segments.push(renderEmojiHtml(emoji));
   }
 
