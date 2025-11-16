@@ -372,6 +372,128 @@ def base64_payload(payload_bytes: bytes | None) -> str | None:
     return base64.b64encode(payload_bytes).decode("ascii")
 
 
+def _normalize_trace_hops(hops_value) -> list[int]:
+    """Coerce hop entries to integers while preserving order."""
+
+    if hops_value is None:
+        return []
+    hop_entries = hops_value if isinstance(hops_value, list) else [hops_value]
+    normalized: list[int] = []
+    for hop in hop_entries:
+        hop_value = hop
+        if isinstance(hop, Mapping):
+            hop_value = _first(hop, "node_id", "nodeId", "id", "num", default=None)
+        hop_id = _coerce_int(hop_value)
+        if hop_id is not None:
+            normalized.append(hop_id)
+    return normalized
+
+
+def store_traceroute_packet(packet: Mapping, decoded: Mapping) -> None:
+    """Persist traceroute details and hop path to the API."""
+
+    traceroute_section = (
+        decoded.get("traceroute") if isinstance(decoded, Mapping) else None
+    )
+    request_id = _coerce_int(
+        _first(
+            traceroute_section,
+            "requestId",
+            "request_id",
+            default=_first(decoded, "req", "requestId", "request_id", default=None),
+        )
+    )
+    pkt_id = _coerce_int(_first(packet, "id", "packet_id", "packetId", default=None))
+    if pkt_id is None:
+        pkt_id = request_id
+
+    rx_time = _coerce_int(_first(packet, "rxTime", "rx_time", default=time.time()))
+    if rx_time is None:
+        rx_time = int(time.time())
+
+    src = _coerce_int(
+        _first(
+            decoded,
+            "src",
+            "source",
+            default=_first(packet, "fromId", "from_id", "from", default=None),
+        )
+    )
+    dest = _coerce_int(
+        _first(
+            decoded,
+            "dest",
+            "destination",
+            default=_first(packet, "toId", "to_id", "to", default=None),
+        )
+    )
+
+    metrics = traceroute_section if isinstance(traceroute_section, Mapping) else {}
+    rssi = _coerce_int(
+        _first(metrics, "rssi", default=_first(packet, "rssi", "rx_rssi", "rxRssi"))
+    )
+    snr = _coerce_float(
+        _first(metrics, "snr", default=_first(packet, "snr", "rx_snr", "rxSnr"))
+    )
+    elapsed_ms = _coerce_int(
+        _first(metrics, "elapsed_ms", "latency_ms", "latencyMs", default=None)
+    )
+
+    hop_candidates = (
+        _first(metrics, "hops", default=None),
+        _first(metrics, "path", default=None),
+        _first(metrics, "route", default=None),
+        _first(decoded, "hops", default=None),
+        _first(decoded, "path", default=None),
+        (
+            _first(traceroute_section, "route", default=None)
+            if isinstance(traceroute_section, Mapping)
+            else None
+        ),
+    )
+    hops: list[int] = []
+    seen_hops: set[int] = set()
+    for candidate in hop_candidates:
+        for hop in _normalize_trace_hops(candidate):
+            if hop in seen_hops:
+                continue
+            seen_hops.add(hop)
+            hops.append(hop)
+
+    if pkt_id is None and request_id is None and not hops:
+        _record_ignored_packet(packet, reason="traceroute-missing-identifiers")
+        return
+
+    payload = {
+        "id": pkt_id,
+        "request_id": request_id,
+        "src": src,
+        "dest": dest,
+        "rx_time": rx_time,
+        "rx_iso": _iso(rx_time),
+        "hops": hops,
+        "rssi": rssi,
+        "snr": snr,
+        "elapsed_ms": elapsed_ms,
+    }
+
+    _queue_post_json(
+        "/api/traces",
+        _apply_radio_metadata(payload),
+        priority=queue._TRACE_POST_PRIORITY,
+    )
+
+    if config.DEBUG:
+        config._debug_log(
+            "Queued traceroute payload",
+            context="handlers.store_traceroute_packet",
+            request_id=request_id,
+            src=src,
+            dest=dest,
+            hop_count=len(hops),
+        )
+
+
 def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     """Persist telemetry metrics extracted from a packet.
 
@@ -1082,6 +1204,40 @@ def store_packet_dict(packet: Mapping) -> None:
         or isinstance(telemetry_section, Mapping)
     ):
         store_telemetry_packet(packet, decoded)
+        return
+
+    traceroute_section = (
+        decoded.get("traceroute") if isinstance(decoded, Mapping) else None
+    )
+    traceroute_port_ints: set[int] = set()
+    for module_name in (
+        "meshtastic.portnums_pb2",
+        "meshtastic.protobuf.portnums_pb2",
+    ):
+        module = sys.modules.get(module_name)
+        if module is None:
+            with contextlib.suppress(ModuleNotFoundError):
+                module = importlib.import_module(module_name)
+        if module is None:
+            continue
+        portnum_enum = getattr(module, "PortNum", None)
+        value_lookup = getattr(portnum_enum, "Value", None) if portnum_enum else None
+        if callable(value_lookup):
+            with contextlib.suppress(Exception):
+                candidate = _coerce_int(value_lookup("TRACEROUTE_APP"))
+                if candidate is not None:
+                    traceroute_port_ints.add(candidate)
+        constant_value = getattr(module, "TRACEROUTE_APP", None)
+        candidate = _coerce_int(constant_value)
+        if candidate is not None:
+            traceroute_port_ints.add(candidate)
+
+    if (
+        portnum == "TRACEROUTE_APP"
+        or (portnum_int is not None and portnum_int in traceroute_port_ints)
+        or isinstance(traceroute_section, Mapping)
+    ):
+        store_traceroute_packet(packet, decoded)
         return
 
     if portnum in {"5", "NODEINFO_APP"}:

@@ -75,6 +75,7 @@ def _payload_key_value_pairs(payload: Mapping[str, object]) -> str:
 
 _MESSAGE_POST_PRIORITY = 10
 _NEIGHBOR_POST_PRIORITY = 20
+_TRACE_POST_PRIORITY = 25
 _POSITION_POST_PRIORITY = 30
 _TELEMETRY_POST_PRIORITY = 40
 _NODE_POST_PRIORITY = 50
@@ -261,6 +262,7 @@ __all__ = [
     "_NEIGHBOR_POST_PRIORITY",
     "_NODE_POST_PRIORITY",
     "_POSITION_POST_PRIORITY",
+    "_TRACE_POST_PRIORITY",
     "_TELEMETRY_POST_PRIORITY",
     "_clear_post_queue",
     "_drain_post_queue",

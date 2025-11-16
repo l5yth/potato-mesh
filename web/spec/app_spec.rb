@@ -96,6 +96,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
   def clear_database
     with_db do |db|
       db.execute("DELETE FROM instances")
+      db.execute("DELETE FROM trace_hops")
+      db.execute("DELETE FROM traces")
       db.execute("DELETE FROM neighbors")
       db.execute("DELETE FROM messages")
       db.execute("DELETE FROM nodes")
@@ -270,6 +272,30 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:nodes_fixture) { JSON.parse(File.read(fixture_path("nodes.json"))) }
   let(:messages_fixture) { JSON.parse(File.read(fixture_path("messages.json"))) }
   let(:telemetry_fixture) { JSON.parse(File.read(fixture_path("telemetry.json"))) }
+  let(:trace_fixture) do
+    [
+      {
+        "id" => 9_001,
+        "request_id" => 17,
+        "src" => 2_658_361_180,
+        "dest" => 4_242_424_242,
+        "rx_time" => reference_time.to_i - 2,
+        "hops" => [2_658_361_180, 19_088_743, 4_242_424_242],
+        "rssi" => -83,
+        "snr" => 5.0,
+        "elapsed_ms" => 842,
+      },
+      {
+        "packet_id" => 9_002,
+        "req" => 21,
+        "from" => 19_088_743,
+        "destination" => 2_658_361_180,
+        "rx_time" => reference_time.to_i - 5,
+        "path" => [{ "node_id" => "0xbeadf00d" }, { "node_id" => 19_088_743 }],
+        "metrics" => { "snr" => 3.5, "latency_ms" => 1_020 },
+      },
+    ]
+  end
   let(:reference_time) do
     latest = nodes_fixture.map { |node| node["last_heard"] }.compact.max
     Time.at((latest || Time.now.to_i) + 1000)
@@ -3186,6 +3212,88 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe "POST /api/traces" do
+      it "stores traces with hop paths and updates last heard timestamps" do
+        payload = trace_fixture
+
+        post "/api/traces", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+
+          traces = db.execute("SELECT * FROM traces ORDER BY rx_time DESC")
+          expect(traces.size).to eq(payload.size)
+
+          primary = traces.find { |row| row["id"] == payload.first["id"] }
+          expect(primary["request_id"]).to eq(payload.first["request_id"])
+          expect(primary["src"]).to eq(payload.first["src"])
+          expect(primary["dest"]).to eq(payload.first["dest"])
+          expect(primary["rx_time"]).to eq(payload.first["rx_time"])
+          expect(primary["rx_iso"]).to eq(Time.at(payload.first["rx_time"]).utc.iso8601)
+          expect(primary["rssi"]).to eq(payload.first["rssi"])
+          expect(primary["snr"]).to eq(payload.first["snr"])
+          expect(primary["elapsed_ms"]).to eq(payload.first["elapsed_ms"])
+
+          primary_hops = db.execute(
+            "SELECT hop_index, node_id FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
+            [primary["id"]],
+          )
+          expect(primary_hops.map { |row| row["node_id"] }).to eq(payload.first["hops"])
+
+          secondary = traces.find { |row| row["id"] == payload.last["packet_id"] }
+          expect(secondary["request_id"]).to eq(payload.last["req"])
+          expect(secondary["src"]).to eq(payload.last["from"])
+          expect(secondary["dest"]).to eq(payload.last["destination"])
+          expect(secondary["rssi"]).to be_nil
+          expect(secondary["snr"]).to eq(payload.last.dig("metrics", "snr"))
+          expect(secondary["elapsed_ms"]).to eq(payload.last.dig("metrics", "latency_ms"))
+
+          secondary_hops = db.execute(
+            "SELECT hop_index, node_id FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
+            [secondary["id"]],
+          )
+          expect(secondary_hops.map { |row| row["node_id"] }).to eq([0xBEADF00D, 19_088_743])
+
+          node_ids = [
+            payload.first["src"],
+            payload.first["dest"],
+            payload.first["hops"][1],
+            0xBEADF00D,
+          ].map { |num| format("!%08x", num & 0xFFFFFFFF) }
+
+          placeholders = node_ids.map { "?" }.join(",")
+          rows = db.execute("SELECT node_id, last_heard FROM nodes WHERE node_id IN (#{placeholders})", node_ids)
+          expect(rows.size).to eq(node_ids.size)
+          latest_last_heard = rows.map { |row| row["last_heard"] }.max
+          expect(latest_last_heard).to eq(payload.first["rx_time"])
+        end
+      end
+
+      it "returns 400 when the payload is not valid JSON" do
+        post "/api/traces", "{", auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+      end
+
+      it "returns 400 when more than 1000 traces are provided" do
+        payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
+
+        post "/api/traces", payload.to_json, auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "too many traces")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM traces")
+          expect(count).to eq(0)
+        end
+      end
+    end
+
     it "returns 400 when more than 1000 messages are provided" do
       payload = Array.new(1001) { |i| { "packet_id" => i + 1 } }
 
@@ -4239,6 +4347,52 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.length).to eq(1)
       expect(filtered.first).not_to have_key("battery_level")
       expect(filtered.first).not_to have_key("portnum")
+    end
+  end
+
+  describe "GET /api/traces" do
+    it "returns stored traces ordered by receive time" do
+      clear_database
+      post "/api/traces", trace_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/traces"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.length).to eq(trace_fixture.length)
+      expect(payload.map { |row| row["id"] }).to eq([trace_fixture.first["id"], trace_fixture.last["packet_id"]])
+
+      latest = payload.first
+      expect(latest["request_id"]).to eq(trace_fixture.first["request_id"])
+      expect(latest["src"]).to eq(trace_fixture.first["src"])
+      expect(latest["dest"]).to eq(trace_fixture.first["dest"])
+      expect(latest["hops"]).to eq(trace_fixture.first["hops"])
+      expect(latest["rx_iso"]).to eq(Time.at(trace_fixture.first["rx_time"]).utc.iso8601)
+
+      earlier = payload.last
+      expect(earlier["request_id"]).to eq(trace_fixture.last["req"])
+      expect(earlier["hops"]).to eq([0xBEADF00D, 19_088_743])
+      expect(earlier["elapsed_ms"]).to eq(trace_fixture.last.dig("metrics", "latency_ms"))
+    end
+
+    it "filters traces by node reference across sources" do
+      clear_database
+      post "/api/traces", trace_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/traces/#{trace_fixture.first["src"]}"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["id"] }).to include(trace_fixture.first["id"], trace_fixture.last["packet_id"])
+
+      get "/api/traces/!beadf00d"
+
+      expect(last_response).to be_ok
+      bead_filtered = JSON.parse(last_response.body)
+      expect(bead_filtered.map { |row| row["id"] }).to eq([trace_fixture.last["packet_id"]])
+      expect(bead_filtered.first["hops"]).to eq([0xBEADF00D, 19_088_743])
     end
   end
 

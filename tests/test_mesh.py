@@ -1978,6 +1978,55 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["modem_preset"] == "MediumFast"
 
 
+def test_store_packet_dict_handles_traceroute_packet(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    mesh.config.LORA_FREQ = 915
+    mesh.config.MODEM_PRESET = "LongFast"
+
+    packet = {
+        "id": 2_934_054_466,
+        "rxTime": 1_763_183_133,
+        "rssi": -70,
+        "snr": 10.25,
+        "fromId": "3664074452",
+        "decoded": {
+            "portnum": "PAXCOUNTER_APP",
+            "dest": "2660618080",
+            "traceroute": {
+                "requestId": 17,
+                "route": [3_663_643_096, 1_150_717_793],
+                "snrTowards": [42, -14, 41],
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/traces"
+    assert priority == mesh._TRACE_POST_PRIORITY
+    assert payload["id"] == packet["id"]
+    assert payload["request_id"] == 17
+    assert payload["src"] == 3_664_074_452
+    assert payload["dest"] == 2_660_618_080
+    assert payload["rx_time"] == 1_763_183_133
+    assert payload["rx_iso"] == "2025-11-15T05:05:33Z"
+    assert payload["hops"] == [3_663_643_096, 1_150_717_793]
+    assert payload["rssi"] == -70
+    assert payload["snr"] == pytest.approx(10.25)
+    assert "elapsed_ms" in payload
+    assert payload["lora_freq"] == 915
+    assert payload["modem_preset"] == "LongFast"
+
+
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
     mesh._clear_post_queue()

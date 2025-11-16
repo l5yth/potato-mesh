@@ -81,10 +81,10 @@ module PotatoMesh
         return false unless File.exist?(PotatoMesh::Config.db_path)
 
         db = open_database(readonly: true)
-        required = %w[nodes messages positions telemetry neighbors instances]
+        required = %w[nodes messages positions telemetry neighbors instances traces trace_hops]
         tables =
           db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','instances')",
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','instances','traces','trace_hops')",
           ).flatten
         (required - tables).empty?
       rescue SQLite3::Exception
@@ -99,7 +99,7 @@ module PotatoMesh
       def init_db
         FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
-        %w[nodes messages positions telemetry neighbors instances].each do |schema|
+        %w[nodes messages positions telemetry neighbors instances traces].each do |schema|
           sql_file = File.expand_path("../../../../data/#{schema}.sql", __dir__)
           db.execute_batch(File.read(sql_file))
         end
@@ -177,6 +177,15 @@ module PotatoMesh
 
           db.execute("ALTER TABLE telemetry ADD COLUMN #{name} #{type}")
           telemetry_columns << name
+        end
+
+        trace_tables =
+          db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('traces','trace_hops')",
+          ).flatten
+        unless trace_tables.include?("traces") && trace_tables.include?("trace_hops")
+          traces_schema = File.expand_path("../../../../data/traces.sql", __dir__)
+          db.execute_batch(File.read(traces_schema))
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

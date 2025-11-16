@@ -165,4 +165,22 @@ RSpec.describe PotatoMesh::App::Database do
     expect(telemetry_columns).to include("soil_temperature", "lux", "iaq")
     expect(telemetry_columns).to include("rx_time", "battery_level")
   end
+
+  it "creates trace tables when absent" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+    end
+
+    expect(column_names_for("traces")).to be_empty
+    expect(column_names_for("trace_hops")).to be_empty
+
+    harness_class.ensure_schema_upgrades
+
+    traces_columns = column_names_for("traces")
+    expect(traces_columns).to include("request_id", "src", "dest", "rx_time", "rx_iso", "elapsed_ms")
+
+    hop_columns = column_names_for("trace_hops")
+    expect(hop_columns).to include("trace_id", "hop_index", "node_id")
+  end
 end

@@ -321,6 +321,25 @@ module PotatoMesh
           ensure
             db&.close
           end
+
+          app.post "/api/traces" do
+            require_token!
+            content_type :json
+            begin
+              data = JSON.parse(read_json_body)
+            rescue JSON::ParserError
+              halt 400, { error: "invalid JSON" }.to_json
+            end
+            trace_packets = data.is_a?(Array) ? data : [data]
+            halt 400, { error: "too many traces" }.to_json if trace_packets.size > 1000
+            db = open_database
+            trace_packets.each do |packet|
+              insert_trace(db, packet)
+            end
+            { status: "ok" }.to_json
+          ensure
+            db&.close
+          end
         end
       end
     end
