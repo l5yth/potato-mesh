@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## v0.5.5
+
+* Added comprehensive helper unit tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/457>
+* Added reaction-aware handling by @l5yth in <https://github.com/l5yth/potato-mesh/pull/455>
+* Env: add map zoom by @l5yth in <https://github.com/l5yth/potato-mesh/pull/454>
+* Charts: render aggregated telemetry charts for all nodes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/453>
+* Nodes: render charts detail pages as overlay by @l5yth in <https://github.com/l5yth/potato-mesh/pull/452>
+* Fix telemetry parsing for charts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/451>
+* Nodes: improve charts on detail pages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/450>
+* Nodes: add charts to detail pages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/449>
+* Aggregate frontend snapshots across views by @l5yth in <https://github.com/l5yth/potato-mesh/pull/447>
+* Remove added 1 if reply with emoji by @Alexkurd in <https://github.com/l5yth/potato-mesh/pull/443>
+* Refine node detail view layout by @l5yth in <https://github.com/l5yth/potato-mesh/pull/442>
+* Enable map centering from node table coordinates by @l5yth in <https://github.com/l5yth/potato-mesh/pull/439>
+* Add node detail route and page by @l5yth in <https://github.com/l5yth/potato-mesh/pull/441>
+* Ensure Meshtastic nodeinfo patch runs before importing interfaces by @l5yth in <https://github.com/l5yth/potato-mesh/pull/440>
+* Filter zero-valued fields from API responses by @l5yth in <https://github.com/l5yth/potato-mesh/pull/438>
+* Add debug payload tracing and ignored packet logging by @l5yth in <https://github.com/l5yth/potato-mesh/pull/437>
+* Tighten map auto-fit behaviour by @l5yth in <https://github.com/l5yth/potato-mesh/pull/435>
+* Fetch encrypted chat log entries for log tab by @l5yth in <https://github.com/l5yth/potato-mesh/pull/434>
+* Add encrypted filter to messages API by @l5yth in <https://github.com/l5yth/potato-mesh/pull/432>
+* Guard NodeInfo handler against missing IDs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/431>
+* Add standalone full-screen map, chat, and nodes views by @l5yth in <https://github.com/l5yth/potato-mesh/pull/429>
+* Ensure chat history fetches full message limit by @l5yth in <https://github.com/l5yth/potato-mesh/pull/428>
+* Fix ingestion of nodeinfo packets missing ids (#426) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/427>
+* Chore: update license headers by @l5yth in <https://github.com/l5yth/potato-mesh/pull/424>
+* Chore: bump version to 0.5.5 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/423>
+
 ## v0.5.4
 
 * Handle naming when primary channel has a name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/422>
