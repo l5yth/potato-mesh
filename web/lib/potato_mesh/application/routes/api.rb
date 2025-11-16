@@ -18,6 +18,11 @@ module PotatoMesh
   module App
     module Routes
       module Api
+        # Register read-only API endpoints that expose cached mesh data and
+        # instance metadata. Invoked by Sinatra during extension registration.
+        #
+        # @param app [Sinatra::Base] application instance receiving the routes.
+        # @return [void]
         def self.registered(app)
           app.before "/api/messages*" do
             halt 404 if private_mode?

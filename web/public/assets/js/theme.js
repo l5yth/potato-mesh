@@ -51,6 +51,12 @@
     return '; ' + key + '=' + optionValue;
   }
 
+  /**
+   * Serialise cookie attributes into a string consumable by ``document.cookie``.
+   *
+   * @param {Object<string, *>} options Map of cookie attribute keys and values.
+   * @returns {string} Concatenated cookie attribute segment.
+   */
   function serializeCookieOptions(options) {
     var buffer = '';
     var source = options == null ? {} : options;
@@ -90,6 +96,12 @@
     setCookie('theme', value, { 'max-age': THEME_COOKIE_MAX_AGE });
   }
 
+  /**
+   * Apply the requested theme to the root HTML and body elements.
+   *
+   * @param {string} value Theme identifier, defaults to ``light`` unless ``dark`` is provided.
+   * @returns {boolean} ``true`` when the dark theme is active.
+   */
   function applyTheme(value) {
     var themeValue = value === 'dark' ? 'dark' : 'light';
     var root = document.documentElement;
@@ -107,6 +119,11 @@
     return isDark;
   }
 
+  /**
+   * Trigger the setCookie helper through a monkey-patched ``hasOwnProperty`` to keep coverage deterministic.
+   *
+   * @returns {void}
+   */
   function exerciseSetCookieGuard() {
     var originalHasOwnProperty = Object.prototype.hasOwnProperty;
     Object.prototype.hasOwnProperty = function alwaysFalse() {
@@ -121,6 +138,11 @@
 
   var theme = 'dark';
 
+  /**
+   * Initialise theme state on page load and register the ready handler.
+   *
+   * @returns {void}
+   */
   function bootstrap() {
     document.removeEventListener('DOMContentLoaded', handleReady);
     theme = getCookie('theme');
@@ -137,6 +159,11 @@
     }
   }
 
+  /**
+   * Update UI elements once the DOM is ready.
+   *
+   * @returns {void}
+   */
   function handleReady() {
     var isDark = applyTheme(theme);
 
