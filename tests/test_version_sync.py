@@ -59,7 +59,9 @@ def test_version_identifiers_match_across_languages() -> None:
     """Guard against version drift between Python, Ruby, and JavaScript."""
 
     python_version = getattr(data, "__version__", None)
-    assert isinstance(python_version, str) and python_version, "data.__version__ missing"
+    assert (
+        isinstance(python_version, str) and python_version
+    ), "data.__version__ missing"
 
     ruby_version = _ruby_fallback_version()
     javascript_version = _javascript_package_version()
