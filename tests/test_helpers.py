@@ -68,7 +68,9 @@ def test_queue_stringification_and_ordering():
     queue._enqueue_post_json("/low", {"x": 1}, priority=90, state=state)
     queue._enqueue_post_json("/high", {"x": 2}, priority=10, state=state)
     state.active = True
-    queue._drain_post_queue(state=state, send=lambda path, payload: order.append((path, payload["x"])))
+    queue._drain_post_queue(
+        state=state, send=lambda path, payload: order.append((path, payload["x"]))
+    )
     assert order == [("/high", 2), ("/low", 1)]
     assert state.active is False
     assert state.queue == []
@@ -165,7 +167,9 @@ def test_patch_nodeinfo_handler_class(monkeypatch):
             self.calls.append(packet)
             return packet.get("id")
 
-    mesh_interface = types.SimpleNamespace(NodeInfoHandler=DummyHandler, __name__="meshtastic.mesh_interface")
+    mesh_interface = types.SimpleNamespace(
+        NodeInfoHandler=DummyHandler, __name__="meshtastic.mesh_interface"
+    )
     interfaces._patch_nodeinfo_handler_class(mesh_interface)
     handler_cls = mesh_interface.NodeInfoHandler
     handler = handler_cls()
@@ -185,7 +189,7 @@ def test_region_frequency_and_resolution_helpers():
 
     class EnumType:
         def __init__(self):
-            self.values_by_number = {1: EnumValue("REGION_915") }
+            self.values_by_number = {1: EnumValue("REGION_915")}
 
     class FieldDesc:
         def __init__(self):
