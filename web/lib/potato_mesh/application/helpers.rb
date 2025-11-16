@@ -122,6 +122,7 @@ module PotatoMesh
             lat: PotatoMesh::Config.map_center_lat,
             lon: PotatoMesh::Config.map_center_lon,
           },
+          mapZoom: PotatoMesh::Config.map_zoom,
           maxDistanceKm: PotatoMesh::Config.max_distance_km,
           tileFilters: PotatoMesh::Config.tile_filters,
           instanceDomain: app_constant(:INSTANCE_DOMAIN),
@@ -171,6 +172,18 @@ module PotatoMesh
         return nil unless body && !body.empty?
         escaped = Rack::Utils.escape_path(body)
         "/nodes/!#{escaped}"
+      end
+
+      # Present a version string with a leading ``v`` when missing to keep
+      # UI labels consistent across tagged and fallback builds.
+      #
+      # @param version [String, nil] raw application version string.
+      # @return [String, nil] version string prefixed with ``v`` when needed.
+      def display_version(version)
+        return nil if version.nil? || version.to_s.strip.empty?
+
+        text = version.to_s.strip
+        text.start_with?("v") ? text : "v#{text}"
       end
 
       # Render a linked long name pointing to the node detail page.

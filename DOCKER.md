@@ -47,6 +47,7 @@ Additional environment variables are optional:
 | `FREQUENCY` | `"915MHz"` | Default LoRa frequency description shown in the UI. |
 | `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix room alias rendered in UI footers and overlays. |
 | `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map view. |
+| `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom (disables the auto-fit checkbox when set). |
 | `MAX_DISTANCE` | `42` | Maximum relationship distance (km) before edges are hidden. |
 | `DEBUG` | `0` | Enables verbose logging across services when set to `1`. |
 | `FEDERATION` | `1` | Controls whether the instance announces itself and crawls peers (`1`) or stays isolated (`0`). |

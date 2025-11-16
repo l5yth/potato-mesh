@@ -78,6 +78,7 @@
    show_meta_info = true
    show_auto_refresh_controls = true
    show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
+   map_zoom_override = defined?(map_zoom) ? map_zoom : nil
    show_info_button = !full_screen_view
    show_footer = !full_screen_view
    show_filter_input = !%i[node_detail charts].include?(view_mode)
@@ -133,7 +134,14 @@
       <% end %>
       <div class="<%= controls_classes.join(" ") %>">
         <% if show_auto_fit_toggle %>
-          <label><input type="checkbox" id="fitBounds" checked /> Auto-fit map</label>
+          <% auto_fit_attrs = [] %>
+          <% if map_zoom_override.nil? %>
+            <% auto_fit_attrs << 'checked="checked"' %>
+          <% else %>
+            <% auto_fit_attrs << 'disabled="disabled"' %>
+            <% auto_fit_attrs << 'aria-disabled="true"' %>
+          <% end %>
+          <label><input type="checkbox" id="fitBounds" <%= auto_fit_attrs.join(" ") %> /> Auto-fit map</label>
         <% end %>
         <% if show_filter_input %>
           <div class="filter-input">

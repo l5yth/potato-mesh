@@ -62,13 +62,14 @@ module PotatoMesh
               max_distance_km: PotatoMesh::Config.max_distance_km,
               contact_link: sanitized_contact_link,
               contact_link_url: sanitized_contact_link_url,
-              version: app_constant(:APP_VERSION),
+              version: display_version(app_constant(:APP_VERSION)),
               private_mode: private_mode?,
               federation_enabled: federation_enabled?,
               refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,
               app_config_json: JSON.generate(config),
               initial_theme: theme,
               current_view_mode: view_mode_sym,
+              map_zoom: PotatoMesh::Config.map_zoom,
             }
             sanitized_locals = extra_locals.is_a?(Hash) ? extra_locals : {}
             merged_locals = base_locals.merge(sanitized_locals)

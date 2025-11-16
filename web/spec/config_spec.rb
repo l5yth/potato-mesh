@@ -426,6 +426,30 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".map_zoom" do
+    it "returns nil when the override is not provided" do
+      within_env("MAP_ZOOM" => nil) do
+        expect(described_class.map_zoom).to be_nil
+      end
+    end
+
+    it "parses positive numeric overrides" do
+      within_env("MAP_ZOOM" => "11") do
+        expect(described_class.map_zoom).to eq(11.0)
+      end
+    end
+
+    it "rejects non-positive or invalid overrides" do
+      within_env("MAP_ZOOM" => "0") do
+        expect(described_class.map_zoom).to be_nil
+      end
+
+      within_env("MAP_ZOOM" => "potato") do
+        expect(described_class.map_zoom).to be_nil
+      end
+    end
+  end
+
   describe ".max_distance_km" do
     it "returns the default distance when unset" do
       within_env("MAX_DISTANCE" => nil) do

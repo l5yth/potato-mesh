@@ -91,6 +91,7 @@ ENV RACK_ENV=production \
     CHANNEL="#LongFast" \
     FREQUENCY="915MHz" \
     MAP_CENTER="38.761944,-27.090833" \
+    MAP_ZOOM="" \
     MAX_DISTANCE=42 \
     CONTACT_LINK="#potatomesh:dod.ngo" \
     DEBUG=0
