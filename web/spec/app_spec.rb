@@ -4394,6 +4394,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(bead_filtered.map { |row| row["id"] }).to eq([trace_fixture.last["packet_id"]])
       expect(bead_filtered.first["hops"]).to eq([0xBEADF00D, 19_088_743])
     end
+
+    it "returns an empty list when no traces are stored" do
+      clear_database
+      get "/api/traces"
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq([])
+    end
   end
 
   describe "GET /nodes/:id" do

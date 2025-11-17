@@ -2032,6 +2032,55 @@ def test_store_packet_dict_handles_traceroute_packet(mesh_module, monkeypatch):
     assert payload["modem_preset"] == "LongFast"
 
 
+def test_traceroute_hop_normalization_supports_mappings(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 1_111,
+        "decoded": {
+            "portnum": "TRACEROUTE_APP",
+            "traceroute": {
+                "requestId": 42,
+                "route": [{"node_id": "!beadf00d"}, {"num": "0xc0ffee99"}, {"id": 123}],
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["hops"] == [0xBEADF00D, 0xC0FFEE99, 123]
+
+
+def test_traceroute_packet_without_identifiers_is_ignored(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "decoded": {
+            "portnum": "TRACEROUTE_APP",
+            "traceroute": {},
+        },
+        "rxTime": 123,
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured == []
+
+
 def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
     mesh = mesh_module
     mesh._clear_post_queue()
