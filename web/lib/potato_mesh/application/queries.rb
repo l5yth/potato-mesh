@@ -487,7 +487,7 @@ module PotatoMesh
           candidate_clauses << "src IN (#{placeholders})"
           candidate_clauses << "dest IN (#{placeholders})"
           candidate_clauses << "id IN (SELECT trace_id FROM trace_hops WHERE node_id IN (#{placeholders}))"
-          where_clauses << "(#{candidate_clauses.join(' OR ')})"
+          where_clauses << "(#{candidate_clauses.join(" OR ")})"
           3.times { params.concat(numeric_values) }
         end
 

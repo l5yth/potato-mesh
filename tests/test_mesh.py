@@ -2001,7 +2001,7 @@ def test_store_packet_dict_handles_traceroute_packet(mesh_module, monkeypatch):
             "dest": "2660618080",
             "traceroute": {
                 "requestId": 17,
-                "route": [3_663_643_096, 1_150_717_793],
+                "route": [3_663_643_096, "!beadf00d", "c0ffee99", 1_150_717_793],
                 "snrTowards": [42, -14, 41],
             },
         },
@@ -2019,7 +2019,12 @@ def test_store_packet_dict_handles_traceroute_packet(mesh_module, monkeypatch):
     assert payload["dest"] == 2_660_618_080
     assert payload["rx_time"] == 1_763_183_133
     assert payload["rx_iso"] == "2025-11-15T05:05:33Z"
-    assert payload["hops"] == [3_663_643_096, 1_150_717_793]
+    assert payload["hops"] == [
+        3_663_643_096,
+        3_199_070_221,
+        3_237_998_233,
+        1_150_717_793,
+    ]
     assert payload["rssi"] == -70
     assert payload["snr"] == pytest.approx(10.25)
     assert "elapsed_ms" in payload

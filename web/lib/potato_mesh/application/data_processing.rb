@@ -1297,7 +1297,7 @@ module PotatoMesh
                          rssi=COALESCE(excluded.rssi,traces.rssi),
                          snr=COALESCE(excluded.snr,traces.snr),
                          elapsed_ms=COALESCE(excluded.elapsed_ms,traces.elapsed_ms)
-          SQL
+                     SQL
 
           trace_id = trace_identifier || db.last_insert_row_id
           return unless trace_id

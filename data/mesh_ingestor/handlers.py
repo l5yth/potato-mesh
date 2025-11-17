@@ -383,7 +383,11 @@ def _normalize_trace_hops(hops_value) -> list[int]:
         hop_value = hop
         if isinstance(hop, Mapping):
             hop_value = _first(hop, "node_id", "nodeId", "id", "num", default=None)
-        hop_id = _coerce_int(hop_value)
+
+        canonical = _canonical_node_id(hop_value)
+        hop_id = _node_num_from_id(canonical or hop_value)
+        if hop_id is None:
+            hop_id = _coerce_int(hop_value)
         if hop_id is not None:
             normalized.append(hop_id)
     return normalized
