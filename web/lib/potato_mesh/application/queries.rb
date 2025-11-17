@@ -110,7 +110,7 @@ module PotatoMesh
         cleaned_strings = string_values.compact.map(&:to_s).map(&:strip).reject(&:empty?).uniq
         cleaned_numbers = numeric_values.compact.map do |value|
           begin
-            Integer(value, 10)
+            value.is_a?(String) ? Integer(value, 10) : Integer(value)
           rescue ArgumentError, TypeError
             nil
           end
@@ -471,10 +471,6 @@ module PotatoMesh
         db.results_as_hash = true
         params = []
         where_clauses = []
-        now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.week_seconds
-        where_clauses << "COALESCE(rx_time, 0) >= ?"
-        params << min_rx_time
 
         if node_ref
           tokens = node_reference_tokens(node_ref)
