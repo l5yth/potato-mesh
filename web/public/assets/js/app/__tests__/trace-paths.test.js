@@ -17,7 +17,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildTraceSegments } from '../trace-paths.js';
+import { buildTraceSegments, __testUtils } from '../trace-paths.js';
+
+const { coerceFiniteNumber, findNode, resolveNodeCoordinates } = __testUtils;
+const { buildNodeIndex } = __testUtils;
 
 test('buildTraceSegments connects source, hops, and destination when coordinates exist', () => {
   const traces = [
@@ -69,4 +72,52 @@ test('buildTraceSegments respects distance limits when evaluating coordinates', 
   const segments = buildTraceSegments(traces, nodes, { limitDistance: true, maxDistanceKm: 50 });
 
   assert.equal(segments.length, 0);
+});
+
+test('buildTraceSegments skips invalid inputs and uses numeric lookup fallbacks', () => {
+  const traces = [
+    { id: 9_004, src: '1001', hops: [], dest: '1002' },
+  ];
+  const nodes = [
+    { node_id: '  ', node_num: '1001', latitude: 0, longitude: 0 },
+    { node_id: '1002', latitude: 0, longitude: 1 },
+  ];
+
+  const segments = buildTraceSegments(traces, nodes, {
+    limitDistance: false,
+    maxDistanceKm: null,
+    colorForNode: () => '#123456',
+  });
+
+  assert.equal(segments.length, 1);
+  assert.deepEqual(segments[0].latlngs, [[0, 0], [0, 1]]);
+  assert.equal(segments[0].color, '#123456');
+});
+
+test('helper utilities coerce values and locate nodes', () => {
+  assert.equal(coerceFiniteNumber(null), null);
+  assert.equal(coerceFiniteNumber('   '), null);
+  assert.equal(coerceFiniteNumber('7'), 7);
+
+  const byId = new Map([['!id', { node_id: '!id', latitude: 1, longitude: 2 }]]);
+  const byNum = new Map([[99, { node_id: '!other', latitude: 0, longitude: 0 }]]);
+  assert.equal(findNode(byId, byNum, '!id').node_id, '!id');
+  assert.equal(findNode(byId, byNum, 99).node_id, '!other');
+  assert.equal(findNode(byId, byNum, 100), null);
+
+  const coords = resolveNodeCoordinates({ latitude: 5, longitude: 6, distance_km: 10 }, { limitDistance: true, maxDistanceKm: 15 });
+  assert.deepEqual(coords, [5, 6]);
+  const outOfRange = resolveNodeCoordinates({ latitude: 0, longitude: 0, distance_km: 20 }, { limitDistance: true, maxDistanceKm: 15 });
+  assert.equal(outOfRange, null);
+});
+
+test('buildNodeIndex tolerates non-array inputs and buildTraceSegments short-circuits', () => {
+  const index = buildNodeIndex(null);
+  assert.ok(index.byId instanceof Map);
+  assert.ok(index.byNum instanceof Map);
+  assert.equal(index.byId.size, 0);
+  assert.equal(index.byNum.size, 0);
+
+  const segments = buildTraceSegments(null, null);
+  assert.deepEqual(segments, []);
 });

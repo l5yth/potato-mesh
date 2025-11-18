@@ -534,6 +534,37 @@ test('renderTraceroutes lists traceroute paths with badges', () => {
   assert.equal(html.includes('short-name'), true);
 });
 
+test('renderTraceroutes skips empty or single-hop paths and renderTracePath uses node metadata', () => {
+  const pathHtml = renderTracePath([{ identifier: '!self', numericId: 1 }], short => `<b>${short}</b>`, {
+    roleIndex: null,
+    node: { nodeId: '!self', shortName: 'SELF', role: 'ROUTER' },
+  });
+  assert.equal(pathHtml, '');
+
+  const html = renderTraceroutes(
+    [{ src: '!self', hops: [], dest: '!peer' }],
+    (short, role) => `<span data-role="${role}">${short}</span>`,
+    {
+      roleIndex: {
+        detailsById: new Map([['!self', { shortName: 'SELF', role: 'CLIENT' }]]),
+        detailsByNum: new Map(),
+        byId: new Map([['!peer', 'ROUTER']]),
+        byNum: new Map(),
+      },
+      node: { nodeId: '!self', shortName: 'SELF', role: 'ADMIN' },
+    },
+  );
+  assert.equal(html.includes('Traceroutes'), true);
+  assert.match(html, /data-role="ADMIN"/);
+});
+
+test('renderTrace helpers normalise references and short-circuit when traces are empty', () => {
+  assert.deepEqual(normalizeTraceNodeRef('!abcd'), { identifier: '!abcd', numericId: null });
+  assert.equal(extractTracePath(null).length, 0);
+  const html = renderTraceroutes([], () => '', { roleIndex: null });
+  assert.equal(html, '');
+});
+
 test('fetchTracesForNode requests traceroutes for the node', async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {
@@ -548,6 +579,20 @@ test('fetchTracesForNode requests traceroutes for the node', async () => {
   assert.equal(traces.length, 1);
   assert.equal(calls[0].url.includes('/api/traces/!abc'), true);
   assert.equal(calls[0].options.cache, 'no-store');
+});
+
+test('fetchTracesForNode returns empty when identifier is missing', async () => {
+  const traces = await fetchTracesForNode(null, { fetchImpl: () => { throw new Error('should not run'); } });
+  assert.deepEqual(traces, []);
+});
+
+test('fetchTracesForNode throws on HTTP error', async () => {
+  await assert.rejects(
+    () => fetchTracesForNode('!err', {
+      fetchImpl: async () => ({ status: 500, ok: false, json: async () => ({}) }),
+    }),
+    /Failed to load traceroutes/,
+  );
 });
 
 test('initializeNodeDetailPage hydrates the container with node data', async () => {
