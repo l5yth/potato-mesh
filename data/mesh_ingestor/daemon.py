@@ -284,6 +284,9 @@ def main(existing_interface=None) -> None:
                         active_candidate = resolved_target
                     interfaces._ensure_radio_metadata(iface)
                     interfaces._ensure_channel_metadata(iface)
+                    handlers.register_host_node_id(
+                        interfaces._extract_host_node_id(iface)
+                    )
                     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
                     initial_snapshot_sent = False
                     if not announced_target and resolved_target:

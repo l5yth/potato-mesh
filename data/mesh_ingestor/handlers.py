@@ -20,6 +20,7 @@ import base64
 import contextlib
 import importlib
 import json
+import math
 import sys
 import threading
 import time
@@ -34,6 +35,15 @@ _IGNORED_PACKET_LOG_PATH = Path(__file__).resolve().parents[2] / "ignored.txt"
 
 _IGNORED_PACKET_LOCK = threading.Lock()
 """Lock guarding writes to :data:`_IGNORED_PACKET_LOG_PATH`."""
+
+_HOST_TELEMETRY_INTERVAL_SECS = 60 * 60
+"""Minimum interval between accepted host telemetry packets."""
+
+_host_node_id: str | None = None
+"""Canonical ``!xxxxxxxx`` identifier for the connected host device."""
+
+_host_telemetry_last_rx: int | None = None
+"""Receive timestamp of the last accepted host telemetry packet."""
 
 
 def _ignored_packet_default(value: object) -> object:
@@ -88,6 +98,50 @@ from .serialization import (
     _pkt_to_dict,
     upsert_payload,
 )
+
+
+def register_host_node_id(node_id: str | None) -> None:
+    """Record the canonical identifier for the connected host device.
+
+    Parameters:
+        node_id: Identifier reported by the connected device. ``None`` clears
+            the current host assignment.
+    """
+
+    global _host_node_id, _host_telemetry_last_rx
+    canonical = _canonical_node_id(node_id)
+    _host_node_id = canonical
+    _host_telemetry_last_rx = None
+    if canonical:
+        config._debug_log(
+            "Registered host device node id",
+            context="handlers.host_device",
+            host_node_id=canonical,
+        )
+
+
+def host_node_id() -> str | None:
+    """Return the canonical identifier for the connected host device."""
+
+    return _host_node_id
+
+
+def _mark_host_telemetry_seen(rx_time: int) -> None:
+    """Update the last receive time for the host telemetry window."""
+
+    global _host_telemetry_last_rx
+    _host_telemetry_last_rx = rx_time
+
+
+def _host_telemetry_suppressed(rx_time: int) -> tuple[bool, int]:
+    """Return suppression state and minutes remaining for host telemetry."""
+
+    if _host_telemetry_last_rx is None:
+        return False, 0
+    remaining_secs = (_host_telemetry_last_rx + _HOST_TELEMETRY_INTERVAL_SECS) - rx_time
+    if remaining_secs <= 0:
+        return False, 0
+    return True, int(math.ceil(remaining_secs / 60.0))
 
 
 def _radio_metadata_fields() -> dict[str, object]:
@@ -533,6 +587,19 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     except (TypeError, ValueError):
         rx_time = int(time.time())
     rx_iso = _iso(rx_time)
+
+    host_id = host_node_id()
+    if host_id is not None and node_id == host_id:
+        suppressed, minutes_remaining = _host_telemetry_suppressed(rx_time)
+        if suppressed:
+            config._debug_log(
+                "Suppressed host telemetry update",
+                context="handlers.store_telemetry",
+                host_node_id=host_id,
+                minutes_remaining=minutes_remaining,
+            )
+            return
+        _mark_host_telemetry_seen(rx_time)
 
     telemetry_time = _coerce_int(_first(telemetry_section, "time", default=None))
 
@@ -1492,8 +1559,10 @@ def on_receive(packet, interface) -> None:
 
 __all__ = [
     "_queue_post_json",
+    "host_node_id",
     "last_packet_monotonic",
     "on_receive",
+    "register_host_node_id",
     "store_neighborinfo_packet",
     "store_nodeinfo_packet",
     "store_packet_dict",

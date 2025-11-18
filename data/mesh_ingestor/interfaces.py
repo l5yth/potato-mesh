@@ -113,6 +113,47 @@ def _candidate_node_id(mapping: Mapping | None) -> str | None:
     return None
 
 
+def _extract_host_node_id(iface) -> str | None:
+    """Return the canonical node identifier for the connected host device."""
+
+    if iface is None:
+        return None
+
+    def _as_mapping(candidate) -> Mapping | None:
+        mapping = _ensure_mapping(candidate)
+        if mapping is not None:
+            return mapping
+        if callable(candidate):
+            with contextlib.suppress(Exception):
+                return _ensure_mapping(candidate())
+        return None
+
+    candidates: list[Mapping] = []
+    for attr in ("myInfo", "my_node_info", "myNodeInfo", "my_node", "localNode"):
+        mapping = _as_mapping(getattr(iface, attr, None))
+        if mapping is None:
+            continue
+        candidates.append(mapping)
+        nested_info = _ensure_mapping(mapping.get("info"))
+        if nested_info:
+            candidates.append(nested_info)
+
+    for mapping in candidates:
+        node_id = _candidate_node_id(mapping)
+        if node_id:
+            return node_id
+        for key in ("myNodeNum", "my_node_num", "myNodeId", "my_node_id"):
+            node_id = serialization._canonical_node_id(mapping.get(key))
+            if node_id:
+                return node_id
+
+    node_id = serialization._canonical_node_id(getattr(iface, "myNodeNum", None))
+    if node_id:
+        return node_id
+
+    return None
+
+
 def _normalise_nodeinfo_packet(packet) -> dict | None:
     """Return a dictionary view of ``packet`` with a guaranteed ``id`` when known."""
 
@@ -771,6 +812,7 @@ __all__ = [
     "NoAvailableMeshInterface",
     "_ensure_channel_metadata",
     "_ensure_radio_metadata",
+    "_extract_host_node_id",
     "_DummySerialInterface",
     "_DEFAULT_TCP_PORT",
     "_DEFAULT_TCP_TARGET",
