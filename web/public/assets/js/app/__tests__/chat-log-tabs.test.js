@@ -280,3 +280,49 @@ test('buildChatTabModel merges secondary channels with matching labels regardles
   assert.equal(secondaryChannel.index, 3);
   assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), [secondaryFirstId, secondarySecondId]);
 });
+
+test('buildChatTabModel rekeys unnamed secondary buckets when a label later arrives', () => {
+  const unnamedId = 'unnamed';
+  const namedId = 'named';
+  const label = 'SideMesh';
+  const index = 4;
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: unnamedId, rx_time: NOW - 15, channel: index },
+      { id: namedId, rx_time: NOW - 10, channel: index, channel_name: label }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  const secondaryChannels = model.channels.filter(channel => channel.index === index);
+  assert.equal(secondaryChannels.length, 1);
+  const [secondaryChannel] = secondaryChannels;
+  assert.equal(secondaryChannel.id, 'channel-secondary-sidemesh');
+  assert.equal(secondaryChannel.label, label);
+  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), [unnamedId, namedId]);
+});
+
+test('buildChatTabModel merges unlabeled secondary messages into existing named buckets by index', () => {
+  const namedId = 'named';
+  const unlabeledId = 'unlabeled';
+  const label = 'MeshNorth';
+  const index = 5;
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: namedId, rx_time: NOW - 12, channel: index, channel_name: label },
+      { id: unlabeledId, rx_time: NOW - 8, channel: index }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  const secondaryChannels = model.channels.filter(channel => channel.index === index);
+  assert.equal(secondaryChannels.length, 1);
+  const [secondaryChannel] = secondaryChannels;
+  assert.equal(secondaryChannel.id, 'channel-secondary-meshnorth');
+  assert.equal(secondaryChannel.label, label);
+  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), [namedId, unlabeledId]);
+});
