@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+from collections import namedtuple
 import enum
 import importlib
 import json
@@ -1279,6 +1280,51 @@ def test_interfaces_patch_handles_preimported_serial():
         for name, module in preserved_modules.items():
             if module is not None:
                 sys.modules[name] = module
+
+
+def test_nodeinfo_patch_updates_known_protocols(monkeypatch):
+    """Ensure NodeInfo protocol callbacks are replaced with safe wrappers."""
+
+    from data.mesh_ingestor import interfaces
+
+    Protocol = namedtuple("Protocol", ("name", "protobufFactory", "onReceive"))
+
+    callbacks: list[dict] = []
+
+    def _unsafe_handler(iface, packet):
+        callbacks.append(packet)
+        user = packet["decoded"]["user"]
+        iface.nodes[user["id"]] = {"user": user}
+        return user["id"]
+
+    nodeinfo_value = 42
+    PortNum = enum.IntEnum("PortNum", {"NODEINFO_APP": nodeinfo_value})
+    portnums_pb2 = types.SimpleNamespace(PortNum=PortNum)
+    protocols = {PortNum.NODEINFO_APP: Protocol("user", object, _unsafe_handler)}
+
+    meshtastic_mod = types.ModuleType("meshtastic")
+    meshtastic_mod._onNodeInfoReceive = _unsafe_handler
+    meshtastic_mod.portnums_pb2 = portnums_pb2
+    meshtastic_mod.protocols = protocols
+
+    mesh_interface_mod = types.ModuleType("meshtastic.mesh_interface")
+    mesh_interface_mod.protocols = protocols
+    mesh_interface_mod.portnums_pb2 = portnums_pb2
+
+    monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
+    monkeypatch.setitem(sys.modules, "meshtastic.mesh_interface", mesh_interface_mod)
+    monkeypatch.setattr(interfaces, "meshtastic", meshtastic_mod, raising=False)
+
+    interfaces._patch_meshtastic_nodeinfo_handler()
+
+    handler = meshtastic_mod.protocols[PortNum.NODEINFO_APP].onReceive
+    iface = types.SimpleNamespace(nodes={})
+
+    handler(iface, {"decoded": {"user": {"shortName": "anon"}}, "from": 0x01020304})
+
+    assert getattr(handler, "_potato_mesh_safe_wrapper", False)
+    assert callbacks, "Expected patched handler to call original callback"
+    assert iface.nodes["!01020304"]["user"]["id"] == "!01020304"
 
 
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
