@@ -135,6 +135,20 @@ module PotatoMesh
             query_telemetry(limit, node_ref: node_ref).to_json
           end
 
+          app.get "/api/traces" do
+            content_type :json
+            limit = [params["limit"]&.to_i || 200, 1000].min
+            query_traces(limit).to_json
+          end
+
+          app.get "/api/traces/:id" do
+            content_type :json
+            node_ref = string_or_nil(params["id"])
+            halt 400, { error: "missing node id" }.to_json unless node_ref
+            limit = [params["limit"]&.to_i || 200, 1000].min
+            query_traces(limit, node_ref: node_ref).to_json
+          end
+
           app.get "/api/instances" do
             # Prevent the federation catalog from being exposed when federation is disabled.
             halt 404 unless federation_enabled?

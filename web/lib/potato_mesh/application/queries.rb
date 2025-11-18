@@ -110,7 +110,7 @@ module PotatoMesh
         cleaned_strings = string_values.compact.map(&:to_s).map(&:strip).reject(&:empty?).uniq
         cleaned_numbers = numeric_values.compact.map do |value|
           begin
-            Integer(value, 10)
+            value.is_a?(String) ? Integer(value, 10) : Integer(value)
           rescue ArgumentError, TypeError
             nil
           end
@@ -459,6 +459,79 @@ module PotatoMesh
           r["rainfall_24h"] = coerce_float(r["rainfall_24h"])
           r["soil_moisture"] = coerce_integer(r["soil_moisture"])
           r["soil_temperature"] = coerce_float(r["soil_temperature"])
+        end
+        rows.map { |row| compact_api_row(row) }
+      ensure
+        db&.close
+      end
+
+      def query_traces(limit, node_ref: nil)
+        limit = coerce_query_limit(limit)
+        db = open_database(readonly: true)
+        db.results_as_hash = true
+        params = []
+        where_clauses = []
+
+        if node_ref
+          tokens = node_reference_tokens(node_ref)
+          numeric_values = tokens[:numeric_values]
+          if numeric_values.empty?
+            return []
+          end
+          placeholders = Array.new(numeric_values.length, "?").join(", ")
+          candidate_clauses = []
+          candidate_clauses << "src IN (#{placeholders})"
+          candidate_clauses << "dest IN (#{placeholders})"
+          candidate_clauses << "id IN (SELECT trace_id FROM trace_hops WHERE node_id IN (#{placeholders}))"
+          where_clauses << "(#{candidate_clauses.join(" OR ")})"
+          3.times { params.concat(numeric_values) }
+        end
+
+        sql = <<~SQL
+          SELECT id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms
+          FROM traces
+        SQL
+        sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
+        sql += <<~SQL
+          ORDER BY rx_time DESC
+          LIMIT ?
+        SQL
+        params << limit
+        rows = db.execute(sql, params)
+
+        trace_ids = rows.map { |row| coerce_integer(row["id"]) }.compact
+        hops_by_trace = Hash.new { |hash, key| hash[key] = [] }
+        unless trace_ids.empty?
+          placeholders = Array.new(trace_ids.length, "?").join(", ")
+          hop_rows =
+            db.execute(
+              "SELECT trace_id, hop_index, node_id FROM trace_hops WHERE trace_id IN (#{placeholders}) ORDER BY trace_id, hop_index",
+              trace_ids,
+            )
+          hop_rows.each do |hop|
+            trace_id = coerce_integer(hop["trace_id"])
+            node_id = coerce_integer(hop["node_id"])
+            next unless trace_id && node_id
+
+            hops_by_trace[trace_id] << node_id
+          end
+        end
+
+        rows.each do |r|
+          rx_time = coerce_integer(r["rx_time"])
+          r["rx_time"] = rx_time if rx_time
+          r["rx_iso"] = Time.at(rx_time).utc.iso8601 if rx_time && string_or_nil(r["rx_iso"]).nil?
+          r["request_id"] = coerce_integer(r["request_id"])
+          r["src"] = coerce_integer(r["src"])
+          r["dest"] = coerce_integer(r["dest"])
+          r["rssi"] = coerce_integer(r["rssi"])
+          r["snr"] = coerce_float(r["snr"])
+          r["elapsed_ms"] = coerce_integer(r["elapsed_ms"])
+
+          trace_id = coerce_integer(r["id"])
+          if trace_id && hops_by_trace.key?(trace_id)
+            r["hops"] = hops_by_trace[trace_id]
+          end
         end
         rows.map { |row| compact_api_row(row) }
       ensure
