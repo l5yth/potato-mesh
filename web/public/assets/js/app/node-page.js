@@ -39,6 +39,7 @@ const HOUR_MS = 3_600_000;
 const TELEMETRY_WINDOW_MS = DAY_MS * 7;
 const DEFAULT_CHART_DIMENSIONS = Object.freeze({ width: 660, height: 360 });
 const DEFAULT_CHART_MARGIN = Object.freeze({ top: 28, right: 80, bottom: 64, left: 80 });
+const TRACE_LIMIT = 200;
 /**
  * Telemetry chart definitions describing axes and series metadata.
  *
@@ -1998,19 +1999,144 @@ function renderMessages(messages, renderShortHtml, node) {
 }
 
 /**
+ * Normalise a trace node reference into identifier and numeric forms.
+ *
+ * @param {*} value Raw trace endpoint/hop reference.
+ * @returns {{ identifier: (string|null), numericId: (number|null) }|null} Normalised reference.
+ */
+function normalizeTraceNodeRef(value) {
+  const numericId = numberOrNull(value);
+  const identifier = (() => {
+    const stringId = stringOrNull(value);
+    if (numericId != null) {
+      const hex = (numericId >>> 0).toString(16).padStart(8, '0');
+      return `!${hex}`;
+    }
+    return stringId;
+  })();
+  if (identifier == null && numericId == null) {
+    return null;
+  }
+  return { identifier, numericId };
+}
+
+/**
+ * Extract an ordered trace path containing the source, hops, and destination.
+ *
+ * @param {Object} trace Trace payload.
+ * @returns {Array<{identifier: (string|null), numericId: (number|null)}>} Normalised path entries.
+ */
+function extractTracePath(trace) {
+  if (!trace || typeof trace !== 'object') return [];
+  const path = [];
+  const append = ref => {
+    const normalized = normalizeTraceNodeRef(ref);
+    if (!normalized) return;
+    path.push(normalized);
+  };
+  append(trace.src ?? trace.source ?? trace.from);
+  const hops = Array.isArray(trace.hops) ? trace.hops : [];
+  hops.forEach(append);
+  append(trace.dest ?? trace.destination ?? trace.to);
+  return path;
+}
+
+/**
+ * Render a trace path using short-name badges.
+ *
+ * @param {Array<{identifier: (string|null), numericId: (number|null)}>} path Ordered path references.
+ * @param {Function} renderShortHtml Badge rendering function.
+ * @param {{ roleIndex?: Object|null, node?: Object|null }} options Rendering helpers.
+ * @returns {string} HTML fragment for the trace or ``''`` when unsuitable.
+ */
+function renderTracePath(path, renderShortHtml, { roleIndex = null, node = null } = {}) {
+  if (!Array.isArray(path) || path.length < 2 || typeof renderShortHtml !== 'function') {
+    return '';
+  }
+
+  const nodeIdNormalized = normalizeNodeId(node?.nodeId ?? node?.node_id);
+  const nodeNumNormalized = numberOrNull(node?.nodeNum ?? node?.node_num ?? node?.num);
+
+  const renderBadge = ref => {
+    const identifier = ref?.identifier ?? null;
+    const numericId = ref?.numericId ?? null;
+    const normalizedId = normalizeNodeId(identifier);
+    const matchesNode =
+      (normalizedId && nodeIdNormalized && normalizedId === nodeIdNormalized) ||
+      (numericId != null && nodeNumNormalized != null && numericId === nodeNumNormalized);
+
+    let details = lookupNeighborDetails(roleIndex, { identifier, numericId }) ?? undefined;
+    if (matchesNode && node) {
+      details = {
+        ...(details || {}),
+        role: node.role ?? details?.role ?? 'CLIENT',
+        shortName: node.shortName ?? node.short_name ?? details?.shortName ?? null,
+        longName: node.longName ?? node.long_name ?? details?.longName ?? null,
+      };
+    }
+
+    return renderRoleAwareBadge(renderShortHtml, {
+      shortName: details?.shortName ?? null,
+      longName: details?.longName ?? null,
+      role: details?.role ?? null,
+      identifier,
+      numericId,
+      source: details,
+    });
+  };
+
+  const items = path
+    .map(renderBadge)
+    .filter(fragment => stringOrNull(fragment));
+  if (items.length < 2) {
+    return '';
+  }
+  const arrow = '<span class="node-detail__trace-arrow" aria-hidden="true">&rarr;</span>';
+  return `<li class="node-detail__trace">${items.join(arrow)}</li>`;
+}
+
+/**
+ * Render all traceroutes associated with the node.
+ *
+ * @param {Array<Object>} traces Trace payloads.
+ * @param {Function} renderShortHtml Badge renderer.
+ * @param {{ roleIndex?: Object|null, node?: Object|null }} options Rendering helpers.
+ * @returns {string} HTML fragment or ``''`` when absent.
+ */
+function renderTraceroutes(traces, renderShortHtml, { roleIndex = null, node = null } = {}) {
+  if (!Array.isArray(traces) || traces.length === 0 || typeof renderShortHtml !== 'function') {
+    return '';
+  }
+  const items = traces
+    .map(trace => renderTracePath(extractTracePath(trace), renderShortHtml, { roleIndex, node }))
+    .filter(fragment => stringOrNull(fragment));
+  if (items.length === 0) {
+    return '';
+  }
+  return `
+    <section class="node-detail__section node-detail__traceroutes">
+      <h3>Traceroutes</h3>
+      <ul class="node-detail__trace-list">${items.join('')}</ul>
+    </section>
+  `;
+}
+
+/**
  * Render the node detail layout to an HTML fragment.
  *
  * @param {Object} node Normalised node payload.
  * @param {{
- *   neighbors?: Array<Object>,
- *   messages?: Array<Object>,
- *   renderShortHtml: Function,
- * }} options Rendering options.
+  *   neighbors?: Array<Object>,
+  *   messages?: Array<Object>,
+ *   traces?: Array<Object>,
+  *   renderShortHtml: Function,
+  * }} options Rendering options.
  * @returns {string} HTML fragment representing the detail view.
  */
 function renderNodeDetailHtml(node, {
   neighbors = [],
   messages = [],
+  traces = [],
   renderShortHtml,
   neighborRoleIndex = null,
   chartNowMs = Date.now(),
@@ -2028,11 +2154,15 @@ function renderNodeDetailHtml(node, {
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex: neighborRoleIndex });
+  const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex: neighborRoleIndex, node });
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
 
   const sections = [];
   if (neighborsHtml) {
     sections.push(neighborsHtml);
+  }
+  if (tracesHtml) {
+    sections.push(tracesHtml);
   }
   if (Array.isArray(messages) && messages.length > 0 && messagesHtml) {
     sections.push(`<section class="node-detail__section"><h3>Messages</h3>${messagesHtml}</section>`);
@@ -2136,6 +2266,32 @@ async function fetchMessages(identifier, { fetchImpl, includeEncrypted = false, 
 }
 
 /**
+ * Fetch traceroute records for a node reference.
+ *
+ * @param {string|number} identifier Canonical node identifier or number.
+ * @param {{fetchImpl?: Function}} options Fetch options.
+ * @returns {Promise<Array<Object>>} Resolved trace collection.
+ */
+async function fetchTracesForNode(identifier, { fetchImpl } = {}) {
+  if (identifier == null) {
+    return [];
+  }
+  const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
+  if (typeof fetchFn !== 'function') {
+    throw new TypeError('A fetch implementation is required to load traceroutes');
+  }
+  const encodedId = encodeURIComponent(String(identifier));
+  const url = `/api/traces/${encodedId}?limit=${TRACE_LIMIT}`;
+  const response = await fetchFn(url, DEFAULT_FETCH_OPTIONS);
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    throw new Error(`Failed to load traceroutes (HTTP ${response.status})`);
+  }
+  const payload = await response.json();
+  return Array.isArray(payload) ? payload : [];
+}
+
+/**
  * Initialise the node detail page by hydrating the DOM with fetched data.
  *
  * @param {{
@@ -2166,13 +2322,17 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     normalized.nodeId ??
     stringOrNull(node.nodeId ?? node.node_id) ??
     (normalized.nodeNum != null ? normalized.nodeNum : null);
-  const messages = await fetchMessages(messageIdentifier, {
-    fetchImpl: options.fetchImpl,
-    privateMode: options.privateMode === true,
-  });
+  const [messages, traces] = await Promise.all([
+    fetchMessages(messageIdentifier, {
+      fetchImpl: options.fetchImpl,
+      privateMode: options.privateMode === true,
+    }),
+    fetchTracesForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
+  ]);
   return renderNodeDetailHtml(node, {
     neighbors: node.neighbors,
     messages,
+    traces,
     renderShortHtml,
     neighborRoleIndex,
   });
@@ -2256,10 +2416,15 @@ export const __testUtils = {
   renderSingleNodeTable,
   renderTelemetryCharts,
   renderMessages,
+  renderTraceroutes,
+  renderTracePath,
+  extractTracePath,
+  normalizeTraceNodeRef,
   renderNodeDetailHtml,
   parseReferencePayload,
   resolveRenderShortHtml,
   fetchMessages,
+  fetchTracesForNode,
   fetchNodeDetailHtml,
   normalizeNodeReference,
 };

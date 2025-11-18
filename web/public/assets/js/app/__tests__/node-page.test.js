@@ -45,10 +45,15 @@ const {
   renderSingleNodeTable,
   renderTelemetryCharts,
   renderMessages,
+  renderTraceroutes,
+  renderTracePath,
+  extractTracePath,
+  normalizeTraceNodeRef,
   renderNodeDetailHtml,
   parseReferencePayload,
   resolveRenderShortHtml,
   fetchMessages,
+  fetchTracesForNode,
 } = __testUtils;
 
 test('format helpers normalise values as expected', () => {
@@ -340,6 +345,9 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
         { node_id: '!abcd', neighbor_id: '!ally', neighbor_short_name: 'ALLY', snr: 5.1 },
       ],
       messages: [{ text: 'Hello', rx_time: 1_700_000_111 }],
+      traces: [
+        { src: '!abcd', hops: ['!beef'], dest: '!ally' },
+      ],
       renderShortHtml: (short, role) => `<span class="short-name" data-role="${role}">${short}</span>`,
     },
   );
@@ -351,6 +359,8 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">Example Node<\/a>/);
   assert.equal(html.includes('PEER'), true);
   assert.equal(html.includes('ALLY'), true);
+  assert.equal(html.includes('Traceroutes'), true);
+  assert.match(html, /&rarr;/);
   assert.match(html, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[/);
   assert.equal(html.includes('data-role="CLIENT"'), true);
 });
@@ -389,16 +399,31 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
 
 test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
   const reference = { nodeId: '!alpha' };
-  let fetchCalls = 0;
+  const calledUrls = [];
   const fetchImpl = async url => {
-    fetchCalls += 1;
-    assert.match(url, /\/api\/messages\/!alpha/);
+    calledUrls.push(url);
+    if (url.startsWith('/api/messages/')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return [{ text: 'Overlay hello', rx_time: 1_700_000_000 }];
+        },
+      };
+    }
+    if (url.startsWith('/api/traces/')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return [{ src: '!alpha', dest: '!bravo', hops: [] }];
+        },
+      };
+    }
     return {
-      ok: true,
-      status: 200,
-      async json() {
-        return [{ text: 'Overlay hello', rx_time: 1_700_000_000 }];
-      },
+      ok: false,
+      status: 404,
+      async json() { return []; },
     };
   };
   const refreshImpl = async () => ({
@@ -415,9 +440,11 @@ test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
     fetchImpl,
     renderShortHtml: short => `<span class="short-name">${short}</span>`,
   });
-  assert.equal(fetchCalls, 1);
+  assert.equal(calledUrls.some(url => url.includes('/api/messages/!alpha')), true);
+  assert.equal(calledUrls.some(url => url.includes('/api/traces/!alpha')), true);
   assert.equal(html.includes('Example Alpha'), true);
   assert.equal(html.includes('Overlay hello'), true);
+  assert.equal(html.includes('Traceroutes'), true);
   assert.equal(html.includes('node-detail__table'), true);
 });
 
@@ -475,6 +502,97 @@ test('fetchMessages returns an empty list when the endpoint is missing', async (
   const fetchImpl = async () => ({ status: 404, ok: false, json: async () => ({}) });
   const messages = await fetchMessages('!node', { fetchImpl });
   assert.deepEqual(messages, []);
+});
+
+test('normalizeTraceNodeRef canonicalizes references and renderTracePath builds arrowed output', () => {
+  const ref = normalizeTraceNodeRef(1234);
+  assert.deepEqual(ref, { identifier: '!000004d2', numericId: 1234 });
+  const roleIndex = {
+    byId: new Map([['!000004d2', 'CLIENT']]),
+    byNum: new Map(),
+    detailsById: new Map([['!000004d2', { shortName: 'NODE', role: 'ROUTER' }]]),
+    detailsByNum: new Map(),
+  };
+  const path = extractTracePath({ src: 1234, hops: [0xbeef], dest: '!ally' });
+  const html = renderTracePath(path, (short, role) => `<span data-role="${role}">${short}</span>`, {
+    roleIndex,
+    node: { nodeId: '!000004d2', shortName: 'NODE', role: 'ROUTER' },
+  });
+  assert.notEqual(html, '');
+  assert.match(html, /data-role="ROUTER"/);
+  assert.match(html, /&rarr;/);
+});
+
+test('renderTraceroutes lists traceroute paths with badges', () => {
+  const traces = [
+    { src: '!one', hops: ['!two'], dest: '!three' },
+  ];
+  const html = renderTraceroutes(traces, short => `<span class="short-name">${short}</span>`, {
+    roleIndex: null,
+  });
+  assert.equal(html.includes('Traceroutes'), true);
+  assert.equal(html.includes('short-name'), true);
+});
+
+test('renderTraceroutes skips empty or single-hop paths and renderTracePath uses node metadata', () => {
+  const pathHtml = renderTracePath([{ identifier: '!self', numericId: 1 }], short => `<b>${short}</b>`, {
+    roleIndex: null,
+    node: { nodeId: '!self', shortName: 'SELF', role: 'ROUTER' },
+  });
+  assert.equal(pathHtml, '');
+
+  const html = renderTraceroutes(
+    [{ src: '!self', hops: [], dest: '!peer' }],
+    (short, role) => `<span data-role="${role}">${short}</span>`,
+    {
+      roleIndex: {
+        detailsById: new Map([['!self', { shortName: 'SELF', role: 'CLIENT' }]]),
+        detailsByNum: new Map(),
+        byId: new Map([['!peer', 'ROUTER']]),
+        byNum: new Map(),
+      },
+      node: { nodeId: '!self', shortName: 'SELF', role: 'ADMIN' },
+    },
+  );
+  assert.equal(html.includes('Traceroutes'), true);
+  assert.match(html, /data-role="ADMIN"/);
+});
+
+test('renderTrace helpers normalise references and short-circuit when traces are empty', () => {
+  assert.deepEqual(normalizeTraceNodeRef('!abcd'), { identifier: '!abcd', numericId: null });
+  assert.equal(extractTracePath(null).length, 0);
+  const html = renderTraceroutes([], () => '', { roleIndex: null });
+  assert.equal(html, '');
+});
+
+test('fetchTracesForNode requests traceroutes for the node', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      status: 200,
+      ok: true,
+      json: async () => [{ src: '!abc', dest: '!def', hops: [] }],
+    };
+  };
+  const traces = await fetchTracesForNode('!abc', { fetchImpl });
+  assert.equal(traces.length, 1);
+  assert.equal(calls[0].url.includes('/api/traces/!abc'), true);
+  assert.equal(calls[0].options.cache, 'no-store');
+});
+
+test('fetchTracesForNode returns empty when identifier is missing', async () => {
+  const traces = await fetchTracesForNode(null, { fetchImpl: () => { throw new Error('should not run'); } });
+  assert.deepEqual(traces, []);
+});
+
+test('fetchTracesForNode throws on HTTP error', async () => {
+  await assert.rejects(
+    () => fetchTracesForNode('!err', {
+      fetchImpl: async () => ({ status: 500, ok: false, json: async () => ({}) }),
+    }),
+    /Failed to load traceroutes/,
+  );
 });
 
 test('initializeNodeDetailPage hydrates the container with node data', async () => {
