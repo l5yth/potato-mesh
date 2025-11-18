@@ -252,6 +252,36 @@ def test_extract_host_node_id_from_nested_info(mesh_module):
     assert mesh._extract_host_node_id(iface) == "!cafebabe"
 
 
+def test_extract_host_node_id_from_callable(mesh_module):
+    mesh = mesh_module
+
+    class CallableNoDict:
+        __slots__ = ()
+
+        def __call__(self):
+            return {"id": "!f00ba4"}
+
+    class DummyInterface:
+        def __init__(self):
+            self.localNode = CallableNoDict()
+
+    iface = DummyInterface()
+
+    assert mesh._extract_host_node_id(iface) == "!00f00ba4"
+
+
+def test_extract_host_node_id_from_my_node_num_attribute(mesh_module):
+    mesh = mesh_module
+
+    class DummyInterface:
+        def __init__(self):
+            self.myNodeNum = 0xDEADBEEF
+
+    iface = DummyInterface()
+
+    assert mesh._extract_host_node_id(iface) == "!deadbeef"
+
+
 @pytest.mark.parametrize("value", ["mock", "Mock", " disabled "])
 def test_create_serial_interface_allows_mock(mesh_module, value):
     mesh = mesh_module
