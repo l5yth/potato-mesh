@@ -56,6 +56,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
+import { buildTraceSegments } from './trace-paths.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -148,6 +149,8 @@ export function initializeApp(config) {
   /** @type {Array<Object>} */
   let allNeighbors = [];
   /** @type {Array<Object>} */
+  let allTraces = [];
+  /** @type {Array<Object>} */
   let allMessages = [];
   /** @type {Array<Object>} */
   let allEncryptedMessages = [];
@@ -156,8 +159,8 @@ export function initializeApp(config) {
   /** @type {Array<Object>} */
   let allPositionEntries = [];
   /** @type {Map<string, Object>} */
-let nodesById = new Map();
-let messagesById = new Map();
+  let nodesById = new Map();
+  let messagesById = new Map();
   let nodesByNum = new Map();
   const messageNodeHydrator = createMessageNodeHydrator({
     fetchNodeById,
@@ -165,6 +168,7 @@ let messagesById = new Map();
     logger: console,
   });
   const NODE_LIMIT = 1000;
+  const TRACE_LIMIT = 200;
   const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
@@ -3315,6 +3319,20 @@ let messagesById = new Map();
   }
 
   /**
+   * Fetch traceroute observations from the JSON API.
+   *
+   * @param {number} [limit=TRACE_LIMIT] Maximum number of records.
+   * @returns {Promise<Array<Object>>} Parsed trace payloads.
+   */
+  async function fetchTraces(limit = TRACE_LIMIT) {
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
+    const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
+    const r = await fetch(`/api/traces?limit=${effectiveLimit}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+
+  /**
    * Fetch telemetry entries from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
@@ -3654,6 +3672,13 @@ let messagesById = new Map();
       if (typeof nodeId !== 'string' || nodeId.length === 0) continue;
       nodesById.set(nodeId, node);
     }
+    const traceSegments = neighborLinesLayer
+      ? buildTraceSegments(allTraces, nodes, {
+          limitDistance: LIMIT_DISTANCE,
+          maxDistanceKm: MAX_DISTANCE_KM,
+          colorForNode: node => getRoleColor(node.role)
+        })
+      : [];
 
     if (neighborLinesLayer && Array.isArray(allNeighbors) && allNeighbors.length) {
       const neighborSegments = [];
@@ -3764,6 +3789,25 @@ let messagesById = new Map();
               openNeighborOverlay(anchorEl, segment);
             });
           }
+        });
+    }
+
+    if (neighborLinesLayer && traceSegments.length) {
+      traceSegments
+        .sort((a, b) => {
+          const rxA = Number.isFinite(a.rxTime) ? a.rxTime : -Infinity;
+          const rxB = Number.isFinite(b.rxTime) ? b.rxTime : -Infinity;
+          if (rxA === rxB) return 0;
+          return rxA - rxB;
+        })
+        .forEach(segment => {
+          L.polyline(segment.latlngs, {
+            color: segment.color,
+            weight: 2,
+            opacity: 0.42,
+            dashArray: '6 6',
+            className: 'neighbor-connection-line trace-connection-line'
+          }).addTo(neighborLinesLayer);
         });
     }
 
@@ -3961,14 +4005,27 @@ let messagesById = new Map();
         console.warn('position refresh failed; continuing without updates', err);
         return [];
       });
+      const tracesPromise = fetchTraces().catch(err => {
+        console.warn('trace refresh failed; continuing without traceroutes', err);
+        return [];
+      });
       const encryptedMessagesPromise = fetchMessages(MESSAGE_LIMIT, { encrypted: true }).catch(err => {
         console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
         return [];
       });
-      const [nodes, positions, neighborTuples, messages, telemetryEntries, encryptedMessages] = await Promise.all([
+      const [
+        nodes,
+        positions,
+        neighborTuples,
+        traceEntries,
+        messages,
+        telemetryEntries,
+        encryptedMessages
+      ] = await Promise.all([
         fetchNodes(),
         positionsPromise,
         neighborPromise,
+        tracesPromise,
         fetchMessages(MESSAGE_LIMIT),
         telemetryPromise,
         encryptedMessagesPromise
@@ -3993,6 +4050,7 @@ let messagesById = new Map();
       allTelemetryEntries = aggregatedTelemetry;
       allPositionEntries = aggregatedPositions;
       allNeighbors = aggregatedNeighbors;
+      allTraces = Array.isArray(traceEntries) ? traceEntries : [];
       applyFilter();
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
