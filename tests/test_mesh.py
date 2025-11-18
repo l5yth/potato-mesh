@@ -1327,6 +1327,68 @@ def test_nodeinfo_patch_updates_known_protocols(monkeypatch):
     assert iface.nodes["!01020304"]["user"]["id"] == "!01020304"
 
 
+def test_nodeinfo_patch_updates_protocols_without_replace(monkeypatch):
+    """Fallback protocol replacement path should still wrap unsafe callbacks."""
+
+    from data.mesh_ingestor import interfaces
+
+    class DummyProtocol:
+        def __init__(self, name, factory, on_receive):
+            self.name = name
+            self.protobufFactory = factory
+            self.onReceive = on_receive
+
+    callbacks: list[dict] = []
+
+    def _unsafe_handler(iface, packet):
+        callbacks.append(packet)
+        iface.nodes[packet["from"]] = {"user": packet["decoded"]["user"]}
+        return packet["from"]
+
+    nodeinfo_value = 7
+    PortNum = enum.IntEnum("PortNum", {"NODEINFO_APP": nodeinfo_value})
+    portnums_pb2 = types.SimpleNamespace(PortNum=PortNum)
+    protocol_obj = DummyProtocol("user", object, _unsafe_handler)
+    protocols = {
+        PortNum.NODEINFO_APP: protocol_obj,
+        99: DummyProtocol("other", object, lambda *_: None),
+    }
+
+    meshtastic_mod = types.ModuleType("meshtastic")
+    meshtastic_mod._onNodeInfoReceive = _unsafe_handler
+    meshtastic_mod.portnums_pb2 = portnums_pb2
+    meshtastic_mod.protocols = protocols
+
+    mesh_interface_mod = types.ModuleType("meshtastic.mesh_interface")
+    mesh_interface_mod.protocols = dict(protocols)
+    mesh_interface_mod.portnums_pb2 = portnums_pb2
+    mesh_interface_mod._onNodeInfoReceive = _unsafe_handler
+
+    monkeypatch.setitem(sys.modules, "meshtastic", meshtastic_mod)
+    monkeypatch.setitem(sys.modules, "meshtastic.mesh_interface", mesh_interface_mod)
+    monkeypatch.setattr(interfaces, "meshtastic", meshtastic_mod, raising=False)
+
+    interfaces._patch_meshtastic_nodeinfo_handler()
+
+    handler = meshtastic_mod.protocols[PortNum.NODEINFO_APP].onReceive
+    iface = types.SimpleNamespace(nodes={})
+
+    handler(iface, {"decoded": {"user": {"shortName": "anon"}}, "from": 0x01020304})
+
+    assert getattr(handler, "_potato_mesh_safe_wrapper", False)
+    assert callbacks, "Expected patched handler to call original callback"
+    assert callbacks[0]["decoded"]["user"]["id"] == "!01020304"
+    assert iface.nodes[0x01020304]["user"]["id"] == "!01020304"
+    assert (
+        getattr(mesh_interface_mod, "_onNodeInfoReceive").__name__ == handler.__name__
+    )
+    assert getattr(
+        mesh_interface_mod.protocols[nodeinfo_value].onReceive,
+        "_potato_mesh_safe_wrapper",
+        False,
+    )
+
+
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
