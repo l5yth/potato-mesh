@@ -359,13 +359,15 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
 
   const segments = [];
   const reaction = isReactionMessage(message);
-  const emoji = normaliseEmojiValue(message.emoji);
   const textSegment = resolveMessageTextSegment(message, reaction);
-  if (textSegment && textSegment!==emoji) {
-      segments.push(escapeHtml(textSegment));
-  } else if (emoji) {
-      segments.push(renderEmojiHtml(emoji));
+  if (textSegment && !reaction) {
+    segments.push(escapeHtml(textSegment));
   }
+  const emoji = normaliseEmojiValue(message.emoji);
+  if (emoji) {
+    segments.push(renderEmojiHtml(emoji));
+  }
+
   if (segments.length === 0) {
     return '';
   }
