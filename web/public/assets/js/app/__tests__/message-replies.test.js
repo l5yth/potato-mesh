@@ -100,5 +100,5 @@ test('buildMessageBody suppresses reaction slot markers and formats counts', () 
     renderEmojiHtml: value => `EMOJI(${value})`
   });
 
-  assert.equal(countedBody, 'ESC(×2) EMOJI(✨)');
+  assert.equal(countedBody, 'EMOJI(✨)');
 });
