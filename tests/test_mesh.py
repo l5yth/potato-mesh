@@ -1389,6 +1389,55 @@ def test_nodeinfo_patch_updates_protocols_without_replace(monkeypatch):
     )
 
 
+def test_normalise_nodeinfo_packet_injects_decoded_user_id():
+    """Ensure decoded user payloads inherit the inferred node id."""
+
+    from data.mesh_ingestor import interfaces
+
+    packet = {"decoded": {"user": {"shortName": "anon"}}, "from": 0x0A0B0C0D}
+
+    normalised = interfaces._normalise_nodeinfo_packet(packet)
+
+    assert normalised["id"] == "!0a0b0c0d"
+    assert normalised["decoded"]["user"]["id"] == "!0a0b0c0d"
+
+
+def test_patch_protocol_nodeinfo_callback_without_portnum(monkeypatch):
+    """Protocols lacking PortNum constants should still be wrapped."""
+
+    from data.mesh_ingestor import interfaces
+
+    captured: list[dict] = []
+
+    def _original(iface, packet):
+        captured.append(packet)
+        iface.nodes = {"observed": packet}
+        return packet.get("id")
+
+    class DummyProtocol:
+        def __init__(self, name, factory, on_receive):
+            self.name = name
+            self.protobufFactory = factory
+            self.onReceive = on_receive
+
+    module = types.SimpleNamespace(
+        protocols={123: DummyProtocol("user", object, _original)},
+        portnums_pb2=None,
+    )
+
+    safe_callback = interfaces._build_safe_nodeinfo_callback(_original)
+    interfaces._patch_protocol_nodeinfo_callback(module, _original, safe_callback)
+
+    handler = module.protocols[123].onReceive
+    iface = types.SimpleNamespace(nodes={})
+
+    handler(iface, {"decoded": {"user": {"shortName": "anon"}}, "from": 0x01020304})
+
+    assert getattr(handler, "_potato_mesh_safe_wrapper", False)
+    assert captured[0]["id"] == "!01020304"
+    assert iface.nodes["observed"]["decoded"]["user"]["id"] == "!01020304"
+
+
 def test_store_packet_dict_ignores_non_text(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
