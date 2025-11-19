@@ -224,6 +224,23 @@ def mesh_module(monkeypatch):
     sys.modules.pop(module_name, None)
 
 
+def test_subscribe_receive_topics_covers_all_handlers(mesh_module):
+    mesh = mesh_module
+    pub = sys.modules["pubsub"].pub
+    pub.subscriptions.clear()
+
+    subscribed_topics = mesh._subscribe_receive_topics()
+
+    expected_topics = list(mesh._RECEIVE_TOPICS)
+    assert subscribed_topics == expected_topics
+    assert len(pub.subscriptions) == len(expected_topics)
+
+    for (args, kwargs), topic in zip(pub.subscriptions, expected_topics):
+        assert not kwargs
+        assert args[0] is mesh.on_receive
+        assert args[1] == topic
+
+
 def test_snapshot_interval_defaults_to_60_seconds(mesh_module):
     mesh = mesh_module
     assert mesh.SNAPSHOT_SECS == 60
