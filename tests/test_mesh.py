@@ -224,6 +224,30 @@ def mesh_module(monkeypatch):
     sys.modules.pop(module_name, None)
 
 
+def test_subscribe_receive_topics_covers_all_handlers(mesh_module, monkeypatch):
+    mesh = mesh_module
+    daemon_mod = sys.modules["data.mesh_ingestor.daemon"]
+
+    recorded_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class RecordingPub:
+        def subscribe(self, *args, **kwargs):
+            recorded_calls.append((args, kwargs))
+
+    monkeypatch.setattr(daemon_mod, "pub", RecordingPub())
+
+    subscribed_topics = mesh._subscribe_receive_topics()
+
+    expected_topics = list(mesh._RECEIVE_TOPICS)
+    assert subscribed_topics == expected_topics
+    assert len(recorded_calls) == len(expected_topics)
+
+    for (args, kwargs), topic in zip(recorded_calls, expected_topics):
+        assert not kwargs
+        assert args[0] is mesh.on_receive
+        assert args[1] == topic
+
+
 def test_snapshot_interval_defaults_to_60_seconds(mesh_module):
     mesh = mesh_module
     assert mesh.SNAPSHOT_SECS == 60

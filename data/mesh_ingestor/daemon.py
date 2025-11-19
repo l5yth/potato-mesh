@@ -36,6 +36,7 @@ _RECEIVE_TOPICS = (
     "meshtastic.receive.TEXT_MESSAGE_APP",
     "meshtastic.receive.REACTION_APP",
     "meshtastic.receive.TELEMETRY_APP",
+    "meshtastic.receive.TRACEROUTE_APP",
 )
 
 
