@@ -127,6 +127,37 @@ module PotatoMesh
             query_telemetry(limit).to_json
           end
 
+          app.get "/api/telemetry/aggregated" do
+            content_type :json
+            default_window = PotatoMesh::App::Queries::DEFAULT_TELEMETRY_WINDOW_SECONDS
+            default_bucket = PotatoMesh::App::Queries::DEFAULT_TELEMETRY_BUCKET_SECONDS
+
+            window_seconds = if params.key?("windowSeconds")
+                coerce_integer(params["windowSeconds"])
+              else
+                default_window
+              end
+            bucket_seconds = if params.key?("bucketSeconds")
+                coerce_integer(params["bucketSeconds"])
+              else
+                default_bucket
+              end
+
+            if window_seconds.nil? || window_seconds <= 0
+              halt 400, { error: "windowSeconds must be positive" }.to_json
+            end
+            if bucket_seconds.nil? || bucket_seconds <= 0
+              halt 400, { error: "bucketSeconds must be positive" }.to_json
+            end
+
+            bucket_count = (window_seconds.to_f / bucket_seconds).ceil
+            if bucket_count > PotatoMesh::App::Queries::MAX_QUERY_LIMIT
+              halt 400, { error: "bucketSeconds too small for requested window" }.to_json
+            end
+
+            query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds).to_json
+          end
+
           app.get "/api/telemetry/:id" do
             content_type :json
             node_ref = string_or_nil(params["id"])

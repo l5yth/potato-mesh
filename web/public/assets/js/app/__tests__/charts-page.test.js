@@ -33,23 +33,35 @@ function createResponse(status, body) {
   };
 }
 
-test('fetchAggregatedTelemetry requests the latest 1000 telemetry entries', async () => {
+test('fetchAggregatedTelemetry requests aggregated telemetry buckets and normalizes stats', async () => {
   const requests = [];
   const fetchImpl = async url => {
     requests.push(url);
-    return createResponse(200, [{ rx_time: 1_700_000_000, node_id: '!demo' }]);
+    return createResponse(200, [
+      {
+        bucket_start: 1_700_000_000,
+        bucket_seconds: 300,
+        sample_count: 4,
+        aggregates: {
+          battery_level: { avg: 85.2, min: 80, max: 90 },
+          temperature: { avg: 22.5 },
+        },
+      },
+    ]);
   };
-  const snapshots = await fetchAggregatedTelemetry({ fetchImpl });
+  const snapshots = await fetchAggregatedTelemetry({ fetchImpl, windowMs: 604_800_000, bucketSeconds: 900 });
   assert.equal(requests.length, 1);
-  assert.equal(requests[0], '/api/telemetry?limit=1000');
+  assert.equal(requests[0], '/api/telemetry/aggregated?windowSeconds=604800&bucketSeconds=900');
   assert.equal(Array.isArray(snapshots), true);
-  assert.equal(snapshots[0].node_id, '!demo');
+  assert.equal(snapshots[0].battery_level, 85.2);
+  assert.equal(snapshots[0].battery_level_max, 90);
+  assert.equal(snapshots[0].temperature, 22.5);
 });
 
 test('fetchAggregatedTelemetry validates fetch availability and response codes', async () => {
   await assert.rejects(() => fetchAggregatedTelemetry({ fetchImpl: null }), /fetch implementation/i);
   const fetchImpl = async () => createResponse(503, []);
-  await assert.rejects(() => fetchAggregatedTelemetry({ fetchImpl }), /Failed to fetch telemetry/);
+  await assert.rejects(() => fetchAggregatedTelemetry({ fetchImpl }), /Failed to fetch aggregated telemetry/);
 });
 
 test('initializeChartsPage renders the telemetry charts when snapshots are available', async () => {
@@ -59,7 +71,14 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
       return id === 'chartsPage' ? container : null;
     },
   };
-  const fetchImpl = async () => createResponse(200, [{ rx_time: 1_700_000_000, temperature: 22.5 }]);
+  const fetchImpl = async () => createResponse(200, [
+    {
+      bucket_start: 1_700_000_000,
+      bucket_seconds: 300,
+      sample_count: 3,
+      aggregates: { temperature: { avg: 22.5 } },
+    },
+  ]);
   let receivedOptions = null;
   const renderCharts = (node, options) => {
     receivedOptions = options;
@@ -69,8 +88,10 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
   assert.equal(result, true);
   assert.equal(container.innerHTML.includes('node-detail__charts'), true);
   assert.ok(receivedOptions);
-  assert.equal(receivedOptions.chartOptions.windowMs, 86_400_000);
+  assert.equal(receivedOptions.chartOptions.windowMs, 604_800_000);
   assert.equal(typeof receivedOptions.chartOptions.lineReducer, 'function');
+  assert.equal(typeof receivedOptions.chartOptions.xAxisTickBuilder, 'function');
+  assert.equal(typeof receivedOptions.chartOptions.xAxisTickFormatter, 'function');
   const average = receivedOptions.chartOptions.lineReducer(
     [
       { timestamp: 0, value: 0 },
@@ -79,6 +100,12 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
     ],
   );
   assert.equal(Array.isArray(average), true);
+  const nowMs = Date.UTC(2025, 8, 16); // September 16, 2025
+  const ticks = receivedOptions.chartOptions.xAxisTickBuilder(nowMs, 604_800_000);
+  assert.equal(Array.isArray(ticks), true);
+  assert.equal(new Date(ticks[0]).getHours(), 0);
+  const label = receivedOptions.chartOptions.xAxisTickFormatter(ticks[0]);
+  assert.equal(/^\d{2}$/.test(label), true);
 });
 
 test('initializeChartsPage shows an error message when fetching fails', async () => {
@@ -122,7 +149,12 @@ test('initializeChartsPage shows a status when rendering produces no markup', as
       return container;
     },
   };
-  const fetchImpl = async () => createResponse(200, [{ rx_time: 1_700_000_000 }]);
+  const fetchImpl = async () => createResponse(200, [
+    {
+      bucket_start: 1_700_000_000,
+      aggregates: { voltage: { avg: 3.9 } },
+    },
+  ]);
   const renderCharts = () => '';
   const result = await initializeChartsPage({ document: documentStub, fetchImpl, renderCharts });
   assert.equal(result, true);

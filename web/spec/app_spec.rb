@@ -4350,6 +4350,54 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /api/telemetry/aggregated" do
+    it "returns aggregated telemetry buckets for the requested interval" do
+      post "/api/telemetry", telemetry_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=300"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets).not_to be_empty
+      a_bucket = buckets.first
+      expect(a_bucket["bucket_seconds"]).to eq(300)
+      expect(a_bucket["sample_count"]).to be >= 1
+      expect(a_bucket["bucket_start"]).to be_a(Integer)
+      expect(a_bucket["bucket_end"]).to be_a(Integer)
+      expect(a_bucket["aggregates"]).to be_a(Hash)
+      expect(a_bucket["aggregates"]).to have_key("battery_level")
+      expect(a_bucket["aggregates"]["battery_level"]).to include("avg")
+      expect(a_bucket).not_to have_key("device_metrics")
+    end
+
+    it "applies default window and bucket sizes when parameters are omitted" do
+      post "/api/telemetry", telemetry_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/telemetry/aggregated"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets.length).to be >= 1
+      expect(buckets.first["bucket_seconds"]).to eq(PotatoMesh::App::Queries::DEFAULT_TELEMETRY_BUCKET_SECONDS)
+    end
+
+    it "rejects invalid bucket and window parameters" do
+      get "/api/telemetry/aggregated?windowSeconds=0&bucketSeconds=300"
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "windowSeconds must be positive")
+
+      get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=0"
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "bucketSeconds must be positive")
+
+      get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=1"
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "bucketSeconds too small for requested window")
+    end
+  end
+
   describe "GET /api/traces" do
     it "returns stored traces ordered by receive time" do
       clear_database

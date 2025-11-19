@@ -18,6 +18,36 @@ module PotatoMesh
   module App
     module Queries
       MAX_QUERY_LIMIT = 1000
+      DEFAULT_TELEMETRY_WINDOW_SECONDS = 86_400
+      DEFAULT_TELEMETRY_BUCKET_SECONDS = 300
+      TELEMETRY_AGGREGATE_COLUMNS =
+        %w[
+          battery_level
+          voltage
+          channel_utilization
+          air_util_tx
+          temperature
+          relative_humidity
+          barometric_pressure
+          gas_resistance
+          current
+          iaq
+          distance
+          lux
+          white_lux
+          ir_lux
+          uv_lux
+          wind_direction
+          wind_speed
+          wind_gust
+          wind_lull
+          weight
+          radiation
+          rainfall_1h
+          rainfall_24h
+          soil_moisture
+          soil_temperature
+        ].freeze
 
       # Remove nil or empty values from an API response hash to reduce payload size
       # while preserving legitimate zero-valued measurements.
@@ -461,6 +491,82 @@ module PotatoMesh
           r["soil_temperature"] = coerce_float(r["soil_temperature"])
         end
         rows.map { |row| compact_api_row(row) }
+      ensure
+        db&.close
+      end
+
+      def query_telemetry_buckets(window_seconds:, bucket_seconds:)
+        window = coerce_integer(window_seconds) || DEFAULT_TELEMETRY_WINDOW_SECONDS
+        window = DEFAULT_TELEMETRY_WINDOW_SECONDS if window <= 0
+        bucket = coerce_integer(bucket_seconds) || DEFAULT_TELEMETRY_BUCKET_SECONDS
+        bucket = DEFAULT_TELEMETRY_BUCKET_SECONDS if bucket <= 0
+
+        db = open_database(readonly: true)
+        db.results_as_hash = true
+        now = Time.now.to_i
+        min_timestamp = now - window
+        bucket_expression = "((COALESCE(rx_time, telemetry_time) / ?) * ?)"
+        select_clauses = [
+          "#{bucket_expression} AS bucket_start",
+          "COUNT(*) AS sample_count",
+          "MIN(COALESCE(rx_time, telemetry_time)) AS first_timestamp",
+          "MAX(COALESCE(rx_time, telemetry_time)) AS last_timestamp",
+        ]
+
+        TELEMETRY_AGGREGATE_COLUMNS.each do |column|
+          select_clauses << "AVG(#{column}) AS #{column}_avg"
+          select_clauses << "MIN(#{column}) AS #{column}_min"
+          select_clauses << "MAX(#{column}) AS #{column}_max"
+        end
+
+        sql = <<~SQL
+          SELECT
+            #{select_clauses.join(",\n            ")}
+          FROM telemetry
+          WHERE COALESCE(rx_time, telemetry_time) IS NOT NULL
+            AND COALESCE(rx_time, telemetry_time, 0) >= ?
+          GROUP BY bucket_start
+          ORDER BY bucket_start ASC
+          LIMIT ?
+        SQL
+        params = [bucket, bucket, min_timestamp, MAX_QUERY_LIMIT]
+        rows = db.execute(sql, params)
+        rows.map do |row|
+          bucket_start = coerce_integer(row["bucket_start"])
+          bucket_end = bucket_start ? bucket_start + bucket : nil
+          first_timestamp = coerce_integer(row["first_timestamp"])
+          last_timestamp = coerce_integer(row["last_timestamp"])
+
+          aggregates = {}
+          TELEMETRY_AGGREGATE_COLUMNS.each do |column|
+            avg = coerce_float(row["#{column}_avg"])
+            min_value = coerce_float(row["#{column}_min"])
+            max_value = coerce_float(row["#{column}_max"])
+
+            metrics = {}
+            metrics["avg"] = avg unless avg.nil?
+            metrics["min"] = min_value unless min_value.nil?
+            metrics["max"] = max_value unless max_value.nil?
+            aggregates[column] = metrics unless metrics.empty?
+          end
+
+          bucket_response = {
+            "bucket_start" => bucket_start,
+            "bucket_start_iso" => bucket_start ? Time.at(bucket_start).utc.iso8601 : nil,
+            "bucket_end" => bucket_end,
+            "bucket_end_iso" => bucket_end ? Time.at(bucket_end).utc.iso8601 : nil,
+            "bucket_seconds" => bucket,
+            "sample_count" => coerce_integer(row["sample_count"]),
+            "first_timestamp" => first_timestamp,
+            "first_timestamp_iso" => first_timestamp ? Time.at(first_timestamp).utc.iso8601 : nil,
+            "last_timestamp" => last_timestamp,
+            "last_timestamp_iso" => last_timestamp ? Time.at(last_timestamp).utc.iso8601 : nil,
+            "aggregates" => aggregates,
+          }
+          bucket_response["timestamp"] = bucket_start if bucket_start
+          bucket_response["timestamp_iso"] = bucket_response["bucket_start_iso"] if bucket_response["bucket_start_iso"]
+          compact_api_row(bucket_response)
+        end
       ensure
         db&.close
       end
