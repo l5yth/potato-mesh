@@ -360,7 +360,7 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   const segments = [];
   const reaction = isReactionMessage(message);
   const textSegment = resolveMessageTextSegment(message, reaction);
-  if (textSegment) {
+  if (textSegment && !reaction) {
     segments.push(escapeHtml(textSegment));
   }
   const emoji = normaliseEmojiValue(message.emoji);
