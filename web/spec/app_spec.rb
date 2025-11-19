@@ -4371,6 +4371,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(a_bucket).not_to have_key("device_metrics")
     end
 
+    it "applies default window and bucket sizes when parameters are omitted" do
+      post "/api/telemetry", telemetry_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/telemetry/aggregated"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets.length).to be >= 1
+      expect(buckets.first["bucket_seconds"]).to eq(PotatoMesh::App::Queries::DEFAULT_TELEMETRY_BUCKET_SECONDS)
+    end
+
     it "rejects invalid bucket and window parameters" do
       get "/api/telemetry/aggregated?windowSeconds=0&bucketSeconds=300"
       expect(last_response.status).to eq(400)

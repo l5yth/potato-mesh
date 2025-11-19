@@ -90,6 +90,8 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
   assert.ok(receivedOptions);
   assert.equal(receivedOptions.chartOptions.windowMs, 604_800_000);
   assert.equal(typeof receivedOptions.chartOptions.lineReducer, 'function');
+  assert.equal(typeof receivedOptions.chartOptions.xAxisTickBuilder, 'function');
+  assert.equal(typeof receivedOptions.chartOptions.xAxisTickFormatter, 'function');
   const average = receivedOptions.chartOptions.lineReducer(
     [
       { timestamp: 0, value: 0 },
@@ -98,6 +100,12 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
     ],
   );
   assert.equal(Array.isArray(average), true);
+  const nowMs = Date.UTC(2025, 8, 16); // September 16, 2025
+  const ticks = receivedOptions.chartOptions.xAxisTickBuilder(nowMs, 604_800_000);
+  assert.equal(Array.isArray(ticks), true);
+  assert.equal(new Date(ticks[0]).getHours(), 0);
+  const label = receivedOptions.chartOptions.xAxisTickFormatter(ticks[0]);
+  assert.equal(/^\d{2}$/.test(label), true);
 });
 
 test('initializeChartsPage shows an error message when fetching fails', async () => {
