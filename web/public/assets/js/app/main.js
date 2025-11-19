@@ -23,7 +23,7 @@ import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { createNodeDetailOverlayManager } from './node-detail-overlay.js';
 import { refreshNodeInformation } from './node-details.js';
-import { extractModemMetadata, formatModemDisplay } from './node-modem-metadata.js';
+import { extractModemMetadata, formatLoraFrequencyMHz, formatModemDisplay } from './node-modem-metadata.js';
 import {
   TELEMETRY_FIELDS,
   buildTelemetryDisplayEntries,
@@ -120,6 +120,18 @@ export function initializeApp(config) {
     node_id: { getValue: n => n.node_id, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     short_name: { getValue: n => n.short_name, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     long_name: { getValue: n => n.long_name, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+    lora_freq: {
+      getValue: n => n.lora_freq ?? n.loraFreq ?? n.frequency,
+      compare: compareNumber,
+      hasValue: hasNumberValue,
+      defaultDirection: 'desc'
+    },
+    modem_preset: {
+      getValue: n => n.modem_preset ?? n.modemPreset,
+      compare: compareString,
+      hasValue: hasStringValue,
+      defaultDirection: 'asc'
+    },
     last_heard: { getValue: n => n.last_heard, compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'desc' },
     role: { getValue: n => n.role, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     hw_model: { getValue: n => n.hw_model, compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
@@ -3599,12 +3611,18 @@ export function initializeApp(config) {
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
       const latitudeDisplay = fmtCoords(n.latitude);
       const longitudeDisplay = fmtCoords(n.longitude);
-    const nodeDisplayName = getNodeDisplayNameForOverlay(n);
-    const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
-    tr.innerHTML = `
+      const nodeDisplayName = getNodeDisplayNameForOverlay(n);
+      const modemMetadata = extractModemMetadata(n);
+      const loraFrequencyText = formatLoraFrequencyMHz(modemMetadata.loraFreq);
+      const loraFrequencyDisplay = loraFrequencyText ? escapeHtml(loraFrequencyText) : '';
+      const modemPresetDisplay = modemMetadata.modemPreset ? escapeHtml(modemMetadata.modemPreset) : '';
+      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
+      tr.innerHTML = `
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
+        <td class="nodes-col nodes-col--frequency">${loraFrequencyDisplay}</td>
+        <td class="nodes-col nodes-col--modem-preset">${modemPresetDisplay}</td>
         <td class="nodes-col nodes-col--last-seen">${timeAgo(n.last_heard, nowSec)}</td>
         <td class="nodes-col nodes-col--role">${n.role || "CLIENT"}</td>
         <td class="nodes-col nodes-col--hw-model">${fmtHw(n.hw_model)}</td>

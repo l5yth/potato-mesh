@@ -1679,7 +1679,9 @@ input[type="radio"] {
 }
 
 @media (max-width: 1679px) {
-  .nodes-col--node-id {
+  .nodes-col--node-id,
+  .nodes-col--frequency,
+  .nodes-col--modem-preset {
     display: none;
   }
 }
