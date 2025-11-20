@@ -329,6 +329,28 @@ def test_nodeinfo_position_dict_variant_fields():
 def test_nodeinfo_user_dict_monkeypatched_paths(monkeypatch):
     """Cover manual_to_dict failures and decoded user ProtoMessage conversion."""
 
+    monkeypatch.setattr(serialization, "_load_cli_role_lookup", lambda: {})
+
+    proto_pkg = types.SimpleNamespace()
+    failing_role = types.SimpleNamespace(
+        Name=lambda _value: (_ for _ in ()).throw(ValueError("nope"))
+    )
+    failing_user = types.SimpleNamespace(Role=failing_role)
+    monkeypatch.setitem(
+        sys.modules, "meshtastic", types.SimpleNamespace(protobuf=proto_pkg)
+    )
+    monkeypatch.setitem(sys.modules, "meshtastic.protobuf", proto_pkg)
+    monkeypatch.setitem(
+        sys.modules,
+        "meshtastic.protobuf.mesh_pb2",
+        types.SimpleNamespace(User=failing_user),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "meshtastic.protobuf.config_pb2",
+        types.SimpleNamespace(Config=types.SimpleNamespace(DeviceConfig=failing_user)),
+    )
+
     def raising_to_dict():
         raise ValueError("nope")
 
