@@ -20,6 +20,7 @@ import contextlib
 import glob
 import importlib
 import ipaddress
+import math
 import re
 import sys
 import urllib.parse
@@ -471,11 +472,24 @@ def _resolve_lora_message(local_config: Any) -> Any | None:
     return None
 
 
-def _region_frequency(lora_message: Any) -> int | None:
-    """Derive the LoRa region frequency in MHz from ``lora_message``."""
+def _region_frequency(lora_message: Any) -> int | float | str | None:
+    """Derive the LoRa region frequency in MHz or the region label from ``lora_message``.
+
+    Numeric override values are floored to the nearest MHz to align with the
+    integer frequencies expected elsewhere in the ingestion pipeline.
+    """
 
     if lora_message is None:
         return None
+
+    override_frequency = getattr(lora_message, "override_frequency", None)
+    if override_frequency is not None:
+        if isinstance(override_frequency, (int, float)):
+            if override_frequency > 0:
+                return math.floor(override_frequency)
+        elif override_frequency:
+            return override_frequency
+
     region_value = getattr(lora_message, "region", None)
     if region_value is None:
         return None
@@ -494,7 +508,10 @@ def _region_frequency(lora_message: Any) -> int | None:
                 return int(token)
             except ValueError:  # pragma: no cover - defensive only
                 continue
+        return enum_name
     if isinstance(region_value, int) and region_value >= 100:
+        return region_value
+    if isinstance(region_value, str) and region_value:
         return region_value
     return None
 
