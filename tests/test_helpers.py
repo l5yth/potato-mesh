@@ -141,6 +141,15 @@ def test_candidate_node_id_and_normaliser():
     unknown_packet = {"id": "123456"}
     assert interfaces._candidate_node_id(unknown_packet) is None
 
+    preferred_hex_packet = {"id": "0x2a"}
+    assert interfaces._candidate_node_id(preferred_hex_packet) == "!0000002a"
+
+    caret_alias_packet = {"id": "^abc"}
+    assert interfaces._candidate_node_id(caret_alias_packet) == "^abc"
+
+    non_node_numeric = {"id": 42.0}
+    assert interfaces._candidate_node_id(non_node_numeric) is None
+
     packet = {"user": {"id": "!0000002a"}, "userId": None}
     normalised = interfaces._normalise_nodeinfo_packet(packet)
     assert normalised["id"] == "!0000002a"
