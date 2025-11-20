@@ -513,8 +513,10 @@ def _region_frequency(lora_message: Any) -> int | float | str | None:
     override_frequency = getattr(lora_message, "override_frequency", None)
     if override_frequency is not None:
         if isinstance(override_frequency, (int, float)):
-            return math.floor(override_frequency)
-        return override_frequency
+            if override_frequency > 0:
+                return math.floor(override_frequency)
+        elif override_frequency:
+            return override_frequency
 
     region_value = getattr(lora_message, "region", None)
     if region_value is None:

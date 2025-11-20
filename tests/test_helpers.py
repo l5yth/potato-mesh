@@ -211,6 +211,9 @@ def test_region_frequency_and_resolution_helpers():
     freq = interfaces._region_frequency(LoraMessage(1))
     assert freq == 915
 
+    freq = interfaces._region_frequency(LoraMessage(1, override_frequency=0))
+    assert freq == 915
+
     freq = interfaces._region_frequency(LoraMessage(1, override_frequency=921.5))
     assert freq == 921
 
