@@ -214,8 +214,18 @@ def test_region_frequency_and_resolution_helpers():
     freq = interfaces._region_frequency(LoraMessage(1, override_frequency=921.5))
     assert freq == 921
 
+    freq = interfaces._region_frequency(LoraMessage(1, override_frequency="915MHz"))
+    assert freq == "915MHz"
+
     freq = interfaces._region_frequency(LoraMessage(2))
     assert freq == "US"
+
+    class StringRegionMessage:
+        def __init__(self, region):
+            self.region = region
+
+    freq = interfaces._region_frequency(StringRegionMessage("EU"))
+    assert freq == "EU"
 
     class LocalConfig:
         def __init__(self, lora):

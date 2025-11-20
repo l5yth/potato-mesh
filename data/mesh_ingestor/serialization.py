@@ -172,6 +172,12 @@ def _node_to_dict(n) -> dict:
         if dataclasses.is_dataclass(value):
             return {k: _convert(getattr(value, k)) for k in value.__dataclass_fields__}
         if isinstance(value, ProtoMessage):
+            manual_to_dict = getattr(value, "to_dict", None)
+            if callable(manual_to_dict):
+                try:
+                    return manual_to_dict()
+                except Exception:
+                    pass
             try:
                 return MessageToDict(
                     value,
@@ -715,6 +721,12 @@ def _nodeinfo_user_dict(node_info, decoded_user):
     if node_info:
         field_names = {f[0].name for f in node_info.ListFields()}
         if "user" in field_names:
+            manual_to_dict = getattr(node_info.user, "to_dict", None)
+            if callable(manual_to_dict):
+                try:
+                    user_dict = manual_to_dict()
+                except Exception:
+                    user_dict = None
             try:
                 user_dict = MessageToDict(
                     node_info.user,
@@ -723,16 +735,28 @@ def _nodeinfo_user_dict(node_info, decoded_user):
                 )
             except Exception:
                 user_dict = None
+            if user_dict is None and callable(manual_to_dict):
+                try:
+                    user_dict = manual_to_dict()
+                except Exception:
+                    user_dict = None
 
     if isinstance(decoded_user, ProtoMessage):
-        try:
-            decoded_user = MessageToDict(
-                decoded_user,
-                preserving_proto_field_name=False,
-                use_integers_for_enums=False,
-            )
-        except Exception:
-            decoded_user = _node_to_dict(decoded_user)
+        manual_to_dict = getattr(decoded_user, "to_dict", None)
+        if callable(manual_to_dict):
+            try:
+                decoded_user = manual_to_dict()
+            except Exception:
+                decoded_user = decoded_user
+        if isinstance(decoded_user, ProtoMessage):
+            try:
+                decoded_user = MessageToDict(
+                    decoded_user,
+                    preserving_proto_field_name=False,
+                    use_integers_for_enums=False,
+                )
+            except Exception:
+                decoded_user = _node_to_dict(decoded_user)
 
     if isinstance(decoded_user, Mapping):
         user_dict = _merge_mappings(user_dict, decoded_user)
