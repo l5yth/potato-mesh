@@ -134,6 +134,13 @@ def test_candidate_node_id_and_normaliser():
     node_id = interfaces._candidate_node_id(nested)
     assert node_id == "!0000002a"
 
+    telemetry_packet = {"id": 123456, "from": "!0000000b"}
+    node_id = interfaces._candidate_node_id(telemetry_packet)
+    assert node_id == "!0000000b"
+
+    unknown_packet = {"id": "123456"}
+    assert interfaces._candidate_node_id(unknown_packet) is None
+
     packet = {"user": {"id": "!0000002a"}, "userId": None}
     normalised = interfaces._normalise_nodeinfo_packet(packet)
     assert normalised["id"] == "!0000002a"

@@ -48,16 +48,37 @@ def _ensure_mapping(value) -> Mapping | None:
     return None
 
 
+def _is_nodeish_identifier(value: Any) -> bool:
+    """Return ``True`` when ``value`` resembles a Meshtastic node identifier."""
+
+    if isinstance(value, (int, float)):
+        return False
+    if not isinstance(value, str):
+        return False
+
+    trimmed = value.strip()
+    if not trimmed:
+        return False
+    if trimmed.startswith("^"):
+        return True
+    if trimmed.startswith("!"):
+        trimmed = trimmed[1:]
+    elif trimmed.lower().startswith("0x"):
+        trimmed = trimmed[2:]
+    elif not re.search(r"[a-fA-F]", trimmed):
+        # Bare decimal strings should not be treated as node ids when labelled "id".
+        return False
+
+    return bool(re.fullmatch(r"[0-9a-fA-F]{1,8}", trimmed))
+
+
 def _candidate_node_id(mapping: Mapping | None) -> str | None:
     """Extract a canonical node identifier from ``mapping`` when present."""
 
     if mapping is None:
         return None
 
-    primary_keys = (
-        "id",
-        "userId",
-        "user_id",
+    node_keys = (
         "fromId",
         "from_id",
         "from",
@@ -66,19 +87,34 @@ def _candidate_node_id(mapping: Mapping | None) -> str | None:
         "nodeNum",
         "node_num",
         "num",
+        "userId",
+        "user_id",
     )
 
-    for key in primary_keys:
+    for key in node_keys:
         with contextlib.suppress(Exception):
             node_id = serialization._canonical_node_id(mapping.get(key))
             if node_id:
                 return node_id
 
+    with contextlib.suppress(Exception):
+        value = mapping.get("id")
+        if _is_nodeish_identifier(value):
+            node_id = serialization._canonical_node_id(value)
+            if node_id:
+                return node_id
+
     user_section = _ensure_mapping(mapping.get("user"))
     if user_section is not None:
-        for key in ("id", "userId", "user_id", "num", "nodeNum", "node_num"):
+        for key in ("userId", "user_id", "num", "nodeNum", "node_num"):
             with contextlib.suppress(Exception):
                 node_id = serialization._canonical_node_id(user_section.get(key))
+                if node_id:
+                    return node_id
+        with contextlib.suppress(Exception):
+            user_id_value = user_section.get("id")
+            if _is_nodeish_identifier(user_id_value):
+                node_id = serialization._canonical_node_id(user_id_value)
                 if node_id:
                     return node_id
 
