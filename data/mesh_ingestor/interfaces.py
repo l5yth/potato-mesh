@@ -49,16 +49,37 @@ def _ensure_mapping(value) -> Mapping | None:
     return None
 
 
+def _is_nodeish_identifier(value: Any) -> bool:
+    """Return ``True`` when ``value`` resembles a Meshtastic node identifier."""
+
+    if isinstance(value, (int, float)):
+        return False
+    if not isinstance(value, str):
+        return False
+
+    trimmed = value.strip()
+    if not trimmed:
+        return False
+    if trimmed.startswith("^"):
+        return True
+    if trimmed.startswith("!"):
+        trimmed = trimmed[1:]
+    elif trimmed.lower().startswith("0x"):
+        trimmed = trimmed[2:]
+    elif not re.search(r"[a-fA-F]", trimmed):
+        # Bare decimal strings should not be treated as node ids when labelled "id".
+        return False
+
+    return bool(re.fullmatch(r"[0-9a-fA-F]{1,8}", trimmed))
+
+
 def _candidate_node_id(mapping: Mapping | None) -> str | None:
     """Extract a canonical node identifier from ``mapping`` when present."""
 
     if mapping is None:
         return None
 
-    primary_keys = (
-        "id",
-        "userId",
-        "user_id",
+    node_keys = (
         "fromId",
         "from_id",
         "from",
@@ -67,19 +88,34 @@ def _candidate_node_id(mapping: Mapping | None) -> str | None:
         "nodeNum",
         "node_num",
         "num",
+        "userId",
+        "user_id",
     )
 
-    for key in primary_keys:
+    for key in node_keys:
         with contextlib.suppress(Exception):
             node_id = serialization._canonical_node_id(mapping.get(key))
             if node_id:
                 return node_id
 
+    with contextlib.suppress(Exception):
+        value = mapping.get("id")
+        if _is_nodeish_identifier(value):
+            node_id = serialization._canonical_node_id(value)
+            if node_id:
+                return node_id
+
     user_section = _ensure_mapping(mapping.get("user"))
     if user_section is not None:
-        for key in ("id", "userId", "user_id", "num", "nodeNum", "node_num"):
+        for key in ("userId", "user_id", "num", "nodeNum", "node_num"):
             with contextlib.suppress(Exception):
                 node_id = serialization._canonical_node_id(user_section.get(key))
+                if node_id:
+                    return node_id
+        with contextlib.suppress(Exception):
+            user_id_value = user_section.get("id")
+            if _is_nodeish_identifier(user_id_value):
+                node_id = serialization._canonical_node_id(user_id_value)
                 if node_id:
                     return node_id
 
@@ -174,17 +210,6 @@ def _normalise_nodeinfo_packet(packet) -> dict | None:
     if node_id and normalised.get("id") != node_id:
         normalised["id"] = node_id
 
-    decoded_section = _ensure_mapping(normalised.get("decoded"))
-    if decoded_section is not None:
-        decoded_dict = dict(decoded_section)
-        user_section = _ensure_mapping(decoded_dict.get("user"))
-        if user_section is not None:
-            user_dict = dict(user_section)
-            if node_id and user_dict.get("id") != node_id:
-                user_dict["id"] = node_id
-            decoded_dict["user"] = user_dict
-        normalised["decoded"] = decoded_dict
-
     return normalised
 
 
@@ -214,18 +239,8 @@ def _patch_meshtastic_nodeinfo_handler() -> None:
         with contextlib.suppress(Exception):
             mesh_interface_module = importlib.import_module("meshtastic.mesh_interface")
 
-    safe_callback = original
     if not getattr(original, "_potato_mesh_safe_wrapper", False):
-        safe_callback = _build_safe_nodeinfo_callback(original)
-        module._onNodeInfoReceive = safe_callback
-    if (
-        mesh_interface_module is not None
-        and getattr(mesh_interface_module, "_onNodeInfoReceive", None) is original
-    ):
-        mesh_interface_module._onNodeInfoReceive = safe_callback
-
-    _patch_protocol_nodeinfo_callback(module, original, safe_callback)
-    _patch_protocol_nodeinfo_callback(mesh_interface_module, original, safe_callback)
+        module._onNodeInfoReceive = _build_safe_nodeinfo_callback(original)
 
     _patch_nodeinfo_handler_class(mesh_interface_module, module)
 
@@ -247,49 +262,6 @@ def _build_safe_nodeinfo_callback(original):
 
     _safe_on_node_info_receive._potato_mesh_safe_wrapper = True  # type: ignore[attr-defined]
     return _safe_on_node_info_receive
-
-
-def _replace_known_protocol_callback(protocol, replacement):
-    """Return ``protocol`` with ``onReceive`` set to ``replacement``."""
-
-    replacer = getattr(protocol, "_replace", None)
-    if callable(replacer):
-        try:
-            return replacer(onReceive=replacement)
-        except Exception:
-            pass
-    protocol_cls = getattr(protocol, "__class__", None)
-    try:
-        return protocol_cls(
-            getattr(protocol, "name", None),
-            getattr(protocol, "protobufFactory", None),
-            replacement,
-        )
-    except Exception:
-        return protocol
-
-
-def _patch_protocol_nodeinfo_callback(module, original, replacement) -> None:
-    """Swap the NodeInfo protocol callback to ``replacement`` when needed."""
-
-    if module is None or replacement is None:
-        return
-
-    protocols = getattr(module, "protocols", None)
-    if not isinstance(protocols, Mapping):
-        return
-
-    portnums = getattr(module, "portnums_pb2", None)
-    portnum_enum = getattr(portnums, "PortNum", None)
-    try:
-        nodeinfo_key = getattr(portnum_enum, "NODEINFO_APP")
-    except Exception:
-        nodeinfo_key = None
-
-    for key, protocol in list(protocols.items()):
-        on_receive = getattr(protocol, "onReceive", None)
-        if key == nodeinfo_key or on_receive is original:
-            protocols[key] = _replace_known_protocol_callback(protocol, replacement)
 
 
 def _update_nodeinfo_handler_aliases(original, replacement) -> None:

@@ -734,7 +734,7 @@ def _nodeinfo_user_dict(node_info, decoded_user):
                     use_integers_for_enums=False,
                 )
             except Exception:
-                user_dict = None
+                user_dict = _node_to_dict(node_info.user)
             if user_dict is None and callable(manual_to_dict):
                 try:
                     user_dict = manual_to_dict()
