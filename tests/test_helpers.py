@@ -189,7 +189,10 @@ def test_region_frequency_and_resolution_helpers():
 
     class EnumType:
         def __init__(self):
-            self.values_by_number = {1: EnumValue("REGION_915")}
+            self.values_by_number = {
+                1: EnumValue("REGION_915"),
+                2: EnumValue("US"),
+            }
 
     class FieldDesc:
         def __init__(self):
@@ -200,12 +203,19 @@ def test_region_frequency_and_resolution_helpers():
             self.fields_by_name = {"region": FieldDesc()}
 
     class LoraMessage:
-        def __init__(self, region):
+        def __init__(self, region, override_frequency=None):
             self.region = region
+            self.override_frequency = override_frequency
             self.DESCRIPTOR = Descriptor()
 
     freq = interfaces._region_frequency(LoraMessage(1))
     assert freq == 915
+
+    freq = interfaces._region_frequency(LoraMessage(1, override_frequency=921.5))
+    assert freq == 921
+
+    freq = interfaces._region_frequency(LoraMessage(2))
+    assert freq == "US"
 
     class LocalConfig:
         def __init__(self, lora):

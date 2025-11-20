@@ -66,8 +66,8 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 """When ``True``, enables the ingestor's energy saving mode."""
 
-LORA_FREQ: int | None = None
-"""Frequency of the local node's configured LoRa region in MHz."""
+LORA_FREQ: float | int | str | None = None
+"""Frequency of the local node's configured LoRa region in MHz or raw region label."""
 
 MODEM_PRESET: str | None = None
 """CamelCase modem preset name reported by the local node."""
