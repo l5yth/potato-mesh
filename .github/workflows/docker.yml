@@ -45,9 +45,9 @@ jobs:
       matrix:
         service: [web, ingestor]
         architecture:
-          - { name: linux-amd64, platform: linux/amd64, label: "Linux x86_64" }
-          - { name: linux-arm64, platform: linux/arm64, label: "Linux ARM64" }
-          - { name: linux-armv7, platform: linux/arm/v7, label: "Linux ARMv7" }
+          - { name: linux-amd64, platform: linux/amd64, label: "Linux x86_64", os: linux, architecture: amd64 }
+          - { name: linux-arm64, platform: linux/arm64, label: "Linux ARM64", os: linux, architecture: arm64 }
+          - { name: linux-armv7, platform: linux/arm/v7, label: "Linux ARMv7", os: linux, architecture: arm }
 
     steps:
     - name: Checkout repository
@@ -126,9 +126,8 @@ jobs:
           org.opencontainers.image.revision=${{ github.sha }}
           org.opencontainers.image.title=PotatoMesh ${{ matrix.service == 'web' && 'Web' || 'Ingestor' }} (${{ matrix.architecture.label }})
           org.opencontainers.image.vendor=PotatoMesh
-          org.opencontainers.image.architecture=${{ matrix.architecture.name }}
-          org.opencontainers.image.os=linux
-          org.opencontainers.image.arch=${{ matrix.architecture.name }}
+          org.opencontainers.image.architecture=${{ matrix.architecture.architecture }}
+          org.opencontainers.image.os=${{ matrix.architecture.os }}
         cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.architecture.name }}
         cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ matrix.architecture.name }}
 
