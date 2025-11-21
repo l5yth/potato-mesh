@@ -1276,6 +1276,22 @@ function registerRoleCandidate(
 }
 
 /**
+ * Clone an existing role index into fresh map instances.
+ *
+ * @param {Object|null|undefined} index Original role index maps.
+ * @returns {{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}}
+ *   Cloned maps with identical entries.
+ */
+function cloneRoleIndex(index) {
+  return {
+    byId: index?.byId instanceof Map ? new Map(index.byId) : new Map(),
+    byNum: index?.byNum instanceof Map ? new Map(index.byNum) : new Map(),
+    detailsById: index?.detailsById instanceof Map ? new Map(index.detailsById) : new Map(),
+    detailsByNum: index?.detailsByNum instanceof Map ? new Map(index.detailsByNum) : new Map(),
+  };
+}
+
+/**
  * Resolve a role from the provided index using identifier or numeric keys.
  *
  * @param {{byId?: Map<string, string>, byNum?: Map<number, string>}|null} index Role lookup maps.
@@ -1431,14 +1447,15 @@ function seedNeighborRoleIndex(index, neighbors) {
 }
 
 /**
- * Fetch missing neighbor role assignments using the nodes API.
+ * Fetch node metadata for the supplied identifiers and merge it into the role index.
  *
- * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
- * @param {Map<string, string>} fetchIdMap Mapping of normalized identifiers to raw fetch identifiers.
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}} index Role index maps.
+ * @param {Map<string, *>} fetchIdMap Mapping of normalized identifiers to raw fetch identifiers.
  * @param {Function} fetchImpl Fetch implementation.
+ * @param {string} [contextLabel='node metadata'] Context string used in warning logs.
  * @returns {Promise<void>} Completion promise.
  */
-async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
+async function fetchNodeDetailsIntoIndex(index, fetchIdMap, fetchImpl, contextLabel = 'node metadata') {
   if (!(fetchIdMap instanceof Map) || fetchIdMap.size === 0) {
     return;
   }
@@ -1447,7 +1464,7 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
     return;
   }
   const tasks = [];
-  for (const [normalized, raw] of fetchIdMap.entries()) {
+  for (const [, raw] of fetchIdMap.entries()) {
     const task = (async () => {
       try {
         const response = await fetchFn(`/api/nodes/${encodeURIComponent(raw)}`, DEFAULT_FETCH_OPTIONS);
@@ -1470,7 +1487,7 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
           longName: payload?.long_name ?? payload?.longName ?? null,
         });
       } catch (error) {
-        console.warn('Failed to resolve neighbor role', error);
+        console.warn(`Failed to resolve ${contextLabel}`, error);
       }
     })();
     tasks.push(task);
@@ -1484,6 +1501,18 @@ async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
     // eslint-disable-next-line no-await-in-loop
     await Promise.all(batch);
   }
+}
+
+/**
+ * Fetch missing neighbor role assignments using the nodes API.
+ *
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>}} index Role index maps.
+ * @param {Map<string, string>} fetchIdMap Mapping of normalized identifiers to raw fetch identifiers.
+ * @param {Function} fetchImpl Fetch implementation.
+ * @returns {Promise<void>} Completion promise.
+ */
+async function fetchMissingNeighborRoles(index, fetchIdMap, fetchImpl) {
+  await fetchNodeDetailsIntoIndex(index, fetchIdMap, fetchImpl, 'neighbor role');
 }
 
 /**
@@ -2042,6 +2071,56 @@ function extractTracePath(trace) {
 }
 
 /**
+ * Build a fetch map for trace nodes missing display metadata.
+ *
+ * @param {Array<Object>} traces Trace payloads to inspect.
+ * @param {{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}} roleIndex Existing role index hydrated with known nodes.
+ * @returns {Map<string, *>} Mapping of normalized identifiers to fetch payloads.
+ */
+function collectTraceNodeFetchMap(traces, roleIndex) {
+  const fetchIdMap = new Map();
+  if (!Array.isArray(traces)) return fetchIdMap;
+
+  for (const trace of traces) {
+    const path = extractTracePath(trace);
+    for (const ref of path) {
+      const identifier = ref?.identifier ?? null;
+      const numericId = ref?.numericId ?? null;
+      registerRoleCandidate(roleIndex, { identifier, numericId });
+      const details = lookupNeighborDetails(roleIndex, { identifier, numericId });
+      const hasNames = Boolean(stringOrNull(details?.shortName) || stringOrNull(details?.longName));
+      if (hasNames) continue;
+      const normalized = normalizeNodeId(identifier);
+      const numericKey = numberOrNull(numericId);
+      const mapKey = normalized ?? (numericKey != null ? `#${numericKey}` : null);
+      const fetchKey = identifier ?? numericKey;
+      if (mapKey && fetchKey != null && !fetchIdMap.has(mapKey)) {
+        fetchIdMap.set(mapKey, fetchKey);
+      }
+    }
+  }
+
+  return fetchIdMap;
+}
+
+/**
+ * Build a role index enriched with node metadata for trace hops.
+ *
+ * @param {Array<Object>} traces Trace payloads.
+ * @param {{byId?: Map<string, string>, byNum?: Map<number, string>, detailsById?: Map<string, Object>, detailsByNum?: Map<number, Object>}} [baseIndex]
+ *   Optional base role index to clone.
+ * @param {{ fetchImpl?: Function }} [options] Fetch overrides.
+ * @returns {Promise<{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}>}
+ *   Hydrated role index containing hop metadata.
+ */
+async function buildTraceRoleIndex(traces, baseIndex = null, { fetchImpl } = {}) {
+  const roleIndex = cloneRoleIndex(baseIndex);
+  const fetchIdMap = collectTraceNodeFetchMap(traces, roleIndex);
+  await fetchNodeDetailsIntoIndex(roleIndex, fetchIdMap, fetchImpl, 'trace node metadata');
+  return roleIndex;
+}
+
+/**
  * Render a trace path using short-name badges.
  *
  * @param {Array<{identifier: (string|null), numericId: (number|null)}>} path Ordered path references.
@@ -2138,7 +2217,7 @@ function renderNodeDetailHtml(node, {
   messages = [],
   traces = [],
   renderShortHtml,
-  neighborRoleIndex = null,
+  roleIndex = null,
   chartNowMs = Date.now(),
 } = {}) {
   const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
@@ -2153,8 +2232,8 @@ function renderNodeDetailHtml(node, {
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
-  const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex: neighborRoleIndex });
-  const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex: neighborRoleIndex, node });
+  const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
+  const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
 
   const sections = [];
@@ -2329,12 +2408,13 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     }),
     fetchTracesForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
   ]);
+  const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
   return renderNodeDetailHtml(node, {
     neighbors: node.neighbors,
     messages,
     traces,
     renderShortHtml,
-    neighborRoleIndex,
+    roleIndex,
   });
 }
 
@@ -2406,11 +2486,14 @@ export const __testUtils = {
   formatSnr,
   padTwo,
   normalizeNodeId,
+  cloneRoleIndex,
   registerRoleCandidate,
   lookupRole,
   lookupNeighborDetails,
   seedNeighborRoleIndex,
   buildNeighborRoleIndex,
+  collectTraceNodeFetchMap,
+  buildTraceRoleIndex,
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
