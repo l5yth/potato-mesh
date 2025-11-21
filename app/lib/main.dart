@@ -91,7 +91,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('#BerlinMesh'),
+        title: const Text('Meshtastic Reader'),
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -170,8 +170,8 @@ class ChatLine extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: RichText(
-        text: TextSpan(
+      child: Text.rich(
+        TextSpan(
           style: DefaultTextStyle.of(context).style,
           children: [
             TextSpan(
