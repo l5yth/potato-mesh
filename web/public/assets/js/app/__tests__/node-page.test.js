@@ -35,11 +35,14 @@ const {
   formatSnr,
   padTwo,
   normalizeNodeId,
+  cloneRoleIndex,
   registerRoleCandidate,
   lookupRole,
   lookupNeighborDetails,
   seedNeighborRoleIndex,
   buildNeighborRoleIndex,
+  collectTraceNodeFetchMap,
+  buildTraceRoleIndex,
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
@@ -228,6 +231,49 @@ test('buildNeighborRoleIndex fetches missing neighbor metadata from the API', as
   assert.equal(calls.some(url => url.startsWith('/api/nodes/')), true);
   const allyMetadata = lookupNeighborDetails(index, { identifier: '!ally', numericId: 99 });
   assert.equal(allyMetadata.shortName, 'ALLY-API');
+});
+
+test('buildTraceRoleIndex hydrates hop metadata using node lookups', async () => {
+  const traces = [{ src: '!src', hops: [42], dest: '!dest' }];
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    if (url.includes('0000002a')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { node_id: '!hop', node_num: 42, short_name: 'HOPR', long_name: 'Hop Route', role: 'ROUTER' };
+        },
+      };
+    }
+    if (url.includes('/api/nodes/!dest')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { node_id: '!dest', short_name: 'DESTN', long_name: 'Destination', role: 'CLIENT' };
+        },
+      };
+    }
+    return { ok: false, status: 404, async json() { return {}; } };
+  };
+  const baseIndex = cloneRoleIndex({
+    byId: new Map([['!src', 'CLIENT']]),
+    byNum: new Map(),
+    detailsById: new Map([['!src', { shortName: 'SRC1', role: 'CLIENT' }]]),
+    detailsByNum: new Map(),
+  });
+  const fetchMap = collectTraceNodeFetchMap(traces, baseIndex);
+  assert.equal(fetchMap.size, 2);
+  const roleIndex = await buildTraceRoleIndex(traces, baseIndex, { fetchImpl });
+  const hopDetails = lookupNeighborDetails(roleIndex, { numericId: 42 });
+  const destDetails = lookupNeighborDetails(roleIndex, { identifier: '!dest' });
+  assert.equal(hopDetails.shortName, 'HOPR');
+  assert.equal(hopDetails.longName, 'Hop Route');
+  assert.equal(destDetails.shortName, 'DESTN');
+  assert.equal(destDetails.longName, 'Destination');
+  assert.equal(calls.some(url => url.includes('%21src')), false);
 });
 
 test('renderSingleNodeTable renders a condensed table for the node', () => {
@@ -446,6 +492,53 @@ test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
   assert.equal(html.includes('Overlay hello'), true);
   assert.equal(html.includes('Traceroutes'), true);
   assert.equal(html.includes('node-detail__table'), true);
+});
+
+test('fetchNodeDetailHtml hydrates traceroute nodes with API metadata', async () => {
+  const reference = { nodeId: '!origin' };
+  const calledUrls = [];
+  const fetchImpl = async url => {
+    calledUrls.push(url);
+    if (url.startsWith('/api/messages/')) {
+      return { ok: true, status: 200, async json() { return []; } };
+    }
+    if (url.startsWith('/api/traces/')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return [{ src: '!origin', hops: ['!relay'], dest: '!target' }];
+        },
+      };
+    }
+    if (url.includes('/api/nodes/!relay')) {
+      return { ok: true, status: 200, async json() { return { node_id: '!relay', short_name: 'RLY1', role: 'REPEATER' }; } };
+    }
+    if (url.includes('/api/nodes/!target')) {
+      return { ok: true, status: 200, async json() { return { node_id: '!target', short_name: 'TGT1', long_name: 'Trace Target', role: 'CLIENT' }; } };
+    }
+    return { ok: true, status: 200, async json() { return { node_id: '!origin', short_name: 'ORIG', role: 'CLIENT' }; } };
+  };
+  const refreshImpl = async () => ({
+    nodeId: '!origin',
+    nodeNum: 7,
+    shortName: 'ORIG',
+    longName: 'Origin Node',
+    role: 'CLIENT',
+    neighbors: [],
+    rawSources: { node: { node_id: '!origin', role: 'CLIENT', short_name: 'ORIG' } },
+  });
+
+  const html = await fetchNodeDetailHtml(reference, {
+    refreshImpl,
+    fetchImpl,
+    renderShortHtml: short => `<span class="short-name">${short}</span>`,
+  });
+
+  assert.equal(calledUrls.some(url => url.includes('/api/nodes/!relay')), true);
+  assert.equal(calledUrls.some(url => url.includes('/api/nodes/!target')), true);
+  assert.equal(html.includes('RLY1'), true);
+  assert.equal(html.includes('TGT1'), true);
 });
 
 test('fetchNodeDetailHtml requires a node identifier reference', async () => {
