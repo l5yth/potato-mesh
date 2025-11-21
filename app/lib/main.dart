@@ -170,36 +170,45 @@ class ChatLine extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: Text.rich(
-        TextSpan(
-          style: DefaultTextStyle.of(context).style,
-          children: [
-            TextSpan(
-              text: '$timeStr ',
-              style: const TextStyle(
-                color: Colors.grey,
-                fontWeight: FontWeight.w500,
-              ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            timeStr,
+            style: const TextStyle(
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
             ),
-            TextSpan(
-              text: '$nick ',
-              style: TextStyle(
-                color: _nickColor(message.fromShort),
-                fontWeight: FontWeight.w600,
-              ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            nick,
+            style: TextStyle(
+              color: _nickColor(message.fromShort),
+              fontWeight: FontWeight.w600,
             ),
-            TextSpan(
-              text: message.text.isEmpty ? '⟂ (no text)' : message.text,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message.text.isEmpty ? '⟂ (no text)' : message.text,
+                  style: DefaultTextStyle.of(context).style,
+                ),
+                if (message.channelName != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '#${message.channelName}',
+                      style: const TextStyle(color: Colors.tealAccent),
+                    ),
+                  ),
+              ],
             ),
-            if (message.channelName != null) ...[
-              const TextSpan(text: '  '),
-              TextSpan(
-                text: '#${message.channelName}',
-                style: const TextStyle(color: Colors.tealAccent),
-              ),
-            ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
