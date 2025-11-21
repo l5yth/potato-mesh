@@ -82,6 +82,29 @@ jobs:
         echo "raw_version=$RAW_VERSION" >> $GITHUB_OUTPUT
         echo "Published version: $STRIPPED_VERSION"
 
+    - name: Determine tagging strategy
+      id: tagging
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PUBLISH_ALL_VARIANTS: ${{ github.event.inputs.publish_all_variants || 'false' }}
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+
+        if echo "$VERSION" | grep -E -- '-(rc|beta|alpha|dev)'; then
+          IS_PRERELEASE=true
+        else
+          IS_PRERELEASE=false
+        fi
+
+        if [ "$IS_PRERELEASE" = "false" ] && { [ "$EVENT_NAME" = "push" ] || [ "$PUBLISH_ALL_VARIANTS" = "true" ]; }; then
+          INCLUDE_LATEST=true
+        else
+          INCLUDE_LATEST=false
+        fi
+
+        echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+        echo "include_latest=$INCLUDE_LATEST" >> $GITHUB_OUTPUT
+
     - name: Build and push ${{ matrix.service }} for ${{ matrix.architecture.name }}
       uses: docker/build-push-action@v5
       with:
@@ -91,9 +114,9 @@ jobs:
         platforms: ${{ matrix.architecture.platform }}
         push: true
         tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}-${{ matrix.architecture.name }}:latest
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}-${{ matrix.architecture.name }}:${{ steps.version.outputs.version }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}-${{ matrix.architecture.name }}:${{ steps.version.outputs.version_with_v }}
+          ${{ steps.tagging.outputs.include_latest == 'true' && format('{0}/{1}-{2}-{3}:latest', env.REGISTRY, env.IMAGE_PREFIX, matrix.service, matrix.architecture.name) || '' }}
         labels: |
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
           org.opencontainers.image.description=PotatoMesh ${{ matrix.service == 'web' && 'Web Application' || 'Python Ingestor' }} for ${{ matrix.architecture.label }}
@@ -135,6 +158,19 @@ jobs:
         STRIPPED_VERSION=${RAW_VERSION#v}
         echo "version=$STRIPPED_VERSION" >> $GITHUB_OUTPUT
         echo "version_with_v=v$STRIPPED_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Detect pre-release tag
+      id: tagging
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+
+        if echo "$VERSION" | grep -E -- '-(rc|beta|alpha|dev)'; then
+          INCLUDE_LATEST=false
+        else
+          INCLUDE_LATEST=true
+        fi
+
+        echo "include_latest=$INCLUDE_LATEST" >> $GITHUB_OUTPUT
 
     - name: Test web application (Linux AMD64)
       run: |
@@ -184,15 +220,19 @@ jobs:
         
         # Web images
         echo "### 🌐 Web Application" >> $GITHUB_STEP_SUMMARY
-        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
-        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
-        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
 
         # Ingestor images
         echo "### 📡 Ingestor Service" >> $GITHUB_STEP_SUMMARY
-        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
-        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
-        echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
         
