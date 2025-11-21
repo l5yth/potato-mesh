@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { initializeNodeDetailPage, fetchNodeDetailHtml, __testUtils } from '../node-page.js';
+import { getRoleColor, getRoleKey, translateRoleId } from '../role-helpers.js';
 
 const {
   stringOrNull,
@@ -94,6 +95,14 @@ test('role lookup helpers normalise identifiers and register candidates', () => 
   assert.equal(lookupRole(index, { identifier: '!missing' }), null);
   const metadata = lookupNeighborDetails(index, { identifier: '!node', numericId: 77 });
   assert.deepEqual(metadata, { role: 'ROUTER', shortName: 'NODE', longName: 'Node Long' });
+});
+
+test('numeric role identifiers resolve to canonical labels and colours', () => {
+  assert.equal(translateRoleId(12), 'CLIENT_BASE');
+  assert.equal(getRoleKey(12), 'CLIENT_BASE');
+  assert.equal(getRoleKey('2'), 'ROUTER');
+  assert.equal(getRoleColor(2), getRoleColor('ROUTER'));
+  assert.equal(getRoleColor(11), getRoleColor('ROUTER_LATE'));
 });
 
 test('seedNeighborRoleIndex captures known roles and missing identifiers', () => {
