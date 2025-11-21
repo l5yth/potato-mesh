@@ -80,11 +80,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   /// Reloads the message feed and waits for completion for pull-to-refresh.
+  ///
+  /// Errors are intentionally swallowed so the [FutureBuilder] can surface them
+  /// via its `snapshot.error` state without bubbling an exception to the
+  /// gesture handler.
   Future<void> _refresh() async {
     setState(() {
       _future = widget.fetcher();
     });
-    await _future;
+    try {
+      await _future;
+    } catch (_) {
+      // Let the FutureBuilder display error UI without breaking the gesture.
+    }
   }
 
   @override
