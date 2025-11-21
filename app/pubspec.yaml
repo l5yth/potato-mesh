@@ -1,4 +1,4 @@
-name: potato-mesh-reader
+name: potato_mesh_reader
 description: Meshtastic Reader — read-only view for PotatoMesh messages.
 publish_to: "none"
 version: 0.5.6

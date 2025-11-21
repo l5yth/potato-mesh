@@ -335,8 +335,13 @@ Future<List<MeshMessage>> fetchMessages() async {
 /// Returns a new list sorted by receive time so older messages render first.
 List<MeshMessage> sortMessagesByRxTime(List<MeshMessage> messages) {
   messages.sort((a, b) {
-    final at = a.rxTime ?? DateTime.fromMillisecondsSinceEpoch(0);
-    final bt = b.rxTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+    final at = a.rxTime;
+    final bt = b.rxTime;
+
+    if (at == null && bt == null) return 0;
+    if (at == null) return 1;
+    if (bt == null) return -1;
+
     return at.compareTo(bt);
   });
 
