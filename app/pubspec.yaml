@@ -1,0 +1,39 @@
+name: potato-mesh-reader
+description: Meshtastic Reader — read-only view for PotatoMesh messages.
+publish_to: "none"
+version: 0.5.6
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.2
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icon.png
+  remove_alpha_ios: true
+  adaptive_icon_background: "#111417"
+  adaptive_icon_foreground: assets/icon.png
+
+flutter_native_splash:
+  color: "#111417"
+  image: assets/icon.png
+  android_12:
+    color: "#111417"
+    image: assets/icon.png
