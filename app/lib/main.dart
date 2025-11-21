@@ -23,7 +23,13 @@ void main() {
 
 /// Meshtastic Reader root widget that configures theming and the home screen.
 class PotatoMeshReaderApp extends StatelessWidget {
-  const PotatoMeshReaderApp({super.key});
+  const PotatoMeshReaderApp({
+    super.key,
+    this.fetcher = fetchMessages,
+  });
+
+  /// Fetch function injected to simplify testing and offline previews.
+  final Future<List<MeshMessage>> Function() fetcher;
 
   @override
   Widget build(BuildContext context) {
@@ -45,14 +51,20 @@ class PotatoMeshReaderApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const MessagesScreen(),
+      home: MessagesScreen(fetcher: fetcher),
     );
   }
 }
 
 /// Displays the fetched mesh messages and supports pull-to-refresh.
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key});
+  const MessagesScreen({
+    super.key,
+    this.fetcher = fetchMessages,
+  });
+
+  /// Fetch function used to load messages from the PotatoMesh API.
+  final Future<List<MeshMessage>> Function() fetcher;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -64,13 +76,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
   @override
   void initState() {
     super.initState();
-    _future = fetchMessages();
+    _future = widget.fetcher();
   }
 
   /// Reloads the message feed and waits for completion for pull-to-refresh.
   Future<void> _refresh() async {
     setState(() {
-      _future = fetchMessages();
+      _future = widget.fetcher();
     });
     await _future;
   }
@@ -308,13 +320,22 @@ class MeshMessage {
 }
 
 /// Fetches the latest PotatoMesh messages and returns them sorted by receive time.
-Future<List<MeshMessage>> fetchMessages() async {
+///
+/// A custom [client] can be supplied for testing; otherwise a short-lived
+/// [http.Client] is created and closed after the request completes.
+Future<List<MeshMessage>> fetchMessages({http.Client? client}) async {
   final uri = Uri.https('potatomesh.net', '/api/messages', {
     'limit': '100',
     'encrypted': 'false',
   });
 
-  final resp = await http.get(uri);
+  final httpClient = client ?? http.Client();
+  final shouldClose = client == null;
+
+  final resp = await httpClient.get(uri);
+  if (shouldClose) {
+    httpClient.close();
+  }
   if (resp.statusCode != 200) {
     throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
   }
