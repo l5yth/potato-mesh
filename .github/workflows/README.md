@@ -7,6 +7,7 @@
 - **`python.yml`** - Python ingestor pipeline
 - **`ruby.yml`** - Ruby Sinatra app testing
 - **`javascript.yml`** - Frontend test suite
+- **`mobile.yml`** - Flutter mobile tests with coverage reporting
 
 ## Usage
 

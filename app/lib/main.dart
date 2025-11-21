@@ -333,17 +333,22 @@ Future<List<MeshMessage>> fetchMessages() async {
 }
 
 /// Returns a new list sorted by receive time so older messages render first.
+///
+/// Messages that lack a receive time keep their original positions to avoid
+/// shuffling "unknown" entries to the start or end of the feed. Only messages
+/// with a concrete [rxTime] are re-ordered chronologically.
 List<MeshMessage> sortMessagesByRxTime(List<MeshMessage> messages) {
-  messages.sort((a, b) {
-    final at = a.rxTime;
-    final bt = b.rxTime;
+  final knownTimes = messages.where((m) => m.rxTime != null).toList()
+    ..sort((a, b) => a.rxTime!.compareTo(b.rxTime!));
 
-    if (at == null && bt == null) return 0;
-    if (at == null) return 1;
-    if (bt == null) return -1;
+  var knownIndex = 0;
+  return messages.map((message) {
+    if (message.rxTime == null) {
+      return message;
+    }
 
-    return at.compareTo(bt);
-  });
-
-  return messages;
+    final sortedMessage = knownTimes[knownIndex];
+    knownIndex += 1;
+    return sortedMessage;
+  }).toList();
 }
