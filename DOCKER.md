@@ -13,15 +13,25 @@ will pull the latest release images for you.
 
 ## Images on GHCR
 
-| Service  | Image                                                                                                         |
-|----------|---------------------------------------------------------------------------------------------------------------|
-| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                           |
-| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                      |
+| Service  | Image                                                                                                         | Architecture |
+|----------|---------------------------------------------------------------------------------------------------------------|--------------|
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                           | Linux x86_64 |
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-arm64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                           | Linux ARM64  |
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-armv7:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                           | Linux ARMv7  |
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-armv6:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                           | Linux ARMv6  |
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-riscv64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                         | Linux RISC-V |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                      | Linux x86_64 |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                      | Linux ARM64  |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                      | Linux ARMv7  |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-armv6:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                      | Linux ARMv6  |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-riscv64:<tag>` (e.g. `latest`, `3.0`, or `v3.0`)                    | Linux RISC-V |
 
 Images are published for every tagged release. Each build receives both semantic
 version tags (for example `3.0`) and a matching `v`-prefixed tag (for example
 `v3.0`). `latest` always points to the newest release, so pin one of the version
-tags when you need a specific build.
+tags when you need a specific build. Set `POTATOMESH_IMAGE_ARCH` in your Compose
+environment to switch between the published architectures (for example,
+`linux-armv6` for ARMv6 or `linux-riscv64` for RISC-V).
 
 ## Configure environment
 
