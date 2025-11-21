@@ -318,8 +318,8 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('Channel utilization (%)'), true);
   assert.equal(html.includes('Air util TX (%)'), true);
   assert.equal(html.includes('Utilization (%)'), true);
-  assert.equal(html.includes('Gas resistance (10-100k Ω)'), true);
-  assert.equal(html.includes('Temperature (-20-40°C)'), true);
+  assert.equal(html.includes('Gas resistance (\u03a9)'), true);
+  assert.equal(html.includes('Temperature (\u00b0C)'), true);
   assert.equal(html.includes(expectedDate), true);
   assert.equal(html.includes('node-detail__chart-point'), true);
 });
