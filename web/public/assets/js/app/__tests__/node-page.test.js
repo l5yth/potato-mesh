@@ -276,6 +276,25 @@ test('buildTraceRoleIndex hydrates hop metadata using node lookups', async () =>
   assert.equal(calls.some(url => url.includes('%21src')), false);
 });
 
+test('cloneRoleIndex builds isolated maps and collectTraceNodeFetchMap handles numeric placeholders', () => {
+  const baseIndex = {
+    byId: new Map([['!known', 'CLIENT']]),
+    byNum: new Map([[7, 'ROUTER']]),
+    detailsById: new Map([['!known', { shortName: 'KNWN' }]]),
+    detailsByNum: new Map([[7, { shortName: 'SEVN' }]]),
+  };
+  const clone = cloneRoleIndex(baseIndex);
+  assert.notStrictEqual(clone.byId, baseIndex.byId);
+  assert.notStrictEqual(clone.byNum, baseIndex.byNum);
+  assert.notStrictEqual(clone.detailsById, baseIndex.detailsById);
+  assert.notStrictEqual(clone.detailsByNum, baseIndex.detailsByNum);
+
+  const fetchMap = collectTraceNodeFetchMap([{ src: 7, hops: [88], dest: null }], clone);
+  assert.equal(fetchMap.has('!00000058'), true);
+  assert.equal(fetchMap.get('!00000058'), '!00000058');
+  assert.equal(fetchMap.has('!known'), false);
+});
+
 test('renderSingleNodeTable renders a condensed table for the node', () => {
   const node = {
     shortName: 'NODE',
