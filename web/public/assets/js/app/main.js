@@ -57,6 +57,14 @@ import {
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
 import { buildTraceSegments } from './trace-paths.js';
+import {
+  getRoleColor,
+  getRoleKey,
+  getRoleRenderPriority,
+  normalizeRole,
+  roleColors,
+  roleRenderOrder,
+} from './role-helpers.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -770,33 +778,6 @@ export function initializeApp(config) {
 
   syncInfoOverlayHost();
 
-  // Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
-  const roleColors = Object.freeze({
-    CLIENT_HIDDEN: '#A9CBE8',
-    SENSOR: '#A8D5BA',
-    TRACKER: '#B9DFAC',
-    CLIENT_MUTE: '#CDE7A9',
-    CLIENT: '#E8E6A1',
-    CLIENT_BASE: '#F6D0A6',
-    REPEATER: '#F7B7A3',
-    ROUTER_LATE: '#F29AA3',
-    ROUTER: '#E88B94',
-    LOST_AND_FOUND: '#C3A8E8'
-  });
-
-  const roleRenderOrder = Object.freeze({
-    CLIENT_HIDDEN: 1,
-    SENSOR: 2,
-    TRACKER: 3,
-    CLIENT_MUTE: 4,
-    CLIENT: 5,
-    CLIENT_BASE: 6,
-    REPEATER: 7,
-    ROUTER_LATE: 8,
-    ROUTER: 9,
-    LOST_AND_FOUND: 10
-  });
-
   const activeRoleFilters = new Set();
   const legendRoleButtons = new Map();
 
@@ -862,54 +843,6 @@ export function initializeApp(config) {
     mapContainer.appendChild(placeholder);
   }
 
-  /**
-   * Normalise role strings so lookups remain consistent.
-   *
-   * @param {*} role Raw role value from the API.
-   * @returns {string} Uppercase role identifier with a fallback of ``CLIENT``.
-   */
-  function normalizeRole(role) {
-    if (role == null) return 'CLIENT';
-    const str = String(role).trim();
-    return str.length ? str : 'CLIENT';
-  }
-
-  /**
-   * Resolve the canonical role key used for colour lookup tables.
-   *
-   * @param {*} role Raw role value from the API.
-   * @returns {string} Canonical role identifier.
-   */
-  function getRoleKey(role) {
-    const normalized = normalizeRole(role);
-    if (roleColors[normalized]) return normalized;
-    const upper = normalized.toUpperCase();
-    if (roleColors[upper]) return upper;
-    return normalized;
-  }
-
-  /**
-   * Determine the colour assigned to a role for legend badges.
-   *
-   * @param {*} role Raw role value.
-   * @returns {string} CSS colour string.
-   */
-  function getRoleColor(role) {
-    const key = getRoleKey(role);
-    return roleColors[key] || roleColors.CLIENT || '#3388ff';
-  }
-
-  /**
-   * Determine the render priority that decides marker stacking order.
-   *
-   * @param {*} role Raw role value.
-   * @returns {number} Higher numbers render above lower ones.
-   */
-  function getRoleRenderPriority(role) {
-    const key = getRoleKey(role);
-    const priority = roleRenderOrder[key];
-    return typeof priority === 'number' ? priority : 0;
-  }
 
   // --- Map setup ---
   const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
