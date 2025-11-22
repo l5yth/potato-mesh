@@ -134,8 +134,24 @@ void main() {
         calls.add(request.url);
         return http.Response(
           jsonEncode([
-            {'id': 2, 'rx_iso': '2024-01-02T00:01:00Z', 'from_id': '!b', 'to_id': '^', 'channel': 1, 'portnum': 'TEXT', 'text': 'Later'},
-            {'id': 1, 'rx_iso': '2024-01-01T23:59:00Z', 'from_id': '!a', 'to_id': '^', 'channel': 1, 'portnum': 'TEXT', 'text': 'Earlier'},
+            {
+              'id': 2,
+              'rx_iso': '2024-01-02T00:01:00Z',
+              'from_id': '!b',
+              'to_id': '^',
+              'channel': 1,
+              'portnum': 'TEXT',
+              'text': 'Later'
+            },
+            {
+              'id': 1,
+              'rx_iso': '2024-01-01T23:59:00Z',
+              'from_id': '!a',
+              'to_id': '^',
+              'channel': 1,
+              'portnum': 'TEXT',
+              'text': 'Earlier'
+            },
           ]),
           200,
         );
@@ -159,7 +175,8 @@ void main() {
     });
 
     test('throws on unexpected response shapes', () async {
-      final client = MockClient((request) async => http.Response('{"id":1}', 200));
+      final client =
+          MockClient((request) async => http.Response('{"id":1}', 200));
 
       expect(
         () => fetchMessages(client: client),

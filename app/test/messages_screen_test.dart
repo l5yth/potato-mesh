@@ -20,7 +20,8 @@ import 'package:potato_mesh_reader/main.dart';
 
 /// Widget-level tests that exercise UI states and rendering branches.
 void main() {
-  testWidgets('PotatoMeshReaderApp wires theming and home screen', (tester) async {
+  testWidgets('PotatoMeshReaderApp wires theming and home screen',
+      (tester) async {
     final fetchCalls = <int>[];
     Future<List<MeshMessage>> fakeFetch() async {
       fetchCalls.add(1);
@@ -50,7 +51,8 @@ void main() {
     expect(fetchCalls.length, 1);
   });
 
-  testWidgets('MessagesScreen shows loading, data, refresh, and empty states', (tester) async {
+  testWidgets('MessagesScreen shows loading, data, refresh, and empty states',
+      (tester) async {
     var fetchCount = 0;
     final completer = Completer<List<MeshMessage>>();
     Future<List<MeshMessage>> fetcher() {
@@ -79,7 +81,8 @@ void main() {
       return Future.error(StateError('no new data'));
     }
 
-    await tester.pumpWidget(MaterialApp(home: MessagesScreen(fetcher: fetcher)));
+    await tester
+        .pumpWidget(MaterialApp(home: MessagesScreen(fetcher: fetcher)));
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
