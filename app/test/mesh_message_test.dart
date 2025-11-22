@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:potato_mesh_reader/main.dart';
 
 /// Unit tests for [MeshMessage] parsing and the sorting helper.
@@ -42,6 +46,31 @@ void main() {
       expect(msg.rssi, -90);
       expect(msg.snr, closeTo(5.25, 0.0001));
       expect(msg.hopLimit, 3);
+    });
+
+    test('handles invalid timestamps and non-numeric fields', () {
+      final msg = MeshMessage.fromJson({
+        'id': null,
+        'rx_iso': 'not-a-date',
+        'from_id': '',
+        'to_id': '',
+        'channel': 'abc',
+        'portnum': 'TEXT',
+        'text': '',
+        'rssi': 'missing',
+        'snr': 'noise',
+        'hop_limit': null,
+      });
+
+      expect(msg.id, 0);
+      expect(msg.rxTime, isNull);
+      expect(msg.timeFormatted, '--:--');
+      expect(msg.fromShort, '?');
+      expect(msg.channel, isNull);
+      expect(msg.rssi, isNull);
+      expect(msg.snr, isNull);
+      expect(msg.hopLimit, isNull);
+      expect(msg.text, '');
     });
   });
 
@@ -95,6 +124,47 @@ void main() {
       expect(sorted.first.id, older.id);
       expect(sorted.last.id, newer.id);
       expect(sorted[1].id, unknownTime.id);
+    });
+  });
+
+  group('fetchMessages', () {
+    test('parses, sorts, and returns API messages', () async {
+      final calls = <Uri>[];
+      final client = MockClient((request) async {
+        calls.add(request.url);
+        return http.Response(
+          jsonEncode([
+            {'id': 2, 'rx_iso': '2024-01-02T00:01:00Z', 'from_id': '!b', 'to_id': '^', 'channel': 1, 'portnum': 'TEXT', 'text': 'Later'},
+            {'id': 1, 'rx_iso': '2024-01-01T23:59:00Z', 'from_id': '!a', 'to_id': '^', 'channel': 1, 'portnum': 'TEXT', 'text': 'Earlier'},
+          ]),
+          200,
+        );
+      });
+
+      final messages = await fetchMessages(client: client);
+
+      expect(calls.single.queryParameters['limit'], '100');
+      expect(messages.first.id, 1);
+      expect(messages.last.id, 2);
+      expect(messages.first.fromShort, 'a');
+    });
+
+    test('throws on non-200 responses', () async {
+      final client = MockClient((request) async => http.Response('nope', 500));
+
+      expect(
+        () => fetchMessages(client: client),
+        throwsA(isA<Exception>()),
+      );
+    });
+
+    test('throws on unexpected response shapes', () async {
+      final client = MockClient((request) async => http.Response('{"id":1}', 200));
+
+      expect(
+        () => fetchMessages(client: client),
+        throwsA(isA<Exception>()),
+      );
     });
   });
 }
