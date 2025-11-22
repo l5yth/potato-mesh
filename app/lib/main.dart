@@ -79,6 +79,18 @@ class _MessagesScreenState extends State<MessagesScreen> {
     _future = widget.fetcher();
   }
 
+  /// When the fetcher changes, reload the future so the widget reflects the
+  /// new data source on rebuilds.
+  @override
+  void didUpdateWidget(covariant MessagesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fetcher != widget.fetcher) {
+      setState(() {
+        _future = widget.fetcher();
+      });
+    }
+  }
+
   /// Reloads the message feed and waits for completion for pull-to-refresh.
   ///
   /// Errors are intentionally swallowed so the [FutureBuilder] can surface them
