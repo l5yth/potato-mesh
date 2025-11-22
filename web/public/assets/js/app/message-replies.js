@@ -290,14 +290,16 @@ function isReactionMessage(message) {
     return false;
   }
   const portnum = toTrimmedString(message.portnum ?? message.portNum);
-  if (portnum && portnum.toUpperCase() === 'REACTION_APP') {
+  const reactionPort = portnum && portnum.toUpperCase() === 'REACTION_APP';
+  if (reactionPort) {
     return true;
   }
   const hasEmoji = !!normaliseEmojiValue(message.emoji);
   if (!hasEmoji) {
     return false;
   }
-  return message.reply_id != null || message.replyId != null || !!portnum;
+  const hasReplyId = message.reply_id != null || message.replyId != null;
+  return hasReplyId || !!portnum;
 }
 
 /**
