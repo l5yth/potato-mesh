@@ -23,7 +23,13 @@ void main() {
 
 /// Meshtastic Reader root widget that configures theming and the home screen.
 class PotatoMeshReaderApp extends StatelessWidget {
-  const PotatoMeshReaderApp({super.key});
+  const PotatoMeshReaderApp({
+    super.key,
+    this.fetcher = fetchMessages,
+  });
+
+  /// Fetch function injected to simplify testing and offline previews.
+  final Future<List<MeshMessage>> Function() fetcher;
 
   @override
   Widget build(BuildContext context) {
@@ -45,14 +51,20 @@ class PotatoMeshReaderApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const MessagesScreen(),
+      home: MessagesScreen(fetcher: fetcher),
     );
   }
 }
 
 /// Displays the fetched mesh messages and supports pull-to-refresh.
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key});
+  const MessagesScreen({
+    super.key,
+    this.fetcher = fetchMessages,
+  });
+
+  /// Fetch function used to load messages from the PotatoMesh API.
+  final Future<List<MeshMessage>> Function() fetcher;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -64,22 +76,42 @@ class _MessagesScreenState extends State<MessagesScreen> {
   @override
   void initState() {
     super.initState();
-    _future = fetchMessages();
+    _future = widget.fetcher();
+  }
+
+  /// When the fetcher changes, reload the future so the widget reflects the
+  /// new data source on rebuilds.
+  @override
+  void didUpdateWidget(covariant MessagesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fetcher != widget.fetcher) {
+      setState(() {
+        _future = widget.fetcher();
+      });
+    }
   }
 
   /// Reloads the message feed and waits for completion for pull-to-refresh.
+  ///
+  /// Errors are intentionally swallowed so the [FutureBuilder] can surface them
+  /// via its `snapshot.error` state without bubbling an exception to the
+  /// gesture handler.
   Future<void> _refresh() async {
     setState(() {
-      _future = fetchMessages();
+      _future = widget.fetcher();
     });
-    await _future;
+    try {
+      await _future;
+    } catch (_) {
+      // Let the FutureBuilder display error UI without breaking the gesture.
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('#BerlinMesh'),
+        title: const Text('Meshtastic Reader'),
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -158,36 +190,45 @@ class ChatLine extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: RichText(
-        text: TextSpan(
-          style: DefaultTextStyle.of(context).style,
-          children: [
-            TextSpan(
-              text: '$timeStr ',
-              style: const TextStyle(
-                color: Colors.grey,
-                fontWeight: FontWeight.w500,
-              ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            timeStr,
+            style: const TextStyle(
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
             ),
-            TextSpan(
-              text: '$nick ',
-              style: TextStyle(
-                color: _nickColor(message.fromShort),
-                fontWeight: FontWeight.w600,
-              ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            nick,
+            style: TextStyle(
+              color: _nickColor(message.fromShort),
+              fontWeight: FontWeight.w600,
             ),
-            TextSpan(
-              text: message.text.isEmpty ? '⟂ (no text)' : message.text,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  message.text.isEmpty ? '⟂ (no text)' : message.text,
+                  style: DefaultTextStyle.of(context).style,
+                ),
+                if (message.channelName != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '#${message.channelName}',
+                      style: const TextStyle(color: Colors.tealAccent),
+                    ),
+                  ),
+              ],
             ),
-            if (message.channelName != null) ...[
-              const TextSpan(text: '  '),
-              TextSpan(
-                text: '#${message.channelName}',
-                style: const TextStyle(color: Colors.tealAccent),
-              ),
-            ],
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -308,13 +349,22 @@ class MeshMessage {
 }
 
 /// Fetches the latest PotatoMesh messages and returns them sorted by receive time.
-Future<List<MeshMessage>> fetchMessages() async {
+///
+/// A custom [client] can be supplied for testing; otherwise a short-lived
+/// [http.Client] is created and closed after the request completes.
+Future<List<MeshMessage>> fetchMessages({http.Client? client}) async {
   final uri = Uri.https('potatomesh.net', '/api/messages', {
     'limit': '100',
     'encrypted': 'false',
   });
 
-  final resp = await http.get(uri);
+  final httpClient = client ?? http.Client();
+  final shouldClose = client == null;
+
+  final resp = await httpClient.get(uri);
+  if (shouldClose) {
+    httpClient.close();
+  }
   if (resp.statusCode != 200) {
     throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
   }
