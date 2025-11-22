@@ -16,6 +16,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:potato_mesh_reader/main.dart';
 
 /// Widget-level tests that exercise UI states and rendering branches.
@@ -23,7 +24,10 @@ void main() {
   testWidgets('PotatoMeshReaderApp wires theming and home screen',
       (tester) async {
     final fetchCalls = <int>[];
-    Future<List<MeshMessage>> fakeFetch() async {
+    Future<List<MeshMessage>> fakeFetch({
+      http.Client? client,
+      String domain = 'potatomesh.net',
+    }) async {
       fetchCalls.add(1);
       return [
         MeshMessage(
@@ -134,15 +138,83 @@ void main() {
   testWidgets('Settings button navigates to SettingsScreen', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: MessagesScreen(fetcher: () async => []),
+        home: MessagesScreen(
+          fetcher: () async => [],
+          onOpenSettings: (context) {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SettingsScreen(
+                  currentDomain: 'potatomesh.net',
+                  onDomainChanged: (_) {},
+                  loadInstances: () async => const [],
+                ),
+              ),
+            );
+          },
+          resetToken: 0,
+        ),
       ),
     );
 
     await tester.tap(find.byIcon(Icons.settings));
     await tester.pumpAndSettle();
 
-    expect(find.text('Settings (MVP)'), findsOneWidget);
-    expect(find.textContaining('Meshtastic Reader MVP'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.textContaining('Meshtastic Reader'), findsOneWidget);
+  });
+
+  testWidgets('changing endpoint triggers a refresh with new domain',
+      (tester) async {
+    final calls = <String>[];
+    Future<List<MeshMessage>> fetcher({
+      http.Client? client,
+      String domain = 'potatomesh.net',
+    }) async {
+      calls.add(domain);
+      return [
+        MeshMessage(
+          id: 1,
+          rxTime: null,
+          rxIso: '2024-01-01T00:00:00Z',
+          fromId: '!a',
+          toId: '^',
+          channel: 1,
+          channelName: 'Main',
+          portnum: 'TEXT',
+          text: domain,
+          rssi: null,
+          snr: null,
+          hopLimit: null,
+        )
+      ];
+    }
+
+    Future<List<MeshInstance>> loader() async => const [
+          MeshInstance(name: 'Mesh Berlin', domain: 'berlin.mesh'),
+        ];
+
+    await tester.pumpWidget(
+      PotatoMeshReaderApp(
+        fetcher: fetcher,
+        instanceFetcher: ({http.Client? client}) => loader(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(calls.single, 'potatomesh.net');
+    expect(find.text('potatomesh.net'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.settings));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mesh Berlin').last);
+    await tester.pumpAndSettle();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(calls.last, 'berlin.mesh');
+    expect(find.text('berlin.mesh'), findsOneWidget);
   });
 
   testWidgets('ChatLine renders placeholders and nick colour', (tester) async {

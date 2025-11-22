@@ -21,15 +21,59 @@ void main() {
   runApp(const PotatoMeshReaderApp());
 }
 
+/// Function type used to fetch messages from a specific endpoint.
+typedef MessageFetcher = Future<List<MeshMessage>> Function({
+  http.Client? client,
+  String domain,
+});
+
 /// Meshtastic Reader root widget that configures theming and the home screen.
-class PotatoMeshReaderApp extends StatelessWidget {
+class PotatoMeshReaderApp extends StatefulWidget {
   const PotatoMeshReaderApp({
     super.key,
     this.fetcher = fetchMessages,
+    this.instanceFetcher = fetchInstances,
+    this.initialDomain = 'potatomesh.net',
   });
 
   /// Fetch function injected to simplify testing and offline previews.
-  final Future<List<MeshMessage>> Function() fetcher;
+  final MessageFetcher fetcher;
+
+  /// Loader for federation instance metadata, overridable in tests.
+  final Future<List<MeshInstance>> Function({http.Client? client})
+      instanceFetcher;
+
+  /// Initial endpoint domain used when the app boots.
+  final String initialDomain;
+
+  @override
+  State<PotatoMeshReaderApp> createState() => _PotatoMeshReaderAppState();
+}
+
+class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
+  late String _endpointDomain;
+  int _endpointVersion = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _endpointDomain = widget.initialDomain;
+  }
+
+  void _handleEndpointChanged(String newDomain) {
+    if (newDomain.isEmpty || newDomain == _endpointDomain) {
+      return;
+    }
+
+    setState(() {
+      _endpointDomain = newDomain;
+      _endpointVersion += 1;
+    });
+  }
+
+  Future<List<MeshMessage>> _fetchMessagesForCurrentDomain() {
+    return widget.fetcher(domain: _endpointDomain);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +95,22 @@ class PotatoMeshReaderApp extends StatelessWidget {
           ),
         ),
       ),
-      home: MessagesScreen(fetcher: fetcher),
+      home: MessagesScreen(
+        key: ValueKey<String>(_endpointDomain),
+        fetcher: _fetchMessagesForCurrentDomain,
+        resetToken: _endpointVersion,
+        onOpenSettings: (context) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SettingsScreen(
+                currentDomain: _endpointDomain,
+                onDomainChanged: _handleEndpointChanged,
+                loadInstances: () => widget.instanceFetcher(),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -61,10 +120,18 @@ class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
     super.key,
     this.fetcher = fetchMessages,
+    this.onOpenSettings,
+    this.resetToken = 0,
   });
 
   /// Fetch function used to load messages from the PotatoMesh API.
   final Future<List<MeshMessage>> Function() fetcher;
+
+  /// Handler invoked when the settings icon is tapped.
+  final void Function(BuildContext context)? onOpenSettings;
+
+  /// Bumps when the endpoint changes to force a refresh of cached data.
+  final int resetToken;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -84,7 +151,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
   @override
   void didUpdateWidget(covariant MessagesScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.fetcher != widget.fetcher) {
+    if (oldWidget.fetcher != widget.fetcher ||
+        oldWidget.resetToken != widget.resetToken) {
       setState(() {
         _future = widget.fetcher();
       });
@@ -122,11 +190,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
             tooltip: 'Settings',
             icon: const Icon(Icons.settings),
             onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const SettingsScreen(),
-                ),
-              );
+              if (widget.onOpenSettings != null) {
+                widget.onOpenSettings!(context);
+              }
             },
           ),
         ],
@@ -234,27 +300,180 @@ class ChatLine extends StatelessWidget {
   }
 }
 
-/// MVP settings placeholder offering endpoint and about info.
-class SettingsScreen extends StatelessWidget {
-  const SettingsScreen({super.key});
+/// MVP settings view offering endpoint selection and about info.
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({
+    super.key,
+    required this.currentDomain,
+    required this.onDomainChanged,
+    this.loadInstances = fetchInstances,
+  });
+
+  /// Currently selected endpoint domain.
+  final String currentDomain;
+
+  /// Callback fired when the user changes the endpoint.
+  final ValueChanged<String> onDomainChanged;
+
+  /// Loader used to fetch federation instance metadata.
+  final Future<List<MeshInstance>> Function() loadInstances;
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  static const String _defaultDomain = 'potatomesh.net';
+  static const String _defaultName = 'BerlinMesh';
+  List<MeshInstance> _instances = const [];
+  bool _loading = false;
+  String _selectedDomain = '';
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedDomain = widget.currentDomain;
+    _fetchInstances();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentDomain != widget.currentDomain) {
+      _selectedDomain = widget.currentDomain;
+    }
+  }
+
+  Future<void> _fetchInstances() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final fetched = await widget.loadInstances();
+      if (!mounted) return;
+      setState(() {
+        _instances = fetched;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _instances = const [];
+        _error = error.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  void _onEndpointChanged(String? domain) {
+    if (domain == null || domain.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _selectedDomain = domain;
+    });
+    widget.onDomainChanged(domain);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Endpoint set to $domain')),
+    );
+  }
+
+  List<DropdownMenuItem<String>> _buildEndpointOptions() {
+    final seen = <String>{};
+    final items = <DropdownMenuItem<String>>[];
+
+    // Always surface the default BerlinMesh endpoint.
+    seen.add(_defaultDomain);
+    items.add(
+      const DropdownMenuItem(
+        value: _defaultDomain,
+        child: Text(_defaultName),
+      ),
+    );
+
+    for (final instance in _instances) {
+      if (instance.domain.isEmpty || seen.contains(instance.domain)) {
+        continue;
+      }
+      seen.add(instance.domain);
+      items.add(
+        DropdownMenuItem(
+          value: instance.domain,
+          child: Text(instance.displayName),
+        ),
+      );
+    }
+
+    if (_selectedDomain.isNotEmpty && !seen.contains(_selectedDomain)) {
+      items.insert(
+        0,
+        DropdownMenuItem(
+          value: _selectedDomain,
+          child: Text('Custom ($_selectedDomain)'),
+        ),
+      );
+    }
+
+    return items;
+  }
 
   @override
   Widget build(BuildContext context) {
+    final endpointItems = _buildEndpointOptions();
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings (MVP)')),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        children: const [
+        children: [
           ListTile(
-            leading: Icon(Icons.cloud),
-            title: Text('Endpoint'),
-            subtitle: Text('https://potatomesh.net/api/messages'),
+            leading: const Icon(Icons.cloud),
+            title: const Text('Endpoint'),
+            subtitle: Text('$_selectedDomain/api/messages'),
           ),
-          Divider(),
-          ListTile(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<String>(
+                  key: ValueKey<String>(_selectedDomain),
+                  initialValue: _selectedDomain.isNotEmpty
+                      ? _selectedDomain
+                      : _defaultDomain,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Select endpoint',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: endpointItems,
+                  onChanged: _loading ? null : _onEndpointChanged,
+                ),
+                const SizedBox(height: 8),
+                if (_loading)
+                  const LinearProgressIndicator()
+                else if (_error != null)
+                  Text(
+                    'Failed to load instances: $_error',
+                    style: const TextStyle(color: Colors.redAccent),
+                  )
+                else if (_instances.isEmpty)
+                  const Text('No federation instances returned.'),
+              ],
+            ),
+          ),
+          const Divider(),
+          const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('About'),
             subtitle: Text(
-                'Meshtastic Reader MVP — read-only view of PotatoMesh messages.'),
+                'Meshtastic Reader — read-only view of PotatoMesh messages.'),
           ),
         ],
       ),
@@ -349,15 +568,66 @@ class MeshMessage {
   }
 }
 
+/// Mesh federation instance metadata used to configure endpoints.
+class MeshInstance {
+  const MeshInstance({
+    required this.name,
+    required this.domain,
+  });
+
+  /// Human-friendly instance name.
+  final String name;
+
+  /// Instance domain hosting the PotatoMesh API.
+  final String domain;
+
+  /// Prefer the provided name, falling back to the domain.
+  String get displayName => name.isNotEmpty ? name : domain;
+
+  /// Parse a [MeshInstance] from an API payload entry.
+  factory MeshInstance.fromJson(Map<String, dynamic> json) {
+    final domain = json['domain']?.toString().trim() ?? '';
+    final name = json['name']?.toString().trim() ?? '';
+    return MeshInstance(name: name, domain: domain);
+  }
+}
+
+/// Build a messages API URI for a given domain or absolute URL.
+Uri _buildMessagesUri(String domain) {
+  final trimmed = domain.trim();
+  if (trimmed.isEmpty) {
+    return Uri.https('potatomesh.net', '/api/messages', {
+      'limit': '100',
+      'encrypted': 'false',
+    });
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    final parsed = Uri.parse(trimmed);
+    return parsed.replace(
+      path: '/api/messages',
+      queryParameters: {
+        'limit': '100',
+        'encrypted': 'false',
+      },
+    );
+  }
+
+  return Uri.https(trimmed, '/api/messages', {
+    'limit': '100',
+    'encrypted': 'false',
+  });
+}
+
 /// Fetches the latest PotatoMesh messages and returns them sorted by receive time.
 ///
 /// A custom [client] can be supplied for testing; otherwise a short-lived
 /// [http.Client] is created and closed after the request completes.
-Future<List<MeshMessage>> fetchMessages({http.Client? client}) async {
-  final uri = Uri.https('potatomesh.net', '/api/messages', {
-    'limit': '100',
-    'encrypted': 'false',
-  });
+Future<List<MeshMessage>> fetchMessages({
+  http.Client? client,
+  String domain = 'potatomesh.net',
+}) async {
+  final uri = _buildMessagesUri(domain);
 
   final httpClient = client ?? http.Client();
   final shouldClose = client == null;
@@ -381,6 +651,42 @@ Future<List<MeshMessage>> fetchMessages({http.Client? client}) async {
       .toList();
 
   return sortMessagesByRxTime(msgs);
+}
+
+/// Fetches federation instance metadata from potatomesh.net and normalizes it.
+///
+/// Instances lacking a domain are dropped. A provided [client] is closed
+/// automatically when created internally.
+Future<List<MeshInstance>> fetchInstances({http.Client? client}) async {
+  final uri = Uri.https('potatomesh.net', '/api/instances');
+  final httpClient = client ?? http.Client();
+  final shouldClose = client == null;
+
+  try {
+    final resp = await httpClient.get(uri);
+    if (resp.statusCode != 200) {
+      throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
+    }
+
+    final dynamic decoded = jsonDecode(resp.body);
+    if (decoded is! List) {
+      throw Exception('Unexpected instances response, expected JSON array');
+    }
+
+    final instances = decoded
+        .whereType<Map<String, dynamic>>()
+        .map((entry) => MeshInstance.fromJson(entry))
+        .where((instance) => instance.domain.isNotEmpty)
+        .toList()
+      ..sort((a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+
+    return instances;
+  } finally {
+    if (shouldClose) {
+      httpClient.close();
+    }
+  }
 }
 
 /// Returns a new list sorted by receive time so older messages render first.
