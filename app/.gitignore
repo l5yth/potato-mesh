@@ -1,0 +1,18 @@
+
+# FVM Version Cache
+.fvm/
+
+# Scaffholding
+.dart_tool/
+.flutter-plugins-dependencies
+.fvmrc
+.idea/
+.metadata
+android/
+ios/
+linux/
+macos/
+potato_mesh_reader.iml
+pubspec.lock
+web/
+windows/

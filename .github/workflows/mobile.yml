@@ -40,6 +40,10 @@ jobs:
       run: flutter pub get
     - name: Run Flutter tests with coverage
       run: flutter test --coverage
+    - name: Check formatting
+      run: dart format --set-exit-if-changed .
+    - name: Analyze Dart code
+      run: flutter analyze
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v5

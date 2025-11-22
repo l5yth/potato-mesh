@@ -253,7 +253,8 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('About'),
-            subtitle: Text('Meshtastic Reader MVP — read-only view of PotatoMesh messages.'),
+            subtitle: Text(
+                'Meshtastic Reader MVP — read-only view of PotatoMesh messages.'),
           ),
         ],
       ),
