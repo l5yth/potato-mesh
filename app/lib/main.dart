@@ -323,6 +323,8 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  static const String _defaultDomain = 'potatomesh.net';
+  static const String _defaultName = 'BerlinMesh';
   List<MeshInstance> _instances = const [];
   bool _loading = false;
   String _selectedDomain = '';
@@ -388,6 +390,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final seen = <String>{};
     final items = <DropdownMenuItem<String>>[];
 
+    // Always surface the default BerlinMesh endpoint.
+    seen.add(_defaultDomain);
+    items.add(
+      const DropdownMenuItem(
+        value: _defaultDomain,
+        child: Text(_defaultName),
+      ),
+    );
+
     for (final instance in _instances) {
       if (instance.domain.isEmpty || seen.contains(instance.domain)) {
         continue;
@@ -433,8 +444,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 DropdownButtonFormField<String>(
                   key: ValueKey<String>(_selectedDomain),
-                  initialValue:
-                      _selectedDomain.isNotEmpty ? _selectedDomain : null,
+                  initialValue: _selectedDomain.isNotEmpty
+                      ? _selectedDomain
+                      : _defaultDomain,
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Select endpoint',
