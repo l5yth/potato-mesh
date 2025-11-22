@@ -27,6 +27,11 @@ Use two-space indentation for Ruby and keep `# frozen_string_literal: true` at t
 
 JavaScript follows ES modules under `public/assets/js`; co-locate components with `__tests__` folders and use kebab-case filenames. Format Ruby via `bundle exec rufo .` and Python via `black`. Skip committing generated coverage artifacts.
 
+## Flutter Mobile App (`app/`)
+The Flutter client lives in `app/`. Keep only the mobile targets (`android/`, `ios/`) under version control unless you explicitly support other platforms. Do not commit Flutter build outputs or editor cruft (`.dart_tool/`, `.flutter-plugins-dependencies`, `.idea/`, `.metadata`, `*.iml`, `.fvmrc` if unused).
+
+Install dependencies with `cd app && flutter pub get`; format with `dart format .` and lint via `flutter analyze`. Run tests with `cd app && flutter test` and keep widget/unit coverage high—no new code without tests. Commit `pubspec.lock` and analysis options so toolchains stay consistent.
+
 ## Testing Guidelines
 Ruby specs run with `cd web && bundle exec rspec`, producing SimpleCov output in `coverage/`. Front-end behaviour is verified through Node’s test runner: `cd web && npm test` writes V8 coverage and JUnit XML under `reports/`.
 
