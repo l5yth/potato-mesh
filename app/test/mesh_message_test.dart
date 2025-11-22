@@ -183,5 +183,52 @@ void main() {
         throwsA(isA<Exception>()),
       );
     });
+
+    test('uses custom domains including full URLs', () async {
+      final calls = <Uri>[];
+      final client = MockClient((request) async {
+        calls.add(request.url);
+        return http.Response(jsonEncode([]), 200);
+      });
+
+      await fetchMessages(client: client, domain: 'mesh.example.org');
+      await fetchMessages(
+          client: client, domain: 'https://mesh.alt.example/api');
+
+      expect(calls[0].host, 'mesh.example.org');
+      expect(calls[0].path, '/api/messages');
+      expect(calls[1].scheme, 'https');
+      expect(calls[1].path, '/api/messages');
+    });
+  });
+
+  group('fetchInstances', () {
+    test('parses and sorts instance list', () async {
+      final client = MockClient((request) async {
+        return http.Response(
+          jsonEncode([
+            {'name': 'Bravo', 'domain': 'bravo.example'},
+            {'name': 'Alpha', 'domain': 'alpha.example'},
+            {'name': '', 'domain': ''},
+          ]),
+          200,
+        );
+      });
+
+      final instances = await fetchInstances(client: client);
+
+      expect(instances.map((i) => i.displayName), ['Alpha', 'Bravo']);
+      expect(
+          instances.map((i) => i.domain), ['alpha.example', 'bravo.example']);
+    });
+
+    test('throws on failed fetch', () async {
+      final client = MockClient((request) async => http.Response('oops', 500));
+
+      expect(
+        () => fetchInstances(client: client),
+        throwsA(isA<Exception>()),
+      );
+    });
   });
 }

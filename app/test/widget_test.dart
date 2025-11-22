@@ -6,6 +6,7 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:potato_mesh_reader/main.dart';
 
@@ -44,7 +45,10 @@ void main() {
     ];
 
     var fetchCount = 0;
-    Future<List<MeshMessage>> mockFetcher() async {
+    Future<List<MeshMessage>> mockFetcher({
+      http.Client? client,
+      String domain = 'potatomesh.net',
+    }) async {
       final idx = fetchCount >= sampleMessages.length
           ? sampleMessages.length - 1
           : fetchCount;
