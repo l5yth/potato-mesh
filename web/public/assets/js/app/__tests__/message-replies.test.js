@@ -102,3 +102,52 @@ test('buildMessageBody suppresses reaction slot markers and formats counts', () 
 
   assert.equal(countedBody, 'EMOJI(✨) ESC(×2)');
 });
+
+test('buildMessageBody treats REACTION_APP packets without reply identifiers as reactions', () => {
+  const reactionAppPacket = {
+    text: '1',
+    emoji: '🚀',
+    portnum: 'REACTION_APP'
+  };
+
+  const body = buildMessageBody({
+    message: reactionAppPacket,
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(🚀)');
+});
+
+test('buildMessageBody renders reaction emoji from text when emoji field carries placeholder counts', () => {
+  const placeholderEmojiMessage = {
+    text: '💩',
+    emoji: '1',
+    reply_id: 98822809,
+    portnum: 'TEXT_MESSAGE_APP'
+  };
+
+  const body = buildMessageBody({
+    message: placeholderEmojiMessage,
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(💩)');
+});
+
+test('buildMessageBody appends reaction counts for REACTION_APP packets without reply identifiers', () => {
+  const countedReactionAppPacket = {
+    text: '2',
+    emoji: '🌶',
+    portnum: 'REACTION_APP'
+  };
+
+  const body = buildMessageBody({
+    message: countedReactionAppPacket,
+    escapeHtml: value => `ESC(${value})`,
+    renderEmojiHtml: value => `EMOJI(${value})`
+  });
+
+  assert.equal(body, 'EMOJI(🌶) ESC(×2)');
+});
