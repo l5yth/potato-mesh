@@ -359,19 +359,32 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
     return '';
   }
 
-  const segments = [];
+ const segments = [];
   const reaction = isReactionMessage(message);
   const textSegment = resolveMessageTextSegment(message, reaction);
   const reactionCount = reaction && textSegment && /^×\d+$/.test(textSegment) ? textSegment : null;
-  if (textSegment && !reaction) {
+  const emoji = normaliseEmojiValue(message.emoji);
+  const emojiIsNumericPlaceholder = reaction && emoji && /^\d+$/.test(emoji);
+  let reactionEmoji = reaction && !emojiIsNumericPlaceholder ? emoji : null;
+
+  if (!reaction && textSegment) {
     segments.push(escapeHtml(textSegment));
   }
-  const emoji = normaliseEmojiValue(message.emoji);
-  if (emoji) {
+
+  if (reaction) {
+    if (!reactionEmoji && textSegment && !reactionCount) {
+      reactionEmoji = textSegment;
+    }
+    if (reactionEmoji) {
+      segments.push(renderEmojiHtml(reactionEmoji));
+    } else if (textSegment && !reactionCount) {
+      segments.push(escapeHtml(textSegment));
+    }
+    if (reactionCount) {
+      segments.push(escapeHtml(reactionCount));
+    }
+  } else if (emoji) {
     segments.push(renderEmojiHtml(emoji));
-  }
-  if (reactionCount) {
-    segments.push(escapeHtml(reactionCount));
   }
 
   if (segments.length === 0) {
