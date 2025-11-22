@@ -100,7 +100,7 @@ test('buildMessageBody suppresses reaction slot markers and formats counts', () 
     renderEmojiHtml: value => `EMOJI(${value})`
   });
 
-  assert.equal(countedBody, 'EMOJI(✨)');
+  assert.equal(countedBody, 'EMOJI(✨) ESC(×2)');
 });
 
 test('buildMessageBody treats REACTION_APP packets without reply identifiers as reactions', () => {
