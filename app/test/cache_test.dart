@@ -16,9 +16,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:potato_mesh_reader/main.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    NodeShortNameCache.instance.clear();
+  });
 
   test('NodeShortNameCache fetches and memoizes short names', () async {
     var calls = 0;

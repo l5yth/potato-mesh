@@ -13,6 +13,7 @@ dependencies:
   package_info_plus: ^8.1.0
   flutter_svg: ^2.0.10+1
   url_launcher: ^6.3.1
+  shared_preferences: ^2.3.2
 
 dev_dependencies:
   flutter_test:

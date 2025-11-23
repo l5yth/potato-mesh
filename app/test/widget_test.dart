@@ -7,10 +7,16 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:potato_mesh_reader/main.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    NodeShortNameCache.instance.clear();
+  });
+
   testWidgets('renders messages from fetcher and refreshes list',
       (WidgetTester tester) async {
     final sampleMessages = <MeshMessage>[
@@ -56,14 +62,29 @@ void main() {
       return [sampleMessages[idx]];
     }
 
-    await tester.pumpWidget(PotatoMeshReaderApp(fetcher: mockFetcher));
+    Future<BootstrapResult> bootstrapper({ProgressCallback? onProgress}) async {
+      onProgress?.call(const BootstrapProgress(stage: 'loading instances'));
+      return BootstrapResult(
+        instances: const [],
+        nodes: const [],
+        messages: sampleMessages,
+        selectedDomain: 'potatomesh.net',
+      );
+    }
+
+    await tester.pumpWidget(
+      PotatoMeshReaderApp(
+        fetcher: mockFetcher,
+        bootstrapper: bootstrapper,
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
     expect(find.textContaining('[--:--]'), findsWidgets);
-    expect(find.byType(ChatLine), findsOneWidget);
-    expect(find.textContaining('hello world'), findsNothing);
-    expect(find.textContaining('#TEST'), findsOneWidget);
+    expect(find.byType(ChatLine), findsNWidgets(2));
+    expect(find.textContaining('hello world'), findsOneWidget);
+    expect(find.textContaining('#TEST'), findsWidgets);
     expect(find.textContaining('<!nodeB>'), findsOneWidget);
     expect(find.textContaining('second message'), findsOneWidget);
   });

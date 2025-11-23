@@ -13,13 +13,16 @@
 // limitations under the License.
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const String _gitVersionEnv =
@@ -30,6 +33,7 @@ const String _gitCommitsEnv =
 const String _gitShaEnv = String.fromEnvironment('GIT_SHA', defaultValue: '');
 const String _gitDirtyEnv =
     String.fromEnvironment('GIT_DIRTY', defaultValue: '');
+const Duration _requestTimeout = Duration(seconds: 5);
 
 void main() {
   runApp(const PotatoMeshReaderApp());
@@ -48,6 +52,8 @@ class PotatoMeshReaderApp extends StatefulWidget {
     this.fetcher = fetchMessages,
     this.instanceFetcher = fetchInstances,
     this.initialDomain = 'potatomesh.net',
+    this.repository,
+    this.bootstrapper,
   });
 
   /// Fetch function injected to simplify testing and offline previews.
@@ -60,6 +66,13 @@ class PotatoMeshReaderApp extends StatefulWidget {
   /// Initial endpoint domain used when the app boots.
   final String initialDomain;
 
+  /// Backing repository controlling persistence and caching.
+  final MeshRepository? repository;
+
+  /// Optional bootstrapper override for testing or previews.
+  final Future<BootstrapResult> Function({ProgressCallback? onProgress})?
+      bootstrapper;
+
   @override
   State<PotatoMeshReaderApp> createState() => _PotatoMeshReaderAppState();
 }
@@ -67,26 +80,112 @@ class PotatoMeshReaderApp extends StatefulWidget {
 class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
   late String _endpointDomain;
   int _endpointVersion = 0;
+  late final MeshRepository _repository;
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+  BootstrapProgress _progress =
+      const BootstrapProgress(stage: 'loading instances');
+  Future<BootstrapResult>? _bootstrapFuture;
+  BootstrapResult? _bootstrapResult;
+  Object? _lastError;
 
   @override
   void initState() {
     super.initState();
     _endpointDomain = widget.initialDomain;
+    _repository = widget.repository ?? MeshRepository();
+    NodeShortNameCache.instance.registerResolver(_repository);
+    _startBootstrap();
   }
 
-  void _handleEndpointChanged(String newDomain) {
+  void _startBootstrap() {
+    final loader = widget.bootstrapper ??
+        (({ProgressCallback? onProgress}) => _repository.bootstrap(
+              initialDomain: widget.initialDomain,
+              onProgress: onProgress,
+            ));
+
+    setState(() {
+      _bootstrapFuture = loader(onProgress: _updateProgress);
+    });
+
+    _bootstrapFuture!.then((result) {
+      if (!mounted) return;
+      setState(() {
+        _bootstrapResult = result;
+        _endpointDomain = result.selectedDomain;
+        _endpointVersion += 1;
+        _lastError = null;
+      });
+    }).catchError((error) {
+      if (!mounted) return;
+      setState(() {
+        _lastError = error;
+      });
+    });
+  }
+
+  void _updateProgress(BootstrapProgress progress) {
+    if (!mounted) return;
+    setState(() {
+      _progress = progress;
+    });
+  }
+
+  Future<void> _handleEndpointChanged(String newDomain) async {
     if (newDomain.isEmpty || newDomain == _endpointDomain) {
       return;
     }
 
+    final future = _repository
+        .loadDomainData(
+          domain: newDomain,
+          forceFull: true,
+          onProgress: _updateProgress,
+        )
+        .then(
+          (domainResult) => BootstrapResult(
+            instances: _repository.instances,
+            nodes: domainResult.nodes,
+            messages: domainResult.messages,
+            selectedDomain: domainResult.domain,
+          ),
+        );
+
     setState(() {
-      _endpointDomain = newDomain;
-      _endpointVersion += 1;
+      _bootstrapFuture = future;
     });
+
+    try {
+      final result = await future;
+      if (!mounted) return;
+      setState(() {
+        _bootstrapResult = result;
+        _endpointDomain = result.selectedDomain;
+        _endpointVersion += 1;
+        _lastError = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lastError = error;
+      });
+      _messengerKey.currentState?.showSnackBar(
+        SnackBar(content: Text('Failed to switch instance: $error')),
+      );
+    }
   }
 
-  Future<List<MeshMessage>> _fetchMessagesForCurrentDomain() {
-    return widget.fetcher(domain: _endpointDomain);
+  Future<List<MeshMessage>> _fetchMessagesForCurrentDomain({
+    http.Client? client,
+    String domain = '',
+  }) {
+    final activeDomain = domain.isNotEmpty ? domain : _endpointDomain;
+    final hasCustomFetcher = !identical(widget.fetcher, fetchMessages);
+    if (hasCustomFetcher) {
+      return widget.fetcher(domain: activeDomain, client: client);
+    }
+    return _repository.loadMessages(domain: activeDomain);
   }
 
   @override
@@ -94,6 +193,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     return MaterialApp(
       title: '🥔 PotatoMesh Reader',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: _messengerKey,
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
@@ -109,24 +209,836 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
           ),
         ),
       ),
-      home: MessagesScreen(
-        key: ValueKey<String>(_endpointDomain),
-        fetcher: _fetchMessagesForCurrentDomain,
-        resetToken: _endpointVersion,
-        domain: _endpointDomain,
-        onOpenSettings: (context) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => SettingsScreen(
-                currentDomain: _endpointDomain,
-                onDomainChanged: _handleEndpointChanged,
-                loadInstances: () => widget.instanceFetcher(),
-              ),
-            ),
+      home: FutureBuilder<BootstrapResult>(
+        future: _bootstrapFuture,
+        builder: (context, snapshot) {
+          final effectiveResult = snapshot.data ?? _bootstrapResult;
+          if (snapshot.connectionState != ConnectionState.done ||
+              effectiveResult == null) {
+            return LoadingScreen(
+              progress: _progress,
+              error: _lastError ?? snapshot.error,
+            );
+          }
+
+          final domain = _repository.selectedDomain.isNotEmpty
+              ? _repository.selectedDomain
+              : effectiveResult.selectedDomain;
+          return MessagesScreen(
+            key: ValueKey<String>(domain),
+            fetcher: _fetchMessagesForCurrentDomain,
+            resetToken: _endpointVersion,
+            domain: domain,
+            repository: _repository,
+            initialMessages: effectiveResult.messages,
+            onOpenSettings: (context) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(
+                    currentDomain: _repository.selectedDomain.isNotEmpty
+                        ? _repository.selectedDomain
+                        : domain,
+                    onDomainChanged: _handleEndpointChanged,
+                    loadInstances: () async {
+                      if (_repository.instances.isNotEmpty) {
+                        return _repository.instances;
+                      }
+                      return widget.instanceFetcher();
+                    },
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
     );
+  }
+}
+
+/// Splash-style loading view shown while federation data is hydrated.
+class LoadingScreen extends StatelessWidget {
+  const LoadingScreen({
+    super.key,
+    required this.progress,
+    this.error,
+  });
+
+  final BootstrapProgress progress;
+  final Object? error;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = error != null
+        ? 'Failed to load: $error'
+        : (progress.label.isNotEmpty ? progress.label : 'Loading…');
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Image.asset(
+                'assets/icon-splash.png',
+                height: 120,
+                semanticLabel: 'PotatoMesh',
+              ),
+            ),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 28),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Progress payload used to render bootstrap and domain load status.
+class BootstrapProgress {
+  const BootstrapProgress({
+    required this.stage,
+    this.current,
+    this.total,
+    this.detail,
+  });
+
+  final String stage;
+  final int? current;
+  final int? total;
+  final String? detail;
+
+  /// Human-friendly label summarising the current progress state.
+  String get label {
+    final buffer = StringBuffer(stage);
+    if (current != null && total != null && total! > 0) {
+      buffer.write(' ${current!}/${total!}');
+    }
+    if (detail != null && detail!.isNotEmpty) {
+      buffer.write(' • ${detail!}');
+    }
+    return buffer.toString();
+  }
+}
+
+/// Result container returned once federation, nodes, and messages are loaded.
+class BootstrapResult {
+  const BootstrapResult({
+    required this.instances,
+    required this.nodes,
+    required this.messages,
+    required this.selectedDomain,
+  });
+
+  final List<MeshInstance> instances;
+  final List<MeshNode> nodes;
+  final List<MeshMessage> messages;
+  final String selectedDomain;
+}
+
+/// Domain-level fetch outcome used when switching between instances.
+class DomainLoadResult {
+  const DomainLoadResult({
+    required this.domain,
+    required this.nodes,
+    required this.messages,
+  });
+
+  final String domain;
+  final List<MeshNode> nodes;
+  final List<MeshMessage> messages;
+}
+
+typedef ProgressCallback = void Function(BootstrapProgress progress);
+
+/// Thin wrapper around [SharedPreferences] used to persist federation data.
+class MeshLocalStore {
+  MeshLocalStore(this._prefs);
+
+  final SharedPreferences _prefs;
+
+  static const String _instancesKey = 'mesh.instances';
+  static const String _selectedDomainKey = 'mesh.selectedDomain';
+
+  String _safeKey(String domain) {
+    final base = domain.trim().isEmpty ? 'potatomesh.net' : domain.trim();
+    return base.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+  }
+
+  Future<void> saveInstances(List<MeshInstance> instances) async {
+    final encoded = jsonEncode(instances.map((i) => i.toJson()).toList());
+    await _prefs.setString(_instancesKey, encoded);
+  }
+
+  List<MeshInstance> loadInstances() {
+    final raw = _prefs.getString(_instancesKey);
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(MeshInstance.fromJson)
+          .where((instance) => instance.domain.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> saveSelectedDomain(String domain) async {
+    await _prefs.setString(_selectedDomainKey, domain.trim());
+  }
+
+  String? loadSelectedDomain() {
+    return _prefs.getString(_selectedDomainKey);
+  }
+
+  Future<void> saveNodes(String domain, List<MeshNode> nodes) async {
+    final encoded = jsonEncode(nodes.map((n) => n.toJson()).toList());
+    await _prefs.setString('mesh.nodes.${_safeKey(domain)}', encoded);
+  }
+
+  List<MeshNode> loadNodes(String domain) {
+    final raw = _prefs.getString('mesh.nodes.${_safeKey(domain)}');
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(MeshNode.fromJson)
+          .where((node) => node.nodeId.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> saveMessages(String domain, List<MeshMessage> messages) async {
+    final trimmed = messages.length > 1200
+        ? messages.sublist(messages.length - 1200)
+        : messages;
+    final encoded = jsonEncode(trimmed.map((m) => m.toJson()).toList());
+    await _prefs.setString('mesh.messages.${_safeKey(domain)}', encoded);
+  }
+
+  List<MeshMessage> loadMessages(String domain) {
+    final raw = _prefs.getString('mesh.messages.${_safeKey(domain)}');
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final dynamic decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(MeshMessage.fromJson)
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+}
+
+/// Provider used by [NodeShortNameCache] to resolve cached node metadata.
+abstract class MeshNodeResolver {
+  MeshNode? findNode(String domain, String nodeId);
+}
+
+/// Repository responsible for federation discovery, caching, and persistence.
+class MeshRepository implements MeshNodeResolver {
+  MeshRepository({
+    SharedPreferences? prefs,
+    http.Client? client,
+    Random? random,
+  })  : _prefs = prefs,
+        _client = client,
+        _random = random ?? Random();
+
+  SharedPreferences? _prefs;
+  MeshLocalStore? _store;
+  final http.Client? _client;
+  final Random _random;
+
+  final Map<String, List<MeshNode>> _nodesByDomain = {};
+  final Map<String, List<MeshMessage>> _messagesByDomain = {};
+  final Map<String, bool> _messagesLoaded = {};
+  List<MeshInstance> _instances = const [];
+  String _selectedDomain = 'potatomesh.net';
+
+  List<MeshInstance> get instances => _instances;
+  String get selectedDomain => _selectedDomain;
+
+  Future<MeshLocalStore> _ensureStore() async {
+    if (_store != null) return _store!;
+    _prefs ??= await SharedPreferences.getInstance();
+    _store = MeshLocalStore(_prefs!);
+    return _store!;
+  }
+
+  String _domainKey(String domain) {
+    var cleaned = domain.trim();
+    if (cleaned.startsWith('https://')) cleaned = cleaned.substring(8);
+    if (cleaned.startsWith('http://')) cleaned = cleaned.substring(7);
+    if (cleaned.endsWith('/')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    if (cleaned.isEmpty) return 'potatomesh.net';
+    return cleaned.toLowerCase();
+  }
+
+  /// Kicks off the full bootstrap flow including federation discovery, node
+  /// validation, and initial message downloads.
+  Future<BootstrapResult> bootstrap({
+    String initialDomain = 'potatomesh.net',
+    ProgressCallback? onProgress,
+  }) async {
+    final store = await _ensureStore();
+    final cachedInstances = store.loadInstances();
+    final hasCachedInstances = cachedInstances.isNotEmpty;
+    if (hasCachedInstances) {
+      _instances = cachedInstances;
+    }
+
+    final cachedDomain = store.loadSelectedDomain();
+    _selectedDomain = (cachedDomain != null && cachedDomain.isNotEmpty)
+        ? cachedDomain
+        : initialDomain;
+
+    final httpClient = _client ?? http.Client();
+    final shouldCloseClient = _client == null;
+
+    if (!hasCachedInstances) {
+      final discovered = await _discoverInstances(
+        client: httpClient,
+        onProgress: onProgress,
+      );
+      final validated = await _validateInstances(
+        discovered,
+        httpClient,
+        onProgress,
+      );
+      if (validated.isNotEmpty) {
+        _instances = validated;
+        await store.saveInstances(validated);
+      }
+    }
+
+    _selectedDomain = _resolveSelectedDomain(_instances, _selectedDomain);
+    await store.saveSelectedDomain(_selectedDomain);
+
+    // Hydrate caches from storage before hitting the network so the UI has
+    // something to render if connectivity is constrained.
+    final cachedNodes = store.loadNodes(_selectedDomain);
+    if (cachedNodes.isNotEmpty) {
+      final key = _domainKey(_selectedDomain);
+      _nodesByDomain[key] = cachedNodes;
+      NodeShortNameCache.instance
+          .prime(domain: _selectedDomain, nodes: cachedNodes);
+    }
+    final cachedMessages = store.loadMessages(_selectedDomain);
+    if (cachedMessages.isNotEmpty) {
+      _messagesByDomain[_domainKey(_selectedDomain)] = cachedMessages;
+      _messagesLoaded[_domainKey(_selectedDomain)] = true;
+    }
+
+    final domainResult = await _loadFirstResponsiveInstance(
+      preferredDomain: _selectedDomain,
+      candidates: _instances,
+      httpClient: httpClient,
+      onProgress: onProgress,
+    );
+
+    if (shouldCloseClient) {
+      httpClient.close();
+    }
+
+    return BootstrapResult(
+      instances: _instances,
+      nodes: domainResult.nodes,
+      messages: domainResult.messages,
+      selectedDomain: _selectedDomain,
+    );
+  }
+
+  /// Loads nodes and messages for a domain, persisting the selection.
+  Future<DomainLoadResult> loadDomainData({
+    required String domain,
+    ProgressCallback? onProgress,
+    http.Client? httpClient,
+    bool forceFull = false,
+  }) async {
+    final store = await _ensureStore();
+    final targetDomain =
+        domain.trim().isEmpty ? 'potatomesh.net' : domain.trim();
+
+    final client = httpClient ?? _client ?? http.Client();
+    final shouldClose = httpClient == null && _client == null;
+
+    try {
+      final nodes = await _fetchNodesList(
+        domain: targetDomain,
+        client: client,
+        persist: true,
+        useCacheWhenAvailable: !forceFull,
+        onProgress: onProgress,
+      );
+
+      final messages = await _loadMessagesInternal(
+        domain: targetDomain,
+        client: client,
+        forceFull: forceFull,
+        onProgress: onProgress,
+      );
+
+      _selectedDomain = targetDomain;
+      await store.saveSelectedDomain(_selectedDomain);
+
+      return DomainLoadResult(
+        domain: targetDomain,
+        nodes: nodes,
+        messages: messages,
+      );
+    } finally {
+      if (shouldClose) {
+        client.close();
+      }
+    }
+  }
+
+  /// Fetches a complete messages list on first load, falling back to a smaller
+  /// refresh window on subsequent calls.
+  Future<List<MeshMessage>> loadMessages({required String domain}) async {
+    await _ensureStore();
+    final key = _domainKey(domain);
+    final loaded = _messagesLoaded[key] ?? false;
+    final client = _client ?? http.Client();
+    final shouldClose = _client == null;
+    try {
+      // Ensure cached data is available for immediate rendering.
+      if (!loaded && !_messagesByDomain.containsKey(key)) {
+        final cached = _store?.loadMessages(domain) ?? const [];
+        if (cached.isNotEmpty) {
+          _messagesByDomain[key] = cached;
+        }
+      }
+      return _loadMessagesInternal(
+        domain: domain,
+        client: client,
+        forceFull: !loaded,
+      );
+    } finally {
+      if (shouldClose) {
+        client.close();
+      }
+    }
+  }
+
+  /// Stores a nodes snapshot for quick lookup without refetching mid-session.
+  Future<List<MeshNode>> loadNodes({required String domain}) async {
+    await _ensureStore();
+    final key = _domainKey(domain);
+    if (_nodesByDomain.containsKey(key)) {
+      return _nodesByDomain[key]!;
+    }
+
+    final cached = _store?.loadNodes(domain) ?? const [];
+    if (cached.isNotEmpty) {
+      _nodesByDomain[key] = cached;
+      NodeShortNameCache.instance.prime(domain: domain, nodes: cached);
+      return cached;
+    }
+
+    final client = _client ?? http.Client();
+    final shouldClose = _client == null;
+    try {
+      return _fetchNodesList(
+        domain: domain,
+        client: client,
+        persist: true,
+        useCacheWhenAvailable: true,
+      );
+    } finally {
+      if (shouldClose) {
+        client.close();
+      }
+    }
+  }
+
+  /// Public entry point for fetching and caching federation instances.
+  Future<List<MeshInstance>> discoverInstances({
+    http.Client? client,
+    ProgressCallback? onProgress,
+  }) async {
+    final store = await _ensureStore();
+    final cached = store.loadInstances();
+    final httpClient = client ?? _client ?? http.Client();
+    final shouldClose = client == null && _client == null;
+    try {
+      final discovered = await _discoverInstances(
+        client: httpClient,
+        onProgress: onProgress,
+      );
+      final validated = await _validateInstances(
+        discovered,
+        httpClient,
+        onProgress,
+      );
+      if (validated.isNotEmpty) {
+        _instances = validated;
+        await store.saveInstances(validated);
+        return validated;
+      }
+      if (cached.isNotEmpty) return cached;
+      return discovered;
+    } finally {
+      if (shouldClose) {
+        httpClient.close();
+      }
+    }
+  }
+
+  @override
+  MeshNode? findNode(String domain, String nodeId) {
+    final key = _domainKey(domain);
+    final nodes = _nodesByDomain[key];
+    if (nodes == null) return null;
+    final trimmed = nodeId.trim();
+    for (final node in nodes) {
+      if (_matchesNodeId(node.nodeId, trimmed)) {
+        return node;
+      }
+    }
+    return null;
+  }
+
+  Future<List<MeshInstance>> _discoverInstances({
+    required http.Client client,
+    ProgressCallback? onProgress,
+  }) async {
+    final seen = <String>{};
+    final queue = Queue<String>();
+    final results = <MeshInstance>[];
+
+    Future<void> enqueueFromDomain(String domain) async {
+      try {
+        final uri = _buildInstancesUri(domain);
+        final resp = await client.get(uri).timeout(_requestTimeout);
+        if (resp.statusCode != 200) return;
+        final dynamic decoded = jsonDecode(resp.body);
+        if (decoded is! List) return;
+        final parsed = decoded
+            .whereType<Map<String, dynamic>>()
+            .map(MeshInstance.fromJson)
+            .where((instance) => instance.domain.isNotEmpty)
+            .toList();
+        for (final instance in parsed) {
+          final key = _domainKey(instance.domain);
+          if (seen.contains(key)) continue;
+          seen.add(key);
+          results.add(instance);
+          queue.add(instance.domain);
+        }
+      } catch (_) {
+        // Skip unreachable domains during discovery.
+      }
+    }
+
+    onProgress?.call(const BootstrapProgress(stage: 'loading instances'));
+    await enqueueFromDomain('potatomesh.net');
+
+    while (queue.isNotEmpty) {
+      final domain = queue.removeFirst();
+      onProgress?.call(
+        BootstrapProgress(
+          stage: 'discovering instances',
+          current: results.length,
+          total: null,
+          detail: domain,
+        ),
+      );
+      await enqueueFromDomain(domain);
+    }
+
+    final deduped = <String, MeshInstance>{};
+    for (final instance in results) {
+      final key = _domainKey(instance.domain);
+      if (instance.isPrivate) continue;
+      deduped[key] = instance;
+    }
+
+    final list = deduped.values.toList()
+      ..sort((a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
+    return list;
+  }
+
+  Future<List<MeshInstance>> _validateInstances(
+    List<MeshInstance> candidates,
+    http.Client client,
+    ProgressCallback? onProgress,
+  ) async {
+    if (candidates.isEmpty) return const [];
+    final now = DateTime.now().toUtc();
+    final valid = <MeshInstance>[];
+    final total = candidates.length;
+    for (var i = 0; i < candidates.length; i++) {
+      final candidate = candidates[i];
+      onProgress?.call(
+        BootstrapProgress(
+          stage: 'verifying instances',
+          current: i + 1,
+          total: total,
+          detail: candidate.domain,
+        ),
+      );
+      try {
+        final nodes = await _fetchNodesList(
+          domain: candidate.domain,
+          client: client,
+          limit: 200,
+          persist: false,
+          useCacheWhenAvailable: false,
+        );
+        final active = nodes
+            .where((node) => node.isActive(const Duration(hours: 24), now))
+            .toList();
+        if (active.length >= 10) {
+          valid.add(candidate);
+        }
+      } catch (_) {
+        // Invalid instance; skip.
+      }
+    }
+    return valid.isNotEmpty ? valid : candidates;
+  }
+
+  Future<DomainLoadResult> _loadFirstResponsiveInstance({
+    required String preferredDomain,
+    required List<MeshInstance> candidates,
+    required http.Client httpClient,
+    ProgressCallback? onProgress,
+  }) async {
+    final store = await _ensureStore();
+    final ordered = <String>{
+      preferredDomain,
+      ...candidates.map((c) => c.domain)
+    };
+    DomainLoadResult? result;
+    Object? lastError;
+    for (final domain in ordered) {
+      try {
+        result = await loadDomainData(
+          domain: domain,
+          onProgress: onProgress,
+          httpClient: httpClient,
+          forceFull: true,
+        );
+        break;
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+    }
+
+    if (result != null) {
+      return result;
+    }
+
+    final cachedNodes = store.loadNodes(preferredDomain);
+    final cachedMessages = store.loadMessages(preferredDomain);
+    if (cachedNodes.isNotEmpty || cachedMessages.isNotEmpty) {
+      _selectedDomain = preferredDomain;
+      await store.saveSelectedDomain(_selectedDomain);
+      return DomainLoadResult(
+        domain: preferredDomain,
+        nodes: cachedNodes,
+        messages: cachedMessages,
+      );
+    }
+
+    throw lastError ?? Exception('No responsive instances');
+  }
+
+  String _resolveSelectedDomain(
+    List<MeshInstance> available,
+    String desired,
+  ) {
+    if (available.isEmpty) {
+      return desired.trim().isNotEmpty ? desired.trim() : 'potatomesh.net';
+    }
+    final desiredKey = _domainKey(desired);
+    for (final instance in available) {
+      if (_domainKey(instance.domain) == desiredKey) {
+        return instance.domain;
+      }
+    }
+    return available[_random.nextInt(available.length)].domain;
+  }
+
+  Future<List<MeshNode>> _fetchNodesList({
+    required String domain,
+    required http.Client client,
+    int limit = 1000,
+    bool persist = true,
+    bool useCacheWhenAvailable = true,
+    ProgressCallback? onProgress,
+  }) async {
+    final key = _domainKey(domain);
+    if (useCacheWhenAvailable && _nodesByDomain.containsKey(key)) {
+      return _nodesByDomain[key]!;
+    }
+    final uri = _buildNodesUri(domain, limit: limit);
+    final resp = await client.get(uri).timeout(_requestTimeout);
+    if (resp.statusCode != 200) {
+      throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
+    }
+    final dynamic decoded = jsonDecode(resp.body);
+    if (decoded is! List) {
+      throw Exception('Unexpected nodes response, expected JSON array');
+    }
+    final nodes = <MeshNode>[];
+    var index = 0;
+    for (final entry in decoded.whereType<Map<String, dynamic>>()) {
+      index += 1;
+      final node = MeshNode.fromJson(entry);
+      if (node.nodeId.isEmpty) continue;
+      nodes.add(node);
+      onProgress?.call(
+        BootstrapProgress(
+          stage: 'loading nodes',
+          current: index,
+          total: decoded.length,
+          detail: domain,
+        ),
+      );
+    }
+
+    if (persist) {
+      _nodesByDomain[key] = nodes;
+      NodeShortNameCache.instance.prime(domain: domain, nodes: nodes);
+      await _store?.saveNodes(domain, nodes);
+    }
+
+    return nodes;
+  }
+
+  Future<List<MeshMessage>> _loadMessagesInternal({
+    required String domain,
+    required http.Client client,
+    bool forceFull = false,
+    ProgressCallback? onProgress,
+  }) async {
+    final key = _domainKey(domain);
+    final alreadyLoaded = _messagesLoaded[key] ?? false;
+    final initialFetch = forceFull || !alreadyLoaded;
+    final limit = initialFetch ? 1000 : 100;
+
+    final uri = _buildMessagesUri(domain, limit: limit);
+    final resp = await client.get(uri).timeout(_requestTimeout);
+    if (resp.statusCode != 200) {
+      throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
+    }
+    final dynamic decoded = jsonDecode(resp.body);
+    if (decoded is! List) {
+      throw Exception('Unexpected response shape, expected JSON array');
+    }
+
+    final messages = <MeshMessage>[];
+    var index = 0;
+    for (final entry in decoded.whereType<Map<String, dynamic>>()) {
+      index += 1;
+      final message = MeshMessage.fromJson(entry);
+      messages.add(message);
+      onProgress?.call(
+        BootstrapProgress(
+          stage: 'loading messages',
+          current: index,
+          total: decoded.length,
+          detail: domain,
+        ),
+      );
+    }
+
+    final merged = _mergeMessages(domain, messages);
+    _messagesLoaded[key] = true;
+    await _store?.saveMessages(domain, merged);
+
+    // Ensure new senders are cached locally for name lookups.
+    await _hydrateMissingNodes(
+        domain: domain, messages: messages, client: client);
+
+    return merged;
+  }
+
+  List<MeshMessage> _mergeMessages(String domain, List<MeshMessage> incoming) {
+    final key = _domainKey(domain);
+    final existing = List<MeshMessage>.from(_messagesByDomain[key] ?? const []);
+    final seen = existing.map(_messageKey).toSet();
+    for (final msg in incoming) {
+      final key = _messageKey(msg);
+      if (seen.contains(key)) continue;
+      existing.add(msg);
+      seen.add(key);
+    }
+    final sorted = sortMessagesByRxTime(existing);
+    if (sorted.length > 1200) {
+      sorted.removeRange(0, sorted.length - 1200);
+    }
+    _messagesByDomain[key] = sorted;
+    return sorted;
+  }
+
+  String _messageKey(MeshMessage msg) {
+    return '${msg.id}-${msg.rxIso}-${msg.fromId}-${msg.text}';
+  }
+
+  Future<void> _hydrateMissingNodes({
+    required String domain,
+    required List<MeshMessage> messages,
+    required http.Client client,
+  }) async {
+    final key = _domainKey(domain);
+    var nodes = List<MeshNode>.from(_nodesByDomain[key] ?? const []);
+    final knownIds = nodes.map((n) => _normalizeNodeId(n.nodeId)).toSet();
+    for (final message in messages) {
+      final rawNodeId = message.lookupNodeId.trim();
+      final nodeId = _normalizeNodeId(rawNodeId);
+      if (nodeId.isEmpty || knownIds.contains(nodeId)) continue;
+      try {
+        final uri = _buildNodeUri(domain, rawNodeId);
+        final resp = await client.get(uri);
+        if (resp.statusCode != 200) continue;
+        final dynamic decoded = jsonDecode(resp.body);
+        if (decoded is Map<String, dynamic>) {
+          final node = MeshNode.fromJson(decoded);
+          if (node.nodeId.isEmpty) continue;
+          nodes = List<MeshNode>.from(nodes)..add(node);
+          _nodesByDomain[key] = nodes;
+          NodeShortNameCache.instance.prime(domain: domain, nodes: [node]);
+          await _store?.saveNodes(domain, nodes);
+          knownIds.add(_normalizeNodeId(node.nodeId));
+        }
+      } catch (_) {
+        // Swallow node lookup errors during refresh.
+      }
+    }
+  }
+
+  bool _matchesNodeId(String existing, String candidate) {
+    final cleanExisting = _normalizeNodeId(existing);
+    final cleanCandidate = _normalizeNodeId(candidate);
+    return cleanExisting.trim() == cleanCandidate.trim();
+  }
+
+  String _normalizeNodeId(String id) {
+    return id.startsWith('!') ? id.substring(1) : id;
   }
 }
 
@@ -138,6 +1050,8 @@ class MessagesScreen extends StatefulWidget {
     this.onOpenSettings,
     this.resetToken = 0,
     required this.domain,
+    this.repository,
+    this.initialMessages = const [],
   });
 
   /// Fetch function used to load messages from the PotatoMesh API.
@@ -151,6 +1065,12 @@ class MessagesScreen extends StatefulWidget {
 
   /// Active endpoint domain used for auxiliary lookups like node metadata.
   final String domain;
+
+  /// Optional repository backing persistence for this screen.
+  final MeshRepository? repository;
+
+  /// Messages obtained during the bootstrap phase to avoid re-fetching.
+  final List<MeshMessage> initialMessages;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -168,7 +1088,9 @@ class _MessagesScreenState extends State<MessagesScreen>
   @override
   void initState() {
     super.initState();
-    _startFetch(clear: true);
+    _messages = List<MeshMessage>.from(widget.initialMessages);
+    _future = Future.value(_messages);
+    _startFetch(clear: _messages.isEmpty);
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refresh();
@@ -184,7 +1106,11 @@ class _MessagesScreenState extends State<MessagesScreen>
     if (oldWidget.fetcher != widget.fetcher ||
         oldWidget.resetToken != widget.resetToken) {
       _restartAutoRefresh();
-      _startFetch(clear: true);
+      setState(() {
+        _messages = List<MeshMessage>.from(widget.initialMessages);
+        _future = Future.value(_messages);
+      });
+      _startFetch(clear: _messages.isEmpty);
     }
   }
 
@@ -243,7 +1169,7 @@ class _MessagesScreenState extends State<MessagesScreen>
   }
 
   String _messageKey(MeshMessage msg) {
-    return '${msg.id}-${msg.rxIso}-${msg.text}';
+    return '${msg.id}-${msg.rxIso}-${msg.fromId}-${msg.text}';
   }
 
   void _scheduleScrollToBottom({int retries = 5}) {
@@ -474,6 +1400,8 @@ class ChatLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final timeStr = '[${message.timeFormatted}]';
     final rawId = message.fromId.isNotEmpty ? message.fromId : '?';
+    final lookupId =
+        message.lookupNodeId.isNotEmpty ? message.lookupNodeId : rawId;
     final nick = rawId.startsWith('!') ? rawId : '!$rawId';
     final channel = '#${message.channelName ?? ''}'.trim();
     final bodyText = message.text.isEmpty ? '⟂ (no text)' : message.text;
@@ -489,12 +1417,12 @@ class ChatLine extends StatelessWidget {
       child: FutureBuilder<String>(
           future: NodeShortNameCache.instance.shortNameFor(
             domain: domain,
-            nodeId: rawId,
+            nodeId: lookupId,
           ),
           builder: (context, snapshot) {
             final shortName = snapshot.data?.isNotEmpty == true
                 ? snapshot.data!
-                : _fallbackShortName(rawId);
+                : _fallbackShortName(lookupId);
             final paddedShortName = NodeShortNameCache.padToWidth(shortName);
             return SelectionArea(
               child: Column(
@@ -871,6 +1799,7 @@ class MeshMessage {
   final DateTime? rxTime;
   final String rxIso;
   final String fromId;
+  final String nodeId;
   final String toId;
   final int? channel;
   final String? channelName;
@@ -886,6 +1815,7 @@ class MeshMessage {
     required this.rxTime,
     required this.rxIso,
     required this.fromId,
+    this.nodeId = '',
     required this.toId,
     required this.channel,
     required this.channelName,
@@ -924,6 +1854,7 @@ class MeshMessage {
       rxTime: parsedTime,
       rxIso: json['rx_iso']?.toString() ?? '',
       fromId: json['from_id']?.toString() ?? '',
+      nodeId: json['node_id']?.toString() ?? '',
       toId: json['to_id']?.toString() ?? '',
       channel: parseInt(json['channel']),
       channelName: json['channel_name']?.toString(),
@@ -948,6 +1879,27 @@ class MeshMessage {
     if (fromId.isEmpty) return '?';
     return fromId.startsWith('!') ? fromId.substring(1) : fromId;
   }
+
+  /// Prefer the explicit node id when present, falling back to the sender id.
+  String get lookupNodeId => nodeId.isNotEmpty ? nodeId : fromId;
+
+  /// Serialises the message for persistence in local storage.
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'rx_iso': rxIso,
+      'from_id': fromId,
+      'node_id': nodeId,
+      'to_id': toId,
+      'channel': channel,
+      'channel_name': channelName,
+      'portnum': portnum,
+      'text': text,
+      'rssi': rssi,
+      'snr': snr,
+      'hop_limit': hopLimit,
+    };
+  }
 }
 
 /// Mesh federation instance metadata used to configure endpoints.
@@ -955,6 +1907,9 @@ class MeshInstance {
   const MeshInstance({
     required this.name,
     required this.domain,
+    this.id = '',
+    this.isPrivate = false,
+    this.lastUpdateTime,
   });
 
   /// Human-friendly instance name.
@@ -963,6 +1918,15 @@ class MeshInstance {
   /// Instance domain hosting the PotatoMesh API.
   final String domain;
 
+  /// Unique identifier for the instance when provided by the API.
+  final String id;
+
+  /// True when the instance is marked as private and should be hidden.
+  final bool isPrivate;
+
+  /// Optional last update timestamp from the federation payload.
+  final DateTime? lastUpdateTime;
+
   /// Prefer the provided name, falling back to the domain.
   String get displayName => name.isNotEmpty ? name : domain;
 
@@ -970,35 +1934,144 @@ class MeshInstance {
   factory MeshInstance.fromJson(Map<String, dynamic> json) {
     final domain = json['domain']?.toString().trim() ?? '';
     final name = json['name']?.toString().trim() ?? '';
-    return MeshInstance(name: name, domain: domain);
+    final id = json['id']?.toString().trim() ?? '';
+    final isPrivateRaw = json['isPrivate'] ?? json['private'];
+    final isPrivate = isPrivateRaw is bool
+        ? isPrivateRaw
+        : isPrivateRaw?.toString().toLowerCase() == 'true';
+    DateTime? lastUpdate;
+    final lastUpdateRaw = json['lastUpdateTime'];
+    if (lastUpdateRaw != null) {
+      final seconds = int.tryParse(lastUpdateRaw.toString());
+      if (seconds != null) {
+        lastUpdate =
+            DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true);
+      }
+    }
+
+    return MeshInstance(
+      name: name,
+      domain: domain,
+      id: id,
+      isPrivate: isPrivate,
+      lastUpdateTime: lastUpdate,
+    );
+  }
+
+  /// Serialize the instance for persistence.
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'domain': domain,
+      'isPrivate': isPrivate,
+      'lastUpdateTime': lastUpdateTime != null
+          ? lastUpdateTime!.millisecondsSinceEpoch ~/ 1000
+          : null,
+    };
+  }
+}
+
+/// Node metadata persisted locally to avoid repeated network lookups.
+class MeshNode {
+  const MeshNode({
+    required this.nodeId,
+    this.shortName = '',
+    this.longName = '',
+    this.lastHeard,
+    this.firstHeard,
+    this.hwModel,
+    this.latitude,
+    this.longitude,
+  });
+
+  final String nodeId;
+  final String shortName;
+  final String longName;
+  final DateTime? lastHeard;
+  final DateTime? firstHeard;
+  final String? hwModel;
+  final double? latitude;
+  final double? longitude;
+
+  /// Returns a name suitable for chat rendering.
+  String get displayShortName => shortName.isNotEmpty
+      ? shortName
+      : NodeShortNameCache.fallbackShortName(nodeId);
+
+  /// Whether the node was heard within the provided freshness window.
+  bool isActive(Duration freshness, DateTime nowUtc) {
+    if (lastHeard == null) return false;
+    final threshold = nowUtc.subtract(freshness);
+    return lastHeard!.isAfter(threshold);
+  }
+
+  factory MeshNode.fromJson(Map<String, dynamic> json) {
+    DateTime? parseSeconds(dynamic value) {
+      if (value == null) return null;
+      final seconds = int.tryParse(value.toString());
+      if (seconds == null) return null;
+      return DateTime.fromMillisecondsSinceEpoch(seconds * 1000, isUtc: true);
+    }
+
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      return double.tryParse(value.toString());
+    }
+
+    return MeshNode(
+      nodeId: json['node_id']?.toString() ?? json['id']?.toString() ?? '',
+      shortName:
+          json['short_name']?.toString() ?? json['shortName']?.toString() ?? '',
+      longName:
+          json['long_name']?.toString() ?? json['longName']?.toString() ?? '',
+      lastHeard:
+          parseSeconds(json['last_heard']) ?? parseSeconds(json['lastSeen']),
+      firstHeard: parseSeconds(json['first_heard']),
+      hwModel: json['hw_model']?.toString(),
+      latitude: parseDouble(json['latitude']),
+      longitude: parseDouble(json['longitude']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'node_id': nodeId,
+      'short_name': shortName,
+      'long_name': longName,
+      'last_heard':
+          lastHeard != null ? lastHeard!.millisecondsSinceEpoch ~/ 1000 : null,
+      'first_heard': firstHeard != null
+          ? firstHeard!.millisecondsSinceEpoch ~/ 1000
+          : null,
+      'hw_model': hwModel,
+      'latitude': latitude,
+      'longitude': longitude,
+    };
   }
 }
 
 /// Build a messages API URI for a given domain or absolute URL.
-Uri _buildMessagesUri(String domain) {
+Uri _buildMessagesUri(String domain, {int limit = 1000}) {
   final trimmed = domain.trim();
+  final params = {
+    'limit': limit.toString(),
+    'encrypted': 'false',
+  };
   if (trimmed.isEmpty) {
-    return Uri.https('potatomesh.net', '/api/messages', {
-      'limit': '1000',
-      'encrypted': 'false',
-    });
+    return Uri.https('potatomesh.net', '/api/messages', params);
   }
 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     final parsed = Uri.parse(trimmed);
     return parsed.replace(
       path: '/api/messages',
-      queryParameters: {
-        'limit': '1000',
-        'encrypted': 'false',
-      },
+      queryParameters: params,
     );
   }
 
-  return Uri.https(trimmed, '/api/messages', {
-    'limit': '1000',
-    'encrypted': 'false',
-  });
+  return Uri.https(trimmed, '/api/messages', params);
 }
 
 /// Build a node metadata API URI for a given domain.
@@ -1019,6 +2092,24 @@ Uri _buildNodeUri(String domain, String nodeId) {
   return Uri.https(trimmedDomain, '/api/nodes/$encodedId');
 }
 
+/// Build the bulk nodes API URI for fetching recent nodes.
+Uri _buildNodesUri(String domain, {int limit = 1000}) {
+  final trimmedDomain = domain.trim();
+  final params = {'limit': limit.toString()};
+
+  if (trimmedDomain.isEmpty) {
+    return Uri.https('potatomesh.net', '/api/nodes', params);
+  }
+
+  if (trimmedDomain.startsWith('http://') ||
+      trimmedDomain.startsWith('https://')) {
+    final parsed = Uri.parse(trimmedDomain);
+    return parsed.replace(path: '/api/nodes', queryParameters: params);
+  }
+
+  return Uri.https(trimmedDomain, '/api/nodes', params);
+}
+
 /// Build a /version endpoint URI for a given domain.
 Uri _buildVersionUri(String domain) {
   final trimmed = domain.trim();
@@ -1030,6 +2121,19 @@ Uri _buildVersionUri(String domain) {
     return parsed.replace(path: '/version');
   }
   return Uri.https(trimmed, '/version');
+}
+
+/// Build an instances API URI for federation discovery.
+Uri _buildInstancesUri(String domain) {
+  final trimmed = domain.trim();
+  if (trimmed.isEmpty || trimmed == 'potatomesh.net') {
+    return Uri.https('potatomesh.net', '/api/instances');
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    final parsed = Uri.parse(trimmed);
+    return parsed.replace(path: '/api/instances');
+  }
+  return Uri.https(trimmed, '/api/instances');
 }
 
 String _composeGitAwareVersion(PackageInfo info) {
@@ -1090,13 +2194,14 @@ Uri? _buildDomainUrl(String domain) {
 Future<List<MeshMessage>> fetchMessages({
   http.Client? client,
   String domain = 'potatomesh.net',
+  int limit = 1000,
 }) async {
-  final uri = _buildMessagesUri(domain);
+  final uri = _buildMessagesUri(domain, limit: limit);
 
   final httpClient = client ?? http.Client();
   final shouldClose = client == null;
 
-  final resp = await httpClient.get(uri);
+  final resp = await httpClient.get(uri).timeout(_requestTimeout);
   if (shouldClose) {
     httpClient.close();
   }
@@ -1124,7 +2229,32 @@ class NodeShortNameCache {
   /// Singleton instance used by chat line rendering.
   static final NodeShortNameCache instance = NodeShortNameCache._();
 
+  MeshNodeResolver? _resolver;
   final Map<String, Future<String>> _cache = {};
+  final Map<String, Map<String, String>> _primedShortNames = {};
+
+  /// Registers a resolver that can supply locally cached node metadata.
+  void registerResolver(MeshNodeResolver resolver) {
+    _resolver = resolver;
+  }
+
+  /// Clears memoised entries; primarily used in tests.
+  void clear() {
+    _cache.clear();
+    _primedShortNames.clear();
+  }
+
+  /// Seeds the cache with a batch of node metadata to avoid network calls.
+  void prime({required String domain, required Iterable<MeshNode> nodes}) {
+    final key = domain.trim();
+    final map = _primedShortNames.putIfAbsent(key, () => {});
+    for (final node in nodes) {
+      final id = node.nodeId.trim();
+      final name = node.shortName.trim();
+      if (id.isEmpty || name.isEmpty) continue;
+      map[id] = name;
+    }
+  }
 
   /// Resolve the short name for a node, defaulting to the fallback suffix.
   Future<String> shortNameFor({
@@ -1135,6 +2265,22 @@ class NodeShortNameCache {
     final trimmedId = nodeId.trim();
     final fallback = fallbackShortName(trimmedId);
     if (trimmedId.isEmpty) return Future.value(fallback);
+
+    final domainKey = domain.trim();
+    final primed = _primedShortNames[domainKey];
+    if (primed != null) {
+      final primedName = primed[trimmedId] ?? primed['!$trimmedId'];
+      if (primedName != null && primedName.isNotEmpty) {
+        return Future.value(padToWidth(primedName));
+      }
+    }
+
+    final resolved = _resolver?.findNode(domainKey, trimmedId);
+    if (resolved != null && resolved.displayShortName.isNotEmpty) {
+      final name = resolved.displayShortName;
+      _storePrimed(domainKey, trimmedId, name);
+      return Future.value(padToWidth(name));
+    }
 
     final key = '${domain.trim()}|$trimmedId';
     if (_cache.containsKey(key)) {
@@ -1162,7 +2308,7 @@ class NodeShortNameCache {
     final shouldClose = client == null;
 
     try {
-      final resp = await httpClient.get(uri);
+      final resp = await httpClient.get(uri).timeout(_requestTimeout);
       if (resp.statusCode != 200) return fallback;
 
       final dynamic decoded = jsonDecode(resp.body);
@@ -1170,7 +2316,10 @@ class NodeShortNameCache {
         final raw = decoded['short_name'] ?? decoded['shortName'];
         if (raw != null) {
           final name = raw.toString().trim();
-          if (name.isNotEmpty) return name;
+          if (name.isNotEmpty) {
+            _storePrimed(domain, nodeId, name);
+            return padToWidth(name);
+          }
         }
       }
 
@@ -1197,6 +2346,11 @@ class NodeShortNameCache {
   static String padToWidth(String value, {int width = 4}) {
     if (value.length >= width) return value;
     return value.padLeft(width);
+  }
+
+  void _storePrimed(String domain, String nodeId, String name) {
+    final map = _primedShortNames.putIfAbsent(domain.trim(), () => {});
+    map[nodeId.trim()] = name;
   }
 }
 
@@ -1268,7 +2422,7 @@ class InstanceVersionCache {
     final httpClient = client ?? http.Client();
     final shouldClose = client == null;
     try {
-      final resp = await httpClient.get(uri);
+      final resp = await httpClient.get(uri).timeout(_requestTimeout);
       if (resp.statusCode != 200) return null;
       final dynamic decoded = jsonDecode(resp.body);
       if (decoded is Map<String, dynamic>) {
@@ -1285,40 +2439,10 @@ class InstanceVersionCache {
   }
 }
 
-/// Fetches federation instance metadata from potatomesh.net and normalizes it.
-///
-/// Instances lacking a domain are dropped. A provided [client] is closed
-/// automatically when created internally.
-Future<List<MeshInstance>> fetchInstances({http.Client? client}) async {
-  final uri = Uri.https('potatomesh.net', '/api/instances');
-  final httpClient = client ?? http.Client();
-  final shouldClose = client == null;
-
-  try {
-    final resp = await httpClient.get(uri);
-    if (resp.statusCode != 200) {
-      throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
-    }
-
-    final dynamic decoded = jsonDecode(resp.body);
-    if (decoded is! List) {
-      throw Exception('Unexpected instances response, expected JSON array');
-    }
-
-    final instances = decoded
-        .whereType<Map<String, dynamic>>()
-        .map((entry) => MeshInstance.fromJson(entry))
-        .where((instance) => instance.domain.isNotEmpty)
-        .toList()
-      ..sort((a, b) =>
-          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()));
-
-    return instances;
-  } finally {
-    if (shouldClose) {
-      httpClient.close();
-    }
-  }
+/// Fetches and validates federation instances, persisting them locally.
+Future<List<MeshInstance>> fetchInstances({http.Client? client}) {
+  final repository = MeshRepository(client: client);
+  return repository.discoverInstances(client: client);
 }
 
 /// Returns a new list sorted by receive time so older messages render first.
