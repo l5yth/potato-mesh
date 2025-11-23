@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   android-release:
