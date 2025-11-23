@@ -50,7 +50,7 @@ void main() {
     await tester.pumpWidget(PotatoMeshReaderApp(fetcher: fakeFetch));
     await tester.pumpAndSettle();
 
-    expect(find.text('Meshtastic Reader'), findsOneWidget);
+    expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
     expect(find.byType(MessagesScreen), findsOneWidget);
     expect(fetchCalls.length, 1);
   });
@@ -85,8 +85,14 @@ void main() {
       return Future.error(StateError('no new data'));
     }
 
-    await tester
-        .pumpWidget(MaterialApp(home: MessagesScreen(fetcher: fetcher)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MessagesScreen(
+          fetcher: fetcher,
+          domain: 'potatomesh.net',
+        ),
+      ),
+    );
 
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
@@ -127,7 +133,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: MessagesScreen(fetcher: () async => []),
+        home: MessagesScreen(
+          fetcher: () async => [],
+          domain: 'potatomesh.net',
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -140,6 +149,7 @@ void main() {
       MaterialApp(
         home: MessagesScreen(
           fetcher: () async => [],
+          domain: 'potatomesh.net',
           onOpenSettings: (context) {
             Navigator.of(context).push(
               MaterialPageRoute(
@@ -160,7 +170,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Settings'), findsOneWidget);
-    expect(find.textContaining('Meshtastic Reader'), findsOneWidget);
+    expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
   });
 
   testWidgets('changing endpoint triggers a refresh with new domain',
@@ -235,7 +245,12 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: ChatLine(message: message)),
+        home: Scaffold(
+          body: ChatLine(
+            message: message,
+            domain: 'potatomesh.net',
+          ),
+        ),
       ),
     );
 

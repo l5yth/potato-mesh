@@ -10,6 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
+  package_info_plus: ^8.1.0
+  flutter_svg: ^2.0.10+1
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
@@ -26,14 +29,14 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/icon.png
+  image_path: assets/icon-launcher.png
   remove_alpha_ios: true
   adaptive_icon_background: "#111417"
-  adaptive_icon_foreground: assets/icon.png
+  adaptive_icon_foreground: assets/icon-launcher.png
 
 flutter_native_splash:
   color: "#111417"
-  image: assets/icon.png
+  image: assets/icon-splash.png
   android_12:
     color: "#111417"
     image: assets/icon.png
