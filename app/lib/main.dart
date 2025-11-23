@@ -830,8 +830,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.tag),
             title: const Text('Version'),
-            subtitle:
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(_versionLabel.isNotEmpty ? _versionLabel : 'Loading…'),
+                const SizedBox(height: 4),
+                RichText(
+                  text: TextSpan(
+                    text: 'github.com/l5yth/potato-mesh',
+                    style: const TextStyle(
+                      color: Colors.tealAccent,
+                      decoration: TextDecoration.underline,
+                    ),
+                    recognizer: TapGestureRecognizer()
+                      ..onTap = () async {
+                        final uri = Uri.parse(
+                          'https://github.com/l5yth/potato-mesh/',
+                        );
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      },
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
