@@ -80,6 +80,8 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
   late String _endpointDomain;
   int _endpointVersion = 0;
   late final MeshRepository _repository;
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
   BootstrapProgress _progress =
       const BootstrapProgress(stage: 'loading instances');
   Future<BootstrapResult>? _bootstrapFuture;
@@ -167,7 +169,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
       setState(() {
         _lastError = error;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      _messengerKey.currentState?.showSnackBar(
         SnackBar(content: Text('Failed to switch instance: $error')),
       );
     }
@@ -190,6 +192,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     return MaterialApp(
       title: '🥔 PotatoMesh Reader',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: _messengerKey,
       theme: ThemeData(
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
@@ -217,7 +220,9 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
             );
           }
 
-          final domain = effectiveResult.selectedDomain;
+          final domain = _repository.selectedDomain.isNotEmpty
+              ? _repository.selectedDomain
+              : effectiveResult.selectedDomain;
           return MessagesScreen(
             key: ValueKey<String>(domain),
             fetcher: _fetchMessagesForCurrentDomain,
@@ -229,7 +234,9 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => SettingsScreen(
-                    currentDomain: domain,
+                    currentDomain: _repository.selectedDomain.isNotEmpty
+                        ? _repository.selectedDomain
+                        : domain,
                     onDomainChanged: _handleEndpointChanged,
                     loadInstances: () async {
                       if (_repository.instances.isNotEmpty) {
@@ -556,15 +563,15 @@ class MeshRepository implements MeshNodeResolver {
     bool forceFull = false,
   }) async {
     final store = await _ensureStore();
-    _selectedDomain = domain.trim().isEmpty ? 'potatomesh.net' : domain.trim();
-    await store.saveSelectedDomain(_selectedDomain);
+    final targetDomain =
+        domain.trim().isEmpty ? 'potatomesh.net' : domain.trim();
 
     final client = httpClient ?? _client ?? http.Client();
     final shouldClose = httpClient == null && _client == null;
 
     try {
       final nodes = await _fetchNodesList(
-        domain: _selectedDomain,
+        domain: targetDomain,
         client: client,
         persist: true,
         useCacheWhenAvailable: !forceFull,
@@ -572,14 +579,17 @@ class MeshRepository implements MeshNodeResolver {
       );
 
       final messages = await _loadMessagesInternal(
-        domain: _selectedDomain,
+        domain: targetDomain,
         client: client,
         forceFull: forceFull,
         onProgress: onProgress,
       );
 
+      _selectedDomain = targetDomain;
+      await store.saveSelectedDomain(_selectedDomain);
+
       return DomainLoadResult(
-        domain: _selectedDomain,
+        domain: targetDomain,
         nodes: nodes,
         messages: messages,
       );
