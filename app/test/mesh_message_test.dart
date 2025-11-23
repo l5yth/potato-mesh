@@ -18,9 +18,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:potato_mesh_reader/main.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Unit tests for [MeshMessage] parsing and the sorting helper.
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    NodeShortNameCache.instance.clear();
+  });
+
   group('MeshMessage.fromJson', () {
     test('parses fields and strips leading bang from sender', () {
       final msg = MeshMessage.fromJson({
@@ -222,13 +230,11 @@ void main() {
           instances.map((i) => i.domain), ['alpha.example', 'bravo.example']);
     });
 
-    test('throws on failed fetch', () async {
+    test('returns empty list on failed fetch', () async {
       final client = MockClient((request) async => http.Response('oops', 500));
 
-      expect(
-        () => fetchInstances(client: client),
-        throwsA(isA<Exception>()),
-      );
+      final instances = await fetchInstances(client: client);
+      expect(instances, isEmpty);
     });
   });
 }

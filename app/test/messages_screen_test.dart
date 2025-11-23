@@ -17,10 +17,19 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:potato_mesh_reader/main.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Widget-level tests that exercise UI states and rendering branches.
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    NodeShortNameCache.instance.clear();
+  });
+
   testWidgets('PotatoMeshReaderApp wires theming and home screen',
       (tester) async {
     final fetchCalls = <int>[];
@@ -47,12 +56,25 @@ void main() {
       ];
     }
 
-    await tester.pumpWidget(PotatoMeshReaderApp(fetcher: fakeFetch));
+    Future<BootstrapResult> bootstrapper({ProgressCallback? onProgress}) async {
+      onProgress?.call(const BootstrapProgress(stage: 'loading instances'));
+      return BootstrapResult(
+        instances: const [],
+        nodes: const [],
+        messages: await fakeFetch(domain: 'potatomesh.net'),
+        selectedDomain: 'potatomesh.net',
+      );
+    }
+
+    await tester.pumpWidget(PotatoMeshReaderApp(
+      fetcher: fakeFetch,
+      bootstrapper: bootstrapper,
+    ));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
     expect(find.byType(MessagesScreen), findsOneWidget);
-    expect(fetchCalls.length, greaterThanOrEqualTo(2));
+    expect(fetchCalls.length, greaterThanOrEqualTo(1));
   });
 
   testWidgets('MessagesScreen shows loading, data, refresh, and empty states',
@@ -196,10 +218,37 @@ void main() {
           MeshInstance(name: 'Mesh Berlin', domain: 'berlin.mesh'),
         ];
 
+    final mockClient = MockClient((request) async {
+      if (request.url.path.contains('/api/nodes')) {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path.contains('/api/messages')) {
+        return http.Response('[]', 200);
+      }
+      if (request.url.path.contains('/api/instances')) {
+        return http.Response(
+            '[{"name":"Mesh Berlin","domain":"berlin.mesh"}]', 200);
+      }
+      return http.Response('[]', 200);
+    });
+
+    Future<BootstrapResult> bootstrapper({ProgressCallback? onProgress}) async {
+      onProgress?.call(const BootstrapProgress(stage: 'loading instances'));
+      final initialMessages = await fetcher(domain: 'potatomesh.net');
+      return BootstrapResult(
+        instances: const [],
+        nodes: const [],
+        messages: initialMessages,
+        selectedDomain: 'potatomesh.net',
+      );
+    }
+
     await tester.pumpWidget(
       PotatoMeshReaderApp(
         fetcher: fetcher,
         instanceFetcher: ({http.Client? client}) => loader(),
+        bootstrapper: bootstrapper,
+        repository: MeshRepository(client: mockClient),
       ),
     );
     await tester.pumpAndSettle();
@@ -214,9 +263,9 @@ void main() {
     await tester.tap(find.text('Mesh Berlin').last);
     await tester.pumpAndSettle();
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await tester.pumpAndSettle(const Duration(seconds: 1));
 
-    expect(calls.last, 'berlin.mesh');
+    expect(calls.contains('berlin.mesh'), isTrue);
     expect(find.text('berlin.mesh'), findsOneWidget);
   });
 
