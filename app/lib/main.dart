@@ -163,12 +163,12 @@ class _MessagesScreenState extends State<MessagesScreen>
   final ScrollController _scrollController = ScrollController();
   Timer? _refreshTimer;
   bool _isForeground = true;
+  int _fetchVersion = 0;
 
   @override
   void initState() {
     super.initState();
-    _future = widget.fetcher();
-    _future.then((msgs) => _appendMessages(msgs)).catchError((_) {});
+    _startFetch(clear: true);
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refresh();
@@ -183,12 +183,8 @@ class _MessagesScreenState extends State<MessagesScreen>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fetcher != widget.fetcher ||
         oldWidget.resetToken != widget.resetToken) {
-      setState(() {
-        _future = widget.fetcher();
-        _messages = const [];
-      });
       _restartAutoRefresh();
-      _future.then((msgs) => _appendMessages(msgs)).catchError((_) {});
+      _startFetch(clear: true);
     }
   }
 
@@ -221,15 +217,7 @@ class _MessagesScreenState extends State<MessagesScreen>
   /// via its `snapshot.error` state without bubbling an exception to the
   /// gesture handler.
   Future<void> _refresh() async {
-    setState(() {
-      _future = widget.fetcher();
-    });
-    try {
-      final newMessages = await _future;
-      _appendMessages(newMessages);
-    } catch (_) {
-      // Let the FutureBuilder display error UI without breaking the gesture.
-    }
+    _startFetch();
   }
 
   void _appendMessages(List<MeshMessage> newMessages) {
@@ -280,6 +268,22 @@ class _MessagesScreenState extends State<MessagesScreen>
     if (_isForeground) {
       _startAutoRefresh();
     }
+  }
+
+  void _startFetch({bool clear = false}) {
+    final version = ++_fetchVersion;
+    setState(() {
+      if (clear) {
+        _messages = const [];
+      }
+      _future = widget.fetcher();
+    });
+    _future.then((msgs) {
+      if (version != _fetchVersion) return;
+      _appendMessages(msgs);
+    }).catchError((_) {
+      // Let FutureBuilder surface the error; ignore for stale fetches.
+    });
   }
 
   String _dateLabelFor(MeshMessage message) {
