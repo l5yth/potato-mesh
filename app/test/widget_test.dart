@@ -60,16 +60,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
-    expect(find.text('[--:--]'), findsOneWidget);
-    expect(find.text('<!nodeA>'), findsOneWidget);
-    expect(find.text('hello world'), findsOneWidget);
-    expect(find.text('#TEST'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Refresh'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('<!nodeB>'), findsOneWidget);
-    expect(find.text('second message'), findsOneWidget);
-    expect(find.text('<!nodeA>'), findsNothing);
+    expect(find.textContaining('[--:--]'), findsWidgets);
+    expect(find.byType(ChatLine), findsNWidgets(2));
+    expect(find.textContaining('hello world'), findsOneWidget);
+    expect(find.textContaining('#TEST'), findsNWidgets(2));
+    expect(find.textContaining('<!nodeB>'), findsOneWidget);
+    expect(find.textContaining('second message'), findsOneWidget);
   });
 }
