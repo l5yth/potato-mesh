@@ -1,0 +1,124 @@
+# Copyright © 2025-26 l5yth & contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Mobile Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  android-release:
+    name: Android Release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./app
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Install dependencies
+      run: flutter pub get
+    - name: Build release APK
+      run: flutter build apk --release
+    - name: Prepare artifacts
+      run: |
+        set -euo pipefail
+        APK_DIR="build/app/outputs/flutter-apk"
+        mv "${APK_DIR}/app-release.apk" "${APK_DIR}/potatomesh-reader-android-${TAG_NAME}.apk"
+        (cd "${APK_DIR}" && sha256sum "potatomesh-reader-android-${TAG_NAME}.apk" > "potatomesh-reader-android-${TAG_NAME}.apk.sha256sum")
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: potatomesh-reader-android-${{ env.TAG_NAME }}
+        path: |
+          app/build/app/outputs/flutter-apk/potatomesh-reader-android-${{ env.TAG_NAME }}.apk
+          app/build/app/outputs/flutter-apk/potatomesh-reader-android-${{ env.TAG_NAME }}.apk.sha256sum
+
+  ios-release:
+    name: iOS Release
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ./app
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+    steps:
+    - uses: actions/checkout@v5
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Install dependencies
+      run: flutter pub get
+    - name: Build release IPA (no codesign)
+      run: flutter build ipa --release --no-codesign
+    - name: Prepare artifacts
+      run: |
+        set -euo pipefail
+        IPA_DIR="build/ios/ipa"
+        IPA_FILE="$(ls "${IPA_DIR}"/*.ipa | head -n 1)"
+        mv "${IPA_FILE}" "${IPA_DIR}/potatomesh-reader-ios-${TAG_NAME}.ipa"
+        (cd "${IPA_DIR}" && shasum -a 256 "potatomesh-reader-ios-${TAG_NAME}.ipa" > "potatomesh-reader-ios-${TAG_NAME}.ipa.sha256sum")
+    - name: Upload release artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: potatomesh-reader-ios-${{ env.TAG_NAME }}
+        path: |
+          app/build/ios/ipa/potatomesh-reader-ios-${{ env.TAG_NAME }}.ipa
+          app/build/ios/ipa/potatomesh-reader-ios-${{ env.TAG_NAME }}.ipa.sha256sum
+
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs:
+      - android-release
+      - ios-release
+    if: ${{ github.ref_name matches '^v[0-9]+\\.[0-9]+\\.[0-9]+$' }}
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+    steps:
+    - uses: actions/checkout@v5
+    - name: Download Android artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: potatomesh-reader-android-${{ env.TAG_NAME }}
+        path: artifacts/android
+    - name: Download iOS artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: potatomesh-reader-ios-${{ env.TAG_NAME }}
+        path: artifacts/ios
+    - name: Attach assets to release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ github.ref_name }}
+        generate_release_notes: true
+        files: |
+          artifacts/android/potatomesh-reader-android-${{ env.TAG_NAME }}.apk
+          artifacts/android/potatomesh-reader-android-${{ env.TAG_NAME }}.apk.sha256sum
+          artifacts/ios/potatomesh-reader-ios-${{ env.TAG_NAME }}.ipa
+          artifacts/ios/potatomesh-reader-ios-${{ env.TAG_NAME }}.ipa.sha256sum
