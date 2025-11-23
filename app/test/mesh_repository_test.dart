@@ -192,4 +192,70 @@ void main() {
     expect(refreshed.length, 2);
     expect(refreshed.last.text, 'new');
   });
+
+  test('bootstrap falls back to next responsive instance when first fails',
+      () async {
+    final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final client = MockClient((request) async {
+      if (request.url.host == 'potatomesh.net' &&
+          request.url.path == '/api/instances') {
+        return http.Response(
+          jsonEncode([
+            {'name': 'Broken', 'domain': 'broken.mesh'},
+            {'name': 'Healthy', 'domain': 'healthy.mesh'},
+          ]),
+          200,
+        );
+      }
+      if (request.url.host == 'broken.mesh' &&
+          request.url.path == '/api/nodes') {
+        return http.Response('Not found', 404);
+      }
+      if (request.url.host == 'healthy.mesh' &&
+          request.url.path == '/api/nodes') {
+        final nodes = List.generate(10, (i) {
+          return {
+            'node_id': '!ok$i',
+            'short_name': 'OK$i',
+            'last_heard': nowSeconds,
+          };
+        });
+        return http.Response(jsonEncode(nodes), 200);
+      }
+      if (request.url.host == 'healthy.mesh' &&
+          request.url.path == '/api/messages') {
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 10,
+              'rx_iso': '2024-01-01T00:00:00Z',
+              'from_id': '!ok1',
+              'to_id': '^',
+              'channel': 1,
+              'portnum': 'TEXT',
+              'text': 'hi'
+            }
+          ]),
+          200,
+        );
+      }
+      if (request.url.path.startsWith('/api/nodes/')) {
+        return http.Response(
+          jsonEncode({
+            'node_id': '!ok1',
+            'short_name': 'OK1',
+            'last_heard': nowSeconds
+          }),
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    });
+
+    final repository = MeshRepository(client: client);
+    final result = await repository.bootstrap(initialDomain: 'broken.mesh');
+
+    expect(result.selectedDomain, 'healthy.mesh');
+    expect(result.messages.single.text, 'hi');
+  });
 }

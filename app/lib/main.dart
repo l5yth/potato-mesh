@@ -33,6 +33,7 @@ const String _gitCommitsEnv =
 const String _gitShaEnv = String.fromEnvironment('GIT_SHA', defaultValue: '');
 const String _gitDirtyEnv =
     String.fromEnvironment('GIT_DIRTY', defaultValue: '');
+const Duration _requestTimeout = Duration(seconds: 5);
 
 void main() {
   runApp(const PotatoMeshReaderApp());
@@ -276,8 +277,16 @@ class LoadingScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Image.asset(
+                'assets/icon-splash.png',
+                height: 120,
+                semanticLabel: 'PotatoMesh',
+              ),
+            ),
             const CircularProgressIndicator(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 28),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Text(
@@ -536,11 +545,11 @@ class MeshRepository implements MeshNodeResolver {
       _messagesLoaded[_domainKey(_selectedDomain)] = true;
     }
 
-    final domainResult = await loadDomainData(
-      domain: _selectedDomain,
-      onProgress: onProgress,
+    final domainResult = await _loadFirstResponsiveInstance(
+      preferredDomain: _selectedDomain,
+      candidates: _instances,
       httpClient: httpClient,
-      forceFull: true,
+      onProgress: onProgress,
     );
 
     if (shouldCloseClient) {
@@ -715,22 +724,26 @@ class MeshRepository implements MeshNodeResolver {
     final results = <MeshInstance>[];
 
     Future<void> enqueueFromDomain(String domain) async {
-      final uri = _buildInstancesUri(domain);
-      final resp = await client.get(uri);
-      if (resp.statusCode != 200) return;
-      final dynamic decoded = jsonDecode(resp.body);
-      if (decoded is! List) return;
-      final parsed = decoded
-          .whereType<Map<String, dynamic>>()
-          .map(MeshInstance.fromJson)
-          .where((instance) => instance.domain.isNotEmpty)
-          .toList();
-      for (final instance in parsed) {
-        final key = _domainKey(instance.domain);
-        if (seen.contains(key)) continue;
-        seen.add(key);
-        results.add(instance);
-        queue.add(instance.domain);
+      try {
+        final uri = _buildInstancesUri(domain);
+        final resp = await client.get(uri).timeout(_requestTimeout);
+        if (resp.statusCode != 200) return;
+        final dynamic decoded = jsonDecode(resp.body);
+        if (decoded is! List) return;
+        final parsed = decoded
+            .whereType<Map<String, dynamic>>()
+            .map(MeshInstance.fromJson)
+            .where((instance) => instance.domain.isNotEmpty)
+            .toList();
+        for (final instance in parsed) {
+          final key = _domainKey(instance.domain);
+          if (seen.contains(key)) continue;
+          seen.add(key);
+          results.add(instance);
+          queue.add(instance.domain);
+        }
+      } catch (_) {
+        // Skip unreachable domains during discovery.
       }
     }
 
@@ -803,6 +816,53 @@ class MeshRepository implements MeshNodeResolver {
     return valid.isNotEmpty ? valid : candidates;
   }
 
+  Future<DomainLoadResult> _loadFirstResponsiveInstance({
+    required String preferredDomain,
+    required List<MeshInstance> candidates,
+    required http.Client httpClient,
+    ProgressCallback? onProgress,
+  }) async {
+    final store = await _ensureStore();
+    final ordered = <String>{
+      preferredDomain,
+      ...candidates.map((c) => c.domain)
+    };
+    DomainLoadResult? result;
+    Object? lastError;
+    for (final domain in ordered) {
+      try {
+        result = await loadDomainData(
+          domain: domain,
+          onProgress: onProgress,
+          httpClient: httpClient,
+          forceFull: true,
+        );
+        break;
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+    }
+
+    if (result != null) {
+      return result;
+    }
+
+    final cachedNodes = store.loadNodes(preferredDomain);
+    final cachedMessages = store.loadMessages(preferredDomain);
+    if (cachedNodes.isNotEmpty || cachedMessages.isNotEmpty) {
+      _selectedDomain = preferredDomain;
+      await store.saveSelectedDomain(_selectedDomain);
+      return DomainLoadResult(
+        domain: preferredDomain,
+        nodes: cachedNodes,
+        messages: cachedMessages,
+      );
+    }
+
+    throw lastError ?? Exception('No responsive instances');
+  }
+
   String _resolveSelectedDomain(
     List<MeshInstance> available,
     String desired,
@@ -832,7 +892,7 @@ class MeshRepository implements MeshNodeResolver {
       return _nodesByDomain[key]!;
     }
     final uri = _buildNodesUri(domain, limit: limit);
-    final resp = await client.get(uri);
+    final resp = await client.get(uri).timeout(_requestTimeout);
     if (resp.statusCode != 200) {
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     }
@@ -878,7 +938,7 @@ class MeshRepository implements MeshNodeResolver {
     final limit = initialFetch ? 1000 : 100;
 
     final uri = _buildMessagesUri(domain, limit: limit);
-    final resp = await client.get(uri);
+    final resp = await client.get(uri).timeout(_requestTimeout);
     if (resp.statusCode != 200) {
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     }
@@ -2138,7 +2198,7 @@ Future<List<MeshMessage>> fetchMessages({
   final httpClient = client ?? http.Client();
   final shouldClose = client == null;
 
-  final resp = await httpClient.get(uri);
+  final resp = await httpClient.get(uri).timeout(_requestTimeout);
   if (shouldClose) {
     httpClient.close();
   }
@@ -2245,7 +2305,7 @@ class NodeShortNameCache {
     final shouldClose = client == null;
 
     try {
-      final resp = await httpClient.get(uri);
+      final resp = await httpClient.get(uri).timeout(_requestTimeout);
       if (resp.statusCode != 200) return fallback;
 
       final dynamic decoded = jsonDecode(resp.body);
@@ -2359,7 +2419,7 @@ class InstanceVersionCache {
     final httpClient = client ?? http.Client();
     final shouldClose = client == null;
     try {
-      final resp = await httpClient.get(uri);
+      final resp = await httpClient.get(uri).timeout(_requestTimeout);
       if (resp.statusCode != 200) return null;
       final dynamic decoded = jsonDecode(resp.body);
       if (decoded is Map<String, dynamic>) {
