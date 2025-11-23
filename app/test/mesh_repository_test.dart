@@ -258,4 +258,73 @@ void main() {
     expect(result.selectedDomain, 'healthy.mesh');
     expect(result.messages.single.text, 'hi');
   });
+
+  test('bootstrap skips instance discovery when cache is populated', () async {
+    final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+    final cachedInstances = jsonEncode([
+      {
+        'id': '1',
+        'name': 'Cached Mesh',
+        'domain': 'cached.mesh',
+        'isPrivate': false,
+        'lastUpdateTime': nowSeconds,
+      }
+    ]);
+    SharedPreferences.setMockInitialValues({
+      'mesh.instances': cachedInstances,
+      'mesh.selectedDomain': 'cached.mesh',
+    });
+
+    var instancesCalls = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/instances') {
+        instancesCalls += 1;
+        return http.Response('[]', 200);
+      }
+      if (request.url.path == '/api/nodes') {
+        final nodes = List.generate(10, (i) {
+          return {
+            'node_id': '!cached$i',
+            'short_name': 'C$i',
+            'last_heard': nowSeconds,
+          };
+        });
+        return http.Response(jsonEncode(nodes), 200);
+      }
+      if (request.url.path == '/api/messages') {
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 20,
+              'rx_iso': '2024-01-01T00:00:00Z',
+              'from_id': '!cached1',
+              'to_id': '^',
+              'channel': 1,
+              'portnum': 'TEXT',
+              'text': 'cached'
+            }
+          ]),
+          200,
+        );
+      }
+      if (request.url.path.startsWith('/api/nodes/')) {
+        return http.Response(
+          jsonEncode({
+            'node_id': '!cached1',
+            'short_name': 'C1',
+            'last_heard': nowSeconds
+          }),
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    });
+
+    final repository = MeshRepository(client: client);
+    final result = await repository.bootstrap(initialDomain: 'cached.mesh');
+
+    expect(instancesCalls, 0, reason: 'should not refetch instance list');
+    expect(result.selectedDomain, 'cached.mesh');
+    expect(result.messages.single.text, 'cached');
+  });
 }

@@ -501,7 +501,8 @@ class MeshRepository implements MeshNodeResolver {
   }) async {
     final store = await _ensureStore();
     final cachedInstances = store.loadInstances();
-    if (cachedInstances.isNotEmpty) {
+    final hasCachedInstances = cachedInstances.isNotEmpty;
+    if (hasCachedInstances) {
       _instances = cachedInstances;
     }
 
@@ -513,18 +514,20 @@ class MeshRepository implements MeshNodeResolver {
     final httpClient = _client ?? http.Client();
     final shouldCloseClient = _client == null;
 
-    final discovered = await _discoverInstances(
-      client: httpClient,
-      onProgress: onProgress,
-    );
-    final validated = await _validateInstances(
-      discovered,
-      httpClient,
-      onProgress,
-    );
-    if (validated.isNotEmpty) {
-      _instances = validated;
-      await store.saveInstances(validated);
+    if (!hasCachedInstances) {
+      final discovered = await _discoverInstances(
+        client: httpClient,
+        onProgress: onProgress,
+      );
+      final validated = await _validateInstances(
+        discovered,
+        httpClient,
+        onProgress,
+      );
+      if (validated.isNotEmpty) {
+        _instances = validated;
+        await store.saveInstances(validated);
+      }
     }
 
     _selectedDomain = _resolveSelectedDomain(_instances, _selectedDomain);
