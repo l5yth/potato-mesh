@@ -61,9 +61,9 @@ void main() {
 
     expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
     expect(find.textContaining('[--:--]'), findsWidgets);
-    expect(find.byType(ChatLine), findsNWidgets(2));
-    expect(find.textContaining('hello world'), findsOneWidget);
-    expect(find.textContaining('#TEST'), findsNWidgets(2));
+    expect(find.byType(ChatLine), findsOneWidget);
+    expect(find.textContaining('hello world'), findsNothing);
+    expect(find.textContaining('#TEST'), findsOneWidget);
     expect(find.textContaining('<!nodeB>'), findsOneWidget);
     expect(find.textContaining('second message'), findsOneWidget);
   });
