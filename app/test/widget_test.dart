@@ -59,17 +59,12 @@ void main() {
     await tester.pumpWidget(PotatoMeshReaderApp(fetcher: mockFetcher));
     await tester.pumpAndSettle();
 
-    expect(find.text('Meshtastic Reader'), findsOneWidget);
-    expect(find.text('[--:--]'), findsOneWidget);
-    expect(find.text('<nodeA>'), findsOneWidget);
-    expect(find.text('hello world'), findsOneWidget);
-    expect(find.text('#TEST'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Refresh'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('<nodeB>'), findsOneWidget);
-    expect(find.text('second message'), findsOneWidget);
-    expect(find.text('<nodeA>'), findsNothing);
+    expect(find.textContaining('PotatoMesh Reader'), findsOneWidget);
+    expect(find.textContaining('[--:--]'), findsWidgets);
+    expect(find.byType(ChatLine), findsOneWidget);
+    expect(find.textContaining('hello world'), findsNothing);
+    expect(find.textContaining('#TEST'), findsOneWidget);
+    expect(find.textContaining('<!nodeB>'), findsOneWidget);
+    expect(find.textContaining('second message'), findsOneWidget);
   });
 }

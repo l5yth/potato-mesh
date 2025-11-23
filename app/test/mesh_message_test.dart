@@ -159,7 +159,7 @@ void main() {
 
       final messages = await fetchMessages(client: client);
 
-      expect(calls.single.queryParameters['limit'], '100');
+      expect(calls.single.queryParameters['limit'], '1000');
       expect(messages.first.id, 1);
       expect(messages.last.id, 2);
       expect(messages.first.fromShort, 'a');
