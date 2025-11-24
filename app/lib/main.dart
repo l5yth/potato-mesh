@@ -575,13 +575,15 @@ class MeshRepository implements MeshNodeResolver {
 
   String _domainKey(String domain) {
     var cleaned = domain.trim();
+    if (cleaned.isEmpty) return 'potatomesh.net';
+    cleaned = cleaned.toLowerCase();
     if (cleaned.startsWith('https://')) cleaned = cleaned.substring(8);
     if (cleaned.startsWith('http://')) cleaned = cleaned.substring(7);
     if (cleaned.endsWith('/')) {
       cleaned = cleaned.substring(0, cleaned.length - 1);
     }
     if (cleaned.isEmpty) return 'potatomesh.net';
-    return cleaned.toLowerCase();
+    return cleaned;
   }
 
   /// Kicks off the full bootstrap flow including federation discovery, node

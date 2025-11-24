@@ -327,4 +327,57 @@ void main() {
     expect(result.selectedDomain, 'cached.mesh');
     expect(result.messages.single.text, 'cached');
   });
+
+  test('loadMessages prefers cached nodes over remote lookups', () async {
+    final savedNodes = jsonEncode([
+      {'node_id': '!a', 'short_name': 'A', 'last_heard': 0}
+    ]);
+    SharedPreferences.setMockInitialValues({
+      'mesh.nodes.potatomesh.net': savedNodes,
+    });
+
+    var nodeDetailHits = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/messages') {
+        return http.Response(
+          jsonEncode([
+            {
+              'id': 1,
+              'rx_iso': '2024-01-01T00:00:00Z',
+              'from_id': '!a',
+              'to_id': '^',
+              'channel': 1,
+              'portnum': 'TEXT',
+              'text': 'cached node'
+            }
+          ]),
+          200,
+        );
+      }
+      if (request.url.path.startsWith('/api/nodes/')) {
+        nodeDetailHits += 1;
+        return http.Response(
+          jsonEncode({'node_id': '!a', 'short_name': 'A', 'last_heard': 0}),
+          200,
+        );
+      }
+      return http.Response('[]', 200);
+    });
+
+    final repository = MeshRepository(client: client);
+    final messages = await repository.loadMessages(domain: 'potatomesh.net');
+
+    expect(messages.single.text, 'cached node');
+    expect(nodeDetailHits, 0);
+  });
+
+  test('rememberSelectedDomain persists normalized choice', () async {
+    final repo = MeshRepository();
+    await repo.rememberSelectedDomain('HTTP://Example.Mesh/');
+    expect(repo.selectedDomain, 'example.mesh');
+
+    final prefs = await SharedPreferences.getInstance();
+    final store = MeshLocalStore(prefs);
+    expect(store.loadSelectedDomain(), 'example.mesh');
+  });
 }
