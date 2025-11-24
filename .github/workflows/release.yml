@@ -34,11 +34,18 @@ jobs:
       TAG_NAME: ${{ github.ref_name }}
     steps:
     - uses: actions/checkout@v5
+    - name: Configure Android local.properties
+      run: |
+        cat > android/local.properties <<'EOF'
+        sdk.dir=${ANDROID_SDK_ROOT}
+        flutter.sdk=${FLUTTER_ROOT}
+        EOF
     - name: Set up Flutter
       uses: subosito/flutter-action@v2
       with:
         channel: stable
         cache: true
+        cache-key: ${{ runner.os }}-flutter-${{ hashFiles('app/pubspec.lock') }}
     - name: Install dependencies
       run: flutter pub get
     - name: Build release APK
@@ -72,6 +79,7 @@ jobs:
       with:
         channel: stable
         cache: true
+        cache-key: ${{ runner.os }}-flutter-${{ hashFiles('app/pubspec.lock') }}
     - name: Install dependencies
       run: flutter pub get
     - name: Build release IPA (no codesign)
