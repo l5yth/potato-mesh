@@ -282,6 +282,7 @@ void main() {
     expect(repository.selectedDomain, 'berlin.mesh');
     expect(calls.contains('berlin.mesh'), isTrue);
     expect(find.text('berlin.mesh'), findsOneWidget);
+    expect(find.text('potatomesh.net'), findsNothing);
     expect(find.text('🥔 Mesh Berlin'), findsOneWidget);
   });
 

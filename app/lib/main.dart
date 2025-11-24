@@ -306,6 +306,9 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
           final instanceName = _hasUserSelectedInstance
               ? _instanceNameFor(domain) ?? domain
               : null;
+          final initialMessages = (effectiveResult.selectedDomain == domain)
+              ? effectiveResult.messages
+              : const <MeshMessage>[];
           return MessagesScreen(
             key: ValueKey<String>(domain),
             fetcher: _fetchMessagesForCurrentDomain,
@@ -314,7 +317,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
             repository: _repository,
             instanceName: instanceName,
             enableAutoRefresh: widget.enableAutoRefresh,
-            initialMessages: effectiveResult.messages,
+            initialMessages: initialMessages,
             onOpenSettings: (context) {
               Navigator.of(context).push(
                 MaterialPageRoute(

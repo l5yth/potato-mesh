@@ -45,6 +45,7 @@ jobs:
       with:
         channel: stable
         cache: true
+        cache-key: ${{ runner.os }}-flutter-${{ hashFiles('app/pubspec.lock') }}
     - name: Install dependencies
       run: flutter pub get
     - name: Build release APK
@@ -78,6 +79,7 @@ jobs:
       with:
         channel: stable
         cache: true
+        cache-key: ${{ runner.os }}-flutter-${{ hashFiles('app/pubspec.lock') }}
     - name: Install dependencies
       run: flutter pub get
     - name: Build release IPA (no codesign)
