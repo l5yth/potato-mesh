@@ -25,7 +25,7 @@ void main() {
   testWidgets('SettingsScreen lists instances and updates selection',
       (tester) async {
     final selections = <String>[];
-    Future<List<MeshInstance>> loader() async => const [
+    Future<List<MeshInstance>> loader({bool refresh = false}) async => const [
           MeshInstance(name: 'Mesh Dresden', domain: 'map.meshdresden.eu'),
           MeshInstance(name: 'Mesh Berlin', domain: 'berlin.mesh'),
         ];
@@ -53,7 +53,8 @@ void main() {
   });
 
   testWidgets('SettingsScreen surfaces load errors', (tester) async {
-    Future<List<MeshInstance>> loader() => Future.error(StateError('boom'));
+    Future<List<MeshInstance>> loader({bool refresh = false}) =>
+        Future.error(StateError('boom'));
 
     await tester.pumpWidget(
       MaterialApp(
@@ -68,5 +69,35 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('Failed to load instances'), findsOneWidget);
+  });
+
+  testWidgets('SettingsScreen refresh button refetches instances',
+      (tester) async {
+    final refreshCalls = <bool>[];
+    Future<List<MeshInstance>> loader({bool refresh = false}) async {
+      refreshCalls.add(refresh);
+      return const [
+        MeshInstance(name: 'Mesh Berlin', domain: 'berlin.mesh'),
+      ];
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsScreen(
+          currentDomain: 'potatomesh.net',
+          onDomainChanged: (_) {},
+          loadInstances: loader,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(refreshCalls, [false]);
+
+    await tester.tap(find.byIcon(Icons.refresh));
+    await tester.pumpAndSettle();
+
+    expect(refreshCalls, contains(true));
+    expect(refreshCalls.length, greaterThanOrEqualTo(2));
   });
 }

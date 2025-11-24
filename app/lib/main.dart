@@ -17,6 +17,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -34,6 +35,34 @@ const String _gitShaEnv = String.fromEnvironment('GIT_SHA', defaultValue: '');
 const String _gitDirtyEnv =
     String.fromEnvironment('GIT_DIRTY', defaultValue: '');
 const Duration _requestTimeout = Duration(seconds: 5);
+
+void _logHttp(String message) {
+  debugPrint('D/$message');
+}
+
+Future<List<Map<String, dynamic>>> _decodeJsonList(String body) {
+  return compute(_decodeJsonListSync, body);
+}
+
+List<Map<String, dynamic>> _decodeJsonListSync(String body) {
+  final dynamic decoded = jsonDecode(body);
+  if (decoded is! List) {
+    throw const FormatException('Expected JSON array');
+  }
+  return decoded.whereType<Map<String, dynamic>>().toList();
+}
+
+Future<Map<String, dynamic>> _decodeJsonMap(String body) {
+  return compute(_decodeJsonMapSync, body);
+}
+
+Map<String, dynamic> _decodeJsonMapSync(String body) {
+  final dynamic decoded = jsonDecode(body);
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException('Expected JSON object');
+  }
+  return decoded;
+}
 
 void main() {
   runApp(const PotatoMeshReaderApp());
@@ -54,6 +83,7 @@ class PotatoMeshReaderApp extends StatefulWidget {
     this.initialDomain = 'potatomesh.net',
     this.repository,
     this.bootstrapper,
+    this.enableAutoRefresh = true,
   });
 
   /// Fetch function injected to simplify testing and offline previews.
@@ -73,6 +103,9 @@ class PotatoMeshReaderApp extends StatefulWidget {
   final Future<BootstrapResult> Function({ProgressCallback? onProgress})?
       bootstrapper;
 
+  /// Whether the chat view should periodically refresh messages.
+  final bool enableAutoRefresh;
+
   @override
   State<PotatoMeshReaderApp> createState() => _PotatoMeshReaderAppState();
 }
@@ -83,6 +116,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
   late final MeshRepository _repository;
   final GlobalKey<ScaffoldMessengerState> _messengerKey =
       GlobalKey<ScaffoldMessengerState>();
+  bool _hasUserSelectedInstance = false;
   BootstrapProgress _progress =
       const BootstrapProgress(stage: 'loading instances');
   Future<BootstrapResult>? _bootstrapFuture;
@@ -114,6 +148,8 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
       setState(() {
         _bootstrapResult = result;
         _endpointDomain = result.selectedDomain;
+        _hasUserSelectedInstance = _normalizeDomain(result.selectedDomain) !=
+            _normalizeDomain(widget.initialDomain);
         _endpointVersion += 1;
         _lastError = null;
       });
@@ -132,11 +168,47 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     });
   }
 
+  String _normalizeDomain(String domain) {
+    var cleaned = domain.trim().toLowerCase();
+    if (cleaned.startsWith('https://')) cleaned = cleaned.substring(8);
+    if (cleaned.startsWith('http://')) cleaned = cleaned.substring(7);
+    if (cleaned.endsWith('/')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    return cleaned;
+  }
+
+  String? _instanceNameFor(String domain) {
+    final normalized = _normalizeDomain(domain);
+    final candidates = <MeshInstance>[
+      ..._repository.instances,
+      if (_bootstrapResult != null) ..._bootstrapResult!.instances,
+    ];
+    for (final instance in candidates) {
+      if (_normalizeDomain(instance.domain) == normalized) {
+        return instance.displayName;
+      }
+    }
+    return null;
+  }
+
+  Future<List<MeshInstance>> _loadInstances({bool refresh = false}) async {
+    if (!refresh && _repository.instances.isNotEmpty) {
+      return _repository.instances;
+    }
+    final instances = await widget.instanceFetcher();
+    await _repository.updateInstances(instances);
+    return instances;
+  }
+
   Future<void> _handleEndpointChanged(String newDomain) async {
     if (newDomain.isEmpty || newDomain == _endpointDomain) {
       return;
     }
 
+    final previousDomain = _endpointDomain;
+    final previousSelectedDomain = _repository.selectedDomain;
+    await _repository.rememberSelectedDomain(newDomain);
     final future = _repository
         .loadDomainData(
           domain: newDomain,
@@ -154,6 +226,10 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
 
     setState(() {
       _bootstrapFuture = future;
+      _endpointDomain = newDomain;
+      _hasUserSelectedInstance = true;
+      _endpointVersion += 1;
+      _lastError = null;
     });
 
     try {
@@ -162,14 +238,18 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
       setState(() {
         _bootstrapResult = result;
         _endpointDomain = result.selectedDomain;
-        _endpointVersion += 1;
+        _hasUserSelectedInstance = true;
         _lastError = null;
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _lastError = error;
+        _endpointDomain = previousDomain;
+        _hasUserSelectedInstance = _normalizeDomain(previousDomain) !=
+            _normalizeDomain(widget.initialDomain);
       });
+      await _repository.rememberSelectedDomain(previousSelectedDomain);
       _messengerKey.currentState?.showSnackBar(
         SnackBar(content: Text('Failed to switch instance: $error')),
       );
@@ -213,8 +293,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
         future: _bootstrapFuture,
         builder: (context, snapshot) {
           final effectiveResult = snapshot.data ?? _bootstrapResult;
-          if (snapshot.connectionState != ConnectionState.done ||
-              effectiveResult == null) {
+          if (effectiveResult == null) {
             return LoadingScreen(
               progress: _progress,
               error: _lastError ?? snapshot.error,
@@ -224,12 +303,17 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
           final domain = _repository.selectedDomain.isNotEmpty
               ? _repository.selectedDomain
               : effectiveResult.selectedDomain;
+          final instanceName = _hasUserSelectedInstance
+              ? _instanceNameFor(domain) ?? domain
+              : null;
           return MessagesScreen(
             key: ValueKey<String>(domain),
             fetcher: _fetchMessagesForCurrentDomain,
             resetToken: _endpointVersion,
             domain: domain,
             repository: _repository,
+            instanceName: instanceName,
+            enableAutoRefresh: widget.enableAutoRefresh,
             initialMessages: effectiveResult.messages,
             onOpenSettings: (context) {
               Navigator.of(context).push(
@@ -239,12 +323,8 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
                         ? _repository.selectedDomain
                         : domain,
                     onDomainChanged: _handleEndpointChanged,
-                    loadInstances: () async {
-                      if (_repository.instances.isNotEmpty) {
-                        return _repository.instances;
-                      }
-                      return widget.instanceFetcher();
-                    },
+                    loadInstances: ({bool refresh = false}) =>
+                        _loadInstances(refresh: refresh),
                   ),
                 ),
               );
@@ -469,6 +549,7 @@ class MeshRepository implements MeshNodeResolver {
   final Map<String, List<MeshNode>> _nodesByDomain = {};
   final Map<String, List<MeshMessage>> _messagesByDomain = {};
   final Map<String, bool> _messagesLoaded = {};
+  final Map<String, Set<String>> _nodeFetchInFlight = {};
   List<MeshInstance> _instances = const [];
   String _selectedDomain = 'potatomesh.net';
 
@@ -480,6 +561,13 @@ class MeshRepository implements MeshNodeResolver {
     _prefs ??= await SharedPreferences.getInstance();
     _store = MeshLocalStore(_prefs!);
     return _store!;
+  }
+
+  /// Persist the selected domain choice without performing network calls.
+  Future<void> rememberSelectedDomain(String domain) async {
+    _selectedDomain = _domainKey(domain);
+    final store = await _ensureStore();
+    await store.saveSelectedDomain(_selectedDomain);
   }
 
   String _domainKey(String domain) {
@@ -704,6 +792,13 @@ class MeshRepository implements MeshNodeResolver {
     }
   }
 
+  /// Overwrites the cached instances and persists them to local storage.
+  Future<void> updateInstances(List<MeshInstance> instances) async {
+    _instances = instances;
+    final store = await _ensureStore();
+    await store.saveInstances(instances);
+  }
+
   @override
   MeshNode? findNode(String domain, String nodeId) {
     final key = _domainKey(domain);
@@ -729,12 +824,12 @@ class MeshRepository implements MeshNodeResolver {
     Future<void> enqueueFromDomain(String domain) async {
       try {
         final uri = _buildInstancesUri(domain);
+        _logHttp('GET $uri');
         final resp = await client.get(uri).timeout(_requestTimeout);
+        _logHttp('HTTP ${resp.statusCode} $uri');
         if (resp.statusCode != 200) return;
-        final dynamic decoded = jsonDecode(resp.body);
-        if (decoded is! List) return;
+        final decoded = await _decodeJsonList(resp.body);
         final parsed = decoded
-            .whereType<Map<String, dynamic>>()
             .map(MeshInstance.fromJson)
             .where((instance) => instance.domain.isNotEmpty)
             .toList();
@@ -895,17 +990,16 @@ class MeshRepository implements MeshNodeResolver {
       return _nodesByDomain[key]!;
     }
     final uri = _buildNodesUri(domain, limit: limit);
+    _logHttp('GET $uri');
     final resp = await client.get(uri).timeout(_requestTimeout);
+    _logHttp('HTTP ${resp.statusCode} $uri');
     if (resp.statusCode != 200) {
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     }
-    final dynamic decoded = jsonDecode(resp.body);
-    if (decoded is! List) {
-      throw Exception('Unexpected nodes response, expected JSON array');
-    }
+    final decoded = await _decodeJsonList(resp.body);
     final nodes = <MeshNode>[];
     var index = 0;
-    for (final entry in decoded.whereType<Map<String, dynamic>>()) {
+    for (final entry in decoded) {
       index += 1;
       final node = MeshNode.fromJson(entry);
       if (node.nodeId.isEmpty) continue;
@@ -941,18 +1035,17 @@ class MeshRepository implements MeshNodeResolver {
     final limit = initialFetch ? 1000 : 100;
 
     final uri = _buildMessagesUri(domain, limit: limit);
+    _logHttp('GET $uri');
     final resp = await client.get(uri).timeout(_requestTimeout);
+    _logHttp('HTTP ${resp.statusCode} $uri');
     if (resp.statusCode != 200) {
       throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
     }
-    final dynamic decoded = jsonDecode(resp.body);
-    if (decoded is! List) {
-      throw Exception('Unexpected response shape, expected JSON array');
-    }
+    final decoded = await _decodeJsonList(resp.body);
 
     final messages = <MeshMessage>[];
     var index = 0;
-    for (final entry in decoded.whereType<Map<String, dynamic>>()) {
+    for (final entry in decoded) {
       index += 1;
       final message = MeshMessage.fromJson(entry);
       messages.add(message);
@@ -1004,29 +1097,43 @@ class MeshRepository implements MeshNodeResolver {
     required List<MeshMessage> messages,
     required http.Client client,
   }) async {
+    final store = await _ensureStore();
     final key = _domainKey(domain);
     var nodes = List<MeshNode>.from(_nodesByDomain[key] ?? const []);
+    if (nodes.isEmpty) {
+      final cached = store.loadNodes(domain);
+      if (cached.isNotEmpty) {
+        nodes = List<MeshNode>.from(cached);
+        _nodesByDomain[key] = nodes;
+        NodeShortNameCache.instance.prime(domain: domain, nodes: cached);
+      }
+    }
     final knownIds = nodes.map((n) => _normalizeNodeId(n.nodeId)).toSet();
+    final inFlight = _nodeFetchInFlight.putIfAbsent(key, () => {});
     for (final message in messages) {
       final rawNodeId = message.lookupNodeId.trim();
       final nodeId = _normalizeNodeId(rawNodeId);
       if (nodeId.isEmpty || knownIds.contains(nodeId)) continue;
+      if (inFlight.contains(nodeId)) continue;
+      inFlight.add(nodeId);
       try {
         final uri = _buildNodeUri(domain, rawNodeId);
-        final resp = await client.get(uri);
+        _logHttp('GET $uri');
+        final resp = await client.get(uri).timeout(_requestTimeout);
+        _logHttp('HTTP ${resp.statusCode} $uri');
         if (resp.statusCode != 200) continue;
-        final dynamic decoded = jsonDecode(resp.body);
-        if (decoded is Map<String, dynamic>) {
-          final node = MeshNode.fromJson(decoded);
-          if (node.nodeId.isEmpty) continue;
-          nodes = List<MeshNode>.from(nodes)..add(node);
-          _nodesByDomain[key] = nodes;
-          NodeShortNameCache.instance.prime(domain: domain, nodes: [node]);
-          await _store?.saveNodes(domain, nodes);
-          knownIds.add(_normalizeNodeId(node.nodeId));
-        }
+        final decoded = await _decodeJsonMap(resp.body);
+        final node = MeshNode.fromJson(decoded);
+        if (node.nodeId.isEmpty) continue;
+        nodes = List<MeshNode>.from(nodes)..add(node);
+        _nodesByDomain[key] = nodes;
+        NodeShortNameCache.instance.prime(domain: domain, nodes: [node]);
+        await _store?.saveNodes(domain, nodes);
+        knownIds.add(_normalizeNodeId(node.nodeId));
       } catch (_) {
         // Swallow node lookup errors during refresh.
+      } finally {
+        inFlight.remove(nodeId);
       }
     }
   }
@@ -1052,6 +1159,8 @@ class MessagesScreen extends StatefulWidget {
     required this.domain,
     this.repository,
     this.initialMessages = const [],
+    this.instanceName,
+    this.enableAutoRefresh = true,
   });
 
   /// Fetch function used to load messages from the PotatoMesh API.
@@ -1071,6 +1180,12 @@ class MessagesScreen extends StatefulWidget {
 
   /// Messages obtained during the bootstrap phase to avoid re-fetching.
   final List<MeshMessage> initialMessages;
+
+  /// Human-friendly name of the selected instance if the user picked one.
+  final String? instanceName;
+
+  /// Whether periodic background refresh is enabled.
+  final bool enableAutoRefresh;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -1104,7 +1219,8 @@ class _MessagesScreenState extends State<MessagesScreen>
   void didUpdateWidget(covariant MessagesScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.fetcher != widget.fetcher ||
-        oldWidget.resetToken != widget.resetToken) {
+        oldWidget.resetToken != widget.resetToken ||
+        oldWidget.enableAutoRefresh != widget.enableAutoRefresh) {
       _restartAutoRefresh();
       setState(() {
         _messages = List<MeshMessage>.from(widget.initialMessages);
@@ -1184,6 +1300,7 @@ class _MessagesScreenState extends State<MessagesScreen>
   }
 
   void _startAutoRefresh() {
+    if (!widget.enableAutoRefresh) return;
     _refreshTimer?.cancel();
     if (!_isForeground) return;
     _refreshTimer =
@@ -1228,6 +1345,10 @@ class _MessagesScreenState extends State<MessagesScreen>
 
   @override
   Widget build(BuildContext context) {
+    final titleText =
+        (widget.instanceName != null && widget.instanceName!.trim().isNotEmpty)
+            ? '🥔 ${widget.instanceName!.trim()}'
+            : '🥔 PotatoMesh Reader';
     return Scaffold(
       appBar: AppBar(
         leading: Padding(
@@ -1238,7 +1359,7 @@ class _MessagesScreenState extends State<MessagesScreen>
             semanticsLabel: 'PotatoMesh logo',
           ),
         ),
-        title: const Text('🥔 PotatoMesh Reader'),
+        title: Text(titleText),
         actions: [
           IconButton(
             tooltip: 'Refresh',
@@ -1328,6 +1449,8 @@ class ChatLine extends StatelessWidget {
     required this.domain,
   });
 
+  static final Map<String, double> _indentCache = {};
+
   /// Message data to render.
   final MeshMessage message;
   final String domain;
@@ -1389,11 +1512,17 @@ class ChatLine extends StatelessWidget {
   }
 
   double _computeIndentPixels(TextStyle baseStyle, BuildContext context) {
+    final key =
+        '${baseStyle.fontFamily}-${baseStyle.fontSize}-${baseStyle.fontWeight}-${baseStyle.fontStyle}';
+    final cached = _indentCache[key];
+    if (cached != null) return cached;
     final painter = TextPainter(
       text: TextSpan(text: ' ', style: baseStyle),
       textDirection: Directionality.of(context),
     )..layout();
-    return painter.size.width * 8;
+    final width = painter.size.width * 8;
+    _indentCache[key] = width;
+    return width;
   }
 
   @override
@@ -1511,7 +1640,7 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.currentDomain,
     required this.onDomainChanged,
-    this.loadInstances = fetchInstances,
+    this.loadInstances = _defaultInstanceLoader,
   });
 
   /// Currently selected endpoint domain.
@@ -1521,7 +1650,12 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<String> onDomainChanged;
 
   /// Loader used to fetch federation instance metadata.
-  final Future<List<MeshInstance>> Function() loadInstances;
+  final Future<List<MeshInstance>> Function({bool refresh}) loadInstances;
+
+  static Future<List<MeshInstance>> _defaultInstanceLoader(
+      {bool refresh = false}) {
+    return fetchInstances();
+  }
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -1557,14 +1691,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _fetchInstances() async {
+  Future<void> _fetchInstances({bool refresh = false}) async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final fetched = await widget.loadInstances();
+      final fetched = await widget.loadInstances(refresh: refresh);
       if (!mounted) return;
       setState(() {
         _instances = fetched;
@@ -1674,18 +1808,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DropdownButtonFormField<String>(
-                  key: ValueKey<String>(_selectedDomain),
-                  initialValue: _selectedDomain.isNotEmpty
-                      ? _selectedDomain
-                      : _defaultDomain,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Select endpoint',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: endpointItems,
-                  onChanged: _loading ? null : _onEndpointChanged,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey<String>(_selectedDomain),
+                        initialValue: _selectedDomain.isNotEmpty
+                            ? _selectedDomain
+                            : _defaultDomain,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Select endpoint',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: endpointItems,
+                        onChanged: _loading ? null : _onEndpointChanged,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Refresh instances',
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _loading
+                          ? null
+                          : () => _fetchInstances(refresh: true),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 if (_loading)
@@ -1719,7 +1868,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
               return ListTile(
                 leading: const Icon(Icons.storage),
-                title: const Text('PotatoMesh Info'),
+                title: const Text('Instance'),
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2197,11 +2346,13 @@ Future<List<MeshMessage>> fetchMessages({
   int limit = 1000,
 }) async {
   final uri = _buildMessagesUri(domain, limit: limit);
+  _logHttp('GET $uri');
 
   final httpClient = client ?? http.Client();
   final shouldClose = client == null;
 
   final resp = await httpClient.get(uri).timeout(_requestTimeout);
+  _logHttp('HTTP ${resp.statusCode} $uri');
   if (shouldClose) {
     httpClient.close();
   }
@@ -2209,15 +2360,8 @@ Future<List<MeshMessage>> fetchMessages({
     throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
   }
 
-  final dynamic decoded = jsonDecode(resp.body);
-  if (decoded is! List) {
-    throw Exception('Unexpected response shape, expected JSON array');
-  }
-
-  final msgs = decoded
-      .whereType<Map<String, dynamic>>()
-      .map((m) => MeshMessage.fromJson(m))
-      .toList();
+  final decoded = await _decodeJsonList(resp.body);
+  final msgs = decoded.map(MeshMessage.fromJson).toList();
 
   return sortMessagesByRxTime(msgs);
 }
@@ -2232,6 +2376,7 @@ class NodeShortNameCache {
   MeshNodeResolver? _resolver;
   final Map<String, Future<String>> _cache = {};
   final Map<String, Map<String, String>> _primedShortNames = {};
+  bool _allowRemoteLookups = true;
 
   /// Registers a resolver that can supply locally cached node metadata.
   void registerResolver(MeshNodeResolver resolver) {
@@ -2242,6 +2387,11 @@ class NodeShortNameCache {
   void clear() {
     _cache.clear();
     _primedShortNames.clear();
+  }
+
+  /// Enables or disables remote lookups for short names.
+  set allowRemoteLookups(bool enabled) {
+    _allowRemoteLookups = enabled;
   }
 
   /// Seeds the cache with a batch of node metadata to avoid network calls.
@@ -2265,6 +2415,7 @@ class NodeShortNameCache {
     final trimmedId = nodeId.trim();
     final fallback = fallbackShortName(trimmedId);
     if (trimmedId.isEmpty) return Future.value(fallback);
+    if (!_allowRemoteLookups) return Future.value(fallback);
 
     final domainKey = domain.trim();
     final primed = _primedShortNames[domainKey];
@@ -2308,18 +2459,18 @@ class NodeShortNameCache {
     final shouldClose = client == null;
 
     try {
+      _logHttp('GET $uri');
       final resp = await httpClient.get(uri).timeout(_requestTimeout);
+      _logHttp('HTTP ${resp.statusCode} $uri');
       if (resp.statusCode != 200) return fallback;
 
-      final dynamic decoded = jsonDecode(resp.body);
-      if (decoded is Map<String, dynamic>) {
-        final raw = decoded['short_name'] ?? decoded['shortName'];
-        if (raw != null) {
-          final name = raw.toString().trim();
-          if (name.isNotEmpty) {
-            _storePrimed(domain, nodeId, name);
-            return padToWidth(name);
-          }
+      final decoded = await _decodeJsonMap(resp.body);
+      final raw = decoded['short_name'] ?? decoded['shortName'];
+      if (raw != null) {
+        final name = raw.toString().trim();
+        if (name.isNotEmpty) {
+          _storePrimed(domain, nodeId, name);
+          return padToWidth(name);
         }
       }
 
@@ -2422,13 +2573,12 @@ class InstanceVersionCache {
     final httpClient = client ?? http.Client();
     final shouldClose = client == null;
     try {
+      _logHttp('GET $uri');
       final resp = await httpClient.get(uri).timeout(_requestTimeout);
+      _logHttp('HTTP ${resp.statusCode} $uri');
       if (resp.statusCode != 200) return null;
-      final dynamic decoded = jsonDecode(resp.body);
-      if (decoded is Map<String, dynamic>) {
-        return InstanceVersion.fromJson(decoded);
-      }
-      return null;
+      final decoded = await _decodeJsonMap(resp.body);
+      return InstanceVersion.fromJson(decoded);
     } catch (_) {
       return null;
     } finally {

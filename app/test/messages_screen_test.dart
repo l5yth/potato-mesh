@@ -27,6 +27,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    NodeShortNameCache.instance.allowRemoteLookups = false;
     NodeShortNameCache.instance.clear();
   });
 
@@ -69,6 +70,7 @@ void main() {
     await tester.pumpWidget(PotatoMeshReaderApp(
       fetcher: fakeFetch,
       bootstrapper: bootstrapper,
+      enableAutoRefresh: false,
     ));
     await tester.pumpAndSettle();
 
@@ -109,6 +111,7 @@ void main() {
         home: MessagesScreen(
           fetcher: fetcher,
           domain: 'potatomesh.net',
+          enableAutoRefresh: false,
         ),
       ),
     );
@@ -148,6 +151,7 @@ void main() {
         home: MessagesScreen(
           fetcher: () async => [],
           domain: 'potatomesh.net',
+          enableAutoRefresh: false,
         ),
       ),
     );
@@ -162,13 +166,14 @@ void main() {
         home: MessagesScreen(
           fetcher: () async => [],
           domain: 'potatomesh.net',
+          enableAutoRefresh: false,
           onOpenSettings: (context) {
             Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => SettingsScreen(
                   currentDomain: 'potatomesh.net',
                   onDomainChanged: (_) {},
-                  loadInstances: () async => const [],
+                  loadInstances: ({bool refresh = false}) async => const [],
                 ),
               ),
             );
@@ -214,7 +219,7 @@ void main() {
       ];
     }
 
-    Future<List<MeshInstance>> loader() async => const [
+    Future<List<MeshInstance>> loader({bool refresh = false}) async => const [
           MeshInstance(name: 'Mesh Berlin', domain: 'berlin.mesh'),
         ];
 
@@ -232,11 +237,15 @@ void main() {
       return http.Response('[]', 200);
     });
 
+    final repository = MeshRepository(client: mockClient);
+
     Future<BootstrapResult> bootstrapper({ProgressCallback? onProgress}) async {
       onProgress?.call(const BootstrapProgress(stage: 'loading instances'));
       final initialMessages = await fetcher(domain: 'potatomesh.net');
+      final instances = await loader();
+      await repository.updateInstances(instances);
       return BootstrapResult(
-        instances: const [],
+        instances: instances,
         nodes: const [],
         messages: initialMessages,
         selectedDomain: 'potatomesh.net',
@@ -248,7 +257,8 @@ void main() {
         fetcher: fetcher,
         instanceFetcher: ({http.Client? client}) => loader(),
         bootstrapper: bootstrapper,
-        repository: MeshRepository(client: mockClient),
+        repository: repository,
+        enableAutoRefresh: false,
       ),
     );
     await tester.pumpAndSettle();
@@ -263,10 +273,16 @@ void main() {
     await tester.tap(find.text('Mesh Berlin').last);
     await tester.pumpAndSettle();
     await tester.pageBack();
-    await tester.pumpAndSettle(const Duration(seconds: 1));
+    final messagesFinder = find.byType(MessagesScreen);
+    for (var i = 0; i < 10 && messagesFinder.evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
 
+    expect(messagesFinder, findsOneWidget);
+    expect(repository.selectedDomain, 'berlin.mesh');
     expect(calls.contains('berlin.mesh'), isTrue);
     expect(find.text('berlin.mesh'), findsOneWidget);
+    expect(find.text('🥔 Mesh Berlin'), findsOneWidget);
   });
 
   testWidgets('ChatLine renders placeholders and nick colour', (tester) async {
