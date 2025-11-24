@@ -35,6 +35,7 @@ const String _gitShaEnv = String.fromEnvironment('GIT_SHA', defaultValue: '');
 const String _gitDirtyEnv =
     String.fromEnvironment('GIT_DIRTY', defaultValue: '');
 const Duration _requestTimeout = Duration(seconds: 5);
+const String _themePreferenceKey = 'mesh.themeMode';
 
 void _logHttp(String message) {
   debugPrint('D/$message');
@@ -68,6 +69,36 @@ void main() {
   runApp(const PotatoMeshReaderApp());
 }
 
+/// Persistent storage for the theme choice so the UI can honor user intent.
+class ThemePreferenceStore {
+  const ThemePreferenceStore();
+
+  Future<ThemeMode> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getString(_themePreferenceKey);
+    switch (stored) {
+      case 'dark':
+        return ThemeMode.dark;
+      case 'light':
+        return ThemeMode.light;
+      case 'system':
+        return ThemeMode.system;
+      default:
+        return ThemeMode.system;
+    }
+  }
+
+  Future<void> save(ThemeMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = mode == ThemeMode.dark
+        ? 'dark'
+        : mode == ThemeMode.light
+            ? 'light'
+            : 'system';
+    await prefs.setString(_themePreferenceKey, value);
+  }
+}
+
 /// Function type used to fetch messages from a specific endpoint.
 typedef MessageFetcher = Future<List<MeshMessage>> Function({
   http.Client? client,
@@ -84,6 +115,7 @@ class PotatoMeshReaderApp extends StatefulWidget {
     this.repository,
     this.bootstrapper,
     this.enableAutoRefresh = true,
+    this.themeStore = const ThemePreferenceStore(),
   });
 
   /// Fetch function injected to simplify testing and offline previews.
@@ -106,6 +138,9 @@ class PotatoMeshReaderApp extends StatefulWidget {
   /// Whether the chat view should periodically refresh messages.
   final bool enableAutoRefresh;
 
+  /// Storage used to persist the chosen theme.
+  final ThemePreferenceStore themeStore;
+
   @override
   State<PotatoMeshReaderApp> createState() => _PotatoMeshReaderAppState();
 }
@@ -116,12 +151,12 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
   late final MeshRepository _repository;
   final GlobalKey<ScaffoldMessengerState> _messengerKey =
       GlobalKey<ScaffoldMessengerState>();
-  bool _hasUserSelectedInstance = false;
   BootstrapProgress _progress =
       const BootstrapProgress(stage: 'loading instances');
   Future<BootstrapResult>? _bootstrapFuture;
   BootstrapResult? _bootstrapResult;
   Object? _lastError;
+  ThemeMode _themeMode = ThemeMode.system;
 
   @override
   void initState() {
@@ -129,7 +164,16 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     _endpointDomain = widget.initialDomain;
     _repository = widget.repository ?? MeshRepository();
     NodeShortNameCache.instance.registerResolver(_repository);
+    _loadThemeMode();
     _startBootstrap();
+  }
+
+  Future<void> _loadThemeMode() async {
+    final mode = await widget.themeStore.load();
+    if (!mounted) return;
+    setState(() {
+      _themeMode = mode;
+    });
   }
 
   void _startBootstrap() {
@@ -148,8 +192,6 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
       setState(() {
         _bootstrapResult = result;
         _endpointDomain = result.selectedDomain;
-        _hasUserSelectedInstance = _normalizeDomain(result.selectedDomain) !=
-            _normalizeDomain(widget.initialDomain);
         _endpointVersion += 1;
         _lastError = null;
       });
@@ -201,6 +243,13 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     return instances;
   }
 
+  Future<void> _handleThemeChanged(ThemeMode mode) async {
+    setState(() {
+      _themeMode = mode;
+    });
+    await widget.themeStore.save(mode);
+  }
+
   Future<void> _handleEndpointChanged(String newDomain) async {
     if (newDomain.isEmpty || newDomain == _endpointDomain) {
       return;
@@ -227,7 +276,6 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     setState(() {
       _bootstrapFuture = future;
       _endpointDomain = newDomain;
-      _hasUserSelectedInstance = true;
       _endpointVersion += 1;
       _lastError = null;
     });
@@ -238,7 +286,6 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
       setState(() {
         _bootstrapResult = result;
         _endpointDomain = result.selectedDomain;
-        _hasUserSelectedInstance = true;
         _lastError = null;
       });
     } catch (error) {
@@ -246,8 +293,6 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
       setState(() {
         _lastError = error;
         _endpointDomain = previousDomain;
-        _hasUserSelectedInstance = _normalizeDomain(previousDomain) !=
-            _normalizeDomain(widget.initialDomain);
       });
       await _repository.rememberSelectedDomain(previousSelectedDomain);
       _messengerKey.currentState?.showSnackBar(
@@ -270,25 +315,45 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
 
   @override
   Widget build(BuildContext context) {
+    final seed = Colors.teal;
+    final lightTheme = ThemeData(
+      brightness: Brightness.light,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: seed,
+        brightness: Brightness.light,
+      ),
+      useMaterial3: true,
+      textTheme: const TextTheme(
+        bodyMedium: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          height: 1.15,
+        ),
+      ),
+    );
+    final darkTheme = ThemeData(
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: seed,
+        brightness: Brightness.dark,
+      ),
+      useMaterial3: true,
+      textTheme: const TextTheme(
+        bodyMedium: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          height: 1.15,
+        ),
+      ),
+    );
+
     return MaterialApp(
       title: '🥔 PotatoMesh Reader',
       debugShowCheckedModeBanner: false,
       scaffoldMessengerKey: _messengerKey,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-        textTheme: const TextTheme(
-          bodyMedium: TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 13,
-            height: 1.15,
-          ),
-        ),
-      ),
+      theme: lightTheme,
+      darkTheme: darkTheme,
+      themeMode: _themeMode,
       home: FutureBuilder<BootstrapResult>(
         future: _bootstrapFuture,
         builder: (context, snapshot) {
@@ -303,9 +368,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
           final domain = _repository.selectedDomain.isNotEmpty
               ? _repository.selectedDomain
               : effectiveResult.selectedDomain;
-          final instanceName = _hasUserSelectedInstance
-              ? _instanceNameFor(domain) ?? domain
-              : null;
+          final instanceName = _instanceNameFor(domain);
           final initialMessages = (effectiveResult.selectedDomain == domain)
               ? effectiveResult.messages
               : const <MeshMessage>[];
@@ -328,6 +391,8 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
                     onDomainChanged: _handleEndpointChanged,
                     loadInstances: ({bool refresh = false}) =>
                         _loadInstances(refresh: refresh),
+                    themeMode: _themeMode,
+                    onThemeChanged: _handleThemeChanged,
                   ),
                 ),
               );
@@ -1126,7 +1191,10 @@ class MeshRepository implements MeshNodeResolver {
         _logHttp('GET $uri');
         final resp = await client.get(uri).timeout(_requestTimeout);
         _logHttp('HTTP ${resp.statusCode} $uri');
-        if (resp.statusCode != 200) continue;
+        if (resp.statusCode != 200) {
+          knownIds.add(nodeId);
+          continue;
+        }
         final decoded = await _decodeJsonMap(resp.body);
         final node = MeshNode.fromJson(decoded);
         if (node.nodeId.isEmpty) continue;
@@ -1263,8 +1331,8 @@ class _MessagesScreenState extends State<MessagesScreen>
   /// Errors are intentionally swallowed so the [FutureBuilder] can surface them
   /// via its `snapshot.error` state without bubbling an exception to the
   /// gesture handler.
-  Future<void> _refresh() async {
-    _startFetch();
+  Future<void> _refresh({bool appendOnly = false}) async {
+    await _startFetch(appendOnly: appendOnly);
   }
 
   void _appendMessages(List<MeshMessage> newMessages) {
@@ -1308,8 +1376,10 @@ class _MessagesScreenState extends State<MessagesScreen>
     if (!widget.enableAutoRefresh) return;
     _refreshTimer?.cancel();
     if (!_isForeground) return;
-    _refreshTimer =
-        Timer.periodic(const Duration(seconds: 60), (_) => _refresh());
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _refresh(appendOnly: true),
+    );
   }
 
   void _restartAutoRefresh() {
@@ -1318,20 +1388,29 @@ class _MessagesScreenState extends State<MessagesScreen>
     }
   }
 
-  void _startFetch({bool clear = false}) {
+  Future<void> _startFetch(
+      {bool clear = false, bool appendOnly = false}) async {
     final version = ++_fetchVersion;
-    setState(() {
-      if (clear) {
-        _messages = const [];
-      }
-      _future = widget.fetcher();
-    });
-    _future.then((msgs) {
+    final future = widget.fetcher();
+    if (!appendOnly) {
+      setState(() {
+        if (clear) {
+          _messages = const [];
+        }
+        _future = future;
+      });
+    }
+    try {
+      final msgs = await future;
       if (version != _fetchVersion) return;
       _appendMessages(msgs);
-    }).catchError((_) {
-      // Let FutureBuilder surface the error; ignore for stale fetches.
-    });
+    } catch (error) {
+      if (appendOnly) {
+        debugPrint('D/Failed to append messages: $error');
+        return;
+      }
+      rethrow;
+    }
   }
 
   String _dateLabelFor(MeshMessage message) {
@@ -1346,6 +1425,19 @@ class _MessagesScreenState extends State<MessagesScreen>
       return message.rxIso.substring(0, 10);
     }
     return 'Unknown';
+  }
+
+  Color _zebraColor(BuildContext context, int index) {
+    final isEven = index.isEven;
+    final brightness = Theme.of(context).brightness;
+    if (brightness == Brightness.dark) {
+      return isEven
+          ? Colors.black
+          : Color.lerp(Colors.black, Colors.white, 0.05)!;
+    }
+    return isEven
+        ? Colors.white
+        : Color.lerp(Colors.white, Colors.black, 0.05)!;
   }
 
   @override
@@ -1411,7 +1503,7 @@ class _MessagesScreenState extends State<MessagesScreen>
               behavior: const ScrollBehavior().copyWith(scrollbars: false),
               child: ListView.builder(
                 controller: _scrollController,
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: EdgeInsets.zero,
                 itemCount: messages.length,
                 itemBuilder: (context, index) {
                   final msg = messages[index];
@@ -1420,22 +1512,23 @@ class _MessagesScreenState extends State<MessagesScreen>
                       index > 0 ? _dateLabelFor(messages[index - 1]) : null;
                   final needsDivider =
                       prevLabel == null || currentLabel != prevLabel;
-                  if (!needsDivider) {
-                    return ChatLine(
-                      message: msg,
-                      domain: widget.domain,
-                    );
-                  }
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      DateDivider(label: currentLabel),
-                      ChatLine(
-                        message: msg,
-                        domain: widget.domain,
-                      ),
-                    ],
-                  );
+                  final zebraColor = _zebraColor(context, index);
+                  final content = needsDivider
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DateDivider(label: currentLabel),
+                            ChatLine(
+                              message: msg,
+                              domain: widget.domain,
+                            ),
+                          ],
+                        )
+                      : ChatLine(
+                          message: msg,
+                          domain: widget.domain,
+                        );
+                  return Container(color: zebraColor, child: content);
                 },
               ),
             ),
@@ -1539,82 +1632,82 @@ class ChatLine extends StatelessWidget {
     final nick = rawId.startsWith('!') ? rawId : '!$rawId';
     final channel = '#${message.channelName ?? ''}'.trim();
     final bodyText = message.text.isEmpty ? '⟂ (no text)' : message.text;
-    final baseStyle = DefaultTextStyle.of(context).style;
+    final colorScheme = Theme.of(context).colorScheme;
+    final baseStyle = DefaultTextStyle.of(context)
+        .style
+        .copyWith(color: colorScheme.onSurface);
     final linkStyle = baseStyle.copyWith(
-      color: Colors.tealAccent,
+      color: colorScheme.tertiary,
       decoration: TextDecoration.underline,
     );
     final indentPx = _computeIndentPixels(baseStyle, context);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: FutureBuilder<String>(
-          future: NodeShortNameCache.instance.shortNameFor(
-            domain: domain,
-            nodeId: lookupId,
-          ),
-          builder: (context, snapshot) {
-            final shortName = snapshot.data?.isNotEmpty == true
-                ? snapshot.data!
-                : _fallbackShortName(lookupId);
-            final paddedShortName = NodeShortNameCache.padToWidth(shortName);
-            return SelectionArea(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: timeStr,
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const TextSpan(text: ' '),
-                        TextSpan(
-                          text: '<$nick>',
-                          style: TextStyle(
-                            color: _nickColor(message.fromShort),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const TextSpan(text: ' '),
-                        TextSpan(
-                          text: '($paddedShortName)',
-                          style: baseStyle.copyWith(
-                            color: _nickColor(message.fromShort),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const TextSpan(text: ' '),
-                        TextSpan(
-                          text: channel,
-                          style: const TextStyle(color: Colors.tealAccent),
-                        ),
-                      ],
-                      style: baseStyle,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Padding(
-                    padding: EdgeInsets.only(left: indentPx),
-                    child: SelectableText.rich(
+    return FutureBuilder<String>(
+        future: NodeShortNameCache.instance.shortNameFor(
+          domain: domain,
+          nodeId: lookupId,
+        ),
+        builder: (context, snapshot) {
+          final shortName = snapshot.data?.isNotEmpty == true
+              ? snapshot.data!
+              : _fallbackShortName(lookupId);
+          final paddedShortName = NodeShortNameCache.padToWidth(shortName);
+          return SelectionArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    children: [
                       TextSpan(
-                        children: _buildLinkedSpans(
-                          bodyText,
-                          baseStyle,
-                          linkStyle,
+                        text: timeStr,
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w500,
                         ),
+                      ),
+                      const TextSpan(text: ' '),
+                      TextSpan(
+                        text: '<$nick>',
+                        style: TextStyle(
+                          color: _nickColor(message.fromShort),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const TextSpan(text: ' '),
+                      TextSpan(
+                        text: '($paddedShortName)',
+                        style: baseStyle.copyWith(
+                          color: _nickColor(message.fromShort),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const TextSpan(text: ' '),
+                      TextSpan(
+                        text: channel,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.tertiary),
+                      ),
+                    ],
+                    style: baseStyle,
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.only(left: indentPx),
+                  child: SelectableText.rich(
+                    TextSpan(
+                      children: _buildLinkedSpans(
+                        bodyText,
+                        baseStyle,
+                        linkStyle,
                       ),
                     ),
                   ),
-                ],
-              ),
-            );
-          }),
-    );
+                ),
+              ],
+            ),
+          );
+        });
   }
 }
 
@@ -1626,13 +1719,14 @@ class DateDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: Text(
         '-- $label --',
-        style: const TextStyle(
+        style: TextStyle(
           fontWeight: FontWeight.w700,
-          color: Colors.grey,
+          color: color,
         ),
       ),
     );
@@ -1646,6 +1740,8 @@ class SettingsScreen extends StatefulWidget {
     required this.currentDomain,
     required this.onDomainChanged,
     this.loadInstances = _defaultInstanceLoader,
+    this.themeMode = ThemeMode.system,
+    this.onThemeChanged,
   });
 
   /// Currently selected endpoint domain.
@@ -1656,6 +1752,12 @@ class SettingsScreen extends StatefulWidget {
 
   /// Loader used to fetch federation instance metadata.
   final Future<List<MeshInstance>> Function({bool refresh}) loadInstances;
+
+  /// Current theme mode selection.
+  final ThemeMode themeMode;
+
+  /// Callback when the theme selection changes.
+  final ValueChanged<ThemeMode>? onThemeChanged;
 
   static Future<List<MeshInstance>> _defaultInstanceLoader(
       {bool refresh = false}) {
@@ -1675,11 +1777,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _error;
   String _versionLabel = '';
   Future<InstanceVersion?>? _instanceVersionFuture;
+  late ThemeMode _selectedThemeMode;
 
   @override
   void initState() {
     super.initState();
     _selectedDomain = widget.currentDomain;
+    _selectedThemeMode = widget.themeMode;
     _fetchInstances();
     _loadVersion();
     _instanceVersionFuture =
@@ -1693,6 +1797,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _selectedDomain = widget.currentDomain;
       _instanceVersionFuture =
           InstanceVersionCache.instance.fetch(domain: _selectedDomain);
+    }
+    if (oldWidget.themeMode != widget.themeMode) {
+      _selectedThemeMode = widget.themeMode;
     }
   }
 
@@ -1757,43 +1864,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _onThemeModeChanged(ThemeMode? mode) {
+    if (mode == null) return;
+    setState(() {
+      _selectedThemeMode = mode;
+    });
+    widget.onThemeChanged?.call(mode);
+  }
+
   List<DropdownMenuItem<String>> _buildEndpointOptions() {
-    final seen = <String>{};
-    final items = <DropdownMenuItem<String>>[];
+    final seen = <String, String>{};
+    void addOption(String domain, String name) {
+      final key = domain.trim();
+      if (key.isEmpty || seen.containsKey(key)) return;
+      seen[key] = name;
+    }
 
-    // Always surface the default BerlinMesh endpoint.
-    seen.add(_defaultDomain);
-    items.add(
-      const DropdownMenuItem(
-        value: _defaultDomain,
-        child: Text(_defaultName),
-      ),
-    );
-
+    addOption(_defaultDomain, _defaultName);
     for (final instance in _instances) {
-      if (instance.domain.isEmpty || seen.contains(instance.domain)) {
-        continue;
-      }
-      seen.add(instance.domain);
-      items.add(
-        DropdownMenuItem(
-          value: instance.domain,
-          child: Text(instance.displayName),
-        ),
-      );
+      addOption(instance.domain, instance.displayName);
+    }
+    if (_selectedDomain.isNotEmpty && !seen.containsKey(_selectedDomain)) {
+      addOption(_selectedDomain, 'Custom (${_selectedDomain.trim()})');
     }
 
-    if (_selectedDomain.isNotEmpty && !seen.contains(_selectedDomain)) {
-      items.insert(
-        0,
-        DropdownMenuItem(
-          value: _selectedDomain,
-          child: Text('Custom ($_selectedDomain)'),
-        ),
-      );
-    }
+    final sortedKeys = seen.keys.toList()
+      ..sort(
+          (a, b) => seen[a]!.toLowerCase().compareTo(seen[b]!.toLowerCase()));
 
-    return items;
+    return sortedKeys
+        .map(
+          (domain) => DropdownMenuItem<String>(
+            value: domain,
+            child: Text(seen[domain]!),
+          ),
+        )
+        .toList();
   }
 
   @override
@@ -1882,8 +1988,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     RichText(
                       text: TextSpan(
                         text: domainDisplay,
-                        style: const TextStyle(
-                          color: Colors.tealAccent,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
                           decoration: TextDecoration.underline,
                         ),
                         recognizer: TapGestureRecognizer()
@@ -1904,6 +2010,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const Divider(),
           const ListTile(
+            leading: Icon(Icons.palette_outlined),
+            title: Text('Theme'),
+            subtitle: Text('Select preferred appearance'),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: DropdownButtonFormField<ThemeMode>(
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Appearance',
+              ),
+              initialValue: _selectedThemeMode,
+              items: const [
+                DropdownMenuItem(
+                  value: ThemeMode.system,
+                  child: Text('System'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.light,
+                  child: Text('Light'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.dark,
+                  child: Text('Dark'),
+                ),
+              ],
+              onChanged: _onThemeModeChanged,
+            ),
+          ),
+          const Divider(),
+          const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('About'),
             subtitle: Text(
@@ -1920,8 +2057,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 RichText(
                   text: TextSpan(
                     text: 'github.com/l5yth/potato-mesh',
-                    style: const TextStyle(
-                      color: Colors.tealAccent,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
                       decoration: TextDecoration.underline,
                     ),
                     recognizer: TapGestureRecognizer()
@@ -2401,7 +2538,7 @@ class NodeShortNameCache {
 
   /// Seeds the cache with a batch of node metadata to avoid network calls.
   void prime({required String domain, required Iterable<MeshNode> nodes}) {
-    final key = domain.trim();
+    final key = _normalizeDomainKey(domain);
     final map = _primedShortNames.putIfAbsent(key, () => {});
     for (final node in nodes) {
       final id = node.nodeId.trim();
@@ -2418,14 +2555,17 @@ class NodeShortNameCache {
     http.Client? client,
   }) {
     final trimmedId = nodeId.trim();
+    final normalizedDomain = _normalizeDomainKey(domain);
+    final normalizedId = _normalizeNodeId(trimmedId);
     final fallback = fallbackShortName(trimmedId);
-    if (trimmedId.isEmpty) return Future.value(fallback);
+    if (normalizedId.isEmpty) return Future.value(fallback);
     if (!_allowRemoteLookups) return Future.value(fallback);
 
-    final domainKey = domain.trim();
+    final domainKey = normalizedDomain;
     final primed = _primedShortNames[domainKey];
     if (primed != null) {
-      final primedName = primed[trimmedId] ?? primed['!$trimmedId'];
+      final primedName =
+          primed[trimmedId] ?? primed['!$trimmedId'] ?? primed[normalizedId];
       if (primedName != null && primedName.isNotEmpty) {
         return Future.value(padToWidth(primedName));
       }
@@ -2438,7 +2578,7 @@ class NodeShortNameCache {
       return Future.value(padToWidth(name));
     }
 
-    final key = '${domain.trim()}|$trimmedId';
+    final key = '$domainKey|$normalizedId';
     if (_cache.containsKey(key)) {
       return _cache[key]!;
     }
@@ -2459,6 +2599,13 @@ class NodeShortNameCache {
     required String fallback,
     http.Client? client,
   }) async {
+    final normalizedDomain = _normalizeDomainKey(domain);
+    final normalizedId = _normalizeNodeId(nodeId);
+    final cacheKey = '$normalizedDomain|$normalizedId';
+    if (_cache.containsKey(cacheKey)) {
+      return _cache[cacheKey]!;
+    }
+
     final uri = _buildNodeUri(domain, nodeId);
     final httpClient = client ?? http.Client();
     final shouldClose = client == null;
@@ -2505,8 +2652,29 @@ class NodeShortNameCache {
   }
 
   void _storePrimed(String domain, String nodeId, String name) {
-    final map = _primedShortNames.putIfAbsent(domain.trim(), () => {});
-    map[nodeId.trim()] = name;
+    final domainKey = _normalizeDomainKey(domain);
+    final map = _primedShortNames.putIfAbsent(domainKey, () => {});
+    final trimmedId = nodeId.trim();
+    final normalizedId = _normalizeNodeId(trimmedId);
+    map[trimmedId] = name;
+    map['!$normalizedId'] = name;
+    map[normalizedId] = name;
+  }
+
+  String _normalizeDomainKey(String domain) {
+    var cleaned = domain.trim();
+    if (cleaned.startsWith('https://')) cleaned = cleaned.substring(8);
+    if (cleaned.startsWith('http://')) cleaned = cleaned.substring(7);
+    if (cleaned.endsWith('/')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    if (cleaned.isEmpty) return 'potatomesh.net';
+    return cleaned.toLowerCase();
+  }
+
+  String _normalizeNodeId(String id) {
+    final trimmed = id.trim();
+    return trimmed.startsWith('!') ? trimmed.substring(1) : trimmed;
   }
 }
 
