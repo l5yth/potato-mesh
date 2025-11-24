@@ -2538,7 +2538,7 @@ class NodeShortNameCache {
 
   /// Seeds the cache with a batch of node metadata to avoid network calls.
   void prime({required String domain, required Iterable<MeshNode> nodes}) {
-    final key = domain.trim();
+    final key = _normalizeDomainKey(domain);
     final map = _primedShortNames.putIfAbsent(key, () => {});
     for (final node in nodes) {
       final id = node.nodeId.trim();
@@ -2630,7 +2630,6 @@ class NodeShortNameCache {
     } catch (_) {
       return fallback;
     } finally {
-      _cache[cacheKey] = Future.value(fallback);
       if (shouldClose) {
         httpClient.close();
       }
