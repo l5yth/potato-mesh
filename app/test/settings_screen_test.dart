@@ -100,4 +100,30 @@ void main() {
     expect(refreshCalls, contains(true));
     expect(refreshCalls.length, greaterThanOrEqualTo(2));
   });
+
+  testWidgets('SettingsScreen toggles theme mode', (tester) async {
+    final selected = <ThemeMode>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SettingsScreen(
+          currentDomain: 'potatomesh.net',
+          onDomainChanged: (_) {},
+          loadInstances: ({bool refresh = false}) async => const [],
+          themeMode: ThemeMode.light,
+          onThemeChanged: selected.add,
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Appearance'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<ThemeMode>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dark').last);
+    await tester.pumpAndSettle();
+
+    expect(selected.single, ThemeMode.dark);
+  });
 }
