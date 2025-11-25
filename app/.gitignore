@@ -8,11 +8,22 @@
 .fvmrc
 .idea/
 .metadata
-android/
-ios/
 linux/
 macos/
 potato_mesh_reader.iml
 pubspec.lock
 web/
 windows/
+# Android/Gradle outputs
+android/.gradle/
+android/app/build/
+
+# iOS/Xcode outputs
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/ephemeral/
+ios/Flutter/App.framework
+ios/Flutter/Flutter.framework
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/Generated.xcconfig
+ios/Runner/GeneratedPluginRegistrant.*
