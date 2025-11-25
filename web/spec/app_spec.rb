@@ -3903,7 +3903,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "omits messages received more than seven days ago" do
+    it "filters messages by the since parameter while defaulting to the full history" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -3930,14 +3930,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
       ids = payload.map { |row| row["id"] }
-      expect(ids).to include(2)
-      expect(ids).not_to include(1)
+      expect(ids).to eq([2, 1])
 
-      get "/api/messages/!old"
+      get "/api/messages?since=#{fresh_rx}"
 
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
       expect(filtered.map { |row| row["id"] }).to eq([2])
+
+      get "/api/messages/!old?since=#{fresh_rx}"
+
+      expect(last_response).to be_ok
+      scoped = JSON.parse(last_response.body)
+      expect(scoped.map { |row| row["id"] }).to eq([2])
     end
   end
 

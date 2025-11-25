@@ -130,7 +130,7 @@ The web app contains an API:
 
 * GET `/api/nodes?limit=100` - returns the latest 100 nodes reported to the app
 * GET `/api/positions?limit=100` - returns the latest 100 position data
-* GET `/api/messages?limit=100&encrypted=false` - returns the latest 100 messages (disabled when `PRIVATE=1`)
+* GET `/api/messages?limit=100&encrypted=false&since=0` - returns the latest 100 messages newer than the provided unix timestamp (defaults to `since=0` to return full history; disabled when `PRIVATE=1`)
 * GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
 * GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
 * GET `/api/instances` - returns known potato-mesh instances in other locations

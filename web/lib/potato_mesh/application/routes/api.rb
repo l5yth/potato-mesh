@@ -81,7 +81,9 @@ module PotatoMesh
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
             include_encrypted = coerce_boolean(params["encrypted"]) || false
-            query_messages(limit, include_encrypted: include_encrypted).to_json
+            since = coerce_integer(params["since"])
+            since = 0 if since.nil? || since.negative?
+            query_messages(limit, include_encrypted: include_encrypted, since: since).to_json
           end
 
           app.get "/api/messages/:id" do
@@ -90,7 +92,14 @@ module PotatoMesh
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
             include_encrypted = coerce_boolean(params["encrypted"]) || false
-            query_messages(limit, node_ref: node_ref, include_encrypted: include_encrypted).to_json
+            since = coerce_integer(params["since"])
+            since = 0 if since.nil? || since.negative?
+            query_messages(
+              limit,
+              node_ref: node_ref,
+              include_encrypted: include_encrypted,
+              since: since,
+            ).to_json
           end
 
           app.get "/api/positions" do

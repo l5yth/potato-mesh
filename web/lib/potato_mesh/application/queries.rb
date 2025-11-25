@@ -245,8 +245,17 @@ module PotatoMesh
         db&.close
       end
 
-      def query_messages(limit, node_ref: nil, include_encrypted: false)
+      # Fetch chat messages with optional filtering.
+      #
+      # @param limit [Integer] maximum number of rows to return.
+      # @param node_ref [String, Integer, nil] optional node reference to scope results.
+      # @param include_encrypted [Boolean] when true, include encrypted payloads in the response.
+      # @param since [Integer] unix timestamp threshold; messages with rx_time older than this are excluded.
+      # @return [Array<Hash>] compacted message rows safe for API responses.
+      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0)
         limit = coerce_query_limit(limit)
+        since_threshold = coerce_integer(since)
+        since_threshold = 0 if since_threshold.nil? || since_threshold.negative?
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -254,10 +263,8 @@ module PotatoMesh
           "(COALESCE(TRIM(m.text), '') != '' OR COALESCE(TRIM(m.encrypted), '') != '' OR m.reply_id IS NOT NULL OR COALESCE(TRIM(m.emoji), '') != '')",
         ]
         include_encrypted = !!include_encrypted
-        now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.week_seconds
         where_clauses << "m.rx_time >= ?"
-        params << min_rx_time
+        params << since_threshold
 
         unless include_encrypted
           where_clauses << "COALESCE(TRIM(m.encrypted), '') = ''"
