@@ -15,16 +15,21 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:workmanager/workmanager.dart';
+import 'package:potato_mesh_reader/dart_plugin_registrant.dart'
+    as dart_plugin_registrant;
 
 const String _gitVersionEnv =
     String.fromEnvironment('GIT_VERSION', defaultValue: '');
@@ -36,6 +41,326 @@ const String _gitDirtyEnv =
     String.fromEnvironment('GIT_DIRTY', defaultValue: '');
 const Duration _requestTimeout = Duration(seconds: 5);
 const String _themePreferenceKey = 'mesh.themeMode';
+const String _notificationChannelId = 'mesh.messages';
+const String _notificationChannelName = 'Mesh messages';
+const String _notificationChannelDescription =
+    'Alerts when new PotatoMesh messages arrive';
+const String _backgroundTaskName = 'mesh_message_poll';
+const String _backgroundTaskId = 'mesh.message.poll';
+const Duration _backgroundFetchInterval = Duration(minutes: 15);
+
+/// Client interface used to deliver notifications when unseen messages arrive.
+abstract class NotificationClient {
+  const NotificationClient();
+
+  /// Performs any platform-specific initialization, such as channel creation.
+  Future<void> initialize();
+
+  /// Shows a notification for an unseen message.
+  Future<void> showNewMessage({
+    required MeshMessage message,
+    required String domain,
+    String? senderShortName,
+  });
+}
+
+/// No-op notification client used in tests and web builds.
+class NoopNotificationClient implements NotificationClient {
+  const NoopNotificationClient();
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<void> showNewMessage({
+    required MeshMessage message,
+    required String domain,
+    String? senderShortName,
+  }) async {}
+}
+
+/// Platform-aware notification client backed by the Flutter Local Notifications plugin.
+class LocalNotificationClient implements NotificationClient {
+  LocalNotificationClient({FlutterLocalNotificationsPlugin? plugin})
+      : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+
+  final FlutterLocalNotificationsPlugin _plugin;
+  bool _initialized = false;
+
+  AndroidNotificationChannel get _channel => const AndroidNotificationChannel(
+        _notificationChannelId,
+        _notificationChannelName,
+        description: _notificationChannelDescription,
+        importance: Importance.high,
+      );
+
+  @override
+  Future<void> initialize() async {
+    if (_initialized) return;
+    if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) {
+      // Unit tests and desktop builds do not have a notification host.
+      _initialized = true;
+      return;
+    }
+    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosInit = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    final settings =
+        const InitializationSettings(android: androidInit, iOS: iosInit);
+    await _plugin.initialize(settings);
+
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await android?.createNotificationChannel(_channel);
+    if (Platform.isAndroid) {
+      final enabled = await android?.areNotificationsEnabled() ?? true;
+      if (!enabled) {
+        final granted =
+            await android?.requestNotificationsPermission() ?? false;
+        debugPrint('D/Notifications: permission requested; granted=$granted');
+      }
+    }
+    debugPrint('D/Notifications: initialized');
+
+    _initialized = true;
+  }
+
+  NotificationDetails _notificationDetails() {
+    const androidDetails = AndroidNotificationDetails(
+      _notificationChannelId,
+      _notificationChannelName,
+      channelDescription: _notificationChannelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      enableVibration: true,
+      playSound: true,
+    );
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    return const NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+  }
+
+  @override
+  Future<void> showNewMessage({
+    required MeshMessage message,
+    required String domain,
+    String? senderShortName,
+  }) async {
+    await initialize();
+    if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) return;
+    debugPrint('D/Notifications: showing message ${message.id} on $domain');
+    final displaySender = senderShortName?.trim().isNotEmpty == true
+        ? senderShortName!.trim()
+        : message.fromShort;
+    final channel = message.channelName?.trim().isNotEmpty == true
+        ? message.channelName!.trim()
+        : domain;
+    final title = 'New message from $displaySender';
+    final body = message.text.trim().isNotEmpty
+        ? message.text.trim()
+        : 'New message on $channel';
+    await _plugin.show(
+      message.id.hashCode.abs(),
+      title,
+      body,
+      _notificationDetails(),
+      payload: domain,
+    );
+  }
+}
+
+/// Callback dispatcher used by the Workmanager plugin.
+@pragma('vm:entry-point')
+void _workmanagerCallbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      dart_plugin_registrant.DartPluginRegistrant.ensureInitialized();
+      return await BackgroundSyncManager.handleBackgroundTask(
+        task,
+        inputData,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('E/BackgroundSync dispatcher failed: $error\n$stackTrace');
+      return false;
+    }
+  });
+}
+
+/// Workmanager abstraction to simplify testing.
+abstract class WorkmanagerAdapter {
+  const WorkmanagerAdapter();
+
+  Future<void> initialize(Function dispatcher);
+
+  Future<void> registerPeriodicTask(
+    String taskId,
+    String taskName, {
+    Duration frequency,
+    ExistingPeriodicWorkPolicy existingWorkPolicy,
+    Duration? initialDelay,
+    Constraints? constraints,
+  });
+
+  Future<void> cancelAll();
+}
+
+/// Real Workmanager adapter used in production builds.
+class FlutterWorkmanagerAdapter implements WorkmanagerAdapter {
+  FlutterWorkmanagerAdapter({Workmanager? delegate})
+      : _delegate = delegate ?? Workmanager();
+
+  final Workmanager _delegate;
+
+  @override
+  Future<void> initialize(Function dispatcher) {
+    return _delegate.initialize(dispatcher);
+  }
+
+  @override
+  Future<void> registerPeriodicTask(
+    String taskId,
+    String taskName, {
+    Duration frequency = _backgroundFetchInterval,
+    ExistingPeriodicWorkPolicy existingWorkPolicy =
+        ExistingPeriodicWorkPolicy.keep,
+    Duration? initialDelay,
+    Constraints? constraints,
+  }) {
+    return _delegate.registerPeriodicTask(
+      taskId,
+      taskName,
+      frequency: frequency,
+      existingWorkPolicy: existingWorkPolicy,
+      initialDelay: initialDelay,
+      constraints: constraints,
+      inputData: const {},
+    );
+  }
+
+  @override
+  Future<void> cancelAll() {
+    return _delegate.cancelAll();
+  }
+}
+
+/// Factories used to build repositories and notifications for background work.
+class BackgroundDependencies {
+  const BackgroundDependencies({
+    required this.repositoryBuilder,
+    required this.notificationBuilder,
+  });
+
+  final Future<MeshRepository> Function() repositoryBuilder;
+  final Future<NotificationClient> Function() notificationBuilder;
+}
+
+/// Schedules and executes periodic background message refreshes.
+class BackgroundSyncManager {
+  BackgroundSyncManager({
+    required this.workmanager,
+    required this.dependencies,
+  });
+
+  final WorkmanagerAdapter workmanager;
+  final BackgroundDependencies dependencies;
+
+  static final BackgroundDependencies _defaultDependencies =
+      BackgroundDependencies(
+    repositoryBuilder: () async => MeshRepository(),
+    notificationBuilder: () async => LocalNotificationClient(),
+  );
+  static BackgroundDependencies? _registeredDependencies;
+
+  /// Registers dependencies for the Workmanager callback and schedules polling.
+  Future<void> initialize({bool debugMode = false}) async {
+    _registeredDependencies = dependencies;
+    await workmanager.initialize(_workmanagerCallbackDispatcher);
+  }
+
+  /// Schedules the periodic background fetch task.
+  Future<void> ensurePeriodicTask() {
+    return workmanager.registerPeriodicTask(
+      _backgroundTaskId,
+      _backgroundTaskName,
+      frequency: _backgroundFetchInterval,
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+      initialDelay: const Duration(minutes: 1),
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
+    );
+  }
+
+  /// Clears registered dependencies; intended for tests only.
+  @visibleForTesting
+  static void resetForTest() {
+    _registeredDependencies = null;
+  }
+
+  /// Executes the background task to fetch messages and post notifications.
+  @pragma('vm:entry-point')
+  static Future<bool> handleBackgroundTask(
+    String task,
+    Map<String, dynamic>? inputData,
+  ) async {
+    WidgetsFlutterBinding.ensureInitialized();
+    final deps = _registeredDependencies ??
+        ((Platform.isAndroid || Platform.isIOS) ? _defaultDependencies : null);
+    if (deps == null) {
+      debugPrint('D/BackgroundSync: no dependencies registered; skipping');
+      return true;
+    }
+    try {
+      debugPrint('D/BackgroundSync: start task=$task');
+      final repository = await deps.repositoryBuilder();
+      final notification = await deps.notificationBuilder();
+      await notification.initialize();
+
+      final domain = await repository.loadSelectedDomainOrDefault();
+      final messages = await repository.loadMessages(domain: domain);
+      final unseen = await repository.detectUnseenMessages(
+        domain: domain,
+        messages: messages,
+      );
+
+      debugPrint(
+          'D/BackgroundSync: task=$task domain=$domain fetched=${messages.length} unseen=${unseen.length}');
+
+      for (final message in unseen) {
+        final sender = NodeShortNameCache.fallbackShortName(
+          message.lookupNodeId.isNotEmpty
+              ? message.lookupNodeId
+              : message.fromId,
+        );
+        debugPrint(
+            'D/BackgroundSync: notifying message=${message.id} sender=$sender');
+        await notification.showNewMessage(
+          message: message,
+          domain: domain,
+          senderShortName: sender,
+        );
+      }
+      return true;
+    } on SocketException catch (error) {
+      debugPrint('W/BackgroundSync: network unavailable ($error); will retry');
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint('E/BackgroundSync failed: $error\n$stackTrace');
+      // Return true to avoid aggressive retries if the environment blocks plugins.
+      return true;
+    }
+  }
+}
 
 void _logHttp(String message) {
   debugPrint('D/$message');
@@ -65,8 +390,24 @@ Map<String, dynamic> _decodeJsonMapSync(String body) {
   return decoded;
 }
 
-void main() {
-  runApp(const PotatoMeshReaderApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final notificationClient = LocalNotificationClient();
+  await notificationClient.initialize();
+  if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+    final backgroundManager = BackgroundSyncManager(
+      workmanager: FlutterWorkmanagerAdapter(),
+      dependencies: BackgroundDependencies(
+        repositoryBuilder: () async => MeshRepository(),
+        notificationBuilder: () async => LocalNotificationClient(),
+      ),
+    );
+    await backgroundManager.initialize();
+    await backgroundManager.ensurePeriodicTask();
+  }
+  runApp(PotatoMeshReaderApp(
+    notificationClient: notificationClient,
+  ));
 }
 
 /// Persistent storage for the theme choice so the UI can honor user intent.
@@ -116,6 +457,7 @@ class PotatoMeshReaderApp extends StatefulWidget {
     this.bootstrapper,
     this.enableAutoRefresh = true,
     this.themeStore = const ThemePreferenceStore(),
+    this.notificationClient = const NoopNotificationClient(),
   });
 
   /// Fetch function injected to simplify testing and offline previews.
@@ -141,6 +483,9 @@ class PotatoMeshReaderApp extends StatefulWidget {
   /// Storage used to persist the chosen theme.
   final ThemePreferenceStore themeStore;
 
+  /// Client responsible for platform notifications.
+  final NotificationClient notificationClient;
+
   @override
   State<PotatoMeshReaderApp> createState() => _PotatoMeshReaderAppState();
 }
@@ -149,6 +494,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
   late String _endpointDomain;
   int _endpointVersion = 0;
   late final MeshRepository _repository;
+  late final NotificationClient _notificationClient;
   final GlobalKey<ScaffoldMessengerState> _messengerKey =
       GlobalKey<ScaffoldMessengerState>();
   BootstrapProgress _progress =
@@ -163,6 +509,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
     super.initState();
     _endpointDomain = widget.initialDomain;
     _repository = widget.repository ?? MeshRepository();
+    _notificationClient = widget.notificationClient;
     NodeShortNameCache.instance.registerResolver(_repository);
     _loadThemeMode();
     _startBootstrap();
@@ -378,6 +725,7 @@ class _PotatoMeshReaderAppState extends State<PotatoMeshReaderApp> {
             resetToken: _endpointVersion,
             domain: domain,
             repository: _repository,
+            notificationClient: _notificationClient,
             instanceName: instanceName,
             enableAutoRefresh: widget.enableAutoRefresh,
             initialMessages: initialMessages,
@@ -514,6 +862,7 @@ class MeshLocalStore {
 
   static const String _instancesKey = 'mesh.instances';
   static const String _selectedDomainKey = 'mesh.selectedDomain';
+  static const String _lastSeenKey = 'mesh.lastSeen';
 
   String _safeKey(String domain) {
     final base = domain.trim().isEmpty ? 'potatomesh.net' : domain.trim();
@@ -592,6 +941,14 @@ class MeshLocalStore {
       return const [];
     }
   }
+
+  Future<void> saveLastSeenMessageKey(String domain, String key) async {
+    await _prefs.setString('$_lastSeenKey.${_safeKey(domain)}', key);
+  }
+
+  String? loadLastSeenMessageKey(String domain) {
+    return _prefs.getString('$_lastSeenKey.${_safeKey(domain)}');
+  }
 }
 
 /// Provider used by [NodeShortNameCache] to resolve cached node metadata.
@@ -611,6 +968,7 @@ class MeshRepository implements MeshNodeResolver {
 
   SharedPreferences? _prefs;
   MeshLocalStore? _store;
+  MessageSeenTracker? _tracker;
   final http.Client? _client;
   final Random _random;
 
@@ -629,6 +987,22 @@ class MeshRepository implements MeshNodeResolver {
     _prefs ??= await SharedPreferences.getInstance();
     _store = MeshLocalStore(_prefs!);
     return _store!;
+  }
+
+  /// Returns the last selected domain, defaulting to the provided fallback.
+  Future<String> loadSelectedDomainOrDefault(
+      {String fallback = 'potatomesh.net'}) async {
+    final store = await _ensureStore();
+    final cached = store.loadSelectedDomain();
+    _selectedDomain = (cached != null && cached.isNotEmpty) ? cached : fallback;
+    return _selectedDomain;
+  }
+
+  Future<MessageSeenTracker> _ensureTracker() async {
+    if (_tracker != null) return _tracker!;
+    final store = await _ensureStore();
+    _tracker = MessageSeenTracker(store);
+    return _tracker!;
   }
 
   /// Persist the selected domain choice without performing network calls.
@@ -796,6 +1170,15 @@ class MeshRepository implements MeshNodeResolver {
         client.close();
       }
     }
+  }
+
+  /// Returns any messages that arrived after the last recorded entry for a domain.
+  Future<List<MeshMessage>> detectUnseenMessages({
+    required String domain,
+    required List<MeshMessage> messages,
+  }) async {
+    final tracker = await _ensureTracker();
+    return tracker.unseenSince(domain: domain, messages: messages);
   }
 
   /// Stores a nodes snapshot for quick lookup without refetching mid-session.
@@ -1143,10 +1526,12 @@ class MeshRepository implements MeshNodeResolver {
   List<MeshMessage> _mergeMessages(String domain, List<MeshMessage> incoming) {
     final key = _domainKey(domain);
     final existing = List<MeshMessage>.from(_messagesByDomain[key] ?? const []);
-    final seen = existing.map(_messageKey).toSet();
+    final seen = existing.map(MessageSeenTracker.messageKey).toSet();
     for (final msg in incoming) {
-      final key = _messageKey(msg);
-      if (seen.contains(key)) continue;
+      final key = MessageSeenTracker.messageKey(msg);
+      if (seen.contains(key)) {
+        continue;
+      }
       existing.add(msg);
       seen.add(key);
     }
@@ -1156,10 +1541,6 @@ class MeshRepository implements MeshNodeResolver {
     }
     _messagesByDomain[key] = sorted;
     return sorted;
-  }
-
-  String _messageKey(MeshMessage msg) {
-    return '${msg.id}-${msg.rxIso}-${msg.fromId}-${msg.text}';
   }
 
   Future<void> _hydrateMissingNodes({
@@ -1222,6 +1603,50 @@ class MeshRepository implements MeshNodeResolver {
   }
 }
 
+/// Tracks and persists the most recently seen message per domain.
+class MessageSeenTracker {
+  MessageSeenTracker(this._store);
+
+  final MeshLocalStore _store;
+
+  /// Returns unseen messages that arrived after the last recorded message,
+  /// while updating the persisted marker to the newest entry.
+  Future<List<MeshMessage>> unseenSince({
+    required String domain,
+    required List<MeshMessage> messages,
+  }) async {
+    if (messages.isEmpty) return const [];
+
+    final lastSeen = _store.loadLastSeenMessageKey(domain);
+    final ordered = sortMessagesByRxTime(List<MeshMessage>.from(messages));
+    final latestKey = messageKey(ordered.last);
+    await _store.saveLastSeenMessageKey(domain, latestKey);
+
+    if (lastSeen == null || lastSeen.isEmpty) {
+      return const [];
+    }
+
+    var markerFound = false;
+    final unseen = <MeshMessage>[];
+    for (final message in ordered) {
+      if (markerFound) {
+        unseen.add(message);
+        continue;
+      }
+      if (messageKey(message) == lastSeen) {
+        markerFound = true;
+      }
+    }
+
+    return markerFound ? unseen : const [];
+  }
+
+  /// Returns the stable key used to detect repeated messages.
+  static String messageKey(MeshMessage msg) {
+    return '${msg.id}-${msg.rxIso}-${msg.fromId}-${msg.text}';
+  }
+}
+
 /// Displays the fetched mesh messages and supports pull-to-refresh.
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
@@ -1234,6 +1659,7 @@ class MessagesScreen extends StatefulWidget {
     this.initialMessages = const [],
     this.instanceName,
     this.enableAutoRefresh = true,
+    this.notificationClient = const NoopNotificationClient(),
   });
 
   /// Fetch function used to load messages from the PotatoMesh API.
@@ -1260,6 +1686,9 @@ class MessagesScreen extends StatefulWidget {
   /// Whether periodic background refresh is enabled.
   final bool enableAutoRefresh;
 
+  /// Client used to deliver local notifications for unseen messages.
+  final NotificationClient notificationClient;
+
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
 }
@@ -1272,10 +1701,14 @@ class _MessagesScreenState extends State<MessagesScreen>
   Timer? _refreshTimer;
   bool _isForeground = true;
   int _fetchVersion = 0;
+  late final NotificationClient _notificationClient;
+  late final Future<void> _notificationReady;
 
   @override
   void initState() {
     super.initState();
+    _notificationClient = widget.notificationClient;
+    _notificationReady = _notificationClient.initialize();
     _messages = List<MeshMessage>.from(widget.initialMessages);
     _future = Future.value(_messages);
     _startFetch(clear: _messages.isEmpty);
@@ -1291,6 +1724,10 @@ class _MessagesScreenState extends State<MessagesScreen>
   @override
   void didUpdateWidget(covariant MessagesScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.notificationClient != widget.notificationClient) {
+      _notificationClient = widget.notificationClient;
+      _notificationReady = _notificationClient.initialize();
+    }
     if (oldWidget.fetcher != widget.fetcher ||
         oldWidget.resetToken != widget.resetToken ||
         oldWidget.enableAutoRefresh != widget.enableAutoRefresh) {
@@ -1358,7 +1795,7 @@ class _MessagesScreenState extends State<MessagesScreen>
   }
 
   String _messageKey(MeshMessage msg) {
-    return '${msg.id}-${msg.rxIso}-${msg.fromId}-${msg.text}';
+    return MessageSeenTracker.messageKey(msg);
   }
 
   void _scheduleScrollToBottom({int retries = 5}) {
@@ -1388,6 +1825,35 @@ class _MessagesScreenState extends State<MessagesScreen>
     }
   }
 
+  Future<void> _notifyUnseenMessages(List<MeshMessage> fetched) async {
+    final repo = widget.repository;
+    if (repo == null || fetched.isEmpty) return;
+    try {
+      final unseen = await repo.detectUnseenMessages(
+        domain: widget.domain,
+        messages: fetched,
+      );
+      if (_isForeground || unseen.isEmpty) {
+        return;
+      }
+      await _notificationReady;
+      for (final message in unseen) {
+        final sender = NodeShortNameCache.fallbackShortName(
+          message.lookupNodeId.isNotEmpty
+              ? message.lookupNodeId
+              : message.fromId,
+        );
+        await _notificationClient.showNewMessage(
+          message: message,
+          domain: widget.domain,
+          senderShortName: sender,
+        );
+      }
+    } catch (error) {
+      debugPrint('D/Notification error: $error');
+    }
+  }
+
   Future<void> _startFetch(
       {bool clear = false, bool appendOnly = false}) async {
     final version = ++_fetchVersion;
@@ -1404,6 +1870,7 @@ class _MessagesScreenState extends State<MessagesScreen>
       final msgs = await future;
       if (version != _fetchVersion) return;
       _appendMessages(msgs);
+      await _notifyUnseenMessages(msgs);
     } catch (error) {
       if (appendOnly) {
         debugPrint('D/Failed to append messages: $error');
