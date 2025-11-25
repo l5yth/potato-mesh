@@ -7,13 +7,14 @@
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5yth/potato-mesh/issues)
 [![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
 
-A simple Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
+A federated Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
 
 * Web app with chat window and map view showing nodes, neighbors, telemetry, and messages.
-* API to POST (authenticated) and to GET nodes and messages.
+  * API to POST (authenticated) and to GET nodes and messages.
+  * Shows new node notifications (first seen) in chat.
+  * Allows searching and filtering for nodes in map and table view.
 * Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
-* Shows new node notifications (first seen) in chat.
-* Allows searching and filtering for nodes in map and table view.
+* Mobile app to _read_ messages on your local aether (no radio required).
 
 Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
 
@@ -84,7 +85,6 @@ The web app can be configured with environment variables (defaults shown):
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
-| `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the Meshtastic radio. |
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled
@@ -114,8 +114,7 @@ PotatoMesh instances can optionally federate by publishing signed metadata and
 discovering peers. Federation is enabled by default and controlled with the
 `FEDERATION` environment variable. Set `FEDERATION=1` (default) to announce your
 instance, respond to remote crawlers, and crawl the wider network. Set
-`FEDERATION=0` to keep your deployment isolated—federation requests will be
-ignored and the ingestor will skip discovery tasks. Private mode still takes
+`FEDERATION=0` to keep your deployment isolated. Private mode still takes
 precedence; when `PRIVATE=1`, federation features remain disabled regardless of
 the `FEDERATION` value.
 
@@ -131,7 +130,7 @@ The web app contains an API:
 
 * GET `/api/nodes?limit=100` - returns the latest 100 nodes reported to the app
 * GET `/api/positions?limit=100` - returns the latest 100 position data
-* GET `/api/messages?limit=100` - returns the latest 100 messages (disabled when `PRIVATE=1`)
+* GET `/api/messages?limit=100&encrypted=false` - returns the latest 100 messages (disabled when `PRIVATE=1`)
 * GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
 * GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
 * GET `/api/instances` - returns known potato-mesh instances in other locations
@@ -145,7 +144,7 @@ The web app contains an API:
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
-### Observability
+### Monitoring
 
 PotatoMesh ships with a Prometheus exporter mounted at `/metrics`. Consult
 [`PROMETHEUS.md`](./PROMETHEUS.md) for deployment guidance, metric details, and
@@ -155,8 +154,8 @@ scrape configuration examples.
 
 The web app is not meant to be run locally connected to a Meshtastic node but rather
 on a remote host without access to a physical Meshtastic device. Therefore, it only
-accepts data through the API POST endpoints. Benefit is, here multiple nodes across the
-community can feed the dashboard with data. The web app handles messages and nodes
+accepts data through the API POST endpoints. Benefit is, here _multiple nodes across the
+community_ can feed the dashboard with data. The web app handles messages and nodes
 by ID and there will be no duplication.
 
 For convenience, the directory `./data` contains a Python ingestor. It connects to a
@@ -192,25 +191,29 @@ an IP address (for example `192.168.1.20:4403`) to use the Meshtastic TCP
 interface. `CONNECTION` also accepts Bluetooth device addresses (e.g.,
 `ED:4D:9E:95:CF:60`) and the script attempts a BLE connection if available.
 
-## Demos
-
-Post your nodes here:
-
-* <https://github.com/l5yth/potato-mesh/discussions/258>
-
 ## Docker
 
 Docker images are published on Github for each release:
 
 ```bash
-docker pull ghcr.io/l5yth/potato-mesh/web:latest    # newest release
-docker pull ghcr.io/l5yth/potato-mesh/web:v3.0      # pinned historical release
+docker pull ghcr.io/l5yth/potato-mesh/web:latest      # newest release
+docker pull ghcr.io/l5yth/potato-mesh/web:v0.5.5      # pinned historical release
 docker pull ghcr.io/l5yth/potato-mesh/ingestor:latest
 ```
 
-Set `POTATOMESH_IMAGE_TAG` in your `.env` (or environment) to deploy a specific
-tagged release with Docker Compose. See the [Docker guide](DOCKER.md) for more
-details and custom deployment instructions.
+Feel free to run the [configure.sh](./configure.sh) script to set up your
+environment. See the [Docker guide](DOCKER.md) for more details and custom
+deployment instructions.
+
+## Mobile App
+
+A mobile _reader_ app is currently being worked on. Stay tuned for releases and updates.
+
+## Demos
+
+Post your nodes and screenshots here:
+
+* <https://github.com/l5yth/potato-mesh/discussions/258>
 
 ## License
 

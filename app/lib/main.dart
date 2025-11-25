@@ -115,6 +115,14 @@ class LocalNotificationClient implements NotificationClient {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.createNotificationChannel(_channel);
+    if (Platform.isAndroid) {
+      final enabled = await android?.areNotificationsEnabled() ?? true;
+      if (!enabled) {
+        final granted =
+            await android?.requestNotificationsPermission() ?? false;
+        debugPrint('D/Notifications: permission requested; granted=$granted');
+      }
+    }
     debugPrint('D/Notifications: initialized');
 
     _initialized = true;
