@@ -125,7 +125,7 @@ void main() {
   test('loadMessages performs incremental refresh after initial sync',
       () async {
     final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final limits = <String>[];
+    final sinces = <String>[];
     final client = MockClient((request) async {
       if (request.url.path == '/api/nodes') {
         return http.Response(
@@ -143,8 +143,9 @@ void main() {
         );
       }
       if (request.url.path == '/api/messages') {
-        limits.add(request.url.queryParameters['limit'] ?? '');
-        if (limits.length == 1) {
+        sinces.add(request.url.queryParameters['since'] ?? '');
+        expect(request.url.queryParameters['limit'], '1000');
+        if (sinces.length == 1) {
           return http.Response(
             jsonEncode([
               {
@@ -187,8 +188,11 @@ void main() {
 
     final refreshed = await repository.loadMessages(domain: 'potatomesh.net');
 
-    expect(limits.first, '1000');
-    expect(limits.last, '100');
+    final expectedSince =
+        DateTime.parse('2024-01-01T00:00:00Z').toUtc().millisecondsSinceEpoch ~/
+            1000;
+    expect(sinces.first, '0');
+    expect(sinces.last, expectedSince.toString());
     expect(refreshed.length, 2);
     expect(refreshed.last.text, 'new');
   });

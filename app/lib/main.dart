@@ -1144,8 +1144,7 @@ class MeshRepository implements MeshNodeResolver {
     }
   }
 
-  /// Fetches a complete messages list on first load, falling back to a smaller
-  /// refresh window on subsequent calls.
+  /// Fetches messages, using a full sync initially and incremental loads later.
   Future<List<MeshMessage>> loadMessages({required String domain}) async {
     await _ensureStore();
     final key = _domainKey(domain);
@@ -1485,9 +1484,10 @@ class MeshRepository implements MeshNodeResolver {
     final key = _domainKey(domain);
     final alreadyLoaded = _messagesLoaded[key] ?? false;
     final initialFetch = forceFull || !alreadyLoaded;
-    final limit = initialFetch ? 1000 : 100;
+    final since = initialFetch ? 0 : _latestRxTimeSeconds(domain);
+    const limit = 1000;
 
-    final uri = _buildMessagesUri(domain, limit: limit);
+    final uri = _buildMessagesUri(domain, since: since, limit: limit);
     _logHttp('GET $uri');
     final resp = await client.get(uri).timeout(_requestTimeout);
     _logHttp('HTTP ${resp.statusCode} $uri');
@@ -1541,6 +1541,33 @@ class MeshRepository implements MeshNodeResolver {
     }
     _messagesByDomain[key] = sorted;
     return sorted;
+  }
+
+  int _latestRxTimeSeconds(String domain) {
+    final key = _domainKey(domain);
+    final messages = _messagesByDomain[key];
+    if (messages == null || messages.isEmpty) return 0;
+
+    var maxSeconds = 0;
+    for (final message in messages) {
+      final rxMillis = message.rxTime?.toUtc().millisecondsSinceEpoch;
+      final candidate = message.rxTimeSeconds ??
+          (rxMillis != null ? rxMillis ~/ 1000 : null) ??
+          _coerceIsoSeconds(message.rxIso);
+      if (candidate != null && candidate > maxSeconds) {
+        maxSeconds = candidate;
+      }
+    }
+    return maxSeconds;
+  }
+
+  int? _coerceIsoSeconds(String rxIso) {
+    if (rxIso.isEmpty) return null;
+    try {
+      return DateTime.parse(rxIso).toUtc().millisecondsSinceEpoch ~/ 1000;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _hydrateMissingNodes({
@@ -2554,6 +2581,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 /// Representation of a single mesh message returned by the PotatoMesh API.
 class MeshMessage {
   final int id;
+  final int? rxTimeSeconds;
   final DateTime? rxTime;
   final String rxIso;
   final String fromId;
@@ -2570,6 +2598,7 @@ class MeshMessage {
   /// Creates a [MeshMessage] with all properties parsed from the API response.
   MeshMessage({
     required this.id,
+    this.rxTimeSeconds,
     required this.rxTime,
     required this.rxIso,
     required this.fromId,
@@ -2586,14 +2615,31 @@ class MeshMessage {
 
   /// Parses a [MeshMessage] from the raw JSON map returned by the API.
   factory MeshMessage.fromJson(Map<String, dynamic> json) {
+    int? parsedSeconds;
+    final rawSeconds = json['rx_time'];
+    if (rawSeconds != null) {
+      parsedSeconds = int.tryParse(rawSeconds.toString());
+    }
+
     DateTime? parsedTime;
     if (json['rx_iso'] is String) {
       try {
-        parsedTime = DateTime.parse(json['rx_iso'] as String).toLocal();
+        final parsedIso = DateTime.parse(json['rx_iso'] as String);
+        parsedTime = parsedIso.toLocal();
+        parsedSeconds ??= parsedIso.toUtc().millisecondsSinceEpoch ~/ 1000;
       } catch (_) {
         parsedTime = null;
       }
     }
+
+    final parsedMillis = parsedTime?.toUtc().millisecondsSinceEpoch;
+    if (parsedMillis != null && parsedSeconds == null) {
+      parsedSeconds = parsedMillis ~/ 1000;
+    }
+    parsedTime ??= parsedSeconds != null
+        ? DateTime.fromMillisecondsSinceEpoch(parsedSeconds * 1000, isUtc: true)
+            .toLocal()
+        : null;
 
     double? parseDouble(dynamic v) {
       if (v == null) return null;
@@ -2609,6 +2655,7 @@ class MeshMessage {
 
     return MeshMessage(
       id: parseInt(json['id']) ?? 0,
+      rxTimeSeconds: parsedSeconds,
       rxTime: parsedTime,
       rxIso: json['rx_iso']?.toString() ?? '',
       fromId: json['from_id']?.toString() ?? '',
@@ -2645,6 +2692,7 @@ class MeshMessage {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'rx_time': rxTimeSeconds,
       'rx_iso': rxIso,
       'from_id': fromId,
       'node_id': nodeId,
@@ -2811,11 +2859,12 @@ class MeshNode {
 }
 
 /// Build a messages API URI for a given domain or absolute URL.
-Uri _buildMessagesUri(String domain, {int limit = 1000}) {
+Uri _buildMessagesUri(String domain, {int since = 0, int limit = 1000}) {
   final trimmed = domain.trim();
   final params = {
     'limit': limit.toString(),
     'encrypted': 'false',
+    'since': since.toString(),
   };
   if (trimmed.isEmpty) {
     return Uri.https('potatomesh.net', '/api/messages', params);
@@ -2952,9 +3001,9 @@ Uri? _buildDomainUrl(String domain) {
 Future<List<MeshMessage>> fetchMessages({
   http.Client? client,
   String domain = 'potatomesh.net',
-  int limit = 1000,
+  int since = 0,
 }) async {
-  final uri = _buildMessagesUri(domain, limit: limit);
+  final uri = _buildMessagesUri(domain, since: since, limit: 1000);
   _logHttp('GET $uri');
 
   final httpClient = client ?? http.Client();
