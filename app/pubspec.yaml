@@ -14,6 +14,10 @@ dependencies:
   flutter_svg: ^2.0.10+1
   url_launcher: ^6.3.1
   shared_preferences: ^2.3.2
+  flutter_local_notifications: ^19.5.0
+  workmanager: ^0.9.0+3
+  shared_preferences_android: any
+  shared_preferences_foundation: any
 
 dev_dependencies:
   flutter_test:

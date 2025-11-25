@@ -41,14 +41,14 @@ read_with_default() {
     local prompt="$1"
     local default="$2"
     local var_name="$3"
-    
+
     if [ -n "$default" ]; then
         read -p "$prompt [$default]: " input
         input=${input:-$default}
     else
         read -p "$prompt: " input
     fi
-    
+
     eval "$var_name='$input'"
 }
 
@@ -86,6 +86,13 @@ POTATOMESH_IMAGE_TAG=$(grep "^POTATOMESH_IMAGE_TAG=" .env 2>/dev/null | cut -d'=
 INSTANCE_DOMAIN=$(grep "^INSTANCE_DOMAIN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 DEBUG=$(grep "^DEBUG=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 CONNECTION=$(grep "^CONNECTION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "/dev/ttyACM0")
+
+echo ""
+echo "🌐 Domain Settings"
+echo "------------------"
+echo "Provide the public hostname that clients should use to reach this PotatoMesh instance."
+echo "Leave blank to allow automatic detection via reverse DNS."
+read_with_default "Instance domain (e.g. mesh.example.org)" "$INSTANCE_DOMAIN" INSTANCE_DOMAIN
 
 echo "📍 Location Settings"
 echo "-------------------"
@@ -135,13 +142,6 @@ echo "Define how the mesh ingestor connects to your Meshtastic device."
 echo "Use serial devices like /dev/ttyACM0, TCP endpoints such as tcp://host:port,"
 echo "or Bluetooth addresses when supported."
 read_with_default "Connection target" "$CONNECTION" CONNECTION
-
-echo ""
-echo "🌐 Domain Settings"
-echo "------------------"
-echo "Provide the public hostname that clients should use to reach this PotatoMesh instance."
-echo "Leave blank to allow automatic detection via reverse DNS."
-read_with_default "Instance domain (e.g. mesh.example.org)" "$INSTANCE_DOMAIN" INSTANCE_DOMAIN
 
 echo ""
 echo "🔐 Security Settings"
@@ -238,7 +238,7 @@ echo "   Max Distance: ${MAX_DISTANCE}km"
 echo "   Channel: $CHANNEL"
 echo "   Frequency: $FREQUENCY"
 echo "   Chat: ${CONTACT_LINK:-'Not set'}"
-echo "   Debug Logging: ${DEBUG}" 
+echo "   Debug Logging: ${DEBUG}"
 echo "   Connection: ${CONNECTION}"
 echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"

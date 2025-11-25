@@ -81,10 +81,10 @@ EXPOSE 41447
 ENV APP_ENV=production \
     RACK_ENV=production \
     SITE_NAME="PotatoMesh Demo" \
+    INSTANCE_DOMAIN="potato.example.com" \
     CHANNEL="#LongFast" \
     FREQUENCY="915MHz" \
     MAP_CENTER="38.761944,-27.090833" \
-    MAP_ZOOM="" \
     MAX_DISTANCE=42 \
     CONTACT_LINK="#potatomesh:dod.ngo" \
     DEBUG=0
