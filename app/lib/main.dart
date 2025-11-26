@@ -45,6 +45,8 @@ const String _notificationChannelId = 'mesh.messages';
 const String _notificationChannelName = 'Mesh messages';
 const String _notificationChannelDescription =
     'Alerts when new PotatoMesh messages arrive';
+const String _notificationIconName = 'ic_mesh_notification';
+const String _notificationIconResource = '@drawable/$_notificationIconName';
 const String _backgroundTaskName = 'mesh_message_poll';
 const String _backgroundTaskId = 'mesh.message.poll';
 const Duration _backgroundFetchInterval = Duration(minutes: 15);
@@ -61,7 +63,30 @@ abstract class NotificationClient {
     required MeshMessage message,
     required String domain,
     String? senderShortName,
+    String? senderLongName,
   });
+}
+
+/// Display names used when rendering a notification title and subtitle.
+class NotificationSender {
+  const NotificationSender({
+    required this.shortName,
+    this.longName,
+  });
+
+  /// Short name fallback for the sender when a long name is unavailable.
+  final String shortName;
+
+  /// Full descriptive name for the sender when provided by the mesh.
+  final String? longName;
+
+  /// Preferred display name that favors the long form when available.
+  String get preferredName {
+    if (longName != null && longName!.trim().isNotEmpty) {
+      return longName!.trim();
+    }
+    return shortName.trim();
+  }
 }
 
 /// No-op notification client used in tests and web builds.
@@ -76,6 +101,7 @@ class NoopNotificationClient implements NotificationClient {
     required MeshMessage message,
     required String domain,
     String? senderShortName,
+    String? senderLongName,
   }) async {}
 }
 
@@ -102,7 +128,8 @@ class LocalNotificationClient implements NotificationClient {
       _initialized = true;
       return;
     }
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidInit =
+        AndroidInitializationSettings(_notificationIconResource);
     const iosInit = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -137,11 +164,14 @@ class LocalNotificationClient implements NotificationClient {
       priority: Priority.high,
       enableVibration: true,
       playSound: true,
+      category: AndroidNotificationCategory.message,
+      icon: _notificationIconResource,
     );
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      categoryIdentifier: 'chat',
     );
     return const NotificationDetails(
       android: androidDetails,
@@ -149,22 +179,42 @@ class LocalNotificationClient implements NotificationClient {
     );
   }
 
+  /// Picks the preferred sender name prioritising the long form when present.
+  String _preferredSenderName({
+    required MeshMessage message,
+    String? senderLongName,
+    String? senderShortName,
+  }) {
+    final trimmedLong = senderLongName?.trim();
+    if (trimmedLong != null && trimmedLong.isNotEmpty) {
+      return trimmedLong;
+    }
+    final trimmedShort = senderShortName?.trim();
+    if (trimmedShort != null && trimmedShort.isNotEmpty) {
+      return trimmedShort;
+    }
+    return message.fromShort;
+  }
+
   @override
   Future<void> showNewMessage({
     required MeshMessage message,
     required String domain,
     String? senderShortName,
+    String? senderLongName,
   }) async {
     await initialize();
     if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) return;
     debugPrint('D/Notifications: showing message ${message.id} on $domain');
-    final displaySender = senderShortName?.trim().isNotEmpty == true
-        ? senderShortName!.trim()
-        : message.fromShort;
+    final displaySender = _preferredSenderName(
+      senderLongName: senderLongName,
+      senderShortName: senderShortName,
+      message: message,
+    );
     final channel = message.channelName?.trim().isNotEmpty == true
         ? message.channelName!.trim()
         : domain;
-    final title = 'New message from $displaySender';
+    final title = displaySender;
     final body = message.text.trim().isNotEmpty
         ? message.text.trim()
         : 'New message on $channel';
@@ -337,17 +387,17 @@ class BackgroundSyncManager {
           'D/BackgroundSync: task=$task domain=$domain fetched=${messages.length} unseen=${unseen.length}');
 
       for (final message in unseen) {
-        final sender = NodeShortNameCache.fallbackShortName(
-          message.lookupNodeId.isNotEmpty
-              ? message.lookupNodeId
-              : message.fromId,
+        final sender = repository.resolveNotificationSender(
+          domain: domain,
+          message: message,
         );
         debugPrint(
-            'D/BackgroundSync: notifying message=${message.id} sender=$sender');
+            'D/BackgroundSync: notifying message=${message.id} sender=${sender.preferredName}');
         await notification.showNewMessage(
           message: message,
           domain: domain,
-          senderShortName: sender,
+          senderShortName: sender.shortName,
+          senderLongName: sender.longName,
         );
       }
       return true;
@@ -1619,6 +1669,27 @@ class MeshRepository implements MeshNodeResolver {
     }
   }
 
+  /// Resolves the best-effort sender names for notification payloads.
+  NotificationSender resolveNotificationSender({
+    required String domain,
+    required MeshMessage message,
+  }) {
+    final node = findNode(domain, message.lookupNodeId);
+    final trimmedLong = node?.longName.trim();
+    final fallbackId =
+        message.lookupNodeId.isNotEmpty ? message.lookupNodeId : message.fromId;
+    final shortFromNode = node?.displayShortName.trim();
+    final shortName = (shortFromNode != null && shortFromNode.isNotEmpty)
+        ? shortFromNode
+        : NodeShortNameCache.fallbackShortName(fallbackId);
+
+    return NotificationSender(
+      shortName: shortName,
+      longName:
+          trimmedLong != null && trimmedLong.isNotEmpty ? trimmedLong : null,
+    );
+  }
+
   bool _matchesNodeId(String existing, String candidate) {
     final cleanExisting = _normalizeNodeId(existing);
     final cleanCandidate = _normalizeNodeId(candidate);
@@ -1865,15 +1936,15 @@ class _MessagesScreenState extends State<MessagesScreen>
       }
       await _notificationReady;
       for (final message in unseen) {
-        final sender = NodeShortNameCache.fallbackShortName(
-          message.lookupNodeId.isNotEmpty
-              ? message.lookupNodeId
-              : message.fromId,
+        final sender = repo.resolveNotificationSender(
+          domain: widget.domain,
+          message: message,
         );
         await _notificationClient.showNewMessage(
           message: message,
           domain: widget.domain,
-          senderShortName: sender,
+          senderShortName: sender.shortName,
+          senderLongName: sender.longName,
         );
       }
     } catch (error) {
