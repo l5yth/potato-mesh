@@ -46,7 +46,6 @@ const String _notificationChannelName = 'Mesh messages';
 const String _notificationChannelDescription =
     'Alerts when new PotatoMesh messages arrive';
 const String _notificationIconName = 'ic_mesh_notification';
-const String _notificationIconResource = '@drawable/$_notificationIconName';
 const String _backgroundTaskName = 'mesh_message_poll';
 const String _backgroundTaskId = 'mesh.message.poll';
 const Duration _backgroundFetchInterval = Duration(minutes: 15);
@@ -128,15 +127,9 @@ class LocalNotificationClient implements NotificationClient {
       _initialized = true;
       return;
     }
-    const androidInit =
-        AndroidInitializationSettings(_notificationIconResource);
-    const iosInit = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-    final settings =
-        const InitializationSettings(android: androidInit, iOS: iosInit);
+    final androidInit = buildAndroidInitializationSettings();
+    final iosInit = buildDarwinInitializationSettings();
+    final settings = InitializationSettings(android: androidInit, iOS: iosInit);
     await _plugin.initialize(settings);
 
     final android = _plugin.resolvePlatformSpecificImplementation<
@@ -165,7 +158,7 @@ class LocalNotificationClient implements NotificationClient {
       enableVibration: true,
       playSound: true,
       category: AndroidNotificationCategory.message,
-      icon: _notificationIconResource,
+      icon: _notificationIconName,
     );
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -177,6 +170,28 @@ class LocalNotificationClient implements NotificationClient {
       android: androidDetails,
       iOS: iosDetails,
     );
+  }
+
+  /// Builds the default Android initialization settings.
+  @visibleForTesting
+  AndroidInitializationSettings buildAndroidInitializationSettings() {
+    return const AndroidInitializationSettings(_notificationIconName);
+  }
+
+  /// Builds the default Darwin (iOS) initialization settings.
+  @visibleForTesting
+  DarwinInitializationSettings buildDarwinInitializationSettings() {
+    return const DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+  }
+
+  /// Exposes notification details for test assertions.
+  @visibleForTesting
+  NotificationDetails notificationDetailsForTest() {
+    return _notificationDetails();
   }
 
   /// Picks the preferred sender name prioritising the long form when present.
