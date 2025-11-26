@@ -354,6 +354,7 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
               voltage: 4.1,
               channel_utilization: 40,
               air_util_tx: 22,
+              current: 0.75,
             },
             environment_metrics: {
               temperature: 19.5,
@@ -369,6 +370,7 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
               voltage: 4.05,
               channelUtilization: 35,
               airUtilTx: 20,
+              current: 0.65,
             },
             environmentMetrics: {
               temperature: 18.4,
@@ -387,8 +389,9 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Power metrics'), true);
   assert.equal(html.includes('Environmental telemetry'), true);
-  assert.equal(html.includes('Battery (0-100%)'), true);
-  assert.equal(html.includes('Voltage (0-6V)'), true);
+  assert.equal(html.includes('Battery (%)'), true);
+  assert.equal(html.includes('Voltage (V)'), true);
+  assert.equal(html.includes('Current (A)'), true);
   assert.equal(html.includes('Channel utilization (%)'), true);
   assert.equal(html.includes('Air util TX (%)'), true);
   assert.equal(html.includes('Utilization (%)'), true);
@@ -454,6 +457,7 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
             battery_level: 75,
             voltage: 4.08,
             channel_utilization: 30,
+            current: 0.42,
             temperature: 20,
             relative_humidity: 45,
             barometric_pressure: 990,
