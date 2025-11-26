@@ -783,6 +783,39 @@ body.view-map .map-panel--full #map {
   background: rgba(0, 0, 0, 0.08);
 }
 
+.short-info-sats {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: inherit;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+  vertical-align: middle;
+}
+
+.short-info-sats__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.short-info-sats__glyph {
+  display: block;
+  filter: grayscale(1);
+}
+
+body.dark .short-info-sats__glyph {
+  filter: invert(1) grayscale(1);
+}
+
+.short-info-sats__count {
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: 0.1px;
+}
+
 .node-detail-overlay {
   position: fixed;
   inset: 0;

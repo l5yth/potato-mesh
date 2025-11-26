@@ -181,6 +181,7 @@ function mergeNodeFields(target, record) {
   assignString(target, 'hwModel', extractString(record, ['hwModel', 'hw_model']));
   mergeModemMetadata(target, record);
   assignNumber(target, 'snr', extractNumber(record, ['snr']));
+  assignNumber(target, 'satsInView', extractNumber(record, ['sats_in_view', 'satsInView']));
   assignNumber(target, 'battery', extractNumber(record, ['battery', 'battery_level', 'batteryLevel']));
   assignNumber(target, 'voltage', extractNumber(record, ['voltage']));
   assignNumber(target, 'uptime', extractNumber(record, ['uptime', 'uptime_seconds', 'uptimeSeconds']));
@@ -278,6 +279,8 @@ function mergePosition(target, position) {
       assignString(target, 'lastSeenIso', extractString(position, ['rx_iso', 'rxIso']), { preferExisting: true });
     }
   }
+
+  assignNumber(target, 'satsInView', extractNumber(position, ['sats_in_view', 'satsInView']), { preferExisting: true });
 }
 
 /**

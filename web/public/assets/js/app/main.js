@@ -34,6 +34,7 @@ import {
   fmtTemperature,
   fmtTx,
 } from './short-info-telemetry.js';
+import { renderSatsInViewBadge } from './short-info-satellites.js';
 import { createMessageNodeHydrator } from './message-node-hydrator.js';
 import {
   extractChatMessageMetadata,
@@ -2002,6 +2003,7 @@ export function initializeApp(config) {
       ['latitude', source.latitude],
       ['longitude', source.longitude],
       ['altitude', source.altitude],
+      ['satsInView', source.satsInView ?? source.sats_in_view],
       ['positionTime', source.positionTime ?? source.position_time],
     ];
     for (const [key, value] of numericPairs) {
@@ -2115,6 +2117,10 @@ export function initializeApp(config) {
     const nodeIdValue = shortInfoValueOrDash(overlayInfo.nodeId ?? '');
     if (nodeIdValue !== '—') {
       shortParts.push(`<span class="mono">${escapeHtml(nodeIdValue)}</span>`);
+    }
+    const satelliteLine = renderSatsInViewBadge(overlayInfo);
+    if (satelliteLine) {
+      shortParts.push(satelliteLine);
     }
     if (shortParts.length) {
       lines.push(shortParts.join(' '));
