@@ -56,6 +56,10 @@ class _FakeNotificationClient extends NotificationClient {
   _FakeNotificationClient();
 
   int calls = 0;
+  MeshMessage? lastMessage;
+  String? lastDomain;
+  String? lastShortName;
+  String? lastLongName;
 
   @override
   Future<void> initialize() async {}
@@ -65,8 +69,13 @@ class _FakeNotificationClient extends NotificationClient {
     required MeshMessage message,
     required String domain,
     String? senderShortName,
+    String? senderLongName,
   }) async {
     calls += 1;
+    lastMessage = message;
+    lastDomain = domain;
+    lastShortName = senderShortName;
+    lastLongName = senderLongName;
   }
 }
 
@@ -75,11 +84,15 @@ class _FakeRepository extends MeshRepository {
     required this.domain,
     required this.messages,
     required this.unseen,
-  }) : super();
+    NotificationSender? sender,
+  })  : sender = sender ??
+            const NotificationSender(shortName: 'MOCK', longName: 'Mocky'),
+        super();
 
   final String domain;
   final List<MeshMessage> messages;
   final List<MeshMessage> unseen;
+  final NotificationSender sender;
   int loadMessagesCalls = 0;
 
   @override
@@ -100,6 +113,14 @@ class _FakeRepository extends MeshRepository {
     required List<MeshMessage> messages,
   }) async {
     return unseen;
+  }
+
+  @override
+  NotificationSender resolveNotificationSender({
+    required String domain,
+    required MeshMessage message,
+  }) {
+    return sender;
   }
 }
 
@@ -133,6 +154,10 @@ void main() {
       domain: 'potatomesh.net',
       messages: [_buildMessage(1, 'hello')],
       unseen: [_buildMessage(2, 'new')],
+      sender: const NotificationSender(
+        shortName: 'TEST',
+        longName: 'Test Sender',
+      ),
     );
     final notifier = _FakeNotificationClient();
 
@@ -160,6 +185,9 @@ void main() {
     expect(handled, isTrue);
     expect(fakeRepo.loadMessagesCalls, 1);
     expect(notifier.calls, 1);
+    expect(notifier.lastDomain, 'potatomesh.net');
+    expect(notifier.lastShortName, 'TEST');
+    expect(notifier.lastLongName, 'Test Sender');
   });
 
   test('returns true and no-ops when dependencies are missing', () async {
