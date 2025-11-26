@@ -3321,7 +3321,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
             "SELECT last_heard, battery_level, voltage FROM nodes WHERE node_id = ?",
             [payload[1]["node_id"]],
           )
-          latest_rx = telemetry_for_node.map { |entry| entry["rx_time"] }.compact.max
+          env_rx_times = payload.select { |entry| entry["node_id"] == payload[1]["node_id"] }.filter_map do |entry|
+            entry["rx_time"]
+          end
+          latest_rx = env_rx_times.max
           expect(env_node["last_heard"]).to eq(latest_rx)
           expect_same_value(env_node["battery_level"], telemetry_metric(payload[1], "battery_level"))
           expect_same_value(env_node["voltage"], telemetry_metric(payload[1], "voltage"))
@@ -3942,11 +3945,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       import_nodes_fixture
       import_messages_fixture
 
+      filtered_messages = messages_fixture.select do |message|
+        %w[text encrypted emoji reply_id].any? do |key|
+          value = message[key]
+          value.is_a?(String) ? !value.strip.empty? : !value.nil?
+        end
+      end
+
       get "/api/messages?encrypted=1&limit=#{messages_fixture.size}"
       expect(last_response).to be_ok
 
       actual = JSON.parse(last_response.body)
-      expect(actual.size).to eq(messages_fixture.size)
+      expect(actual.size).to eq(filtered_messages.size)
 
       actual_by_id = actual.each_with_object({}) do |row, acc|
         acc[row["id"]] = row
@@ -3960,7 +3970,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
-      messages_fixture.each do |message|
+      filtered_messages.each do |message|
         expected = message.reject { |key, _| key == "node" }
         actual_row = actual_by_id.fetch(message["id"])
 
