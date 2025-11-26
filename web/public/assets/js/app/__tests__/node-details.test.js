@@ -113,6 +113,36 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
   });
 });
 
+test('refreshNodeInformation surfaces sats_in_view from the latest position packet', async () => {
+  const calls = [];
+  const responses = new Map([
+    ['/api/nodes/!sat?limit=7', createResponse(200, {
+      node_id: '!sat',
+      short_name: 'SAT',
+    })],
+    ['/api/telemetry/!sat?limit=1000', createResponse(404, { error: 'not found' })],
+    ['/api/positions/!sat?limit=7', createResponse(200, [
+      { node_id: '!sat', position_time: 200, rx_time: 200, latitude: 1.1, longitude: 2.1, sats_in_view: 8 },
+      { node_id: '!sat', position_time: 100, rx_time: 100, latitude: 1, longitude: 2, sats_in_view: 3 },
+    ])],
+    ['/api/neighbors/!sat?limit=1000', createResponse(404, { error: 'not found' })],
+  ]);
+
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return responses.get(url) ?? createResponse(404, { error: 'not found' });
+  };
+
+  const node = await refreshNodeInformation({ nodeId: '!sat' }, { fetchImpl });
+
+  assert.equal(node.satsInView, 8);
+  assert.equal(node.sats_in_view, 8);
+  assert.ok(node.position);
+  assert.equal(node.position.sats_in_view, 8);
+  assert.equal(node.rawSources.position.sats_in_view, 8);
+  assert.equal(calls.length, 4);
+});
+
 test('refreshNodeInformation normalizes telemetry aliases for downstream consumers', async () => {
   const responses = new Map([
     ['/api/nodes/!chan?limit=7', createResponse(404, { error: 'not found' })],

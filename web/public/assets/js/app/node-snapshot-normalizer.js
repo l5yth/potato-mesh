@@ -74,6 +74,7 @@ const FIELD_ALIASES = Object.freeze([
   { keys: ['relative_humidity', 'relativeHumidity', 'humidity'], normalise: normalizeNumber },
   { keys: ['barometric_pressure', 'barometricPressure', 'pressure'], normalise: normalizeNumber },
   { keys: ['gas_resistance', 'gasResistance'], normalise: normalizeNumber },
+  { keys: ['sats_in_view', 'satsInView'], normalise: normalizeNumber },
   { keys: ['snr'], normalise: normalizeNumber },
   { keys: ['last_heard', 'lastHeard'], normalise: normalizeNumber },
   { keys: ['last_seen_iso', 'lastSeenIso'], normalise: normalizeString },
