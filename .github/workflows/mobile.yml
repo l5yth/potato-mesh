@@ -54,7 +54,7 @@ jobs:
       run: flutter build apk --debug
     - name: Build iOS debug IPA
       if: matrix.os == 'macos-latest'
-      run: flutter build ipa --debug
+      run: flutter build ipa --debug --no-codesign
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v5
