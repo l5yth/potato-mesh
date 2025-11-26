@@ -389,9 +389,9 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Power metrics'), true);
   assert.equal(html.includes('Environmental telemetry'), true);
-  assert.equal(html.includes('Battery (0-100%)'), true);
-  assert.equal(html.includes('Voltage (0-6V)'), true);
-  assert.equal(html.includes('Current (0-3A)'), true);
+  assert.equal(html.includes('Battery (%)'), true);
+  assert.equal(html.includes('Voltage (V)'), true);
+  assert.equal(html.includes('Current (A)'), true);
   assert.equal(html.includes('Channel utilization (%)'), true);
   assert.equal(html.includes('Air util TX (%)'), true);
   assert.equal(html.includes('Utilization (%)'), true);
