@@ -25,7 +25,12 @@ permissions:
 
 jobs:
   flutter:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: ./app
@@ -44,6 +49,12 @@ jobs:
       run: dart format --set-exit-if-changed .
     - name: Analyze Dart code
       run: flutter analyze
+    - name: Build Android debug APK
+      if: matrix.os == 'ubuntu-latest'
+      run: flutter build apk --debug
+    - name: Build iOS debug IPA
+      if: matrix.os == 'macos-latest'
+      run: flutter build ipa --debug
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v5
