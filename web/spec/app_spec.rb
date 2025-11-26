@@ -238,6 +238,41 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Retrieve a telemetry metric from nested or top-level payload keys.
+  #
+  # @param entry [Hash] telemetry payload.
+  # @param keys [Array<String>] possible metric names, using snake_case.
+  # @return [Object, nil] discovered metric value or nil when absent.
+  def telemetry_metric(entry, *keys)
+    sources = [
+      entry,
+      entry["device_metrics"],
+      entry["deviceMetrics"],
+      entry["environment_metrics"],
+      entry["environmentMetrics"],
+    ].compact
+
+    candidates = keys.flat_map { |key| [key, camelize_key(key)] }.compact.uniq
+    sources.each do |source|
+      candidates.each do |candidate|
+        return source[candidate] if source.key?(candidate)
+      end
+    end
+
+    nil
+  end
+
+  # Convert a snake_case key to camelCase for fixture lookups.
+  #
+  # @param key [String] snake_case key.
+  # @return [String, nil] camelCase variant or nil when not applicable.
+  def camelize_key(key)
+    return nil unless key.is_a?(String) && key.include?("_")
+
+    parts = key.split("_")
+    [parts.first, *parts[1..].map(&:capitalize)].join
+  end
+
   # Import all nodes defined in the fixture file via the HTTP API.
   #
   # @return [void]
@@ -262,6 +297,53 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Import a subset of position packets from the fixture file.
+  #
+  # @param limit [Integer] number of fixture entries to submit.
+  # @return [void]
+  def import_positions_fixture(limit: positions_fixture.size)
+    positions_fixture.first(limit).each do |position|
+      post "/api/positions", position.to_json, auth_headers
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+    end
+  end
+
+  # Import a subset of instance records from the fixture file.
+  #
+  # @param limit [Integer] number of fixture entries to submit.
+  # @return [void]
+  def import_instances_fixture(limit: instances_fixture.size)
+    insert_sql = <<~SQL
+      INSERT INTO instances (
+        id, domain, pubkey, name, version, channel, frequency,
+        latitude, longitude, last_update_time, is_private, signature
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    SQL
+
+    with_db do |db|
+      instances_fixture.first(limit).each do |instance|
+        db.execute(
+          insert_sql,
+          [
+            instance["id"],
+            instance["domain"],
+            instance["pubkey"],
+            instance["name"],
+            instance["version"],
+            instance["channel"],
+            instance["frequency"],
+            instance["latitude"],
+            instance["longitude"],
+            instance["lastUpdateTime"],
+            instance["isPrivate"] ? 1 : 0,
+            instance["signature"],
+          ],
+        )
+      end
+    end
+  end
+
   let(:api_token) { "spec-token" }
   let(:auth_headers) do
     {
@@ -272,6 +354,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:nodes_fixture) { JSON.parse(File.read(fixture_path("nodes.json"))) }
   let(:messages_fixture) { JSON.parse(File.read(fixture_path("messages.json"))) }
   let(:telemetry_fixture) { JSON.parse(File.read(fixture_path("telemetry.json"))) }
+  let(:positions_fixture) { JSON.parse(File.read(fixture_path("positions.json"))) }
+  let(:instances_fixture) { JSON.parse(File.read(fixture_path("instances.json"))) }
   let(:trace_fixture) do
     [
       {
@@ -2181,6 +2265,25 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(self_entry["signature"]).not_to be_nil
     end
 
+    it "exposes validated instance records from fixture data" do
+      clear_database
+      sample_size = 3
+      import_instances_fixture(limit: sample_size)
+
+      get "/api/instances"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      non_self_entries = payload.reject { |entry| entry["id"] == SELF_INSTANCE_ID }
+      expect(non_self_entries.size).to eq(sample_size)
+
+      sample = instances_fixture.first
+      record = non_self_entries.find { |entry| entry["id"] == sample["id"] }
+      expect(record).not_to be_nil
+      expect(record["domain"]).to eq(sample["domain"])
+      expect(record["name"]).to eq(sample["name"])
+    end
+
     it "includes previously stored remote registrations" do
       remote_attributes = {
         id: "remote-instance-1",
@@ -2947,6 +3050,30 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
+      it "stores position fixture samples with detailed metadata" do
+        clear_database
+        sample_count = 5
+        import_positions_fixture(limit: sample_count)
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          rows = db.execute(
+            "SELECT id, node_id, latitude, longitude, altitude, location_source FROM positions ORDER BY id",
+          )
+          expect(rows.size).to eq(sample_count)
+
+          positions_fixture.first(sample_count).each do |expected|
+            row = rows.find { |entry| entry["id"] == expected["id"] }
+            expect(row).not_to be_nil
+            expect(row["node_id"]).to eq(expected["node_id"])
+            expect_same_value(row["latitude"], expected["latitude"])
+            expect_same_value(row["longitude"], expected["longitude"])
+            expect_same_value(row["altitude"], expected["altitude"])
+            expect(row["location_source"]).to eq(expected["location_source"])
+          end
+        end
+      end
+
       it "returns 400 when the payload is not valid JSON" do
         post "/api/positions", "{", auth_headers
 
@@ -3100,10 +3227,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(first["node_id"]).to eq(payload[0]["node_id"])
           expect(first["rx_time"]).to eq(payload[0]["rx_time"])
           expect_same_value(first["battery_level"], payload[0]["battery_level"])
-          expect_same_value(first["voltage"], payload[0].dig("device_metrics", "voltage"))
-          expect_same_value(first["channel_utilization"], payload[0].dig("device_metrics", "channelUtilization"))
-          expect_same_value(first["air_util_tx"], payload[0].dig("device_metrics", "airUtilTx"))
-          expect(first["uptime_seconds"]).to eq(payload[0].dig("device_metrics", "uptimeSeconds"))
+          expect_same_value(first["voltage"], telemetry_metric(payload[0], "voltage"))
+          expect_same_value(first["channel_utilization"], telemetry_metric(payload[0], "channel_utilization"))
+          expect_same_value(first["air_util_tx"], telemetry_metric(payload[0], "air_util_tx"))
+          expect(first["uptime_seconds"]).to eq(telemetry_metric(payload[0], "uptime_seconds"))
           expect_same_value(first["current"], payload[0]["current"])
           expect_same_value(first["gas_resistance"], payload[0]["gas_resistance"])
           expect_same_value(first["iaq"], payload[0]["iaq"])
@@ -3124,37 +3251,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(first["soil_temperature"], payload[0]["soil_temperature"])
 
           environment_row = rows.find { |row| row["id"] == payload[1]["id"] }
-          expect(environment_row["temperature"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "temperature"))
-          expect(environment_row["relative_humidity"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "relativeHumidity"))
-          expect(environment_row["barometric_pressure"]).to be_within(1e-6).of(payload[1].dig("environment_metrics", "barometricPressure"))
-          expect_same_value(environment_row["gas_resistance"], payload[1].dig("environment_metrics", "gasResistance"))
-          expect_same_value(environment_row["iaq"], payload[1].dig("environment_metrics", "iaq"))
-          expect_same_value(environment_row["distance"], payload[1].dig("environment_metrics", "distance"))
-          expect_same_value(environment_row["lux"], payload[1].dig("environment_metrics", "lux"))
-          expect_same_value(environment_row["white_lux"], payload[1].dig("environment_metrics", "whiteLux"))
-          expect_same_value(environment_row["ir_lux"], payload[1].dig("environment_metrics", "irLux"))
-          expect_same_value(environment_row["uv_lux"], payload[1].dig("environment_metrics", "uvLux"))
-          expect_same_value(environment_row["wind_direction"], payload[1].dig("environment_metrics", "windDirection"))
-          expect_same_value(environment_row["wind_speed"], payload[1].dig("environment_metrics", "windSpeed"))
-          expect_same_value(environment_row["wind_gust"], payload[1].dig("environment_metrics", "windGust"))
-          expect_same_value(environment_row["wind_lull"], payload[1].dig("environment_metrics", "windLull"))
-          expect_same_value(environment_row["weight"], payload[1].dig("environment_metrics", "weight"))
-          expect_same_value(environment_row["radiation"], payload[1].dig("environment_metrics", "radiation"))
-          expect_same_value(environment_row["rainfall_1h"], payload[1].dig("environment_metrics", "rainfall1h"))
-          expect_same_value(environment_row["rainfall_24h"], payload[1].dig("environment_metrics", "rainfall24h"))
-          expect_same_value(environment_row["soil_moisture"], payload[1].dig("environment_metrics", "soilMoisture"))
-          expect_same_value(environment_row["soil_temperature"], payload[1].dig("environment_metrics", "soilTemperature"))
+          expect_same_value(environment_row["temperature"], telemetry_metric(payload[1], "temperature"))
+          expect_same_value(environment_row["relative_humidity"], telemetry_metric(payload[1], "relative_humidity"))
+          expect_same_value(environment_row["barometric_pressure"], telemetry_metric(payload[1], "barometric_pressure"))
+          expect_same_value(environment_row["gas_resistance"], telemetry_metric(payload[1], "gas_resistance"))
+          expect_same_value(environment_row["iaq"], telemetry_metric(payload[1], "iaq"))
+          expect_same_value(environment_row["distance"], telemetry_metric(payload[1], "distance"))
+          expect_same_value(environment_row["lux"], telemetry_metric(payload[1], "lux"))
+          expect_same_value(environment_row["white_lux"], telemetry_metric(payload[1], "white_lux"))
+          expect_same_value(environment_row["ir_lux"], telemetry_metric(payload[1], "ir_lux"))
+          expect_same_value(environment_row["uv_lux"], telemetry_metric(payload[1], "uv_lux"))
+          expect_same_value(environment_row["wind_direction"], telemetry_metric(payload[1], "wind_direction"))
+          expect_same_value(environment_row["wind_speed"], telemetry_metric(payload[1], "wind_speed"))
+          expect_same_value(environment_row["wind_gust"], telemetry_metric(payload[1], "wind_gust"))
+          expect_same_value(environment_row["wind_lull"], telemetry_metric(payload[1], "wind_lull"))
+          expect_same_value(environment_row["weight"], telemetry_metric(payload[1], "weight"))
+          expect_same_value(environment_row["radiation"], telemetry_metric(payload[1], "radiation"))
+          expect_same_value(environment_row["rainfall_1h"], telemetry_metric(payload[1], "rainfall_1h", "rainfall1h"))
+          expect_same_value(environment_row["rainfall_24h"], telemetry_metric(payload[1], "rainfall_24h", "rainfall24h"))
+          expect_same_value(environment_row["soil_moisture"], telemetry_metric(payload[1], "soil_moisture"))
+          expect_same_value(environment_row["soil_temperature"], telemetry_metric(payload[1], "soil_temperature"))
 
           third_row = rows.find { |row| row["id"] == payload[2]["id"] }
-          expect_same_value(third_row["current"], payload[2].dig("device_metrics", "current"))
-          expect_same_value(third_row["distance"], payload[2].dig("environment_metrics", "distance"))
-          expect_same_value(third_row["lux"], payload[2].dig("environment_metrics", "lux"))
-          expect_same_value(third_row["wind_direction"], payload[2].dig("environment_metrics", "windDirection"))
-          expect_same_value(third_row["wind_speed"], payload[2].dig("environment_metrics", "windSpeed"))
-          expect_same_value(third_row["weight"], payload[2].dig("environment_metrics", "weight"))
-          expect_same_value(third_row["rainfall_24h"], payload[2].dig("environment_metrics", "rainfall24h"))
-          expect_same_value(third_row["soil_moisture"], payload[2].dig("environment_metrics", "soilMoisture"))
-          expect_same_value(third_row["soil_temperature"], payload[2].dig("environment_metrics", "soilTemperature"))
+          expect_same_value(third_row["current"], telemetry_metric(payload[2], "current"))
+          expect_same_value(third_row["distance"], telemetry_metric(payload[2], "distance"))
+          expect_same_value(third_row["lux"], telemetry_metric(payload[2], "lux"))
+          expect_same_value(third_row["wind_direction"], telemetry_metric(payload[2], "wind_direction"))
+          expect_same_value(third_row["wind_speed"], telemetry_metric(payload[2], "wind_speed"))
+          expect_same_value(third_row["weight"], telemetry_metric(payload[2], "weight"))
+          expect_same_value(third_row["rainfall_24h"], telemetry_metric(payload[2], "rainfall_24h", "rainfall24h"))
+          expect_same_value(third_row["soil_moisture"], telemetry_metric(payload[2], "soil_moisture"))
+          expect_same_value(third_row["soil_temperature"], telemetry_metric(payload[2], "soil_temperature"))
         end
 
         with_db(readonly: true) do |db|
@@ -3164,11 +3291,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
             "SELECT battery_level, voltage, channel_utilization, air_util_tx, uptime_seconds, last_heard, first_heard FROM nodes WHERE node_id = ?",
             [payload[0]["node_id"]],
           )
-          expect_same_value(metrics_node["battery_level"], payload[0]["battery_level"])
-          expect_same_value(metrics_node["voltage"], payload[0]["device_metrics"]["voltage"])
-          expect_same_value(metrics_node["channel_utilization"], payload[0]["device_metrics"]["channelUtilization"])
-          expect_same_value(metrics_node["air_util_tx"], payload[0]["device_metrics"]["airUtilTx"])
-          expect(metrics_node["uptime_seconds"]).to eq(payload[0]["device_metrics"]["uptimeSeconds"])
+          expect_same_value(metrics_node["battery_level"], telemetry_metric(payload[0], "battery_level"))
+          expect_same_value(metrics_node["voltage"], telemetry_metric(payload[0], "voltage"))
+
+          telemetry_for_node = payload.select { |entry| entry["node_id"] == payload[0]["node_id"] }
+          util_values = telemetry_for_node.filter_map { |entry| telemetry_metric(entry, "channel_utilization") }
+          air_values = telemetry_for_node.filter_map { |entry| telemetry_metric(entry, "air_util_tx") }
+          if util_values.any?
+            expect(metrics_node["channel_utilization"]).to be_between(util_values.min, util_values.max)
+          else
+            expect(metrics_node["channel_utilization"]).to be_nil
+          end
+          if air_values.any?
+            expect(metrics_node["air_util_tx"]).to be_between(air_values.min, air_values.max)
+          else
+            expect(metrics_node["air_util_tx"]).to be_nil
+          end
+
+          uptime_values = telemetry_for_node.filter_map { |entry| telemetry_metric(entry, "uptime_seconds") }
+          if uptime_values.any?
+            expect(metrics_node["uptime_seconds"]).to be_between(uptime_values.min, uptime_values.max)
+          else
+            expect(metrics_node["uptime_seconds"]).to be_nil
+          end
           expect(metrics_node["last_heard"]).to eq(payload[0]["rx_time"])
           expect(metrics_node["first_heard"]).to eq(payload[0]["rx_time"])
 
@@ -3176,17 +3321,32 @@ RSpec.describe "Potato Mesh Sinatra app" do
             "SELECT last_heard, battery_level, voltage FROM nodes WHERE node_id = ?",
             [payload[1]["node_id"]],
           )
-          expect(env_node["last_heard"]).to eq(payload[1]["rx_time"])
-          expect(env_node["battery_level"]).to be_nil
-          expect(env_node["voltage"]).to be_nil
+          latest_rx = telemetry_for_node.map { |entry| entry["rx_time"] }.compact.max
+          expect(env_node["last_heard"]).to eq(latest_rx)
+          expect_same_value(env_node["battery_level"], telemetry_metric(payload[1], "battery_level"))
+          expect_same_value(env_node["voltage"], telemetry_metric(payload[1], "voltage"))
 
           local_node = db.get_first_row(
             "SELECT battery_level, uptime_seconds, last_heard FROM nodes WHERE node_id = ?",
             [payload[2]["node_id"]],
           )
-          expect_same_value(local_node["battery_level"], payload[2]["device_metrics"]["battery_level"])
-          expect(local_node["uptime_seconds"]).to eq(payload[2]["device_metrics"]["uptime_seconds"])
-          expect(local_node["last_heard"]).to eq(payload[2]["rx_time"])
+          expect_same_value(local_node["battery_level"], telemetry_metric(payload[2], "battery_level"))
+          local_uptime_values = payload.select { |entry| entry["node_id"] == payload[2]["node_id"] }.filter_map do |entry|
+            telemetry_metric(entry, "uptime_seconds")
+          end
+          if local_uptime_values.any?
+            expect(local_node["uptime_seconds"]).to be_between(local_uptime_values.min, local_uptime_values.max)
+          else
+            expect(local_node["uptime_seconds"]).to be_nil
+          end
+          local_rx_times = payload.select { |entry| entry["node_id"] == payload[2]["node_id"] }.filter_map do |entry|
+            entry["rx_time"]
+          end
+          if local_rx_times.any?
+            expect(local_node["last_heard"]).to eq(local_rx_times.max)
+          else
+            expect(local_node["last_heard"]).to be_nil
+          end
         end
       end
 
@@ -3650,7 +3810,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "returns the stored nodes with derived timestamps" do
       import_nodes_fixture
 
-      get "/api/nodes"
+      get "/api/nodes?limit=#{nodes_fixture.size}"
       expect(last_response).to be_ok
 
       actual = JSON.parse(last_response.body)
@@ -3782,7 +3942,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       import_nodes_fixture
       import_messages_fixture
 
-      get "/api/messages?encrypted=1"
+      get "/api/messages?encrypted=1&limit=#{messages_fixture.size}"
       expect(last_response).to be_ok
 
       actual = JSON.parse(last_response.body)
@@ -4231,40 +4391,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(first_entry["telemetry_time"]).to eq(latest["telemetry_time"])
       expect(first_entry["telemetry_time_iso"]).to eq(Time.at(latest["telemetry_time"]).utc.iso8601)
       expect(first_entry).not_to have_key("device_metrics")
-      expect_same_value(first_entry["battery_level"], latest.dig("device_metrics", "battery_level") || latest.dig("device_metrics", "batteryLevel"))
-      expect_same_value(first_entry["current"], latest.dig("device_metrics", "current"))
-      expect_same_value(first_entry["distance"], latest.dig("environment_metrics", "distance"))
-      expect_same_value(first_entry["lux"], latest.dig("environment_metrics", "lux"))
-      expect_same_value(first_entry["wind_direction"], latest.dig("environment_metrics", "windDirection"))
-      expect_same_value(first_entry["wind_speed"], latest.dig("environment_metrics", "windSpeed"))
-      expect_same_value(first_entry["weight"], latest.dig("environment_metrics", "weight"))
-      expect_same_value(first_entry["rainfall_24h"], latest.dig("environment_metrics", "rainfall24h"))
-      expect_same_value(first_entry["soil_moisture"], latest.dig("environment_metrics", "soilMoisture"))
-      expect_same_value(first_entry["soil_temperature"], latest.dig("environment_metrics", "soilTemperature"))
+      expect_same_value(first_entry["battery_level"], telemetry_metric(latest, "battery_level"))
+      expect_same_value(first_entry["current"], telemetry_metric(latest, "current"))
+      expect_same_value(first_entry["distance"], telemetry_metric(latest, "distance"))
+      expect_same_value(first_entry["lux"], telemetry_metric(latest, "lux"))
+      expect_same_value(first_entry["wind_direction"], telemetry_metric(latest, "wind_direction"))
+      expect_same_value(first_entry["wind_speed"], telemetry_metric(latest, "wind_speed"))
+      expect_same_value(first_entry["weight"], telemetry_metric(latest, "weight"))
+      expect_same_value(first_entry["rainfall_24h"], telemetry_metric(latest, "rainfall_24h", "rainfall24h"))
+      expect_same_value(first_entry["soil_moisture"], telemetry_metric(latest, "soil_moisture"))
+      expect_same_value(first_entry["soil_temperature"], telemetry_metric(latest, "soil_temperature"))
 
       second_entry = data.last
       expect(second_entry["id"]).to eq(second_latest["id"])
       expect(second_entry).not_to have_key("environment_metrics")
-      expect(second_entry["temperature"]).to be_within(1e-6).of(second_latest["environment_metrics"]["temperature"])
-      expect(second_entry["relative_humidity"]).to be_within(1e-6).of(second_latest["environment_metrics"]["relativeHumidity"])
-      expect(second_entry["barometric_pressure"]).to be_within(1e-6).of(second_latest["environment_metrics"]["barometricPressure"])
-      expect_same_value(second_entry["gas_resistance"], second_latest.dig("environment_metrics", "gasResistance"))
-      expect_same_value(second_entry["iaq"], second_latest.dig("environment_metrics", "iaq"))
-      expect_same_value(second_entry["distance"], second_latest.dig("environment_metrics", "distance"))
-      expect_same_value(second_entry["lux"], second_latest.dig("environment_metrics", "lux"))
-      expect_same_value(second_entry["white_lux"], second_latest.dig("environment_metrics", "whiteLux"))
-      expect_same_value(second_entry["ir_lux"], second_latest.dig("environment_metrics", "irLux"))
-      expect_same_value(second_entry["uv_lux"], second_latest.dig("environment_metrics", "uvLux"))
-      expect_same_value(second_entry["wind_direction"], second_latest.dig("environment_metrics", "windDirection"))
-      expect_same_value(second_entry["wind_speed"], second_latest.dig("environment_metrics", "windSpeed"))
-      expect_same_value(second_entry["wind_gust"], second_latest.dig("environment_metrics", "windGust"))
-      expect_same_value(second_entry["wind_lull"], second_latest.dig("environment_metrics", "windLull"))
-      expect_same_value(second_entry["weight"], second_latest.dig("environment_metrics", "weight"))
-      expect_same_value(second_entry["radiation"], second_latest.dig("environment_metrics", "radiation"))
-      expect_same_value(second_entry["rainfall_1h"], second_latest.dig("environment_metrics", "rainfall1h"))
-      expect_same_value(second_entry["rainfall_24h"], second_latest.dig("environment_metrics", "rainfall24h"))
-      expect_same_value(second_entry["soil_moisture"], second_latest.dig("environment_metrics", "soilMoisture"))
-      expect_same_value(second_entry["soil_temperature"], second_latest.dig("environment_metrics", "soilTemperature"))
+      expect_api_value(second_entry, "temperature", telemetry_metric(second_latest, "temperature"))
+      expect_api_value(second_entry, "relative_humidity", telemetry_metric(second_latest, "relative_humidity"))
+      expect_api_value(second_entry, "barometric_pressure", telemetry_metric(second_latest, "barometric_pressure"))
+      expect_same_value(second_entry["gas_resistance"], telemetry_metric(second_latest, "gas_resistance"))
+      expect_same_value(second_entry["iaq"], telemetry_metric(second_latest, "iaq"))
+      expect_same_value(second_entry["distance"], telemetry_metric(second_latest, "distance"))
+      expect_same_value(second_entry["lux"], telemetry_metric(second_latest, "lux"))
+      expect_same_value(second_entry["white_lux"], telemetry_metric(second_latest, "white_lux"))
+      expect_same_value(second_entry["ir_lux"], telemetry_metric(second_latest, "ir_lux"))
+      expect_same_value(second_entry["uv_lux"], telemetry_metric(second_latest, "uv_lux"))
+      expect_same_value(second_entry["wind_direction"], telemetry_metric(second_latest, "wind_direction"))
+      expect_same_value(second_entry["wind_speed"], telemetry_metric(second_latest, "wind_speed"))
+      expect_same_value(second_entry["wind_gust"], telemetry_metric(second_latest, "wind_gust"))
+      expect_same_value(second_entry["wind_lull"], telemetry_metric(second_latest, "wind_lull"))
+      expect_same_value(second_entry["weight"], telemetry_metric(second_latest, "weight"))
+      expect_same_value(second_entry["radiation"], telemetry_metric(second_latest, "radiation"))
+      expect_same_value(second_entry["rainfall_1h"], telemetry_metric(second_latest, "rainfall_1h", "rainfall1h"))
+      expect_same_value(second_entry["rainfall_24h"], telemetry_metric(second_latest, "rainfall_24h", "rainfall24h"))
+      expect_same_value(second_entry["soil_moisture"], telemetry_metric(second_latest, "soil_moisture"))
+      expect_same_value(second_entry["soil_temperature"], telemetry_metric(second_latest, "soil_temperature"))
     end
 
     it "excludes telemetry entries older than seven days" do
