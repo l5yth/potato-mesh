@@ -361,6 +361,7 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
               relative_humidity: 55,
               barometric_pressure: 995,
               gas_resistance: 1500,
+              iaq: 83,
             },
           },
           {
@@ -377,6 +378,7 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
               relativeHumidity: 52,
               barometricPressure: 1000,
               gasResistance: 2000,
+              iaq: 88,
             },
           },
         ],
@@ -396,6 +398,8 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('Air util TX (%)'), true);
   assert.equal(html.includes('Utilization (%)'), true);
   assert.equal(html.includes('Gas resistance (\u03a9)'), true);
+  assert.equal(html.includes('Air quality'), true);
+  assert.equal(html.includes('IAQ index'), true);
   assert.equal(html.includes('Temperature (\u00b0C)'), true);
   assert.equal(html.includes(expectedDate), true);
   assert.equal(html.includes('node-detail__chart-point'), true);
@@ -473,6 +477,7 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
   });
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Power metrics'), true);
+  assert.equal(html.includes('Air quality'), true);
 });
 
 test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
