@@ -55,6 +55,10 @@ jobs:
     - name: Build iOS debug IPA
       if: matrix.os == 'macos-latest'
       run: flutter build ipa --debug --no-codesign
+    - name: SonarQube Scan
+      uses: SonarSource/sonarqube-scan-action@v6
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v5

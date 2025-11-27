@@ -40,6 +40,10 @@ jobs:
       run: |
         mkdir -p reports
         pytest --cov=data --cov-report=term --cov-report=xml:reports/python-coverage.xml --junitxml=reports/python-junit.xml
+    - name: SonarQube Scan
+      uses: SonarSource/sonarqube-scan-action@v6
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     - name: Upload coverage to Codecov
       if: always()
       uses: codecov/codecov-action@v5

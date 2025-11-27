@@ -216,7 +216,7 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Published Images:**" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
+
         # Web images
         echo "### 🌐 Web Application" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
@@ -234,4 +234,3 @@ jobs:
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
         fi
-        
