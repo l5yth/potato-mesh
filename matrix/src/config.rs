@@ -46,6 +46,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::io::Write;
 
     #[test]
@@ -106,6 +107,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn from_default_path_not_found() {
         let tmp_dir = tempfile::tempdir().unwrap();
         std::env::set_current_dir(tmp_dir.path()).unwrap();
@@ -114,6 +116,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn from_default_path_found() {
         let toml_str = r#"
             [potatomesh]

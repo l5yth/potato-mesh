@@ -17,3 +17,4 @@ urlencoding = "2"
 [dev-dependencies]
 tempfile = "3"
 mockito = "1"
+serial_test = "3"
