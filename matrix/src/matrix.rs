@@ -132,9 +132,28 @@ impl MatrixAppserviceClient {
         };
 
         let resp = self.http.put(&url).json(&content).send().await?;
+
         if !resp.status().is_success() {
-            tracing::warn!("Failed to send message as {}: {}", user_id, resp.status());
+            let status = resp.status();
+            // optional: pull a short body snippet for debugging
+            let body_snip = resp.text().await.unwrap_or_default();
+
+            // Log for observability
+            tracing::warn!(
+                "Failed to send message as {}: status {}, body: {}",
+                user_id,
+                status,
+                body_snip
+            );
+
+            // Propagate an error so callers know this message was NOT delivered
+            return Err(anyhow::anyhow!(
+                "Matrix send failed for {} with status {}",
+                user_id,
+                status
+            ));
         }
+
         Ok(())
     }
 }
