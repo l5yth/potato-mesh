@@ -47,6 +47,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: reports/python-coverage.xml
         flags: python-ingestor
+        fail_ci_if_error: false
         name: python-ingestor
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

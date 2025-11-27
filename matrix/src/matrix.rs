@@ -72,11 +72,7 @@ impl MatrixAppserviceClient {
     }
 
     /// Set display name for puppet user.
-    pub async fn set_display_name(
-        &self,
-        user_id: &str,
-        display_name: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn set_display_name(&self, user_id: &str, display_name: &str) -> anyhow::Result<()> {
         #[derive(Serialize)]
         struct DisplayNameReq<'a> {
             displayname: &'a str,
@@ -91,7 +87,9 @@ impl MatrixAppserviceClient {
             self.auth_query()
         );
 
-        let body = DisplayNameReq { displayname: display_name };
+        let body = DisplayNameReq {
+            displayname: display_name,
+        };
 
         let resp = self.http.put(&url).json(&body).send().await?;
         if resp.status().is_success() {
@@ -108,11 +106,7 @@ impl MatrixAppserviceClient {
     }
 
     /// Send a plain text message into the configured room as puppet user_id.
-    pub async fn send_text_message_as(
-        &self,
-        user_id: &str,
-        body_text: &str,
-    ) -> anyhow::Result<()> {
+    pub async fn send_text_message_as(&self, user_id: &str, body_text: &str) -> anyhow::Result<()> {
         #[derive(Serialize)]
         struct MsgContent<'a> {
             msgtype: &'a str,
@@ -139,12 +133,53 @@ impl MatrixAppserviceClient {
 
         let resp = self.http.put(&url).json(&content).send().await?;
         if !resp.status().is_success() {
-            tracing::warn!(
-                "Failed to send message as {}: {}",
-                user_id,
-                resp.status()
-            );
+            tracing::warn!("Failed to send message as {}: {}", user_id, resp.status());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_cfg() -> MatrixConfig {
+        MatrixConfig {
+            homeserver: "https://matrix.example.org".to_string(),
+            as_token: "AS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        }
+    }
+
+    #[test]
+    fn localpart_strips_bang_correctly() {
+        assert_eq!(
+            MatrixAppserviceClient::localpart_from_node_id("!deadbeef"),
+            "deadbeef"
+        );
+        assert_eq!(
+            MatrixAppserviceClient::localpart_from_node_id("cafebabe"),
+            "cafebabe"
+        );
+    }
+
+    #[test]
+    fn user_id_builds_from_localpart_and_server_name() {
+        let http = reqwest::Client::builder().build().unwrap();
+        let client = MatrixAppserviceClient::new(http, dummy_cfg());
+
+        let uid = client.user_id("deadbeef");
+        assert_eq!(uid, "@deadbeef:example.org");
+    }
+
+    #[test]
+    fn auth_query_contains_access_token() {
+        let http = reqwest::Client::builder().build().unwrap();
+        let client = MatrixAppserviceClient::new(http, dummy_cfg());
+
+        let q = client.auth_query();
+        assert!(q.starts_with("access_token="));
+        assert!(q.contains("AS_TOKEN"));
     }
 }

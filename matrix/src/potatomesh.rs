@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 
 use crate::config::PotatomeshConfig;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct PotatoMessage {
     pub id: u64,
@@ -26,6 +27,7 @@ pub struct PotatoMessage {
     pub node_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct PotatoNode {
     pub node_id: String,
@@ -107,5 +109,80 @@ impl PotatoClient {
         }
 
         Ok(node)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_sample_message_array() {
+        let json = r#"
+        [
+          {
+            "id": 2947676906,
+            "rx_time": 1764241436,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!da6556d4",
+            "to_id": "^all",
+            "channel": 1,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Ping",
+            "rssi": -111,
+            "hop_limit": 1,
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "TEST",
+            "snr": -9.0,
+            "node_id": "!06871773"
+          }
+        ]
+        "#;
+
+        let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
+        assert_eq!(msgs.len(), 1);
+        let m = &msgs[0];
+        assert_eq!(m.id, 2947676906);
+        assert_eq!(m.from_id, "!da6556d4");
+        assert_eq!(m.node_id, "!06871773");
+        assert_eq!(m.portnum, "TEXT_MESSAGE_APP");
+        assert_eq!(m.lora_freq, 868);
+        assert!((m.snr - (-9.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn deserialize_sample_node() {
+        let json = r#"
+        {
+          "node_id": "!67fc83cb",
+          "short_name": "83CB",
+          "long_name": "Meshtastic 83CB",
+          "role": "CLIENT_HIDDEN",
+          "last_heard": 1764250515,
+          "first_heard": 1758993817,
+          "last_seen_iso": "2025-11-27T13:35:15Z"
+        }
+        "#;
+
+        let node: PotatoNode = serde_json::from_str(json).expect("valid node json");
+        assert_eq!(node.node_id, "!67fc83cb");
+        assert_eq!(node.short_name.as_deref(), Some("83CB"));
+        assert_eq!(node.long_name, "Meshtastic 83CB");
+        assert_eq!(node.role.as_deref(), Some("CLIENT_HIDDEN"));
+        assert_eq!(node.last_heard, Some(1764250515));
+        assert_eq!(node.first_heard, Some(1758993817));
+        assert!(node.latitude.is_none());
+    }
+
+    #[test]
+    fn node_hex_id_is_stripped_correctly() {
+        let with_bang = "!deadbeef";
+        let hex = with_bang.trim_start_matches('!');
+        assert_eq!(hex, "deadbeef");
+
+        let already_hex = "cafebabe";
+        let hex2 = already_hex.trim_start_matches('!');
+        assert_eq!(hex2, "cafebabe");
     }
 }

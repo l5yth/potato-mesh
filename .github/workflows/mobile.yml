@@ -63,5 +63,6 @@ jobs:
         files: coverage/lcov.info
         flags: flutter-mobile
         name: flutter-mobile
+        fail_ci_if_error: false
       env:
         CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

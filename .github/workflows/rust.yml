@@ -43,6 +43,11 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Show rustc version
         run: rustc --version
+      - name: Install llvm-tools-preview component
+        run: rustup component add llvm-tools-preview --toolchain stable
+      - name: Install cargo-llvm-cov
+        working-directory: ./matrix
+        run: cargo install cargo-llvm-cov --locked
       - name: Check formatting
         working-directory: ./matrix
         run: cargo fmt --all -- --check
@@ -51,7 +56,19 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Build
         working-directory: ./matrix
-        run: cargo build --all --all-features --release
+        run: cargo build --all --all-features
       - name: Test
         working-directory: ./matrix
         run: cargo test --all --all-features --verbose
+      - name: Run tests with coverage
+        working-directory: ./matrix
+        run: |
+          cargo llvm-cov --all-features --workspace --lcov --output-path coverage.lcov
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./matrix/coverage.lcov
+          flags: matrix-bridge
+          name: matrix-bridge
+          fail_ci_if_error: false

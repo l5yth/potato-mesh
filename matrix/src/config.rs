@@ -42,3 +42,37 @@ impl Config {
         Self::load_from_file(path)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_minimal_config_from_toml_str() {
+        let toml_str = r#"
+            [potatomesh]
+            base_url = "https://potatomesh.net/api"
+            poll_interval_secs = 10
+
+            [matrix]
+            homeserver = "https://matrix.example.org"
+            as_token = "AS_TOKEN"
+            server_name = "example.org"
+            room_id = "!roomid:example.org"
+
+            [state]
+            state_file = "bridge_state.json"
+        "#;
+
+        let cfg: Config = toml::from_str(toml_str).expect("toml should parse");
+        assert_eq!(cfg.potatomesh.base_url, "https://potatomesh.net/api");
+        assert_eq!(cfg.potatomesh.poll_interval_secs, 10);
+
+        assert_eq!(cfg.matrix.homeserver, "https://matrix.example.org");
+        assert_eq!(cfg.matrix.as_token, "AS_TOKEN");
+        assert_eq!(cfg.matrix.server_name, "example.org");
+        assert_eq!(cfg.matrix.room_id, "!roomid:example.org");
+
+        assert_eq!(cfg.state.state_file, "bridge_state.json");
+    }
+}

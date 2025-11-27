@@ -145,3 +145,73 @@ async fn handle_message(
     state.update_with(msg);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::potatomesh::PotatoMessage;
+
+    fn sample_msg(id: u64) -> PotatoMessage {
+        PotatoMessage {
+            id,
+            rx_time: 0,
+            rx_iso: "2025-11-27T00:00:00Z".to_string(),
+            from_id: "!abcd1234".to_string(),
+            to_id: "^all".to_string(),
+            channel: 1,
+            portnum: "TEXT_MESSAGE_APP".to_string(),
+            text: "Ping".to_string(),
+            rssi: -100,
+            hop_limit: 1,
+            lora_freq: 868,
+            modem_preset: "MediumFast".to_string(),
+            channel_name: "TEST".to_string(),
+            snr: 0.0,
+            reply_id: None,
+            node_id: "!abcd1234".to_string(),
+        }
+    }
+
+    #[test]
+    fn bridge_state_initially_forwards_all() {
+        let state = BridgeState::default();
+        let msg = sample_msg(42);
+
+        assert!(state.should_forward(&msg));
+    }
+
+    #[test]
+    fn bridge_state_tracks_highest_id_and_skips_older() {
+        let mut state = BridgeState::default();
+        let m1 = sample_msg(10);
+        let m2 = sample_msg(20);
+        let m3 = sample_msg(15);
+
+        // First message, should forward
+        assert!(state.should_forward(&m1));
+        state.update_with(&m1);
+        assert_eq!(state.last_message_id, Some(10));
+
+        // Second message, higher id, should forward
+        assert!(state.should_forward(&m2));
+        state.update_with(&m2);
+        assert_eq!(state.last_message_id, Some(20));
+
+        // Third message, lower than last, should NOT forward
+        assert!(!state.should_forward(&m3));
+        // state remains unchanged
+        assert_eq!(state.last_message_id, Some(20));
+    }
+
+    #[test]
+    fn bridge_state_update_is_monotonic() {
+        let mut state = BridgeState {
+            last_message_id: Some(50),
+        };
+        let m = sample_msg(40);
+
+        state.update_with(&m); // id is lower than current
+                               // last_message_id must stay at 50
+        assert_eq!(state.last_message_id, Some(50));
+    }
+}

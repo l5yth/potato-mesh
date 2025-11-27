@@ -2,7 +2,7 @@
 # Base URL without trailing slash
 base_url = "https://potatomesh.net/api"
 # Poll interval in seconds
-poll_interval_secs = 10
+poll_interval_secs = 60
 
 [matrix]
 # Homeserver base URL (client API) without trailing slash
