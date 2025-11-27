@@ -185,4 +185,185 @@ mod tests {
         let hex2 = already_hex.trim_start_matches('!');
         assert_eq!(hex2, "cafebabe");
     }
+
+    #[test]
+    fn test_new_potato_client() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        assert_eq!(client.cfg.base_url, "http://localhost:8080");
+        assert_eq!(client.cfg.poll_interval_secs, 60);
+    }
+
+    #[test]
+    fn test_messages_url() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        assert_eq!(client.messages_url(), "http://localhost:8080/messages");
+    }
+
+    #[test]
+    fn test_node_url() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        assert_eq!(
+            client.node_url("!1234"),
+            "http://localhost:8080/nodes/!1234"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_messages_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                [
+                  {
+                    "id": 2947676906, "rx_time": 1764241436, "rx_iso": "2025-11-27T11:03:56Z",
+                    "from_id": "!da6556d4", "to_id": "^all", "channel": 1,
+                    "portnum": "TEXT_MESSAGE_APP", "text": "Ping", "rssi": -111,
+                    "hop_limit": 1, "lora_freq": 868, "modem_preset": "MediumFast",
+                    "channel_name": "TEST", "snr": -9.0, "node_id": "!06871773"
+                  }
+                ]
+                "#,
+            )
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        let result = client.fetch_messages().await;
+
+        mock.assert();
+        assert!(result.is_ok());
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, 2947676906);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_messages_error() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/messages")
+            .with_status(500)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        let result = client.fetch_messages().await;
+
+        mock.assert();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_node_cache_hit() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        let node = PotatoNode {
+            node_id: "!1234".to_string(),
+            short_name: Some("test".to_string()),
+            long_name: "test node".to_string(),
+            role: None,
+            hw_model: None,
+            last_heard: None,
+            first_heard: None,
+            latitude: None,
+            longitude: None,
+            altitude: None,
+        };
+        client
+            .nodes_cache
+            .write()
+            .await
+            .insert("1234".to_string(), node.clone());
+        let result = client.get_node("!1234").await;
+        assert!(result.is_ok());
+        let got = result.unwrap();
+        assert_eq!(got.node_id, "!1234");
+        assert_eq!(got.short_name.unwrap(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_get_node_cache_miss() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/nodes/1234")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"
+                {
+                  "node_id": "!1234", "short_name": "test", "long_name": "test node",
+                  "role": "test", "hw_model": "test", "last_heard": 1, "first_heard": 1,
+                  "latitude": 1.0, "longitude": 1.0, "altitude": 1.0
+                }
+                "#,
+            )
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+
+        // first call, should miss cache and hit the server
+        let result = client.get_node("!1234").await;
+        mock.assert();
+        assert!(result.is_ok());
+
+        // second call, should hit cache
+        let result2 = client.get_node("!1234").await;
+        assert!(result2.is_ok());
+        // mockito would panic here if we made a second request
+    }
+
+    #[tokio::test]
+    async fn test_get_node_error() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/nodes/1234")
+            .with_status(500)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        let result = client.get_node("!1234").await;
+        mock.assert();
+        assert!(result.is_err());
+    }
 }

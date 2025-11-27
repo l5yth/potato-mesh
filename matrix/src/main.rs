@@ -13,7 +13,7 @@ use crate::matrix::MatrixAppserviceClient;
 use crate::potatomesh::{PotatoClient, PotatoMessage};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
-struct BridgeState {
+pub struct BridgeState {
     last_message_id: Option<u64>,
 }
 
@@ -149,7 +149,9 @@ async fn handle_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::potatomesh::PotatoMessage;
+    use crate::config::{MatrixConfig, PotatomeshConfig};
+    use crate::matrix::MatrixAppserviceClient;
+    use crate::potatomesh::PotatoClient;
 
     fn sample_msg(id: u64) -> PotatoMessage {
         PotatoMessage {
@@ -213,5 +215,108 @@ mod tests {
         state.update_with(&m); // id is lower than current
                                // last_message_id must stay at 50
         assert_eq!(state.last_message_id, Some(50));
+    }
+
+    #[test]
+    fn bridge_state_load_save_roundtrip() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("state.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let mut state = BridgeState::default();
+        state.last_message_id = Some(12345);
+        state.save(path_str).unwrap();
+
+        let loaded_state = BridgeState::load(path_str).unwrap();
+        assert_eq!(loaded_state.last_message_id, Some(12345));
+    }
+
+    #[test]
+    fn bridge_state_load_nonexistent() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("nonexistent.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let state = BridgeState::load(path_str).unwrap();
+        assert_eq!(state.last_message_id, None);
+    }
+
+    #[tokio::test]
+    async fn test_handle_message() {
+        let mut server = mockito::Server::new_async().await;
+
+        let potatomesh_cfg = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 1,
+        };
+        let matrix_cfg = MatrixConfig {
+            homeserver: server.url(),
+            as_token: "AS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        };
+
+        let node_id = "abcd1234";
+        let user_id = format!("@{}:{}", node_id, matrix_cfg.server_name);
+        let encoded_user = urlencoding::encode(&user_id);
+
+        let mock_get_node = server
+            .mock("GET", "/nodes/abcd1234")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"node_id": "!abcd1234", "long_name": "Test Node", "short_name": "TN"}"#,
+            )
+            .create();
+
+        let mock_register = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user&access_token=AS_TOKEN")
+            .with_status(200)
+            .create();
+
+        let mock_display_name = server
+            .mock(
+                "PUT",
+                format!("/_matrix/client/v3/profile/{}/displayname", encoded_user).as_str(),
+            )
+            .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .with_status(200)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let matrix_client = MatrixAppserviceClient::new(http_client.clone(), matrix_cfg);
+        let room_id = &matrix_client.cfg.room_id;
+        let encoded_room = urlencoding::encode(room_id);
+        let txn_id = matrix_client
+            .txn_counter
+            .load(std::sync::atomic::Ordering::SeqCst);
+
+        let mock_send = server
+            .mock(
+                "PUT",
+                format!(
+                    "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
+                    encoded_room, txn_id
+                )
+                .as_str(),
+            )
+            .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .with_status(200)
+            .create();
+
+        let potato_client = PotatoClient::new(http_client.clone(), potatomesh_cfg);
+        let mut state = BridgeState::default();
+        let msg = sample_msg(100);
+
+        let result = handle_message(&potato_client, &matrix_client, &mut state, &msg).await;
+
+        assert!(result.is_ok());
+        mock_get_node.assert();
+        mock_register.assert();
+        mock_display_name.assert();
+        mock_send.assert();
+
+        assert_eq!(state.last_message_id, Some(100));
     }
 }

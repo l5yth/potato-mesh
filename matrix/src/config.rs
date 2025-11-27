@@ -46,6 +46,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn parse_minimal_config_from_toml_str() {
@@ -74,5 +75,66 @@ mod tests {
         assert_eq!(cfg.matrix.room_id, "!roomid:example.org");
 
         assert_eq!(cfg.state.state_file, "bridge_state.json");
+    }
+
+    #[test]
+    fn load_from_file_not_found() {
+        let result = Config::load_from_file("file_that_does_not_exist.toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_from_file_valid_file() {
+        let toml_str = r#"
+            [potatomesh]
+            base_url = "https://potatomesh.net/api"
+            poll_interval_secs = 10
+
+            [matrix]
+            homeserver = "https://matrix.example.org"
+            as_token = "AS_TOKEN"
+            server_name = "example.org"
+            room_id = "!roomid:example.org"
+
+            [state]
+            state_file = "bridge_state.json"
+        "#;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "{}", toml_str).unwrap();
+        let result = Config::load_from_file(file.path().to_str().unwrap());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn from_default_path_not_found() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp_dir.path()).unwrap();
+        let result = Config::from_default_path();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_default_path_found() {
+        let toml_str = r#"
+            [potatomesh]
+            base_url = "https://potatomesh.net/api"
+            poll_interval_secs = 10
+
+            [matrix]
+            homeserver = "https://matrix.example.org"
+            as_token = "AS_TOKEN"
+            server_name = "example.org"
+            room_id = "!roomid:example.org"
+
+            [state]
+            state_file = "bridge_state.json"
+        "#;
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("Config.toml");
+        let mut file = std::fs::File::create(file_path).unwrap();
+        write!(file, "{}", toml_str).unwrap();
+        std::env::set_current_dir(tmp_dir.path()).unwrap();
+        let result = Config::from_default_path();
+        assert!(result.is_ok());
     }
 }

@@ -9,8 +9,8 @@ use crate::config::MatrixConfig;
 #[derive(Clone)]
 pub struct MatrixAppserviceClient {
     http: reqwest::Client,
-    cfg: MatrixConfig,
-    txn_counter: Arc<AtomicU64>,
+    pub cfg: MatrixConfig,
+    pub txn_counter: Arc<AtomicU64>,
 }
 
 impl MatrixAppserviceClient {
@@ -200,5 +200,163 @@ mod tests {
         let q = client.auth_query();
         assert!(q.starts_with("access_token="));
         assert!(q.contains("AS_TOKEN"));
+    }
+
+    #[test]
+    fn test_new_matrix_client() {
+        let http_client = reqwest::Client::new();
+        let config = dummy_cfg();
+        let client = MatrixAppserviceClient::new(http_client, config);
+        assert_eq!(client.cfg.homeserver, "https://matrix.example.org");
+        assert_eq!(client.cfg.as_token, "AS_TOKEN");
+        assert!(client.txn_counter.load(Ordering::SeqCst) > 0);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_registered_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user&access_token=AS_TOKEN")
+            .with_status(200)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_registered("testuser").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_registered_user_in_use() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user&access_token=AS_TOKEN")
+            .with_status(400) // M_USER_IN_USE
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_registered("testuser").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_display_name_success() {
+        let mut server = mockito::Server::new_async().await;
+        let user_id = "@test:example.org";
+        let encoded_user = urlencoding::encode(user_id);
+        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let path = format!("/_matrix/client/v3/profile/{}/displayname", encoded_user);
+
+        let mock = server
+            .mock("PUT", path.as_str())
+            .match_query(query.as_str())
+            .with_status(200)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.set_display_name(user_id, "Test Name").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_set_display_name_fail_is_ok() {
+        let mut server = mockito::Server::new_async().await;
+        let user_id = "@test:example.org";
+        let encoded_user = urlencoding::encode(user_id);
+        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let path = format!("/_matrix/client/v3/profile/{}/displayname", encoded_user);
+
+        let mock = server
+            .mock("PUT", path.as_str())
+            .match_query(query.as_str())
+            .with_status(500)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.set_display_name(user_id, "Test Name").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_text_message_as_success() {
+        let mut server = mockito::Server::new_async().await;
+        let user_id = "@test:example.org";
+        let room_id = "!roomid:example.org";
+        let encoded_user = urlencoding::encode(user_id);
+        let encoded_room = urlencoding::encode(room_id);
+
+        let client = {
+            let mut cfg = dummy_cfg();
+            cfg.homeserver = server.url();
+            cfg.room_id = room_id.to_string();
+            MatrixAppserviceClient::new(reqwest::Client::new(), cfg)
+        };
+        let txn_id = client.txn_counter.load(Ordering::SeqCst);
+        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let path = format!(
+            "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
+            encoded_room, txn_id
+        );
+
+        let mock = server
+            .mock("PUT", path.as_str())
+            .match_query(query.as_str())
+            .with_status(200)
+            .create();
+
+        let result = client.send_text_message_as(user_id, "hello").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_text_message_as_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let user_id = "@test:example.org";
+        let room_id = "!roomid:example.org";
+        let encoded_user = urlencoding::encode(user_id);
+        let encoded_room = urlencoding::encode(room_id);
+
+        let client = {
+            let mut cfg = dummy_cfg();
+            cfg.homeserver = server.url();
+            cfg.room_id = room_id.to_string();
+            MatrixAppserviceClient::new(reqwest::Client::new(), cfg)
+        };
+        let txn_id = client.txn_counter.load(Ordering::SeqCst);
+        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let path = format!(
+            "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
+            encoded_room, txn_id
+        );
+
+        let mock = server
+            .mock("PUT", path.as_str())
+            .match_query(query.as_str())
+            .with_status(500)
+            .create();
+
+        let result = client.send_text_message_as(user_id, "hello").await;
+
+        mock.assert();
+        assert!(result.is_err());
     }
 }
