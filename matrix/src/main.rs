@@ -223,8 +223,9 @@ mod tests {
         let file_path = tmp_dir.path().join("state.json");
         let path_str = file_path.to_str().unwrap();
 
-        let mut state = BridgeState::default();
-        state.last_message_id = Some(12345);
+        let state = BridgeState {
+            last_message_id: Some(12345),
+        };
         state.save(path_str).unwrap();
 
         let loaded_state = BridgeState::load(path_str).unwrap();
@@ -264,9 +265,7 @@ mod tests {
             .mock("GET", "/nodes/abcd1234")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(
-                r#"{"node_id": "!abcd1234", "long_name": "Test Node", "short_name": "TN"}"#,
-            )
+            .with_body(r#"{"node_id": "!abcd1234", "long_name": "Test Node", "short_name": "TN"}"#)
             .create();
 
         let mock_register = server

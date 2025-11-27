@@ -263,10 +263,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_messages_error() {
         let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", "/messages")
-            .with_status(500)
-            .create();
+        let mock = server.mock("GET", "/messages").with_status(500).create();
 
         let http_client = reqwest::Client::new();
         let config = PotatomeshConfig {
@@ -351,10 +348,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_node_error() {
         let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", "/nodes/1234")
-            .with_status(500)
-            .create();
+        let mock = server.mock("GET", "/nodes/1234").with_status(500).create();
 
         let http_client = reqwest::Client::new();
         let config = PotatomeshConfig {
