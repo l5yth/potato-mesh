@@ -36,6 +36,8 @@ jobs:
         include:
         - language: python
           build-mode: none
+        - language: rust
+          build-mode: none
         - language: ruby
           build-mode: none
         - language: javascript-typescript
