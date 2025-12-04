@@ -30,7 +30,8 @@ export const MAX_CHANNEL_INDEX = 9;
  *   NODE_INFO: 'node-info',
  *   TELEMETRY: 'telemetry',
  *   POSITION: 'position',
- *   NEIGHBOR: 'neighbor'
+ *   NEIGHBOR: 'neighbor',
+ *   TRACE: 'trace'
  * }}
  */
 export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
@@ -39,6 +40,7 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
   TELEMETRY: 'telemetry',
   POSITION: 'position',
   NEIGHBOR: 'neighbor',
+  TRACE: 'trace',
   MESSAGE_ENCRYPTED: 'message-encrypted'
 });
 
@@ -70,6 +72,7 @@ function resolveSnapshotList(entry) {
  *   telemetry?: Array<Object>,
  *   positions?: Array<Object>,
  *   neighbors?: Array<Object>,
+ *   traces?: Array<Object>,
  *   messages?: Array<Object>,
  *   logOnlyMessages?: Array<Object>,
  *   nowSeconds: number,
@@ -87,6 +90,7 @@ export function buildChatTabModel({
   telemetry = [],
   positions = [],
   neighbors = [],
+  traces = [],
   messages = [],
   logOnlyMessages = [],
   nowSeconds,
@@ -154,6 +158,27 @@ export function buildChatTabModel({
       const neighborId = normaliseNeighborId(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: snapshot, nodeId, nodeNum, neighborId });
     }
+  }
+
+  for (const trace of traces || []) {
+    if (!trace) continue;
+    const ts = resolveTimestampSeconds(trace.rx_time ?? trace.rxTime, trace.rx_iso ?? trace.rxIso);
+    if (ts == null || ts < cutoff) continue;
+    const path = buildTracePath(trace);
+    if (path.length < 2) continue;
+    const firstHop = path[0] || {};
+    const traceLabels = path
+      .map(hop => hop?.id ?? (Number.isFinite(hop?.num) ? String(hop.num) : (hop?.raw != null ? String(hop.raw) : null)))
+      .filter(value => value != null && value !== '');
+    logEntries.push({
+      ts,
+      type: CHAT_LOG_ENTRY_TYPES.TRACE,
+      trace,
+      tracePath: path,
+      traceLabels,
+      nodeId: firstHop.id ?? null,
+      nodeNum: firstHop.num ?? null
+    });
   }
 
   const encryptedLogEntries = [];
@@ -346,7 +371,12 @@ function pickFirstPropertyValue(source, keys) {
  * @returns {?string} Canonical node identifier.
  */
 function normaliseNodeId(value) {
-  if (!value || typeof value !== 'object') return null;
+  if (value == null) return null;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const rawString = String(value).trim();
+    return rawString.length ? rawString : null;
+  }
+  if (typeof value !== 'object') return null;
   const raw = value.node_id ?? value.nodeId ?? null;
   return typeof raw === 'string' && raw.trim().length ? raw.trim() : null;
 }
@@ -364,6 +394,29 @@ function normaliseNeighborId(value) {
     return raw.trim();
   }
   return null;
+}
+
+/**
+ * Build an ordered trace path of node identifiers and numeric references.
+ *
+ * @param {Object} trace Trace payload.
+ * @returns {Array<{id: ?string, num: ?number, raw: *}>} Ordered hop descriptors.
+ */
+function buildTracePath(trace) {
+  const path = [];
+  const append = value => {
+    if (value == null || value === '') return;
+    const id = normaliseNodeId(value);
+    const num = normaliseNodeNum({ num: value });
+    path.push({ id, num, raw: value });
+  };
+  append(trace.src ?? trace.source ?? trace.from);
+  const hops = Array.isArray(trace.hops) ? trace.hops : [];
+  for (const hop of hops) {
+    append(hop);
+  }
+  append(trace.dest ?? trace.destination ?? trace.to);
+  return path;
 }
 
 /**
