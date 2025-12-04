@@ -73,6 +73,7 @@ module PotatoMesh
           longitude: PotatoMesh::Config.map_center_lon,
           last_update_time: last_update,
           is_private: private_mode?,
+          contact_link: sanitized_contact_link,
         }
       end
 
@@ -96,6 +97,7 @@ module PotatoMesh
           "longitude" => attributes[:longitude],
           "lastUpdateTime" => attributes[:last_update_time],
           "isPrivate" => attributes[:is_private],
+          "contactLink" => attributes[:contact_link],
           "signature" => signature,
         }
         payload.reject { |_, value| value.nil? }
@@ -450,6 +452,7 @@ module PotatoMesh
 
       def canonical_instance_payload(attributes)
         data = {}
+        data["contactLink"] = attributes[:contact_link] if attributes[:contact_link]
         data["id"] = attributes[:id] if attributes[:id]
         data["domain"] = attributes[:domain] if attributes[:domain]
         data["pubkey"] = attributes[:pubkey] if attributes[:pubkey]
@@ -611,6 +614,7 @@ module PotatoMesh
           longitude: coerce_float(payload["longitude"]),
           last_update_time: coerce_integer(payload["lastUpdateTime"]),
           is_private: private_flag,
+          contact_link: string_or_nil(payload["contactLink"]),
         }
 
         [attributes, signature, nil]
@@ -1055,8 +1059,8 @@ module PotatoMesh
         sql = <<~SQL
           INSERT INTO instances (
             id, domain, pubkey, name, version, channel, frequency,
-            latitude, longitude, last_update_time, is_private, signature
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            latitude, longitude, last_update_time, is_private, contact_link, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             domain=excluded.domain,
             pubkey=excluded.pubkey,
@@ -1068,6 +1072,7 @@ module PotatoMesh
             longitude=excluded.longitude,
             last_update_time=excluded.last_update_time,
             is_private=excluded.is_private,
+            contact_link=excluded.contact_link,
             signature=excluded.signature
         SQL
 
@@ -1083,6 +1088,7 @@ module PotatoMesh
           attributes[:longitude],
           attributes[:last_update_time],
           attributes[:is_private] ? 1 : 0,
+          attributes[:contact_link],
           signature,
         ]
 

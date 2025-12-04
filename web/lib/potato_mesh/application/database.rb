@@ -164,6 +164,11 @@ module PotatoMesh
           db.execute_batch(File.read(sql_file))
         end
 
+        instance_columns = db.execute("PRAGMA table_info(instances)").map { |row| row[1] }
+        unless instance_columns.include?("contact_link")
+          db.execute("ALTER TABLE instances ADD COLUMN contact_link TEXT")
+        end
+
         telemetry_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telemetry'").flatten
         if telemetry_tables.empty?
