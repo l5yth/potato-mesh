@@ -53,6 +53,7 @@ test('federation map centers on configured coordinates and follows theme filters
   tileContainer.appendChild(tileImage);
   tilePane.appendChild(tileImage);
   const mapSetViewCalls = [];
+  const mapFitBoundsCalls = [];
   const tileLayerStub = {
     addTo() {
       return this;
@@ -73,6 +74,9 @@ test('federation map centers on configured coordinates and follows theme filters
     on() {},
     getPane(name) {
       return name === 'tilePane' ? tilePane : null;
+    },
+    fitBounds(...args) {
+      mapFitBoundsCalls.push(args);
     }
   };
   const leafletStub = {
@@ -153,6 +157,7 @@ const fetchImpl = async () => ({
     assert.match(secondRowHtml, /<em>—<\/em>/); // no contact link
     assert.match(secondRowHtml, /2\.0\.0/);
     assert.match(secondRowHtml, /d ago/);
+    assert.deepEqual(mapFitBoundsCalls[0][0], [[10.12345, -20.98765]]);
   } finally {
     cleanup();
   }

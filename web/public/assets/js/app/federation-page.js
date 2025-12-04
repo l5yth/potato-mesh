@@ -201,11 +201,15 @@ export async function initializeFederationPage(options = {}) {
 
   // Render map markers
   if (map && markersLayer && hasLeaflet && Array.isArray(instances)) {
+    const bounds = [];
+
     for (const instance of instances) {
       const lat = Number(instance.latitude);
       const lon = Number(instance.longitude);
 
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      bounds.push([lat, lon]);
 
       const name = instance.name || instance.domain || 'Unknown';
       const url = buildInstanceUrl(instance.domain);
@@ -228,6 +232,14 @@ export async function initializeFederationPage(options = {}) {
 
       marker.bindPopup(popupContent);
       markersLayer.addLayer(marker);
+    }
+
+    if (bounds.length > 0 && typeof map.fitBounds === 'function') {
+      try {
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 10 });
+      } catch (err) {
+        console.warn('Failed to fit federation map bounds', err);
+      }
     }
   }
 
