@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS instances (
   longitude         REAL,
   last_update_time  INTEGER,
   is_private        BOOLEAN NOT NULL DEFAULT 0,
+  contact_link      TEXT,
   signature         TEXT
 );
 
