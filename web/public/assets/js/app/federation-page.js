@@ -78,66 +78,110 @@ function buildInstanceUrl(domain) {
   return `https://${trimmed}`;
 }
 
-/**
- * Leaflet map instance for the federation page.
- *
- * @type {L.Map|null}
- */
-let map = null;
-
-/**
- * Leaflet layer group for instance markers.
- *
- * @type {L.LayerGroup|null}
- */
-let markersLayer = null;
+const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
 
 /**
  * Initialize the federation page by fetching instances, rendering the map,
  * and populating the table.
  *
+ * @param {{
+ *   config?: object,
+ *   fetchImpl?: typeof fetch,
+ *   leaflet?: typeof L
+ * }} [options] Optional overrides for testing.
  * @returns {Promise<void>}
  */
-export async function initializeFederationPage() {
-  const rawConfig = readAppConfig();
+export async function initializeFederationPage(options = {}) {
+  const rawConfig = options.config || readAppConfig();
   const config = mergeConfig(rawConfig);
+  const fetchImpl = options.fetchImpl || fetch;
+  const leaflet = options.leaflet || (typeof window !== 'undefined' ? window.L : null);
   const mapContainer = document.getElementById('map');
   const tableBody = document.querySelector('#instances tbody');
   const statusEl = document.getElementById('status');
 
   const hasLeaflet =
-    typeof window !== 'undefined' &&
-    typeof window.L === 'object' &&
-    window.L &&
-    typeof window.L.map === 'function';
+    typeof leaflet === 'object' &&
+    leaflet &&
+    typeof leaflet.map === 'function' &&
+    typeof leaflet.tileLayer === 'function';
+
+  let map = null;
+  let markersLayer = null;
+  let tileLayer = null;
+
+  /**
+   * Resolve the active theme based on the DOM state.
+   *
+   * @returns {'dark' | 'light'}
+   */
+  const resolveTheme = () => {
+    if (document.body && document.body.classList.contains('dark')) return 'dark';
+    const htmlTheme = document.documentElement?.getAttribute('data-theme');
+    if (htmlTheme === 'dark' || htmlTheme === 'light') return htmlTheme;
+    return 'dark';
+  };
+
+  /**
+   * Apply the configured CSS filter to the active tile container.
+   *
+   * @returns {void}
+   */
+  const applyTileFilter = () => {
+    if (!tileLayer) return;
+    const theme = resolveTheme();
+    const filterValue = theme === 'dark' ? config.tileFilters.dark : config.tileFilters.light;
+    const container =
+      typeof tileLayer.getContainer === 'function' ? tileLayer.getContainer() : null;
+    if (container && container.style) {
+      container.style.filter = filterValue;
+      container.style.webkitFilter = filterValue;
+    }
+    const tilePane = map && typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
+    if (tilePane && tilePane.style) {
+      tilePane.style.filter = filterValue;
+      tilePane.style.webkitFilter = filterValue;
+    }
+    const tileNodes = [];
+    if (container && typeof container.querySelectorAll === 'function') {
+      tileNodes.push(...container.querySelectorAll('.leaflet-tile'));
+    }
+    if (tilePane && typeof tilePane.querySelectorAll === 'function') {
+      tileNodes.push(...tilePane.querySelectorAll('.leaflet-tile'));
+    }
+    tileNodes.forEach(tile => {
+      if (tile && tile.style) {
+        tile.style.filter = filterValue;
+        tile.style.webkitFilter = filterValue;
+      }
+    });
+  };
 
   // Initialize the map if Leaflet is available
   if (hasLeaflet && mapContainer) {
-    map = L.map(mapContainer, { worldCopyJump: true, attributionControl: false });
-    map.setView([config.mapCenter.lat, config.mapCenter.lon], 3);
+    const initialZoom = Number.isFinite(config.mapZoom) ? config.mapZoom : 5;
+    map = leaflet.map(mapContainer, { worldCopyJump: true, attributionControl: false });
+    map.setView([config.mapCenter.lat, config.mapCenter.lon], initialZoom);
 
-    // Determine theme and apply appropriate tile filter
-    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-    const tileFilter =
-      currentTheme === 'dark' ? config.tileFilters.dark : config.tileFilters.light;
+    tileLayer = leaflet
+      .tileLayer(TILE_LAYER_URL, {
+        maxZoom: 19,
+        className: 'map-tiles',
+        crossOrigin: 'anonymous'
+      })
+      .addTo(map);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      className: 'map-tiles'
-    }).addTo(map);
+    tileLayer.on?.('load', applyTileFilter);
+    applyTileFilter();
 
-    // Apply CSS filter to tiles
-    const style = document.createElement('style');
-    style.textContent = `.map-tiles { filter: ${tileFilter}; }`;
-    document.head.appendChild(style);
-
-    markersLayer = L.layerGroup().addTo(map);
+    window.addEventListener('themechange', applyTileFilter);
+    markersLayer = leaflet.layerGroup().addTo(map);
   }
 
   // Fetch instances data
   let instances = [];
   try {
-    const response = await fetch('/api/instances', {
+    const response = await fetchImpl('/api/instances', {
       headers: { Accept: 'application/json' },
       credentials: 'omit'
     });
@@ -177,7 +221,7 @@ export async function initializeFederationPage() {
            ${instance.version ? `Version: ${escapeHtml(instance.version)}` : ''}`
         : `<strong>${escapeHtml(name)}</strong>`;
 
-      const marker = L.circleMarker([lat, lon], {
+      const marker = leaflet.circleMarker([lat, lon], {
         radius: 8,
         fillColor: '#4CAF50',
         color: '#2E7D32',
@@ -190,12 +234,11 @@ export async function initializeFederationPage() {
       markersLayer.addLayer(marker);
     }
 
-    // Fit bounds if we have markers
-    if (bounds.length > 0) {
+    if (bounds.length > 0 && typeof map.fitBounds === 'function') {
       try {
         map.fitBounds(bounds, { padding: [50, 50], maxZoom: 10 });
       } catch (err) {
-        console.warn('Failed to fit map bounds', err);
+        console.warn('Failed to fit federation map bounds', err);
       }
     }
   }
@@ -213,10 +256,13 @@ export async function initializeFederationPage() {
       const domainHtml = url
         ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(instance.domain || '')}</a>`
         : escapeHtml(instance.domain || '');
+      const contact = instance.contactLink ? escapeHtml(instance.contactLink) : '';
+      const contactHtml = contact ? `<span class="mono">${contact}</span>` : '<em>—</em>';
 
       tr.innerHTML = `
         <td class="instances-col instances-col--name">${nameHtml}</td>
         <td class="instances-col instances-col--domain mono">${domainHtml}</td>
+        <td class="instances-col instances-col--contact">${contactHtml}</td>
         <td class="instances-col instances-col--version mono">${escapeHtml(instance.version || '')}</td>
         <td class="instances-col instances-col--channel">${escapeHtml(instance.channel || '')}</td>
         <td class="instances-col instances-col--frequency">${escapeHtml(instance.frequency || '')}</td>

@@ -17,6 +17,7 @@
 require "spec_helper"
 require "net/http"
 require "openssl"
+require "sqlite3"
 require "set"
 require "uri"
 require "socket"
@@ -319,6 +320,85 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(visited).to include(seed_domain, attributes_list.first[:domain])
       expect(visited).not_to include(attributes_list[1][:domain], attributes_list[2][:domain])
       expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
+    end
+  end
+
+  describe ".upsert_instance_record" do
+    let(:application_class) { PotatoMesh::Application }
+    let(:base_attributes) do
+      {
+        id: "remote-instance",
+        domain: "Remote.Mesh",
+        pubkey: PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+        name: "Remote Mesh",
+        version: "1.0.0",
+        channel: "longfox",
+        frequency: "915",
+        latitude: 45.0,
+        longitude: -122.0,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+        contact_link: "https://example.org/contact",
+      }
+    end
+
+    def with_db
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.busy_timeout = PotatoMesh::Config.db_busy_timeout_ms
+      db.execute("PRAGMA foreign_keys = ON")
+      yield db
+    ensure
+      db&.close
+    end
+
+    before do
+      FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
+      application_class.init_db unless application_class.db_schema_present?
+      application_class.ensure_schema_upgrades
+      with_db do |db|
+        db.execute("DELETE FROM instances")
+      end
+      allow(federation_helpers).to receive(:ip_from_domain).and_return(nil)
+    end
+
+    it "inserts the contact_link for new records" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-1")
+
+        stored = db.get_first_value("SELECT contact_link FROM instances WHERE id = ?", base_attributes[:id])
+        expect(stored).to eq("https://example.org/contact")
+      end
+    end
+
+    it "updates the contact_link on conflict" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-1")
+
+        federation_helpers.send(
+          :upsert_instance_record,
+          db,
+          base_attributes.merge(contact_link: "https://example.org/new-contact", name: "Renamed Mesh"),
+          "sig-2",
+        )
+
+        row =
+          db.get_first_row("SELECT contact_link, name, signature FROM instances WHERE id = ?", base_attributes[:id])
+        expect(row[0]).to eq("https://example.org/new-contact")
+        expect(row[1]).to eq("Renamed Mesh")
+        expect(row[2]).to eq("sig-2")
+      end
+    end
+
+    it "allows the contact_link to be cleared" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(contact_link: nil), "sig-3")
+
+        row = db.get_first_row("SELECT contact_link, signature FROM instances WHERE id = ?", base_attributes[:id])
+        expect(row[0]).to be_nil
+        expect(row[1]).to eq("sig-3")
+      end
     end
   end
 

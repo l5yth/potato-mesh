@@ -13,18 +13,10 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<section class="federation-page">
-  <header class="federation-page__intro">
-    <h2>Federation Network</h2>
-    <p>
-      This page shows other PotatoMesh instances in the federation network.
-      Each marker on the map represents a federated instance.
-      <a href="/" class="federation-page__back-link">← Back to Dashboard</a>
-    </p>
-  </header>
+<section class="federation-page federation-page--full-width">
   <div class="federation-page__content">
     <div class="federation-page__map-row">
-      <%= erb :"shared/_map_panel", locals: { full_screen: false } %>
+      <%= erb :"shared/_map_panel", locals: { full_screen: true } %>
     </div>
     <%= erb :"shared/_instances_table" %>
   </div>

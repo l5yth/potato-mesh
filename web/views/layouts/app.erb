@@ -77,12 +77,14 @@
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = !full_screen_view
    show_meta_info = true
-   show_auto_refresh_controls = true
+   show_auto_refresh_controls = view_mode != :federation
    show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
    map_zoom_override = defined?(map_zoom) ? map_zoom : nil
    show_info_button = !full_screen_view
    show_footer = !full_screen_view
-   show_filter_input = !%i[node_detail charts].include?(view_mode)
+   show_filter_input = !%i[node_detail charts federation].include?(view_mode)
+   show_auto_refresh_toggle = show_auto_refresh_controls
+   show_refresh_actions = show_auto_refresh_controls || view_mode == :federation
    controls_classes = ["controls"]
    controls_classes << "controls--full-screen" if full_screen_view
    refresh_row_classes = ["refresh-row"]
@@ -111,7 +113,10 @@
                 <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
               </select>
             </div>
-            <a href="/federation" class="federation-link" aria-label="View federation network">🌐</a>
+            <a href="/federation" class="federation-link" aria-label="View federation network" target="_blank" rel="noopener noreferrer">🔗</a>
+            <a href="/map" class="federation-link" aria-label="Open map in new tab" target="_blank" rel="noopener noreferrer">🌍</a>
+            <a href="/chat" class="federation-link" aria-label="Open chat in new tab" target="_blank" rel="noopener noreferrer">💬</a>
+            <a href="/nodes" class="federation-link" aria-label="Open nodes in new tab" target="_blank" rel="noopener noreferrer">🪢</a>
           </div>
         <% end %>
       </header>
@@ -126,9 +131,11 @@
             <% else %>
               <p id="refreshInfo" class="<%= refresh_info_classes.join(" ") %>" aria-live="polite"></p>
             <% end %>
-            <% if show_auto_refresh_controls %>
+            <% if show_refresh_actions %>
               <div class="refresh-actions">
-                <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
+                <% if show_auto_refresh_toggle %>
+                  <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
+                <% end %>
                 <button id="refreshBtn" type="button">Refresh now</button>
                 <span id="status" class="pill">loading…</span>
               </div>

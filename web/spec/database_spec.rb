@@ -183,4 +183,20 @@ RSpec.describe PotatoMesh::App::Database do
     hop_columns = column_names_for("trace_hops")
     expect(hop_columns).to include("trace_id", "hop_index", "node_id")
   end
+
+  it "adds the contact_link column to existing instances tables" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      db.execute(
+        "CREATE TABLE instances(id TEXT PRIMARY KEY, domain TEXT, pubkey TEXT, last_update_time INTEGER, is_private INTEGER)",
+      )
+    end
+
+    expect(column_names_for("instances")).not_to include("contact_link")
+
+    harness_class.ensure_schema_upgrades
+
+    expect(column_names_for("instances")).to include("contact_link")
+  end
 end
