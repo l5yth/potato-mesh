@@ -1337,6 +1337,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /federation" do
+    it "returns 404 when federation is disabled" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(false)
+
+      get "/federation"
+
+      expect(last_response.status).to eq(404)
+    end
+
+    it "renders the federation subpage when enabled" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
+
+      get "/federation"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('class="federation-page federation-page--full-width"')
+      expect(last_response.body).to include("initializeFederationPage")
+    end
+
+    it "hides dashboard-only refresh controls while keeping manual refresh and theme toggle" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
+
+      get "/federation"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).not_to include('id="autoRefresh"')
+      expect(last_response.body).not_to include('id="filterInput"')
+      expect(last_response.body).to include('id="refreshBtn"')
+      expect(last_response.body).to include('id="themeToggle"')
+    end
+  end
+
   describe "GET /chat" do
     it "renders the chat container when chat is enabled" do
       get "/chat"

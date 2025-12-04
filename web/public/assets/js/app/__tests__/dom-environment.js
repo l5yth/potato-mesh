@@ -104,6 +104,7 @@ class MockElement {
     this.style = {};
     this.textContent = '';
     this.classList = new MockClassList();
+    this.childNodes = [];
   }
 
   /**
@@ -128,6 +129,95 @@ class MockElement {
    */
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  /**
+   * Append a child node to this element.
+   *
+   * @param {Object} node Child node to append.
+   * @returns {Object} Appended node.
+   */
+  appendChild(node) {
+    this.childNodes.push(node);
+    return node;
+  }
+
+  /**
+   * Replace all existing children with the provided nodes.
+   *
+   * @param {...Object} nodes Child nodes to set on the element.
+   * @returns {void}
+   */
+  replaceChildren(...nodes) {
+    this.childNodes = [...nodes];
+  }
+
+  /**
+   * Serialize the element's children into a naive HTML string for test
+   * assertions. This intentionally covers only the subset of markup produced
+   * in unit tests.
+   *
+   * @returns {string} Serialized HTML content.
+   */
+  get innerHTML() {
+    return this.childNodes
+      .map(node => {
+        if (typeof node === 'string') return node;
+        if (node && node.tagName) {
+          const attrs = [];
+          if (node.attributes.size) {
+            node.attributes.forEach((value, key) => {
+              attrs.push(`${key}="${value}"`);
+            });
+          }
+          const classAttr = node.classList && node.classList._values && node.classList._values.size
+            ? `class="${Array.from(node.classList._values).join(' ')}"`
+            : null;
+          if (classAttr) attrs.push(classAttr);
+          const children = node.innerHTML || '';
+          return `<${node.tagName.toLowerCase()}${attrs.length ? ' ' + attrs.join(' ') : ''}>${children}</${node.tagName.toLowerCase()}>`;
+        }
+        return '';
+      })
+      .join('');
+  }
+
+  /**
+   * Setter to overwrite children from a raw HTML string in tests. This is a
+   * minimal stub and only supports plain text content insertion.
+   *
+   * @param {string} value Raw HTML content.
+   * @returns {void}
+   */
+  set innerHTML(value) {
+    this.childNodes = [String(value)];
+  }
+
+  /**
+   * Very small querySelectorAll implementation that supports ``.class`` lookups
+   * used in unit tests.
+   *
+   * @param {string} selector CSS selector (class names only).
+   * @returns {Array<MockElement>} Matching child nodes.
+   */
+  querySelectorAll(selector) {
+    if (!selector || typeof selector !== 'string') return [];
+    const classMatch = selector.match(/^\.(.+)$/);
+    if (!classMatch) return [];
+    const className = classMatch[1];
+    const matches = [];
+    const visit = node => {
+      if (node && node.classList && typeof node.classList.contains === 'function') {
+        if (node.classList.contains(className)) {
+          matches.push(node);
+        }
+      }
+      if (node && Array.isArray(node.childNodes)) {
+        node.childNodes.forEach(child => visit(child));
+      }
+    };
+    visit(this);
+    return matches;
   }
 }
 
@@ -182,8 +272,9 @@ export function createDomEnvironment(options = {}) {
       documentListeners.delete(event);
     },
     dispatchEvent(event) {
-      const handler = documentListeners.get(event);
-      if (handler) handler();
+      const key = typeof event === 'string' ? event : event?.type;
+      const handler = documentListeners.get(key);
+      if (handler) handler(event);
     },
     getElementById(id) {
       return registry.get(id) || null;
@@ -193,6 +284,18 @@ export function createDomEnvironment(options = {}) {
     },
     createElement(tagName) {
       return new MockElement(tagName, registry);
+    },
+    createDocumentFragment() {
+      const fragment = new MockElement('fragment', null);
+      fragment.childNodes = [];
+      fragment.appendChild = node => {
+        fragment.childNodes.push(node);
+        return node;
+      };
+      fragment.replaceChildren = (...nodes) => {
+        fragment.childNodes = [...nodes];
+      };
+      return fragment;
     }
   };
 
@@ -218,8 +321,9 @@ export function createDomEnvironment(options = {}) {
       windowListeners.delete(event);
     },
     dispatchEvent(event) {
-      const handler = windowListeners.get(event);
-      if (handler) handler();
+      const key = typeof event === 'string' ? event : event?.type;
+      const handler = windowListeners.get(key);
+      if (handler) handler(event);
     },
     getComputedStyle(target) {
       if (typeof computedStyleImpl === 'function') {

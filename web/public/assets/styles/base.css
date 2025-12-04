@@ -1977,33 +1977,13 @@ body.dark #map .leaflet-tile.map-tiles {
 
 .federation-page {
   padding: 24px var(--pad) 48px;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   width: 100%;
 }
 
-.federation-page__intro {
-  padding: 0 4px 16px;
-}
-
-.federation-page__intro h2 {
-  margin: 0 0 6px;
-  font-size: 1.6rem;
-}
-
-.federation-page__intro p {
-  margin: 0;
-  color: var(--muted);
-}
-
-.federation-page__back-link {
-  color: var(--accent);
-  text-decoration: none;
-  margin-left: 12px;
-}
-
-.federation-page__back-link:hover {
-  text-decoration: underline;
+.federation-page--full-width {
+  padding-top: 0;
 }
 
 .federation-page__content {

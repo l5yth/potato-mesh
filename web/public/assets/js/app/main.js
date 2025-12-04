@@ -433,6 +433,7 @@ export function initializeApp(config) {
   const mapPanel = document.getElementById('mapPanel');
   const mapFullscreenToggle = document.getElementById('mapFullscreenToggle');
   const fullscreenContainer = mapPanel || mapContainer;
+  const isFederationView = bodyClassList ? bodyClassList.contains('view-federation') : false;
   let mapStatusEl = null;
   let map = null;
   let mapCenterLatLng = null;
@@ -1170,7 +1171,9 @@ export function initializeApp(config) {
     applyFiltersToAllTiles();
   }
 
-  if (hasLeaflet && mapContainer) {
+  const mapAlreadyInitialized = mapContainer && mapContainer._leaflet_id;
+
+  if (hasLeaflet && mapContainer && !isFederationView && !mapAlreadyInitialized) {
     map = L.map(mapContainer, { worldCopyJump: true, attributionControl: false });
     showMapStatus('Loading map tiles…');
     tiles = L.tileLayer(TILE_LAYER_URL, {
@@ -1246,7 +1249,7 @@ export function initializeApp(config) {
     if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
       activateOfflineTiles('Offline mode detected. Using placeholder basemap.');
     }
-  } else if (mapContainer) {
+  } else if (mapContainer && !isFederationView) {
     setMapPlaceholder('Leaflet assets are unavailable. Data will continue to refresh without a live map.');
   }
 

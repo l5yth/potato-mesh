@@ -95,5 +95,42 @@ RSpec.describe PotatoMesh::App::Instances do
       expect(domains).not_to include("missing.mesh.test")
       expect(payload.all? { |row| row["lastUpdateTime"] >= lower_bound }).to be(true)
     end
+
+    it "exposes contactLink when present and omits blank values" do
+      fixed_time = Time.utc(2025, 2, 1, 12, 0, 0)
+      allow(Time).to receive(:now).and_return(fixed_time)
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, contact_link) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            "instance-with-contact",
+            "alpha.mesh.test",
+            PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+            fixed_time.to_i,
+            0,
+            " https://example.org/contact ",
+          ],
+        )
+        db.execute(
+          "INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, contact_link) VALUES (?, ?, ?, ?, ?, ?)",
+          [
+            "instance-without-contact",
+            "beta.mesh.test",
+            PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+            fixed_time.to_i,
+            0,
+            " \t ",
+          ],
+        )
+      end
+
+      payload = application_class.load_instances_for_api
+      with_contact = payload.find { |row| row["domain"] == "alpha.mesh.test" }
+      without_contact = payload.find { |row| row["domain"] == "beta.mesh.test" }
+
+      expect(with_contact["contactLink"]).to eq("https://example.org/contact")
+      expect(without_contact.key?("contactLink")).to be(false)
+    end
   end
 end
