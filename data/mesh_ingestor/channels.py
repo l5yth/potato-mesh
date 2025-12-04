@@ -278,8 +278,12 @@ def _validate_channel_filter() -> None:
             context="channels.filter",
             severity="warn",
             always=True,
-            allowed_indices=list(_ALLOWED_CHANNEL_INDICES) if _ALLOWED_CHANNEL_INDICES else None,
-            allowed_names=list(_ALLOWED_CHANNEL_NAMES) if _ALLOWED_CHANNEL_NAMES else None,
+            allowed_indices=(
+                list(_ALLOWED_CHANNEL_INDICES) if _ALLOWED_CHANNEL_INDICES else None
+            ),
+            allowed_names=(
+                list(_ALLOWED_CHANNEL_NAMES) if _ALLOWED_CHANNEL_NAMES else None
+            ),
         )
         return
 

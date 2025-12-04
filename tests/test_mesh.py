@@ -2968,7 +2968,9 @@ def test_is_channel_allowed_filter_by_name(mesh_module, monkeypatch, capsys):
                 channels=[
                     SimpleNamespace(role=1, settings=SimpleNamespace(name="LongFast")),
                     SimpleNamespace(
-                        role="SECONDARY", index=1, settings=SimpleNamespace(name="MyChannel")
+                        role="SECONDARY",
+                        index=1,
+                        settings=SimpleNamespace(name="MyChannel"),
                     ),
                 ]
             )
@@ -2986,7 +2988,9 @@ def test_is_channel_allowed_filter_by_name(mesh_module, monkeypatch, capsys):
     assert mesh.channels.is_channel_allowed(1) is False  # MyChannel not allowed
 
 
-def test_is_channel_allowed_filter_mixed_index_and_name(mesh_module, monkeypatch, capsys):
+def test_is_channel_allowed_filter_mixed_index_and_name(
+    mesh_module, monkeypatch, capsys
+):
     """ALLOWED_CHANNELS can contain both indices and names."""
     mesh = mesh_module
 
@@ -2999,10 +3003,14 @@ def test_is_channel_allowed_filter_mixed_index_and_name(mesh_module, monkeypatch
                 channels=[
                     SimpleNamespace(role=1, settings=SimpleNamespace(name="LongFast")),
                     SimpleNamespace(
-                        role="SECONDARY", index=1, settings=SimpleNamespace(name="Private")
+                        role="SECONDARY",
+                        index=1,
+                        settings=SimpleNamespace(name="Private"),
                     ),
                     SimpleNamespace(
-                        role="SECONDARY", index=2, settings=SimpleNamespace(name="Other")
+                        role="SECONDARY",
+                        index=2,
+                        settings=SimpleNamespace(name="Other"),
                     ),
                 ]
             )
@@ -3048,7 +3056,9 @@ def test_is_channel_allowed_case_insensitive_names(mesh_module, monkeypatch, cap
     assert mesh.channels.is_channel_allowed(0) is True
 
 
-def test_validate_channel_filter_warns_on_unmatched_index(mesh_module, monkeypatch, capsys):
+def test_validate_channel_filter_warns_on_unmatched_index(
+    mesh_module, monkeypatch, capsys
+):
     """A warning should be logged when allowed indices don't match device channels."""
     mesh = mesh_module
 
@@ -3080,7 +3090,9 @@ def test_validate_channel_filter_warns_on_unmatched_index(mesh_module, monkeypat
     assert "unmatched_indices=" in out
 
 
-def test_validate_channel_filter_warns_on_unmatched_name(mesh_module, monkeypatch, capsys):
+def test_validate_channel_filter_warns_on_unmatched_name(
+    mesh_module, monkeypatch, capsys
+):
     """A warning should be logged when allowed names don't match device channels."""
     mesh = mesh_module
 
@@ -3111,7 +3123,9 @@ def test_validate_channel_filter_warns_on_unmatched_name(mesh_module, monkeypatc
     assert "unmatched_names=" in out
 
 
-def test_validate_channel_filter_warns_when_no_device_channels(mesh_module, monkeypatch, capsys):
+def test_validate_channel_filter_warns_when_no_device_channels(
+    mesh_module, monkeypatch, capsys
+):
     """A warning should be logged if filter is set but device channels aren't captured yet."""
     mesh = mesh_module
 
@@ -3138,7 +3152,9 @@ def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     # Packet on channel 0 - should be allowed
@@ -3146,7 +3162,11 @@ def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
         "id": 1,
         "rxTime": 10,
         "fromId": "!abc",
-        "decoded": {"payload": {"text": "hello"}, "portnum": "TEXT_MESSAGE_APP", "channel": 0},
+        "decoded": {
+            "payload": {"text": "hello"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 0,
+        },
     }
     mesh.store_packet_dict(packet_allowed)
     assert len(captured) == 1
@@ -3156,7 +3176,11 @@ def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
         "id": 2,
         "rxTime": 11,
         "fromId": "!abc",
-        "decoded": {"payload": {"text": "hello"}, "portnum": "TEXT_MESSAGE_APP", "channel": 1},
+        "decoded": {
+            "payload": {"text": "hello"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 1,
+        },
     }
     mesh.store_packet_dict(packet_filtered)
     assert len(captured) == 1  # Still 1, packet was filtered
@@ -3173,14 +3197,20 @@ def test_store_packet_dict_channel_filter_debug_log(mesh_module, monkeypatch, ca
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     packet = {
         "id": 1,
         "rxTime": 10,
         "fromId": "!abc",
-        "decoded": {"payload": {"text": "hi"}, "portnum": "TEXT_MESSAGE_APP", "channel": 2},
+        "decoded": {
+            "payload": {"text": "hi"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 2,
+        },
     }
     mesh.store_packet_dict(packet)
 
@@ -3205,7 +3235,9 @@ def test_store_packet_dict_filters_dm_by_default(mesh_module, monkeypatch):
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     # DM packet (to_id is a specific node, not ^all)
@@ -3214,7 +3246,11 @@ def test_store_packet_dict_filters_dm_by_default(mesh_module, monkeypatch):
         "rxTime": 10,
         "fromId": "!abc",
         "toId": "!def",
-        "decoded": {"payload": {"text": "private"}, "portnum": "TEXT_MESSAGE_APP", "channel": 0},
+        "decoded": {
+            "payload": {"text": "private"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 0,
+        },
     }
     mesh.store_packet_dict(dm_packet)
     assert len(captured) == 0  # DM should be filtered
@@ -3231,7 +3267,9 @@ def test_store_packet_dict_allows_dm_when_show_dms_enabled(mesh_module, monkeypa
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     dm_packet = {
@@ -3239,7 +3277,11 @@ def test_store_packet_dict_allows_dm_when_show_dms_enabled(mesh_module, monkeypa
         "rxTime": 10,
         "fromId": "!abc",
         "toId": "!def",
-        "decoded": {"payload": {"text": "private"}, "portnum": "TEXT_MESSAGE_APP", "channel": 0},
+        "decoded": {
+            "payload": {"text": "private"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 0,
+        },
     }
     mesh.store_packet_dict(dm_packet)
     assert len(captured) == 1  # DM should be allowed
@@ -3256,7 +3298,9 @@ def test_store_packet_dict_broadcast_not_filtered(mesh_module, monkeypatch):
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     broadcast_packet = {
@@ -3264,7 +3308,11 @@ def test_store_packet_dict_broadcast_not_filtered(mesh_module, monkeypatch):
         "rxTime": 10,
         "fromId": "!abc",
         "toId": "^all",
-        "decoded": {"payload": {"text": "hello"}, "portnum": "TEXT_MESSAGE_APP", "channel": 0},
+        "decoded": {
+            "payload": {"text": "hello"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 0,
+        },
     }
     mesh.store_packet_dict(broadcast_packet)
     assert len(captured) == 1  # Broadcast should pass through
@@ -3281,7 +3329,9 @@ def test_store_packet_dict_dm_filter_debug_log(mesh_module, monkeypatch, capsys)
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     dm_packet = {
@@ -3289,7 +3339,11 @@ def test_store_packet_dict_dm_filter_debug_log(mesh_module, monkeypatch, capsys)
         "rxTime": 10,
         "fromId": "!abc",
         "toId": "!def",
-        "decoded": {"payload": {"text": "private"}, "portnum": "TEXT_MESSAGE_APP", "channel": 0},
+        "decoded": {
+            "payload": {"text": "private"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 0,
+        },
     }
     mesh.store_packet_dict(dm_packet)
 
@@ -3309,7 +3363,9 @@ def test_store_packet_dict_encrypted_dm_not_filtered(mesh_module, monkeypatch):
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     encrypted_dm = {
@@ -3347,7 +3403,9 @@ def test_parse_allowed_channels_whitespace_handling(mesh_module, monkeypatch):
     assert mesh.channels.is_channel_allowed(1) is False
 
 
-def test_store_packet_dict_dm_on_secondary_channel_not_filtered(mesh_module, monkeypatch):
+def test_store_packet_dict_dm_on_secondary_channel_not_filtered(
+    mesh_module, monkeypatch
+):
     """DMs on non-primary channels (channel != 0) should NOT be filtered.
 
     DM filtering only applies to channel 0 to maintain backward compatibility.
@@ -3361,7 +3419,9 @@ def test_store_packet_dict_dm_on_secondary_channel_not_filtered(mesh_module, mon
 
     captured = []
     monkeypatch.setattr(
-        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append(payload),
     )
 
     # DM on channel 1 - should NOT be filtered (only channel 0 DMs are filtered)
@@ -3370,7 +3430,11 @@ def test_store_packet_dict_dm_on_secondary_channel_not_filtered(mesh_module, mon
         "rxTime": 10,
         "fromId": "!abc",
         "toId": "!def",
-        "decoded": {"payload": {"text": "private"}, "portnum": "TEXT_MESSAGE_APP", "channel": 1},
+        "decoded": {
+            "payload": {"text": "private"},
+            "portnum": "TEXT_MESSAGE_APP",
+            "channel": 1,
+        },
     }
     mesh.store_packet_dict(dm_packet)
     assert len(captured) == 1  # DM on secondary channel should pass through
