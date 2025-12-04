@@ -260,7 +260,7 @@ def main(existing_interface=None) -> None:
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGTERM, handle_sigterm)
 
-    target = config.INSTANCE or "(no POTATOMESH_INSTANCE)"
+    target = config.INSTANCE or "(no INSTANCE_DOMAIN configured)"
     configured_port = config.CONNECTION
     active_candidate = configured_port
     announced_target = False

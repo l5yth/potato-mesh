@@ -57,9 +57,10 @@ Additional environment variables are optional:
 | `PRIVATE` | `0` | Restricts public visibility and disables chat/message endpoints when set to `1`. |
 | `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the radio. |
 
-The ingestor also respects supporting variables such as `POTATOMESH_INSTANCE`
-(defaults to `http://web:41447`) for remote posting and `CHANNEL_INDEX` when
-selecting a LoRa channel on serial or Bluetooth connections.
+The ingestor posts to the URL configured via `INSTANCE_DOMAIN` (defaulting to
+`http://web:41447` in the provided compose file) and still accepts
+`POTATOMESH_INSTANCE` as a legacy alias when the primary variable is unset. Use
+`CHANNEL_INDEX` to select a LoRa channel on serial or Bluetooth connections.
 
 ## Docker Compose file
 
