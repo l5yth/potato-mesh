@@ -262,6 +262,25 @@ def test_instance_domain_falls_back_to_legacy(mesh_module, monkeypatch):
         mesh_module.INSTANCE = mesh_module.config.INSTANCE
 
 
+def test_instance_domain_infers_scheme_for_hostnames(mesh_module, monkeypatch):
+    """Ensure bare hostnames are promoted to HTTPS URLs for ingestion."""
+
+    monkeypatch.setenv("INSTANCE_DOMAIN", "mesh.example.org")
+    monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
+
+    try:
+        refreshed_instance = mesh_module.config._resolve_instance_domain()
+        mesh_module.config.INSTANCE = refreshed_instance
+        mesh_module.INSTANCE = refreshed_instance
+
+        assert refreshed_instance == "https://mesh.example.org"
+        assert mesh_module.INSTANCE == "https://mesh.example.org"
+    finally:
+        monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
+        mesh_module.config.INSTANCE = mesh_module.config._resolve_instance_domain()
+        mesh_module.INSTANCE = mesh_module.config.INSTANCE
+
+
 def test_subscribe_receive_topics_covers_all_handlers(mesh_module, monkeypatch):
     mesh = mesh_module
     daemon_mod = sys.modules["data.mesh_ingestor.daemon"]

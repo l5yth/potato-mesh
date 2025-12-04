@@ -75,7 +75,12 @@ def _resolve_instance_domain() -> str:
     instance_domain = os.environ.get("INSTANCE_DOMAIN", "")
     legacy_instance = os.environ.get("POTATOMESH_INSTANCE", "")
 
-    return (instance_domain or legacy_instance).rstrip("/")
+    configured_instance = (instance_domain or legacy_instance).rstrip("/")
+
+    if configured_instance and "://" not in configured_instance:
+        return f"https://{configured_instance}"
+
+    return configured_instance
 
 
 INSTANCE = _resolve_instance_domain()
