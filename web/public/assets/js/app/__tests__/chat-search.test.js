@@ -74,6 +74,18 @@ test('chatLogEntryMatchesQuery inspects neighbor node context', () => {
   assert.equal(chatLogEntryMatchesQuery(entry, query), true);
 });
 
+test('chatLogEntryMatchesQuery inspects traceroute hop labels', () => {
+  const entry = {
+    type: CHAT_LOG_ENTRY_TYPES.TRACE,
+    traceLabels: ['!alpha', '!bravo', '!charlie'],
+    tracePath: [{ id: '!alpha' }, { id: '!bravo' }, { id: '!charlie' }]
+  };
+  const query = normaliseChatFilterQuery('bravo');
+  assert.equal(chatLogEntryMatchesQuery(entry, query), true);
+  const missQuery = normaliseChatFilterQuery('delta');
+  assert.equal(chatLogEntryMatchesQuery(entry, missQuery), false);
+});
+
 test('filterChatModel filters both log entries and channel messages', () => {
   const model = {
     logEntries: [

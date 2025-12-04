@@ -4657,6 +4657,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       expect(JSON.parse(last_response.body)).to eq([])
     end
+
+    it "excludes traces older than one week" do
+      clear_database
+      now = Time.now.to_i
+      recent_rx = now - (PotatoMesh::Config.week_seconds / 2)
+      stale_rx = now - (PotatoMesh::Config.week_seconds + 60)
+      payload = [
+        { "id" => 50_001, "src" => 1, "dest" => 2, "rx_time" => recent_rx, "metrics" => {} },
+        { "id" => 50_002, "src" => 3, "dest" => 4, "rx_time" => stale_rx, "metrics" => {} },
+      ]
+
+      post "/api/traces", payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      get "/api/traces"
+
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |row| row["id"] }
+      expect(ids).to eq([50_001])
+    end
   end
 
   describe "GET /nodes/:id" do

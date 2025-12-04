@@ -452,8 +452,11 @@ export function initializeApp(config) {
   const AUTO_FIT_PADDING_PX = 12;
   const MAX_INITIAL_ZOOM = 13;
   let neighborLinesLayer = null;
+  let traceLinesLayer = null;
   let neighborLinesVisible = true;
+  let traceLinesVisible = true;
   let neighborLinesToggleButton = null;
+  let traceLinesToggleButton = null;
   let markersLayer = null;
   let tileDomObserver = null;
   const fullscreenChangeEvents = [
@@ -1244,6 +1247,7 @@ export function initializeApp(config) {
     });
 
     neighborLinesLayer = L.layerGroup().addTo(map);
+    traceLinesLayer = L.layerGroup().addTo(map);
     markersLayer = L.layerGroup().addTo(map);
 
     if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
@@ -1334,6 +1338,38 @@ export function initializeApp(config) {
       }
     }
     updateNeighborLinesToggleState();
+  }
+
+  /**
+   * Synchronise the traceroute line toggle button with the active state.
+   *
+   * @returns {void}
+   */
+  function updateTraceLinesToggleState() {
+    if (!traceLinesToggleButton) return;
+    const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
+    traceLinesToggleButton.textContent = label;
+    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
+    traceLinesToggleButton.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Toggle the Leaflet layer that renders traceroute connections.
+   *
+   * @param {boolean} visible Whether to show traceroute paths.
+   * @returns {void}
+   */
+  function setTraceLinesVisibility(visible) {
+    traceLinesVisible = Boolean(visible);
+    if (traceLinesLayer && map) {
+      const hasLayer = map.hasLayer(traceLinesLayer);
+      if (traceLinesVisible && !hasLayer) {
+        traceLinesLayer.addTo(map);
+      } else if (!traceLinesVisible && hasLayer) {
+        map.removeLayer(traceLinesLayer);
+      }
+    }
+    updateTraceLinesToggleState();
   }
 
   /**
@@ -1432,6 +1468,15 @@ export function initializeApp(config) {
         setNeighborLinesVisibility(!neighborLinesVisible);
       });
       updateNeighborLinesToggleState();
+
+      traceLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-traces', toggle);
+      traceLinesToggleButton.type = 'button';
+      traceLinesToggleButton.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setTraceLinesVisibility(!traceLinesVisible);
+      });
+      updateTraceLinesToggleState();
 
       const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
       resetButton.type = 'button';
@@ -2400,6 +2445,8 @@ export function initializeApp(config) {
         return createPositionChatEntry(entry, context);
       case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
         return createNeighborChatEntry(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.TRACE:
+        return createTraceChatEntry(entry, context);
       case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
         return entry?.message ? createMessageChatEntry(entry.message) : null;
       default:
@@ -2444,6 +2491,50 @@ export function initializeApp(config) {
     div.className = 'chat-entry-node';
     div.innerHTML = `${prefix}${presetTag} ${shortHtml} ${messageHtml}`;
     return div;
+  }
+
+  /**
+   * Convert a trace path into user-friendly labels using cached node metadata.
+   *
+   * @param {Array<{id: ?string, num: ?number, raw: *}>} tracePath Ordered hop references.
+   * @returns {Array<string>} Display labels for each hop.
+   */
+  function formatTracePathLabels(tracePath) {
+    if (!Array.isArray(tracePath)) return [];
+    const labels = [];
+    for (const hop of tracePath) {
+      if (!hop || typeof hop !== 'object') continue;
+      let node = null;
+      if (hop.id && nodesById instanceof Map && nodesById.has(hop.id)) {
+        node = nodesById.get(hop.id);
+      } else if (Number.isFinite(hop.num) && nodesByNum instanceof Map && nodesByNum.has(hop.num)) {
+        node = nodesByNum.get(hop.num);
+      }
+      const fallbackId = hop.id ?? (Number.isFinite(hop.num) ? String(hop.num) : (hop.raw != null ? String(hop.raw) : ''));
+      const label = node ? (getNodeDisplayNameForOverlay(node) || fallbackId) : fallbackId;
+      if (label) {
+        labels.push(String(label));
+      }
+    }
+    return labels;
+  }
+
+  function createTraceChatEntry(entry, context) {
+    if (!entry || !Array.isArray(entry.tracePath) || entry.tracePath.length < 2) {
+      return null;
+    }
+    const labels = formatTracePathLabels(entry.tracePath);
+    const labelText = labels.length ? labels.join(', ') : 'Traceroute';
+    const labelSuffix = `: ${escapeHtml(labelText)}`;
+    return createAnnouncementEntry({
+      timestampSeconds: entry?.ts ?? null,
+      shortName: context.shortName,
+      longName: context.longName || context.nodeId || labels[0] || 'Traceroute',
+      role: context.role,
+      metadataSource: context.metadataSource,
+      nodeData: context.nodeData,
+      messageHtml: `${renderEmojiHtml('👣')} ${renderAnnouncementCopy('Caught trace', labelSuffix)}`
+    });
   }
 
   /**
@@ -2809,6 +2900,7 @@ export function initializeApp(config) {
    *   telemetryEntries?: Array<Object>,
    *   positionEntries?: Array<Object>,
    *   neighborEntries?: Array<Object>,
+   *   traceEntries?: Array<Object>,
    *   filterQuery?: string
    * }} params Render inputs.
    * @returns {void}
@@ -2820,6 +2912,7 @@ export function initializeApp(config) {
     telemetryEntries = [],
     positionEntries = [],
     neighborEntries = [],
+    traceEntries = [],
     filterQuery = ''
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
@@ -2834,6 +2927,7 @@ export function initializeApp(config) {
       telemetry: telemetryEntries,
       positions: positionEntries,
       neighbors: neighborEntries,
+      traces: traceEntries,
       messages,
       logOnlyMessages: encryptedMessages,
       nowSeconds,
@@ -3623,6 +3717,9 @@ export function initializeApp(config) {
     if (neighborLinesLayer) {
       neighborLinesLayer.clearLayers();
     }
+    if (traceLinesLayer) {
+      traceLinesLayer.clearLayers();
+    }
     markersLayer.clearLayers();
     const pts = [];
     const nodesById = new Map();
@@ -3632,7 +3729,7 @@ export function initializeApp(config) {
       if (typeof nodeId !== 'string' || nodeId.length === 0) continue;
       nodesById.set(nodeId, node);
     }
-    const traceSegments = neighborLinesLayer
+    const traceSegments = traceLinesLayer
       ? buildTraceSegments(allTraces, nodes, {
           limitDistance: LIMIT_DISTANCE,
           maxDistanceKm: MAX_DISTANCE_KM,
@@ -3752,7 +3849,7 @@ export function initializeApp(config) {
         });
     }
 
-    if (neighborLinesLayer && traceSegments.length) {
+    if (traceLinesLayer && traceSegments.length) {
       traceSegments
         .sort((a, b) => {
           const rxA = Number.isFinite(a.rxTime) ? a.rxTime : -Infinity;
@@ -3767,7 +3864,7 @@ export function initializeApp(config) {
             opacity: 0.42,
             dashArray: '6 6',
             className: 'neighbor-connection-line trace-connection-line'
-          }).addTo(neighborLinesLayer);
+          }).addTo(traceLinesLayer);
         });
     }
 
@@ -3917,6 +4014,7 @@ export function initializeApp(config) {
       telemetryEntries: allTelemetryEntries,
       positionEntries: allPositionEntries,
       neighborEntries: allNeighbors,
+      traceEntries: allTraces,
       filterQuery
     });
   }
