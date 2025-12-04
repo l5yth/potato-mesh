@@ -1,0 +1,35 @@
+<!--
+  Copyright © 2025-26 l5yth & contributors
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<section class="federation-page">
+  <header class="federation-page__intro">
+    <h2>Federation Network</h2>
+    <p>
+      This page shows other PotatoMesh instances in the federation network.
+      Each marker on the map represents a federated instance.
+      <a href="/" class="federation-page__back-link">← Back to Dashboard</a>
+    </p>
+  </header>
+  <div class="federation-page__content">
+    <div class="federation-page__map-row">
+      <%= erb :"shared/_map_panel", locals: { full_screen: false } %>
+    </div>
+    <%= erb :"shared/_instances_table" %>
+  </div>
+</section>
+<script type="module">
+  import { initializeFederationPage } from '/assets/js/app/federation-page.js';
+  initializeFederationPage();
+</script>

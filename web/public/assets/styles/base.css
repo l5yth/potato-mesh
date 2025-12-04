@@ -1948,3 +1948,164 @@ body.dark #map .leaflet-tile.map-tiles {
   filter: var(--map-tiles-filter, var(--map-tile-filter-dark));
   -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-dark));
 }
+
+/* ===========================
+   Federation Page Styles
+   =========================== */
+
+.header-federation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.federation-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  text-decoration: none;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.federation-link:hover {
+  background: var(--hover-bg, rgba(255, 255, 255, 0.1));
+  transform: scale(1.1);
+}
+
+.federation-page {
+  padding: 24px var(--pad) 48px;
+  max-width: 1600px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.federation-page__intro {
+  padding: 0 4px 16px;
+}
+
+.federation-page__intro h2 {
+  margin: 0 0 6px;
+  font-size: 1.6rem;
+}
+
+.federation-page__intro p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.federation-page__back-link {
+  color: var(--accent);
+  text-decoration: none;
+  margin-left: 12px;
+}
+
+.federation-page__back-link:hover {
+  text-decoration: underline;
+}
+
+.federation-page__content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.federation-page__map-row {
+  width: 100%;
+  height: 400px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.federation-page__map-row .map-panel {
+  height: 100%;
+}
+
+.federation-page__map-row #map {
+  height: 100%;
+  width: 100%;
+}
+
+.instances-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+#instances {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+#instances th,
+#instances td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+#instances th {
+  font-weight: 600;
+  background: var(--table-header-bg, var(--surface));
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+#instances tbody tr:hover {
+  background: var(--hover-bg, rgba(255, 255, 255, 0.05));
+}
+
+#instances a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+#instances a:hover {
+  text-decoration: underline;
+}
+
+.instances-col--name {
+  min-width: 140px;
+}
+
+.instances-col--domain {
+  min-width: 180px;
+}
+
+.instances-col--version {
+  min-width: 80px;
+}
+
+.instances-col--channel,
+.instances-col--frequency {
+  min-width: 100px;
+}
+
+.instances-col--latitude,
+.instances-col--longitude {
+  min-width: 100px;
+}
+
+.instances-col--last-update {
+  min-width: 90px;
+}
+
+@media (max-width: 900px) {
+  .federation-page__map-row {
+    height: 300px;
+  }
+
+  .header-federation {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .federation-link {
+    align-self: flex-end;
+  }
+}

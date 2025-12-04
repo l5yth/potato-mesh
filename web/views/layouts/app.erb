@@ -104,11 +104,14 @@
           <span class="site-title-text"><%= site_name %></span>
         </h1>
         <% if !private_mode && federation_enabled %>
-          <div class="instance-selector">
-            <label class="visually-hidden" for="instanceSelect">Select a region</label>
-            <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
-              <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
-            </select>
+          <div class="header-federation">
+            <div class="instance-selector">
+              <label class="visually-hidden" for="instanceSelect">Select a region</label>
+              <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
+                <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
+              </select>
+            </div>
+            <a href="/federation" class="federation-link" aria-label="View federation network">🌐</a>
           </div>
         <% end %>
       </header>

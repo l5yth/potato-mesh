@@ -186,6 +186,11 @@ module PotatoMesh
             render_root_view(:charts, view_mode: :charts)
           end
 
+          app.get %r{/federation/?} do
+            halt 404 unless federation_enabled?
+            render_root_view(:federation, view_mode: :federation)
+          end
+
           app.get "/nodes/:id" do
             node_ref = params.fetch("id", nil)
             reference_payload = build_node_detail_reference(node_ref)
