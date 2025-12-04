@@ -74,7 +74,7 @@ function timeAgo(unixSec, nowSec = Date.now() / 1000) {
 function buildInstanceUrl(domain) {
   if (typeof domain !== 'string' || !domain.trim()) return null;
   const trimmed = domain.trim();
-  if (/^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return `https://${trimmed}`;
 }
 
