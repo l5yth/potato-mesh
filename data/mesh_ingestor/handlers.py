@@ -1458,9 +1458,11 @@ def store_packet_dict(packet: Mapping) -> None:
 
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
-    # Check if this is a direct message (not broadcast)
+    # Check if this is a direct message on the primary channel (not broadcast)
+    # DMs are only filtered on channel 0 to maintain backward compatibility
     is_direct_message = (
         not is_reaction_packet
+        and channel == 0
         and not encrypted_flag
         and to_id_normalized
         and to_id_normalized.lower() != "^all"

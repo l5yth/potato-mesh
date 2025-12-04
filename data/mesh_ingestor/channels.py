@@ -339,9 +339,6 @@ def is_channel_allowed(channel_index: int | None) -> bool:
         if name and name.lower() in _ALLOWED_CHANNEL_NAMES:
             return True
 
-    if _ALLOWED_CHANNEL_INDICES and channel_index in _ALLOWED_CHANNEL_INDICES:
-        return True
-
     return False
 
 

@@ -3345,3 +3345,32 @@ def test_parse_allowed_channels_whitespace_handling(mesh_module, monkeypatch):
     assert mesh.channels.is_channel_allowed(0) is True
     assert mesh.channels.is_channel_allowed(2) is True
     assert mesh.channels.is_channel_allowed(1) is False
+
+
+def test_store_packet_dict_dm_on_secondary_channel_not_filtered(mesh_module, monkeypatch):
+    """DMs on non-primary channels (channel != 0) should NOT be filtered.
+
+    DM filtering only applies to channel 0 to maintain backward compatibility.
+    """
+    mesh = mesh_module
+
+    mesh.channels._reset_channel_filter()
+    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
+    monkeypatch.setattr(mesh.config, "SHOW_DMS", False)
+    monkeypatch.setattr(mesh.config, "DEBUG", False)
+
+    captured = []
+    monkeypatch.setattr(
+        mesh, "_queue_post_json", lambda path, payload, *, priority: captured.append(payload)
+    )
+
+    # DM on channel 1 - should NOT be filtered (only channel 0 DMs are filtered)
+    dm_packet = {
+        "id": 1,
+        "rxTime": 10,
+        "fromId": "!abc",
+        "toId": "!def",
+        "decoded": {"payload": {"text": "private"}, "portnum": "TEXT_MESSAGE_APP", "channel": 1},
+    }
+    mesh.store_packet_dict(dm_packet)
+    assert len(captured) == 1  # DM on secondary channel should pass through
