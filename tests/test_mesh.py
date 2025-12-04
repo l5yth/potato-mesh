@@ -223,6 +223,45 @@ def mesh_module(monkeypatch):
     sys.modules.pop(module_name, None)
 
 
+def test_instance_domain_prefers_primary_env(mesh_module, monkeypatch):
+    """Ensure the ingestor prefers ``INSTANCE_DOMAIN`` over the legacy variable."""
+
+    monkeypatch.setenv("INSTANCE_DOMAIN", "https://new.example")
+    monkeypatch.setenv("POTATOMESH_INSTANCE", "https://legacy.example")
+
+    try:
+        refreshed_instance = mesh_module.config._resolve_instance_domain()
+        mesh_module.config.INSTANCE = refreshed_instance
+        mesh_module.INSTANCE = refreshed_instance
+
+        assert refreshed_instance == "https://new.example"
+        assert mesh_module.INSTANCE == "https://new.example"
+    finally:
+        monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
+        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
+        mesh_module.config.INSTANCE = mesh_module.config._resolve_instance_domain()
+        mesh_module.INSTANCE = mesh_module.config.INSTANCE
+
+
+def test_instance_domain_falls_back_to_legacy(mesh_module, monkeypatch):
+    """Verify ``POTATOMESH_INSTANCE`` is used when ``INSTANCE_DOMAIN`` is unset."""
+
+    monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
+    monkeypatch.setenv("POTATOMESH_INSTANCE", "https://legacy-only.example")
+
+    try:
+        refreshed_instance = mesh_module.config._resolve_instance_domain()
+        mesh_module.config.INSTANCE = refreshed_instance
+        mesh_module.INSTANCE = refreshed_instance
+
+        assert refreshed_instance == "https://legacy-only.example"
+        assert mesh_module.INSTANCE == "https://legacy-only.example"
+    finally:
+        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
+        mesh_module.config.INSTANCE = mesh_module.config._resolve_instance_domain()
+        mesh_module.INSTANCE = mesh_module.config.INSTANCE
+
+
 def test_subscribe_receive_topics_covers_all_handlers(mesh_module, monkeypatch):
     mesh = mesh_module
     daemon_mod = sys.modules["data.mesh_ingestor.daemon"]
