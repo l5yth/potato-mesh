@@ -217,7 +217,7 @@ export async function initializeFederationPage(options = {}) {
            ${instance.version ? `Version: ${escapeHtml(instance.version)}` : ''}`
         : `<strong>${escapeHtml(name)}</strong>`;
 
-      const marker = L.circleMarker([lat, lon], {
+      const marker = leaflet.circleMarker([lat, lon], {
         radius: 8,
         fillColor: '#4CAF50',
         color: '#2E7D32',

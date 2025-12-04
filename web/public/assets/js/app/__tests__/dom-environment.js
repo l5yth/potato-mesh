@@ -132,6 +132,16 @@ class MockElement {
   }
 
   /**
+   * Remove an attribute from the element.
+   *
+   * @param {string} name Attribute identifier.
+   * @returns {void}
+   */
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
+  /**
    * Append a child node to this element.
    *
    * @param {Object} node Child node to append.
@@ -149,7 +159,15 @@ class MockElement {
    * @returns {void}
    */
   replaceChildren(...nodes) {
-    this.childNodes = [...nodes];
+    const expanded = [];
+    nodes.forEach(node => {
+      if (node && node.tagName === 'FRAGMENT' && Array.isArray(node.childNodes)) {
+        expanded.push(...node.childNodes);
+      } else {
+        expanded.push(node);
+      }
+    });
+    this.childNodes = expanded;
   }
 
   /**

@@ -99,16 +99,25 @@ test('federation map centers on configured coordinates and follows theme filters
     }
   };
 
-  const fetchImpl = async () => ({
-    ok: true,
-    json: async () => [
-      {
-        domain: 'alpha.mesh',
-        contactLink: 'https://chat.alpha',
-        version: '1.0.0'
-      }
-    ]
-  });
+const fetchImpl = async () => ({
+  ok: true,
+  json: async () => [
+    {
+      domain: 'alpha.mesh',
+      contactLink: 'https://chat.alpha',
+      version: '1.0.0',
+      latitude: 10.12345,
+      longitude: -20.98765,
+      lastUpdateTime: Math.floor(Date.now() / 1000) - 90
+    },
+    {
+      domain: 'bravo.mesh',
+      contactLink: null,
+      version: '2.0.0',
+      lastUpdateTime: Math.floor(Date.now() / 1000) - (2 * 86400)
+    }
+  ]
+});
 
   try {
     await initializeFederationPage({ config: configPayload, fetchImpl, leaflet: leafletStub });
@@ -125,12 +134,82 @@ test('federation map centers on configured coordinates and follows theme filters
     assert.equal(tilePane.style.filter, 'brightness(1)');
     assert.equal(tileImage.style.filter, 'brightness(1)');
 
+    document.documentElement.removeAttribute('data-theme');
+    document.body.classList.remove('dark');
+    window.dispatchEvent({ type: 'themechange', detail: { theme: null } });
+    assert.equal(tileContainer.style.filter, 'invert(1)');
+
     const rows = tbodyEl.childNodes;
-    assert.equal(rows.length, 1);
-    const rowHtml = rows[0].innerHTML;
-    assert.match(rowHtml, /alpha\.mesh/);
-    assert.match(rowHtml, /https:\/\/chat\.alpha/);
+    assert.equal(rows.length, 2);
+    const firstRowHtml = rows[0].innerHTML;
+    assert.match(firstRowHtml, /alpha\.mesh/);
+    assert.match(firstRowHtml, /https:\/\/chat\.alpha/);
+    assert.match(firstRowHtml, /10\.12345/);
+    assert.match(firstRowHtml, /-20\.98765/);
+    assert.match(firstRowHtml, /ago/);
+
+    const secondRowHtml = rows[1].innerHTML;
+    assert.match(secondRowHtml, /bravo\.mesh/);
+    assert.match(secondRowHtml, /<em>—<\/em>/); // no contact link
+    assert.match(secondRowHtml, /2\.0\.0/);
+    assert.match(secondRowHtml, /d ago/);
   } finally {
     cleanup();
   }
+});
+
+test('federation page tolerates fetch failures', async () => {
+  const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
+  const { document, createElement, registerElement, cleanup } = env;
+
+  const mapEl = createElement('div', 'map');
+  registerElement('map', mapEl);
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify({}));
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+
+  const leafletStub = {
+    map() {
+      return {
+        setView() {},
+        on() {},
+        getPane() {
+          return null;
+        }
+      };
+    },
+    tileLayer() {
+      return {
+        addTo() {
+          return this;
+        },
+        getContainer() {
+          return null;
+        },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return { addLayer() {}, addTo() { return this; } };
+    },
+    circleMarker() {
+      return { bindPopup() { return this; } };
+    }
+  };
+
+  const fetchImpl = async () => {
+    throw new Error('boom');
+  };
+
+  await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
+  cleanup();
 });
