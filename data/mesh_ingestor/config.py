@@ -60,6 +60,13 @@ SNAPSHOT_SECS = DEFAULT_SNAPSHOT_SECS
 CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 """Index of the LoRa channel to select when connecting."""
 
+ALLOWED_CHANNELS: str | None = os.environ.get("ALLOWED_CHANNELS") or None
+"""Optional comma-separated list of channel indices or names to process.
+
+When unset or empty, all channels are processed. Accepts channel indices
+(e.g., ``0,1,2``) or channel names (e.g., ``LongFast,MyChannel``) or a mix.
+"""
+
 DEBUG = os.environ.get("DEBUG") == "1"
 INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
 API_TOKEN = os.environ.get("API_TOKEN", "")
@@ -121,6 +128,7 @@ __all__ = [
     "CONNECTION",
     "SNAPSHOT_SECS",
     "CHANNEL_INDEX",
+    "ALLOWED_CHANNELS",
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",

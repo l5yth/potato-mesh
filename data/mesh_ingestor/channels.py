@@ -230,9 +230,134 @@ def _reset_channel_cache() -> None:
     _CHANNEL_LOOKUP = {}
 
 
+_ALLOWED_CHANNEL_INDICES: set[int] | None = None
+_ALLOWED_CHANNEL_NAMES: set[str] | None = None
+_CHANNEL_FILTER_VALIDATED: bool = False
+
+
+def _parse_allowed_channels() -> None:
+    """Parse the ALLOWED_CHANNELS config into index and name sets."""
+    global _ALLOWED_CHANNEL_INDICES, _ALLOWED_CHANNEL_NAMES
+
+    raw = getattr(config, "ALLOWED_CHANNELS", None)
+    if not raw or not isinstance(raw, str):
+        _ALLOWED_CHANNEL_INDICES = None
+        _ALLOWED_CHANNEL_NAMES = None
+        return
+
+    indices: set[int] = set()
+    names: set[str] = set()
+
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            indices.add(int(part))
+        except ValueError:
+            names.add(part.lower())
+
+    _ALLOWED_CHANNEL_INDICES = indices if indices else None
+    _ALLOWED_CHANNEL_NAMES = names if names else None
+
+
+def _validate_channel_filter() -> None:
+    """Warn if configured allowed channels don't match any device channels."""
+    global _CHANNEL_FILTER_VALIDATED
+
+    if _CHANNEL_FILTER_VALIDATED:
+        return
+    _CHANNEL_FILTER_VALIDATED = True
+
+    if _ALLOWED_CHANNEL_INDICES is None and _ALLOWED_CHANNEL_NAMES is None:
+        return
+
+    if not _CHANNEL_MAPPINGS:
+        config._debug_log(
+            "Channel filter configured but device channels not yet captured",
+            context="channels.filter",
+            severity="warn",
+            always=True,
+            allowed_indices=list(_ALLOWED_CHANNEL_INDICES) if _ALLOWED_CHANNEL_INDICES else None,
+            allowed_names=list(_ALLOWED_CHANNEL_NAMES) if _ALLOWED_CHANNEL_NAMES else None,
+        )
+        return
+
+    device_indices = {idx for idx, _ in _CHANNEL_MAPPINGS}
+    device_names = {name.lower() for _, name in _CHANNEL_MAPPINGS}
+
+    unmatched_indices: set[int] = set()
+    unmatched_names: set[str] = set()
+
+    if _ALLOWED_CHANNEL_INDICES:
+        unmatched_indices = _ALLOWED_CHANNEL_INDICES - device_indices
+
+    if _ALLOWED_CHANNEL_NAMES:
+        unmatched_names = _ALLOWED_CHANNEL_NAMES - device_names
+
+    if unmatched_indices or unmatched_names:
+        config._debug_log(
+            "Some allowed channels do not match any device channel",
+            context="channels.filter",
+            severity="warn",
+            always=True,
+            unmatched_indices=list(unmatched_indices) if unmatched_indices else None,
+            unmatched_names=list(unmatched_names) if unmatched_names else None,
+            device_channels=list(_CHANNEL_MAPPINGS),
+        )
+
+
+def is_channel_allowed(channel_index: int | None) -> bool:
+    """Return ``True`` if the channel should be processed.
+
+    When ``ALLOWED_CHANNELS`` is not configured, all channels are allowed.
+    Otherwise, the channel must match either by index or by resolved name.
+
+    Parameters:
+        channel_index: The channel index to check.
+
+    Returns:
+        ``True`` if the channel should be processed, ``False`` otherwise.
+    """
+    global _CHANNEL_FILTER_VALIDATED
+
+    if _ALLOWED_CHANNEL_INDICES is None and _ALLOWED_CHANNEL_NAMES is None:
+        _parse_allowed_channels()
+
+    if _ALLOWED_CHANNEL_INDICES is None and _ALLOWED_CHANNEL_NAMES is None:
+        return True
+
+    if not _CHANNEL_FILTER_VALIDATED and _CHANNEL_MAPPINGS:
+        _validate_channel_filter()
+
+    if channel_index is not None and _ALLOWED_CHANNEL_INDICES:
+        if channel_index in _ALLOWED_CHANNEL_INDICES:
+            return True
+
+    if _ALLOWED_CHANNEL_NAMES:
+        name = channel_name(channel_index)
+        if name and name.lower() in _ALLOWED_CHANNEL_NAMES:
+            return True
+
+    if _ALLOWED_CHANNEL_INDICES and channel_index in _ALLOWED_CHANNEL_INDICES:
+        return True
+
+    return False
+
+
+def _reset_channel_filter() -> None:
+    """Clear channel filter state. Intended for use in tests only."""
+    global _ALLOWED_CHANNEL_INDICES, _ALLOWED_CHANNEL_NAMES, _CHANNEL_FILTER_VALIDATED
+    _ALLOWED_CHANNEL_INDICES = None
+    _ALLOWED_CHANNEL_NAMES = None
+    _CHANNEL_FILTER_VALIDATED = False
+
+
 __all__ = [
     "capture_from_interface",
     "channel_mappings",
     "channel_name",
+    "is_channel_allowed",
     "_reset_channel_cache",
+    "_reset_channel_filter",
 ]
