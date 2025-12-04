@@ -1458,16 +1458,19 @@ def store_packet_dict(packet: Mapping) -> None:
 
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
-    if (
+    # Check if this is a direct message (not broadcast)
+    is_direct_message = (
         not is_reaction_packet
-        and channel == 0
         and not encrypted_flag
         and to_id_normalized
         and to_id_normalized.lower() != "^all"
-    ):
+    )
+
+    # Filter DMs unless SHOW_DMS is enabled
+    if is_direct_message and not getattr(config, "SHOW_DMS", False):
         if config.DEBUG:
             config._debug_log(
-                "Skipped direct message on primary channel",
+                "Skipped direct message (SHOW_DMS not enabled)",
                 context="handlers.store_packet_dict",
                 from_id=_canonical_node_id(from_id) or from_id,
                 to_id=_canonical_node_id(to_id) or to_id,

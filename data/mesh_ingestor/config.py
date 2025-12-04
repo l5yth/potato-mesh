@@ -67,6 +67,14 @@ When unset or empty, all channels are processed. Accepts channel indices
 (e.g., ``0,1,2``) or channel names (e.g., ``LongFast,MyChannel``) or a mix.
 """
 
+SHOW_DMS: bool = os.environ.get("SHOW_DMS", "").lower() in {"1", "true", "yes"}
+"""When ``True``, direct messages are forwarded to the API.
+
+By default, unencrypted direct messages (those addressed to a specific node
+rather than broadcast) are filtered out for privacy. Set to ``1``, ``true``,
+or ``yes`` to include DMs in the data sent to the API.
+"""
+
 DEBUG = os.environ.get("DEBUG") == "1"
 INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
 API_TOKEN = os.environ.get("API_TOKEN", "")
@@ -129,6 +137,7 @@ __all__ = [
     "SNAPSHOT_SECS",
     "CHANNEL_INDEX",
     "ALLOWED_CHANNELS",
+    "SHOW_DMS",
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",
