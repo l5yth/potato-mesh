@@ -307,6 +307,136 @@ RSpec.describe PotatoMesh::App::Cleanup do
       expect(deleted).to eq(1)
     end
   end
+
+  describe ".start_stale_node_cleanup_thread!" do
+    let(:mock_settings) do
+      Class.new do
+        attr_accessor :stale_node_cleanup_thread
+
+        def respond_to?(method, *)
+          method == :stale_node_cleanup_thread || super
+        end
+      end.new
+    end
+
+    before do
+      allow(harness_class).to receive(:settings).and_return(mock_settings)
+      allow(harness_class).to receive(:set) do |key, value|
+        mock_settings.stale_node_cleanup_thread = value if key == :stale_node_cleanup_thread
+      end
+    end
+
+    after do
+      thread = mock_settings.stale_node_cleanup_thread
+      if thread&.alive?
+        thread.kill
+        thread.join(1)
+      end
+    end
+
+    it "returns nil when cleanup is disabled" do
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(false)
+      result = harness_class.start_stale_node_cleanup_thread!
+      expect(result).to be_nil
+    end
+
+    it "returns existing thread if already alive" do
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(true)
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval).and_return(3600)
+
+      existing_thread = Thread.new { sleep 60 }
+      mock_settings.stale_node_cleanup_thread = existing_thread
+
+      result = harness_class.start_stale_node_cleanup_thread!
+      expect(result).to eq(existing_thread)
+    ensure
+      existing_thread&.kill
+      existing_thread&.join(1)
+    end
+
+    it "creates new thread when enabled and no existing thread" do
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(true)
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval).and_return(3600)
+
+      thread = harness_class.start_stale_node_cleanup_thread!
+      expect(thread).to be_a(Thread)
+      expect(thread).to be_alive
+      expect(thread.name).to eq("potato-mesh-node-cleanup")
+    end
+
+    it "creates new thread when existing thread is dead" do
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(true)
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval).and_return(3600)
+
+      dead_thread = Thread.new { nil }
+      dead_thread.join
+      mock_settings.stale_node_cleanup_thread = dead_thread
+
+      thread = harness_class.start_stale_node_cleanup_thread!
+      expect(thread).to be_a(Thread)
+      expect(thread).to be_alive
+      expect(thread).not_to eq(dead_thread)
+    end
+  end
+
+  describe ".stop_stale_node_cleanup_thread!" do
+    let(:mock_settings) do
+      Class.new do
+        attr_accessor :stale_node_cleanup_thread
+
+        def respond_to?(method, *)
+          method == :stale_node_cleanup_thread || super
+        end
+      end.new
+    end
+
+    before do
+      allow(harness_class).to receive(:settings).and_return(mock_settings)
+      allow(harness_class).to receive(:set) do |key, value|
+        mock_settings.stale_node_cleanup_thread = value if key == :stale_node_cleanup_thread
+      end
+    end
+
+    it "does nothing when settings does not respond to stale_node_cleanup_thread" do
+      plain_settings = Object.new
+      allow(harness_class).to receive(:settings).and_return(plain_settings)
+      expect { harness_class.stop_stale_node_cleanup_thread! }.not_to raise_error
+    end
+
+    it "does nothing when thread is nil" do
+      mock_settings.stale_node_cleanup_thread = nil
+      expect { harness_class.stop_stale_node_cleanup_thread! }.not_to raise_error
+    end
+
+    it "does nothing when thread is not alive" do
+      dead_thread = Thread.new { nil }
+      dead_thread.join
+      mock_settings.stale_node_cleanup_thread = dead_thread
+      expect { harness_class.stop_stale_node_cleanup_thread! }.not_to raise_error
+    end
+
+    it "kills and joins running thread" do
+      running_thread = Thread.new { sleep 60 }
+      mock_settings.stale_node_cleanup_thread = running_thread
+
+      harness_class.stop_stale_node_cleanup_thread!
+
+      expect(running_thread).not_to be_alive
+      expect(mock_settings.stale_node_cleanup_thread).to be_nil
+    end
+  end
+
+  describe ".prune_stale_nodes error handling" do
+    it "returns 0 and logs warning on SQLite3 exception" do
+      # Force a database error by closing the database path
+      allow(PotatoMesh::Config).to receive(:db_path).and_return("/nonexistent/path/mesh.db")
+
+      result = harness_class.prune_stale_nodes
+      expect(result).to eq(0)
+      expect(harness_class.warnings).not_to be_empty
+      expect(harness_class.warnings.first[:context]).to eq("cleanup.nodes")
+    end
+  end
 end
 
 RSpec.describe PotatoMesh::Config do
@@ -339,6 +469,26 @@ RSpec.describe PotatoMesh::Config do
 
     it "returns 0 (default) when ENV contains invalid value" do
       ENV["STALE_NODE_CLEANUP_INTERVAL"] = "invalid"
+      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+    end
+
+    it "returns 0 when ENV is empty string" do
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = ""
+      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+    end
+
+    it "returns 0 when ENV is only whitespace" do
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "   "
+      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+    end
+
+    it "handles value with surrounding whitespace" do
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "  3600  "
+      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(3600)
+    end
+
+    it "returns 0 when ENV is negative" do
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "-3600"
       expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
     end
   end
@@ -391,6 +541,21 @@ RSpec.describe PotatoMesh::Config do
     it "returns custom age when ENV is set" do
       ENV["STALE_NODE_MIN_AGE"] = "86400"
       expect(PotatoMesh::Config.stale_node_min_age).to eq(86400)
+    end
+
+    it "returns default when ENV contains invalid value" do
+      ENV["STALE_NODE_MIN_AGE"] = "invalid"
+      expect(PotatoMesh::Config.stale_node_min_age).to eq(7 * 24 * 60 * 60)
+    end
+
+    it "returns default when ENV is empty" do
+      ENV["STALE_NODE_MIN_AGE"] = ""
+      expect(PotatoMesh::Config.stale_node_min_age).to eq(7 * 24 * 60 * 60)
+    end
+
+    it "handles value with surrounding whitespace" do
+      ENV["STALE_NODE_MIN_AGE"] = "  172800  "
+      expect(PotatoMesh::Config.stale_node_min_age).to eq(172800)
     end
   end
 end
