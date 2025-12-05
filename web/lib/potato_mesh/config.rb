@@ -42,6 +42,8 @@ module PotatoMesh
     DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY = 128
     DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS = 120
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
+    DEFAULT_STALE_NODE_CLEANUP_INTERVAL_SECONDS = 0
+    DEFAULT_STALE_NODE_MIN_AGE_SECONDS = 7 * 24 * 60 * 60
 
     # Retrieve the configured API token used for authenticated requests.
     #
@@ -426,6 +428,44 @@ module PotatoMesh
       fetch_positive_integer(
         "INITIAL_FEDERATION_DELAY_SECONDS",
         DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS,
+      )
+    end
+
+    # Determine how often stale nodes are removed from the database.
+    #
+    # Set `STALE_NODE_CLEANUP_INTERVAL` to a positive value (e.g., `86400` for
+    # daily) to enable automatic cleanup. Disabled by default.
+    #
+    # @return [Integer] seconds between cleanup cycles (default 0 = disabled).
+    def stale_node_cleanup_interval
+      raw = ENV["STALE_NODE_CLEANUP_INTERVAL"]
+      return DEFAULT_STALE_NODE_CLEANUP_INTERVAL_SECONDS if raw.nil? || raw.strip.empty?
+
+      begin
+        parsed = Integer(raw.strip, 10)
+        parsed.negative? ? 0 : parsed
+      rescue ArgumentError
+        DEFAULT_STALE_NODE_CLEANUP_INTERVAL_SECONDS
+      end
+    end
+
+    # Determine whether stale node cleanup is enabled.
+    #
+    # @return [Boolean] true when automatic cleanup should run.
+    def stale_node_cleanup_enabled?
+      stale_node_cleanup_interval.positive?
+    end
+
+    # Minimum age before an incomplete node is eligible for cleanup.
+    #
+    # Nodes with default names (e.g., "Meshtastic 1234") and missing hardware
+    # model information must exceed this age before removal.
+    #
+    # @return [Integer] seconds before incomplete nodes can be pruned (default 7 days).
+    def stale_node_min_age
+      fetch_positive_integer(
+        "STALE_NODE_MIN_AGE",
+        DEFAULT_STALE_NODE_MIN_AGE_SECONDS,
       )
     end
 
