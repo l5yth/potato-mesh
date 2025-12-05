@@ -85,8 +85,8 @@ The web app can be configured with environment variables (defaults shown):
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
-| `STALE_NODE_CLEANUP_INTERVAL` | `0` | Seconds between stale node cleanup cycles (e.g., `86400` for daily). Disabled by default. |
-| `STALE_NODE_MIN_AGE` | `604800` | Minimum age (seconds) before incomplete nodes are eligible for cleanup. |
+| `STALE_NODE_CLEANUP_INTERVAL` | `0` | Hours between stale node cleanup cycles (e.g., `24` for daily). Disabled by default. |
+| `STALE_NODE_MIN_AGE` | `168` | Minimum age in hours before incomplete nodes are eligible for cleanup (default 7 days). |
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled

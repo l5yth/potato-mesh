@@ -130,7 +130,7 @@ RSpec.describe PotatoMesh::App::Cleanup do
         allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
         allow(PotatoMesh::Config).to receive(:default_db_path).and_return(db_path)
         allow(PotatoMesh::Config).to receive(:legacy_db_path).and_return(db_path)
-        allow(PotatoMesh::Config).to receive(:stale_node_min_age).and_return(7 * 24 * 60 * 60)
+        allow(PotatoMesh::Config).to receive(:stale_node_min_age_seconds).and_return(7 * 24 * 60 * 60)
 
         FileUtils.mkdir_p(File.dirname(db_path))
         harness_class.init_db
@@ -342,7 +342,7 @@ RSpec.describe PotatoMesh::App::Cleanup do
 
     it "returns existing thread if already alive" do
       allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(true)
-      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval).and_return(3600)
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval_seconds).and_return(3600)
 
       existing_thread = Thread.new { sleep 60 }
       mock_settings.stale_node_cleanup_thread = existing_thread
@@ -356,7 +356,7 @@ RSpec.describe PotatoMesh::App::Cleanup do
 
     it "creates new thread when enabled and no existing thread" do
       allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(true)
-      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval).and_return(3600)
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval_seconds).and_return(3600)
 
       thread = harness_class.start_stale_node_cleanup_thread!
       expect(thread).to be_a(Thread)
@@ -366,7 +366,7 @@ RSpec.describe PotatoMesh::App::Cleanup do
 
     it "creates new thread when existing thread is dead" do
       allow(PotatoMesh::Config).to receive(:stale_node_cleanup_enabled?).and_return(true)
-      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval).and_return(3600)
+      allow(PotatoMesh::Config).to receive(:stale_node_cleanup_interval_seconds).and_return(3600)
 
       dead_thread = Thread.new { nil }
       dead_thread.join
@@ -440,7 +440,7 @@ RSpec.describe PotatoMesh::App::Cleanup do
 end
 
 RSpec.describe PotatoMesh::Config do
-  describe ".stale_node_cleanup_interval" do
+  describe ".stale_node_cleanup_interval_hours" do
     around do |example|
       original = ENV["STALE_NODE_CLEANUP_INTERVAL"]
       example.run
@@ -454,42 +454,65 @@ RSpec.describe PotatoMesh::Config do
 
     it "returns 0 (disabled) when ENV is not set" do
       ENV.delete("STALE_NODE_CLEANUP_INTERVAL")
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(0)
     end
 
-    it "returns custom interval when ENV is set to positive value" do
-      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "86400"
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(86400)
+    it "returns custom interval in hours when ENV is set" do
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "24"
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(24)
     end
 
     it "returns 0 when ENV is explicitly set to 0" do
       ENV["STALE_NODE_CLEANUP_INTERVAL"] = "0"
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(0)
     end
 
     it "returns 0 (default) when ENV contains invalid value" do
       ENV["STALE_NODE_CLEANUP_INTERVAL"] = "invalid"
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(0)
     end
 
     it "returns 0 when ENV is empty string" do
       ENV["STALE_NODE_CLEANUP_INTERVAL"] = ""
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(0)
     end
 
     it "returns 0 when ENV is only whitespace" do
       ENV["STALE_NODE_CLEANUP_INTERVAL"] = "   "
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(0)
     end
 
     it "handles value with surrounding whitespace" do
-      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "  3600  "
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(3600)
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "  48  "
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(48)
     end
 
     it "returns 0 when ENV is negative" do
-      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "-3600"
-      expect(PotatoMesh::Config.stale_node_cleanup_interval).to eq(0)
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "-24"
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_hours).to eq(0)
+    end
+  end
+
+  describe ".stale_node_cleanup_interval_seconds" do
+    around do |example|
+      original = ENV["STALE_NODE_CLEANUP_INTERVAL"]
+      example.run
+    ensure
+      if original
+        ENV["STALE_NODE_CLEANUP_INTERVAL"] = original
+      else
+        ENV.delete("STALE_NODE_CLEANUP_INTERVAL")
+      end
+    end
+
+    it "converts hours to seconds" do
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "24"
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_seconds).to eq(24 * 3600)
+    end
+
+    it "returns 0 when disabled" do
+      ENV.delete("STALE_NODE_CLEANUP_INTERVAL")
+      expect(PotatoMesh::Config.stale_node_cleanup_interval_seconds).to eq(0)
     end
   end
 
@@ -511,7 +534,7 @@ RSpec.describe PotatoMesh::Config do
     end
 
     it "returns true when interval is set to positive value" do
-      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "3600"
+      ENV["STALE_NODE_CLEANUP_INTERVAL"] = "24"
       expect(PotatoMesh::Config.stale_node_cleanup_enabled?).to be(true)
     end
 
@@ -521,7 +544,7 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
-  describe ".stale_node_min_age" do
+  describe ".stale_node_min_age_hours" do
     around do |example|
       original = ENV["STALE_NODE_MIN_AGE"]
       example.run
@@ -533,29 +556,52 @@ RSpec.describe PotatoMesh::Config do
       end
     end
 
-    it "returns default value when ENV is not set" do
+    it "returns default value (168 hours = 7 days) when ENV is not set" do
       ENV.delete("STALE_NODE_MIN_AGE")
-      expect(PotatoMesh::Config.stale_node_min_age).to eq(7 * 24 * 60 * 60)
+      expect(PotatoMesh::Config.stale_node_min_age_hours).to eq(168)
     end
 
-    it "returns custom age when ENV is set" do
-      ENV["STALE_NODE_MIN_AGE"] = "86400"
-      expect(PotatoMesh::Config.stale_node_min_age).to eq(86400)
+    it "returns custom age in hours when ENV is set" do
+      ENV["STALE_NODE_MIN_AGE"] = "48"
+      expect(PotatoMesh::Config.stale_node_min_age_hours).to eq(48)
     end
 
     it "returns default when ENV contains invalid value" do
       ENV["STALE_NODE_MIN_AGE"] = "invalid"
-      expect(PotatoMesh::Config.stale_node_min_age).to eq(7 * 24 * 60 * 60)
+      expect(PotatoMesh::Config.stale_node_min_age_hours).to eq(168)
     end
 
     it "returns default when ENV is empty" do
       ENV["STALE_NODE_MIN_AGE"] = ""
-      expect(PotatoMesh::Config.stale_node_min_age).to eq(7 * 24 * 60 * 60)
+      expect(PotatoMesh::Config.stale_node_min_age_hours).to eq(168)
     end
 
     it "handles value with surrounding whitespace" do
-      ENV["STALE_NODE_MIN_AGE"] = "  172800  "
-      expect(PotatoMesh::Config.stale_node_min_age).to eq(172800)
+      ENV["STALE_NODE_MIN_AGE"] = "  72  "
+      expect(PotatoMesh::Config.stale_node_min_age_hours).to eq(72)
+    end
+  end
+
+  describe ".stale_node_min_age_seconds" do
+    around do |example|
+      original = ENV["STALE_NODE_MIN_AGE"]
+      example.run
+    ensure
+      if original
+        ENV["STALE_NODE_MIN_AGE"] = original
+      else
+        ENV.delete("STALE_NODE_MIN_AGE")
+      end
+    end
+
+    it "converts hours to seconds" do
+      ENV["STALE_NODE_MIN_AGE"] = "48"
+      expect(PotatoMesh::Config.stale_node_min_age_seconds).to eq(48 * 3600)
+    end
+
+    it "returns default in seconds when not set" do
+      ENV.delete("STALE_NODE_MIN_AGE")
+      expect(PotatoMesh::Config.stale_node_min_age_seconds).to eq(168 * 3600)
     end
   end
 end

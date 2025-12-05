@@ -29,7 +29,7 @@ module PotatoMesh
       #   this are eligible for removal.
       # @return [Integer] count of nodes deleted.
       def prune_stale_nodes(cutoff_time = nil)
-        cutoff_time ||= Time.now.to_i - PotatoMesh::Config.stale_node_min_age
+        cutoff_time ||= Time.now.to_i - PotatoMesh::Config.stale_node_min_age_seconds
         db = open_database
 
         sql = <<~SQL
@@ -91,7 +91,7 @@ module PotatoMesh
 
         thread = Thread.new do
           loop do
-            sleep PotatoMesh::Config.stale_node_cleanup_interval
+            sleep PotatoMesh::Config.stale_node_cleanup_interval_seconds
             begin
               run_stale_node_cleanup
             rescue StandardError => e
