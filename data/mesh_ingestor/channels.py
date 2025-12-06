@@ -334,9 +334,8 @@ def is_channel_allowed(channel_index: int | None) -> bool:
     if not _CHANNEL_FILTER_VALIDATED and _CHANNEL_MAPPINGS:
         _validate_channel_filter()
 
-    if channel_index is not None and _ALLOWED_CHANNEL_INDICES:
-        if channel_index in _ALLOWED_CHANNEL_INDICES:
-            return True
+    if _ALLOWED_CHANNEL_INDICES and channel_index in _ALLOWED_CHANNEL_INDICES:
+        return True
 
     if _ALLOWED_CHANNEL_NAMES:
         name = channel_name(channel_index)
