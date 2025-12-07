@@ -20,6 +20,7 @@ module PotatoMesh
       MAX_QUERY_LIMIT = 1000
       DEFAULT_TELEMETRY_WINDOW_SECONDS = 86_400
       DEFAULT_TELEMETRY_BUCKET_SECONDS = 300
+      TELEMETRY_ZERO_INVALID_COLUMNS = %w[battery_level voltage].freeze
       TELEMETRY_AGGREGATE_COLUMNS =
         %w[
           battery_level
@@ -76,6 +77,19 @@ module PotatoMesh
 
           acc[key] = value
         end
+      end
+
+      # Treat zero-valued telemetry measurements that are known to be invalid
+      # (such as battery level or voltage) as missing data so they are omitted
+      # from API responses. Metrics that can legitimately be zero will remain
+      # untouched when routed through this helper.
+      #
+      # @param value [Numeric, nil] telemetry measurement.
+      # @return [Numeric, nil] nil when the value is zero, otherwise the original value.
+      def nil_if_zero(value)
+        return nil if value.respond_to?(:zero?) && value.zero?
+
+        value
       end
 
       # Normalise a caller-provided limit to a sane, positive integer.
@@ -470,8 +484,8 @@ module PotatoMesh
           r["rssi"] = coerce_integer(r["rssi"])
           r["bitfield"] = coerce_integer(r["bitfield"])
           r["snr"] = coerce_float(r["snr"])
-          r["battery_level"] = coerce_float(r["battery_level"])
-          r["voltage"] = coerce_float(r["voltage"])
+          r["battery_level"] = sanitize_zero_invalid_metric("battery_level", coerce_float(r["battery_level"]))
+          r["voltage"] = sanitize_zero_invalid_metric("voltage", coerce_float(r["voltage"]))
           r["channel_utilization"] = coerce_float(r["channel_utilization"])
           r["air_util_tx"] = coerce_float(r["air_util_tx"])
           r["uptime_seconds"] = coerce_integer(r["uptime_seconds"])
@@ -551,6 +565,10 @@ module PotatoMesh
             max_value = coerce_float(row["#{column}_max"])
 
             metrics = {}
+            avg = sanitize_zero_invalid_metric(column, avg)
+            min_value = sanitize_zero_invalid_metric(column, min_value)
+            max_value = sanitize_zero_invalid_metric(column, max_value)
+
             metrics["avg"] = avg unless avg.nil?
             metrics["min"] = min_value unless min_value.nil?
             metrics["max"] = max_value unless max_value.nil?
@@ -576,6 +594,20 @@ module PotatoMesh
         end
       ensure
         db&.close
+      end
+
+      # Normalise telemetry metrics that cannot legitimately be zero so API
+      # consumers do not mistake absent readings for valid measurements. Values
+      # for fields such as battery level and voltage are treated as missing data
+      # when they are zero.
+      #
+      # @param column [String] telemetry metric name.
+      # @param value [Numeric, nil] raw metric value.
+      # @return [Numeric, nil] metric value or nil when zero is invalid.
+      def sanitize_zero_invalid_metric(column, value)
+        return nil_if_zero(value) if TELEMETRY_ZERO_INVALID_COLUMNS.include?(column)
+
+        value
       end
 
       def query_traces(limit, node_ref: nil)
