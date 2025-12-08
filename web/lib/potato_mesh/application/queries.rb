@@ -535,9 +535,10 @@ module PotatoMesh
         ]
 
         TELEMETRY_AGGREGATE_COLUMNS.each do |column|
-          select_clauses << "AVG(#{column}) AS #{column}_avg"
-          select_clauses << "MIN(#{column}) AS #{column}_min"
-          select_clauses << "MAX(#{column}) AS #{column}_max"
+          aggregate_source = telemetry_aggregate_source(column)
+          select_clauses << "AVG(#{aggregate_source}) AS #{column}_avg"
+          select_clauses << "MIN(#{aggregate_source}) AS #{column}_min"
+          select_clauses << "MAX(#{aggregate_source}) AS #{column}_max"
         end
 
         sql = <<~SQL
@@ -608,6 +609,20 @@ module PotatoMesh
         return nil_if_zero(value) if TELEMETRY_ZERO_INVALID_COLUMNS.include?(column)
 
         value
+      end
+
+      # Choose the SQL expression used to aggregate telemetry metrics. Metrics
+      # that cannot legitimately be zero are wrapped in a NULLIF to ensure
+      # invalid zero readings are ignored by aggregate functions such as AVG,
+      # MIN, and MAX, aligning the database semantics with API-level
+      # zero-as-missing handling.
+      #
+      # @param column [String] telemetry metric name.
+      # @return [String] SQL fragment used in aggregate expressions.
+      def telemetry_aggregate_source(column)
+        return "NULLIF(#{column}, 0)" if TELEMETRY_ZERO_INVALID_COLUMNS.include?(column)
+
+        column
       end
 
       def query_traces(limit, node_ref: nil)

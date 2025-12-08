@@ -4563,11 +4563,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       with_db do |db|
         db.execute(
-          "INSERT INTO telemetry(id, node_id, rx_time, telemetry_time, battery_level, voltage, uptime_seconds, channel_utilization) VALUES(?,?,?,?,?,?,?,?)",
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage, uptime_seconds, channel_utilization) VALUES(?,?,?,?,?,?,?,?,?)",
           [
             88,
             "!tele-zero",
             now,
+            Time.at(now).utc.iso8601,
             now - 60,
             0,
             0,
@@ -4641,11 +4642,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       with_db do |db|
         db.execute(
-          "INSERT INTO telemetry(id, node_id, rx_time, telemetry_time, battery_level, voltage, channel_utilization) VALUES(?,?,?,?,?,?,?)",
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage, channel_utilization) VALUES(?,?,?,?,?,?,?,?)",
           [
             991,
             "!tele-agg-zero",
             now,
+            Time.at(now).utc.iso8601,
             now - 30,
             0,
             0,
@@ -4663,6 +4665,54 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(aggregates).not_to have_key("battery_level")
       expect(aggregates).not_to have_key("voltage")
       expect(aggregates.dig("channel_utilization", "avg")).to eq(0.25)
+    end
+
+    it "ignores zero-valued telemetry when aggregating mixed buckets" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?)",
+          [
+            992,
+            "!tele-agg-mixed",
+            now,
+            Time.at(now).utc.iso8601,
+            now - 120,
+            0,
+            0,
+          ],
+        )
+
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?)",
+          [
+            993,
+            "!tele-agg-mixed",
+            now,
+            Time.at(now).utc.iso8601,
+            now - 60,
+            80.0,
+            3.7,
+          ],
+        )
+      end
+
+      get "/api/telemetry/aggregated?windowSeconds=3600&bucketSeconds=300"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets.length).to eq(1)
+      aggregates = buckets.first.fetch("aggregates")
+      expect(aggregates).to have_key("battery_level")
+      expect(aggregates.dig("battery_level", "avg")).to eq(80.0)
+      expect(aggregates.dig("battery_level", "min")).to eq(80.0)
+      expect(aggregates.dig("battery_level", "max")).to eq(80.0)
+      expect(aggregates.dig("voltage", "avg")).to eq(3.7)
+      expect(aggregates.dig("voltage", "min")).to eq(3.7)
+      expect(aggregates.dig("voltage", "max")).to eq(3.7)
     end
 
     it "rejects invalid bucket and window parameters" do
