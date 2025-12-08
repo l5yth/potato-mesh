@@ -230,19 +230,19 @@ def _reset_channel_cache() -> None:
     _CHANNEL_LOOKUP = {}
 
 
-_ALLOWED_CHANNEL_INDICES: set[int] | None = None
-_ALLOWED_CHANNEL_NAMES: set[str] | None = None
+_BLOCKED_CHANNEL_INDICES: set[int] | None = None
+_BLOCKED_CHANNEL_NAMES: set[str] | None = None
 _CHANNEL_FILTER_VALIDATED: bool = False
 
 
-def _parse_allowed_channels() -> None:
-    """Parse the ALLOWED_CHANNELS config into index and name sets."""
-    global _ALLOWED_CHANNEL_INDICES, _ALLOWED_CHANNEL_NAMES
+def _parse_blocked_channels() -> None:
+    """Parse the BLOCKED_CHANNELS config into index and name sets."""
+    global _BLOCKED_CHANNEL_INDICES, _BLOCKED_CHANNEL_NAMES
 
-    raw = getattr(config, "ALLOWED_CHANNELS", None)
+    raw = getattr(config, "BLOCKED_CHANNELS", None)
     if not raw or not isinstance(raw, str):
-        _ALLOWED_CHANNEL_INDICES = None
-        _ALLOWED_CHANNEL_NAMES = None
+        _BLOCKED_CHANNEL_INDICES = None
+        _BLOCKED_CHANNEL_NAMES = None
         return
 
     indices: set[int] = set()
@@ -257,19 +257,19 @@ def _parse_allowed_channels() -> None:
         except ValueError:
             names.add(part.lower())
 
-    _ALLOWED_CHANNEL_INDICES = indices if indices else None
-    _ALLOWED_CHANNEL_NAMES = names if names else None
+    _BLOCKED_CHANNEL_INDICES = indices if indices else None
+    _BLOCKED_CHANNEL_NAMES = names if names else None
 
 
 def _validate_channel_filter() -> None:
-    """Warn if configured allowed channels don't match any device channels."""
+    """Warn if configured blocked channels don't match any device channels."""
     global _CHANNEL_FILTER_VALIDATED
 
     if _CHANNEL_FILTER_VALIDATED:
         return
     _CHANNEL_FILTER_VALIDATED = True
 
-    if _ALLOWED_CHANNEL_INDICES is None and _ALLOWED_CHANNEL_NAMES is None:
+    if _BLOCKED_CHANNEL_INDICES is None and _BLOCKED_CHANNEL_NAMES is None:
         return
 
     if not _CHANNEL_MAPPINGS:
@@ -278,11 +278,11 @@ def _validate_channel_filter() -> None:
             context="channels.filter",
             severity="warn",
             always=True,
-            allowed_indices=(
-                list(_ALLOWED_CHANNEL_INDICES) if _ALLOWED_CHANNEL_INDICES else None
+            blocked_indices=(
+                list(_BLOCKED_CHANNEL_INDICES) if _BLOCKED_CHANNEL_INDICES else None
             ),
-            allowed_names=(
-                list(_ALLOWED_CHANNEL_NAMES) if _ALLOWED_CHANNEL_NAMES else None
+            blocked_names=(
+                list(_BLOCKED_CHANNEL_NAMES) if _BLOCKED_CHANNEL_NAMES else None
             ),
         )
         return
@@ -293,15 +293,15 @@ def _validate_channel_filter() -> None:
     unmatched_indices: set[int] = set()
     unmatched_names: set[str] = set()
 
-    if _ALLOWED_CHANNEL_INDICES:
-        unmatched_indices = _ALLOWED_CHANNEL_INDICES - device_indices
+    if _BLOCKED_CHANNEL_INDICES:
+        unmatched_indices = _BLOCKED_CHANNEL_INDICES - device_indices
 
-    if _ALLOWED_CHANNEL_NAMES:
-        unmatched_names = _ALLOWED_CHANNEL_NAMES - device_names
+    if _BLOCKED_CHANNEL_NAMES:
+        unmatched_names = _BLOCKED_CHANNEL_NAMES - device_names
 
     if unmatched_indices or unmatched_names:
         config._debug_log(
-            "Some allowed channels do not match any device channel",
+            "Some blocked channels do not match any device channel",
             context="channels.filter",
             severity="warn",
             always=True,
@@ -311,35 +311,36 @@ def _validate_channel_filter() -> None:
         )
 
 
-def is_channel_allowed(channel_index: int | None) -> bool:
-    """Return ``True`` if the channel should be processed.
+def is_channel_blocked(channel_index: int | None) -> bool:
+    """Return ``True`` if the channel should be blocked from processing.
 
-    When ``ALLOWED_CHANNELS`` is not configured, all channels are allowed.
-    Otherwise, the channel must match either by index or by resolved name.
+    When ``BLOCKED_CHANNELS`` is not configured, no channels are blocked.
+    Otherwise, the channel is blocked if it matches either by index or by
+    resolved name.
 
     Parameters:
         channel_index: The channel index to check.
 
     Returns:
-        ``True`` if the channel should be processed, ``False`` otherwise.
+        ``True`` if the channel should be blocked, ``False`` otherwise.
     """
     global _CHANNEL_FILTER_VALIDATED
 
-    if _ALLOWED_CHANNEL_INDICES is None and _ALLOWED_CHANNEL_NAMES is None:
-        _parse_allowed_channels()
+    if _BLOCKED_CHANNEL_INDICES is None and _BLOCKED_CHANNEL_NAMES is None:
+        _parse_blocked_channels()
 
-    if _ALLOWED_CHANNEL_INDICES is None and _ALLOWED_CHANNEL_NAMES is None:
-        return True
+    if _BLOCKED_CHANNEL_INDICES is None and _BLOCKED_CHANNEL_NAMES is None:
+        return False
 
     if not _CHANNEL_FILTER_VALIDATED and _CHANNEL_MAPPINGS:
         _validate_channel_filter()
 
-    if _ALLOWED_CHANNEL_INDICES and channel_index in _ALLOWED_CHANNEL_INDICES:
+    if _BLOCKED_CHANNEL_INDICES and channel_index in _BLOCKED_CHANNEL_INDICES:
         return True
 
-    if _ALLOWED_CHANNEL_NAMES:
+    if _BLOCKED_CHANNEL_NAMES:
         name = channel_name(channel_index)
-        if name and name.lower() in _ALLOWED_CHANNEL_NAMES:
+        if name and name.lower() in _BLOCKED_CHANNEL_NAMES:
             return True
 
     return False
@@ -347,9 +348,9 @@ def is_channel_allowed(channel_index: int | None) -> bool:
 
 def _reset_channel_filter() -> None:
     """Clear channel filter state. Intended for use in tests only."""
-    global _ALLOWED_CHANNEL_INDICES, _ALLOWED_CHANNEL_NAMES, _CHANNEL_FILTER_VALIDATED
-    _ALLOWED_CHANNEL_INDICES = None
-    _ALLOWED_CHANNEL_NAMES = None
+    global _BLOCKED_CHANNEL_INDICES, _BLOCKED_CHANNEL_NAMES, _CHANNEL_FILTER_VALIDATED
+    _BLOCKED_CHANNEL_INDICES = None
+    _BLOCKED_CHANNEL_NAMES = None
     _CHANNEL_FILTER_VALIDATED = False
 
 
@@ -357,7 +358,7 @@ __all__ = [
     "capture_from_interface",
     "channel_mappings",
     "channel_name",
-    "is_channel_allowed",
+    "is_channel_blocked",
     "_reset_channel_cache",
     "_reset_channel_filter",
 ]

@@ -731,7 +731,6 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 868
     mesh.config.MODEM_PRESET = "MediumFast"
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", True)
 
     packet = {
         "id": 123,
@@ -1754,7 +1753,6 @@ def test_store_packet_dict_uses_top_level_channel(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 868
     mesh.config.MODEM_PRESET = "MediumFast"
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", True)
 
     packet = {
         "id": "789",
@@ -1815,9 +1813,10 @@ def test_store_packet_dict_handles_invalid_channel(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
-def test_store_packet_dict_skips_direct_message_on_primary_channel(
+def test_store_packet_dict_allows_direct_message_on_primary_channel(
     mesh_module, monkeypatch
 ):
+    """Direct messages are now allowed on all channels (DM filtering removed)."""
     mesh = mesh_module
     captured = []
     monkeypatch.setattr(
@@ -1837,7 +1836,11 @@ def test_store_packet_dict_skips_direct_message_on_primary_channel(
 
     mesh.store_packet_dict(packet)
 
-    assert not captured
+    assert captured
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["text"] == "secret dm"
+    assert payload["to_id"] == "!recipient"
 
 
 def test_store_packet_dict_allows_primary_channel_broadcast(mesh_module, monkeypatch):
@@ -1906,7 +1909,6 @@ def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys
     )
 
     monkeypatch.setattr(mesh, "DEBUG", True)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", True)
 
     packet = {
         "id": "789",
@@ -2985,35 +2987,35 @@ def test_on_receive_skips_seen_packets(mesh_module):
 # -----------------------------------------------------------------------------
 
 
-def test_is_channel_allowed_no_filter_allows_all(mesh_module, monkeypatch):
-    """When ALLOWED_CHANNELS is unset, all channels should be allowed."""
+def test_is_channel_blocked_no_filter_blocks_none(mesh_module, monkeypatch):
+    """When BLOCKED_CHANNELS is unset, no channels should be blocked."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", None)
 
-    assert mesh.channels.is_channel_allowed(0) is True
-    assert mesh.channels.is_channel_allowed(1) is True
-    assert mesh.channels.is_channel_allowed(5) is True
-    assert mesh.channels.is_channel_allowed(None) is True
+    assert mesh.channels.is_channel_blocked(0) is False
+    assert mesh.channels.is_channel_blocked(1) is False
+    assert mesh.channels.is_channel_blocked(5) is False
+    assert mesh.channels.is_channel_blocked(None) is False
 
 
-def test_is_channel_allowed_filter_by_index(mesh_module, monkeypatch):
-    """When ALLOWED_CHANNELS contains indices, only those channels are allowed."""
+def test_is_channel_blocked_filter_by_index(mesh_module, monkeypatch):
+    """When BLOCKED_CHANNELS contains indices, those channels are blocked."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
     mesh.channels._reset_channel_cache()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "0,2")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "0,2")
 
-    assert mesh.channels.is_channel_allowed(0) is True
-    assert mesh.channels.is_channel_allowed(2) is True
-    assert mesh.channels.is_channel_allowed(1) is False
-    assert mesh.channels.is_channel_allowed(3) is False
+    assert mesh.channels.is_channel_blocked(0) is True
+    assert mesh.channels.is_channel_blocked(2) is True
+    assert mesh.channels.is_channel_blocked(1) is False
+    assert mesh.channels.is_channel_blocked(3) is False
 
 
-def test_is_channel_allowed_filter_by_name(mesh_module, monkeypatch, capsys):
-    """When ALLOWED_CHANNELS contains names, channels matching by name are allowed."""
+def test_is_channel_blocked_filter_by_name(mesh_module, monkeypatch, capsys):
+    """When BLOCKED_CHANNELS contains names, channels matching by name are blocked."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
@@ -3040,16 +3042,16 @@ def test_is_channel_allowed_filter_by_name(mesh_module, monkeypatch, capsys):
     capsys.readouterr()  # Clear capture output
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "LongFast")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "LongFast")
 
-    assert mesh.channels.is_channel_allowed(0) is True  # LongFast is channel 0
-    assert mesh.channels.is_channel_allowed(1) is False  # MyChannel not allowed
+    assert mesh.channels.is_channel_blocked(0) is True  # LongFast is channel 0
+    assert mesh.channels.is_channel_blocked(1) is False  # MyChannel not blocked
 
 
-def test_is_channel_allowed_filter_mixed_index_and_name(
+def test_is_channel_blocked_filter_mixed_index_and_name(
     mesh_module, monkeypatch, capsys
 ):
-    """ALLOWED_CHANNELS can contain both indices and names."""
+    """BLOCKED_CHANNELS can contain both indices and names."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
@@ -3080,14 +3082,14 @@ def test_is_channel_allowed_filter_mixed_index_and_name(
     capsys.readouterr()
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "1,Other")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "1,Other")
 
-    assert mesh.channels.is_channel_allowed(0) is False  # LongFast not in filter
-    assert mesh.channels.is_channel_allowed(1) is True  # index 1 explicitly allowed
-    assert mesh.channels.is_channel_allowed(2) is True  # "Other" name matches
+    assert mesh.channels.is_channel_blocked(0) is False  # LongFast not in blocklist
+    assert mesh.channels.is_channel_blocked(1) is True  # index 1 explicitly blocked
+    assert mesh.channels.is_channel_blocked(2) is True  # "Other" name matches
 
 
-def test_is_channel_allowed_case_insensitive_names(mesh_module, monkeypatch, capsys):
+def test_is_channel_blocked_case_insensitive_names(mesh_module, monkeypatch, capsys):
     """Channel name matching should be case insensitive."""
     mesh = mesh_module
 
@@ -3109,15 +3111,15 @@ def test_is_channel_allowed_case_insensitive_names(mesh_module, monkeypatch, cap
     capsys.readouterr()
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "longfast")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "longfast")
 
-    assert mesh.channels.is_channel_allowed(0) is True
+    assert mesh.channels.is_channel_blocked(0) is True
 
 
 def test_validate_channel_filter_warns_on_unmatched_index(
     mesh_module, monkeypatch, capsys
 ):
-    """A warning should be logged when allowed indices don't match device channels."""
+    """A warning should be logged when blocked indices don't match device channels."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
@@ -3138,20 +3140,20 @@ def test_validate_channel_filter_warns_on_unmatched_index(
     capsys.readouterr()
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "0,3,5")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "0,3,5")
 
-    # Trigger validation by calling is_channel_allowed
-    mesh.channels.is_channel_allowed(0)
+    # Trigger validation by calling is_channel_blocked
+    mesh.channels.is_channel_blocked(0)
 
     out = capsys.readouterr().out
-    assert "Some allowed channels do not match any device channel" in out
+    assert "Some blocked channels do not match any device channel" in out
     assert "unmatched_indices=" in out
 
 
 def test_validate_channel_filter_warns_on_unmatched_name(
     mesh_module, monkeypatch, capsys
 ):
-    """A warning should be logged when allowed names don't match device channels."""
+    """A warning should be logged when blocked names don't match device channels."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
@@ -3172,12 +3174,12 @@ def test_validate_channel_filter_warns_on_unmatched_name(
     capsys.readouterr()
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "NonExistentChannel")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "NonExistentChannel")
 
-    mesh.channels.is_channel_allowed(0)
+    mesh.channels.is_channel_blocked(0)
 
     out = capsys.readouterr().out
-    assert "Some allowed channels do not match any device channel" in out
+    assert "Some blocked channels do not match any device channel" in out
     assert "unmatched_names=" in out
 
 
@@ -3189,10 +3191,10 @@ def test_validate_channel_filter_warns_when_no_device_channels(
 
     mesh.channels._reset_channel_filter()
     mesh.channels._reset_channel_cache()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "0,1")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "0,1")
 
     # Parse the config first, then trigger validation without device channels
-    mesh.channels._parse_allowed_channels()
+    mesh.channels._parse_blocked_channels()
     mesh.channels._validate_channel_filter()
 
     out = capsys.readouterr().out
@@ -3200,12 +3202,12 @@ def test_validate_channel_filter_warns_when_no_device_channels(
 
 
 def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
-    """Packets on non-allowed channels should be filtered out."""
+    """Packets on blocked channels should be filtered out."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
     mesh.channels._reset_channel_cache()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "0")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "1")
     monkeypatch.setattr(mesh.config, "DEBUG", False)
 
     captured = []
@@ -3215,7 +3217,7 @@ def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
         lambda path, payload, *, priority: captured.append(payload),
     )
 
-    # Packet on channel 0 - should be allowed
+    # Packet on channel 0 - should be allowed (not blocked)
     packet_allowed = {
         "id": 1,
         "rxTime": 10,
@@ -3229,8 +3231,8 @@ def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
     mesh.store_packet_dict(packet_allowed)
     assert len(captured) == 1
 
-    # Packet on channel 1 - should be filtered
-    packet_filtered = {
+    # Packet on channel 1 - should be blocked
+    packet_blocked = {
         "id": 2,
         "rxTime": 11,
         "fromId": "!abc",
@@ -3240,17 +3242,17 @@ def test_store_packet_dict_filters_by_channel(mesh_module, monkeypatch):
             "channel": 1,
         },
     }
-    mesh.store_packet_dict(packet_filtered)
-    assert len(captured) == 1  # Still 1, packet was filtered
+    mesh.store_packet_dict(packet_blocked)
+    assert len(captured) == 1  # Still 1, packet was blocked
 
 
 def test_store_packet_dict_channel_filter_debug_log(mesh_module, monkeypatch, capsys):
-    """Filtered packets should be logged in debug mode."""
+    """Blocked packets should be logged in debug mode."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
     mesh.channels._reset_channel_cache()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "0")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "2")
     monkeypatch.setattr(mesh.config, "DEBUG", True)
 
     captured = []
@@ -3273,226 +3275,29 @@ def test_store_packet_dict_channel_filter_debug_log(mesh_module, monkeypatch, ca
     mesh.store_packet_dict(packet)
 
     out = capsys.readouterr().out
-    assert "Packet filtered by ALLOWED_CHANNELS" in out
+    assert "Packet filtered by BLOCKED_CHANNELS" in out
     assert len(captured) == 0
 
 
-# -----------------------------------------------------------------------------
-# DM Filtering Tests
-# -----------------------------------------------------------------------------
-
-
-def test_store_packet_dict_filters_dm_by_default(mesh_module, monkeypatch):
-    """Direct messages should be filtered by default (SHOW_DMS=False)."""
+def test_parse_blocked_channels_empty_string(mesh_module, monkeypatch):
+    """Empty BLOCKED_CHANNELS string should result in no blocking."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", False)
-    monkeypatch.setattr(mesh.config, "DEBUG", False)
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", "")
 
-    captured = []
-    monkeypatch.setattr(
-        mesh,
-        "_queue_post_json",
-        lambda path, payload, *, priority: captured.append(payload),
-    )
-
-    # DM packet (to_id is a specific node, not ^all)
-    dm_packet = {
-        "id": 1,
-        "rxTime": 10,
-        "fromId": "!abc",
-        "toId": "!def",
-        "decoded": {
-            "payload": {"text": "private"},
-            "portnum": "TEXT_MESSAGE_APP",
-            "channel": 0,
-        },
-    }
-    mesh.store_packet_dict(dm_packet)
-    assert len(captured) == 0  # DM should be filtered
+    assert mesh.channels.is_channel_blocked(0) is False
+    assert mesh.channels.is_channel_blocked(5) is False
 
 
-def test_store_packet_dict_allows_dm_when_show_dms_enabled(mesh_module, monkeypatch):
-    """Direct messages should be allowed when SHOW_DMS=True."""
-    mesh = mesh_module
-
-    mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", True)
-    monkeypatch.setattr(mesh.config, "DEBUG", False)
-
-    captured = []
-    monkeypatch.setattr(
-        mesh,
-        "_queue_post_json",
-        lambda path, payload, *, priority: captured.append(payload),
-    )
-
-    dm_packet = {
-        "id": 1,
-        "rxTime": 10,
-        "fromId": "!abc",
-        "toId": "!def",
-        "decoded": {
-            "payload": {"text": "private"},
-            "portnum": "TEXT_MESSAGE_APP",
-            "channel": 0,
-        },
-    }
-    mesh.store_packet_dict(dm_packet)
-    assert len(captured) == 1  # DM should be allowed
-
-
-def test_store_packet_dict_broadcast_not_filtered(mesh_module, monkeypatch):
-    """Broadcast messages (to_id=^all) should never be filtered as DMs."""
-    mesh = mesh_module
-
-    mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", False)
-    monkeypatch.setattr(mesh.config, "DEBUG", False)
-
-    captured = []
-    monkeypatch.setattr(
-        mesh,
-        "_queue_post_json",
-        lambda path, payload, *, priority: captured.append(payload),
-    )
-
-    broadcast_packet = {
-        "id": 1,
-        "rxTime": 10,
-        "fromId": "!abc",
-        "toId": "^all",
-        "decoded": {
-            "payload": {"text": "hello"},
-            "portnum": "TEXT_MESSAGE_APP",
-            "channel": 0,
-        },
-    }
-    mesh.store_packet_dict(broadcast_packet)
-    assert len(captured) == 1  # Broadcast should pass through
-
-
-def test_store_packet_dict_dm_filter_debug_log(mesh_module, monkeypatch, capsys):
-    """Filtered DMs should be logged in debug mode."""
-    mesh = mesh_module
-
-    mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", False)
-    monkeypatch.setattr(mesh.config, "DEBUG", True)
-
-    captured = []
-    monkeypatch.setattr(
-        mesh,
-        "_queue_post_json",
-        lambda path, payload, *, priority: captured.append(payload),
-    )
-
-    dm_packet = {
-        "id": 1,
-        "rxTime": 10,
-        "fromId": "!abc",
-        "toId": "!def",
-        "decoded": {
-            "payload": {"text": "private"},
-            "portnum": "TEXT_MESSAGE_APP",
-            "channel": 0,
-        },
-    }
-    mesh.store_packet_dict(dm_packet)
-
-    out = capsys.readouterr().out
-    assert "Skipped direct message" in out
-    assert "SHOW_DMS" in out
-
-
-def test_store_packet_dict_encrypted_dm_not_filtered(mesh_module, monkeypatch):
-    """Encrypted DMs should pass through regardless of SHOW_DMS setting."""
-    mesh = mesh_module
-
-    mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", False)
-    monkeypatch.setattr(mesh.config, "DEBUG", False)
-
-    captured = []
-    monkeypatch.setattr(
-        mesh,
-        "_queue_post_json",
-        lambda path, payload, *, priority: captured.append(payload),
-    )
-
-    encrypted_dm = {
-        "id": 1,
-        "rxTime": 10,
-        "fromId": "!abc",
-        "toId": "!def",
-        "decoded": {"encrypted": True, "portnum": "TEXT_MESSAGE_APP", "channel": 0},
-    }
-    mesh.store_packet_dict(encrypted_dm)
-    assert len(captured) == 1  # Encrypted DM should pass through
-
-
-def test_parse_allowed_channels_empty_string(mesh_module, monkeypatch):
-    """Empty ALLOWED_CHANNELS string should result in no filtering."""
-    mesh = mesh_module
-
-    mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", "")
-
-    assert mesh.channels.is_channel_allowed(0) is True
-    assert mesh.channels.is_channel_allowed(5) is True
-
-
-def test_parse_allowed_channels_whitespace_handling(mesh_module, monkeypatch):
-    """ALLOWED_CHANNELS should handle whitespace in values."""
+def test_parse_blocked_channels_whitespace_handling(mesh_module, monkeypatch):
+    """BLOCKED_CHANNELS should handle whitespace in values."""
     mesh = mesh_module
 
     mesh.channels._reset_channel_filter()
     mesh.channels._reset_channel_cache()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", " 0 , 2 , LongFast ")
+    monkeypatch.setattr(mesh.config, "BLOCKED_CHANNELS", " 0 , 2 , LongFast ")
 
-    assert mesh.channels.is_channel_allowed(0) is True
-    assert mesh.channels.is_channel_allowed(2) is True
-    assert mesh.channels.is_channel_allowed(1) is False
-
-
-def test_store_packet_dict_dm_on_secondary_channel_not_filtered(
-    mesh_module, monkeypatch
-):
-    """DMs on non-primary channels (channel != 0) should NOT be filtered.
-
-    DM filtering only applies to channel 0 to maintain backward compatibility.
-    """
-    mesh = mesh_module
-
-    mesh.channels._reset_channel_filter()
-    monkeypatch.setattr(mesh.config, "ALLOWED_CHANNELS", None)
-    monkeypatch.setattr(mesh.config, "SHOW_DMS", False)
-    monkeypatch.setattr(mesh.config, "DEBUG", False)
-
-    captured = []
-    monkeypatch.setattr(
-        mesh,
-        "_queue_post_json",
-        lambda path, payload, *, priority: captured.append(payload),
-    )
-
-    # DM on channel 1 - should NOT be filtered (only channel 0 DMs are filtered)
-    dm_packet = {
-        "id": 1,
-        "rxTime": 10,
-        "fromId": "!abc",
-        "toId": "!def",
-        "decoded": {
-            "payload": {"text": "private"},
-            "portnum": "TEXT_MESSAGE_APP",
-            "channel": 1,
-        },
-    }
-    mesh.store_packet_dict(dm_packet)
-    assert len(captured) == 1  # DM on secondary channel should pass through
+    assert mesh.channels.is_channel_blocked(0) is True
+    assert mesh.channels.is_channel_blocked(2) is True
+    assert mesh.channels.is_channel_blocked(1) is False

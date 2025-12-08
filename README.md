@@ -170,8 +170,7 @@ The ingestor can be configured with environment variables:
 | `API_TOKEN` | _required_ | Shared secret that authorizes the ingestor to post data. |
 | `CONNECTION` | `/dev/ttyACM0` | Serial port, TCP address (`192.168.1.20:4403`), or Bluetooth address (`ED:4D:9E:95:CF:60`). |
 | `CHANNEL_INDEX` | `0` | LoRa channel index to select when connecting to the device. |
-| `ALLOWED_CHANNELS` | _unset_ | Comma-separated list of channel indices or names to process (e.g., `0,1` or `LongFast`). When unset, all channels are processed. |
-| `SHOW_DMS` | `0` | Set to `1` to forward direct messages on the primary channel to the API. By default, DMs on channel 0 are filtered for privacy (DMs on other channels are always forwarded). |
+| `BLOCKED_CHANNELS` | _unset_ | Comma-separated list of channel indices or names to block (e.g., `1,2` or `Private,LongFast`). When unset, all channels are processed. |
 | `DEBUG` | `0` | Set to `1` for verbose logging output. |
 | `ENERGY_SAVING` | `0` | Set to `1` to enable energy saving mode with periodic sleep cycles. |
 

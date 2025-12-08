@@ -1272,11 +1272,11 @@ def store_packet_dict(packet: Mapping) -> None:
         packet_channel = 0
 
     # Apply channel filter if configured
-    if not channels.is_channel_allowed(packet_channel):
+    if channels.is_channel_blocked(packet_channel):
         channel_display = channels.channel_name(packet_channel) or packet_channel
         if config.DEBUG:
             config._debug_log(
-                "Packet filtered by ALLOWED_CHANNELS",
+                "Packet filtered by BLOCKED_CHANNELS",
                 context="handlers.store_packet_dict",
                 channel=packet_channel,
                 channel_name=channel_display,
@@ -1455,31 +1455,6 @@ def store_packet_dict(packet: Mapping) -> None:
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
 
     encrypted_flag = _is_encrypted_flag(encrypted)
-
-    to_id_normalized = str(to_id).strip() if to_id is not None else ""
-
-    # Check if this is a direct message on the primary channel (not broadcast)
-    # DMs are only filtered on channel 0 to maintain backward compatibility
-    is_direct_message = (
-        not is_reaction_packet
-        and channel == 0
-        and not encrypted_flag
-        and to_id_normalized
-        and to_id_normalized.lower() != "^all"
-    )
-
-    # Filter DMs unless SHOW_DMS is enabled
-    if is_direct_message and not getattr(config, "SHOW_DMS", False):
-        if config.DEBUG:
-            config._debug_log(
-                "Skipped direct message (SHOW_DMS not enabled)",
-                context="handlers.store_packet_dict",
-                from_id=_canonical_node_id(from_id) or from_id,
-                to_id=_canonical_node_id(to_id) or to_id,
-                channel=channel,
-            )
-        _record_ignored_packet(packet, reason="skipped-direct-message")
-        return
 
     message_payload = {
         "id": int(pkt_id),

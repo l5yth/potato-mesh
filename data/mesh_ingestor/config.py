@@ -60,21 +60,6 @@ SNAPSHOT_SECS = DEFAULT_SNAPSHOT_SECS
 CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 """Index of the LoRa channel to select when connecting."""
 
-ALLOWED_CHANNELS: str | None = os.environ.get("ALLOWED_CHANNELS") or None
-"""Optional comma-separated list of channel indices or names to process.
-
-When unset or empty, all channels are processed. Accepts channel indices
-(e.g., ``0,1,2``) or channel names (e.g., ``LongFast,MyChannel``) or a mix.
-"""
-
-SHOW_DMS: bool = os.environ.get("SHOW_DMS", "").lower() in {"1", "true", "yes"}
-"""When ``True``, direct messages are forwarded to the API.
-
-By default, unencrypted direct messages (those addressed to a specific node
-rather than broadcast) are filtered out for privacy. Set to ``1``, ``true``,
-or ``yes`` to include DMs in the data sent to the API.
-"""
-
 DEBUG = os.environ.get("DEBUG") == "1"
 
 
@@ -102,6 +87,9 @@ INSTANCE = _resolve_instance_domain()
 API_TOKEN = os.environ.get("API_TOKEN", "")
 ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 """When ``True``, enables the ingestor's energy saving mode."""
+
+BLOCKED_CHANNELS: str | None = os.environ.get("BLOCKED_CHANNELS")
+"""Comma-separated list of channel indices or names to block from processing."""
 
 LORA_FREQ: float | int | str | None = None
 """Frequency of the local node's configured LoRa region in MHz or raw region label."""
@@ -158,12 +146,11 @@ __all__ = [
     "CONNECTION",
     "SNAPSHOT_SECS",
     "CHANNEL_INDEX",
-    "ALLOWED_CHANNELS",
-    "SHOW_DMS",
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",
     "ENERGY_SAVING",
+    "BLOCKED_CHANNELS",
     "LORA_FREQ",
     "MODEM_PRESET",
     "_RECONNECT_INITIAL_DELAY_SECS",
