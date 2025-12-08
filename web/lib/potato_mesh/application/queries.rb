@@ -20,6 +20,7 @@ module PotatoMesh
       MAX_QUERY_LIMIT = 1000
       DEFAULT_TELEMETRY_WINDOW_SECONDS = 86_400
       DEFAULT_TELEMETRY_BUCKET_SECONDS = 300
+      TELEMETRY_ZERO_INVALID_COLUMNS = %w[battery_level voltage].freeze
       TELEMETRY_AGGREGATE_COLUMNS =
         %w[
           battery_level
@@ -48,6 +49,9 @@ module PotatoMesh
           soil_moisture
           soil_temperature
         ].freeze
+      TELEMETRY_AGGREGATE_SCALERS = {
+        "current" => 0.001,
+      }.freeze
 
       # Remove nil or empty values from an API response hash to reduce payload size
       # while preserving legitimate zero-valued measurements.
@@ -76,6 +80,19 @@ module PotatoMesh
 
           acc[key] = value
         end
+      end
+
+      # Treat zero-valued telemetry measurements that are known to be invalid
+      # (such as battery level or voltage) as missing data so they are omitted
+      # from API responses. Metrics that can legitimately be zero will remain
+      # untouched when routed through this helper.
+      #
+      # @param value [Numeric, nil] telemetry measurement.
+      # @return [Numeric, nil] nil when the value is zero, otherwise the original value.
+      def nil_if_zero(value)
+        return nil if value.respond_to?(:zero?) && value.zero?
+
+        value
       end
 
       # Normalise a caller-provided limit to a sane, positive integer.
@@ -470,8 +487,8 @@ module PotatoMesh
           r["rssi"] = coerce_integer(r["rssi"])
           r["bitfield"] = coerce_integer(r["bitfield"])
           r["snr"] = coerce_float(r["snr"])
-          r["battery_level"] = coerce_float(r["battery_level"])
-          r["voltage"] = coerce_float(r["voltage"])
+          r["battery_level"] = sanitize_zero_invalid_metric("battery_level", coerce_float(r["battery_level"]))
+          r["voltage"] = sanitize_zero_invalid_metric("voltage", coerce_float(r["voltage"]))
           r["channel_utilization"] = coerce_float(r["channel_utilization"])
           r["air_util_tx"] = coerce_float(r["air_util_tx"])
           r["uptime_seconds"] = coerce_integer(r["uptime_seconds"])
@@ -479,7 +496,8 @@ module PotatoMesh
           r["relative_humidity"] = coerce_float(r["relative_humidity"])
           r["barometric_pressure"] = coerce_float(r["barometric_pressure"])
           r["gas_resistance"] = coerce_float(r["gas_resistance"])
-          r["current"] = coerce_float(r["current"])
+          current_ma = coerce_float(r["current"])
+          r["current"] = current_ma.nil? ? nil : current_ma / 1000.0
           r["iaq"] = coerce_integer(r["iaq"])
           r["distance"] = coerce_float(r["distance"])
           r["lux"] = coerce_float(r["lux"])
@@ -521,9 +539,10 @@ module PotatoMesh
         ]
 
         TELEMETRY_AGGREGATE_COLUMNS.each do |column|
-          select_clauses << "AVG(#{column}) AS #{column}_avg"
-          select_clauses << "MIN(#{column}) AS #{column}_min"
-          select_clauses << "MAX(#{column}) AS #{column}_max"
+          aggregate_source = telemetry_aggregate_source(column)
+          select_clauses << "AVG(#{aggregate_source}) AS #{column}_avg"
+          select_clauses << "MIN(#{aggregate_source}) AS #{column}_min"
+          select_clauses << "MAX(#{aggregate_source}) AS #{column}_max"
         end
 
         sql = <<~SQL
@@ -549,8 +568,18 @@ module PotatoMesh
             avg = coerce_float(row["#{column}_avg"])
             min_value = coerce_float(row["#{column}_min"])
             max_value = coerce_float(row["#{column}_max"])
+            scale = TELEMETRY_AGGREGATE_SCALERS[column]
+            if scale
+              avg *= scale unless avg.nil?
+              min_value *= scale unless min_value.nil?
+              max_value *= scale unless max_value.nil?
+            end
 
             metrics = {}
+            avg = sanitize_zero_invalid_metric(column, avg)
+            min_value = sanitize_zero_invalid_metric(column, min_value)
+            max_value = sanitize_zero_invalid_metric(column, max_value)
+
             metrics["avg"] = avg unless avg.nil?
             metrics["min"] = min_value unless min_value.nil?
             metrics["max"] = max_value unless max_value.nil?
@@ -578,12 +607,44 @@ module PotatoMesh
         db&.close
       end
 
+      # Normalise telemetry metrics that cannot legitimately be zero so API
+      # consumers do not mistake absent readings for valid measurements. Values
+      # for fields such as battery level and voltage are treated as missing data
+      # when they are zero.
+      #
+      # @param column [String] telemetry metric name.
+      # @param value [Numeric, nil] raw metric value.
+      # @return [Numeric, nil] metric value or nil when zero is invalid.
+      def sanitize_zero_invalid_metric(column, value)
+        return nil_if_zero(value) if TELEMETRY_ZERO_INVALID_COLUMNS.include?(column)
+
+        value
+      end
+
+      # Choose the SQL expression used to aggregate telemetry metrics. Metrics
+      # that cannot legitimately be zero are wrapped in a NULLIF to ensure
+      # invalid zero readings are ignored by aggregate functions such as AVG,
+      # MIN, and MAX, aligning the database semantics with API-level
+      # zero-as-missing handling.
+      #
+      # @param column [String] telemetry metric name.
+      # @return [String] SQL fragment used in aggregate expressions.
+      def telemetry_aggregate_source(column)
+        return "NULLIF(#{column}, 0)" if TELEMETRY_ZERO_INVALID_COLUMNS.include?(column)
+
+        column
+      end
+
       def query_traces(limit, node_ref: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
         where_clauses = []
+        now = Time.now.to_i
+        min_rx_time = now - PotatoMesh::Config.week_seconds
+        where_clauses << "COALESCE(rx_time, 0) >= ?"
+        params << min_rx_time
 
         if node_ref
           tokens = node_reference_tokens(node_ref)
