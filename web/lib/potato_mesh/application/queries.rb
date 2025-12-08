@@ -48,6 +48,9 @@ module PotatoMesh
           soil_moisture
           soil_temperature
         ].freeze
+      TELEMETRY_AGGREGATE_SCALERS = {
+        "current" => 0.001,
+      }.freeze
 
       # Remove nil or empty values from an API response hash to reduce payload size
       # while preserving legitimate zero-valued measurements.
@@ -550,6 +553,12 @@ module PotatoMesh
             avg = coerce_float(row["#{column}_avg"])
             min_value = coerce_float(row["#{column}_min"])
             max_value = coerce_float(row["#{column}_max"])
+            scale = TELEMETRY_AGGREGATE_SCALERS[column]
+            if scale
+              avg *= scale unless avg.nil?
+              min_value *= scale unless min_value.nil?
+              max_value *= scale unless max_value.nil?
+            end
 
             metrics = {}
             metrics["avg"] = avg unless avg.nil?

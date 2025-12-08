@@ -4577,6 +4577,35 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(a_bucket["aggregates"]).to have_key("battery_level")
       expect(a_bucket["aggregates"]["battery_level"]).to include("avg")
       expect(a_bucket).not_to have_key("device_metrics")
+
+      buckets_by_start = {}
+      buckets.each do |bucket|
+        start_time = bucket["bucket_start"]
+        buckets_by_start[start_time] = bucket if start_time
+      end
+      bucket_seconds = 300
+      current_by_bucket = Hash.new { |hash, key| hash[key] = [] }
+      telemetry_fixture.each do |entry|
+        timestamp = entry["rx_time"] || entry["telemetry_time"]
+        next unless timestamp
+
+        bucket_start = (timestamp / bucket_seconds) * bucket_seconds
+        current_value = telemetry_metric(entry, "current")
+        next if current_value.nil?
+
+        current_by_bucket[bucket_start] << current_value
+      end
+
+      current_by_bucket.each do |bucket_start, values|
+        bucket = buckets_by_start[bucket_start]
+        next unless bucket
+        aggregates = bucket.fetch("aggregates", {})
+        metrics = aggregates["current"]
+        expect(metrics).not_to be_nil
+        expect_same_value(metrics["avg"], values.sum / values.length / 1000.0)
+        expect_same_value(metrics["min"], values.min / 1000.0)
+        expect_same_value(metrics["max"], values.max / 1000.0)
+      end
     end
 
     it "applies default window and bucket sizes when parameters are omitted" do
