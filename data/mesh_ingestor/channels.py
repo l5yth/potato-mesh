@@ -230,9 +230,135 @@ def _reset_channel_cache() -> None:
     _CHANNEL_LOOKUP = {}
 
 
+_BLOCKED_CHANNEL_INDICES: set[int] | None = None
+_BLOCKED_CHANNEL_NAMES: set[str] | None = None
+_CHANNEL_FILTER_VALIDATED: bool = False
+
+
+def _parse_blocked_channels() -> None:
+    """Parse the BLOCKED_CHANNELS config into index and name sets."""
+    global _BLOCKED_CHANNEL_INDICES, _BLOCKED_CHANNEL_NAMES
+
+    raw = getattr(config, "BLOCKED_CHANNELS", None)
+    if not raw or not isinstance(raw, str):
+        _BLOCKED_CHANNEL_INDICES = None
+        _BLOCKED_CHANNEL_NAMES = None
+        return
+
+    indices: set[int] = set()
+    names: set[str] = set()
+
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            indices.add(int(part))
+        except ValueError:
+            names.add(part.lower())
+
+    _BLOCKED_CHANNEL_INDICES = indices if indices else None
+    _BLOCKED_CHANNEL_NAMES = names if names else None
+
+
+def _validate_channel_filter() -> None:
+    """Warn if configured blocked channels don't match any device channels."""
+    global _CHANNEL_FILTER_VALIDATED
+
+    if _CHANNEL_FILTER_VALIDATED:
+        return
+    _CHANNEL_FILTER_VALIDATED = True
+
+    if _BLOCKED_CHANNEL_INDICES is None and _BLOCKED_CHANNEL_NAMES is None:
+        return
+
+    if not _CHANNEL_MAPPINGS:
+        config._debug_log(
+            "Channel filter configured but device channels not yet captured",
+            context="channels.filter",
+            severity="warn",
+            always=True,
+            blocked_indices=(
+                list(_BLOCKED_CHANNEL_INDICES) if _BLOCKED_CHANNEL_INDICES else None
+            ),
+            blocked_names=(
+                list(_BLOCKED_CHANNEL_NAMES) if _BLOCKED_CHANNEL_NAMES else None
+            ),
+        )
+        return
+
+    device_indices = {idx for idx, _ in _CHANNEL_MAPPINGS}
+    device_names = {name.lower() for _, name in _CHANNEL_MAPPINGS}
+
+    unmatched_indices: set[int] = set()
+    unmatched_names: set[str] = set()
+
+    if _BLOCKED_CHANNEL_INDICES:
+        unmatched_indices = _BLOCKED_CHANNEL_INDICES - device_indices
+
+    if _BLOCKED_CHANNEL_NAMES:
+        unmatched_names = _BLOCKED_CHANNEL_NAMES - device_names
+
+    if unmatched_indices or unmatched_names:
+        config._debug_log(
+            "Some blocked channels do not match any device channel",
+            context="channels.filter",
+            severity="warn",
+            always=True,
+            unmatched_indices=list(unmatched_indices) if unmatched_indices else None,
+            unmatched_names=list(unmatched_names) if unmatched_names else None,
+            device_channels=list(_CHANNEL_MAPPINGS),
+        )
+
+
+def is_channel_blocked(channel_index: int | None) -> bool:
+    """Return ``True`` if the channel should be blocked from processing.
+
+    When ``BLOCKED_CHANNELS`` is not configured, no channels are blocked.
+    Otherwise, the channel is blocked if it matches either by index or by
+    resolved name.
+
+    Parameters:
+        channel_index: The channel index to check.
+
+    Returns:
+        ``True`` if the channel should be blocked, ``False`` otherwise.
+    """
+    global _CHANNEL_FILTER_VALIDATED
+
+    if _BLOCKED_CHANNEL_INDICES is None and _BLOCKED_CHANNEL_NAMES is None:
+        _parse_blocked_channels()
+
+    if _BLOCKED_CHANNEL_INDICES is None and _BLOCKED_CHANNEL_NAMES is None:
+        return False
+
+    if not _CHANNEL_FILTER_VALIDATED and _CHANNEL_MAPPINGS:
+        _validate_channel_filter()
+
+    if _BLOCKED_CHANNEL_INDICES and channel_index in _BLOCKED_CHANNEL_INDICES:
+        return True
+
+    if _BLOCKED_CHANNEL_NAMES:
+        name = channel_name(channel_index)
+        if name and name.lower() in _BLOCKED_CHANNEL_NAMES:
+            return True
+
+    return False
+
+
+def _reset_channel_filter() -> None:
+    """Clear channel filter state. Intended for use in tests only."""
+    global _BLOCKED_CHANNEL_INDICES, _BLOCKED_CHANNEL_NAMES, _CHANNEL_FILTER_VALIDATED
+    _BLOCKED_CHANNEL_INDICES = None
+    _BLOCKED_CHANNEL_NAMES = None
+    _CHANNEL_FILTER_VALIDATED = False
+
+
 __all__ = [
     "capture_from_interface",
     "channel_mappings",
     "channel_name",
+    "is_channel_blocked",
     "_reset_channel_cache",
+    "_reset_channel_filter",
 ]

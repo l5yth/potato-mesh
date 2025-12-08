@@ -1262,6 +1262,28 @@ def store_packet_dict(packet: Mapping) -> None:
 
     decoded = packet.get("decoded") or {}
 
+    # Extract channel early for filtering
+    packet_channel = _first(decoded, "channel", default=None)
+    if packet_channel is None:
+        packet_channel = _first(packet, "channel", default=0)
+    try:
+        packet_channel = int(packet_channel)
+    except Exception:
+        packet_channel = 0
+
+    # Apply channel filter if configured
+    if channels.is_channel_blocked(packet_channel):
+        channel_display = channels.channel_name(packet_channel) or packet_channel
+        if config.DEBUG:
+            config._debug_log(
+                "Packet filtered by BLOCKED_CHANNELS",
+                context="handlers.store_packet_dict",
+                channel=packet_channel,
+                channel_name=channel_display,
+            )
+        _record_ignored_packet(packet, reason="filtered-channel")
+        return
+
     portnum_raw = _first(decoded, "portnum", default=None)
     portnum = str(portnum_raw).upper() if portnum_raw is not None else None
     portnum_int = _coerce_int(portnum_raw)
@@ -1406,13 +1428,8 @@ def store_packet_dict(packet: Mapping) -> None:
         _record_ignored_packet(packet, reason="no-message-payload")
         return
 
-    channel = _first(decoded, "channel", default=None)
-    if channel is None:
-        channel = _first(packet, "channel", default=0)
-    try:
-        channel = int(channel)
-    except Exception:
-        channel = 0
+    # Reuse packet_channel extracted at the start of store_packet_dict
+    channel = packet_channel
 
     pkt_id = _first(packet, "id", "packet_id", "packetId", default=None)
     if pkt_id is None:
@@ -1438,26 +1455,6 @@ def store_packet_dict(packet: Mapping) -> None:
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
 
     encrypted_flag = _is_encrypted_flag(encrypted)
-
-    to_id_normalized = str(to_id).strip() if to_id is not None else ""
-
-    if (
-        not is_reaction_packet
-        and channel == 0
-        and not encrypted_flag
-        and to_id_normalized
-        and to_id_normalized.lower() != "^all"
-    ):
-        if config.DEBUG:
-            config._debug_log(
-                "Skipped direct message on primary channel",
-                context="handlers.store_packet_dict",
-                from_id=_canonical_node_id(from_id) or from_id,
-                to_id=_canonical_node_id(to_id) or to_id,
-                channel=channel,
-            )
-        _record_ignored_packet(packet, reason="skipped-direct-message")
-        return
 
     message_payload = {
         "id": int(pkt_id),

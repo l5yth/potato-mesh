@@ -162,6 +162,18 @@ For convenience, the directory `./data` contains a Python ingestor. It connects 
 Meshtastic node via serial port or to a remote device that exposes the Meshtastic TCP
 or Bluetooth (BLE) interfaces to gather nodes and messages seen by the node.
 
+The ingestor can be configured with environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `POTATOMESH_INSTANCE` | _required_ | URL of the PotatoMesh web instance to send data to. |
+| `API_TOKEN` | _required_ | Shared secret that authorizes the ingestor to post data. |
+| `CONNECTION` | `/dev/ttyACM0` | Serial port, TCP address (`192.168.1.20:4403`), or Bluetooth address (`ED:4D:9E:95:CF:60`). |
+| `CHANNEL_INDEX` | `0` | LoRa channel index to select when connecting to the device. |
+| `BLOCKED_CHANNELS` | _unset_ | Comma-separated list of channel indices or names to block (e.g., `1,2` or `Private,LongFast`). When unset, all channels are processed. |
+| `DEBUG` | `0` | Set to `1` for verbose logging output. |
+| `ENERGY_SAVING` | `0` | Set to `1` to enable energy saving mode with periodic sleep cycles. |
+
 ```bash
 pacman -S python
 cd ./data
