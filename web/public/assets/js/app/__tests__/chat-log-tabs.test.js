@@ -168,6 +168,7 @@ test('buildChatTabModel includes telemetry, position, and neighbor events', () =
     telemetry: [{ node_id: nodeId, rx_time: NOW - 30 }],
     positions: [{ node_id: nodeId, rx_time: NOW - 20 }],
     neighbors: [{ node_id: nodeId, neighbor_id: neighborId, rx_time: NOW - 10 }],
+    traces: [{ id: 5_000, src: nodeId, hops: [neighborId], dest: '!charlie', rx_time: NOW - 5 }],
     messages: [],
     nowSeconds: NOW,
     windowSeconds: WINDOW
@@ -178,11 +179,35 @@ test('buildChatTabModel includes telemetry, position, and neighbor events', () =
     CHAT_LOG_ENTRY_TYPES.NODE_INFO,
     CHAT_LOG_ENTRY_TYPES.TELEMETRY,
     CHAT_LOG_ENTRY_TYPES.POSITION,
-    CHAT_LOG_ENTRY_TYPES.NEIGHBOR
+    CHAT_LOG_ENTRY_TYPES.NEIGHBOR,
+    CHAT_LOG_ENTRY_TYPES.TRACE
   ]);
   assert.equal(model.logEntries[0].nodeId, nodeId);
-  const lastEntry = model.logEntries[model.logEntries.length - 1];
-  assert.equal(lastEntry.neighborId, neighborId);
+  const neighborEntry = model.logEntries.find(entry => entry.type === CHAT_LOG_ENTRY_TYPES.NEIGHBOR);
+  assert.ok(neighborEntry);
+  assert.equal(neighborEntry.neighborId, neighborId);
+  const traceEntry = model.logEntries.find(entry => entry.type === CHAT_LOG_ENTRY_TYPES.TRACE);
+  assert.ok(traceEntry);
+  assert.deepEqual(traceEntry.traceLabels, [nodeId, neighborId, '!charlie']);
+});
+
+test('buildChatTabModel normalises numeric traceroute hops into canonical IDs', () => {
+  const source = 0xabcdef01;
+  const hops = ['0xABCDEF02', '!abcdef03', 123];
+  const dest = 0xabcdef04;
+  const model = buildChatTabModel({
+    nodes: [],
+    traces: [{ rx_time: NOW - 5, src: source, hops, dest }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const traceEntry = model.logEntries.find(entry => entry.type === CHAT_LOG_ENTRY_TYPES.TRACE);
+  assert.ok(traceEntry);
+  assert.equal(traceEntry.nodeId, '!abcdef01');
+  assert.deepEqual(
+    traceEntry.tracePath.map(hop => hop.id),
+    ['!abcdef01', '!abcdef02', '!abcdef03', '!0000007b', '!abcdef04']
+  );
 });
 
 test('buildChatTabModel merges dedicated encrypted log feed without altering channels', () => {

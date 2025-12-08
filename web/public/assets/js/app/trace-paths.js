@@ -22,8 +22,26 @@
  */
 function coerceFiniteNumber(value) {
   if (value == null) return null;
-  if (typeof value === 'string' && value.trim().length === 0) return null;
-  const num = typeof value === 'number' ? value : Number(value);
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    if (trimmed.startsWith('!')) {
+      const hex = trimmed.slice(1);
+      if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
+      const parsedHex = Number.parseInt(hex, 16);
+      return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
+    }
+    if (/^0[xX][0-9A-Fa-f]+$/.test(trimmed)) {
+      const parsedHex = Number.parseInt(trimmed, 16);
+      return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
 
@@ -65,6 +83,19 @@ function buildNodeIndex(nodes) {
 }
 
 /**
+ * Convert a numeric node reference into the canonical hex-prefixed identifier.
+ *
+ * @param {number} ref Numeric node identifier.
+ * @returns {string|null} Canonical identifier or ``null`` when invalid.
+ */
+function canonicalNodeIdFromNumeric(ref) {
+  if (!Number.isFinite(ref)) return null;
+  const unsigned = ref >>> 0;
+  const hex = unsigned.toString(16).padStart(8, '0');
+  return `!${hex}`;
+}
+
+/**
  * Locate a node by either string identifier or numeric reference.
  *
  * @param {Map<string, Object>} byId Lookup keyed by canonical identifier.
@@ -80,6 +111,12 @@ function findNode(byId, byNum, ref) {
   }
   if (numeric != null) {
     if (byNum.has(numeric)) return byNum.get(numeric) || null;
+    const canonicalId = canonicalNodeIdFromNumeric(numeric);
+    if (canonicalId) {
+      if (byId.has(canonicalId)) return byId.get(canonicalId) || null;
+      const canonicalUpper = canonicalId.toUpperCase();
+      if (byId.has(canonicalUpper)) return byId.get(canonicalUpper) || null;
+    }
     const asString = String(numeric);
     if (byId.has(asString)) return byId.get(asString) || null;
   }
@@ -163,6 +200,8 @@ export function buildTraceSegments(traces, nodes, { limitDistance = false, maxDi
     const path = extractTracePath(trace);
     if (path.length < 2) continue;
     const rxTime = coerceFiniteNumber(trace.rx_time ?? trace.rxTime);
+    const nodesWithCoords = [];
+    const segmentsForTrace = [];
     let previous = null;
 
     for (const ref of path) {
@@ -172,8 +211,9 @@ export function buildTraceSegments(traces, nodes, { limitDistance = false, maxDi
         previous = null;
         continue;
       }
+      nodesWithCoords.push(node);
       if (previous) {
-        segments.push({
+        segmentsForTrace.push({
           latlngs: [previous.coords, coords],
           color: colorResolver(previous.node),
           traceId: trace.id ?? trace.packet_id ?? trace.trace_id,
@@ -181,6 +221,14 @@ export function buildTraceSegments(traces, nodes, { limitDistance = false, maxDi
         });
       }
       previous = { node, coords };
+    }
+
+    if (segmentsForTrace.length) {
+      const pathNodes = nodesWithCoords.slice();
+      segmentsForTrace.forEach(segment => {
+        segment.pathNodes = pathNodes;
+      });
+      segments.push(...segmentsForTrace);
     }
   }
 
@@ -193,4 +241,5 @@ export const __testUtils = {
   findNode,
   resolveNodeCoordinates,
   extractTracePath,
+  canonicalNodeIdFromNumeric,
 };
