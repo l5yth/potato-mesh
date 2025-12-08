@@ -79,6 +79,28 @@ module PotatoMesh
       value.to_s.strip != "0"
     end
 
+    # Determine whether ingestor management features are enabled.
+    #
+    # When enabled, the instance can register and manage external ingestors
+    # with individual API keys instead of relying solely on the shared
+    # API_TOKEN.
+    #
+    # @return [Boolean] true when INGESTOR_MANAGEMENT=1 in the environment.
+    def ingestor_management_enabled?
+      value = ENV.fetch("INGESTOR_MANAGEMENT", "0")
+      value.to_s.strip == "1"
+    end
+
+    # Retrieve the admin token used to manage ingestors.
+    #
+    # This token is separate from API_TOKEN and grants access to ingestor
+    # management endpoints when ingestor management is enabled.
+    #
+    # @return [String, nil] admin token when provided, otherwise nil.
+    def admin_token
+      fetch_string("ADMIN_TOKEN", nil)
+    end
+
     # Resolve the absolute path to the web application root directory.
     #
     # @return [String] absolute filesystem path of the web folder.

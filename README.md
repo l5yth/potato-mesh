@@ -85,6 +85,8 @@ The web app can be configured with environment variables (defaults shown):
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
+| `INGESTOR_MANAGEMENT` | `0` | Set to `1` to enable ingestor management features for community contributors. |
+| `ADMIN_TOKEN` | _unset_ | Token required to access ingestor management admin endpoints. |
 
 The application derives SEO-friendly document titles, descriptions, and social
 preview tags from these existing configuration values and reuses the bundled
@@ -143,6 +145,53 @@ The web app contains an API:
 * POST `/api/neighbors` - appends neighbor tuples provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
+
+### Ingestor Management
+
+When `INGESTOR_MANAGEMENT=1` is enabled, instance administrators can register
+external ingestors with individual API keys instead of sharing the main
+`API_TOKEN`. This allows community members to contribute data from their own
+Meshtastic nodes while maintaining control over access.
+
+Each ingestor registration tracks:
+
+* **API Key**: Unique authentication token for the ingestor
+* **Node ID**: Associated Meshtastic node identifier
+* **Version**: Ingestor software version (reported automatically)
+* **Last Request**: Timestamp of the most recent data submission
+* **Contact Info**: Email and/or Matrix username for the contributor
+
+#### Admin API Endpoints
+
+All admin endpoints require `ADMIN_TOKEN` in the `Authorization` header:
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/admin/ingestors` | List all registered ingestors |
+| `GET` | `/admin/ingestors/:id` | Get details for a specific ingestor |
+| `POST` | `/admin/ingestors` | Create a new ingestor registration |
+| `PATCH` | `/admin/ingestors/:id` | Update ingestor details |
+| `POST` | `/admin/ingestors/:id/regenerate-key` | Generate a new API key |
+| `POST` | `/admin/ingestors/:id/deactivate` | Disable an ingestor |
+| `POST` | `/admin/ingestors/:id/reactivate` | Re-enable an ingestor |
+| `DELETE` | `/admin/ingestors/:id` | Permanently remove an ingestor |
+
+#### Creating an Ingestor
+
+```bash
+curl -X POST https://your-instance.example/admin/ingestors \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Community Node Berlin",
+    "node_id": "!abc12345",
+    "contact_email": "contributor@example.com",
+    "contact_matrix": "@user:matrix.org"
+  }'
+```
+
+The response includes the generated API key. **Store it securely** - it will
+only be shown once (regeneration is possible but invalidates the previous key).
 
 ### Monitoring
 

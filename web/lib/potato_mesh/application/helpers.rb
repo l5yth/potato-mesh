@@ -421,6 +421,31 @@ module PotatoMesh
       def federation_announcements_active?
         federation_enabled? && !test_environment?
       end
+
+      # Validate the admin token from the Authorization header.
+      #
+      # @return [void]
+      def require_admin_token!
+        admin_token = PotatoMesh::Config.admin_token
+        provided = request.env["HTTP_AUTHORIZATION"].to_s.sub(/^Bearer\s+/i, "")
+
+        unless admin_token && !admin_token.empty? && secure_token_match?(admin_token, provided)
+          halt 403, { error: "Forbidden" }.to_json
+        end
+      end
+
+      # Mask an API key for display, showing only the first and last segments.
+      #
+      # @param api_key [String, nil] the full API key.
+      # @return [String, nil] masked key or nil.
+      def mask_api_key(api_key)
+        return nil if api_key.nil? || api_key.empty?
+
+        parts = api_key.split("-")
+        return "****" if parts.length < 2
+
+        "#{parts.first}-****-****-****-#{parts.last}"
+      end
     end
   end
 end
