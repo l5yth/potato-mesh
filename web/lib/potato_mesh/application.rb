@@ -52,6 +52,7 @@ require_relative "application/queries"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/instances"
+require_relative "application/cleanup"
 require_relative "application/routes/api"
 require_relative "application/routes/ingest"
 require_relative "application/routes/root"
@@ -64,6 +65,7 @@ module PotatoMesh
     extend App::Identity
     extend App::Federation
     extend App::Instances
+    extend App::Cleanup
     extend App::Prometheus
     extend App::Queries
     extend App::DataProcessing
@@ -75,6 +77,7 @@ module PotatoMesh
     include App::Identity
     include App::Federation
     include App::Instances
+    include App::Cleanup
     include App::Prometheus
     include App::Queries
     include App::DataProcessing
@@ -134,6 +137,7 @@ module PotatoMesh
       set :views, File.expand_path("../../views", __dir__)
       set :federation_thread, nil
       set :federation_worker_pool, nil
+      set :stale_node_cleanup_thread, nil
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
 
@@ -179,6 +183,16 @@ module PotatoMesh
           reason: "configuration",
         )
       end
+
+      if PotatoMesh::Config.stale_node_cleanup_enabled?
+        start_stale_node_cleanup_thread!
+      else
+        debug_log(
+          "Stale node cleanup disabled",
+          context: "cleanup.nodes",
+          reason: "configuration",
+        )
+      end
     end
   end
 end
@@ -198,6 +212,7 @@ SELF_INSTANCE_ID = PotatoMesh::Application::SELF_INSTANCE_ID unless defined?(SEL
   PotatoMesh::App::Identity,
   PotatoMesh::App::Federation,
   PotatoMesh::App::Instances,
+  PotatoMesh::App::Cleanup,
   PotatoMesh::App::Prometheus,
   PotatoMesh::App::Queries,
   PotatoMesh::App::DataProcessing,
