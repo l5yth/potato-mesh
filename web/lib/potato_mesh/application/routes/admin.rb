@@ -98,7 +98,7 @@ module PotatoMesh
                 contact_matrix: contact_matrix,
               )
 
-              info_log(
+              warn_log(
                 "Created new ingestor",
                 context: "admin.ingestors.create",
                 ingestor_id: ingestor["id"],
@@ -145,7 +145,7 @@ module PotatoMesh
               success = update_ingestor(db, id, **update_params)
               halt 500, { error: "update failed" }.to_json unless success
 
-              info_log(
+              warn_log(
                 "Updated ingestor",
                 context: "admin.ingestors.update",
                 ingestor_id: id,
@@ -202,7 +202,7 @@ module PotatoMesh
               success = deactivate_ingestor(db, id)
               halt 500, { error: "deactivation failed" }.to_json unless success
 
-              info_log(
+              warn_log(
                 "Deactivated ingestor",
                 context: "admin.ingestors.deactivate",
                 ingestor_id: id,
@@ -229,7 +229,7 @@ module PotatoMesh
               success = reactivate_ingestor(db, id)
               halt 500, { error: "reactivation failed" }.to_json unless success
 
-              info_log(
+              warn_log(
                 "Reactivated ingestor",
                 context: "admin.ingestors.reactivate",
                 ingestor_id: id,

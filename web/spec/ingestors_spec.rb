@@ -256,8 +256,13 @@ RSpec.describe PotatoMesh::App::Ingestors do
     it "returns ingestors ordered by created_at DESC" do
       db = open_db
       begin
+        # Create first ingestor with an older timestamp
         first = harness_class.create_ingestor(db, name: "First")
-        sleep 0.01
+        # Manually update created_at to ensure ordering (since integer seconds)
+        db.execute(
+          "UPDATE ingestors SET created_at = ? WHERE id = ?",
+          [Time.now.to_i - 10, first["id"]],
+        )
         second = harness_class.create_ingestor(db, name: "Second")
 
         list = harness_class.list_ingestors(db)
