@@ -19,8 +19,13 @@ import assert from 'node:assert/strict';
 
 import { buildTraceSegments, __testUtils } from '../trace-paths.js';
 
-const { coerceFiniteNumber, findNode, resolveNodeCoordinates } = __testUtils;
-const { buildNodeIndex } = __testUtils;
+const {
+  coerceFiniteNumber,
+  findNode,
+  resolveNodeCoordinates,
+  canonicalNodeIdFromNumeric,
+  buildNodeIndex
+} = __testUtils;
 
 test('buildTraceSegments connects source, hops, and destination when coordinates exist', () => {
   const traces = [
@@ -43,6 +48,29 @@ test('buildTraceSegments connects source, hops, and destination when coordinates
   assert.equal(segments[0].color, 'color:ROUTER');
   assert.equal(segments[1].color, 'color:CLIENT');
   assert.equal(segments[0].rxTime, 1700);
+  assert.deepEqual(
+    segments[0].pathNodes.map(node => node.node_id),
+    ['2658361180', '19088743', '4242424242']
+  );
+});
+
+test('buildTraceSegments links traces to canonical node IDs when numeric references are provided', () => {
+  const traces = [
+    { id: 9_010, src: 0xbead_f00d, hops: [0xcafe_babe], dest: 0xfeed_c0de, rx_time: 1900 },
+  ];
+  const nodes = [
+    { node_id: '!beadf00d', latitude: 0, longitude: 0, role: 'ROUTER' },
+    { node_id: '!cafebabe', latitude: 1, longitude: 1, role: 'CLIENT' },
+    { node_id: '!feedc0de', latitude: 2, longitude: 2, role: 'CLIENT' },
+  ];
+
+  const segments = buildTraceSegments(traces, nodes, { colorForNode: () => '#abcdef' });
+
+  assert.equal(segments.length, 2);
+  assert.deepEqual(segments[0].latlngs, [[0, 0], [1, 1]]);
+  assert.deepEqual(segments[1].latlngs, [[1, 1], [2, 2]]);
+  assert.equal(segments[0].color, '#abcdef');
+  assert.equal(segments[1].color, '#abcdef');
 });
 
 test('buildTraceSegments drops paths through hops without locations', () => {
@@ -98,12 +126,23 @@ test('helper utilities coerce values and locate nodes', () => {
   assert.equal(coerceFiniteNumber(null), null);
   assert.equal(coerceFiniteNumber('   '), null);
   assert.equal(coerceFiniteNumber('7'), 7);
+  assert.equal(coerceFiniteNumber('!beadf00d'), 0xbeadf00d);
+  assert.equal(coerceFiniteNumber('0x10'), 16);
 
-  const byId = new Map([['!id', { node_id: '!id', latitude: 1, longitude: 2 }]]);
-  const byNum = new Map([[99, { node_id: '!other', latitude: 0, longitude: 0 }]]);
+  const byId = new Map([
+    ['!id', { node_id: '!id', latitude: 1, longitude: 2 }],
+    ['!beadf00d', { node_id: '!beadf00d', latitude: 3, longitude: 4 }]
+  ]);
+  const byNum = new Map([
+    [99, { node_id: '!other', latitude: 0, longitude: 0 }],
+    [0xbeadf00d, { node_id: '!beadf00d', latitude: 3, longitude: 4 }]
+  ]);
   assert.equal(findNode(byId, byNum, '!id').node_id, '!id');
   assert.equal(findNode(byId, byNum, 99).node_id, '!other');
+  assert.equal(findNode(byId, new Map(), 0xbeadf00d).node_id, '!beadf00d');
   assert.equal(findNode(byId, byNum, 100), null);
+
+  assert.equal(canonicalNodeIdFromNumeric(0xbeadf00d), '!beadf00d');
 
   const coords = resolveNodeCoordinates({ latitude: 5, longitude: 6, distance_km: 10 }, { limitDistance: true, maxDistanceKm: 15 });
   assert.deepEqual(coords, [5, 6]);
