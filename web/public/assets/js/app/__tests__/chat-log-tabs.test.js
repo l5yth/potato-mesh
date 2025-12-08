@@ -191,6 +191,25 @@ test('buildChatTabModel includes telemetry, position, and neighbor events', () =
   assert.deepEqual(traceEntry.traceLabels, [nodeId, neighborId, '!charlie']);
 });
 
+test('buildChatTabModel normalises numeric traceroute hops into canonical IDs', () => {
+  const source = 0xabcdef01;
+  const hops = ['0xABCDEF02', '!abcdef03', 123];
+  const dest = 0xabcdef04;
+  const model = buildChatTabModel({
+    nodes: [],
+    traces: [{ rx_time: NOW - 5, src: source, hops, dest }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const traceEntry = model.logEntries.find(entry => entry.type === CHAT_LOG_ENTRY_TYPES.TRACE);
+  assert.ok(traceEntry);
+  assert.equal(traceEntry.nodeId, '!abcdef01');
+  assert.deepEqual(
+    traceEntry.tracePath.map(hop => hop.id),
+    ['!abcdef01', '!abcdef02', '!abcdef03', '!0000007b', '!abcdef04']
+  );
+});
+
 test('buildChatTabModel merges dedicated encrypted log feed without altering channels', () => {
   const regularMessages = fixtureMessages().filter(message => !message.encrypted);
   const encryptedOnly = [

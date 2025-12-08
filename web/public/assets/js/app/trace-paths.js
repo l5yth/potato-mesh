@@ -29,7 +29,9 @@ function coerceFiniteNumber(value) {
     const trimmed = value.trim();
     if (trimmed.length === 0) return null;
     if (trimmed.startsWith('!')) {
-      const parsedHex = Number.parseInt(trimmed.slice(1), 16);
+      const hex = trimmed.slice(1);
+      if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
+      const parsedHex = Number.parseInt(hex, 16);
       return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
     }
     if (/^0[xX][0-9A-Fa-f]+$/.test(trimmed)) {
@@ -198,6 +200,8 @@ export function buildTraceSegments(traces, nodes, { limitDistance = false, maxDi
     const path = extractTracePath(trace);
     if (path.length < 2) continue;
     const rxTime = coerceFiniteNumber(trace.rx_time ?? trace.rxTime);
+    const nodesWithCoords = [];
+    const segmentsForTrace = [];
     let previous = null;
 
     for (const ref of path) {
@@ -207,8 +211,9 @@ export function buildTraceSegments(traces, nodes, { limitDistance = false, maxDi
         previous = null;
         continue;
       }
+      nodesWithCoords.push(node);
       if (previous) {
-        segments.push({
+        segmentsForTrace.push({
           latlngs: [previous.coords, coords],
           color: colorResolver(previous.node),
           traceId: trace.id ?? trace.packet_id ?? trace.trace_id,
@@ -216,6 +221,14 @@ export function buildTraceSegments(traces, nodes, { limitDistance = false, maxDi
         });
       }
       previous = { node, coords };
+    }
+
+    if (segmentsForTrace.length) {
+      const pathNodes = nodesWithCoords.slice();
+      segmentsForTrace.forEach(segment => {
+        segment.pathNodes = pathNodes;
+      });
+      segments.push(...segmentsForTrace);
     }
   }
 

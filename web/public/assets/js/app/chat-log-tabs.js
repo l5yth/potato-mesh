@@ -168,7 +168,14 @@ export function buildChatTabModel({
     if (path.length < 2) continue;
     const firstHop = path[0] || {};
     const traceLabels = path
-      .map(hop => hop?.id ?? (Number.isFinite(hop?.num) ? String(hop.num) : (hop?.raw != null ? String(hop.raw) : null)))
+      .map(hop => {
+        if (!hop || typeof hop !== 'object') return null;
+        const candidates = [hop.id, hop.raw];
+        if (Number.isFinite(hop.num)) {
+          candidates.push(String(hop.num));
+        }
+        return candidates.find(val => val != null && String(val).trim().length > 0) ?? null;
+      })
       .filter(value => value != null && value !== '');
     logEntries.push({
       ts,
@@ -370,15 +377,59 @@ function pickFirstPropertyValue(source, keys) {
  * @param {*} value Arbitrary payload candidate.
  * @returns {?string} Canonical node identifier.
  */
+function coerceFiniteNumber(value) {
+  if (value == null) return null;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('!')) {
+      const hex = trimmed.slice(1);
+      if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
+      const parsedHex = Number.parseInt(hex, 16);
+      return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
+    }
+    if (/^0[xX][0-9A-Fa-f]+$/.test(trimmed)) {
+      const parsedHex = Number.parseInt(trimmed, 16);
+      return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function canonicalNodeIdFromNumeric(ref) {
+  if (!Number.isFinite(ref)) return null;
+  const unsigned = ref >>> 0;
+  const hex = unsigned.toString(16).padStart(8, '0');
+  return `!${hex}`;
+}
+
 function normaliseNodeId(value) {
   if (value == null) return null;
-  if (typeof value === 'string' || typeof value === 'number') {
-    const rawString = String(value).trim();
-    return rawString.length ? rawString : null;
+  if (typeof value === 'number') {
+    return canonicalNodeIdFromNumeric(value);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const canonicalFromNumeric = canonicalNodeIdFromNumeric(coerceFiniteNumber(trimmed));
+    return canonicalFromNumeric ?? trimmed;
   }
   if (typeof value !== 'object') return null;
-  const raw = value.node_id ?? value.nodeId ?? null;
-  return typeof raw === 'string' && raw.trim().length ? raw.trim() : null;
+  const rawId = value.node_id ?? value.nodeId ?? null;
+  if (rawId != null) {
+    const canonical = normaliseNodeId(rawId);
+    if (canonical) return canonical;
+  }
+  const numericRef = value.node_num ?? value.nodeNum ?? value.num;
+  const numericId = canonicalNodeIdFromNumeric(coerceFiniteNumber(numericRef));
+  if (numericId) return numericId;
+  return null;
 }
 
 /**
@@ -426,14 +477,17 @@ function buildTracePath(trace) {
  * @returns {?number} Canonical numeric identifier.
  */
 function normaliseNodeNum(value) {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value.node_num ?? value.nodeNum ?? value.num;
-  if (raw == null || raw === '') return null;
-  if (typeof raw === 'number') {
-    return Number.isFinite(raw) ? raw : null;
+  if (Number.isFinite(value)) {
+    return Math.trunc(value);
   }
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : null;
+  const fromObject = value && typeof value === 'object'
+    ? coerceFiniteNumber(value.node_num ?? value.nodeNum ?? value.num)
+    : null;
+  if (fromObject != null) {
+    return Math.trunc(fromObject);
+  }
+  const parsed = coerceFiniteNumber(value);
+  return parsed != null ? Math.trunc(parsed) : null;
 }
 
 /**

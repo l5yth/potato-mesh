@@ -190,6 +190,7 @@ export function initializeApp(config) {
   });
   const NODE_LIMIT = 1000;
   const TRACE_LIMIT = 200;
+  const TRACE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
   const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
@@ -1810,6 +1811,37 @@ export function initializeApp(config) {
   }
 
   /**
+   * Parse a node identifier or numeric reference into a finite number.
+   *
+   * @param {*} ref Identifier or numeric reference.
+   * @returns {number|null} Parsed number or ``null``.
+   */
+  function parseNodeNumericRef(ref) {
+    if (ref == null) return null;
+    if (typeof ref === 'number') {
+      return Number.isFinite(ref) ? ref : null;
+    }
+    if (typeof ref === 'string') {
+      const trimmed = ref.trim();
+      if (!trimmed) return null;
+      if (trimmed.startsWith('!')) {
+        const hex = trimmed.slice(1);
+        if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
+        const parsedHex = Number.parseInt(hex, 16);
+        return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
+      }
+      if (/^0[xX][0-9A-Fa-f]+$/.test(trimmed)) {
+        const parsedHex = Number.parseInt(trimmed, 16);
+        return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
+      }
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const parsed = Number(ref);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  /**
    * Populate the ``nodesById`` index for quick lookups.
    *
    * @param {Array<Object>} nodes Collection of node payloads.
@@ -1826,9 +1858,13 @@ export function initializeApp(config) {
         : (typeof node.nodeId === 'string' ? node.nodeId : null);
       if (nodeIdRaw) {
         nodesById.set(nodeIdRaw.trim(), node);
+        const numericFromId = parseNodeNumericRef(nodeIdRaw);
+        if (numericFromId != null && !nodesByNum.has(numericFromId)) {
+          nodesByNum.set(numericFromId, node);
+        }
       }
       const nodeNumRaw = node.num ?? node.node_num ?? node.nodeNum;
-      const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
+      const nodeNum = parseNodeNumericRef(nodeNumRaw);
       if (Number.isFinite(nodeNum)) {
         nodesByNum.set(nodeNum, node);
       }
@@ -2504,14 +2540,10 @@ export function initializeApp(config) {
     const labels = [];
     for (const hop of tracePath) {
       if (!hop || typeof hop !== 'object') continue;
-      let node = null;
-      if (hop.id && nodesById instanceof Map && nodesById.has(hop.id)) {
-        node = nodesById.get(hop.id);
-      } else if (Number.isFinite(hop.num) && nodesByNum instanceof Map && nodesByNum.has(hop.num)) {
-        node = nodesByNum.get(hop.num);
-      }
+      const node = resolveNodeForHop(hop);
       const fallbackId = hop.id ?? (Number.isFinite(hop.num) ? String(hop.num) : (hop.raw != null ? String(hop.raw) : ''));
-      const label = node ? (getNodeDisplayNameForOverlay(node) || fallbackId) : fallbackId;
+      const shortName = node ? normalizeNodeNameValue(node.short_name ?? node.shortName) : null;
+      const label = shortName || (node ? (getNodeDisplayNameForOverlay(node) || fallbackId) : fallbackId);
       if (label) {
         labels.push(String(label));
       }
@@ -2523,6 +2555,8 @@ export function initializeApp(config) {
     if (!entry || !Array.isArray(entry.tracePath) || entry.tracePath.length < 2) {
       return null;
     }
+    const sourceHop = entry.tracePath[0] || null;
+    const sourceNode = resolveNodeForHop(sourceHop);
     const labels = formatTracePathLabels(entry.tracePath);
     const labelText = labels.length ? labels.join(', ') : 'Traceroute';
     const labelSuffix = `: ${escapeHtml(labelText)}`;
@@ -2531,10 +2565,100 @@ export function initializeApp(config) {
       shortName: context.shortName,
       longName: context.longName || context.nodeId || labels[0] || 'Traceroute',
       role: context.role,
-      metadataSource: context.metadataSource,
-      nodeData: context.nodeData,
+      metadataSource: sourceNode || context.metadataSource,
+      nodeData: sourceNode || context.nodeData,
       messageHtml: `${renderEmojiHtml('👣')} ${renderAnnouncementCopy('Caught trace', labelSuffix)}`
     });
+  }
+
+  /**
+   * Build tooltip HTML showing styled short-name badges for a trace path.
+   *
+   * @param {Array<Object>} pathNodes Ordered node payloads along the trace.
+   * @returns {string} HTML fragment or ``''`` when unavailable.
+   */
+  function buildTraceTooltipHtml(pathNodes) {
+    if (!Array.isArray(pathNodes) || pathNodes.length < 2) {
+      return '';
+    }
+    const parts = pathNodes
+      .map(node => {
+        if (!node || typeof node !== 'object') {
+          return null;
+        }
+        const short = normalizeNodeNameValue(node.short_name ?? node.shortName) || (typeof node.node_id === 'string' ? node.node_id : '');
+        const long = normalizeNodeNameValue(node.long_name ?? node.longName) || '';
+        return renderShortHtml(short, node.role, long, node);
+      })
+      .filter(Boolean);
+    if (!parts.length) return '';
+    const arrow = '<span class="trace-tooltip__arrow" aria-hidden="true">→</span>';
+    return `<div class="trace-tooltip__content">${parts.join(arrow)}</div>`;
+  }
+
+  /**
+   * Build tooltip HTML for a neighbor segment showing styled short-name badges.
+   *
+   * @param {{sourceNode?: Object, targetNode?: Object, sourceShortName?: string, targetShortName?: string, sourceRole?: string, targetRole?: string}} segment Neighbor segment descriptor.
+   * @returns {string} HTML fragment or ``''`` when unavailable.
+   */
+  function buildNeighborTooltipHtml(segment) {
+    if (!segment) return '';
+    const sourceNode = segment.sourceNode || null;
+    const targetNode = segment.targetNode || null;
+    const sourceShort = normalizeNodeNameValue(
+      segment.sourceShortName ||
+      (sourceNode ? sourceNode.short_name ?? sourceNode.shortName : null) ||
+      (sourceNode && typeof sourceNode.node_id === 'string' ? sourceNode.node_id : '')
+    );
+    const targetShort = normalizeNodeNameValue(
+      segment.targetShortName ||
+      (targetNode ? targetNode.short_name ?? targetNode.shortName : null) ||
+      (targetNode && typeof targetNode.node_id === 'string' ? targetNode.node_id : '')
+    );
+    if (!sourceShort || !targetShort) return '';
+    const sourceLong = normalizeNodeNameValue(sourceNode?.long_name ?? sourceNode?.longName) || '';
+    const targetLong = normalizeNodeNameValue(targetNode?.long_name ?? targetNode?.longName) || '';
+    const sourceHtml = renderShortHtml(sourceShort, segment.sourceRole, sourceLong, sourceNode || {});
+    const targetHtml = renderShortHtml(targetShort, segment.targetRole, targetLong, targetNode || {});
+    const arrow = '<span class="trace-tooltip__arrow" aria-hidden="true">→</span>';
+    return `<div class="trace-tooltip__content">${sourceHtml}${arrow}${targetHtml}</div>`;
+  }
+
+  /**
+   * Resolve a node reference for a trace hop using cached node indices.
+   *
+   * @param {{id?: string, num?: number}|null} hop Trace hop descriptor.
+   * @returns {?Object} Node payload when available.
+   */
+  function resolveNodeForHop(hop) {
+    if (!hop || typeof hop !== 'object') {
+      return null;
+    }
+    const id = typeof hop.id === 'string' ? hop.id.trim() : null;
+    const idCandidates = [];
+    if (id) {
+      idCandidates.push(id);
+      idCandidates.push(id.toUpperCase());
+      idCandidates.push(id.toLowerCase());
+    }
+    for (const candidate of idCandidates) {
+      if (candidate && nodesById instanceof Map && nodesById.has(candidate)) {
+        return nodesById.get(candidate);
+      }
+    }
+    const numericCandidates = [];
+    if (Number.isFinite(hop.num)) numericCandidates.push(hop.num);
+    const parsedFromId = parseNodeNumericRef(id);
+    if (parsedFromId != null) numericCandidates.push(parsedFromId);
+    const parsedFromNum = parseNodeNumericRef(hop.num);
+    if (parsedFromNum != null) numericCandidates.push(parsedFromNum);
+    for (const numeric of numericCandidates) {
+      if (Number.isFinite(numeric) && nodesByNum instanceof Map && nodesByNum.has(numeric)) {
+        return nodesByNum.get(numeric);
+      }
+    }
+    return null;
   }
 
   /**
@@ -3377,7 +3501,8 @@ export function initializeApp(config) {
     const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
     const r = await fetch(`/api/traces?limit=${effectiveLimit}`, { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    const traces = await r.json();
+    return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
   }
 
   /**
@@ -3435,6 +3560,28 @@ export function initializeApp(config) {
       }
     }
     return null;
+  }
+
+  /**
+   * Filter trace entries to discard packets older than the configured window.
+   *
+   * @param {Array<Object>} traces Trace payloads.
+   * @param {number} [maxAgeSeconds=TRACE_MAX_AGE_SECONDS] Maximum allowed age in seconds.
+   * @returns {Array<Object>} Recent trace entries.
+   */
+  function filterRecentTraces(traces, maxAgeSeconds = TRACE_MAX_AGE_SECONDS) {
+    if (!Array.isArray(traces)) {
+      return [];
+    }
+    if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds <= 0) {
+      return [...traces];
+    }
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const cutoff = nowSeconds - maxAgeSeconds;
+    return traces.filter(trace => {
+      const rxTime = resolveTimestampSeconds(trace?.rx_time ?? trace?.rxTime, trace?.rx_iso ?? trace?.rxIso);
+      return rxTime != null && rxTime >= cutoff;
+    });
   }
 
   /**
@@ -3821,6 +3968,21 @@ export function initializeApp(config) {
             opacity: 0.42,
             className: 'neighbor-connection-line'
           }).addTo(neighborLinesLayer);
+          if (polyline && typeof polyline.bindTooltip === 'function') {
+            const tooltipHtml = buildNeighborTooltipHtml({
+              ...segment,
+              sourceNode: nodesById.get(segment.sourceId),
+              targetNode: nodesById.get(segment.targetId)
+            });
+            if (tooltipHtml) {
+              polyline.bindTooltip(tooltipHtml, {
+                direction: 'center',
+                opacity: 0.92,
+                sticky: true,
+                className: 'trace-tooltip'
+              });
+            }
+          }
           if (polyline && typeof polyline.on === 'function') {
             polyline.on('click', event => {
               if (event && event.originalEvent) {
@@ -3838,6 +4000,13 @@ export function initializeApp(config) {
                   ? event.originalEvent.target
                   : null;
               const anchorEl = polyline.getElement() || clickTarget;
+              if (polyline && typeof polyline.isTooltipOpen === 'function' && typeof polyline.openTooltip === 'function') {
+                if (polyline.isTooltipOpen()) {
+                  polyline.closeTooltip();
+                } else {
+                  polyline.openTooltip();
+                }
+              }
               if (!anchorEl) return;
               if (overlayStack.isOpen(anchorEl)) {
                 overlayStack.close(anchorEl);
@@ -3858,13 +4027,43 @@ export function initializeApp(config) {
           return rxA - rxB;
         })
         .forEach(segment => {
-          L.polyline(segment.latlngs, {
+          const polyline = L.polyline(segment.latlngs, {
             color: segment.color,
             weight: 2,
             opacity: 0.42,
             dashArray: '6 6',
             className: 'neighbor-connection-line trace-connection-line'
           }).addTo(traceLinesLayer);
+          if (polyline && typeof polyline.bindTooltip === 'function') {
+            const tooltipHtml = buildTraceTooltipHtml(segment.pathNodes);
+            if (tooltipHtml) {
+              polyline.bindTooltip(tooltipHtml, {
+                direction: 'center',
+                opacity: 0.92,
+                sticky: true,
+                className: 'trace-tooltip'
+              });
+            }
+          }
+          if (polyline && typeof polyline.on === 'function') {
+            polyline.on('click', event => {
+              if (event && event.originalEvent) {
+                if (typeof event.originalEvent.preventDefault === 'function') {
+                  event.originalEvent.preventDefault();
+                }
+                if (typeof event.originalEvent.stopPropagation === 'function') {
+                  event.originalEvent.stopPropagation();
+                }
+              }
+              if (polyline && typeof polyline.isTooltipOpen === 'function' && typeof polyline.openTooltip === 'function') {
+                if (polyline.isTooltipOpen()) {
+                  polyline.closeTooltip();
+                } else {
+                  polyline.openTooltip();
+                }
+              }
+            });
+          }
         });
     }
 

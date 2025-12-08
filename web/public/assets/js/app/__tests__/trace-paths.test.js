@@ -48,6 +48,10 @@ test('buildTraceSegments connects source, hops, and destination when coordinates
   assert.equal(segments[0].color, 'color:ROUTER');
   assert.equal(segments[1].color, 'color:CLIENT');
   assert.equal(segments[0].rxTime, 1700);
+  assert.deepEqual(
+    segments[0].pathNodes.map(node => node.node_id),
+    ['2658361180', '19088743', '4242424242']
+  );
 });
 
 test('buildTraceSegments links traces to canonical node IDs when numeric references are provided', () => {
