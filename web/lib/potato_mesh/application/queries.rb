@@ -479,7 +479,8 @@ module PotatoMesh
           r["relative_humidity"] = coerce_float(r["relative_humidity"])
           r["barometric_pressure"] = coerce_float(r["barometric_pressure"])
           r["gas_resistance"] = coerce_float(r["gas_resistance"])
-          r["current"] = coerce_float(r["current"])
+          current_ma = coerce_float(r["current"])
+          r["current"] = current_ma.nil? ? nil : current_ma / 1000.0
           r["iaq"] = coerce_integer(r["iaq"])
           r["distance"] = coerce_float(r["distance"])
           r["lux"] = coerce_float(r["lux"])
