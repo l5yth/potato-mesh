@@ -584,6 +584,10 @@ module PotatoMesh
         db.results_as_hash = true
         params = []
         where_clauses = []
+        now = Time.now.to_i
+        min_rx_time = now - PotatoMesh::Config.week_seconds
+        where_clauses << "COALESCE(rx_time, 0) >= ?"
+        params << min_rx_time
 
         if node_ref
           tokens = node_reference_tokens(node_ref)
