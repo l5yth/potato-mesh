@@ -4434,7 +4434,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(first_entry["telemetry_time_iso"]).to eq(Time.at(latest["telemetry_time"]).utc.iso8601)
       expect(first_entry).not_to have_key("device_metrics")
       expect_same_value(first_entry["battery_level"], telemetry_metric(latest, "battery_level"))
-      expect_same_value(first_entry["current"], telemetry_metric(latest, "current"))
+      expected_current = telemetry_metric(latest, "current")
+      expect_same_value(first_entry["current"], expected_current.nil? ? nil : expected_current / 1000.0)
       expect_same_value(first_entry["distance"], telemetry_metric(latest, "distance"))
       expect_same_value(first_entry["lux"], telemetry_metric(latest, "lux"))
       expect_same_value(first_entry["wind_direction"], telemetry_metric(latest, "wind_direction"))
@@ -4576,6 +4577,35 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(a_bucket["aggregates"]).to have_key("battery_level")
       expect(a_bucket["aggregates"]["battery_level"]).to include("avg")
       expect(a_bucket).not_to have_key("device_metrics")
+
+      buckets_by_start = {}
+      buckets.each do |bucket|
+        start_time = bucket["bucket_start"]
+        buckets_by_start[start_time] = bucket if start_time
+      end
+      bucket_seconds = 300
+      current_by_bucket = Hash.new { |hash, key| hash[key] = [] }
+      telemetry_fixture.each do |entry|
+        timestamp = entry["rx_time"] || entry["telemetry_time"]
+        next unless timestamp
+
+        bucket_start = (timestamp / bucket_seconds) * bucket_seconds
+        current_value = telemetry_metric(entry, "current")
+        next if current_value.nil?
+
+        current_by_bucket[bucket_start] << current_value
+      end
+
+      current_by_bucket.each do |bucket_start, values|
+        bucket = buckets_by_start[bucket_start]
+        next unless bucket
+        aggregates = bucket.fetch("aggregates", {})
+        metrics = aggregates["current"]
+        expect(metrics).not_to be_nil
+        expect_same_value(metrics["avg"], values.sum / values.length / 1000.0)
+        expect_same_value(metrics["min"], values.min / 1000.0)
+        expect_same_value(metrics["max"], values.max / 1000.0)
+      end
     end
 
     it "applies default window and bucket sizes when parameters are omitted" do
