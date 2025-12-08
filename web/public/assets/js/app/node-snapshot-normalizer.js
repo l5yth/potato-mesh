@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { translateRoleId } from './role-helpers.js';
+
 /**
  * Determine whether the supplied value acts like an object instance.
  *
@@ -34,6 +36,18 @@ function normalizeString(value) {
   if (value == null) return null;
   const str = String(value).trim();
   return str.length === 0 ? null : str;
+}
+
+/**
+ * Convert a raw role value into a canonical identifier.
+ *
+ * @param {*} value Raw role candidate from the API or cached snapshots.
+ * @returns {string|null} Canonical role string or ``null`` when blank.
+ */
+function normalizeRole(value) {
+  if (value == null) return null;
+  const translated = translateRoleId(value);
+  return normalizeString(translated);
 }
 
 /**
@@ -61,7 +75,7 @@ const FIELD_ALIASES = Object.freeze([
   { keys: ['node_num', 'nodeNum', 'num'], normalise: normalizeNumber },
   { keys: ['short_name', 'shortName'], normalise: normalizeString },
   { keys: ['long_name', 'longName'], normalise: normalizeString },
-  { keys: ['role'], normalise: normalizeString },
+  { keys: ['role'], normalise: normalizeRole },
   { keys: ['hw_model', 'hwModel'], normalise: normalizeString },
   { keys: ['modem_preset', 'modemPreset'], normalise: normalizeString },
   { keys: ['lora_freq', 'loraFreq'], normalise: normalizeNumber },

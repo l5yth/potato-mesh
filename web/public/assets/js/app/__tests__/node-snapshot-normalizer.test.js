@@ -62,6 +62,16 @@ test('normalizeNodeCollection applies canonical forms to all nodes', () => {
   assert.equal(nodes[1].air_util_tx, 5.5);
 });
 
+test('normalizeNodeSnapshot maps numeric roles to canonical identifiers', () => {
+  const roleNode = { role: '12', node_id: '!role' };
+  const numberRoleNode = { role: 12, nodeId: '!number-role' };
+
+  normalizeNodeCollection([roleNode, numberRoleNode]);
+
+  assert.equal(roleNode.role, 'CLIENT_BASE');
+  assert.equal(numberRoleNode.role, 'CLIENT_BASE');
+});
+
 test('normaliser helpers coerce primitive values consistently', () => {
   assert.equal(normalizeNumber('42.1'), 42.1);
   assert.equal(normalizeNumber('not-a-number'), null);
