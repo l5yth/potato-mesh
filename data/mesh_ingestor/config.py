@@ -76,7 +76,29 @@ or ``yes`` to include DMs in the data sent to the API.
 """
 
 DEBUG = os.environ.get("DEBUG") == "1"
-INSTANCE = os.environ.get("POTATOMESH_INSTANCE", "").rstrip("/")
+
+
+def _resolve_instance_domain() -> str:
+    """Resolve the configured instance domain from the environment.
+
+    The ingestor prefers the :envvar:`INSTANCE_DOMAIN` variable for clarity and
+    compatibility with the web application. For deployments that still
+    configure the legacy :envvar:`POTATOMESH_INSTANCE` variable, the resolver
+    falls back to that value when no primary domain is set.
+    """
+
+    instance_domain = os.environ.get("INSTANCE_DOMAIN", "")
+    legacy_instance = os.environ.get("POTATOMESH_INSTANCE", "")
+
+    configured_instance = (instance_domain or legacy_instance).rstrip("/")
+
+    if configured_instance and "://" not in configured_instance:
+        return f"https://{configured_instance}"
+
+    return configured_instance
+
+
+INSTANCE = _resolve_instance_domain()
 API_TOKEN = os.environ.get("API_TOKEN", "")
 ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 """When ``True``, enables the ingestor's energy saving mode."""
