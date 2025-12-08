@@ -121,6 +121,25 @@ tbody tr:nth-child(even) td {
   stroke-dasharray: 6 6;
 }
 
+.leaflet-tooltip.trace-tooltip {
+  background: var(--bg2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.trace-tooltip__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trace-tooltip__arrow {
+  opacity: 0.7;
+}
+
 .neighbor-snr {
   margin-left: 4px;
   color: var(--muted);

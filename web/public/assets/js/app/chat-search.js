@@ -110,6 +110,7 @@ export function chatLogEntryMatchesQuery(entry, query) {
   candidates.push(...collectSearchValues(entry.position));
   candidates.push(...collectSearchValues(entry.neighbor));
   candidates.push(...collectSearchValues(entry.neighborNode));
+  candidates.push(...(Array.isArray(entry.traceLabels) ? entry.traceLabels : []));
   if (entry.nodeId) candidates.push(entry.nodeId);
   if (entry.nodeNum != null && entry.nodeNum !== '') candidates.push(entry.nodeNum);
   if (entry.neighborId) candidates.push(entry.neighborId);
