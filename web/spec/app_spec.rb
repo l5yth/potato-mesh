@@ -4556,6 +4556,51 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.first).not_to have_key("battery_level")
       expect(filtered.first).not_to have_key("portnum")
     end
+
+    it "omits zero-valued battery and voltage metrics from telemetry responses" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage, uptime_seconds, channel_utilization) VALUES(?,?,?,?,?,?,?,?,?)",
+          [
+            88,
+            "!tele-zero",
+            now,
+            Time.at(now).utc.iso8601,
+            now - 60,
+            0,
+            0,
+            0,
+            0.5,
+          ],
+        )
+      end
+
+      get "/api/telemetry"
+
+      expect(last_response).to be_ok
+      rows = JSON.parse(last_response.body)
+      expect(rows.length).to eq(1)
+      entry = rows.first
+      expect(entry["node_id"]).to eq("!tele-zero")
+      expect(entry["rx_time"]).to eq(now)
+      expect(entry["telemetry_time"]).to eq(now - 60)
+      expect(entry).not_to have_key("battery_level")
+      expect(entry).not_to have_key("voltage")
+      expect(entry["uptime_seconds"]).to eq(0)
+      expect(entry["channel_utilization"]).to eq(0.5)
+
+      get "/api/telemetry/!tele-zero"
+
+      expect(last_response).to be_ok
+      scoped_rows = JSON.parse(last_response.body)
+      expect(scoped_rows.length).to eq(1)
+      expect(scoped_rows.first).not_to have_key("battery_level")
+      expect(scoped_rows.first).not_to have_key("voltage")
+    end
   end
 
   describe "GET /api/telemetry/aggregated" do
@@ -4618,6 +4663,86 @@ RSpec.describe "Potato Mesh Sinatra app" do
       buckets = JSON.parse(last_response.body)
       expect(buckets.length).to be >= 1
       expect(buckets.first["bucket_seconds"]).to eq(PotatoMesh::App::Queries::DEFAULT_TELEMETRY_BUCKET_SECONDS)
+    end
+
+    it "omits zero-valued battery and voltage aggregates" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage, channel_utilization) VALUES(?,?,?,?,?,?,?,?)",
+          [
+            991,
+            "!tele-agg-zero",
+            now,
+            Time.at(now).utc.iso8601,
+            now - 30,
+            0,
+            0,
+            0.25,
+          ],
+        )
+      end
+
+      get "/api/telemetry/aggregated?windowSeconds=3600&bucketSeconds=300"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets.length).to eq(1)
+      aggregates = buckets.first.fetch("aggregates")
+      expect(aggregates).not_to have_key("battery_level")
+      expect(aggregates).not_to have_key("voltage")
+      expect(aggregates.dig("channel_utilization", "avg")).to eq(0.25)
+    end
+
+    it "ignores zero-valued telemetry when aggregating mixed buckets" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?)",
+          [
+            992,
+            "!tele-agg-mixed",
+            now,
+            Time.at(now).utc.iso8601,
+            now - 120,
+            0,
+            0,
+          ],
+        )
+
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?)",
+          [
+            993,
+            "!tele-agg-mixed",
+            now,
+            Time.at(now).utc.iso8601,
+            now - 60,
+            80.0,
+            3.7,
+          ],
+        )
+      end
+
+      get "/api/telemetry/aggregated?windowSeconds=3600&bucketSeconds=300"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets.length).to eq(1)
+      aggregates = buckets.first.fetch("aggregates")
+      expect(aggregates).to have_key("battery_level")
+      expect(aggregates.dig("battery_level", "avg")).to eq(80.0)
+      expect(aggregates.dig("battery_level", "min")).to eq(80.0)
+      expect(aggregates.dig("battery_level", "max")).to eq(80.0)
+      expect(aggregates.dig("voltage", "avg")).to eq(3.7)
+      expect(aggregates.dig("voltage", "min")).to eq(3.7)
+      expect(aggregates.dig("voltage", "max")).to eq(3.7)
     end
 
     it "rejects invalid bucket and window parameters" do
