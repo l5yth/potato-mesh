@@ -26,6 +26,7 @@ RSpec.describe PotatoMesh::App::Cleanup do
 
       class << self
         attr_reader :info_entries, :debug_entries, :warnings
+        attr_accessor :settings
 
         # Capture info log entries generated during cleanup.
         #
