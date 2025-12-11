@@ -1482,6 +1482,68 @@ def test_post_json_sends_payload_with_token(mesh_module, monkeypatch):
     assert mesh.json.loads(req.data.decode("utf-8")) == {"hello": "world"}
 
 
+def test_post_json_sends_ingestor_version_header(mesh_module, monkeypatch):
+    mesh = mesh_module
+    monkeypatch.setattr(mesh, "INSTANCE", "https://example.test")
+    monkeypatch.setattr(mesh, "API_TOKEN", "secret")
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        captured["req"] = req
+
+        class DummyResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        return DummyResponse()
+
+    monkeypatch.setattr(mesh.urllib.request, "urlopen", fake_urlopen)
+
+    mesh._post_json("/api/test", {"hello": "world"}, ingestor_version="1.2.3")
+
+    req = captured["req"]
+    assert req.get_header("X-ingestor-version") == "1.2.3"
+
+
+def test_post_json_omits_ingestor_version_when_unavailable(mesh_module, monkeypatch):
+    mesh = mesh_module
+    monkeypatch.setattr(mesh, "INSTANCE", "https://example.test")
+    monkeypatch.setattr(mesh, "API_TOKEN", "secret")
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=0):
+        captured["req"] = req
+
+        class DummyResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b"ok"
+
+        return DummyResponse()
+
+    monkeypatch.setattr(mesh.urllib.request, "urlopen", fake_urlopen)
+
+    # Explicitly pass empty string to skip version header
+    mesh._post_json("/api/test", {"data": "test"}, ingestor_version="")
+
+    req = captured["req"]
+    # X-Ingestor-Version header should not be present when version is empty
+    assert req.get_header("X-ingestor-version") is None
+
+
 def test_node_to_dict_handles_non_utf8_bytes(mesh_module):
     mesh = mesh_module
 

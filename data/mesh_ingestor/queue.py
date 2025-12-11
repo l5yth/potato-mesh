@@ -101,6 +101,7 @@ def _post_json(
     *,
     instance: str | None = None,
     api_token: str | None = None,
+    ingestor_version: str | None = None,
 ) -> None:
     """Send a JSON payload to the configured web API.
 
@@ -109,12 +110,20 @@ def _post_json(
         payload: JSON-serialisable body to transmit.
         instance: Optional override for :data:`config.INSTANCE`.
         api_token: Optional override for :data:`config.API_TOKEN`.
+        ingestor_version: Optional version string to report in headers.
     """
 
     if instance is None:
         instance = config.INSTANCE
     if api_token is None:
         api_token = config.API_TOKEN
+    if ingestor_version is None:
+        try:
+            from data import VERSION
+
+            ingestor_version = VERSION
+        except ImportError:
+            ingestor_version = None
 
     if not instance:
         return
@@ -132,6 +141,8 @@ def _post_json(
     }
     if api_token:
         headers["Authorization"] = f"Bearer {api_token}"
+    if ingestor_version:
+        headers["X-Ingestor-Version"] = ingestor_version
 
     req = urllib.request.Request(
         url,

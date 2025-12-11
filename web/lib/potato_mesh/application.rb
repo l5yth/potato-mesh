@@ -52,8 +52,10 @@ require_relative "application/queries"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/instances"
+require_relative "application/ingestors"
 require_relative "application/routes/api"
 require_relative "application/routes/ingest"
+require_relative "application/routes/admin"
 require_relative "application/routes/root"
 
 module PotatoMesh
@@ -64,6 +66,7 @@ module PotatoMesh
     extend App::Identity
     extend App::Federation
     extend App::Instances
+    extend App::Ingestors
     extend App::Prometheus
     extend App::Queries
     extend App::DataProcessing
@@ -75,6 +78,7 @@ module PotatoMesh
     include App::Identity
     include App::Federation
     include App::Instances
+    include App::Ingestors
     include App::Prometheus
     include App::Queries
     include App::DataProcessing
@@ -82,6 +86,7 @@ module PotatoMesh
 
     register App::Routes::Api
     register App::Routes::Ingest
+    register App::Routes::Admin
     register App::Routes::Root
 
     DEFAULT_PORT = 41_447

@@ -278,10 +278,37 @@ module PotatoMesh
         end
       end
 
+      # Validate the request's authorization token.
+      #
+      # Accepts both the shared API_TOKEN and individual ingestor API keys.
+      # When an ingestor key is used, the request is recorded for tracking.
+      #
+      # @return [void]
       def require_token!
         token = ENV["API_TOKEN"]
         provided = request.env["HTTP_AUTHORIZATION"].to_s.sub(/^Bearer\s+/i, "")
-        halt 403, { error: "Forbidden" }.to_json unless token && !token.empty? && secure_token_match?(token, provided)
+
+        # First check against the shared API_TOKEN
+        if token && !token.empty? && secure_token_match?(token, provided)
+          return
+        end
+
+        # Then check against registered ingestor API keys
+        if PotatoMesh::Config.ingestor_management_enabled? && !provided.empty?
+          db = open_database
+          begin
+            ingestor = validate_ingestor_token(db, provided)
+            if ingestor
+              version = request.env["HTTP_X_INGESTOR_VERSION"]
+              record_ingestor_request(db, provided, version: version)
+              return
+            end
+          ensure
+            db&.close
+          end
+        end
+
+        halt 403, { error: "Forbidden" }.to_json
       end
 
       def secure_token_match?(expected, provided)
