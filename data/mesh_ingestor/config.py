@@ -46,6 +46,9 @@ DEFAULT_ENERGY_ONLINE_DURATION_SECS = 300.0
 DEFAULT_ENERGY_SLEEP_SECS = float(6 * 60 * 60)
 """Sleep duration used when energy saving mode is active."""
 
+DEFAULT_INGESTOR_HEARTBEAT_SECS = float(60 * 60)
+"""Interval between ingestor heartbeat announcements."""
+
 CONNECTION = os.environ.get("CONNECTION") or os.environ.get("MESH_SERIAL")
 """Optional connection target for the mesh interface.
 
@@ -134,6 +137,7 @@ _CLOSE_TIMEOUT_SECS = DEFAULT_CLOSE_TIMEOUT_SECS
 _INACTIVITY_RECONNECT_SECS = DEFAULT_INACTIVITY_RECONNECT_SECS
 _ENERGY_ONLINE_DURATION_SECS = DEFAULT_ENERGY_ONLINE_DURATION_SECS
 _ENERGY_SLEEP_SECS = DEFAULT_ENERGY_SLEEP_SECS
+_INGESTOR_HEARTBEAT_SECS = DEFAULT_INGESTOR_HEARTBEAT_SECS
 
 # Backwards compatibility shim for legacy imports.
 PORT = CONNECTION
@@ -190,6 +194,7 @@ __all__ = [
     "_INACTIVITY_RECONNECT_SECS",
     "_ENERGY_ONLINE_DURATION_SECS",
     "_ENERGY_SLEEP_SECS",
+    "_INGESTOR_HEARTBEAT_SECS",
     "_debug_log",
 ]
 

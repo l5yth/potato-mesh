@@ -103,6 +103,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM nodes")
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
+      db.execute("DELETE FROM ingestors")
     end
     ensure_self_instance_record!
   end

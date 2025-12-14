@@ -199,6 +199,66 @@ module PotatoMesh
         updated
       end
 
+      # Insert or update an ingestor heartbeat payload.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param payload [Hash] ingestor payload from the collector.
+      # @return [Boolean] true when persistence succeeded.
+      def upsert_ingestor(db, payload)
+        return false unless payload.is_a?(Hash)
+
+        parts = canonical_node_parts(payload["node_id"] || payload["id"])
+        return false unless parts
+
+        node_id, = parts
+        now = Time.now.to_i
+
+        start_time = coerce_integer(payload["start_time"] || payload["startTime"]) || now
+        last_seen_time =
+          coerce_integer(payload["last_seen_time"] || payload["lastSeenTime"]) || start_time
+
+        start_time = 0 if start_time.negative?
+        last_seen_time = 0 if last_seen_time.negative?
+        start_time = now if start_time > now
+        last_seen_time = now if last_seen_time > now
+        last_seen_time = start_time if last_seen_time < start_time
+
+        version = string_or_nil(payload["version"] || payload["ingestorVersion"])
+        return false unless version
+        lora_freq = coerce_integer(payload["lora_freq"])
+        modem_preset = string_or_nil(payload["modem_preset"])
+
+        with_busy_retry do
+          db.execute <<~SQL, [node_id, start_time, last_seen_time, version, lora_freq, modem_preset]
+                       INSERT INTO ingestors(node_id, start_time, last_seen_time, version, lora_freq, modem_preset)
+                            VALUES(?,?,?,?,?,?)
+                       ON CONFLICT(node_id) DO UPDATE SET
+                         start_time = CASE
+                           WHEN excluded.start_time > ingestors.start_time THEN excluded.start_time
+                           ELSE ingestors.start_time
+                         END,
+                         last_seen_time = CASE
+                           WHEN excluded.last_seen_time > ingestors.last_seen_time THEN excluded.last_seen_time
+                           ELSE ingestors.last_seen_time
+                         END,
+                         version = COALESCE(excluded.version, ingestors.version),
+                         lora_freq = COALESCE(excluded.lora_freq, ingestors.lora_freq),
+                         modem_preset = COALESCE(excluded.modem_preset, ingestors.modem_preset)
+                     SQL
+        end
+
+        true
+      rescue SQLite3::SQLException => e
+        warn_log(
+          "Failed to upsert ingestor record",
+          context: "data_processing.ingestors",
+          node_id: node_id,
+          error_class: e.class.name,
+          error_message: e.message,
+        )
+        false
+      end
+
       def upsert_node(db, node_id, n)
         user = n["user"] || {}
         met = n["deviceMetrics"] || {}

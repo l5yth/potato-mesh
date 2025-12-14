@@ -20,6 +20,7 @@ import re
 import sys
 import threading
 import types
+import time
 
 """End-to-end tests covering the mesh ingestion package."""
 
@@ -214,6 +215,9 @@ def mesh_module(monkeypatch):
         if attr in module.__dict__:
             delattr(module, attr)
     module.channels._reset_channel_cache()
+    module.ingestors.STATE.start_time = int(time.time())
+    module.ingestors.STATE.last_heartbeat = None
+    module.ingestors.STATE.node_id = None
 
     yield module
 
@@ -2659,6 +2663,133 @@ def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
     assert mesh.STATE.active is True
     assert mesh.STATE.queue
     mesh._clear_post_queue()
+
+
+def test_process_ingestor_heartbeat_updates_flag(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.ingestors.STATE.last_heartbeat = None
+    mesh.ingestors.STATE.node_id = None
+    mesh.handlers.register_host_node_id(None)
+    recorded = {"force": None, "count": 0}
+
+    def fake_queue_ingestor_heartbeat(*, force):
+        recorded["force"] = force
+        recorded["count"] += 1
+        return True
+
+    monkeypatch.setattr(
+        mesh.ingestors, "queue_ingestor_heartbeat", fake_queue_ingestor_heartbeat
+    )
+
+    class DummyIface:
+        def __init__(self):
+            self.myNodeNum = 0xCAFEBABE
+
+    updated = mesh._process_ingestor_heartbeat(
+        DummyIface(), ingestor_announcement_sent=False
+    )
+
+    assert updated is True
+    assert recorded["force"] is True
+    assert recorded["count"] == 1
+    assert mesh.handlers.host_node_id() == "!cafebabe"
+
+
+def test_process_ingestor_heartbeat_skips_without_host(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.handlers.register_host_node_id(None)
+    mesh.ingestors.STATE.node_id = None
+    mesh.ingestors.STATE.last_heartbeat = None
+
+    monkeypatch.setattr(mesh.ingestors, "queue_ingestor_heartbeat", lambda **_: False)
+
+    updated = mesh._process_ingestor_heartbeat(None, ingestor_announcement_sent=False)
+
+    assert updated is False
+    assert mesh.ingestors.STATE.node_id is None
+    assert mesh.ingestors.STATE.last_heartbeat is None
+
+
+def test_ingestor_heartbeat_respects_interval_override(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.ingestors.STATE.start_time = 100
+    mesh.ingestors.STATE.last_heartbeat = 1_000
+    mesh.ingestors.STATE.node_id = "!abcd0001"
+    mesh._INGESTOR_HEARTBEAT_SECS = 10_000
+    monkeypatch.setattr(mesh.ingestors.time, "time", lambda: 2_000)
+    sent = mesh.ingestors.queue_ingestor_heartbeat()
+    assert sent is False
+    assert mesh.ingestors.STATE.last_heartbeat == 1_000
+
+
+def test_setting_ingestor_attr_propagates(mesh_module):
+    mesh = mesh_module
+    mesh._INGESTOR_HEARTBEAT_SECS = 123
+    assert mesh.config._INGESTOR_HEARTBEAT_SECS == 123
+
+
+def test_queue_ingestor_heartbeat_requires_node_id(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+
+    monkeypatch.setattr(
+        mesh.queue,
+        "_queue_post_json",
+        lambda path, payload, *, priority, send=None: captured.append(
+            (path, payload, priority)
+        ),
+    )
+
+    mesh.ingestors.STATE.node_id = None
+    mesh.ingestors.STATE.last_heartbeat = None
+
+    queued = mesh.ingestors.queue_ingestor_heartbeat(force=True)
+
+    assert queued is False
+    assert captured == []
+
+
+def test_queue_ingestor_heartbeat_enqueues_and_throttles(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+
+    monkeypatch.setattr(
+        mesh.queue,
+        "_queue_post_json",
+        lambda path, payload, *, priority, send=None: captured.append(
+            (path, payload, priority)
+        ),
+    )
+
+    mesh.ingestors.STATE.start_time = 1_700_000_000
+    mesh.ingestors.STATE.last_heartbeat = None
+    mesh.ingestors.STATE.node_id = None
+    mesh.config.LORA_FREQ = 915
+    mesh.config.MODEM_PRESET = "LongFast"
+
+    mesh.ingestors.set_ingestor_node_id("!CAFEBABE")
+    first = mesh.ingestors.queue_ingestor_heartbeat(force=True)
+    second = mesh.ingestors.queue_ingestor_heartbeat()
+
+    assert first is True
+    assert second is False
+    assert len(captured) == 1
+    path, payload, priority = captured[0]
+    assert path == "/api/ingestors"
+    assert payload["node_id"] == "!cafebabe"
+    assert payload["start_time"] == 1_700_000_000
+    assert payload["last_seen_time"] >= payload["start_time"]
+    assert payload["version"] == mesh.VERSION
+    assert payload["lora_freq"] == 915
+    assert payload["modem_preset"] == "LongFast"
+    assert priority == mesh.queue._INGESTOR_POST_PRIORITY
+
+
+def test_mesh_version_export_matches_package(mesh_module):
+    import data
+
+    mesh = mesh_module
+    assert mesh.VERSION == data.VERSION
 
 
 def test_node_to_dict_handles_proto_fallback(mesh_module, monkeypatch):
