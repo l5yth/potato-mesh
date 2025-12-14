@@ -2716,6 +2716,7 @@ def test_ingestor_heartbeat_respects_interval_override(mesh_module, monkeypatch)
     mesh.ingestors.STATE.last_heartbeat = 1_000
     mesh.ingestors.STATE.node_id = "!abcd0001"
     mesh._INGESTOR_HEARTBEAT_SECS = 10_000
+    monkeypatch.setattr(mesh.ingestors.time, "time", lambda: 2_000)
     sent = mesh.ingestors.queue_ingestor_heartbeat()
     assert sent is False
     assert mesh.ingestors.STATE.last_heartbeat == 1_000
