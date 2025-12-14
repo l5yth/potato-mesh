@@ -3467,6 +3467,43 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
+      it "accepts traceroutes without metrics or RSSI fields" do
+        allow(Time).to receive(:now).and_return(reference_time)
+
+        payload = [
+          {
+            "id" => 9_003,
+            "request_id" => 42,
+            "src" => 0xAAAA0001,
+            "dest" => 0xAAAA0002,
+            "rx_time" => reference_time.to_i - 1,
+            "hops" => [0xAAAA0001, 0xAAAA0003, 0xAAAA0002],
+          },
+        ]
+
+        post "/api/traces", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+
+          stored = db.get_first_row("SELECT * FROM traces WHERE id = ?", [payload.first["id"]])
+          expect(stored["rx_time"]).to eq(payload.first["rx_time"])
+          expect(stored["rx_iso"]).to eq(Time.at(payload.first["rx_time"]).utc.iso8601)
+          expect(stored["rssi"]).to be_nil
+          expect(stored["snr"]).to be_nil
+          expect(stored["elapsed_ms"]).to be_nil
+
+          hops = db.execute(
+            "SELECT hop_index, node_id FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
+            [stored["id"]],
+          )
+          expect(hops.map { |row| row["node_id"] }).to eq(payload.first["hops"])
+        end
+      end
+
       it "returns 400 when the payload is not valid JSON" do
         post "/api/traces", "{", auth_headers
 
