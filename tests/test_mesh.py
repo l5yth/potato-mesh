@@ -281,6 +281,25 @@ def test_instance_domain_infers_scheme_for_hostnames(mesh_module, monkeypatch):
         mesh_module.INSTANCE = mesh_module.config.INSTANCE
 
 
+def test_parse_hidden_channels_deduplicates_names(mesh_module):
+    """Ensure hidden channel parsing strips blanks and deduplicates."""
+
+    mesh = mesh_module
+    previous_hidden = mesh.HIDDEN_CHANNELS
+
+    try:
+        parsed = mesh.config._parse_hidden_channels(" Chat , ,Secret ,chat")
+        mesh.HIDDEN_CHANNELS = parsed
+
+        assert parsed == ("Chat", "Secret")
+        assert mesh.channels.hidden_channel_names() == ("Chat", "Secret")
+        assert mesh.channels.is_hidden_channel(" chat ")
+        assert not mesh.channels.is_hidden_channel("unknown")
+        assert mesh.config._parse_hidden_channels("") == ()
+    finally:
+        mesh.HIDDEN_CHANNELS = previous_hidden
+
+
 def test_subscribe_receive_topics_covers_all_handlers(mesh_module, monkeypatch):
     mesh = mesh_module
     daemon_mod = sys.modules["data.mesh_ingestor.daemon"]
@@ -1930,6 +1949,73 @@ def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys
     log_output = capsys.readouterr().out
     assert "channel_name='Chat'" in log_output
     assert "channel_display='Chat'" in log_output
+
+
+def test_store_packet_dict_skips_hidden_channel(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+    mesh.channels._reset_channel_cache()
+    mesh.config.MODEM_PRESET = None
+
+    class DummyInterface:
+        def __init__(self) -> None:
+            self.localNode = SimpleNamespace(
+                channels=[
+                    SimpleNamespace(
+                        role=1,
+                        settings=SimpleNamespace(name="Primary"),
+                    ),
+                    SimpleNamespace(
+                        role=2,
+                        index=5,
+                        settings=SimpleNamespace(name="Chat"),
+                    ),
+                ]
+            )
+
+        def waitForConfig(self):
+            return None
+
+    mesh.channels.capture_from_interface(DummyInterface())
+    capsys.readouterr()
+
+    captured: list[tuple[str, dict, int]] = []
+    ignored: list[str] = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+    monkeypatch.setattr(
+        mesh.handlers,
+        "_record_ignored_packet",
+        lambda packet, *, reason: ignored.append(reason),
+    )
+
+    previous_debug = mesh.config.DEBUG
+    previous_hidden = mesh.HIDDEN_CHANNELS
+    mesh.config.DEBUG = True
+    mesh.DEBUG = True
+    mesh.HIDDEN_CHANNELS = ("Chat",)
+
+    try:
+        packet = {
+            "id": "999",
+            "rxTime": 24_680,
+            "from": "!sender",
+            "to": "^all",
+            "channel": 5,
+            "decoded": {"text": "hidden msg", "portnum": 1},
+        }
+
+        mesh.store_packet_dict(packet)
+
+        assert captured == []
+        assert ignored == ["hidden-channel"]
+        assert "Ignored packet on hidden channel" in capsys.readouterr().out
+    finally:
+        mesh.HIDDEN_CHANNELS = previous_hidden
+        mesh.config.DEBUG = previous_debug
+        mesh.DEBUG = previous_debug
 
 
 def test_store_packet_dict_includes_encrypted_payload(mesh_module, monkeypatch):

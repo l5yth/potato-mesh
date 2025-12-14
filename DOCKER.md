@@ -53,6 +53,7 @@ Additional environment variables are optional:
 | `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom (disables the auto-fit checkbox when set). |
 | `MAX_DISTANCE` | `42` | Maximum relationship distance (km) before edges are hidden. |
 | `DEBUG` | `0` | Enables verbose logging across services when set to `1`. |
+| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor skips when forwarding packets. |
 | `FEDERATION` | `1` | Controls whether the instance announces itself and crawls peers (`1`) or stays isolated (`0`). |
 | `PRIVATE` | `0` | Restricts public visibility and disables chat/message endpoints when set to `1`. |
 | `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the radio. |

@@ -1414,6 +1414,8 @@ def store_packet_dict(packet: Mapping) -> None:
     except Exception:
         channel = 0
 
+    channel_name_value = channels.channel_name(channel)
+
     pkt_id = _first(packet, "id", "packet_id", "packetId", default=None)
     if pkt_id is None:
         _record_ignored_packet(packet, reason="missing-packet-id")
@@ -1459,6 +1461,17 @@ def store_packet_dict(packet: Mapping) -> None:
         _record_ignored_packet(packet, reason="skipped-direct-message")
         return
 
+    if channels.is_hidden_channel(channel_name_value):
+        _record_ignored_packet(packet, reason="hidden-channel")
+        if config.DEBUG:
+            config._debug_log(
+                "Ignored packet on hidden channel",
+                context="handlers.store_packet_dict",
+                channel=channel,
+                channel_name=channel_name_value,
+            )
+        return
+
     message_payload = {
         "id": int(pkt_id),
         "rx_time": rx_time,
@@ -1476,11 +1489,8 @@ def store_packet_dict(packet: Mapping) -> None:
         "emoji": emoji,
     }
 
-    channel_name_value = None
-    if not encrypted_flag:
-        channel_name_value = channels.channel_name(channel)
-        if channel_name_value:
-            message_payload["channel_name"] = channel_name_value
+    if not encrypted_flag and channel_name_value:
+        message_payload["channel_name"] = channel_name_value
     _queue_post_json(
         "/api/messages",
         _apply_radio_metadata(message_payload),
