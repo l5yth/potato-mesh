@@ -21,6 +21,7 @@ import threading as threading  # re-exported for compatibility
 import sys
 import types
 
+from .. import VERSION as _PACKAGE_VERSION
 from . import (
     channels,
     config,
@@ -91,8 +92,14 @@ _SERIALIZATION_ATTRS = set(serialization.__all__)
 _INTERFACE_EXPORTS = set(interfaces.__all__)
 _INGESTOR_ATTRS = set(ingestors.__all__)
 
+# Re-export the package version for callers that previously referenced
+# data.mesh_ingestor.VERSION directly.
+VERSION = _PACKAGE_VERSION
+__all__.append("VERSION")
+
 __all__.extend(sorted(_CONFIG_ATTRS))
 __all__.extend(sorted(_INTERFACE_ATTRS))
+__all__.append("VERSION")
 
 
 class _MeshIngestorModule(types.ModuleType):
@@ -109,6 +116,8 @@ class _MeshIngestorModule(types.ModuleType):
             return getattr(interfaces, name)
         if name in _INGESTOR_ATTRS:
             return getattr(ingestors, name)
+        if name == "VERSION":
+            return VERSION
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):  # type: ignore[override]

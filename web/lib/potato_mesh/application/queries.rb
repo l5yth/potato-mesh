@@ -269,7 +269,7 @@ module PotatoMesh
         now = Time.now.to_i
         cutoff = now - PotatoMesh::Config.week_seconds
         sql = <<~SQL
-          SELECT node_id, start_time, last_seen_time, version
+          SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset
           FROM ingestors
           WHERE last_seen_time >= ?
           ORDER BY last_seen_time DESC

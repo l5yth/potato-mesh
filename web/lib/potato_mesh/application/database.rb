@@ -208,6 +208,12 @@ module PotatoMesh
           unless ingestor_columns.include?("version")
             db.execute("ALTER TABLE ingestors ADD COLUMN version TEXT")
           end
+          unless ingestor_columns.include?("lora_freq")
+            db.execute("ALTER TABLE ingestors ADD COLUMN lora_freq INTEGER")
+          end
+          unless ingestor_columns.include?("modem_preset")
+            db.execute("ALTER TABLE ingestors ADD COLUMN modem_preset TEXT")
+          end
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

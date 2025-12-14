@@ -169,6 +169,41 @@ def _is_ble_interface(iface_obj) -> bool:
     return "ble_interface" in module_name
 
 
+def _process_ingestor_heartbeat(iface, *, ingestor_announcement_sent: bool) -> bool:
+    """Send ingestor liveness heartbeats when a host id is known.
+
+    Parameters:
+        iface: Active mesh interface used to extract a host node id when absent.
+        ingestor_announcement_sent: Whether an initial heartbeat has already
+            been sent during the current session.
+
+    Returns:
+        Updated ``ingestor_announcement_sent`` flag reflecting whether an
+        initial heartbeat was transmitted.
+    """
+
+    host_id = handlers.host_node_id()
+    if host_id is None and iface is not None:
+        extracted = interfaces._extract_host_node_id(iface)
+        if extracted:
+            handlers.register_host_node_id(extracted)
+            host_id = handlers.host_node_id()
+
+    if host_id:
+        ingestors.set_ingestor_node_id(host_id)
+    heartbeat_sent = ingestors.queue_ingestor_heartbeat(
+        force=not ingestor_announcement_sent
+    )
+    if heartbeat_sent and not ingestor_announcement_sent:
+        return True
+    return ingestor_announcement_sent
+    iface_cls = getattr(iface_obj, "__class__", None)
+    if iface_cls is None:
+        return False
+    module_name = getattr(iface_cls, "__module__", "") or ""
+    return "ble_interface" in module_name
+
+
 def _connected_state(candidate) -> bool | None:
     """Return the connection state advertised by ``candidate``.
 
@@ -503,20 +538,9 @@ def main(existing_interface=None) -> None:
                         iface_connected_at = None
                         continue
 
-            host_id = handlers.host_node_id()
-            if host_id is None and iface is not None:
-                extracted = interfaces._extract_host_node_id(iface)
-                if extracted:
-                    handlers.register_host_node_id(extracted)
-                    host_id = handlers.host_node_id()
-
-            if host_id:
-                ingestors.set_ingestor_node_id(host_id)
-            heartbeat_sent = ingestors.queue_ingestor_heartbeat(
-                force=not ingestor_announcement_sent
+            ingestor_announcement_sent = _process_ingestor_heartbeat(
+                iface, ingestor_announcement_sent=ingestor_announcement_sent
             )
-            if heartbeat_sent and not ingestor_announcement_sent:
-                ingestor_announcement_sent = True
 
             retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
             stop.wait(config.SNAPSHOT_SECS)
@@ -537,6 +561,7 @@ __all__ = [
     "_node_items_snapshot",
     "_subscribe_receive_topics",
     "_is_ble_interface",
+    "_process_ingestor_heartbeat",
     "_connected_state",
     "main",
 ]

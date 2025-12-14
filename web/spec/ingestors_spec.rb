@@ -42,6 +42,7 @@ RSpec.describe "Ingestor endpoints" do
   def clear_ingestors_table
     with_db do |db|
       db.execute("DELETE FROM ingestors")
+      db.execute("VACUUM")
     end
   end
 
@@ -61,6 +62,8 @@ RSpec.describe "Ingestor endpoints" do
       start_time: now - 120,
       last_seen_time: now - 60,
       version: "0.5.7",
+      lora_freq: 915,
+      modem_preset: "LongFast",
     }.merge(overrides)
   end
 
@@ -86,7 +89,7 @@ RSpec.describe "Ingestor endpoints" do
       expect(last_response.status).to eq(200)
       with_db(readonly: true) do |db|
         row = db.get_first_row(
-          "SELECT node_id, start_time, last_seen_time, version FROM ingestors WHERE node_id = ?",
+          "SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset FROM ingestors WHERE node_id = ?",
           [payload[:node_id]],
         )
         expect(row[0]).to eq(payload[:node_id])
@@ -94,11 +97,19 @@ RSpec.describe "Ingestor endpoints" do
         expect(row[2]).to be >= payload[:last_seen_time]
         expect(row[2]).to be <= Time.now.to_i
         expect(row[3]).to eq(payload[:version])
+        expect(row[4]).to eq(payload[:lora_freq])
+        expect(row[5]).to eq(payload[:modem_preset])
       end
     end
 
     it "rejects payloads missing required fields" do
       post "/api/ingestors", { node_id: "!abcd0001" }.to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+    end
+
+    it "rejects invalid JSON" do
+      post "/api/ingestors", "{", auth_headers
 
       expect(last_response.status).to eq(400)
     end
@@ -116,6 +127,10 @@ RSpec.describe "Ingestor endpoints" do
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
           ["!stale000", now - (9 * 24 * 60 * 60), now - (9 * 24 * 60 * 60), "0.5.6"],
         )
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version, lora_freq, modem_preset) VALUES(?,?,?,?,?,?)",
+          ["!rich000", now - 200, now - 100, "0.5.8", 915, "MediumFast"],
+        )
       end
 
       get "/api/ingestors"
@@ -126,6 +141,9 @@ RSpec.describe "Ingestor endpoints" do
       node_ids = payload.map { |entry| entry["node_id"] }
       expect(node_ids).to include("!fresh000")
       expect(node_ids).not_to include("!stale000")
+      rich = payload.find { |row| row["node_id"] == "!rich000" }
+      expect(rich["lora_freq"]).to eq(915)
+      expect(rich["modem_preset"]).to eq("MediumFast")
     end
   end
 end

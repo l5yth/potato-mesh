@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS ingestors (
   node_id        TEXT PRIMARY KEY,
   start_time     INTEGER NOT NULL,
   last_seen_time INTEGER NOT NULL,
-  version        TEXT
+  version        TEXT,
+  lora_freq      INTEGER,
+  modem_preset   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingestors_last_seen ON ingestors(last_seen_time);

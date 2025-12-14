@@ -39,6 +39,9 @@ class _IngestorState:
 
 STATE = _IngestorState()
 """Shared ingestor identity state."""
+# Alias retained for clarity without exporting into the top-level mesh module to
+# avoid colliding with the HTTP queue state.
+INGESTOR_STATE = STATE
 
 
 def ingestor_start_time() -> int:
@@ -111,6 +114,10 @@ def queue_ingestor_heartbeat(
         "last_seen_time": now,
         "version": INGESTOR_VERSION,
     }
+    if getattr(config, "LORA_FREQ", None) is not None:
+        payload["lora_freq"] = config.LORA_FREQ
+    if getattr(config, "MODEM_PRESET", None) is not None:
+        payload["modem_preset"] = config.MODEM_PRESET
     queue._queue_post_json(
         "/api/ingestors",
         payload,
@@ -125,7 +132,7 @@ def queue_ingestor_heartbeat(
 
 __all__ = [
     "HEARTBEAT_INTERVAL_SECS",
-    "STATE",
+    "INGESTOR_STATE",
     "ingestor_start_time",
     "queue_ingestor_heartbeat",
     "set_ingestor_node_id",

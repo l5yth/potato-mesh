@@ -225,11 +225,13 @@ module PotatoMesh
 
         version = string_or_nil(payload["version"] || payload["ingestorVersion"])
         return false unless version
+        lora_freq = coerce_integer(payload["lora_freq"])
+        modem_preset = string_or_nil(payload["modem_preset"])
 
         with_busy_retry do
-          db.execute <<~SQL, [node_id, start_time, last_seen_time, version]
-                       INSERT INTO ingestors(node_id, start_time, last_seen_time, version)
-                            VALUES(?,?,?,?)
+          db.execute <<~SQL, [node_id, start_time, last_seen_time, version, lora_freq, modem_preset]
+                       INSERT INTO ingestors(node_id, start_time, last_seen_time, version, lora_freq, modem_preset)
+                            VALUES(?,?,?,?,?,?)
                        ON CONFLICT(node_id) DO UPDATE SET
                          start_time = CASE
                            WHEN excluded.start_time > ingestors.start_time THEN excluded.start_time
@@ -239,7 +241,9 @@ module PotatoMesh
                            WHEN excluded.last_seen_time > ingestors.last_seen_time THEN excluded.last_seen_time
                            ELSE ingestors.last_seen_time
                          END,
-                         version = COALESCE(excluded.version, ingestors.version)
+                         version = COALESCE(excluded.version, ingestors.version),
+                         lora_freq = COALESCE(excluded.lora_freq, ingestors.lora_freq),
+                         modem_preset = COALESCE(excluded.modem_preset, ingestors.modem_preset)
                      SQL
         end
 
