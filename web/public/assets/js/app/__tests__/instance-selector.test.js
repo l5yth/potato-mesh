@@ -99,6 +99,20 @@ test('buildInstanceUrl normalises domains into navigable HTTPS URLs', () => {
   assert.equal(buildInstanceUrl(null), null);
 });
 
+test('buildInstanceUrl rejects malformed HTTP URLs safely', () => {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = message => warnings.push(message);
+
+  try {
+    assert.equal(buildInstanceUrl('http://[::1'), null);
+    assert.equal(buildInstanceUrl('https://bad host.example'), null);
+    assert.ok(warnings.length >= 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test('initializeInstanceSelector populates options alphabetically and selects the configured domain', async () => {
   const env = createDomEnvironment();
   const select = setupSelectElement(env.document);
