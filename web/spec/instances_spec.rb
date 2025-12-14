@@ -141,9 +141,9 @@ RSpec.describe PotatoMesh::App::Instances do
       with_db do |db|
         db.execute(
           <<~SQL,
-            INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
-            VALUES (?, ?, ?, ?, ?, ?)
-          SQL
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
+          VALUES (?, ?, ?, ?, ?, ?)
+        SQL
           [
             "instance-with-nodes",
             "gamma.mesh.test",
@@ -155,9 +155,9 @@ RSpec.describe PotatoMesh::App::Instances do
         )
         db.execute(
           <<~SQL,
-            INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
-            VALUES (?, ?, ?, ?, ?, ?)
-          SQL
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
+          VALUES (?, ?, ?, ?, ?, ?)
+        SQL
           [
             "instance-with-zero",
             "delta.mesh.test",
