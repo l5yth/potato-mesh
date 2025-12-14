@@ -321,6 +321,39 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(visited).not_to include(attributes_list[1][:domain], attributes_list[2][:domain])
       expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
     end
+
+    it "requests an expanded recent node window when counting remote activity" do
+      now = Time.at(1_700_000_000)
+      allow(Time).to receive(:now).and_return(now)
+      allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
+      recent_cutoff = now.to_i - 900
+
+      mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
+      attributes_list.each_with_index do |attributes, index|
+        mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/nodes"]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
+        allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(payload_entries[index]).and_return([attributes, "signature-#{index}", nil])
+      end
+
+      captured_paths = []
+      allow(federation_helpers).to receive(:fetch_instance_json) do |host, path|
+        captured_paths << [host, path]
+        mapping.fetch([host, path]) { [nil, []] }
+      end
+      allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
+      allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
+      allow(federation_helpers).to receive(:upsert_instance_record)
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
+        [attributes_list[1][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
+        [attributes_list[2][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
+      )
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
+    end
   end
 
   describe ".upsert_instance_record" do

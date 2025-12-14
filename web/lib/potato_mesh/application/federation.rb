@@ -806,7 +806,7 @@ module PotatoMesh
 
           attributes[:is_private] = false if attributes[:is_private].nil?
 
-          nodes_since_path = "/api/nodes?since=#{recent_cutoff}"
+          nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
           nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
           if nodes_since_window.is_a?(Array)
             attributes[:nodes_count] = nodes_since_window.length
