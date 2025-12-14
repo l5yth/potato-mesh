@@ -1262,7 +1262,7 @@ module PotatoMesh
         rx_time = now if rx_time.nil? || rx_time > now
         rx_iso = string_or_nil(payload["rx_iso"]) || Time.at(rx_time).utc.iso8601
 
-        metrics = normalize_json_object(payload["metrics"])
+        metrics = normalize_json_object(payload["metrics"]) || {}
         src = coerce_integer(payload["src"] || payload["source"] || payload["from"])
         dest = coerce_integer(payload["dest"] || payload["destination"] || payload["to"])
         rssi = coerce_integer(payload["rssi"]) || coerce_integer(metrics["rssi"])
