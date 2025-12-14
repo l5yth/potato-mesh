@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 
 import { createDomEnvironment } from './dom-environment.js';
 import { initializeFederationPage } from '../federation-page.js';
+import { roleColors } from '../role-helpers.js';
 
 test('federation map centers on configured coordinates and follows theme filters', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: true });
@@ -54,6 +55,7 @@ test('federation map centers on configured coordinates and follows theme filters
   tilePane.appendChild(tileImage);
   const mapSetViewCalls = [];
   const mapFitBoundsCalls = [];
+  const circleMarkerCalls = [];
   const tileLayerStub = {
     addTo() {
       return this;
@@ -94,7 +96,8 @@ test('federation map centers on configured coordinates and follows theme filters
         }
       };
     },
-    circleMarker() {
+    circleMarker(latlng, options) {
+      circleMarkerCalls.push({ latlng, options });
       return {
         bindPopup() {
           return this;
@@ -112,13 +115,15 @@ const fetchImpl = async () => ({
       version: '1.0.0',
       latitude: 10.12345,
       longitude: -20.98765,
-      lastUpdateTime: Math.floor(Date.now() / 1000) - 90
+      lastUpdateTime: Math.floor(Date.now() / 1000) - 90,
+      nodesCount: 12
     },
     {
       domain: 'bravo.mesh',
       contactLink: null,
       version: '2.0.0',
-      lastUpdateTime: Math.floor(Date.now() / 1000) - (2 * 86400)
+      lastUpdateTime: Math.floor(Date.now() / 1000) - (2 * 86400),
+      nodesCount: 2
     }
   ]
 });
@@ -150,14 +155,17 @@ const fetchImpl = async () => ({
     assert.match(firstRowHtml, /https:\/\/chat\.alpha/);
     assert.match(firstRowHtml, /10\.12345/);
     assert.match(firstRowHtml, /-20\.98765/);
+    assert.match(firstRowHtml, />12</);
     assert.match(firstRowHtml, /ago/);
 
     const secondRowHtml = rows[1].innerHTML;
     assert.match(secondRowHtml, /bravo\.mesh/);
     assert.match(secondRowHtml, /<em>—<\/em>/); // no contact link
     assert.match(secondRowHtml, /2\.0\.0/);
+    assert.match(secondRowHtml, />2</);
     assert.match(secondRowHtml, /d ago/);
     assert.deepEqual(mapFitBoundsCalls[0][0], [[10.12345, -20.98765]]);
+    assert.equal(circleMarkerCalls[0].options.fillColor, roleColors.CLIENT_HIDDEN);
   } finally {
     cleanup();
   }

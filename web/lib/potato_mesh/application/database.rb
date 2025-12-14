@@ -167,6 +167,11 @@ module PotatoMesh
         instance_columns = db.execute("PRAGMA table_info(instances)").map { |row| row[1] }
         unless instance_columns.include?("contact_link")
           db.execute("ALTER TABLE instances ADD COLUMN contact_link TEXT")
+          instance_columns << "contact_link"
+        end
+
+        unless instance_columns.include?("nodes_count")
+          db.execute("ALTER TABLE instances ADD COLUMN nodes_count INTEGER")
         end
 
         telemetry_tables =
