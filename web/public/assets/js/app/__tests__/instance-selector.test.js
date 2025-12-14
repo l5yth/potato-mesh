@@ -90,8 +90,27 @@ test('resolveInstanceLabel falls back to the domain when the name is missing', (
 test('buildInstanceUrl normalises domains into navigable HTTPS URLs', () => {
   assert.equal(buildInstanceUrl('mesh.example'), 'https://mesh.example');
   assert.equal(buildInstanceUrl(' https://mesh.example '), 'https://mesh.example');
+  assert.equal(buildInstanceUrl('https://mesh.example/path?query#fragment'), 'https://mesh.example');
+  assert.equal(buildInstanceUrl('javascript:alert(1)'), null);
+  assert.equal(buildInstanceUrl('ftp://mesh.example'), null);
+  assert.equal(buildInstanceUrl('mesh.example:8080'), 'https://mesh.example:8080');
+  assert.equal(buildInstanceUrl('mesh.example<script>'), null);
   assert.equal(buildInstanceUrl(''), null);
   assert.equal(buildInstanceUrl(null), null);
+});
+
+test('buildInstanceUrl rejects malformed HTTP URLs safely', () => {
+  const originalWarn = console.warn;
+  const warnings = [];
+  console.warn = message => warnings.push(message);
+
+  try {
+    assert.equal(buildInstanceUrl('http://[::1'), null);
+    assert.equal(buildInstanceUrl('https://bad host.example'), null);
+    assert.ok(warnings.length >= 1);
+  } finally {
+    console.warn = originalWarn;
+  }
 });
 
 test('initializeInstanceSelector populates options alphabetically and selects the configured domain', async () => {
