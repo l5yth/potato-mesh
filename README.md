@@ -83,6 +83,7 @@ The web app can be configured with environment variables (defaults shown):
 | `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom applied on first load; disables auto-fit when provided. |
 | `MAX_DISTANCE` | `42` | Maximum distance (km) before node relationships are hidden on the map. |
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
+| `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
 
@@ -191,7 +192,10 @@ an IP address (for example `192.168.1.20:4403`) to use the Meshtastic TCP
 interface. `CONNECTION` also accepts Bluetooth device addresses (e.g.,
 `ED:4D:9E:95:CF:60`) and the script attempts a BLE connection if available. The
 ingestor will still honor the legacy `POTATOMESH_INSTANCE` variable when
-`INSTANCE_DOMAIN` is unset to ease upgrades from earlier deployments.
+`INSTANCE_DOMAIN` is unset to ease upgrades from earlier deployments. To keep
+private channels out of the web UI, set `HIDDEN_CHANNELS` to a comma-separated
+list of channel names (for example `HIDDEN_CHANNELS="Secret,Ops"`); packets on
+those channels are discarded instead of being sent to `/api/messages`.
 
 ## Docker
 
