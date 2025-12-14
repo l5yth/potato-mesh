@@ -126,7 +126,6 @@ module PotatoMesh
           "lastUpdateTime" => attributes[:last_update_time],
           "isPrivate" => attributes[:is_private],
           "contactLink" => attributes[:contact_link],
-          "nodesCount" => attributes[:nodes_count],
           "signature" => signature,
         }
         payload.reject { |_, value| value.nil? }
@@ -644,7 +643,6 @@ module PotatoMesh
           last_update_time: coerce_integer(payload["lastUpdateTime"]),
           is_private: private_flag,
           contact_link: string_or_nil(payload["contactLink"]),
-          nodes_count: coerce_integer(payload["nodesCount"]),
         }
 
         [attributes, signature, nil]
