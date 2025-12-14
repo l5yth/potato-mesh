@@ -90,6 +90,11 @@ test('resolveInstanceLabel falls back to the domain when the name is missing', (
 test('buildInstanceUrl normalises domains into navigable HTTPS URLs', () => {
   assert.equal(buildInstanceUrl('mesh.example'), 'https://mesh.example');
   assert.equal(buildInstanceUrl(' https://mesh.example '), 'https://mesh.example');
+  assert.equal(buildInstanceUrl('https://mesh.example/path?query#fragment'), 'https://mesh.example');
+  assert.equal(buildInstanceUrl('javascript:alert(1)'), null);
+  assert.equal(buildInstanceUrl('ftp://mesh.example'), null);
+  assert.equal(buildInstanceUrl('mesh.example:8080'), 'https://mesh.example:8080');
+  assert.equal(buildInstanceUrl('mesh.example<script>'), null);
   assert.equal(buildInstanceUrl(''), null);
   assert.equal(buildInstanceUrl(null), null);
 });
