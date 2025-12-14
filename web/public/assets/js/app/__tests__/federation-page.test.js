@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 
 import { createDomEnvironment } from './dom-environment.js';
 import { initializeFederationPage } from '../federation-page.js';
+import { roleColors } from '../role-helpers.js';
 
 test('federation map centers on configured coordinates and follows theme filters', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: true });
@@ -54,6 +55,7 @@ test('federation map centers on configured coordinates and follows theme filters
   tilePane.appendChild(tileImage);
   const mapSetViewCalls = [];
   const mapFitBoundsCalls = [];
+  const circleMarkerCalls = [];
   const tileLayerStub = {
     addTo() {
       return this;
@@ -94,7 +96,8 @@ test('federation map centers on configured coordinates and follows theme filters
         }
       };
     },
-    circleMarker() {
+    circleMarker(latlng, options) {
+      circleMarkerCalls.push({ latlng, options });
       return {
         bindPopup() {
           return this;
@@ -112,13 +115,15 @@ const fetchImpl = async () => ({
       version: '1.0.0',
       latitude: 10.12345,
       longitude: -20.98765,
-      lastUpdateTime: Math.floor(Date.now() / 1000) - 90
+      lastUpdateTime: Math.floor(Date.now() / 1000) - 90,
+      nodesCount: 12
     },
     {
       domain: 'bravo.mesh',
       contactLink: null,
       version: '2.0.0',
-      lastUpdateTime: Math.floor(Date.now() / 1000) - (2 * 86400)
+      lastUpdateTime: Math.floor(Date.now() / 1000) - (2 * 86400),
+      nodesCount: 2
     }
   ]
 });
@@ -150,14 +155,268 @@ const fetchImpl = async () => ({
     assert.match(firstRowHtml, /https:\/\/chat\.alpha/);
     assert.match(firstRowHtml, /10\.12345/);
     assert.match(firstRowHtml, /-20\.98765/);
+    assert.match(firstRowHtml, />12</);
     assert.match(firstRowHtml, /ago/);
 
     const secondRowHtml = rows[1].innerHTML;
     assert.match(secondRowHtml, /bravo\.mesh/);
     assert.match(secondRowHtml, /<em>—<\/em>/); // no contact link
     assert.match(secondRowHtml, /2\.0\.0/);
+    assert.match(secondRowHtml, />2</);
     assert.match(secondRowHtml, /d ago/);
     assert.deepEqual(mapFitBoundsCalls[0][0], [[10.12345, -20.98765]]);
+    assert.equal(circleMarkerCalls[0].options.fillColor, roleColors.CLIENT_HIDDEN);
+  } catch (error) {
+    console.error('federation sorting test error', error);
+    throw error;
+  } finally {
+    cleanup();
+  }
+});
+
+test('federation table sorting, contact rendering, and legend creation', async () => {
+  const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
+  const { document, createElement, registerElement, cleanup } = env;
+
+  const mapEl = createElement('div', 'map');
+  registerElement('map', mapEl);
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  tableEl.appendChild(tbodyEl);
+
+  const headerNameTh = createElement('th');
+  const headerName = createElement('span');
+  headerName.classList.add('sort-header');
+  headerName.dataset.sortKey = 'name';
+  headerName.dataset.sortLabel = 'Name';
+  headerNameTh.appendChild(headerName);
+
+  const headerDomainTh = createElement('th');
+  const headerDomain = createElement('span');
+  headerDomain.classList.add('sort-header');
+  headerDomain.dataset.sortKey = 'domain';
+  headerDomain.dataset.sortLabel = 'Domain';
+  headerDomainTh.appendChild(headerDomain);
+
+  const ths = [headerNameTh, headerDomainTh];
+  const headers = [headerName, headerDomain];
+  const headerHandlers = new Map();
+  headers.forEach(header => {
+    header.addEventListener = (event, handler) => {
+      const existing = headerHandlers.get(header) || {};
+      existing[event] = handler;
+      headerHandlers.set(header, existing);
+    };
+    header.closest = () => ths.find(th => th.childNodes.includes(header));
+    header.querySelector = selector => {
+      if (selector === '.sort-indicator') {
+        const span = createElement('span');
+        span.classList.add('sort-indicator');
+        return span;
+      }
+      return null;
+    };
+  });
+
+  tableEl.querySelectorAll = selector => {
+    if (selector === 'thead .sort-header[data-sort-key]') return headers;
+    if (selector === 'thead th') return ths;
+    return [];
+  };
+
+  const configPayload = {
+    mapCenter: { lat: 0, lon: 0 },
+    mapZoom: 3,
+    tileFilters: { light: 'none', dark: 'invert(1)' }
+  };
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify(configPayload));
+
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+
+  const legendContainers = [];
+  const mapSetViewCalls = [];
+  const mapFitBoundsCalls = [];
+  const circleMarkerCalls = [];
+
+  const DomUtil = {
+    create(tag, className, parent) {
+      const el = {
+        tagName: tag,
+        className,
+        children: [],
+        style: {},
+        textContent: '',
+        setAttribute() {},
+        appendChild(child) {
+          this.children.push(child);
+          return child;
+        },
+      };
+      if (parent && parent.appendChild) parent.appendChild(el);
+      return el;
+    }
+  };
+
+  const controlStub = () => {
+    const ctrl = {
+      onAdd: null,
+      container: null,
+      addTo(map) {
+        this.container = this.onAdd ? this.onAdd(map) : null;
+        legendContainers.push(this.container);
+        return this;
+      },
+      getContainer() {
+        return this.container;
+      }
+    };
+    return ctrl;
+  };
+
+  const markersLayer = {
+    layers: [],
+    addLayer(marker) {
+      this.layers.push(marker);
+      return marker;
+    },
+    addTo() {
+      return this;
+    }
+  };
+
+  const mapStub = {
+    addedControls: [],
+    setView(...args) {
+      mapSetViewCalls.push(args);
+    },
+    on() {},
+    fitBounds(...args) {
+      mapFitBoundsCalls.push(args);
+    },
+    addLayer(layer) {
+      this.addedControls.push(layer);
+      return layer;
+    }
+  };
+
+  const leafletStub = {
+    map() {
+      return mapStub;
+    },
+    tileLayer() {
+      return {
+        addTo() {
+          return this;
+        },
+        getContainer() {
+          return null;
+        },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return markersLayer;
+    },
+    circleMarker(latlng, options) {
+      circleMarkerCalls.push({ latlng, options });
+      return {
+        bindPopup() {
+          return this;
+        },
+        addTo() {
+          return this;
+        }
+      };
+    },
+    control: controlStub,
+    DomUtil
+  };
+
+  const now = Math.floor(Date.now() / 1000);
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'c.mesh',
+        name: 'Charlie',
+        contactLink: 'https://charlie.example\nmatrix:#c:mesh',
+        version: '3.0.0',
+        latitude: 1,
+        longitude: 1,
+        lastUpdateTime: now - 10,
+        nodesCount: 0
+      },
+      {
+        domain: 'b.mesh',
+        contactLink: '',
+        version: '2.0.0',
+        latitude: 2,
+        longitude: 2,
+        lastUpdateTime: now - 60,
+        nodesCount: 650
+      },
+      {
+        domain: 'a.mesh',
+        name: 'Alpha',
+        contactLink: 'mailto:alpha@mesh',
+        version: '1.0.0',
+        latitude: 3,
+        longitude: 3,
+        lastUpdateTime: now - 30,
+        nodesCount: 5
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({ config: configPayload, fetchImpl, leaflet: leafletStub });
+
+    const rows = tbodyEl.childNodes.map(node => String(node.childNodes[0]));
+    assert.match(rows[0], /c\.mesh/);
+    assert.match(rows[0], /0</);
+    assert.match(rows[0], /https:\/\/charlie\.example/);
+    assert.match(rows[0], /matrix:#c:mesh/);
+    assert.match(rows[1], /a\.mesh/);
+    assert.match(rows[2], /b\.mesh/);
+
+    const nameHandlers = headerHandlers.get(headerName);
+    nameHandlers.click();
+    const afterNameSort = tbodyEl.childNodes.map(node => String(node.childNodes[0]));
+    assert.match(afterNameSort[0], /a\.mesh/);
+    assert.match(afterNameSort[1], /c\.mesh/);
+    assert.match(afterNameSort[2], /b\.mesh/);
+
+    nameHandlers.click();
+    const descSort = tbodyEl.childNodes.map(node => String(node.childNodes[0]));
+    assert.match(descSort[0], /c\.mesh/);
+    assert.match(descSort[1], /a\.mesh/);
+    assert.match(descSort[2], /b\.mesh/);
+    assert.equal(headerName.closest().attributes.get('aria-sort'), 'descending');
+
+    assert.equal(circleMarkerCalls[0].options.fillColor, roleColors.CLIENT_HIDDEN);
+    assert.equal(circleMarkerCalls[1].options.fillColor, roleColors.REPEATER);
+
+    assert.deepEqual(mapSetViewCalls[0], [[0, 0], 3]);
+    assert.equal(mapFitBoundsCalls[0][0].length, 3);
+
+    assert.equal(legendContainers.length, 1);
+    const legend = legendContainers[0];
+    assert.ok(legend.className.includes('legend'));
+    const legendHeader = legend.children.find(child => child.className === 'legend-header');
+    const legendTitle = legendHeader && Array.isArray(legendHeader.children)
+      ? legendHeader.children.find(child => child.className === 'legend-title')
+      : null;
+    assert.ok(legendTitle);
+    assert.equal(legendTitle.textContent, 'Active nodes');
   } finally {
     cleanup();
   }

@@ -400,6 +400,34 @@ RSpec.describe PotatoMesh::App::Federation do
         expect(row[1]).to eq("sig-3")
       end
     end
+
+    it "stores the nodes_count for new records" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 77), "sig-1")
+
+        stored = db.get_first_value("SELECT nodes_count FROM instances WHERE id = ?", base_attributes[:id])
+        expect(stored).to eq(77)
+      end
+    end
+
+    it "updates the nodes_count on conflict" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 12), "sig-1")
+
+        federation_helpers.send(
+          :upsert_instance_record,
+          db,
+          base_attributes.merge(nodes_count: 99, name: "Renamed Mesh"),
+          "sig-2",
+        )
+
+        row =
+          db.get_first_row("SELECT nodes_count, name, signature FROM instances WHERE id = ?", base_attributes[:id])
+        expect(row[0]).to eq(99)
+        expect(row[1]).to eq("Renamed Mesh")
+        expect(row[2]).to eq("sig-2")
+      end
+    end
   end
 
   describe ".federation_user_agent_header" do

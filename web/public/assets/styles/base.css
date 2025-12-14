@@ -1373,6 +1373,19 @@ button:not(.chat-tab):not(.sort-button):hover {
   outline-offset: 2px;
 }
 
+.sort-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sort-header:focus-visible {
+  outline: 2px solid #4a90e2;
+  outline-offset: 2px;
+}
+
 .sort-indicator {
   font-size: 0.75em;
   opacity: 0.6;
@@ -1850,6 +1863,10 @@ body.dark .sort-button {
   color: inherit;
 }
 
+body.dark .sort-header {
+  color: inherit;
+}
+
 body.dark .sort-button:hover {
   background: none;
 }
@@ -2075,6 +2092,12 @@ body.dark #map .leaflet-tile.map-tiles {
   min-width: 180px;
 }
 
+.instances-col--contact {
+  min-width: 160px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .instances-col--version {
   min-width: 80px;
 }
@@ -2082,6 +2105,10 @@ body.dark #map .leaflet-tile.map-tiles {
 .instances-col--channel,
 .instances-col--frequency {
   min-width: 100px;
+}
+
+.instances-col--nodes {
+  min-width: 110px;
 }
 
 .instances-col--latitude,
