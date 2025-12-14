@@ -61,6 +61,7 @@ module PotatoMesh
       def self_instance_attributes
         domain = self_instance_domain
         last_update = latest_node_update_timestamp || Time.now.to_i
+        nodes_count = active_node_count_since(Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age)
         {
           id: app_constant(:SELF_INSTANCE_ID),
           domain: domain,
@@ -74,7 +75,34 @@ module PotatoMesh
           last_update_time: last_update,
           is_private: private_mode?,
           contact_link: sanitized_contact_link,
+          nodes_count: nodes_count,
         }
+      end
+
+      # Count the number of nodes active since the supplied timestamp.
+      #
+      # @param cutoff [Integer] unix timestamp in seconds.
+      # @param db [SQLite3::Database, nil] optional open handle to reuse.
+      # @return [Integer, nil] node count or nil when unavailable.
+      def active_node_count_since(cutoff, db: nil)
+        return nil unless cutoff
+
+        handle = db || open_database(readonly: true)
+        count =
+          with_busy_retry do
+            handle.get_first_value("SELECT COUNT(*) FROM nodes WHERE last_heard >= ?", cutoff.to_i)
+          end
+        Integer(count)
+      rescue SQLite3::Exception, ArgumentError => e
+        warn_log(
+          "Failed to count active nodes",
+          context: "instances.nodes_count",
+          error_class: e.class.name,
+          error_message: e.message,
+        )
+        nil
+      ensure
+        handle&.close unless db
       end
 
       def sign_instance_attributes(attributes)
@@ -723,6 +751,7 @@ module PotatoMesh
         end
 
         processed_entries = 0
+        recent_cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
         payload.each do |entry|
           if per_response_limit && per_response_limit.positive? && processed_entries >= per_response_limit
             debug_log(
@@ -777,13 +806,27 @@ module PotatoMesh
 
           attributes[:is_private] = false if attributes[:is_private].nil?
 
+          nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
+          nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
+          if nodes_since_window.is_a?(Array)
+            attributes[:nodes_count] = nodes_since_window.length
+          elsif nodes_since_metadata
+            warn_log(
+              "Failed to load remote node window",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              reason: Array(nodes_since_metadata).map(&:to_s).join("; "),
+            )
+          end
+
           remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
+          remote_nodes ||= nodes_since_window if nodes_since_window.is_a?(Array)
           unless remote_nodes
             warn_log(
               "Failed to load remote node data",
               context: "federation.instances",
               domain: attributes[:domain],
-              reason: Array(node_metadata).map(&:to_s).join("; "),
+              reason: Array(node_metadata || nodes_since_metadata).map(&:to_s).join("; "),
             )
             next
           end
@@ -1059,8 +1102,8 @@ module PotatoMesh
         sql = <<~SQL
           INSERT INTO instances (
             id, domain, pubkey, name, version, channel, frequency,
-            latitude, longitude, last_update_time, is_private, contact_link, signature
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            latitude, longitude, last_update_time, is_private, nodes_count, contact_link, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             domain=excluded.domain,
             pubkey=excluded.pubkey,
@@ -1072,10 +1115,12 @@ module PotatoMesh
             longitude=excluded.longitude,
             last_update_time=excluded.last_update_time,
             is_private=excluded.is_private,
+            nodes_count=excluded.nodes_count,
             contact_link=excluded.contact_link,
             signature=excluded.signature
         SQL
 
+        nodes_count = coerce_integer(attributes[:nodes_count])
         params = [
           attributes[:id],
           normalized_domain,
@@ -1088,6 +1133,7 @@ module PotatoMesh
           attributes[:longitude],
           attributes[:last_update_time],
           attributes[:is_private] ? 1 : 0,
+          nodes_count,
           attributes[:contact_link],
           signature,
         ]

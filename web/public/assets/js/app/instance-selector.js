@@ -34,12 +34,15 @@ function resolveInstanceLabel(entry) {
   return domain;
 }
 
-/**
- * Construct a navigable URL for the provided instance domain.
- *
- * @param {string} domain Instance domain as returned by the federation catalog.
- * @returns {string|null} Navigable absolute URL or ``null`` when the domain is empty.
- */
+ /**
+  * Construct a navigable URL for the provided instance domain.
+  *
+  * The returned URL is guaranteed to use HTTP(S) and a host-only component to avoid
+  * interpreting arbitrary DOM-controlled text as executable content.
+  *
+  * @param {string} domain Instance domain as returned by the federation catalog.
+  * @returns {string|null} Navigable absolute URL or ``null`` when the domain is empty or unsafe.
+  */
 export function buildInstanceUrl(domain) {
   if (typeof domain !== 'string') {
     return null;
@@ -50,8 +53,29 @@ export function buildInstanceUrl(domain) {
     return null;
   }
 
-  if (/^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(trimmed)) {
-    return trimmed;
+  const allowedHostPattern = /^[a-zA-Z0-9.-]+(?::\d{1,5})?$/;
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return null;
+      }
+
+      const sanitizedHost = parsed.host.trim();
+      if (!allowedHostPattern.test(sanitizedHost)) {
+        return null;
+      }
+
+      return `${parsed.protocol}//${sanitizedHost}`;
+    } catch (error) {
+      console.warn('Rejected invalid instance URL', error);
+      return null;
+    }
+  }
+
+  if (!allowedHostPattern.test(trimmed)) {
+    return null;
   }
 
   return `https://${trimmed}`;

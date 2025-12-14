@@ -81,10 +81,10 @@ module PotatoMesh
         return false unless File.exist?(PotatoMesh::Config.db_path)
 
         db = open_database(readonly: true)
-        required = %w[nodes messages positions telemetry neighbors instances traces trace_hops]
+        required = %w[nodes messages positions telemetry neighbors instances traces trace_hops ingestors]
         tables =
           db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','instances','traces','trace_hops')",
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('nodes','messages','positions','telemetry','neighbors','instances','traces','trace_hops','ingestors')",
           ).flatten
         (required - tables).empty?
       rescue SQLite3::Exception
@@ -99,7 +99,7 @@ module PotatoMesh
       def init_db
         FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
-        %w[nodes messages positions telemetry neighbors instances traces].each do |schema|
+        %w[nodes messages positions telemetry neighbors instances traces ingestors].each do |schema|
           sql_file = File.expand_path("../../../../data/#{schema}.sql", __dir__)
           db.execute_batch(File.read(sql_file))
         end
@@ -167,6 +167,11 @@ module PotatoMesh
         instance_columns = db.execute("PRAGMA table_info(instances)").map { |row| row[1] }
         unless instance_columns.include?("contact_link")
           db.execute("ALTER TABLE instances ADD COLUMN contact_link TEXT")
+          instance_columns << "contact_link"
+        end
+
+        unless instance_columns.include?("nodes_count")
+          db.execute("ALTER TABLE instances ADD COLUMN nodes_count INTEGER")
         end
 
         telemetry_tables =
@@ -191,6 +196,24 @@ module PotatoMesh
         unless trace_tables.include?("traces") && trace_tables.include?("trace_hops")
           traces_schema = File.expand_path("../../../../data/traces.sql", __dir__)
           db.execute_batch(File.read(traces_schema))
+        end
+
+        ingestor_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ingestors'").flatten
+        if ingestor_tables.empty?
+          ingestors_schema = File.expand_path("../../../../data/ingestors.sql", __dir__)
+          db.execute_batch(File.read(ingestors_schema))
+        else
+          ingestor_columns = db.execute("PRAGMA table_info(ingestors)").map { |row| row[1] }
+          unless ingestor_columns.include?("version")
+            db.execute("ALTER TABLE ingestors ADD COLUMN version TEXT")
+          end
+          unless ingestor_columns.include?("lora_freq")
+            db.execute("ALTER TABLE ingestors ADD COLUMN lora_freq INTEGER")
+          end
+          unless ingestor_columns.include?("modem_preset")
+            db.execute("ALTER TABLE ingestors ADD COLUMN modem_preset TEXT")
+          end
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

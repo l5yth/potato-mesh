@@ -222,6 +222,27 @@ def channel_name(channel_index: int | None) -> str | None:
     return _CHANNEL_LOOKUP.get(int(channel_index))
 
 
+def hidden_channel_names() -> tuple[str, ...]:
+    """Return the configured set of hidden channel names."""
+
+    return tuple(getattr(config, "HIDDEN_CHANNELS", ()))
+
+
+def is_hidden_channel(channel_name_value: str | None) -> bool:
+    """Return ``True`` when ``channel_name_value`` is configured as hidden."""
+
+    if channel_name_value is None:
+        return False
+    normalized = channel_name_value.strip()
+    if not normalized:
+        return False
+    normalized_casefold = normalized.casefold()
+    for hidden in getattr(config, "HIDDEN_CHANNELS", ()):
+        if normalized_casefold == hidden.casefold():
+            return True
+    return False
+
+
 def _reset_channel_cache() -> None:
     """Clear cached channel data. Intended for use in tests only."""
 
@@ -234,5 +255,7 @@ __all__ = [
     "capture_from_interface",
     "channel_mappings",
     "channel_name",
+    "hidden_channel_names",
+    "is_hidden_channel",
     "_reset_channel_cache",
 ]

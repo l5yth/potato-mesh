@@ -46,6 +46,9 @@ DEFAULT_ENERGY_ONLINE_DURATION_SECS = 300.0
 DEFAULT_ENERGY_SLEEP_SECS = float(6 * 60 * 60)
 """Sleep duration used when energy saving mode is active."""
 
+DEFAULT_INGESTOR_HEARTBEAT_SECS = float(60 * 60)
+"""Interval between ingestor heartbeat announcements."""
+
 CONNECTION = os.environ.get("CONNECTION") or os.environ.get("MESH_SERIAL")
 """Optional connection target for the mesh interface.
 
@@ -61,6 +64,40 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 """Index of the LoRa channel to select when connecting."""
 
 DEBUG = os.environ.get("DEBUG") == "1"
+
+
+def _parse_hidden_channels(raw_value: str | None) -> tuple[str, ...]:
+    """Normalise a comma-separated list of hidden channel names.
+
+    Parameters:
+        raw_value: Raw environment string containing channel names separated by
+            commas. ``None`` and empty segments are ignored.
+
+    Returns:
+        A tuple of unique, non-empty channel names preserving input order while
+        deduplicating case-insensitively.
+    """
+
+    if not raw_value:
+        return ()
+
+    normalized_entries: list[str] = []
+    seen: set[str] = set()
+    for part in raw_value.split(","):
+        name = part.strip()
+        if not name:
+            continue
+        key = name.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized_entries.append(name)
+
+    return tuple(normalized_entries)
+
+
+HIDDEN_CHANNELS = _parse_hidden_channels(os.environ.get("HIDDEN_CHANNELS"))
+"""Channel names configured to be ignored by the ingestor."""
 
 
 def _resolve_instance_domain() -> str:
@@ -100,6 +137,7 @@ _CLOSE_TIMEOUT_SECS = DEFAULT_CLOSE_TIMEOUT_SECS
 _INACTIVITY_RECONNECT_SECS = DEFAULT_INACTIVITY_RECONNECT_SECS
 _ENERGY_ONLINE_DURATION_SECS = DEFAULT_ENERGY_ONLINE_DURATION_SECS
 _ENERGY_SLEEP_SECS = DEFAULT_ENERGY_SLEEP_SECS
+_INGESTOR_HEARTBEAT_SECS = DEFAULT_INGESTOR_HEARTBEAT_SECS
 
 # Backwards compatibility shim for legacy imports.
 PORT = CONNECTION
@@ -144,6 +182,7 @@ __all__ = [
     "SNAPSHOT_SECS",
     "CHANNEL_INDEX",
     "DEBUG",
+    "HIDDEN_CHANNELS",
     "INSTANCE",
     "API_TOKEN",
     "ENERGY_SAVING",
@@ -155,6 +194,7 @@ __all__ = [
     "_INACTIVITY_RECONNECT_SECS",
     "_ENERGY_ONLINE_DURATION_SECS",
     "_ENERGY_SLEEP_SECS",
+    "_INGESTOR_HEARTBEAT_SECS",
     "_debug_log",
 ]
 

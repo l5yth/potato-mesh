@@ -14,21 +14,13 @@
 
 PRAGMA journal_mode=WAL;
 
-CREATE TABLE IF NOT EXISTS instances (
-  id                TEXT PRIMARY KEY,
-  domain            TEXT NOT NULL,
-  pubkey            TEXT NOT NULL,
-  name              TEXT,
-  version           TEXT,
-  channel           TEXT,
-  frequency         TEXT,
-  latitude          REAL,
-  longitude         REAL,
-  last_update_time  INTEGER,
-  is_private        BOOLEAN NOT NULL DEFAULT 0,
-  nodes_count       INTEGER,
-  contact_link      TEXT,
-  signature         TEXT
+CREATE TABLE IF NOT EXISTS ingestors (
+  node_id        TEXT PRIMARY KEY,
+  start_time     INTEGER NOT NULL,
+  last_seen_time INTEGER NOT NULL,
+  version        TEXT,
+  lora_freq      INTEGER,
+  modem_preset   TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_instances_domain ON instances(domain);
+CREATE INDEX IF NOT EXISTS idx_ingestors_last_seen ON ingestors(last_seen_time);

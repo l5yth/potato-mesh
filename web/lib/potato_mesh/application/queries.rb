@@ -262,6 +262,41 @@ module PotatoMesh
         db&.close
       end
 
+      def query_ingestors(limit)
+        limit = coerce_query_limit(limit)
+        db = open_database(readonly: true)
+        db.results_as_hash = true
+        now = Time.now.to_i
+        cutoff = now - PotatoMesh::Config.week_seconds
+        sql = <<~SQL
+          SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset
+          FROM ingestors
+          WHERE last_seen_time >= ?
+          ORDER BY last_seen_time DESC
+          LIMIT ?
+        SQL
+
+        rows = db.execute(sql, [cutoff, limit])
+        rows.each do |row|
+          row.delete_if { |key, _| key.is_a?(Integer) }
+          start_time = coerce_integer(row["start_time"])
+          last_seen_time = coerce_integer(row["last_seen_time"])
+          start_time = now if start_time && start_time > now
+          last_seen_time = now if last_seen_time && last_seen_time > now
+          if start_time && last_seen_time && last_seen_time < start_time
+            last_seen_time = start_time
+          end
+          row["start_time"] = start_time
+          row["last_seen_time"] = last_seen_time
+          row["start_time_iso"] = Time.at(start_time).utc.iso8601 if start_time
+          row["last_seen_iso"] = Time.at(last_seen_time).utc.iso8601 if last_seen_time
+        end
+
+        rows.map { |row| compact_api_row(row) }
+      ensure
+        db&.close
+      end
+
       # Fetch chat messages with optional filtering.
       #
       # @param limit [Integer] maximum number of rows to return.

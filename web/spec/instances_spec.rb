@@ -38,6 +38,7 @@ RSpec.describe PotatoMesh::App::Instances do
   before do
     FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
     application_class.init_db unless application_class.db_schema_present?
+    application_class.ensure_schema_upgrades
     with_db do |db|
       db.execute("DELETE FROM instances")
     end
@@ -131,6 +132,49 @@ RSpec.describe PotatoMesh::App::Instances do
 
       expect(with_contact["contactLink"]).to eq("https://example.org/contact")
       expect(without_contact.key?("contactLink")).to be(false)
+    end
+
+    it "includes nodesCount values, preserving zeros" do
+      fixed_time = Time.utc(2025, 2, 2, 8, 0, 0)
+      allow(Time).to receive(:now).and_return(fixed_time)
+
+      with_db do |db|
+        db.execute(
+          <<~SQL,
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
+          VALUES (?, ?, ?, ?, ?, ?)
+        SQL
+          [
+            "instance-with-nodes",
+            "gamma.mesh.test",
+            PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+            fixed_time.to_i,
+            0,
+            42,
+          ],
+        )
+        db.execute(
+          <<~SQL,
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
+          VALUES (?, ?, ?, ?, ?, ?)
+        SQL
+          [
+            "instance-with-zero",
+            "delta.mesh.test",
+            PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+            fixed_time.to_i,
+            0,
+            0,
+          ],
+        )
+      end
+
+      payload = application_class.load_instances_for_api
+      with_nodes = payload.find { |row| row["domain"] == "gamma.mesh.test" }
+      zero_nodes = payload.find { |row| row["domain"] == "delta.mesh.test" }
+
+      expect(with_nodes["nodesCount"]).to eq(42)
+      expect(zero_nodes["nodesCount"]).to eq(0)
     end
   end
 end

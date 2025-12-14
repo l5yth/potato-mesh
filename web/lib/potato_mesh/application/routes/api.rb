@@ -77,6 +77,12 @@ module PotatoMesh
             rows.first.to_json
           end
 
+          app.get "/api/ingestors" do
+            content_type :json
+            limit = coerce_query_limit(params["limit"])
+            query_ingestors(limit).to_json
+          end
+
           app.get "/api/messages" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min

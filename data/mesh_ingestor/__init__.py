@@ -21,7 +21,17 @@ import threading as threading  # re-exported for compatibility
 import sys
 import types
 
-from . import channels, config, daemon, handlers, interfaces, queue, serialization
+from .. import VERSION as _PACKAGE_VERSION
+from . import (
+    channels,
+    config,
+    daemon,
+    handlers,
+    ingestors,
+    interfaces,
+    queue,
+    serialization,
+)
 
 __all__: list[str] = []
 
@@ -40,7 +50,15 @@ def _export_constants() -> None:
     __all__.extend(["json", "urllib", "glob", "threading", "signal"])
 
 
-for _module in (channels, daemon, handlers, interfaces, queue, serialization):
+for _module in (
+    channels,
+    daemon,
+    handlers,
+    interfaces,
+    queue,
+    serialization,
+    ingestors,
+):
     _reexport(_module)
 
 _export_constants()
@@ -52,11 +70,13 @@ _CONFIG_ATTRS = {
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",
+    "HIDDEN_CHANNELS",
     "LORA_FREQ",
     "MODEM_PRESET",
     "_RECONNECT_INITIAL_DELAY_SECS",
     "_RECONNECT_MAX_DELAY_SECS",
     "_CLOSE_TIMEOUT_SECS",
+    "_INGESTOR_HEARTBEAT_SECS",
     "_debug_log",
 }
 
@@ -70,9 +90,16 @@ _HANDLER_ATTRS = set(handlers.__all__)
 _DAEMON_ATTRS = set(daemon.__all__)
 _SERIALIZATION_ATTRS = set(serialization.__all__)
 _INTERFACE_EXPORTS = set(interfaces.__all__)
+_INGESTOR_ATTRS = set(ingestors.__all__)
+
+# Re-export the package version for callers that previously referenced
+# data.mesh_ingestor.VERSION directly.
+VERSION = _PACKAGE_VERSION
+__all__.append("VERSION")
 
 __all__.extend(sorted(_CONFIG_ATTRS))
 __all__.extend(sorted(_INTERFACE_ATTRS))
+__all__.append("VERSION")
 
 
 class _MeshIngestorModule(types.ModuleType):
@@ -87,6 +114,10 @@ class _MeshIngestorModule(types.ModuleType):
             return getattr(interfaces, name)
         if name in _INTERFACE_EXPORTS:
             return getattr(interfaces, name)
+        if name in _INGESTOR_ATTRS:
+            return getattr(ingestors, name)
+        if name == "VERSION":
+            return VERSION
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):  # type: ignore[override]
@@ -120,6 +151,10 @@ class _MeshIngestorModule(types.ModuleType):
         if name in _SERIALIZATION_ATTRS:
             setattr(serialization, name, value)
             super().__setattr__(name, getattr(serialization, name, value))
+            handled = True
+        if name in _INGESTOR_ATTRS:
+            setattr(ingestors, name, value)
+            super().__setattr__(name, getattr(ingestors, name, value))
             handled = True
         if handled:
             return
