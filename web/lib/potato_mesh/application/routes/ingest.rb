@@ -65,6 +65,25 @@ module PotatoMesh
             db&.close
           end
 
+          app.post "/api/ingestors" do
+            require_token!
+            content_type :json
+            begin
+              payload = JSON.parse(read_json_body)
+            rescue JSON::ParserError
+              halt 400, { error: "invalid JSON" }.to_json
+            end
+            unless payload.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
+            db = open_database
+            stored = upsert_ingestor(db, payload)
+            halt 400, { error: "invalid payload" }.to_json unless stored
+            { status: "ok" }.to_json
+          ensure
+            db&.close
+          end
+
           app.post "/api/instances" do
             content_type :json
             begin

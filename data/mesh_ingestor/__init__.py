@@ -21,7 +21,16 @@ import threading as threading  # re-exported for compatibility
 import sys
 import types
 
-from . import channels, config, daemon, handlers, interfaces, queue, serialization
+from . import (
+    channels,
+    config,
+    daemon,
+    handlers,
+    ingestors,
+    interfaces,
+    queue,
+    serialization,
+)
 
 __all__: list[str] = []
 
@@ -40,7 +49,15 @@ def _export_constants() -> None:
     __all__.extend(["json", "urllib", "glob", "threading", "signal"])
 
 
-for _module in (channels, daemon, handlers, interfaces, queue, serialization):
+for _module in (
+    channels,
+    daemon,
+    handlers,
+    interfaces,
+    queue,
+    serialization,
+    ingestors,
+):
     _reexport(_module)
 
 _export_constants()
@@ -58,6 +75,7 @@ _CONFIG_ATTRS = {
     "_RECONNECT_INITIAL_DELAY_SECS",
     "_RECONNECT_MAX_DELAY_SECS",
     "_CLOSE_TIMEOUT_SECS",
+    "_INGESTOR_HEARTBEAT_SECS",
     "_debug_log",
 }
 
@@ -71,6 +89,7 @@ _HANDLER_ATTRS = set(handlers.__all__)
 _DAEMON_ATTRS = set(daemon.__all__)
 _SERIALIZATION_ATTRS = set(serialization.__all__)
 _INTERFACE_EXPORTS = set(interfaces.__all__)
+_INGESTOR_ATTRS = set(ingestors.__all__)
 
 __all__.extend(sorted(_CONFIG_ATTRS))
 __all__.extend(sorted(_INTERFACE_ATTRS))
@@ -88,6 +107,8 @@ class _MeshIngestorModule(types.ModuleType):
             return getattr(interfaces, name)
         if name in _INTERFACE_EXPORTS:
             return getattr(interfaces, name)
+        if name in _INGESTOR_ATTRS:
+            return getattr(ingestors, name)
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):  # type: ignore[override]
@@ -121,6 +142,10 @@ class _MeshIngestorModule(types.ModuleType):
         if name in _SERIALIZATION_ATTRS:
             setattr(serialization, name, value)
             super().__setattr__(name, getattr(serialization, name, value))
+            handled = True
+        if name in _INGESTOR_ATTRS:
+            setattr(ingestors, name, value)
+            super().__setattr__(name, getattr(ingestors, name, value))
             handled = True
         if handled:
             return

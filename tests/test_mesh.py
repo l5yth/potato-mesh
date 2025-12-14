@@ -20,6 +20,7 @@ import re
 import sys
 import threading
 import types
+import time
 
 """End-to-end tests covering the mesh ingestion package."""
 
@@ -214,6 +215,9 @@ def mesh_module(monkeypatch):
         if attr in module.__dict__:
             delattr(module, attr)
     module.channels._reset_channel_cache()
+    module.ingestors.STATE.start_time = int(time.time())
+    module.ingestors.STATE.last_heartbeat = None
+    module.ingestors.STATE.node_id = None
 
     yield module
 
@@ -2659,6 +2663,55 @@ def test_queue_post_json_skips_when_active(mesh_module, monkeypatch):
     assert mesh.STATE.active is True
     assert mesh.STATE.queue
     mesh._clear_post_queue()
+
+
+def test_queue_ingestor_heartbeat_requires_node_id(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+
+    monkeypatch.setattr(
+        mesh.queue,
+        "_queue_post_json",
+        lambda path, payload, *, priority, send=None: captured.append((path, payload, priority)),
+    )
+
+    mesh.ingestors.STATE.node_id = None
+    mesh.ingestors.STATE.last_heartbeat = None
+
+    queued = mesh.ingestors.queue_ingestor_heartbeat(force=True)
+
+    assert queued is False
+    assert captured == []
+
+
+def test_queue_ingestor_heartbeat_enqueues_and_throttles(mesh_module, monkeypatch):
+    mesh = mesh_module
+    captured = []
+
+    monkeypatch.setattr(
+        mesh.queue,
+        "_queue_post_json",
+        lambda path, payload, *, priority, send=None: captured.append((path, payload, priority)),
+    )
+
+    mesh.ingestors.STATE.start_time = 1_700_000_000
+    mesh.ingestors.STATE.last_heartbeat = None
+    mesh.ingestors.STATE.node_id = None
+
+    mesh.ingestors.set_ingestor_node_id("!CAFEBABE")
+    first = mesh.ingestors.queue_ingestor_heartbeat(force=True)
+    second = mesh.ingestors.queue_ingestor_heartbeat()
+
+    assert first is True
+    assert second is False
+    assert len(captured) == 1
+    path, payload, priority = captured[0]
+    assert path == "/api/ingestors"
+    assert payload["node_id"] == "!cafebabe"
+    assert payload["start_time"] == 1_700_000_000
+    assert payload["last_seen_time"] >= payload["start_time"]
+    assert payload["version"] == mesh.VERSION
+    assert priority == mesh.queue._INGESTOR_POST_PRIORITY
 
 
 def test_node_to_dict_handles_proto_fallback(mesh_module, monkeypatch):
