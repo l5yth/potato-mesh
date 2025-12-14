@@ -113,6 +113,18 @@ RSpec.describe "Ingestor endpoints" do
 
       expect(last_response.status).to eq(400)
     end
+
+    it "rejects payloads missing version" do
+      post "/api/ingestors", ingestor_payload(version: nil).to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+    end
+
+    it "rejects non-object payloads" do
+      post "/api/ingestors", [].to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+    end
   end
 
   describe "GET /api/ingestors" do
@@ -144,6 +156,27 @@ RSpec.describe "Ingestor endpoints" do
       rich = payload.find { |row| row["node_id"] == "!rich000" }
       expect(rich["lora_freq"]).to eq(915)
       expect(rich["modem_preset"]).to eq("MediumFast")
+      expect(rich["start_time_iso"]).to be_a(String)
+      expect(rich["last_seen_iso"]).to be_a(String)
+    end
+  end
+
+  describe "schema migrations" do
+    it "creates the ingestors table with frequency and modem columns" do
+      tmp_db = File.join(SPEC_TMPDIR, "ingestor-migrate.db")
+      FileUtils.rm_f(tmp_db)
+      original = PotatoMesh::Config.db_path
+      allow(PotatoMesh::Config).to receive(:db_path).and_return(tmp_db)
+
+      begin
+        PotatoMesh::Application.init_db
+        with_db(readonly: true) do |db|
+          columns = db.execute("PRAGMA table_info(ingestors)").map { |row| row[1] }
+          expect(columns).to include("lora_freq", "modem_preset", "version")
+        end
+      ensure
+        allow(PotatoMesh::Config).to receive(:db_path).and_return(original)
+      end
     end
   end
 end

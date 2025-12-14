@@ -2710,6 +2710,23 @@ def test_process_ingestor_heartbeat_skips_without_host(mesh_module, monkeypatch)
     assert mesh.ingestors.STATE.last_heartbeat is None
 
 
+def test_ingestor_heartbeat_respects_interval_override(mesh_module, monkeypatch):
+    mesh = mesh_module
+    mesh.ingestors.STATE.start_time = 100
+    mesh.ingestors.STATE.last_heartbeat = 1_000
+    mesh.ingestors.STATE.node_id = "!abcd0001"
+    mesh._INGESTOR_HEARTBEAT_SECS = 10_000
+    sent = mesh.ingestors.queue_ingestor_heartbeat()
+    assert sent is False
+    assert mesh.ingestors.STATE.last_heartbeat == 1_000
+
+
+def test_setting_ingestor_attr_propagates(mesh_module):
+    mesh = mesh_module
+    mesh._INGESTOR_HEARTBEAT_SECS = 123
+    assert mesh.config._INGESTOR_HEARTBEAT_SECS == 123
+
+
 def test_queue_ingestor_heartbeat_requires_node_id(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
