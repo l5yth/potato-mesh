@@ -43,7 +43,7 @@ jobs:
 
     strategy:
       matrix:
-        service: [web, ingestor]
+        service: [web, ingestor, matrix-bridge]
         architecture:
           - { name: linux-amd64, platform: linux/amd64, label: "Linux x86_64", os: linux, architecture: amd64 }
           - { name: linux-arm64, platform: linux/arm64, label: "Linux ARM64", os: linux, architecture: arm64 }
@@ -109,8 +109,8 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./${{ matrix.service == 'web' && 'web/Dockerfile' || 'data/Dockerfile' }}
-        target: production
+        file: ${{ matrix.service == 'web' && './web/Dockerfile' || matrix.service == 'ingestor' && './data/Dockerfile' || './matrix/Dockerfile' }}
+        target: ${{ matrix.service == 'matrix-bridge' && 'runtime' || 'production' }}
         platforms: ${{ matrix.architecture.platform }}
         push: true
         tags: |
@@ -119,12 +119,12 @@ jobs:
           ${{ steps.tagging.outputs.include_latest == 'true' && format('{0}/{1}-{2}-{3}:latest', env.REGISTRY, env.IMAGE_PREFIX, matrix.service, matrix.architecture.name) || '' }}
         labels: |
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          org.opencontainers.image.description=PotatoMesh ${{ matrix.service == 'web' && 'Web Application' || 'Python Ingestor' }} for ${{ matrix.architecture.label }}
+          org.opencontainers.image.description=PotatoMesh ${{ matrix.service == 'web' && 'Web Application' || matrix.service == 'ingestor' && 'Python Ingestor' || 'Matrix Bridge' }} for ${{ matrix.architecture.label }}
           org.opencontainers.image.licenses=Apache-2.0
           org.opencontainers.image.version=${{ steps.version.outputs.version }}
           org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
           org.opencontainers.image.revision=${{ github.sha }}
-          org.opencontainers.image.title=PotatoMesh ${{ matrix.service == 'web' && 'Web' || 'Ingestor' }} (${{ matrix.architecture.label }})
+          org.opencontainers.image.title=PotatoMesh ${{ matrix.service == 'web' && 'Web' || matrix.service == 'ingestor' && 'Ingestor' || 'Matrix Bridge' }} (${{ matrix.architecture.label }})
           org.opencontainers.image.vendor=PotatoMesh
           org.opencontainers.image.architecture=${{ matrix.architecture.architecture }}
           org.opencontainers.image.os=${{ matrix.architecture.os }}
@@ -208,6 +208,19 @@ jobs:
         VERSION=${GITHUB_REF#refs/tags/v}
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+    - name: Determine tagging strategy
+      id: tagging
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+
+        if echo "$VERSION" | grep -E -- '-(rc|beta|alpha|dev)'; then
+          INCLUDE_LATEST=false
+        else
+          INCLUDE_LATEST=true
+        fi
+
+        echo "include_latest=$INCLUDE_LATEST" >> $GITHUB_OUTPUT
+
     - name: Publish release summary
       run: |
         echo "## 🚀 PotatoMesh Images Published to GHCR" >> $GITHUB_STEP_SUMMARY
@@ -232,6 +245,15 @@ jobs:
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
           echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        # Matrix bridge images
+        echo "### 🧩 Matrix Bridge" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.tagging.outputs.include_latest }}" = "true" ]; then
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-matrix-bridge-linux-amd64:latest\` - Linux x86_64" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-matrix-bridge-linux-arm64:latest\` - Linux ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-matrix-bridge-linux-armv7:latest\` - Linux ARMv7" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
         fi
         

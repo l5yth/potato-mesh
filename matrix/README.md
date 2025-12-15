@@ -170,6 +170,36 @@ target/release/potatomesh-matrix-bridge
 
 ---
 
+## Docker
+
+Build the container from the repo root with the included `matrix/Dockerfile`:
+
+```bash
+docker build -f matrix/Dockerfile -t potatomesh-matrix-bridge .
+```
+
+Provide your config at `/app/Config.toml` and persist the bridge state file by mounting volumes. Minimal example:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
+  -v bridge_state:/app \
+  potatomesh-matrix-bridge
+```
+
+If you prefer to isolate the state file from the config, mount it directly instead of the whole `/app` directory:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
+  -v bridge_state:/app/bridge_state.json \
+  potatomesh-matrix-bridge
+```
+
+The image ships `Config.example.toml` for reference, but the bridge will exit if `/app/Config.toml` is not provided.
+
+---
+
 ## Run
 
 Ensure `Config.toml` is present and valid, then:
