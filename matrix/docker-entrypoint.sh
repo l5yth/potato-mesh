@@ -15,5 +15,19 @@
 
 set -e
 
-chown -R potatomesh:potatomesh /app
+# Default state file path from Config.toml unless overridden.
+STATE_FILE="${STATE_FILE:-/app/bridge_state.json}"
+STATE_DIR="$(dirname "$STATE_FILE")"
+
+# Ensure state directory exists and is writable by the non-root user without
+# touching the read-only config bind mount.
+if [ ! -d "$STATE_DIR" ]; then
+  mkdir -p "$STATE_DIR"
+fi
+
+# Best-effort ownership fix; ignore if the underlying volume is read-only.
+chown potatomesh:potatomesh "$STATE_DIR" 2>/dev/null || true
+touch "$STATE_FILE" 2>/dev/null || true
+chown potatomesh:potatomesh "$STATE_FILE" 2>/dev/null || true
+
 exec gosu potatomesh potatomesh-matrix-bridge "$@"
