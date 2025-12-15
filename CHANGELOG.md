@@ -1,5 +1,67 @@
 # CHANGELOG
 
+## v0.5.7
+
+* Data: track ingestors heartbeat by @l5yth in <https://github.com/l5yth/potato-mesh/pull/549>
+* Harden instance selector navigation URLs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/550>
+* Data: hide channels that have been flag for ignoring by @l5yth in <https://github.com/l5yth/potato-mesh/pull/548>
+* Web: fix limit when counting remote nodes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/547>
+* Web: improve instances map and table view by @l5yth in <https://github.com/l5yth/potato-mesh/pull/546>
+* Web: fix traces submission with optional fields on udp by @l5yth in <https://github.com/l5yth/potato-mesh/pull/545>
+* Chore: bump version to 0.5.7 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/542>
+* Handle zero telemetry aggregates by @l5yth in <https://github.com/l5yth/potato-mesh/pull/538>
+* Web: fix telemetry api to return current in amperes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/541>
+* Web: fix traces rendering by @l5yth in <https://github.com/l5yth/potato-mesh/pull/535>
+* Normalize numeric node roles to canonical labels by @l5yth in <https://github.com/l5yth/potato-mesh/pull/539>
+* Use INSTANCE_DOMAIN env for ingestor by @l5yth in <https://github.com/l5yth/potato-mesh/pull/536>
+* Web: further refine the federation page by @l5yth in <https://github.com/l5yth/potato-mesh/pull/534>
+* Add Federation Map by @apo-mak in <https://github.com/l5yth/potato-mesh/pull/532>
+* Add contact link to the instance data by @apo-mak in <https://github.com/l5yth/potato-mesh/pull/533>
+* Matrix: create potato-matrix-bridge by @l5yth in <https://github.com/l5yth/potato-mesh/pull/528>
+
+## v0.5.6
+
+* Web: display sats in view by @l5yth in <https://github.com/l5yth/potato-mesh/pull/523>
+* Web: display air quality in separate chart by @l5yth in <https://github.com/l5yth/potato-mesh/pull/521>
+* Ci: Add macOS and Ubuntu builds to Flutter workflow by @l5yth in <https://github.com/l5yth/potato-mesh/pull/519>
+* Web: add current to charts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/520>
+* App: fix notification icon by @l5yth in <https://github.com/l5yth/potato-mesh/pull/518>
+* Spec: update test fixtures by @l5yth in <https://github.com/l5yth/potato-mesh/pull/517>
+* App: generate proper icons by @l5yth in <https://github.com/l5yth/potato-mesh/pull/516>
+* Web: fix favicon by @l5yth in <https://github.com/l5yth/potato-mesh/pull/515>
+* Web: add ?since= parameter to api/messages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/512>
+* App: implement notifications by @l5yth in <https://github.com/l5yth/potato-mesh/pull/511>
+* App: add theme selector by @l5yth in <https://github.com/l5yth/potato-mesh/pull/507>
+* App: further harden refresh logic and prefer local first by @l5yth in <https://github.com/l5yth/potato-mesh/pull/506>
+* Ci: fix app artifacts for tags by @l5yth in <https://github.com/l5yth/potato-mesh/pull/504>
+* Ci: build app artifacts for tags by @l5yth in <https://github.com/l5yth/potato-mesh/pull/503>
+* App: add persistance by @l5yth in <https://github.com/l5yth/potato-mesh/pull/501>
+* App: instance and chat mvp by @l5yth in <https://github.com/l5yth/potato-mesh/pull/498>
+* App: add instance selector to settings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/497>
+* App: add scaffholding gitignore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/496>
+* Handle reaction app packets without reply id by @l5yth in <https://github.com/l5yth/potato-mesh/pull/495>
+* Render reaction multiplier counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/494>
+* Add comprehensive tests for Flutter reader by @l5yth in <https://github.com/l5yth/potato-mesh/pull/491>
+* Map numeric role ids to canonical Meshtastic roles by @l5yth in <https://github.com/l5yth/potato-mesh/pull/489>
+* Update node detail hydration for traces by @l5yth in <https://github.com/l5yth/potato-mesh/pull/490>
+* Add mobile Flutter CI workflow by @l5yth in <https://github.com/l5yth/potato-mesh/pull/488>
+* Align OCI labels in docker workflow by @l5yth in <https://github.com/l5yth/potato-mesh/pull/487>
+* Add Meshtastic reader Flutter app by @l5yth in <https://github.com/l5yth/potato-mesh/pull/483>
+* Handle pre-release Docker tagging by @l5yth in <https://github.com/l5yth/potato-mesh/pull/486>
+* Web: remove range from charts labels by @l5yth in <https://github.com/l5yth/potato-mesh/pull/485>
+* Floor override frequencies to MHz integers by @l5yth in <https://github.com/l5yth/potato-mesh/pull/476>
+* Prevent message ids from being treated as node identifiers by @l5yth in <https://github.com/l5yth/potato-mesh/pull/475>
+* Fix 1 after emojis in reply. by @Alexkurd in <https://github.com/l5yth/potato-mesh/pull/464>
+* Add frequency and preset to node table by @l5yth in <https://github.com/l5yth/potato-mesh/pull/472>
+* Subscribe to traceroute app pubsub topic by @l5yth in <https://github.com/l5yth/potato-mesh/pull/471>
+* Aggregate telemetry over the last 7 days by @l5yth in <https://github.com/l5yth/potato-mesh/pull/470>
+* Address missing id field ingestor bug by @l5yth in <https://github.com/l5yth/potato-mesh/pull/469>
+* Merge secondary channels by name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/468>
+* Rate limit host device telemetry by @l5yth in <https://github.com/l5yth/potato-mesh/pull/467>
+* Add traceroutes to frontend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/466>
+* Feat: implement traceroute app packet handling across the stack by @l5yth in <https://github.com/l5yth/potato-mesh/pull/463>
+* Bump version and update changelog by @l5yth in <https://github.com/l5yth/potato-mesh/pull/462>
+
 ## v0.5.5
 
 * Added comprehensive helper unit tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/457>

@@ -61,7 +61,7 @@ RSpec.describe "Ingestor endpoints" do
       node_id: "!abc12345",
       start_time: now - 120,
       last_seen_time: now - 60,
-      version: "0.5.7",
+      version: "0.5.8",
       lora_freq: 915,
       modem_preset: "LongFast",
     }.merge(overrides)
@@ -133,7 +133,7 @@ RSpec.describe "Ingestor endpoints" do
       with_db do |db|
         db.execute(
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
-          ["!fresh000", now - 100, now - 10, "0.5.7"],
+          ["!fresh000", now - 100, now - 10, "0.5.8"],
         )
         db.execute(
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
