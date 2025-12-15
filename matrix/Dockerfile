@@ -26,7 +26,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates \
+  && apt-get install -y --no-install-recommends ca-certificates gosu \
   && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin potatomesh
@@ -35,9 +35,8 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/potatomesh-matrix-bridge /usr/local/bin/potatomesh-matrix-bridge
 COPY matrix/Config.toml /app/Config.example.toml
+COPY matrix/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN chown -R potatomesh:potatomesh /app
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-USER potatomesh
-
-ENTRYPOINT ["potatomesh-matrix-bridge"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
