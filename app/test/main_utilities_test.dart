@@ -52,50 +52,46 @@ void main() {
   });
 
   test('sortMessagesByRxTime keeps unknown timestamps in place', () {
-    final withTime = MeshMessage(
+    MeshMessage buildMessage({
+      required int id,
+      required String text,
+      required String rxIso,
+      DateTime? rxTime,
+    }) {
+      return MeshMessage(
+        id: id,
+        rxTime: rxTime,
+        rxIso: rxIso,
+        fromId: '!$id',
+        nodeId: '!$id',
+        toId: '^',
+        channelName: '#general',
+        channel: 1,
+        portnum: 'TEXT',
+        text: text,
+        rssi: -50,
+        snr: 1.0,
+        hopLimit: 1,
+      );
+    }
+
+    final withTime = buildMessage(
       id: 2,
       rxTime: DateTime.utc(2024, 1, 1, 12, 1),
       rxIso: '2024-01-01T12:01:00Z',
-      fromId: '!a',
-      nodeId: '!a',
-      toId: '^',
-      channelName: '#general',
-      channel: 1,
-      portnum: 'TEXT',
       text: 'timed',
-      rssi: -50,
-      snr: 1.0,
-      hopLimit: 1,
     );
-    final withoutTime = MeshMessage(
+    final withoutTime = buildMessage(
       id: 1,
       rxTime: null,
-      rxIso: '',
-      fromId: '!b',
-      nodeId: '!b',
-      toId: '^',
-      channelName: '#general',
-      channel: 1,
-      portnum: 'TEXT',
+      rxIso: 'unknown',
       text: 'unknown',
-      rssi: -50,
-      snr: 1.0,
-      hopLimit: 1,
     );
-    final laterTime = MeshMessage(
+    final laterTime = buildMessage(
       id: 3,
       rxTime: DateTime.utc(2024, 1, 1, 12, 5),
       rxIso: '2024-01-01T12:05:00Z',
-      fromId: '!c',
-      nodeId: '!c',
-      toId: '^',
-      channelName: '#general',
-      channel: 1,
-      portnum: 'TEXT',
       text: 'later',
-      rssi: -50,
-      snr: 1.0,
-      hopLimit: 1,
     );
 
     final sorted = sortMessagesByRxTime([withoutTime, laterTime, withTime]);
