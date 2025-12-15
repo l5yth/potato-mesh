@@ -95,6 +95,60 @@ fn update_checkpoint(state: &mut BridgeState, delivered_all: bool, now_secs: u64
     }
 }
 
+async fn poll_once(
+    potato: &PotatoClient,
+    matrix: &MatrixAppserviceClient,
+    state: &mut BridgeState,
+    state_path: &str,
+    now_secs: u64,
+) {
+    let params = build_fetch_params(state);
+
+    match potato.fetch_messages(params).await {
+        Ok(mut msgs) => {
+            // sort by id ascending so we process in order
+            msgs.sort_by_key(|m| m.id);
+
+            let mut delivered_all = true;
+
+            for msg in &msgs {
+                if !state.should_forward(msg) {
+                    continue;
+                }
+
+                // Filter to the ports you care about
+                if let Some(port) = &msg.portnum {
+                    if port != "TEXT_MESSAGE_APP" {
+                        state.update_with(msg);
+                        continue;
+                    }
+                }
+
+                if let Err(e) = handle_message(potato, matrix, state, msg).await {
+                    error!("Error handling message {}: {:?}", msg.id, e);
+                    delivered_all = false;
+                    continue;
+                }
+
+                // persist after each processed message
+                if let Err(e) = state.save(state_path) {
+                    error!("Error saving state: {:?}", e);
+                }
+            }
+
+            // Only advance checkpoint after successful delivery and a known last_message_id.
+            if update_checkpoint(state, delivered_all, now_secs) {
+                if let Err(e) = state.save(state_path) {
+                    error!("Error saving state: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Error fetching PotatoMesh messages: {:?}", e);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logging: RUST_LOG=info,bridge=debug,reqwest=warn ...
@@ -122,56 +176,12 @@ async fn main() -> Result<()> {
     let poll_interval = Duration::from_secs(cfg.potatomesh.poll_interval_secs);
 
     loop {
-        let params = build_fetch_params(&state);
-
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        match potato.fetch_messages(params).await {
-            Ok(mut msgs) => {
-                // sort by id ascending so we process in order
-                msgs.sort_by_key(|m| m.id);
-
-                let mut delivered_all = true;
-
-                for msg in &msgs {
-                    if !state.should_forward(msg) {
-                        continue;
-                    }
-
-                    // Filter to the ports you care about
-                    if let Some(port) = &msg.portnum {
-                        if port != "TEXT_MESSAGE_APP" {
-                            state.update_with(msg);
-                            continue;
-                        }
-                    }
-
-                    if let Err(e) = handle_message(&potato, &matrix, &mut state, msg).await {
-                        error!("Error handling message {}: {:?}", msg.id, e);
-                        delivered_all = false;
-                        continue;
-                    }
-
-                    // persist after each processed message
-                    if let Err(e) = state.save(state_path) {
-                        error!("Error saving state: {:?}", e);
-                    }
-                }
-
-                // Only advance checkpoint after successful delivery and a known last_message_id.
-                if update_checkpoint(&mut state, delivered_all, now_secs) {
-                    if let Err(e) = state.save(state_path) {
-                        error!("Error saving state: {:?}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error fetching PotatoMesh messages: {:?}", e);
-            }
-        }
+        poll_once(&potato, &matrix, &mut state, state_path, now_secs).await;
 
         sleep(poll_interval).await;
     }
@@ -391,6 +401,52 @@ mod tests {
         let params = build_fetch_params(&state);
         assert_eq!(params.limit, Some(10));
         assert_eq!(params.since, None);
+    }
+
+    #[tokio::test]
+    async fn poll_once_persists_checkpoint_without_messages() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("[]")
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potatomesh_cfg = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 1,
+        };
+        let matrix_cfg = MatrixConfig {
+            homeserver: server.url(),
+            as_token: "AS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        };
+
+        let potato = PotatoClient::new(http_client.clone(), potatomesh_cfg);
+        let matrix = MatrixAppserviceClient::new(http_client, matrix_cfg);
+
+        let mut state = BridgeState {
+            last_message_id: Some(1),
+            last_checked_at: None,
+        };
+
+        poll_once(&potato, &matrix, &mut state, state_str, 123).await;
+
+        mock_msgs.assert();
+
+        // Should have advanced checkpoint and saved it.
+        assert_eq!(state.last_checked_at, Some(123));
+        let loaded = BridgeState::load(state_str).unwrap();
+        assert_eq!(loaded.last_checked_at, Some(123));
+        assert_eq!(loaded.last_message_id, Some(1));
     }
 
     #[tokio::test]
