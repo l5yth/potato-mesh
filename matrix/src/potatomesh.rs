@@ -81,9 +81,14 @@ impl PotatoClient {
         }
     }
 
-    /// Build the API root by appending `/api` to the configured base domain.
+    /// Build the API root; accept either a bare domain or one already ending in `/api`.
     fn api_base(&self) -> String {
-        format!("{}/api", self.cfg.base_url.trim_end_matches('/'))
+        let trimmed = self.cfg.base_url.trim_end_matches('/');
+        if trimmed.ends_with("/api") {
+            trimmed.to_string()
+        } else {
+            format!("{}/api", trimmed)
+        }
     }
 
     fn messages_url(&self) -> String {
@@ -233,6 +238,17 @@ mod tests {
         let http_client = reqwest::Client::new();
         let config = PotatomeshConfig {
             base_url: "http://localhost:8080/".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
+    }
+
+    #[test]
+    fn test_messages_url_with_existing_api_suffix() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080/api/".to_string(),
             poll_interval_secs: 60,
         };
         let client = PotatoClient::new(http_client, config);
