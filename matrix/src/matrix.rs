@@ -41,9 +41,9 @@ impl MatrixAppserviceClient {
         }
     }
 
-    /// Convert a node_id like "!deadbeef" into Matrix localpart "deadbeef".
+    /// Convert a node_id like "!deadbeef" into Matrix localpart "potato_deadbeef".
     pub fn localpart_from_node_id(node_id: &str) -> String {
-        node_id.trim_start_matches('!').to_string()
+        format!("potato_{}", node_id.trim_start_matches('!'))
     }
 
     /// Build a full Matrix user_id from localpart.
@@ -189,11 +189,11 @@ mod tests {
     fn localpart_strips_bang_correctly() {
         assert_eq!(
             MatrixAppserviceClient::localpart_from_node_id("!deadbeef"),
-            "deadbeef"
+            "potato_deadbeef"
         );
         assert_eq!(
             MatrixAppserviceClient::localpart_from_node_id("cafebabe"),
-            "cafebabe"
+            "potato_cafebabe"
         );
     }
 
@@ -202,8 +202,8 @@ mod tests {
         let http = reqwest::Client::builder().build().unwrap();
         let client = MatrixAppserviceClient::new(http, dummy_cfg());
 
-        let uid = client.user_id("deadbeef");
-        assert_eq!(uid, "@deadbeef:example.org");
+        let uid = client.user_id("potato_deadbeef");
+        assert_eq!(uid, "@potato_deadbeef:example.org");
     }
 
     #[test]

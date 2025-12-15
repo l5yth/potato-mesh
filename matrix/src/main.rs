@@ -272,11 +272,11 @@ mod tests {
         };
 
         let node_id = "abcd1234";
-        let user_id = format!("@{}:{}", node_id, matrix_cfg.server_name);
+        let user_id = format!("@potato_{}:{}", node_id, matrix_cfg.server_name);
         let encoded_user = urlencoding::encode(&user_id);
 
         let mock_get_node = server
-            .mock("GET", "/nodes/abcd1234")
+            .mock("GET", "/api/nodes/abcd1234")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"node_id": "!abcd1234", "long_name": "Test Node", "short_name": "TN"}"#)

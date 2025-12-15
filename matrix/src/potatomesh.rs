@@ -81,13 +81,23 @@ impl PotatoClient {
         }
     }
 
+    /// Build the API root; accept either a bare domain or one already ending in `/api`.
+    fn api_base(&self) -> String {
+        let trimmed = self.cfg.base_url.trim_end_matches('/');
+        if trimmed.ends_with("/api") {
+            trimmed.to_string()
+        } else {
+            format!("{}/api", trimmed)
+        }
+    }
+
     fn messages_url(&self) -> String {
-        format!("{}/messages", self.cfg.base_url)
+        format!("{}/messages", self.api_base())
     }
 
     fn node_url(&self, hex_id: &str) -> String {
         // e.g. https://potatomesh.net/api/nodes/67fc83cb
-        format!("{}/nodes/{}", self.cfg.base_url, hex_id)
+        format!("{}/nodes/{}", self.api_base(), hex_id)
     }
 
     pub async fn fetch_messages(&self) -> anyhow::Result<Vec<PotatoMessage>> {
@@ -220,7 +230,29 @@ mod tests {
             poll_interval_secs: 60,
         };
         let client = PotatoClient::new(http_client, config);
-        assert_eq!(client.messages_url(), "http://localhost:8080/messages");
+        assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
+    }
+
+    #[test]
+    fn test_messages_url_with_trailing_slash() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080/".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
+    }
+
+    #[test]
+    fn test_messages_url_with_existing_api_suffix() {
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: "http://localhost:8080/api/".to_string(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        assert_eq!(client.messages_url(), "http://localhost:8080/api/messages");
     }
 
     #[test]
@@ -233,7 +265,7 @@ mod tests {
         let client = PotatoClient::new(http_client, config);
         assert_eq!(
             client.node_url("!1234"),
-            "http://localhost:8080/nodes/!1234"
+            "http://localhost:8080/api/nodes/!1234"
         );
     }
 
@@ -241,7 +273,7 @@ mod tests {
     async fn test_fetch_messages_success() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("GET", "/messages")
+            .mock("GET", "/api/messages")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -277,7 +309,10 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_messages_error() {
         let mut server = mockito::Server::new_async().await;
-        let mock = server.mock("GET", "/messages").with_status(500).create();
+        let mock = server
+            .mock("GET", "/api/messages")
+            .with_status(500)
+            .create();
 
         let http_client = reqwest::Client::new();
         let config = PotatomeshConfig {
@@ -327,7 +362,7 @@ mod tests {
     async fn test_get_node_cache_miss() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("GET", "/nodes/1234")
+            .mock("GET", "/api/nodes/1234")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -362,7 +397,10 @@ mod tests {
     #[tokio::test]
     async fn test_get_node_error() {
         let mut server = mockito::Server::new_async().await;
-        let mock = server.mock("GET", "/nodes/1234").with_status(500).create();
+        let mock = server
+            .mock("GET", "/api/nodes/1234")
+            .with_status(500)
+            .create();
 
         let http_client = reqwest::Client::new();
         let config = PotatomeshConfig {
