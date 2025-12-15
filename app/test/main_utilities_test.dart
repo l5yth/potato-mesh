@@ -103,8 +103,7 @@ void main() {
     expect(sorted.last.id, laterTime.id);
   });
 
-  testWidgets('LoadingScreen displays progress label and icon',
-      (tester) async {
+  testWidgets('LoadingScreen displays progress label and icon', (tester) async {
     const screen = LoadingScreen(
       progress: BootstrapProgress(stage: 'Fetching'),
     );
