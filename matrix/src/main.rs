@@ -63,6 +63,25 @@ impl BridgeState {
     }
 }
 
+fn build_fetch_params(state: &BridgeState) -> FetchParams {
+    if state.last_message_id.is_none() {
+        FetchParams {
+            limit: None,
+            since: None,
+        }
+    } else if let Some(ts) = state.last_checked_at {
+        FetchParams {
+            limit: None,
+            since: Some(ts),
+        }
+    } else {
+        FetchParams {
+            limit: Some(10),
+            since: None,
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logging: RUST_LOG=info,bridge=debug,reqwest=warn ...
@@ -90,17 +109,7 @@ async fn main() -> Result<()> {
     let poll_interval = Duration::from_secs(cfg.potatomesh.poll_interval_secs);
 
     loop {
-        let params = if let Some(ts) = state.last_checked_at {
-            FetchParams {
-                limit: None,
-                since: Some(ts),
-            }
-        } else {
-            FetchParams {
-                limit: Some(10),
-                since: None,
-            }
-        };
+        let params = build_fetch_params(&state);
 
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -109,28 +118,39 @@ async fn main() -> Result<()> {
 
         match potato.fetch_messages(params).await {
             Ok(mut msgs) => {
-                state.last_checked_at = Some(now_secs);
                 // sort by id ascending so we process in order
                 msgs.sort_by_key(|m| m.id);
 
-                for msg in msgs {
-                    if !state.should_forward(&msg) {
+                let mut delivered_all = true;
+
+                for msg in &msgs {
+                    if !state.should_forward(msg) {
                         continue;
                     }
 
                     // Filter to the ports you care about
                     if let Some(port) = &msg.portnum {
                         if port != "TEXT_MESSAGE_APP" {
-                            state.update_with(&msg);
+                            state.update_with(msg);
                             continue;
                         }
                     }
 
-                    if let Err(e) = handle_message(&potato, &matrix, &mut state, &msg).await {
+                    if let Err(e) = handle_message(&potato, &matrix, &mut state, msg).await {
                         error!("Error handling message {}: {:?}", msg.id, e);
+                        delivered_all = false;
+                        continue;
                     }
 
                     // persist after each processed message
+                    if let Err(e) = state.save(state_path) {
+                        error!("Error saving state: {:?}", e);
+                    }
+                }
+
+                // Only advance checkpoint after successful delivery and a known last_message_id.
+                if delivered_all && state.last_message_id.is_some() {
+                    state.last_checked_at = Some(now_secs);
                     if let Err(e) = state.save(state_path) {
                         error!("Error saving state: {:?}", e);
                     }
@@ -286,6 +306,43 @@ mod tests {
 
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
+        assert_eq!(state.last_checked_at, None);
+    }
+
+    #[test]
+    fn fetch_params_respects_missing_last_message_id() {
+        let state = BridgeState {
+            last_message_id: None,
+            last_checked_at: Some(123),
+        };
+
+        let params = build_fetch_params(&state);
+        assert_eq!(params.limit, None);
+        assert_eq!(params.since, None);
+    }
+
+    #[test]
+    fn fetch_params_uses_since_when_safe() {
+        let state = BridgeState {
+            last_message_id: Some(1),
+            last_checked_at: Some(123),
+        };
+
+        let params = build_fetch_params(&state);
+        assert_eq!(params.limit, None);
+        assert_eq!(params.since, Some(123));
+    }
+
+    #[test]
+    fn fetch_params_defaults_to_small_window() {
+        let state = BridgeState {
+            last_message_id: Some(1),
+            last_checked_at: None,
+        };
+
+        let params = build_fetch_params(&state);
+        assert_eq!(params.limit, Some(10));
+        assert_eq!(params.since, None);
     }
 
     #[tokio::test]

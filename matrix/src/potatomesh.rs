@@ -112,7 +112,11 @@ impl PotatoClient {
 
     /// Basic liveness check against the PotatoMesh API.
     pub async fn health_check(&self) -> anyhow::Result<()> {
-        let base = self.cfg.base_url.trim_end_matches('/');
+        let base = self
+            .cfg
+            .base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/api");
         let url = format!("{}/version", base);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
@@ -373,6 +377,25 @@ mod tests {
         let http_client = reqwest::Client::new();
         let config = PotatomeshConfig {
             base_url: server.url(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        let result = client.health_check().await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_health_check_strips_api_suffix() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server.mock("GET", "/version").with_status(200).create();
+
+        let http_client = reqwest::Client::new();
+        let mut base = server.url();
+        base.push_str("/api");
+        let config = PotatomeshConfig {
+            base_url: base,
             poll_interval_secs: 60,
         };
         let client = PotatoClient::new(http_client, config);
