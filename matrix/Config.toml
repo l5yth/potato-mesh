@@ -1,6 +1,6 @@
 [potatomesh]
-# Base URL without trailing slash
-base_url = "https://potatomesh.net/api"
+# Base domain (with or without trailing slash)
+base_url = "https://potatomesh.net/"
 # Poll interval in seconds
 poll_interval_secs = 60
 

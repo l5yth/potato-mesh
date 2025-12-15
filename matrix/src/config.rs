@@ -67,7 +67,7 @@ mod tests {
     fn parse_minimal_config_from_toml_str() {
         let toml_str = r#"
             [potatomesh]
-            base_url = "https://potatomesh.net/api"
+            base_url = "https://potatomesh.net/"
             poll_interval_secs = 10
 
             [matrix]
@@ -81,7 +81,7 @@ mod tests {
         "#;
 
         let cfg: Config = toml::from_str(toml_str).expect("toml should parse");
-        assert_eq!(cfg.potatomesh.base_url, "https://potatomesh.net/api");
+        assert_eq!(cfg.potatomesh.base_url, "https://potatomesh.net/");
         assert_eq!(cfg.potatomesh.poll_interval_secs, 10);
 
         assert_eq!(cfg.matrix.homeserver, "https://matrix.example.org");
@@ -102,7 +102,7 @@ mod tests {
     fn load_from_file_valid_file() {
         let toml_str = r#"
             [potatomesh]
-            base_url = "https://potatomesh.net/api"
+            base_url = "https://potatomesh.net/"
             poll_interval_secs = 10
 
             [matrix]
@@ -134,7 +134,7 @@ mod tests {
     fn from_default_path_found() {
         let toml_str = r#"
             [potatomesh]
-            base_url = "https://potatomesh.net/api"
+            base_url = "https://potatomesh.net/"
             poll_interval_secs = 10
 
             [matrix]

@@ -4,7 +4,7 @@ A small Rust daemon that bridges **PotatoMesh** LoRa messages into a **Matrix** 
 
 For each PotatoMesh node, the bridge creates (or uses) a **Matrix puppet user**:
 
-- Matrix localpart: the hex node id (without `!`), e.g. `!67fc83cb` → `@67fc83cb:example.org`
+- Matrix localpart: `potato_` + the hex node id (without `!`), e.g. `!67fc83cb` → `@potato_67fc83cb:example.org`
 - Matrix display name: the node’s `long_name` from the PotatoMesh API
 
 Messages from PotatoMesh are periodically fetched and forwarded to a single Matrix room as those puppet users.
@@ -13,10 +13,10 @@ Messages from PotatoMesh are periodically fetched and forwarded to a single Matr
 
 ## Features
 
-- Polls `https://potatomesh.net/api/messages` (or any configured base URL)
-- Looks up node metadata via `GET /nodes/{hex}` and caches it
+- Polls `https://potatomesh.net/api/messages` (deriving `/api` from the configured base domain)
+- Looks up node metadata via `GET /api/nodes/{hex}` and caches it
 - One Matrix user per node:
-  - username: hex node id
+  - username: `potato_{hex node id}`
   - display name: `long_name`
 - Forwards `TEXT_MESSAGE_APP` messages into a single Matrix room
 - Persists last-seen message ID to avoid duplicates across restarts
@@ -26,12 +26,12 @@ Messages from PotatoMesh are periodically fetched and forwarded to a single Matr
 ## Architecture Overview
 
 - **PotatoMesh side**
-  - `GET /messages` returns an array of messages
-  - `GET /nodes/{hex}` returns node metadata (including `long_name`)
+  - `GET /api/messages` returns an array of messages
+  - `GET /api/nodes/{hex}` returns node metadata (including `long_name`)
 
 - **Matrix side**
   - Uses the Matrix Client-Server API with an **appservice access token**
-  - Impersonates puppet users via `user_id=@{hex}:{server_name}&access_token={as_token}`
+  - Impersonates puppet users via `user_id=@potato_{hex}:{server_name}&access_token={as_token}`
   - Sends `m.room.message` events into a configured room
 
 This is **not** a full appservice framework; it just speaks the minimal HTTP needed.
@@ -43,11 +43,11 @@ This is **not** a full appservice framework; it just speaks the minimal HTTP nee
 - Rust (stable) and `cargo`
 - A Matrix homeserver you control (e.g. Synapse)
 - An **application service registration** on your homeserver that:
-  - Whitelists the puppet user namespace (e.g. `@[0-9a-f]{8}:example.org`)
+  - Whitelists the puppet user namespace (e.g. `@potato_[0-9a-f]{8}:example.org`)
   - Provides an `as_token` the bridge can use
 
 - Network access from the bridge host to:
-  - `https://potatomesh.net/api` (or your configured PotatoMesh API)
+  - `https://potatomesh.net/` (bridge appends `/api`)
   - Your Matrix homeserver (`https://matrix.example.org`)
 
 ---
@@ -60,8 +60,8 @@ Example:
 
 ```toml
 [potatomesh]
-# Base URL without trailing slash
-base_url = "https://potatomesh.net/api"
+# Base domain (bridge will call {base_url}/api)
+base_url = "https://potatomesh.net/"
 # Poll interval in seconds
 poll_interval_secs = 10
 
@@ -84,7 +84,7 @@ state_file = "bridge_state.json"
 
 The bridge assumes:
 
-* Messages: `GET {base_url}/messages` → JSON array, for example:
+* Messages: `GET {base_url}/api/messages` → JSON array, for example:
 
   ```json
   [
@@ -108,7 +108,7 @@ The bridge assumes:
   ]
   ```
 
-* Nodes: `GET {base_url}/nodes/{hex}` → JSON, for example:
+* Nodes: `GET {base_url}/api/nodes/{hex}` → JSON, for example:
 
   ```json
   {
@@ -122,7 +122,7 @@ The bridge assumes:
   }
   ```
 
-Node hex ID is derived from `node_id` by stripping the leading `!` and using the remainder as the Matrix localpart.
+Node hex ID is derived from `node_id` by stripping the leading `!` and using the remainder inside the puppet localpart prefix (`potato_{hex}`).
 
 ---
 
@@ -142,7 +142,7 @@ rate_limited: false
 namespaces:
   users:
     - exclusive: true
-      regex: "@[0-9a-f]{8}:example.org"
+      regex: "@potato_[0-9a-f]{8}:example.org"
 ```
 
 For this bridge, only the `as_token` and `namespaces.users` actually matter. The bridge does not accept inbound events; it only uses the `as_token` to call the homeserver.
@@ -193,7 +193,7 @@ The bridge will:
 3. For each new `TEXT_MESSAGE_APP`:
 
    * Fetch node info.
-   * Ensure puppet is registered (`@{hex}:{server_name}`).
+   * Ensure puppet is registered (`@potato_{hex}:{server_name}`).
    * Set puppet display name to `long_name`.
    * Send a formatted text message into `room_id` as that puppet.
    * Update and persist `bridge_state.json`.
