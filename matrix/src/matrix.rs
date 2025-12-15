@@ -41,6 +41,21 @@ impl MatrixAppserviceClient {
         }
     }
 
+    /// Basic liveness check against the homeserver.
+    pub async fn health_check(&self) -> anyhow::Result<()> {
+        let url = format!("{}/_matrix/client/versions", self.cfg.homeserver);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            tracing::info!("Matrix homeserver healthy at {}", self.cfg.homeserver);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Matrix homeserver versions check failed with status {}",
+                resp.status()
+            ))
+        }
+    }
+
     /// Convert a node_id like "!deadbeef" into Matrix localpart "potato_deadbeef".
     pub fn localpart_from_node_id(node_id: &str) -> String {
         format!("potato_{}", node_id.trim_start_matches('!'))
@@ -204,6 +219,40 @@ mod tests {
 
         let uid = client.user_id("potato_deadbeef");
         assert_eq!(uid, "@potato_deadbeef:example.org");
+    }
+
+    #[tokio::test]
+    async fn health_check_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/_matrix/client/versions")
+            .with_status(200)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.health_check().await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn health_check_failure() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/_matrix/client/versions")
+            .with_status(500)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.health_check().await;
+
+        mock.assert();
+        assert!(result.is_err());
     }
 
     #[test]

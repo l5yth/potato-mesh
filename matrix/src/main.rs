@@ -24,11 +24,12 @@ use tracing::{error, info};
 
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
-use crate::potatomesh::{PotatoClient, PotatoMessage};
+use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
     last_message_id: Option<u64>,
+    last_checked_at: Option<u64>,
 }
 
 impl BridgeState {
@@ -62,6 +63,92 @@ impl BridgeState {
     }
 }
 
+fn build_fetch_params(state: &BridgeState) -> FetchParams {
+    if state.last_message_id.is_none() {
+        FetchParams {
+            limit: None,
+            since: None,
+        }
+    } else if let Some(ts) = state.last_checked_at {
+        FetchParams {
+            limit: None,
+            since: Some(ts),
+        }
+    } else {
+        FetchParams {
+            limit: Some(10),
+            since: None,
+        }
+    }
+}
+
+fn update_checkpoint(state: &mut BridgeState, delivered_all: bool, now_secs: u64) -> bool {
+    if !delivered_all {
+        return false;
+    }
+
+    if state.last_message_id.is_some() {
+        state.last_checked_at = Some(now_secs);
+        true
+    } else {
+        false
+    }
+}
+
+async fn poll_once(
+    potato: &PotatoClient,
+    matrix: &MatrixAppserviceClient,
+    state: &mut BridgeState,
+    state_path: &str,
+    now_secs: u64,
+) {
+    let params = build_fetch_params(state);
+
+    match potato.fetch_messages(params).await {
+        Ok(mut msgs) => {
+            // sort by id ascending so we process in order
+            msgs.sort_by_key(|m| m.id);
+
+            let mut delivered_all = true;
+
+            for msg in &msgs {
+                if !state.should_forward(msg) {
+                    continue;
+                }
+
+                // Filter to the ports you care about
+                if let Some(port) = &msg.portnum {
+                    if port != "TEXT_MESSAGE_APP" {
+                        state.update_with(msg);
+                        continue;
+                    }
+                }
+
+                if let Err(e) = handle_message(potato, matrix, state, msg).await {
+                    error!("Error handling message {}: {:?}", msg.id, e);
+                    delivered_all = false;
+                    continue;
+                }
+
+                // persist after each processed message
+                if let Err(e) = state.save(state_path) {
+                    error!("Error saving state: {:?}", e);
+                }
+            }
+
+            // Only advance checkpoint after successful delivery and a known last_message_id.
+            if update_checkpoint(state, delivered_all, now_secs) {
+                if let Err(e) = state.save(state_path) {
+                    error!("Error saving state: {:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Error fetching PotatoMesh messages: {:?}", e);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logging: RUST_LOG=info,bridge=debug,reqwest=warn ...
@@ -78,7 +165,9 @@ async fn main() -> Result<()> {
 
     let http = reqwest::Client::builder().build()?;
     let potato = PotatoClient::new(http.clone(), cfg.potatomesh.clone());
+    potato.health_check().await?;
     let matrix = MatrixAppserviceClient::new(http.clone(), cfg.matrix.clone());
+    matrix.health_check().await?;
 
     let state_path = &cfg.state.state_file;
     let mut state = BridgeState::load(state_path)?;
@@ -87,36 +176,12 @@ async fn main() -> Result<()> {
     let poll_interval = Duration::from_secs(cfg.potatomesh.poll_interval_secs);
 
     loop {
-        match potato.fetch_messages().await {
-            Ok(mut msgs) => {
-                // sort by id ascending so we process in order
-                msgs.sort_by_key(|m| m.id);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
-                for msg in msgs {
-                    if !state.should_forward(&msg) {
-                        continue;
-                    }
-
-                    // Filter to the ports you care about
-                    if msg.portnum != "TEXT_MESSAGE_APP" {
-                        state.update_with(&msg);
-                        continue;
-                    }
-
-                    if let Err(e) = handle_message(&potato, &matrix, &mut state, &msg).await {
-                        error!("Error handling message {}: {:?}", msg.id, e);
-                    }
-
-                    // persist after each processed message
-                    if let Err(e) = state.save(state_path) {
-                        error!("Error saving state: {:?}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error fetching PotatoMesh messages: {:?}", e);
-            }
-        }
+        poll_once(&potato, &matrix, &mut state, state_path, now_secs).await;
 
         sleep(poll_interval).await;
     }
@@ -143,13 +208,19 @@ async fn handle_message(
         .unwrap_or_else(|| node.long_name.clone());
 
     let body = format!(
-        "[{short}] {text}\n({from_id} → {to_id}, RSSI {rssi} dB, SNR {snr} dB, {chan}/{preset})",
+        "[{short}] {text}\n({from_id} → {to_id}, {rssi}, {snr}, {chan}/{preset})",
         short = short,
         text = msg.text,
         from_id = msg.from_id,
         to_id = msg.to_id,
-        rssi = msg.rssi,
-        snr = msg.snr,
+        rssi = msg
+            .rssi
+            .map(|v| format!("RSSI {v} dB"))
+            .unwrap_or_else(|| "RSSI n/a".to_string()),
+        snr = msg
+            .snr
+            .map(|v| format!("SNR {v} dB"))
+            .unwrap_or_else(|| "SNR n/a".to_string()),
         chan = msg.channel_name,
         preset = msg.modem_preset,
     );
@@ -175,14 +246,14 @@ mod tests {
             from_id: "!abcd1234".to_string(),
             to_id: "^all".to_string(),
             channel: 1,
-            portnum: "TEXT_MESSAGE_APP".to_string(),
+            portnum: Some("TEXT_MESSAGE_APP".to_string()),
             text: "Ping".to_string(),
-            rssi: -100,
-            hop_limit: 1,
+            rssi: Some(-100),
+            hop_limit: Some(1),
             lora_freq: 868,
             modem_preset: "MediumFast".to_string(),
             channel_name: "TEST".to_string(),
-            snr: 0.0,
+            snr: Some(0.0),
             reply_id: None,
             node_id: "!abcd1234".to_string(),
         }
@@ -223,6 +294,7 @@ mod tests {
     fn bridge_state_update_is_monotonic() {
         let mut state = BridgeState {
             last_message_id: Some(50),
+            last_checked_at: None,
         };
         let m = sample_msg(40);
 
@@ -239,11 +311,13 @@ mod tests {
 
         let state = BridgeState {
             last_message_id: Some(12345),
+            last_checked_at: Some(99),
         };
         state.save(path_str).unwrap();
 
         let loaded_state = BridgeState::load(path_str).unwrap();
         assert_eq!(loaded_state.last_message_id, Some(12345));
+        assert_eq!(loaded_state.last_checked_at, Some(99));
     }
 
     #[test]
@@ -254,6 +328,125 @@ mod tests {
 
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
+        assert_eq!(state.last_checked_at, None);
+    }
+
+    #[test]
+    fn update_checkpoint_requires_last_message_id() {
+        let mut state = BridgeState {
+            last_message_id: None,
+            last_checked_at: Some(10),
+        };
+
+        let saved = update_checkpoint(&mut state, true, 123);
+        assert!(!saved);
+        assert_eq!(state.last_checked_at, Some(10));
+    }
+
+    #[test]
+    fn update_checkpoint_skips_when_not_delivered() {
+        let mut state = BridgeState {
+            last_message_id: Some(5),
+            last_checked_at: Some(10),
+        };
+
+        let saved = update_checkpoint(&mut state, false, 123);
+        assert!(!saved);
+        assert_eq!(state.last_checked_at, Some(10));
+    }
+
+    #[test]
+    fn update_checkpoint_sets_when_safe() {
+        let mut state = BridgeState {
+            last_message_id: Some(5),
+            last_checked_at: None,
+        };
+
+        let saved = update_checkpoint(&mut state, true, 123);
+        assert!(saved);
+        assert_eq!(state.last_checked_at, Some(123));
+    }
+
+    #[test]
+    fn fetch_params_respects_missing_last_message_id() {
+        let state = BridgeState {
+            last_message_id: None,
+            last_checked_at: Some(123),
+        };
+
+        let params = build_fetch_params(&state);
+        assert_eq!(params.limit, None);
+        assert_eq!(params.since, None);
+    }
+
+    #[test]
+    fn fetch_params_uses_since_when_safe() {
+        let state = BridgeState {
+            last_message_id: Some(1),
+            last_checked_at: Some(123),
+        };
+
+        let params = build_fetch_params(&state);
+        assert_eq!(params.limit, None);
+        assert_eq!(params.since, Some(123));
+    }
+
+    #[test]
+    fn fetch_params_defaults_to_small_window() {
+        let state = BridgeState {
+            last_message_id: Some(1),
+            last_checked_at: None,
+        };
+
+        let params = build_fetch_params(&state);
+        assert_eq!(params.limit, Some(10));
+        assert_eq!(params.since, None);
+    }
+
+    #[tokio::test]
+    async fn poll_once_persists_checkpoint_without_messages() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("[]")
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potatomesh_cfg = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 1,
+        };
+        let matrix_cfg = MatrixConfig {
+            homeserver: server.url(),
+            as_token: "AS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        };
+
+        let potato = PotatoClient::new(http_client.clone(), potatomesh_cfg);
+        let matrix = MatrixAppserviceClient::new(http_client, matrix_cfg);
+
+        let mut state = BridgeState {
+            last_message_id: Some(1),
+            last_checked_at: None,
+        };
+
+        poll_once(&potato, &matrix, &mut state, state_str, 123).await;
+
+        mock_msgs.assert();
+
+        // Should have advanced checkpoint and saved it.
+        assert_eq!(state.last_checked_at, Some(123));
+        let loaded = BridgeState::load(state_str).unwrap();
+        assert_eq!(loaded.last_checked_at, Some(123));
+        assert_eq!(loaded.last_message_id, Some(1));
     }
 
     #[tokio::test]
