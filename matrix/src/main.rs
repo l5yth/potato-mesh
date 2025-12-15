@@ -82,6 +82,19 @@ fn build_fetch_params(state: &BridgeState) -> FetchParams {
     }
 }
 
+fn update_checkpoint(state: &mut BridgeState, delivered_all: bool, now_secs: u64) -> bool {
+    if !delivered_all {
+        return false;
+    }
+
+    if state.last_message_id.is_some() {
+        state.last_checked_at = Some(now_secs);
+        true
+    } else {
+        false
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logging: RUST_LOG=info,bridge=debug,reqwest=warn ...
@@ -149,8 +162,7 @@ async fn main() -> Result<()> {
                 }
 
                 // Only advance checkpoint after successful delivery and a known last_message_id.
-                if delivered_all && state.last_message_id.is_some() {
-                    state.last_checked_at = Some(now_secs);
+                if update_checkpoint(&mut state, delivered_all, now_secs) {
                     if let Err(e) = state.save(state_path) {
                         error!("Error saving state: {:?}", e);
                     }
@@ -307,6 +319,42 @@ mod tests {
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
         assert_eq!(state.last_checked_at, None);
+    }
+
+    #[test]
+    fn update_checkpoint_requires_last_message_id() {
+        let mut state = BridgeState {
+            last_message_id: None,
+            last_checked_at: Some(10),
+        };
+
+        let saved = update_checkpoint(&mut state, true, 123);
+        assert!(!saved);
+        assert_eq!(state.last_checked_at, Some(10));
+    }
+
+    #[test]
+    fn update_checkpoint_skips_when_not_delivered() {
+        let mut state = BridgeState {
+            last_message_id: Some(5),
+            last_checked_at: Some(10),
+        };
+
+        let saved = update_checkpoint(&mut state, false, 123);
+        assert!(!saved);
+        assert_eq!(state.last_checked_at, Some(10));
+    }
+
+    #[test]
+    fn update_checkpoint_sets_when_safe() {
+        let mut state = BridgeState {
+            last_message_id: Some(5),
+            last_checked_at: None,
+        };
+
+        let saved = update_checkpoint(&mut state, true, 123);
+        assert!(saved);
+        assert_eq!(state.last_checked_at, Some(123));
     }
 
     #[test]
