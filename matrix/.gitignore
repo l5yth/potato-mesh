@@ -1,3 +1,5 @@
 target/
 Cargo.lock
 coverage.lcov
+bridge_state.json
+
