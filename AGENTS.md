@@ -17,10 +17,14 @@ The repository splits runtime and ingestion logic. `web/` holds the Sinatra dash
 
 `data/` hosts the Python Meshtastic ingestor plus migrations and CLI scripts. API fixtures and end-to-end harnesses live in `tests/`. Dockerfiles and compose files support containerized workflows.
 
+`matrix/` contains the Rust Matrix bridge; build with `cargo build --release` or `docker build -f matrix/Dockerfile .`, and keep bridge config under `matrix/Config.toml` when running locally.
+
 ## Build, Test, and Development Commands
 Run dependency installs inside `web/`: `bundle install` for gems and `npm ci` for JavaScript tooling. Start the app with `cd web && API_TOKEN=dev ./app.sh` for local work or `bundle exec rackup -p 41447` when integrating elsewhere.
 
 Prep ingestion with `python -m venv .venv && pip install -r data/requirements.txt`; `./data/mesh.sh` streams from live radios. `docker-compose -f docker-compose.dev.yml up` brings up the full stack.
+
+Container images publish via `.github/workflows/docker.yml` as `potato-mesh-{service}-linux-$arch` (`web`, `ingestor`, `matrix-bridge`), using the Dockerfiles in `web/`, `data/`, and `matrix/`.
 
 ## Coding Style & Naming Conventions
 Use two-space indentation for Ruby and keep `# frozen_string_literal: true` at the top of new files. Keep Ruby classes/modules in `CamelCase`, filenames in `snake_case.rb`, and feature specs in `*_spec.rb`.
