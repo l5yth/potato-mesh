@@ -42,6 +42,7 @@ module PotatoMesh
     DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY = 128
     DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS = 120
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
+    DEFAULT_FEDERATION_SEED_DOMAINS = %w[potatomesh.net potatomesh.jmrp.io].freeze
 
     # Retrieve the configured API token used for authenticated requests.
     #
@@ -409,7 +410,7 @@ module PotatoMesh
     #
     # @return [Array<String>] list of default seed domains.
     def federation_seed_domains
-      ["potatomesh.net"].freeze
+      DEFAULT_FEDERATION_SEED_DOMAINS
     end
 
     # Determine how often we broadcast federation announcements.
