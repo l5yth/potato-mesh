@@ -14,7 +14,7 @@
 
 [package]
 name = "potatomesh-matrix-bridge"
-version = "0.5.8"
+version = "0.5.9"
 edition = "2021"
 
 [dependencies]
