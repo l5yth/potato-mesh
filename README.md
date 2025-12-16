@@ -7,13 +7,20 @@
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5yth/potato-mesh/issues)
 [![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
 
-A federated Meshtastic-powered node dashboard for your local community. _No MQTT clutter, just local LoRa aether._
+A federated, Meshtastic-powered node dashboard for your local community.
+_No MQTT clutter, just local LoRa aether._
 
-* Web app with chat window and map view showing nodes, neighbors, telemetry, and messages.
-  * API to POST (authenticated) and to GET nodes and messages.
-  * Shows new node notifications (first seen) in chat.
+* Web dashboard with chat window and map view showing nodes, positions, neighbors,
+  trace routes, telemetry, and messages.
+  * API to POST (authenticated) and to GET nodes, messages, and telemetry.
+  * Shows new node notifications (first seen) and telemetry logs in chat.
   * Allows searching and filtering for nodes in map and table view.
+  * Federated: _automatically_ froms a federation with other communities running
+    Potato Mesh!
 * Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
+  * Supports multiple ingestors per instance.
+* Matrix bridge that posts Meshtastic messages to a defined matrix channel (no
+  radio required).
 * Mobile app to _read_ messages on your local aether (no radio required).
 
 Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
@@ -58,6 +65,7 @@ RACK_ENV="production" \
 APP_ENV="production" \
 API_TOKEN="SuperSecureTokenReally" \
 INSTANCE_DOMAIN="https://potatomesh.net" \
+MAP_CENTER="53.55,13.42" \
 exec ruby app.rb -p 41447 -o 0.0.0.0
 ```
 
@@ -68,6 +76,7 @@ exec ruby app.rb -p 41447 -o 0.0.0.0
 * Provide a strong `API_TOKEN` value to authorize POST requests against the API.
 * Configure `INSTANCE_DOMAIN` with the public URL of your deployment so vanity
   links and generated metadata resolve correctly.
+* Don't forget to set a `MAP_CENTER` to point to your local region.
 
 The web app can be configured with environment variables (defaults shown):
 
@@ -134,7 +143,9 @@ The web app contains an API:
 * GET `/api/messages?limit=100&encrypted=false&since=0` - returns the latest 100 messages newer than the provided unix timestamp (defaults to `since=0` to return full history; disabled when `PRIVATE=1`)
 * GET `/api/telemetry?limit=100` - returns the latest 100 telemetry data
 * GET `/api/neighbors?limit=100` - returns the latest 100 neighbor tuples
+* GET `/api/traces?limit=100` - returns the latest 100 trace-routes caught
 * GET `/api/instances` - returns known potato-mesh instances in other locations
+* GET `/api/ingestors` - returns active potato-mesh python ingestors that feed data
 * GET `/metrics`- metrics for the prometheus endpoint
 * GET `/version`- information about the potato-mesh instance
 * POST `/api/nodes` - upserts nodes provided as JSON object mapping node ids to node data (requires `Authorization: Bearer <API_TOKEN>`)
@@ -142,6 +153,7 @@ The web app contains an API:
 * POST `/api/messages` - appends messages provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`; disabled when `PRIVATE=1`)
 * POST `/api/telemetry` - appends telemetry provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 * POST `/api/neighbors` - appends neighbor tuples provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
+* POST `/api/traces` - appends caught traces routes provided as a JSON object or array (requires `Authorization: Bearer <API_TOKEN>`)
 
 The `API_TOKEN` environment variable must be set to a non-empty value and match the token supplied in the `Authorization` header for `POST` requests.
 
@@ -190,9 +202,7 @@ node records and parsing new incoming messages. Enable debug output with `DEBUG=
 specify the connection target with `CONNECTION` (default `/dev/ttyACM0`) or set it to
 an IP address (for example `192.168.1.20:4403`) to use the Meshtastic TCP
 interface. `CONNECTION` also accepts Bluetooth device addresses (e.g.,
-`ED:4D:9E:95:CF:60`) and the script attempts a BLE connection if available. The
-ingestor will still honor the legacy `POTATOMESH_INSTANCE` variable when
-`INSTANCE_DOMAIN` is unset to ease upgrades from earlier deployments. To keep
+`ED:4D:9E:95:CF:60`) and the script attempts a BLE connection if available. To keep
 private channels out of the web UI, set `HIDDEN_CHANNELS` to a comma-separated
 list of channel names (for example `HIDDEN_CHANNELS="Secret,Ops"`); packets on
 those channels are discarded instead of being sent to `/api/messages`.
@@ -205,11 +215,18 @@ Docker images are published on Github for each release:
 docker pull ghcr.io/l5yth/potato-mesh/web:latest      # newest release
 docker pull ghcr.io/l5yth/potato-mesh/web:v0.5.5      # pinned historical release
 docker pull ghcr.io/l5yth/potato-mesh/ingestor:latest
+docker pull ghcr.io/l5yth/potato-mesh/matrix-bridge:latest
 ```
 
 Feel free to run the [configure.sh](./configure.sh) script to set up your
 environment. See the [Docker guide](DOCKER.md) for more details and custom
 deployment instructions.
+
+## Matrix Bridge
+
+A matrix bridge is currently being worked on. It requests messages from a configured
+potato-mesh instance and forwards it to a specified matrix channel; see
+[matrix/README.md](./matrix/README.md).
 
 ## Mobile App
 
