@@ -116,6 +116,17 @@ module PotatoMesh
         coerced
       end
 
+      # Normalise a caller-supplied timestamp for API pagination windows.
+      #
+      # @param since [Object] requested lower bound expressed as seconds since the epoch.
+      # @param floor [Integer] minimum allowable timestamp used to clamp the value.
+      # @return [Integer] non-negative timestamp greater than or equal to +floor+.
+      def normalize_since_threshold(since, floor: 0)
+        threshold = coerce_integer(since)
+        threshold = 0 if threshold.nil? || threshold.negative?
+        [threshold, floor].max
+      end
+
       def node_reference_tokens(node_ref)
         parts = canonical_node_parts(node_ref)
         canonical_id, numeric_id = parts ? parts[0, 2] : [nil, nil]
@@ -198,12 +209,19 @@ module PotatoMesh
         ["(#{clauses.join(" OR ")})", params]
       end
 
-      def query_nodes(limit, node_ref: nil)
+      # Fetch node state optionally scoped by identifier and timestamp.
+      #
+      # @param limit [Integer] maximum number of rows to return.
+      # @param node_ref [String, Integer, nil] optional node reference to narrow results.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @return [Array<Hash>] compacted node rows suitable for API responses.
+      def query_nodes(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
         min_last_heard = now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: min_last_heard)
         params = []
         where_clauses = []
 
@@ -214,7 +232,7 @@ module PotatoMesh
           params.concat(clause.last)
         else
           where_clauses << "last_heard >= ?"
-          params << min_last_heard
+          params << since_threshold
         end
 
         if private_mode?
@@ -242,7 +260,7 @@ module PotatoMesh
             .map { |value| coerce_integer(value) }
             .compact
             .max
-          last_candidate && last_candidate >= min_last_heard
+          last_candidate && last_candidate >= since_threshold
         end
         rows.each do |r|
           r["role"] ||= "CLIENT"
@@ -262,12 +280,18 @@ module PotatoMesh
         db&.close
       end
 
-      def query_ingestors(limit)
+      # Fetch ingestor heartbeats with optional freshness filtering.
+      #
+      # @param limit [Integer] maximum number of ingestors to return.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @return [Array<Hash>] compacted ingestor rows suitable for API responses.
+      def query_ingestors(limit, since: 0)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
         cutoff = now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: cutoff)
         sql = <<~SQL
           SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset
           FROM ingestors
@@ -276,7 +300,7 @@ module PotatoMesh
           LIMIT ?
         SQL
 
-        rows = db.execute(sql, [cutoff, limit])
+        rows = db.execute(sql, [since_threshold, limit])
         rows.each do |row|
           row.delete_if { |key, _| key.is_a?(Integer) }
           start_time = coerce_integer(row["start_time"])
@@ -306,8 +330,7 @@ module PotatoMesh
       # @return [Array<Hash>] compacted message rows safe for API responses.
       def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0)
         limit = coerce_query_limit(limit)
-        since_threshold = coerce_integer(since)
-        since_threshold = 0 if since_threshold.nil? || since_threshold.negative?
+        since_threshold = normalize_since_threshold(since, floor: 0)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -385,7 +408,13 @@ module PotatoMesh
         db&.close
       end
 
-      def query_positions(limit, node_ref: nil)
+      # Fetch positions optionally scoped by node and timestamp.
+      #
+      # @param limit [Integer] maximum number of rows to return.
+      # @param node_ref [String, Integer, nil] optional node reference to scope results.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @return [Array<Hash>] compacted position rows suitable for API responses.
+      def query_positions(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -393,8 +422,9 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
-        params << min_rx_time
+        params << since_threshold
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -436,7 +466,13 @@ module PotatoMesh
         db&.close
       end
 
-      def query_neighbors(limit, node_ref: nil)
+      # Fetch neighbor relationships optionally scoped by node and timestamp.
+      #
+      # @param limit [Integer] maximum number of rows to return.
+      # @param node_ref [String, Integer, nil] optional node reference to scope results.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @return [Array<Hash>] compacted neighbor rows suitable for API responses.
+      def query_neighbors(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -444,8 +480,9 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
-        params << min_rx_time
+        params << since_threshold
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id", "neighbor_id"])
@@ -476,7 +513,13 @@ module PotatoMesh
         db&.close
       end
 
-      def query_telemetry(limit, node_ref: nil)
+      # Fetch telemetry packets optionally scoped by node and timestamp.
+      #
+      # @param limit [Integer] maximum number of rows to return.
+      # @param node_ref [String, Integer, nil] optional node reference to scope results.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @return [Array<Hash>] compacted telemetry rows suitable for API responses.
+      def query_telemetry(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -484,8 +527,9 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
-        params << min_rx_time
+        params << since_threshold
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -555,7 +599,13 @@ module PotatoMesh
         db&.close
       end
 
-      def query_telemetry_buckets(window_seconds:, bucket_seconds:)
+      # Aggregate telemetry metrics into time buckets.
+      #
+      # @param window_seconds [Integer] duration expressed in seconds to include in the query.
+      # @param bucket_seconds [Integer] size of each aggregation bucket in seconds.
+      # @param since [Integer] unix timestamp threshold applied in addition to the requested window.
+      # @return [Array<Hash>] aggregated telemetry metrics grouped by bucket start time.
+      def query_telemetry_buckets(window_seconds:, bucket_seconds:, since: 0)
         window = coerce_integer(window_seconds) || DEFAULT_TELEMETRY_WINDOW_SECONDS
         window = DEFAULT_TELEMETRY_WINDOW_SECONDS if window <= 0
         bucket = coerce_integer(bucket_seconds) || DEFAULT_TELEMETRY_BUCKET_SECONDS
@@ -565,6 +615,7 @@ module PotatoMesh
         db.results_as_hash = true
         now = Time.now.to_i
         min_timestamp = now - window
+        since_threshold = normalize_since_threshold(since, floor: min_timestamp)
         bucket_expression = "((COALESCE(rx_time, telemetry_time) / ?) * ?)"
         select_clauses = [
           "#{bucket_expression} AS bucket_start",
@@ -590,7 +641,7 @@ module PotatoMesh
           ORDER BY bucket_start ASC
           LIMIT ?
         SQL
-        params = [bucket, bucket, min_timestamp, MAX_QUERY_LIMIT]
+        params = [bucket, bucket, since_threshold, MAX_QUERY_LIMIT]
         rows = db.execute(sql, params)
         rows.map do |row|
           bucket_start = coerce_integer(row["bucket_start"])
@@ -670,7 +721,13 @@ module PotatoMesh
         column
       end
 
-      def query_traces(limit, node_ref: nil)
+      # Fetch trace records optionally scoped by node and timestamp.
+      #
+      # @param limit [Integer] maximum number of rows to return.
+      # @param node_ref [String, Integer, nil] optional node reference to scope results.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @return [Array<Hash>] compacted trace rows suitable for API responses.
+      def query_traces(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -678,8 +735,9 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
-        params << min_rx_time
+        params << since_threshold
 
         if node_ref
           tokens = node_reference_tokens(node_ref)

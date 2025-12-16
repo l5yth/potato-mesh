@@ -4106,6 +4106,39 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload["node_id"]).to eq("!fresh-node")
     end
 
+    it "filters node results using the since parameter for collections and single lookups" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      older_last_heard = now - 120
+      recent_last_heard = now - 30
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!older-node", "old", "Older", "TBEAM", "CLIENT", 0.0, older_last_heard, older_last_heard],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!recent-node", "new", "Recent", "TBEAM", "CLIENT", 0.0, recent_last_heard, recent_last_heard],
+        )
+      end
+
+      get "/api/nodes?since=#{recent_last_heard}"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |row| row["node_id"] }).to eq(["!recent-node"])
+
+      get "/api/nodes/!older-node?since=#{recent_last_heard}"
+      expect(last_response.status).to eq(404)
+
+      get "/api/nodes/!recent-node?since=#{recent_last_heard}"
+      expect(last_response).to be_ok
+      detail = JSON.parse(last_response.body)
+      expect(detail["node_id"]).to eq("!recent-node")
+    end
+
     it "omits blank values from node responses" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
@@ -4467,6 +4500,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.map { |row| row["id"] }).to eq([2])
     end
 
+    it "filters positions using the since parameter for both global and node queries" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      older_rx = now - 180
+      recent_rx = now - 15
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [10, "!pos-since", 101, older_rx, Time.at(older_rx).utc.iso8601, older_rx - 5, 52.0, 13.0],
+        )
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [11, "!pos-since", 101, recent_rx, Time.at(recent_rx).utc.iso8601, recent_rx - 5, 53.0, 14.0],
+        )
+      end
+
+      get "/api/positions?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |row| row["id"] }).to eq([11])
+
+      get "/api/positions/!pos-since?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["id"] }).to eq([11])
+    end
+
     it "omits blank values from position responses" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
@@ -4563,6 +4627,49 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.length).to eq(1)
       expect(filtered.first["neighbor_id"]).to eq("!neighbor-new")
       expect(filtered.first["rx_time"]).to eq(fresh_rx)
+    end
+
+    it "honours the since parameter for neighbor queries" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      older_rx = now - 300
+      recent_rx = now - 30
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!origin-since", "orig", "Origin", "TBEAM", "CLIENT", 0.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!neighbor-old", "oldn", "Neighbor Old", "TBEAM", "CLIENT", 0.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!neighbor-new", "newn", "Neighbor New", "TBEAM", "CLIENT", 0.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
+          ["!origin-since", "!neighbor-old", 1.5, older_rx],
+        )
+        db.execute(
+          "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
+          ["!origin-since", "!neighbor-new", 7.5, recent_rx],
+        )
+      end
+
+      get "/api/neighbors?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |row| row["neighbor_id"] }).to eq(["!neighbor-new"])
+
+      get "/api/neighbors/!origin-since?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["neighbor_id"] }).to eq(["!neighbor-new"])
     end
 
     it "omits blank values from neighbor responses" do
@@ -4693,6 +4800,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
       expect(filtered.map { |row| row["id"] }).to eq([2])
+    end
+
+    it "filters telemetry rows using the since parameter for both global and node-scoped queries" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      older_rx = now - 300
+      recent_rx = now - 60
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, node_num, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?,?)",
+          [10, "!tele-since", 21, older_rx, Time.at(older_rx).utc.iso8601, older_rx - 5, 20.0, 3.9],
+        )
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, node_num, rx_time, rx_iso, telemetry_time, battery_level, voltage) VALUES(?,?,?,?,?,?,?,?)",
+          [11, "!tele-since", 21, recent_rx, Time.at(recent_rx).utc.iso8601, recent_rx - 5, 80.0, 4.1],
+        )
+      end
+
+      get "/api/telemetry?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |row| row["id"] }).to eq([11])
+
+      get "/api/telemetry/!tele-since?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      filtered = JSON.parse(last_response.body)
+      expect(filtered.map { |row| row["id"] }).to eq([11])
     end
 
     it "omits blank values from telemetry responses" do
@@ -4856,6 +4994,34 @@ RSpec.describe "Potato Mesh Sinatra app" do
       buckets = JSON.parse(last_response.body)
       expect(buckets.length).to be >= 1
       expect(buckets.first["bucket_seconds"]).to eq(PotatoMesh::App::Queries::DEFAULT_TELEMETRY_BUCKET_SECONDS)
+    end
+
+    it "filters aggregated telemetry buckets using the since parameter" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      older_rx = now - 1800
+      recent_rx = now - 120
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level) VALUES(?,?,?,?,?,?)",
+          [801, "!agg-since", older_rx, Time.at(older_rx).utc.iso8601, older_rx - 30, 30.0],
+        )
+        db.execute(
+          "INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level) VALUES(?,?,?,?,?,?)",
+          [802, "!agg-since", recent_rx, Time.at(recent_rx).utc.iso8601, recent_rx - 30, 80.0],
+        )
+      end
+
+      get "/api/telemetry/aggregated?windowSeconds=3600&bucketSeconds=300&since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      buckets = JSON.parse(last_response.body)
+      expect(buckets.length).to eq(1)
+      aggregates = buckets.first.fetch("aggregates")
+      expect(aggregates).to have_key("battery_level")
+      expect_same_value(aggregates.dig("battery_level", "avg"), 80.0)
     end
 
     it "omits zero-valued battery and voltage aggregates" do
@@ -5024,6 +5190,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       ids = JSON.parse(last_response.body).map { |row| row["id"] }
       expect(ids).to eq([50_001])
+    end
+
+    it "filters traces using the since parameter for collection and scoped requests" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      older_rx = now - 300
+      recent_rx = now - 25
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO traces(id, src, dest, rx_time, rx_iso) VALUES(?,?,?,?,?)",
+          [60_001, 123, 456, older_rx, Time.at(older_rx).utc.iso8601],
+        )
+        db.execute(
+          "INSERT INTO traces(id, src, dest, rx_time, rx_iso) VALUES(?,?,?,?,?)",
+          [60_002, 123, 456, recent_rx, Time.at(recent_rx).utc.iso8601],
+        )
+      end
+
+      get "/api/traces?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |row| row["id"] }).to eq([60_002])
+
+      get "/api/traces/123?since=#{recent_rx}"
+
+      expect(last_response).to be_ok
+      scoped = JSON.parse(last_response.body)
+      expect(scoped.map { |row| row["id"] }).to eq([60_002])
     end
   end
 
