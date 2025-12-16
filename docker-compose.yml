@@ -76,6 +76,21 @@ x-ingestor-base: &ingestor-base
         memory: 128M
         cpus: '0.1'
 
+x-matrix-bridge-base: &matrix-bridge-base
+  image: ghcr.io/l5yth/potato-mesh-matrix-bridge-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:${POTATOMESH_IMAGE_TAG:-latest}
+  volumes:
+    - potatomesh_matrix_bridge_state:/app
+    - ./matrix/Config.toml:/app/Config.toml:ro
+  restart: unless-stopped
+  deploy:
+    resources:
+      limits:
+        memory: 128M
+        cpus: '0.1'
+      reservations:
+        memory: 64M
+        cpus: '0.05'
+
 services:
   web:
     <<: *web-base
@@ -109,12 +124,32 @@ services:
     profiles:
       - bridge
 
+  matrix-bridge:
+    <<: *matrix-bridge-base
+    network_mode: host
+    depends_on:
+      - web
+    extra_hosts:
+      - "web:127.0.0.1"
+
+  matrix-bridge-bridge:
+    <<: *matrix-bridge-base
+    container_name: potatomesh-matrix-bridge
+    networks:
+      - potatomesh-network
+    depends_on:
+      - web-bridge
+    profiles:
+      - bridge
+
 volumes:
   potatomesh_data:
     driver: local
   potatomesh_config:
     driver: local
   potatomesh_logs:
+    driver: local
+  potatomesh_matrix_bridge_state:
     driver: local
 
 networks:
