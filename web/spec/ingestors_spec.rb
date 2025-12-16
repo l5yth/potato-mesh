@@ -159,6 +159,30 @@ RSpec.describe "Ingestor endpoints" do
       expect(rich["start_time_iso"]).to be_a(String)
       expect(rich["last_seen_iso"]).to be_a(String)
     end
+
+    it "filters ingestors using the since parameter" do
+      frozen_time = Time.at(1_700_000_000)
+      allow(Time).to receive(:now).and_return(frozen_time)
+      now = frozen_time.to_i
+      recent_cutoff = now - 120
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
+          ["!old-ingestor", now - 600, now - 300, "0.5.5"],
+        )
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
+          ["!new-ingestor", now - 60, now - 30, "0.5.8"],
+        )
+      end
+
+      get "/api/ingestors?since=#{recent_cutoff}"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |entry| entry["node_id"] }).to eq(["!new-ingestor"])
+    end
   end
 
   describe "schema migrations" do

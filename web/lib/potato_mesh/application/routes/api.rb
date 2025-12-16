@@ -64,7 +64,7 @@ module PotatoMesh
           app.get "/api/nodes" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_nodes(limit).to_json
+            query_nodes(limit, since: params["since"]).to_json
           end
 
           app.get "/api/nodes/:id" do
@@ -72,7 +72,7 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            rows = query_nodes(limit, node_ref: node_ref)
+            rows = query_nodes(limit, node_ref: node_ref, since: params["since"])
             halt 404, { error: "not found" }.to_json if rows.empty?
             rows.first.to_json
           end
@@ -80,7 +80,7 @@ module PotatoMesh
           app.get "/api/ingestors" do
             content_type :json
             limit = coerce_query_limit(params["limit"])
-            query_ingestors(limit).to_json
+            query_ingestors(limit, since: params["since"]).to_json
           end
 
           app.get "/api/messages" do
@@ -111,7 +111,7 @@ module PotatoMesh
           app.get "/api/positions" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_positions(limit).to_json
+            query_positions(limit, since: params["since"]).to_json
           end
 
           app.get "/api/positions/:id" do
@@ -119,13 +119,13 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_positions(limit, node_ref: node_ref).to_json
+            query_positions(limit, node_ref: node_ref, since: params["since"]).to_json
           end
 
           app.get "/api/neighbors" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_neighbors(limit).to_json
+            query_neighbors(limit, since: params["since"]).to_json
           end
 
           app.get "/api/neighbors/:id" do
@@ -133,13 +133,13 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_neighbors(limit, node_ref: node_ref).to_json
+            query_neighbors(limit, node_ref: node_ref, since: params["since"]).to_json
           end
 
           app.get "/api/telemetry" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_telemetry(limit).to_json
+            query_telemetry(limit, since: params["since"]).to_json
           end
 
           app.get "/api/telemetry/aggregated" do
@@ -170,7 +170,11 @@ module PotatoMesh
               halt 400, { error: "bucketSeconds too small for requested window" }.to_json
             end
 
-            query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds).to_json
+            query_telemetry_buckets(
+              window_seconds: window_seconds,
+              bucket_seconds: bucket_seconds,
+              since: params["since"],
+            ).to_json
           end
 
           app.get "/api/telemetry/:id" do
@@ -178,13 +182,13 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_telemetry(limit, node_ref: node_ref).to_json
+            query_telemetry(limit, node_ref: node_ref, since: params["since"]).to_json
           end
 
           app.get "/api/traces" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_traces(limit).to_json
+            query_traces(limit, since: params["since"]).to_json
           end
 
           app.get "/api/traces/:id" do
@@ -192,7 +196,7 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_traces(limit, node_ref: node_ref).to_json
+            query_traces(limit, node_ref: node_ref, since: params["since"]).to_json
           end
 
           app.get "/api/instances" do
