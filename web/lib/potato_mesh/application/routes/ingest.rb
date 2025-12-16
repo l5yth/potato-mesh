@@ -132,6 +132,7 @@ module PotatoMesh
             raw_private = payload.key?("isPrivate") ? payload["isPrivate"] : payload["is_private"]
             is_private = coerce_boolean(raw_private)
             signature = string_or_nil(payload["signature"])
+            contact_link = string_or_nil(payload["contactLink"])
 
             attributes = {
               id: id,
@@ -145,6 +146,7 @@ module PotatoMesh
               longitude: longitude,
               last_update_time: last_update_time,
               is_private: is_private,
+              contact_link: contact_link,
             }
 
             if [attributes[:id], attributes[:domain], attributes[:pubkey], signature, attributes[:last_update_time]].any?(&:nil?)
@@ -157,6 +159,10 @@ module PotatoMesh
             end
 
             signature_valid = verify_instance_signature(attributes, signature, attributes[:pubkey])
+            if !signature_valid && contact_link
+              stripped_attributes = attributes.merge(contact_link: nil)
+              signature_valid = verify_instance_signature(stripped_attributes, signature, attributes[:pubkey])
+            end
             # Some remote peers sign payloads using a canonicalised lowercase
             # domain while still sending a mixed-case domain. Retry signature
             # verification with the original casing when the first attempt
@@ -164,6 +170,10 @@ module PotatoMesh
             if !signature_valid && raw_domain && normalized_domain && raw_domain.casecmp?(normalized_domain) && raw_domain != normalized_domain
               alternate_attributes = attributes.merge(domain: raw_domain)
               signature_valid = verify_instance_signature(alternate_attributes, signature, attributes[:pubkey])
+              if !signature_valid && contact_link
+                stripped_alternate = alternate_attributes.merge(contact_link: nil)
+                signature_valid = verify_instance_signature(stripped_alternate, signature, attributes[:pubkey])
+              end
             end
 
             unless signature_valid

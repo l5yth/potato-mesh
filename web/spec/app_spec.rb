@@ -1607,6 +1607,161 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "accepts registrations when contactLink is part of the signed payload" do
+      contact_link = "https://example.test/contact"
+      linked_attributes = instance_attributes.merge(contact_link: contact_link)
+      linked_signature_payload = canonical_instance_payload(linked_attributes)
+      linked_signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, linked_signature_payload),
+      )
+      linked_payload = instance_payload.merge(
+        "contactLink" => contact_link,
+        "signature" => linked_signature,
+      )
+
+      post "/api/instances", linked_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT contact_link, signature FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["contact_link"]).to eq(contact_link)
+        expect(row["signature"]).to eq(linked_signature)
+      end
+    end
+
+    it "accepts instance announcement payloads produced by the application including contactLink" do
+      contact_link = "https://example.test/contact"
+      announcement_attributes = instance_attributes.merge(contact_link: contact_link)
+      announcement_signature = Base64.strict_encode64(
+        instance_key.sign(
+          OpenSSL::Digest::SHA256.new,
+          canonical_instance_payload(announcement_attributes),
+        ),
+      )
+      announcement_payload = application_class.instance_announcement_payload(
+        announcement_attributes,
+        announcement_signature,
+      )
+
+      post "/api/instances", announcement_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT contact_link, signature FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["contact_link"]).to eq(contact_link)
+        expect(row["signature"]).to eq(announcement_signature)
+      end
+    end
+
+    it "accepts signatures that omit contactLink for backwards compatibility" do
+      contact_link = "https://legacy.example/contact"
+      legacy_signature_payload = canonical_instance_payload(instance_attributes)
+      legacy_signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, legacy_signature_payload),
+      )
+      legacy_payload = instance_payload.merge(
+        "contactLink" => contact_link,
+        "signature" => legacy_signature,
+      )
+
+      post "/api/instances", legacy_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT contact_link, signature FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["contact_link"]).to eq(contact_link)
+        expect(row["signature"]).to eq(legacy_signature)
+      end
+    end
+
+    it "accepts mixed-case domains when the signature omits contactLink but the payload includes it" do
+      raw_domain = "Mesh.Example"
+      normalized_domain = raw_domain.downcase
+      contact_link = "https://mixed.example/contact"
+      mixed_attributes = instance_attributes.merge(domain: raw_domain)
+      mixed_signature_payload = canonical_instance_payload(mixed_attributes)
+      mixed_signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, mixed_signature_payload),
+      )
+      mixed_payload = instance_payload.merge(
+        "domain" => raw_domain,
+        "contactLink" => contact_link,
+        "signature" => mixed_signature,
+      )
+
+      mixed_remote_payload = JSON.generate(
+        {
+          "publicKey" => pubkey,
+          "name" => instance_attributes[:name],
+          "version" => instance_attributes[:version],
+          "domain" => normalized_domain,
+          "lastUpdate" => last_update_time,
+        },
+        sort_keys: true,
+      )
+
+      mixed_document = well_known_document.merge(
+        "domain" => normalized_domain,
+        "signedPayload" => Base64.strict_encode64(mixed_remote_payload),
+        "signature" => Base64.strict_encode64(
+          instance_key.sign(OpenSSL::Digest::SHA256.new, mixed_remote_payload),
+        ),
+      )
+
+      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
+        case path
+        when "/.well-known/potato-mesh"
+          [mixed_document, URI("https://#{host}#{path}")]
+        when "/api/nodes"
+          [remote_nodes, URI("https://#{host}#{path}")]
+        else
+          [nil, []]
+        end
+      end
+
+      post "/api/instances", mixed_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "registered")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT domain, contact_link, signature FROM instances WHERE id = ?",
+          [mixed_attributes[:id]],
+        )
+
+        expect(row).not_to be_nil
+        expect(row["domain"]).to eq(normalized_domain)
+        expect(row["contact_link"]).to eq(contact_link)
+        expect(row["signature"]).to eq(mixed_signature)
+      end
+    end
+
     it "rejects registrations with invalid domains" do
       invalid_payload = instance_payload.merge("domain" => "mesh-instance")
 
