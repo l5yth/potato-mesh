@@ -77,6 +77,7 @@ FREQUENCY=$(grep "^FREQUENCY=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || 
 FEDERATION=$(grep "^FEDERATION=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "1")
 PRIVATE=$(grep "^PRIVATE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "0")
 HIDDEN_CHANNELS=$(grep "^HIDDEN_CHANNELS=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
+ALLOWED_CHANNELS=$(grep "^ALLOWED_CHANNELS=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 MAP_CENTER=$(grep "^MAP_CENTER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "38.761944,-27.090833")
 MAP_ZOOM=$(grep "^MAP_ZOOM=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 MAX_DISTANCE=$(grep "^MAX_DISTANCE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "42")
@@ -127,6 +128,9 @@ echo "-------------------"
 echo "Private mode hides public mesh messages from unauthenticated visitors."
 echo "Set to 1 to hide public feeds or 0 to keep them visible."
 read_with_default "Enable private mode (1=yes, 0=no)" "$PRIVATE" PRIVATE
+echo "Provide a comma-separated whitelist of channel names to ingest (optional)."
+echo "When set, only listed channels are ingested unless explicitly hidden below."
+read_with_default "Allowed channels" "$ALLOWED_CHANNELS" ALLOWED_CHANNELS
 echo "Provide a comma-separated list of channel names to hide from the web UI (optional)."
 read_with_default "Hidden channels" "$HIDDEN_CHANNELS" HIDDEN_CHANNELS
 
@@ -199,6 +203,11 @@ update_env "POTATOMESH_IMAGE_TAG" "$POTATOMESH_IMAGE_TAG"
 update_env "FEDERATION" "$FEDERATION"
 update_env "PRIVATE" "$PRIVATE"
 update_env "CONNECTION" "$CONNECTION"
+if [ -n "$ALLOWED_CHANNELS" ]; then
+    update_env "ALLOWED_CHANNELS" "\"$ALLOWED_CHANNELS\""
+else
+    sed -i.bak '/^ALLOWED_CHANNELS=.*/d' .env
+fi
 if [ -n "$HIDDEN_CHANNELS" ]; then
     update_env "HIDDEN_CHANNELS" "\"$HIDDEN_CHANNELS\""
 else
@@ -252,6 +261,7 @@ echo "   API Token: ${API_TOKEN:0:8}..."
 echo "   Docker Image Arch: $POTATOMESH_IMAGE_ARCH"
 echo "   Docker Image Tag: $POTATOMESH_IMAGE_TAG"
 echo "   Private Mode: ${PRIVATE}"
+echo "   Allowed Channels: ${ALLOWED_CHANNELS:-'All'}"
 echo "   Hidden Channels: ${HIDDEN_CHANNELS:-'None'}"
 echo "   Instance Domain: ${INSTANCE_DOMAIN:-'Auto-detected'}"
 if [ "${FEDERATION:-1}" = "0" ]; then

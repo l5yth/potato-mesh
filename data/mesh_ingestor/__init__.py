@@ -70,6 +70,7 @@ _CONFIG_ATTRS = {
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",
+    "ALLOWED_CHANNELS",
     "HIDDEN_CHANNELS",
     "LORA_FREQ",
     "MODEM_PRESET",
