@@ -2046,9 +2046,7 @@ def test_store_packet_dict_skips_hidden_channel(mesh_module, monkeypatch, capsys
         mesh.DEBUG = previous_debug
 
 
-def test_store_packet_dict_skips_disallowed_channel(
-    mesh_module, monkeypatch, capsys
-):
+def test_store_packet_dict_skips_disallowed_channel(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
     mesh.channels._reset_channel_cache()
     mesh.config.MODEM_PRESET = None
