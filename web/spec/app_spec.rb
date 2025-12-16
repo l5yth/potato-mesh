@@ -1080,7 +1080,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       targets = application_class.federation_target_domains("self.mesh")
 
-      expect(targets.first).to eq("potatomesh.net")
+      seed_domains = PotatoMesh::Config.federation_seed_domains.map(&:downcase)
+      expect(targets.first(seed_domains.length)).to eq(seed_domains)
       expect(targets).to include("remote.mesh")
       expect(targets).not_to include("self.mesh")
     end
@@ -1090,7 +1091,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       targets = application_class.federation_target_domains("self.mesh")
 
-      expect(targets).to eq(["potatomesh.net"])
+      expect(targets).to eq(PotatoMesh::Config.federation_seed_domains.map(&:downcase))
     end
 
     it "ignores remote instances that have not updated within a week" do
@@ -1118,7 +1119,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       targets = application_class.federation_target_domains("self.mesh")
 
-      expect(targets).to eq(["potatomesh.net"])
+      expect(targets).to eq(PotatoMesh::Config.federation_seed_domains.map(&:downcase))
     end
   end
 
