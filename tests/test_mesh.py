@@ -306,6 +306,19 @@ def test_parse_channel_names_applies_allowlist(mesh_module):
         mesh.ALLOWED_CHANNELS = previous_allowed
 
 
+def test_allowed_channel_defaults_allow_all(mesh_module):
+    """Ensure unset allowlists do not block any channels."""
+
+    mesh = mesh_module
+    previous_allowed = mesh.ALLOWED_CHANNELS
+
+    try:
+        mesh.ALLOWED_CHANNELS = ()
+        assert mesh.channels.is_allowed_channel("Any")
+    finally:
+        mesh.ALLOWED_CHANNELS = previous_allowed
+
+
 def test_parse_hidden_channels_deduplicates_names(mesh_module):
     """Ensure hidden channel parsing strips blanks and deduplicates."""
 
