@@ -182,8 +182,8 @@ Provide your config at `/app/Config.toml` and persist the bridge state file by m
 
 ```bash
 docker run --rm \
-  -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
   -v bridge_state:/app \
+  -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
   potatomesh-matrix-bridge
 ```
 
@@ -191,8 +191,8 @@ If you prefer to isolate the state file from the config, mount it directly inste
 
 ```bash
 docker run --rm \
+  -v bridge_state:/app \
   -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
-  -v bridge_state:/app/bridge_state.json \
   potatomesh-matrix-bridge
 ```
 
