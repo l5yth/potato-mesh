@@ -1461,6 +1461,18 @@ def store_packet_dict(packet: Mapping) -> None:
         _record_ignored_packet(packet, reason="skipped-direct-message")
         return
 
+    if not channels.is_allowed_channel(channel_name_value):
+        _record_ignored_packet(packet, reason="disallowed-channel")
+        if config.DEBUG:
+            config._debug_log(
+                "Ignored packet on disallowed channel",
+                context="handlers.store_packet_dict",
+                channel=channel,
+                channel_name=channel_name_value,
+                allowed_channels=channels.allowed_channel_names(),
+            )
+        return
+
     if channels.is_hidden_channel(channel_name_value):
         _record_ignored_packet(packet, reason="hidden-channel")
         if config.DEBUG:

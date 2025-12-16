@@ -285,6 +285,40 @@ def test_instance_domain_infers_scheme_for_hostnames(mesh_module, monkeypatch):
         mesh_module.INSTANCE = mesh_module.config.INSTANCE
 
 
+def test_parse_channel_names_applies_allowlist(mesh_module):
+    """Ensure allowlists reuse the shared channel parser."""
+
+    mesh = mesh_module
+    previous_allowed = mesh.ALLOWED_CHANNELS
+
+    try:
+        parsed = mesh.config._parse_channel_names(" Primary ,Chat ,primary , Ops ")
+        mesh.ALLOWED_CHANNELS = parsed
+
+        assert parsed == ("Primary", "Chat", "Ops")
+        assert mesh.channels.allowed_channel_names() == ("Primary", "Chat", "Ops")
+        assert mesh.channels.is_allowed_channel("chat")
+        assert mesh.channels.is_allowed_channel(" ops ")
+        assert not mesh.channels.is_allowed_channel("unknown")
+        assert not mesh.channels.is_allowed_channel(None)
+        assert mesh.config._parse_channel_names("") == ()
+    finally:
+        mesh.ALLOWED_CHANNELS = previous_allowed
+
+
+def test_allowed_channel_defaults_allow_all(mesh_module):
+    """Ensure unset allowlists do not block any channels."""
+
+    mesh = mesh_module
+    previous_allowed = mesh.ALLOWED_CHANNELS
+
+    try:
+        mesh.ALLOWED_CHANNELS = ()
+        assert mesh.channels.is_allowed_channel("Any")
+    finally:
+        mesh.ALLOWED_CHANNELS = previous_allowed
+
+
 def test_parse_hidden_channels_deduplicates_names(mesh_module):
     """Ensure hidden channel parsing strips blanks and deduplicates."""
 
@@ -1997,8 +2031,10 @@ def test_store_packet_dict_skips_hidden_channel(mesh_module, monkeypatch, capsys
 
     previous_debug = mesh.config.DEBUG
     previous_hidden = mesh.HIDDEN_CHANNELS
+    previous_allowed = mesh.ALLOWED_CHANNELS
     mesh.config.DEBUG = True
     mesh.DEBUG = True
+    mesh.ALLOWED_CHANNELS = ("Chat",)
     mesh.HIDDEN_CHANNELS = ("Chat",)
 
     try:
@@ -2017,6 +2053,77 @@ def test_store_packet_dict_skips_hidden_channel(mesh_module, monkeypatch, capsys
         assert ignored == ["hidden-channel"]
         assert "Ignored packet on hidden channel" in capsys.readouterr().out
     finally:
+        mesh.HIDDEN_CHANNELS = previous_hidden
+        mesh.ALLOWED_CHANNELS = previous_allowed
+        mesh.config.DEBUG = previous_debug
+        mesh.DEBUG = previous_debug
+
+
+def test_store_packet_dict_skips_disallowed_channel(mesh_module, monkeypatch, capsys):
+    mesh = mesh_module
+    mesh.channels._reset_channel_cache()
+    mesh.config.MODEM_PRESET = None
+
+    class DummyInterface:
+        def __init__(self) -> None:
+            self.localNode = SimpleNamespace(
+                channels=[
+                    SimpleNamespace(
+                        role=1,
+                        settings=SimpleNamespace(name="Primary"),
+                    ),
+                    SimpleNamespace(
+                        role=2,
+                        index=5,
+                        settings=SimpleNamespace(name="Chat"),
+                    ),
+                ]
+            )
+
+        def waitForConfig(self):
+            return None
+
+    mesh.channels.capture_from_interface(DummyInterface())
+    capsys.readouterr()
+
+    captured: list[tuple[str, dict, int]] = []
+    ignored: list[str] = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+    monkeypatch.setattr(
+        mesh.handlers,
+        "_record_ignored_packet",
+        lambda packet, *, reason: ignored.append(reason),
+    )
+
+    previous_debug = mesh.config.DEBUG
+    previous_allowed = mesh.ALLOWED_CHANNELS
+    previous_hidden = mesh.HIDDEN_CHANNELS
+    mesh.config.DEBUG = True
+    mesh.DEBUG = True
+    mesh.ALLOWED_CHANNELS = ("Primary",)
+    mesh.HIDDEN_CHANNELS = ()
+
+    try:
+        packet = {
+            "id": "1001",
+            "rxTime": 25_680,
+            "from": "!sender",
+            "to": "^all",
+            "channel": 5,
+            "decoded": {"text": "disallowed msg", "portnum": 1},
+        }
+
+        mesh.store_packet_dict(packet)
+
+        assert captured == []
+        assert ignored == ["disallowed-channel"]
+        assert "Ignored packet on disallowed channel" in capsys.readouterr().out
+    finally:
+        mesh.ALLOWED_CHANNELS = previous_allowed
         mesh.HIDDEN_CHANNELS = previous_hidden
         mesh.config.DEBUG = previous_debug
         mesh.DEBUG = previous_debug

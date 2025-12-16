@@ -66,8 +66,8 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 DEBUG = os.environ.get("DEBUG") == "1"
 
 
-def _parse_hidden_channels(raw_value: str | None) -> tuple[str, ...]:
-    """Normalise a comma-separated list of hidden channel names.
+def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
+    """Normalise a comma-separated list of channel names.
 
     Parameters:
         raw_value: Raw environment string containing channel names separated by
@@ -96,8 +96,17 @@ def _parse_hidden_channels(raw_value: str | None) -> tuple[str, ...]:
     return tuple(normalized_entries)
 
 
+def _parse_hidden_channels(raw_value: str | None) -> tuple[str, ...]:
+    """Compatibility wrapper that parses hidden channel names."""
+
+    return _parse_channel_names(raw_value)
+
+
 HIDDEN_CHANNELS = _parse_hidden_channels(os.environ.get("HIDDEN_CHANNELS"))
 """Channel names configured to be ignored by the ingestor."""
+
+ALLOWED_CHANNELS = _parse_channel_names(os.environ.get("ALLOWED_CHANNELS"))
+"""Explicitly permitted channel names; when set, other channels are ignored."""
 
 
 def _resolve_instance_domain() -> str:
@@ -183,6 +192,7 @@ __all__ = [
     "CHANNEL_INDEX",
     "DEBUG",
     "HIDDEN_CHANNELS",
+    "ALLOWED_CHANNELS",
     "INSTANCE",
     "API_TOKEN",
     "ENERGY_SAVING",

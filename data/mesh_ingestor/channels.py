@@ -228,6 +228,33 @@ def hidden_channel_names() -> tuple[str, ...]:
     return tuple(getattr(config, "HIDDEN_CHANNELS", ()))
 
 
+def allowed_channel_names() -> tuple[str, ...]:
+    """Return the configured set of explicitly allowed channel names."""
+
+    return tuple(getattr(config, "ALLOWED_CHANNELS", ()))
+
+
+def is_allowed_channel(channel_name_value: str | None) -> bool:
+    """Return ``True`` when ``channel_name_value`` is permitted by policy."""
+
+    allowed = getattr(config, "ALLOWED_CHANNELS", ())
+    if not allowed:
+        return True
+
+    if channel_name_value is None:
+        return False
+
+    normalized = channel_name_value.strip()
+    if not normalized:
+        return False
+
+    normalized_casefold = normalized.casefold()
+    for allowed_name in allowed:
+        if normalized_casefold == allowed_name.casefold():
+            return True
+    return False
+
+
 def is_hidden_channel(channel_name_value: str | None) -> bool:
     """Return ``True`` when ``channel_name_value`` is configured as hidden."""
 
@@ -255,7 +282,9 @@ __all__ = [
     "capture_from_interface",
     "channel_mappings",
     "channel_name",
+    "allowed_channel_names",
     "hidden_channel_names",
+    "is_allowed_channel",
     "is_hidden_channel",
     "_reset_channel_cache",
 ]
