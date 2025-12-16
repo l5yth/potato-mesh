@@ -79,8 +79,8 @@ x-ingestor-base: &ingestor-base
 x-matrix-bridge-base: &matrix-bridge-base
   image: ghcr.io/l5yth/potato-mesh-matrix-bridge-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:${POTATOMESH_IMAGE_TAG:-latest}
   volumes:
-    - ./matrix/Config.toml:/app/Config.toml:ro
     - potatomesh_matrix_bridge_state:/app
+    - ./matrix/Config.toml:/app/Config.toml:ro
   restart: unless-stopped
   deploy:
     resources:
