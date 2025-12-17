@@ -110,11 +110,20 @@ module PotatoMesh
         ["!#{canonical_hex}", parsed, short_id]
       end
 
+      def broadcast_node_ref?(node_ref, fallback_num = nil)
+        return true if fallback_num == 0xFFFFFFFF
+        trimmed = string_or_nil(node_ref)
+        return false unless trimmed
+        normalized = trimmed.delete_prefix("!").strip.downcase
+        normalized == "ffffffff"
+      end
+
       def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
         parts = canonical_node_parts(node_ref, fallback_num)
         return unless parts
 
         node_id, node_num, short_id = parts
+        return if broadcast_node_ref?(node_id, node_num)
 
         existing = db.get_first_value(
           "SELECT 1 FROM nodes WHERE node_id = ? LIMIT 1",
@@ -158,7 +167,10 @@ module PotatoMesh
         node_id = nil
 
         parts = canonical_node_parts(node_ref, fallback_num)
-        node_id, = parts if parts
+        if parts
+          node_id, node_num = parts
+          return if broadcast_node_ref?(node_id, node_num)
+        end
 
         unless node_id
           trimmed = string_or_nil(node_ref)
@@ -170,6 +182,7 @@ module PotatoMesh
           end
         end
 
+        return if broadcast_node_ref?(node_id, fallback_num)
         return unless node_id
 
         updated = false
@@ -1426,6 +1439,17 @@ module PotatoMesh
           rx_time: rx_time,
           source: :message,
         )
+
+        ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time) if to_id || raw_to_id
+        if to_id || raw_to_id || message.key?("to_num")
+          touch_node_last_seen(
+            db,
+            to_id || raw_to_id || message["to_num"],
+            message["to_num"],
+            rx_time: rx_time,
+            source: :message,
+          )
+        end
 
         lora_freq = coerce_integer(message["lora_freq"] || message["loraFrequency"])
         modem_preset = string_or_nil(message["modem_preset"] || message["modemPreset"])

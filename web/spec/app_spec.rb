@@ -3017,6 +3017,69 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "ignores broadcast identifiers when creating placeholders" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+
+      payload = {
+        "id" => 10_002,
+        "rx_time" => reference_time.to_i,
+        "from_id" => "!ffffffff",
+        "channel" => 0,
+        "text" => "broadcast",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      with_db(readonly: true) do |db|
+        count = db.get_first_value("SELECT COUNT(*) FROM nodes WHERE node_id = '!ffffffff'")
+        expect(count).to eq(0)
+      end
+    end
+
+    it "creates hidden nodes for unseen message participants" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+
+      payload = {
+        "id" => 10_001,
+        "rx_time" => reference_time.to_i,
+        "from_id" => "!cafef00d",
+        "to_id" => "!deadbeef",
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "Spec participant placeholder",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        rows = db.execute(
+          <<~SQL,
+          SELECT node_id, num, short_name, long_name, role, last_heard, first_heard
+          FROM nodes
+          WHERE node_id IN ("!cafef00d", "!deadbeef")
+          ORDER BY node_id
+        SQL
+        )
+
+        expect(rows.map { |row| row["node_id"] }).to contain_exactly("!cafef00d", "!deadbeef")
+        rows.each do |row|
+          expect(row["num"]).to be_an(Integer)
+          expect(row["role"]).to eq("CLIENT_HIDDEN")
+          expect(row["short_name"]).to eq(row["node_id"][-4, 4].upcase)
+          expect(row["long_name"]).to eq("Meshtastic #{row["short_name"]}")
+          expect(row["last_heard"]).to eq(reference_time.to_i)
+          expect(row["first_heard"]).to eq(reference_time.to_i)
+        end
+      end
+    end
+
     it "returns 400 when the payload is not valid JSON" do
       post "/api/messages", "{", auth_headers
 
