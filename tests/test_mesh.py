@@ -2640,6 +2640,62 @@ def test_parse_ble_target_rejects_invalid_values(mesh_module):
     assert mesh._parse_ble_target("zz:zz:zz:zz:zz:zz") is None
 
 
+def test_parse_ble_target_accepts_mac_addresses(mesh_module):
+    """Test that _parse_ble_target accepts valid MAC address format (Linux/Windows)."""
+    mesh = mesh_module
+
+    # Valid MAC addresses should be accepted and normalized to uppercase
+    assert mesh._parse_ble_target("ED:4D:9E:95:CF:60") == "ED:4D:9E:95:CF:60"
+    assert mesh._parse_ble_target("ed:4d:9e:95:cf:60") == "ED:4D:9E:95:CF:60"
+    assert mesh._parse_ble_target("AA:BB:CC:DD:EE:FF") == "AA:BB:CC:DD:EE:FF"
+    assert mesh._parse_ble_target("00:11:22:33:44:55") == "00:11:22:33:44:55"
+
+    # With whitespace
+    assert mesh._parse_ble_target("  ED:4D:9E:95:CF:60  ") == "ED:4D:9E:95:CF:60"
+
+    # Invalid MAC addresses should be rejected
+    assert mesh._parse_ble_target("ED:4D:9E:95:CF") is None  # Too short
+    assert mesh._parse_ble_target("ED:4D:9E:95:CF:60:AB") is None  # Too long
+    assert mesh._parse_ble_target("GG:HH:II:JJ:KK:LL") is None  # Invalid hex
+
+
+def test_parse_ble_target_accepts_uuids(mesh_module):
+    """Test that _parse_ble_target accepts valid UUID format (macOS)."""
+    mesh = mesh_module
+
+    # Valid UUIDs should be accepted and normalized to uppercase
+    assert (
+        mesh._parse_ble_target("C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E")
+        == "C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E"
+    )
+    assert (
+        mesh._parse_ble_target("c0aea92f-045e-9b82-c9a6-a1fd822b3a9e")
+        == "C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E"
+    )
+    assert (
+        mesh._parse_ble_target("12345678-1234-5678-9ABC-DEF012345678")
+        == "12345678-1234-5678-9ABC-DEF012345678"
+    )
+
+    # With whitespace
+    assert (
+        mesh._parse_ble_target("  C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E  ")
+        == "C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E"
+    )
+
+    # Invalid UUIDs should be rejected
+    assert mesh._parse_ble_target("C0AEA92F-045E-9B82-C9A6") is None  # Too short
+    assert (
+        mesh._parse_ble_target("C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E-EXTRA") is None
+    )  # Too long
+    assert (
+        mesh._parse_ble_target("GGGGGGGG-GGGG-GGGG-GGGG-GGGGGGGGGGGG") is None
+    )  # Invalid hex
+    assert (
+        mesh._parse_ble_target("C0AEA92F:045E:9B82:C9A6:A1FD822B3A9E") is None
+    )  # Wrong separator
+
+
 def test_parse_network_target_additional_cases(mesh_module):
     mesh = mesh_module
 

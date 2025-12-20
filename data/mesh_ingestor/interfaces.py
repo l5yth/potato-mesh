@@ -628,7 +628,13 @@ _DEFAULT_SERIAL_PATTERNS = (
     "/dev/cu.usbserial*",
 )
 
-_BLE_ADDRESS_RE = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
+# Support both MAC addresses (Linux/Windows) and UUIDs (macOS)
+_BLE_ADDRESS_RE = re.compile(
+    r"^(?:"
+    r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}|"  # MAC address format
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"  # UUID format
+    r")$"
+)
 
 
 class _DummySerialInterface:
@@ -642,13 +648,13 @@ class _DummySerialInterface:
 
 
 def _parse_ble_target(value: str) -> str | None:
-    """Return an uppercase BLE MAC address when ``value`` matches the format.
+    """Return a normalized BLE address (MAC or UUID) when ``value`` matches the format.
 
     Parameters:
         value: User-provided target string.
 
     Returns:
-        The normalised MAC address or ``None`` when validation fails.
+        The normalised MAC address or UUID, or ``None`` when validation fails.
     """
 
     if not value:
@@ -772,10 +778,13 @@ def _create_serial_interface(port: str) -> tuple[object, str]:
         return _DummySerialInterface(), "mock"
     ble_target = _parse_ble_target(port_value)
     if ble_target:
+        # Determine if it's a MAC address or UUID
+        address_type = "MAC" if ":" in ble_target else "UUID"
         config._debug_log(
             "Using BLE interface",
             context="interfaces.ble",
             address=ble_target,
+            address_type=address_type,
         )
         return _load_ble_interface()(address=ble_target), ble_target
     network_target = _parse_network_target(port_value)
