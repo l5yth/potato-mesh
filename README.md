@@ -202,8 +202,9 @@ Run the script with `INSTANCE_DOMAIN` and `API_TOKEN` to keep updating
 node records and parsing new incoming messages. Enable debug output with `DEBUG=1`,
 specify the connection target with `CONNECTION` (default `/dev/ttyACM0`) or set it to
 an IP address (for example `192.168.1.20:4403`) to use the Meshtastic TCP
-interface. `CONNECTION` also accepts Bluetooth device addresses (e.g.,
-`ED:4D:9E:95:CF:60`) and the script attempts a BLE connection if available. To keep
+interface. `CONNECTION` also accepts Bluetooth device addresses in MAC format (e.g.,
+`ED:4D:9E:95:CF:60`) or UUID format for macOS (e.g., `C0AEA92F-045E-9B82-C9A6-A1FD822B3A9E`)
+and the script attempts a BLE connection if available. To keep
 ingestion limited, set `ALLOWED_CHANNELS` to a comma-separated whitelist (for
 example `ALLOWED_CHANNELS="Chat,Ops"`); packets on other channels are discarded.
 Use `HIDDEN_CHANNELS` to block specific channels from the web UI even when they
