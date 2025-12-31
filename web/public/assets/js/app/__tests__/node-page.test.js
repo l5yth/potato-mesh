@@ -405,6 +405,77 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('node-detail__chart-point'), true);
 });
 
+test('renderTelemetryCharts expands upper bounds when overflow metrics exceed defaults', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const node = {
+    rawSources: {
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: nowSeconds - 120,
+            device_metrics: {
+              battery_level: 90,
+              voltage: 7.2,
+              current: 3.6,
+              channel_utilization: 45,
+              air_util_tx: 18,
+            },
+            environment_metrics: {
+              temperature: 45,
+              relative_humidity: 48,
+              barometric_pressure: 1250,
+              gas_resistance: 1200,
+              iaq: 650,
+            },
+          },
+        ],
+      },
+    },
+  };
+  const html = renderTelemetryCharts(node, { nowMs });
+  assert.match(html, />7\.2<\/text>/);
+  assert.match(html, />3\.6<\/text>/);
+  assert.match(html, />45<\/text>/);
+  assert.match(html, />650<\/text>/);
+  assert.match(html, />1100<\/text>/);
+});
+
+test('renderTelemetryCharts keeps default bounds when metrics stay within limits', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const node = {
+    rawSources: {
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: nowSeconds - 180,
+            device_metrics: {
+              battery_level: 70,
+              voltage: 4.5,
+              current: 1.5,
+              channel_utilization: 35,
+              air_util_tx: 15,
+            },
+            environment_metrics: {
+              temperature: 25,
+              relative_humidity: 50,
+              barometric_pressure: 1015,
+              gas_resistance: 1500,
+              iaq: 200,
+            },
+          },
+        ],
+      },
+    },
+  };
+  const html = renderTelemetryCharts(node, { nowMs });
+  assert.match(html, />6\.0<\/text>/);
+  assert.match(html, />3\.0<\/text>/);
+  assert.match(html, />40<\/text>/);
+  assert.match(html, />500<\/text>/);
+});
+
 test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   const html = renderNodeDetailHtml(
     {
