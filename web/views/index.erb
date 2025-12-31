@@ -17,7 +17,7 @@
   <% unless private_mode %>
     <%= erb :"shared/_chat_panel", locals: { full_screen: false } %>
   <% end %>
-  <%= erb :"shared/_map_panel", locals: { full_screen: false } %>
+  <%= erb :"shared/_map_panel", locals: { full_screen: false, legend_collapsed: true } %>
 </div>
 
 <%= erb :"shared/_nodes_table", locals: { full_screen: false } %>
