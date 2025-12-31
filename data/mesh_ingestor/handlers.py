@@ -1373,13 +1373,12 @@ def store_packet_dict(packet: Mapping) -> None:
             if emoji_text:
                 emoji = emoji_text
 
+    routing_section = decoded.get("routing") if isinstance(decoded, Mapping) else None
     routing_port_candidates = _portnum_candidates("ROUTING_APP")
-    if (
-        text is None
-        and (
-            portnum == "ROUTING_APP"
-            or (portnum_int is not None and portnum_int in routing_port_candidates)
-        )
+    if text is None and (
+        portnum == "ROUTING_APP"
+        or (portnum_int is not None and portnum_int in routing_port_candidates)
+        or isinstance(routing_section, Mapping)
     ):
         routing_payload = _first(decoded, "payload", "data", default=None)
         if routing_payload is not None:
@@ -1406,6 +1405,10 @@ def store_packet_dict(packet: Mapping) -> None:
     for candidate in routing_port_candidates:
         allowed_port_ints.add(candidate)
         allowed_port_values.add(str(candidate))
+
+    if isinstance(routing_section, Mapping) and portnum_int is not None:
+        allowed_port_ints.add(portnum_int)
+        allowed_port_values.add(str(portnum_int))
 
     is_reaction_packet = portnum == "REACTION_APP" or (
         reply_id is not None and emoji is not None

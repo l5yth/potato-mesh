@@ -1997,12 +1997,13 @@ def test_store_packet_dict_serializes_routing_payloads(mesh_module, monkeypatch)
 
     assert captured, "Expected routing packet to be stored"
     _, payload, _ = captured[0]
-    assert payload["text"] == "{\"kind\": \"ack\"}"
+    assert payload["text"] == '{"kind": "ack"}'
 
     captured.clear()
 
     packet["decoded"]["portnum"] = 7
     packet["decoded"]["payload"] = b"\x00"
+    packet["decoded"]["routing"] = {"errorReason": "NONE"}
     mesh.store_packet_dict(packet)
 
     assert captured, "Expected numeric routing packet to be stored"
