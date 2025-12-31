@@ -14,6 +14,7 @@
         # Python environment for the ingestor
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
           meshtastic
+          protobuf
           requests
         ]);
 
@@ -22,7 +23,11 @@
           name = "potato-mesh-web";
           runtimeInputs = [ pkgs.ruby pkgs.bundler pkgs.sqlite pkgs.git pkgs.gnumake pkgs.gcc ];
           text = ''
-            BASEDIR="''${XDG_DATA_HOME:-$HOME/.local/share}/potato-mesh"
+            if [ -n "''${XDG_DATA_HOME:-}" ]; then
+              BASEDIR="$XDG_DATA_HOME"
+            else
+              BASEDIR="$HOME/.local/share/potato-mesh"
+            fi
             WORKDIR="$BASEDIR/web"
             mkdir -p "$WORKDIR"
 
@@ -60,7 +65,11 @@
           runtimeInputs = [ pythonEnv ];
           text = ''
             # The ingestor needs to run from parent directory with data/ folder
-            BASEDIR="''${XDG_DATA_HOME:-$HOME/.local/share}/potato-mesh"
+            if [ -n "''${XDG_DATA_HOME:-}" ]; then
+              BASEDIR="$XDG_DATA_HOME"
+            else
+              BASEDIR="$HOME/.local/share/potato-mesh"
+            fi
             if [ ! -d "$BASEDIR/data" ]; then
               mkdir -p "$BASEDIR"
               cp -rT "${./data}" "$BASEDIR/data/"
@@ -105,6 +114,27 @@
             echo ""
             echo "To run the web app:  cd web && bundle install && ./app.sh"
             echo "To run the ingestor: cd data && python mesh.py"
+          '';
+        };
+
+        checks.potato-mesh-nixos = pkgs.testers.nixosTest {
+          name = "potato-mesh-data-dir";
+          nodes.machine = { lib, ... }: {
+            imports = [ self.nixosModules.default ];
+            services.potato-mesh = {
+              enable = true;
+              apiToken = "test-token";
+              dataDir = "/var/lib/potato-mesh";
+              ingestor.enable = true;
+            };
+            systemd.services.potato-mesh-ingestor.wantedBy = lib.mkForce [];
+          };
+          testScript = ''
+            machine.start
+            machine.succeed("grep -q 'XDG_DATA_HOME=/var/lib/potato-mesh' /etc/systemd/system/potato-mesh-web.service")
+            machine.succeed("grep -q 'XDG_DATA_HOME=/var/lib/potato-mesh' /etc/systemd/system/potato-mesh-ingestor.service")
+            machine.succeed("grep -q 'WorkingDirectory=/var/lib/potato-mesh' /etc/systemd/system/potato-mesh-web.service")
+            machine.succeed("grep -q 'WorkingDirectory=/var/lib/potato-mesh' /etc/systemd/system/potato-mesh-ingestor.service")
           '';
         };
       }
@@ -327,6 +357,7 @@
                 INSTANCE_DOMAIN = "http://127.0.0.1:${toString cfg.port}";
                 CONNECTION = cfg.ingestor.connection;
                 DEBUG = if cfg.debug then "1" else "0";
+                XDG_DATA_HOME = cfg.dataDir;
               } // lib.optionalAttrs (cfg.allowedChannels != null) {
                 ALLOWED_CHANNELS = cfg.allowedChannels;
               } // lib.optionalAttrs (cfg.hiddenChannels != null) {
