@@ -117,7 +117,7 @@
           '';
         };
 
-        checks.potato-mesh-nixos = pkgs.nixosTest {
+        checks.potato-mesh-nixos = pkgs.testers.nixosTest {
           name = "potato-mesh-data-dir";
           nodes.machine = { lib, ... }: {
             imports = [ self.nixosModules.default ];
