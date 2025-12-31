@@ -68,6 +68,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         max: 6,
         ticks: 3,
         color: '#9ebcda',
+        allowUpperOverflow: true,
       },
       {
         id: 'current',
@@ -77,6 +78,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         max: 3,
         ticks: 3,
         color: '#3182bd',
+        allowUpperOverflow: true,
       },
     ],
     series: [
@@ -156,6 +158,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         max: 40,
         ticks: 4,
         color: '#fc8d59',
+        allowUpperOverflow: true,
       },
       {
         id: 'humidity',
@@ -220,6 +223,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         max: 500,
         ticks: 5,
         color: '#636363',
+        allowUpperOverflow: true,
       },
     ],
     series: [
@@ -1005,6 +1009,31 @@ function buildSeriesPoints(entries, fields, domainStart, domainEnd) {
 }
 
 /**
+ * Resolve the effective axis maximum when upper overflow is allowed.
+ *
+ * @param {Object} axis Axis descriptor.
+ * @param {Array<{axisId: string, points: Array<{timestamp: number, value: number}>}>} seriesEntries Series entries.
+ * @returns {number} Effective axis max.
+ */
+function resolveAxisMax(axis, seriesEntries) {
+  if (!axis || axis.allowUpperOverflow !== true) {
+    return axis?.max;
+  }
+  let observedMax = null;
+  for (const entry of seriesEntries) {
+    if (!entry || entry.axisId !== axis.id || !Array.isArray(entry.points)) continue;
+    for (const point of entry.points) {
+      if (!point || !Number.isFinite(point.value)) continue;
+      observedMax = observedMax == null ? point.value : Math.max(observedMax, point.value);
+    }
+  }
+  if (observedMax != null && Number.isFinite(axis.max) && observedMax > axis.max) {
+    return observedMax;
+  }
+  return axis.max;
+}
+
+/**
  * Render a telemetry series as circles plus an optional translucent guide line.
  *
  * @param {Object} seriesConfig Series metadata.
@@ -1133,33 +1162,48 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
   const domainEnd = nowMs;
   const domainStart = nowMs - windowMs;
   const dims = createChartDimensions(spec);
-  const axisMap = new Map(spec.axes.map(axis => [axis.id, axis]));
   const seriesEntries = spec.series
     .map(series => {
-      const axis = axisMap.get(series.axis);
-      if (!axis) return null;
       const points = buildSeriesPoints(entries, series.fields, domainStart, domainEnd);
       if (points.length === 0) return null;
-      return { config: series, axis, points };
+      return { config: series, axisId: series.axis, points };
     })
     .filter(entry => entry != null);
   if (seriesEntries.length === 0) {
     return '';
   }
-  const axesMarkup = spec.axes.map(axis => renderYAxis(axis, dims)).join('');
+  const adjustedAxes = spec.axes.map(axis => {
+    const resolvedMax = resolveAxisMax(axis, seriesEntries);
+    if (resolvedMax != null && resolvedMax !== axis.max) {
+      return { ...axis, max: resolvedMax };
+    }
+    return axis;
+  });
+  const axisMap = new Map(adjustedAxes.map(axis => [axis.id, axis]));
+  const plottedSeries = seriesEntries
+    .map(series => {
+      const axis = axisMap.get(series.axisId);
+      if (!axis) return null;
+      return { config: series.config, axis, points: series.points };
+    })
+    .filter(entry => entry != null);
+  if (plottedSeries.length === 0) {
+    return '';
+  }
+  const axesMarkup = adjustedAxes.map(axis => renderYAxis(axis, dims)).join('');
   const tickBuilder = typeof chartOptions.xAxisTickBuilder === 'function' ? chartOptions.xAxisTickBuilder : buildMidnightTicks;
   const tickFormatter = typeof chartOptions.xAxisTickFormatter === 'function' ? chartOptions.xAxisTickFormatter : formatCompactDate;
   const ticks = tickBuilder(nowMs, windowMs);
   const xAxisMarkup = renderXAxis(dims, domainStart, domainEnd, ticks, { labelFormatter: tickFormatter });
 
-  const seriesMarkup = seriesEntries
+  const seriesMarkup = plottedSeries
     .map(series =>
       renderTelemetrySeries(series.config, series.points, series.axis, dims, domainStart, domainEnd, {
         lineReducer: chartOptions.lineReducer,
       }),
     )
     .join('');
-  const legendItems = seriesEntries
+  const legendItems = plottedSeries
     .map(series => {
       const legendLabel = stringOrNull(series.config.legend) ?? series.config.label;
       return `
