@@ -1999,6 +1999,16 @@ def test_store_packet_dict_serializes_routing_payloads(mesh_module, monkeypatch)
     _, payload, _ = captured[0]
     assert payload["text"] == "{\"kind\": \"ack\"}"
 
+    captured.clear()
+
+    packet["decoded"]["portnum"] = 7
+    packet["decoded"]["payload"] = b"\x00"
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected numeric routing packet to be stored"
+    _, payload, _ = captured[0]
+    assert payload["text"] == "AA=="
+
 
 def test_portnum_candidates_reads_enum_values(mesh_module, monkeypatch):
     """Ensure portnum candidates include enum and constants when available."""
