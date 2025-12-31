@@ -1961,6 +1961,67 @@ def test_store_packet_dict_accepts_routing_app_messages(mesh_module, monkeypatch
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_serializes_routing_payloads(mesh_module, monkeypatch):
+    """Ensure routing payloads are serialized when text is absent."""
+
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 334,
+        "rxTime": 1000,
+        "fromId": "!node",
+        "toId": "^all",
+        "channel": 0,
+        "decoded": {
+            "payload": b"\x01\x02",
+            "portnum": "ROUTING_APP",
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected routing packet to be stored"
+    _, payload, _ = captured[0]
+    assert payload["text"] == "AQI="
+
+    captured.clear()
+
+    packet["decoded"]["payload"] = {"kind": "ack"}
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected routing packet to be stored"
+    _, payload, _ = captured[0]
+    assert payload["text"] == "{\"kind\": \"ack\"}"
+
+
+def test_portnum_candidates_reads_enum_values(mesh_module, monkeypatch):
+    """Ensure portnum candidates include enum and constants when available."""
+
+    mesh = mesh_module
+    module_name = "meshtastic.portnums_pb2"
+
+    class DummyPortNum:
+        @staticmethod
+        def Value(name):
+            if name == "ROUTING_APP":
+                return 7
+            raise KeyError(name)
+
+    dummy_module = types.SimpleNamespace(PortNum=DummyPortNum, ROUTING_APP=8)
+    monkeypatch.setitem(sys.modules, module_name, dummy_module)
+
+    candidates = mesh.handlers._portnum_candidates("ROUTING_APP")
+
+    assert 7 in candidates
+    assert 8 in candidates
+
+
 def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
     mesh.channels._reset_channel_cache()
