@@ -1929,6 +1929,110 @@ def test_store_packet_dict_allows_primary_channel_broadcast(mesh_module, monkeyp
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_accepts_routing_app_messages(mesh_module, monkeypatch):
+    """Ensure routing app payloads are treated as message posts."""
+
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 333,
+        "rxTime": 999,
+        "fromId": "!node",
+        "toId": "^all",
+        "channel": 0,
+        "decoded": {"payload": "GAA=", "portnum": "ROUTING_APP"},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected routing packet to be stored"
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["portnum"] == "ROUTING_APP"
+    assert payload["text"] == "GAA="
+    assert payload["channel"] == 0
+    assert payload["encrypted"] is None
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_store_packet_dict_serializes_routing_payloads(mesh_module, monkeypatch):
+    """Ensure routing payloads are serialized when text is absent."""
+
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 334,
+        "rxTime": 1000,
+        "fromId": "!node",
+        "toId": "^all",
+        "channel": 0,
+        "decoded": {
+            "payload": b"\x01\x02",
+            "portnum": "ROUTING_APP",
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected routing packet to be stored"
+    _, payload, _ = captured[0]
+    assert payload["text"] == "AQI="
+
+    captured.clear()
+
+    packet["decoded"]["payload"] = {"kind": "ack"}
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected routing packet to be stored"
+    _, payload, _ = captured[0]
+    assert payload["text"] == '{"kind": "ack"}'
+
+    captured.clear()
+
+    packet["decoded"]["portnum"] = 7
+    packet["decoded"]["payload"] = b"\x00"
+    packet["decoded"]["routing"] = {"errorReason": "NONE"}
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected numeric routing packet to be stored"
+    _, payload, _ = captured[0]
+    assert payload["text"] == "AA=="
+
+
+def test_portnum_candidates_reads_enum_values(mesh_module, monkeypatch):
+    """Ensure portnum candidates include enum and constants when available."""
+
+    mesh = mesh_module
+    module_name = "meshtastic.portnums_pb2"
+
+    class DummyPortNum:
+        @staticmethod
+        def Value(name):
+            if name == "ROUTING_APP":
+                return 7
+            raise KeyError(name)
+
+    dummy_module = types.SimpleNamespace(PortNum=DummyPortNum, ROUTING_APP=8)
+    monkeypatch.setitem(sys.modules, module_name, dummy_module)
+
+    candidates = mesh.handlers._portnum_candidates("ROUTING_APP")
+
+    assert 7 in candidates
+    assert 8 in candidates
+
+
 def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
     mesh.channels._reset_channel_cache()

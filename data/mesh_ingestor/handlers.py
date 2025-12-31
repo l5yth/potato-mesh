@@ -100,6 +100,41 @@ from .serialization import (
 )
 
 
+def _portnum_candidates(name: str) -> set[int]:
+    """Return Meshtastic port number candidates for ``name``.
+
+    Parameters:
+        name: Port name to look up in Meshtastic ``PortNum`` enums.
+
+    Returns:
+        Set of integer port numbers resolved from Meshtastic modules.
+    """
+
+    candidates: set[int] = set()
+    for module_name in (
+        "meshtastic.portnums_pb2",
+        "meshtastic.protobuf.portnums_pb2",
+    ):
+        module = sys.modules.get(module_name)
+        if module is None:
+            with contextlib.suppress(ModuleNotFoundError):
+                module = importlib.import_module(module_name)
+        if module is None:
+            continue
+        portnum_enum = getattr(module, "PortNum", None)
+        value_lookup = getattr(portnum_enum, "Value", None) if portnum_enum else None
+        if callable(value_lookup):
+            with contextlib.suppress(Exception):
+                candidate = _coerce_int(value_lookup(name))
+                if candidate is not None:
+                    candidates.add(candidate)
+        constant_value = getattr(module, name, None)
+        candidate = _coerce_int(constant_value)
+        if candidate is not None:
+            candidates.add(candidate)
+    return candidates
+
+
 def register_host_node_id(node_id: str | None) -> None:
     """Record the canonical identifier for the connected host device.
 
@@ -1280,28 +1315,7 @@ def store_packet_dict(packet: Mapping) -> None:
     traceroute_section = (
         decoded.get("traceroute") if isinstance(decoded, Mapping) else None
     )
-    traceroute_port_ints: set[int] = set()
-    for module_name in (
-        "meshtastic.portnums_pb2",
-        "meshtastic.protobuf.portnums_pb2",
-    ):
-        module = sys.modules.get(module_name)
-        if module is None:
-            with contextlib.suppress(ModuleNotFoundError):
-                module = importlib.import_module(module_name)
-        if module is None:
-            continue
-        portnum_enum = getattr(module, "PortNum", None)
-        value_lookup = getattr(portnum_enum, "Value", None) if portnum_enum else None
-        if callable(value_lookup):
-            with contextlib.suppress(Exception):
-                candidate = _coerce_int(value_lookup("TRACEROUTE_APP"))
-                if candidate is not None:
-                    traceroute_port_ints.add(candidate)
-        constant_value = getattr(module, "TRACEROUTE_APP", None)
-        candidate = _coerce_int(constant_value)
-        if candidate is not None:
-            traceroute_port_ints.add(candidate)
+    traceroute_port_ints = _portnum_candidates("TRACEROUTE_APP")
 
     if (
         portnum == "TRACEROUTE_APP"
@@ -1359,35 +1373,42 @@ def store_packet_dict(packet: Mapping) -> None:
             if emoji_text:
                 emoji = emoji_text
 
-    allowed_port_values = {"1", "TEXT_MESSAGE_APP", "REACTION_APP"}
+    routing_section = decoded.get("routing") if isinstance(decoded, Mapping) else None
+    routing_port_candidates = _portnum_candidates("ROUTING_APP")
+    if text is None and (
+        portnum == "ROUTING_APP"
+        or (portnum_int is not None and portnum_int in routing_port_candidates)
+        or isinstance(routing_section, Mapping)
+    ):
+        routing_payload = _first(decoded, "payload", "data", default=None)
+        if routing_payload is not None:
+            if isinstance(routing_payload, bytes):
+                text = base64.b64encode(routing_payload).decode("ascii")
+            elif isinstance(routing_payload, str):
+                text = routing_payload
+            else:
+                try:
+                    text = json.dumps(routing_payload, ensure_ascii=True)
+                except TypeError:
+                    text = str(routing_payload)
+            if isinstance(text, str):
+                text = text.strip() or None
+
+    allowed_port_values = {"1", "TEXT_MESSAGE_APP", "REACTION_APP", "ROUTING_APP"}
     allowed_port_ints = {1}
 
-    reaction_port_candidates: set[int] = set()
-    for module_name in (
-        "meshtastic.portnums_pb2",
-        "meshtastic.protobuf.portnums_pb2",
-    ):
-        module = sys.modules.get(module_name)
-        if module is None:
-            with contextlib.suppress(ModuleNotFoundError):
-                module = importlib.import_module(module_name)
-        if module is None:
-            continue
-        portnum_enum = getattr(module, "PortNum", None)
-        value_lookup = getattr(portnum_enum, "Value", None) if portnum_enum else None
-        if callable(value_lookup):
-            with contextlib.suppress(Exception):
-                candidate = _coerce_int(value_lookup("REACTION_APP"))
-                if candidate is not None:
-                    reaction_port_candidates.add(candidate)
-        constant_value = getattr(module, "REACTION_APP", None)
-        candidate = _coerce_int(constant_value)
-        if candidate is not None:
-            reaction_port_candidates.add(candidate)
-
+    reaction_port_candidates = _portnum_candidates("REACTION_APP")
     for candidate in reaction_port_candidates:
         allowed_port_ints.add(candidate)
         allowed_port_values.add(str(candidate))
+
+    for candidate in routing_port_candidates:
+        allowed_port_ints.add(candidate)
+        allowed_port_values.add(str(candidate))
+
+    if isinstance(routing_section, Mapping) and portnum_int is not None:
+        allowed_port_ints.add(portnum_int)
+        allowed_port_values.add(str(portnum_int))
 
     is_reaction_packet = portnum == "REACTION_APP" or (
         reply_id is not None and emoji is not None
