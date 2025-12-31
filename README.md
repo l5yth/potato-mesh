@@ -210,6 +210,45 @@ example `ALLOWED_CHANNELS="Chat,Ops"`); packets on other channels are discarded.
 Use `HIDDEN_CHANNELS` to block specific channels from the web UI even when they
 appear in the allowlist.
 
+## Nix
+
+For the dev shell, run:
+
+```bash
+nix develop
+```
+
+The shell provides Ruby plus the Python ingestor dependencies (including `meshtastic`
+and `protobuf`). To sanity-check that the ingestor starts, run `python -m data.mesh`
+with the usual environment variables (`INSTANCE_DOMAIN`, `API_TOKEN`, `CONNECTION`).
+
+To run the packaged apps directly:
+
+```bash
+nix run .#web
+nix run .#ingestor
+```
+
+Minimal NixOS module snippet:
+
+```nix
+services.potato-mesh = {
+  enable = true;
+  apiTokenFile = config.sops.secrets.potato-mesh-api-token.path;
+  dataDir = "/var/lib/potato-mesh";
+  port = 41447;
+  instanceDomain = "https://mesh.me";
+  siteName = "Nix Mesh";
+  contactLink = "homeserver.mx";
+  mapCenter = "28.96,-13.56";
+  frequency = "868MHz";
+  ingestor = {
+    enable = true;
+    connection = "192.168.X.Y:4403";
+  };
+};
+```
+
 ## Docker
 
 Docker images are published on Github for each release:
