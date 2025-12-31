@@ -1929,6 +1929,38 @@ def test_store_packet_dict_allows_primary_channel_broadcast(mesh_module, monkeyp
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_accepts_routing_app_messages(mesh_module, monkeypatch):
+    """Ensure routing app payloads are treated as message posts."""
+
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 333,
+        "rxTime": 999,
+        "fromId": "!node",
+        "toId": "^all",
+        "channel": 0,
+        "decoded": {"payload": "GAA=", "portnum": "ROUTING_APP"},
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected routing packet to be stored"
+    path, payload, priority = captured[0]
+    assert path == "/api/messages"
+    assert payload["portnum"] == "ROUTING_APP"
+    assert payload["text"] == "GAA="
+    assert payload["channel"] == 0
+    assert payload["encrypted"] is None
+    assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
 def test_store_packet_dict_appends_channel_name(mesh_module, monkeypatch, capsys):
     mesh = mesh_module
     mesh.channels._reset_channel_cache()
