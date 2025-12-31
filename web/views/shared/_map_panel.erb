@@ -14,8 +14,12 @@
   limitations under the License.
 -->
 <% map_classes = ["map-panel"]
-   map_classes << "map-panel--full" if defined?(full_screen) && full_screen %>
-<div class="<%= map_classes.join(" ") %>" id="mapPanel">
+   map_classes << "map-panel--full" if defined?(full_screen) && full_screen
+   data_attrs = []
+   if defined?(legend_collapsed)
+     data_attrs << "data-legend-collapsed=\\" #{legend_collapsed ? 'true' : 'false'}\\""
+   end %>
+<div class="<%= map_classes.join(" ") %>" id="mapPanel" <%= data_attrs.join(" ") %>>
   <div id="map" role="region" aria-label="Nodes map"></div>
   <div class="map-toolbar" role="group" aria-label="Map view controls">
     <button id="mapFullscreenToggle" type="button" aria-pressed="false" aria-label="Enter full screen map view">

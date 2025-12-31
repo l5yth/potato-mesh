@@ -18,6 +18,7 @@ import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from 
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
+import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
@@ -116,6 +117,7 @@ export function initializeApp(config) {
     : false;
   const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
   const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
+  const isMapView = bodyClassList ? bodyClassList.contains('view-map') : false;
   const mapZoomOverride = Number.isFinite(config.mapZoom) ? Number(config.mapZoom) : null;
   /**
    * Column sorter configuration for the node table.
@@ -435,6 +437,7 @@ export function initializeApp(config) {
   const mapFullscreenToggle = document.getElementById('mapFullscreenToggle');
   const fullscreenContainer = mapPanel || mapContainer;
   const isFederationView = bodyClassList ? bodyClassList.contains('view-federation') : false;
+  const legendDefaultCollapsed = mapPanel ? mapPanel.dataset.legendCollapsed === 'true' : false;
   let mapStatusEl = null;
   let map = null;
   let mapCenterLatLng = null;
@@ -1526,8 +1529,14 @@ export function initializeApp(config) {
     legendToggleControl.addTo(map);
 
     const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
-    setLegendVisibility(!legendMediaQuery.matches);
+    const initialLegendVisible = resolveLegendVisibility({
+      defaultCollapsed: legendDefaultCollapsed,
+      mediaQueryMatches: legendMediaQuery.matches,
+      viewMode: isDashboardView ? 'dashboard' : (isMapView ? 'map' : undefined)
+    });
+    setLegendVisibility(initialLegendVisible);
     legendMediaQuery.addEventListener('change', event => {
+      if (legendDefaultCollapsed || isDashboardView || isMapView) return;
       setLegendVisibility(!event.matches);
     });
   } else if (mapContainer && !hasLeaflet) {
