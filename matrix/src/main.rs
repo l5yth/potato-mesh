@@ -250,7 +250,12 @@ fn format_message_bodies(prefix: &str, text: &str) -> (String, String) {
 
 /// Build the Matrix display name from a node's long/short names.
 fn display_name_for_node(node: &PotatoNode) -> String {
-    match node.short_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    match node
+        .short_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(short) if short != node.long_name => format!("{} ({})", node.long_name, short),
         _ => node.long_name.clone(),
     }
