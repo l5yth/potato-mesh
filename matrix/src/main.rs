@@ -485,8 +485,8 @@ mod tests {
         let node_id = "abcd1234";
         let user_id = format!("@potato_{}:{}", node_id, matrix_cfg.server_name);
         let encoded_user = urlencoding::encode(&user_id);
-        let room_id = &matrix_cfg.room_id;
-        let encoded_room = urlencoding::encode(room_id);
+        let room_id = matrix_cfg.room_id.clone();
+        let encoded_room = urlencoding::encode(&room_id);
 
         let mock_get_node = server
             .mock("GET", "/api/nodes/abcd1234")
