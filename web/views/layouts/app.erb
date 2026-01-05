@@ -75,16 +75,19 @@
    main_classes = ["page-main"]
    main_classes << "page-main--dashboard" if view_mode == :dashboard
    main_classes << "page-main--full-screen" if full_screen_view
-   show_header = !full_screen_view
+   show_header = true
    show_meta_info = true
    show_auto_refresh_controls = view_mode != :federation
    show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
    map_zoom_override = defined?(map_zoom) ? map_zoom : nil
-   show_info_button = !full_screen_view
+   show_info_button = true
    show_footer = !full_screen_view
    show_filter_input = !%i[node_detail charts federation].include?(view_mode)
    show_auto_refresh_toggle = show_auto_refresh_controls
    show_refresh_actions = show_auto_refresh_controls || view_mode == :federation
+   nodes_nav_href = "/nodes"
+   nodes_nav_active = %i[nodes node_detail].include?(view_mode)
+   federation_nav_enabled = !private_mode && federation_enabled
    controls_classes = ["controls"]
    controls_classes << "controls--full-screen" if full_screen_view
    refresh_row_classes = ["refresh-row"]
@@ -101,24 +104,69 @@
   <div class="<%= shell_classes.join(" ") %>">
     <% if show_header %>
       <header class="site-header">
-        <h1 class="site-title">
-          <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
-          <span class="site-title-text"><%= site_name %></span>
-        </h1>
-        <% if !private_mode && federation_enabled %>
-          <div class="header-federation">
-            <div class="instance-selector">
-              <label class="visually-hidden" for="instanceSelect">Select a region</label>
-              <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
-                <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
-              </select>
+        <div class="site-header__left<%= federation_nav_enabled ? " site-header__left--federation" : "" %>">
+          <h1 class="site-title">
+            <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
+            <span class="site-title-text"><%= site_name %></span>
+          </h1>
+          <% if federation_nav_enabled %>
+            <div class="header-federation">
+              <div class="instance-selector">
+                <label class="visually-hidden" for="instanceSelect">Select a region</label>
+                <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
+                  <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
+                </select>
+              </div>
             </div>
-          </div>
-        <% end %>
+          <% end %>
+        </div>
+        <div class="site-header__right">
+          <nav class="site-nav" aria-label="Primary">
+            <a href="/" class="site-nav__link<%= view_mode == :dashboard ? " is-active" : "" %>"<%= view_mode == :dashboard ? ' aria-current="page"' : "" %>>Dashboard</a>
+            <a href="/map" class="site-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
+            <a href="/chat" class="site-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
+            <a href="<%= nodes_nav_href %>" class="site-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
+            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <% if federation_nav_enabled %>
+              <a href="/federation" class="site-nav__link<%= view_mode == :federation ? " is-active" : "" %>"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
+            <% end %>
+          </nav>
+          <button
+            id="mobileMenuToggle"
+            class="icon-button menu-toggle"
+            type="button"
+            aria-label="Open navigation menu"
+            aria-expanded="false"
+            aria-controls="mobileMenu"
+          >
+            <span aria-hidden="true">☰</span>
+          </button>
+        </div>
       </header>
+      <div id="mobileMenu" class="mobile-menu" hidden>
+        <div class="mobile-menu__backdrop" data-mobile-menu-close></div>
+        <div class="mobile-menu__panel" role="dialog" aria-modal="true" aria-labelledby="mobileMenuTitle" tabindex="-1">
+          <div class="mobile-menu__header">
+            <h2 id="mobileMenuTitle" class="mobile-menu__title">Menu</h2>
+            <button class="icon-button mobile-menu__close" type="button" data-mobile-menu-close aria-label="Close navigation menu">
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+          <nav class="mobile-nav" aria-label="Mobile">
+            <a href="/" class="mobile-nav__link<%= view_mode == :dashboard ? " is-active" : "" %>"<%= view_mode == :dashboard ? ' aria-current="page"' : "" %>>Dashboard</a>
+            <a href="/map" class="mobile-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
+            <a href="/chat" class="mobile-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
+            <a href="<%= nodes_nav_href %>" class="mobile-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
+            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <% if federation_nav_enabled %>
+              <a href="/federation" class="mobile-nav__link<%= view_mode == :federation ? " is-active" : "" %>"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
+            <% end %>
+          </nav>
+        </div>
+      </div>
     <% end %>
 
-    <div class="row meta">
+    <div id="metaRow" class="row meta">
       <% if show_meta_info %>
         <div class="meta-info">
           <div class="<%= refresh_row_classes.join(" ") %>">
