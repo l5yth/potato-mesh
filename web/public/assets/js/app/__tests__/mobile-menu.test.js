@@ -249,7 +249,7 @@ test('mobile menu closes on escape and route changes', () => {
     controller.initialize();
 
     menuPanel.dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} });
-    assert.equal(menu.hidden, false);
+    assert.equal(menu.hidden, true);
 
     menuToggle.dispatchEvent({ type: 'click', preventDefault() {} });
     assert.equal(menu.hidden, false);
