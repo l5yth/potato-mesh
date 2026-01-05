@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { fetchNodeDetailHtml } from './node-page.js';
+import { fetchNodeDetailHtml, mountTelemetryChartsWithRetry } from './node-page.js';
 
 /**
  * Escape a string for safe HTML injection.
@@ -68,6 +68,9 @@ function hasValidReference(reference) {
  *   fetchImpl?: Function,
  *   refreshImpl?: Function,
  *   renderShortHtml?: Function,
+ *   mountCharts?: Function,
+ *   uPlotImpl?: Function,
+ *   loadUPlot?: Function,
  *   privateMode?: boolean,
  *   logger?: Console
  * }} [options] Behaviour overrides.
@@ -101,6 +104,9 @@ export function createNodeDetailOverlayManager(options = {}) {
   const fetchImpl = options.fetchImpl;
   const refreshImpl = options.refreshImpl;
   const renderShortHtml = options.renderShortHtml;
+  const mountCharts = typeof options.mountCharts === 'function' ? options.mountCharts : mountTelemetryChartsWithRetry;
+  const uPlotImpl = options.uPlotImpl;
+  const loadUPlot = options.loadUPlot;
 
   let requestToken = 0;
   let lastTrigger = null;
@@ -198,16 +204,21 @@ export function createNodeDetailOverlayManager(options = {}) {
     }
     const currentToken = ++requestToken;
     try {
-      const html = await fetchDetail(reference, {
+      const result = await fetchDetail(reference, {
         fetchImpl,
         refreshImpl,
         renderShortHtml,
         privateMode,
+        returnState: true,
       });
       if (currentToken !== requestToken) {
         return;
       }
-      content.innerHTML = html;
+      const resolvedHtml = typeof result === 'string' ? result : result?.html;
+      content.innerHTML = resolvedHtml ?? '';
+      if (result && typeof result === 'object' && Array.isArray(result.chartModels)) {
+        mountCharts(result.chartModels, { root: content, uPlotImpl, loadUPlot });
+      }
       if (typeof closeButton.focus === 'function') {
         closeButton.focus();
       }

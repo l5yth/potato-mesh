@@ -80,13 +80,19 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
     },
   ]);
   let receivedOptions = null;
-  const renderCharts = (node, options) => {
+  let mountedModels = null;
+  const createCharts = (node, options) => {
     receivedOptions = options;
-    return '<section class="node-detail__charts">Charts</section>';
+    return { chartsHtml: '<section class="node-detail__charts">Charts</section>', chartModels: [{ id: 'power' }] };
   };
-  const result = await initializeChartsPage({ document: documentStub, fetchImpl, renderCharts });
+  const mountCharts = (chartModels, options) => {
+    mountedModels = { chartModels, options };
+    return [];
+  };
+  const result = await initializeChartsPage({ document: documentStub, fetchImpl, createCharts, mountCharts });
   assert.equal(result, true);
   assert.equal(container.innerHTML.includes('node-detail__charts'), true);
+  assert.equal(mountedModels.chartModels.length, 1);
   assert.ok(receivedOptions);
   assert.equal(receivedOptions.chartOptions.windowMs, 604_800_000);
   assert.equal(typeof receivedOptions.chartOptions.lineReducer, 'function');
@@ -118,8 +124,8 @@ test('initializeChartsPage shows an error message when fetching fails', async ()
   const fetchImpl = async () => {
     throw new Error('network');
   };
-  const renderCharts = () => '<section>unused</section>';
-  const result = await initializeChartsPage({ document: documentStub, fetchImpl, renderCharts });
+  const createCharts = () => ({ chartsHtml: '<section>unused</section>', chartModels: [] });
+  const result = await initializeChartsPage({ document: documentStub, fetchImpl, createCharts });
   assert.equal(result, false);
   assert.equal(container.innerHTML.includes('Failed to load telemetry charts.'), true);
 });
@@ -136,8 +142,8 @@ test('initializeChartsPage handles missing containers and empty telemetry snapsh
     },
   };
   const fetchImpl = async () => createResponse(200, []);
-  const renderCharts = () => '';
-  const result = await initializeChartsPage({ document: documentStub, fetchImpl, renderCharts });
+  const createCharts = () => ({ chartsHtml: '', chartModels: [] });
+  const result = await initializeChartsPage({ document: documentStub, fetchImpl, createCharts });
   assert.equal(result, true);
   assert.equal(container.innerHTML.includes('Telemetry snapshots are unavailable.'), true);
 });
@@ -155,8 +161,8 @@ test('initializeChartsPage shows a status when rendering produces no markup', as
       aggregates: { voltage: { avg: 3.9 } },
     },
   ]);
-  const renderCharts = () => '';
-  const result = await initializeChartsPage({ document: documentStub, fetchImpl, renderCharts });
+  const createCharts = () => ({ chartsHtml: '', chartModels: [] });
+  const result = await initializeChartsPage({ document: documentStub, fetchImpl, createCharts });
   assert.equal(result, true);
   assert.equal(container.innerHTML.includes('Telemetry snapshots are unavailable.'), true);
 });

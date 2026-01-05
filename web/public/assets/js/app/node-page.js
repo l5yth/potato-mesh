@@ -124,6 +124,15 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         ticks: 4,
         color: '#2ca25f',
       },
+      {
+        id: 'channelSecondary',
+        position: 'right',
+        label: 'Utilization (%)',
+        min: 0,
+        max: 100,
+        ticks: 4,
+        color: '#2ca25f',
+      },
     ],
     series: [
       {
@@ -137,7 +146,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
       },
       {
         id: 'air',
-        axis: 'channel',
+        axis: 'channelSecondary',
         color: '#99d8c9',
         label: 'Air util tx',
         legend: 'Air util TX (%)',
@@ -162,13 +171,13 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
       },
       {
         id: 'humidity',
-        position: 'left',
+        position: 'right',
         label: 'Humidity (%)',
         min: 0,
         max: 100,
         ticks: 4,
         color: '#91bfdb',
-        visible: false,
+        visible: true,
       },
     ],
     series: [
@@ -858,67 +867,6 @@ function createChartDimensions(spec) {
 }
 
 /**
- * Compute the horizontal drawing position for an axis descriptor.
- *
- * @param {string} position Axis position keyword.
- * @param {Object} dims Chart dimensions.
- * @returns {number} X coordinate for the axis baseline.
- */
-function resolveAxisX(position, dims) {
-  switch (position) {
-    case 'leftSecondary':
-      return dims.margin.left - 32;
-    case 'right':
-      return dims.width - dims.margin.right;
-    case 'rightSecondary':
-      return dims.width - dims.margin.right + 32;
-    case 'left':
-    default:
-      return dims.margin.left;
-  }
-}
-
-/**
- * Compute the X coordinate for a timestamp constrained to the rolling window.
- *
- * @param {number} timestamp Timestamp in milliseconds.
- * @param {number} domainStart Start of the window in milliseconds.
- * @param {number} domainEnd End of the window in milliseconds.
- * @param {Object} dims Chart dimensions.
- * @returns {number} X coordinate inside the SVG viewport.
- */
-function scaleTimestamp(timestamp, domainStart, domainEnd, dims) {
-  const safeStart = Math.min(domainStart, domainEnd);
-  const safeEnd = Math.max(domainStart, domainEnd);
-  const span = Math.max(1, safeEnd - safeStart);
-  const clamped = clamp(timestamp, safeStart, safeEnd);
-  const ratio = (clamped - safeStart) / span;
-  return dims.margin.left + ratio * dims.innerWidth;
-}
-
-/**
- * Convert a value bound to a specific axis into a Y coordinate.
- *
- * @param {number} value Series value.
- * @param {Object} axis Axis descriptor.
- * @param {Object} dims Chart dimensions.
- * @returns {number} Y coordinate.
- */
-function scaleValueToAxis(value, axis, dims) {
-  if (!axis) return dims.chartBottom;
-  if (axis.scale === 'log') {
-    const minLog = Math.log10(axis.min);
-    const maxLog = Math.log10(axis.max);
-    const safe = clamp(value, axis.min, axis.max);
-    const ratio = (Math.log10(safe) - minLog) / (maxLog - minLog);
-    return dims.chartBottom - ratio * dims.innerHeight;
-  }
-  const safe = clamp(value, axis.min, axis.max);
-  const ratio = (safe - axis.min) / (axis.max - axis.min || 1);
-  return dims.chartBottom - ratio * dims.innerHeight;
-}
-
-/**
  * Collect candidate containers that may hold telemetry values for a snapshot.
  *
  * @param {Object} snapshot Telemetry snapshot payload.
@@ -1034,129 +982,15 @@ function resolveAxisMax(axis, seriesEntries) {
 }
 
 /**
- * Render a telemetry series as circles plus an optional translucent guide line.
- *
- * @param {Object} seriesConfig Series metadata.
- * @param {Array<{timestamp: number, value: number}>} points Series points.
- * @param {Object} axis Axis descriptor.
- * @param {Object} dims Chart dimensions.
- * @param {number} domainStart Window start timestamp.
- * @param {number} domainEnd Window end timestamp.
- * @returns {string} SVG markup for the series.
- */
-function renderTelemetrySeries(seriesConfig, points, axis, dims, domainStart, domainEnd, { lineReducer } = {}) {
-  if (!Array.isArray(points) || points.length === 0) {
-    return '';
-  }
-  const convertPoint = point => {
-    const cx = scaleTimestamp(point.timestamp, domainStart, domainEnd, dims);
-    const cy = scaleValueToAxis(point.value, axis, dims);
-    return { cx, cy, value: point.value };
-  };
-  const circleEntries = points.map(point => {
-    const coords = convertPoint(point);
-    const tooltip = formatSeriesPointValue(seriesConfig, point.value);
-    const titleMarkup = tooltip ? `<title>${escapeHtml(tooltip)}</title>` : '';
-    return `<circle class="node-detail__chart-point" cx="${coords.cx.toFixed(2)}" cy="${coords.cy.toFixed(2)}" r="3.2" fill="${seriesConfig.color}" aria-hidden="true">${titleMarkup}</circle>`;
-  });
-  const lineSource = typeof lineReducer === 'function' ? lineReducer(points) : points;
-  const linePoints = Array.isArray(lineSource) && lineSource.length > 0 ? lineSource : points;
-  const coordinates = linePoints.map(convertPoint);
-  let line = '';
-  if (coordinates.length > 1) {
-    const path = coordinates
-      .map((coord, idx) => `${idx === 0 ? 'M' : 'L'}${coord.cx.toFixed(2)} ${coord.cy.toFixed(2)}`)
-      .join(' ');
-    line = `<path class="node-detail__chart-trend" d="${path}" fill="none" stroke="${hexToRgba(seriesConfig.color, 0.5)}" stroke-width="1.5" aria-hidden="true"></path>`;
-  }
-  return `${line}${circleEntries.join('')}`;
-}
-
-/**
- * Render a vertical axis when visible.
- *
- * @param {Object} axis Axis descriptor.
- * @param {Object} dims Chart dimensions.
- * @returns {string} SVG markup for the axis or an empty string.
- */
-function renderYAxis(axis, dims) {
-  if (!axis || axis.visible === false) {
-    return '';
-  }
-  const x = resolveAxisX(axis.position, dims);
-  const ticks = axis.scale === 'log'
-    ? buildLogTicks(axis.min, axis.max)
-    : buildLinearTicks(axis.min, axis.max, axis.ticks);
-  const tickElements = ticks
-    .map(value => {
-      const y = scaleValueToAxis(value, axis, dims);
-      const tickLength = axis.position === 'left' || axis.position === 'leftSecondary' ? -4 : 4;
-      const textAnchor = axis.position === 'left' || axis.position === 'leftSecondary' ? 'end' : 'start';
-      const textOffset = axis.position === 'left' || axis.position === 'leftSecondary' ? -6 : 6;
-      return `
-        <g class="node-detail__chart-tick" aria-hidden="true">
-          <line x1="${x}" y1="${y.toFixed(2)}" x2="${(x + tickLength).toFixed(2)}" y2="${y.toFixed(2)}"></line>
-          <text x="${(x + textOffset).toFixed(2)}" y="${(y + 3).toFixed(2)}" text-anchor="${textAnchor}" dominant-baseline="middle">${escapeHtml(formatAxisTick(value, axis))}</text>
-        </g>
-      `;
-    })
-    .join('');
-  const labelPadding = axis.position === 'left' || axis.position === 'leftSecondary' ? -56 : 56;
-  const labelX = x + labelPadding;
-  const labelY = (dims.chartTop + dims.chartBottom) / 2;
-  const labelTransform = `rotate(-90 ${labelX.toFixed(2)} ${labelY.toFixed(2)})`;
-  return `
-    <g class="node-detail__chart-axis node-detail__chart-axis--y" aria-hidden="true">
-      <line x1="${x}" y1="${dims.chartTop}" x2="${x}" y2="${dims.chartBottom}"></line>
-      ${tickElements}
-      <text class="node-detail__chart-axis-label" x="${labelX.toFixed(2)}" y="${labelY.toFixed(2)}" text-anchor="middle" dominant-baseline="middle" transform="${labelTransform}">${escapeHtml(axis.label)}</text>
-    </g>
-  `;
-}
-
-/**
- * Render the horizontal floating seven-day axis with midnight ticks.
- *
- * @param {Object} dims Chart dimensions.
- * @param {number} domainStart Window start timestamp.
- * @param {number} domainEnd Window end timestamp.
- * @param {Array<number>} tickTimestamps Midnight tick timestamps.
- * @returns {string} SVG markup for the X axis.
- */
-function renderXAxis(dims, domainStart, domainEnd, tickTimestamps, { labelFormatter = formatCompactDate } = {}) {
-  const y = dims.chartBottom;
-  const ticks = tickTimestamps
-    .map(ts => {
-      const x = scaleTimestamp(ts, domainStart, domainEnd, dims);
-      const labelY = y + 18;
-      const xStr = x.toFixed(2);
-      const yStr = labelY.toFixed(2);
-      const label = labelFormatter(ts);
-      return `
-        <g class="node-detail__chart-tick" aria-hidden="true">
-          <line class="node-detail__chart-grid-line" x1="${xStr}" y1="${dims.chartTop}" x2="${xStr}" y2="${dims.chartBottom}"></line>
-          <text x="${xStr}" y="${yStr}" text-anchor="end" dominant-baseline="central" transform="rotate(-90 ${xStr} ${yStr})">${escapeHtml(label)}</text>
-        </g>
-      `;
-    })
-    .join('');
-  return `
-    <g class="node-detail__chart-axis node-detail__chart-axis--x" aria-hidden="true">
-      <line x1="${dims.margin.left}" y1="${y}" x2="${dims.width - dims.margin.right}" y2="${y}"></line>
-      ${ticks}
-    </g>
-  `;
-}
-
-/**
- * Render a single telemetry chart defined by ``spec``.
+ * Build a telemetry chart model from a specification and series entries.
  *
  * @param {Object} spec Chart specification.
  * @param {Array<{timestamp: number, snapshot: Object}>} entries Telemetry entries.
  * @param {number} nowMs Reference timestamp.
- * @returns {string} Rendered chart markup or an empty string.
+ * @param {Object} chartOptions Rendering overrides.
+ * @returns {Object|null} Chart model or ``null`` when empty.
  */
-function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
+function buildTelemetryChartModel(spec, entries, nowMs, chartOptions = {}) {
   const windowMs = Number.isFinite(chartOptions.windowMs) && chartOptions.windowMs > 0 ? chartOptions.windowMs : TELEMETRY_WINDOW_MS;
   const timeRangeLabel = stringOrNull(chartOptions.timeRangeLabel) ?? 'Last 7 days';
   const domainEnd = nowMs;
@@ -1170,7 +1004,7 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
     })
     .filter(entry => entry != null);
   if (seriesEntries.length === 0) {
-    return '';
+    return null;
   }
   const adjustedAxes = spec.axes.map(axis => {
     const resolvedMax = resolveAxisMax(axis, seriesEntries);
@@ -1188,22 +1022,33 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
     })
     .filter(entry => entry != null);
   if (plottedSeries.length === 0) {
-    return '';
+    return null;
   }
-  const axesMarkup = adjustedAxes.map(axis => renderYAxis(axis, dims)).join('');
   const tickBuilder = typeof chartOptions.xAxisTickBuilder === 'function' ? chartOptions.xAxisTickBuilder : buildMidnightTicks;
   const tickFormatter = typeof chartOptions.xAxisTickFormatter === 'function' ? chartOptions.xAxisTickFormatter : formatCompactDate;
-  const ticks = tickBuilder(nowMs, windowMs);
-  const xAxisMarkup = renderXAxis(dims, domainStart, domainEnd, ticks, { labelFormatter: tickFormatter });
+  return {
+    id: spec.id,
+    title: spec.title,
+    timeRangeLabel,
+    domainStart,
+    domainEnd,
+    dims,
+    axes: adjustedAxes,
+    seriesEntries: plottedSeries,
+    ticks: tickBuilder(nowMs, windowMs),
+    tickFormatter,
+    lineReducer: typeof chartOptions.lineReducer === 'function' ? chartOptions.lineReducer : null,
+  };
+}
 
-  const seriesMarkup = plottedSeries
-    .map(series =>
-      renderTelemetrySeries(series.config, series.points, series.axis, dims, domainStart, domainEnd, {
-        lineReducer: chartOptions.lineReducer,
-      }),
-    )
-    .join('');
-  const legendItems = plottedSeries
+/**
+ * Render a telemetry chart container for a chart model.
+ *
+ * @param {Object} model Chart model.
+ * @returns {string} Chart markup.
+ */
+function renderTelemetryChartMarkup(model) {
+  const legendItems = model.seriesEntries
     .map(series => {
       const legendLabel = stringOrNull(series.config.legend) ?? series.config.label;
       return `
@@ -1217,20 +1062,426 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
   const legendMarkup = legendItems
     ? `<div class="node-detail__chart-legend" aria-hidden="true">${legendItems}</div>`
     : '';
+  const ariaLabel = `${model.title} over last seven days`;
   return `
-    <figure class="node-detail__chart">
+    <figure class="node-detail__chart" data-telemetry-chart-id="${escapeHtml(model.id)}">
       <figcaption class="node-detail__chart-header">
-        <h4>${escapeHtml(spec.title)}</h4>
-        <span>${escapeHtml(timeRangeLabel)}</span>
+        <h4>${escapeHtml(model.title)}</h4>
+        <span>${escapeHtml(model.timeRangeLabel)}</span>
       </figcaption>
-      <svg viewBox="0 0 ${dims.width} ${dims.height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${escapeHtml(`${spec.title} over last seven days`)}">
-        ${axesMarkup}
-        ${xAxisMarkup}
-        ${seriesMarkup}
-      </svg>
+      <div class="node-detail__chart-plot" data-telemetry-plot role="img" aria-label="${escapeHtml(ariaLabel)}"></div>
       ${legendMarkup}
     </figure>
   `;
+}
+
+/**
+ * Build a sorted timestamp index shared across series entries.
+ *
+ * @param {Array<Object>} seriesEntries Plotted series entries.
+ * @param {Function|null} lineReducer Optional line reducer.
+ * @returns {{timestamps: Array<number>, indexByTimestamp: Map<number, number>}} Timestamp index.
+ */
+function buildChartTimestampIndex(seriesEntries, lineReducer) {
+  const timestampSet = new Set();
+  for (const entry of seriesEntries) {
+    if (!entry || !Array.isArray(entry.points)) continue;
+    entry.points.forEach(point => {
+      if (point && Number.isFinite(point.timestamp)) {
+        timestampSet.add(point.timestamp);
+      }
+    });
+    if (typeof lineReducer === 'function') {
+      const reduced = lineReducer(entry.points);
+      if (Array.isArray(reduced)) {
+        reduced.forEach(point => {
+          if (point && Number.isFinite(point.timestamp)) {
+            timestampSet.add(point.timestamp);
+          }
+        });
+      }
+    }
+  }
+  const timestamps = Array.from(timestampSet).sort((a, b) => a - b);
+  const indexByTimestamp = new Map(timestamps.map((ts, idx) => [ts, idx]));
+  return { timestamps, indexByTimestamp };
+}
+
+/**
+ * Convert a list of points into an aligned values array.
+ *
+ * @param {Array<{timestamp: number, value: number}>} points Series points.
+ * @param {Map<number, number>} indexByTimestamp Timestamp index.
+ * @param {number} length Length of the output array.
+ * @returns {Array<number|null>} Values aligned to timestamps.
+ */
+function mapSeriesValues(points, indexByTimestamp, length) {
+  const values = Array.from({ length }, () => null);
+  if (!Array.isArray(points)) {
+    return values;
+  }
+  for (const point of points) {
+    if (!point || !Number.isFinite(point.timestamp)) continue;
+    const idx = indexByTimestamp.get(point.timestamp);
+    if (idx == null) continue;
+    values[idx] = Number.isFinite(point.value) ? point.value : null;
+  }
+  return values;
+}
+
+/**
+ * Build uPlot series and data arrays for a chart model.
+ *
+ * @param {Object} model Chart model.
+ * @returns {{data: Array<Array<number|null>>, series: Array<Object>}} uPlot data and series config.
+ */
+function buildTelemetryChartData(model) {
+  const { timestamps, indexByTimestamp } = buildChartTimestampIndex(model.seriesEntries, model.lineReducer);
+  const data = [timestamps];
+  const series = [{ label: 'Time' }];
+
+  model.seriesEntries.forEach(entry => {
+    const baseConfig = {
+      label: entry.config.label,
+      scale: entry.axis.id,
+    };
+    if (model.lineReducer) {
+      const reducedPoints = model.lineReducer(entry.points);
+      const linePoints = Array.isArray(reducedPoints) && reducedPoints.length > 0 ? reducedPoints : entry.points;
+      const lineValues = mapSeriesValues(linePoints, indexByTimestamp, timestamps.length);
+      series.push({
+        ...baseConfig,
+        stroke: hexToRgba(entry.config.color, 0.5),
+        width: 1.5,
+        points: { show: false },
+      });
+      data.push(lineValues);
+
+      const pointValues = mapSeriesValues(entry.points, indexByTimestamp, timestamps.length);
+      series.push({
+        ...baseConfig,
+        stroke: entry.config.color,
+        width: 0,
+        points: { show: true, size: 6, width: 1 },
+      });
+      data.push(pointValues);
+    } else {
+      const values = mapSeriesValues(entry.points, indexByTimestamp, timestamps.length);
+      series.push({
+        ...baseConfig,
+        stroke: entry.config.color,
+        width: 1.5,
+        points: { show: true, size: 6, width: 1 },
+      });
+      data.push(values);
+    }
+  });
+
+  return { data, series };
+}
+
+/**
+ * Build uPlot chart configuration and data for a telemetry chart.
+ *
+ * @param {Object} model Chart model.
+ * @returns {{options: Object, data: Array<Array<number|null>>}} uPlot config and data.
+ */
+function buildUPlotChartConfig(model, { width, height, axisColor, gridColor } = {}) {
+  const { data, series } = buildTelemetryChartData(model);
+  const fallbackWidth = Math.round(model.dims.width * 1.8);
+  const resolvedWidth = Number.isFinite(width) && width > 0 ? width : fallbackWidth;
+  const resolvedHeight = Number.isFinite(height) && height > 0 ? height : model.dims.height;
+  const axisStroke = stringOrNull(axisColor) ?? '#5c6773';
+  const gridStroke = stringOrNull(gridColor) ?? 'rgba(12, 15, 18, 0.08)';
+  const axes = [
+    {
+      scale: 'x',
+      side: 2,
+      stroke: axisStroke,
+      grid: { show: true, stroke: gridStroke },
+      splits: () => model.ticks,
+      values: (u, splits) => splits.map(value => model.tickFormatter(value)),
+    },
+  ];
+  const scales = {
+    x: {
+      time: true,
+      range: () => [model.domainStart, model.domainEnd],
+    },
+  };
+
+  model.axes.forEach(axis => {
+    const ticks = axis.scale === 'log'
+      ? buildLogTicks(axis.min, axis.max)
+      : buildLinearTicks(axis.min, axis.max, axis.ticks);
+    const side = axis.position === 'right' || axis.position === 'rightSecondary' ? 1 : 3;
+    axes.push({
+      scale: axis.id,
+      side,
+      show: axis.visible !== false,
+      stroke: axisStroke,
+      grid: { show: false },
+      label: axis.label,
+      splits: () => ticks,
+      values: (u, splits) => splits.map(value => formatAxisTick(value, axis)),
+    });
+    scales[axis.id] = {
+      distr: axis.scale === 'log' ? 3 : 1,
+      log: axis.scale === 'log' ? 10 : undefined,
+      range: () => [axis.min, axis.max],
+    };
+  });
+
+  return {
+    options: {
+      width: resolvedWidth,
+      height: resolvedHeight,
+      padding: [
+        model.dims.margin.top,
+        model.dims.margin.right,
+        model.dims.margin.bottom,
+        model.dims.margin.left,
+      ],
+      legend: { show: false },
+      series,
+      axes,
+      scales,
+    },
+    data,
+  };
+}
+
+/**
+ * Instantiate uPlot charts for the provided chart models.
+ *
+ * @param {Array<Object>} chartModels Chart models to render.
+ * @param {{root?: ParentNode, uPlotImpl?: Function}} [options] Rendering options.
+ * @returns {Array<Object>} Instantiated uPlot charts.
+ */
+export function mountTelemetryCharts(chartModels, { root, uPlotImpl } = {}) {
+  if (!Array.isArray(chartModels) || chartModels.length === 0) {
+    return [];
+  }
+  const host = root ?? globalThis.document;
+  if (!host || typeof host.querySelector !== 'function') {
+    return [];
+  }
+  const uPlotCtor = typeof uPlotImpl === 'function' ? uPlotImpl : globalThis.uPlot;
+  if (typeof uPlotCtor !== 'function') {
+    console.warn('uPlot is unavailable; telemetry charts will not render.');
+    return [];
+  }
+
+  const instances = [];
+  const colorRoot = host?.ownerDocument?.body ?? host?.body ?? globalThis.document?.body ?? null;
+  const axisColor = colorRoot && typeof globalThis.getComputedStyle === 'function'
+    ? globalThis.getComputedStyle(colorRoot).getPropertyValue('--muted').trim()
+    : null;
+  const gridColor = colorRoot && typeof globalThis.getComputedStyle === 'function'
+    ? globalThis.getComputedStyle(colorRoot).getPropertyValue('--line').trim()
+    : null;
+  chartModels.forEach(model => {
+    const container = host.querySelector(`[data-telemetry-chart-id="${model.id}"]`);
+    if (!container) return;
+    const plotRoot = container.querySelector('[data-telemetry-plot]');
+    if (!plotRoot) return;
+    plotRoot.innerHTML = '';
+    const plotWidth = plotRoot.clientWidth || plotRoot.getBoundingClientRect?.().width;
+    const plotHeight = plotRoot.clientHeight || plotRoot.getBoundingClientRect?.().height;
+    const { options, data } = buildUPlotChartConfig(model, {
+      width: plotWidth ? Math.round(plotWidth) : undefined,
+      height: plotHeight ? Math.round(plotHeight) : undefined,
+      axisColor: axisColor || undefined,
+      gridColor: gridColor || undefined,
+    });
+    const instance = new uPlotCtor(options, data, plotRoot);
+    instance.__potatoMeshRoot = plotRoot;
+    instances.push(instance);
+  });
+  registerTelemetryChartResize(instances);
+  return instances;
+}
+
+const telemetryResizeRegistry = new Set();
+const telemetryResizeObservers = new WeakMap();
+let telemetryResizeListenerAttached = false;
+let telemetryResizeDebounceId = null;
+const TELEMETRY_RESIZE_DEBOUNCE_MS = 120;
+
+function resizeUPlotInstance(instance) {
+  if (!instance || typeof instance.setSize !== 'function') {
+    return;
+  }
+  const root = instance.__potatoMeshRoot ?? instance.root ?? null;
+  if (!root) return;
+  const rect = typeof root.getBoundingClientRect === 'function' ? root.getBoundingClientRect() : null;
+  const width = Number.isFinite(root.clientWidth) ? root.clientWidth : rect?.width;
+  const height = Number.isFinite(root.clientHeight) ? root.clientHeight : rect?.height;
+  if (!width || !height) return;
+  instance.setSize({ width: Math.round(width), height: Math.round(height) });
+}
+
+function registerTelemetryChartResize(instances) {
+  if (!Array.isArray(instances) || instances.length === 0) {
+    return;
+  }
+  const scheduleResize = () => {
+    if (telemetryResizeDebounceId != null) {
+      clearTimeout(telemetryResizeDebounceId);
+    }
+    telemetryResizeDebounceId = setTimeout(() => {
+      telemetryResizeDebounceId = null;
+      telemetryResizeRegistry.forEach(instance => resizeUPlotInstance(instance));
+    }, TELEMETRY_RESIZE_DEBOUNCE_MS);
+  };
+  instances.forEach(instance => {
+    telemetryResizeRegistry.add(instance);
+    resizeUPlotInstance(instance);
+    if (typeof globalThis.ResizeObserver === 'function') {
+      if (telemetryResizeObservers.has(instance)) return;
+      const observer = new globalThis.ResizeObserver(scheduleResize);
+      telemetryResizeObservers.set(instance, observer);
+      const root = instance.__potatoMeshRoot ?? instance.root ?? null;
+      if (root && typeof observer.observe === 'function') {
+        observer.observe(root);
+      }
+    }
+  });
+  if (!telemetryResizeListenerAttached && typeof globalThis.addEventListener === 'function') {
+    globalThis.addEventListener('resize', () => {
+      scheduleResize();
+    });
+    telemetryResizeListenerAttached = true;
+  }
+}
+
+function defaultLoadUPlot({ documentRef, onLoad }) {
+  if (!documentRef || typeof documentRef.querySelector !== 'function') {
+    return false;
+  }
+  const existing = documentRef.querySelector('script[data-uplot-loader="true"]');
+  if (existing) {
+    if (existing.dataset.loaded === 'true' && typeof onLoad === 'function') {
+      onLoad();
+    } else if (typeof existing.addEventListener === 'function' && typeof onLoad === 'function') {
+      existing.addEventListener('load', onLoad, { once: true });
+    }
+    return true;
+  }
+  if (typeof documentRef.createElement !== 'function') {
+    return false;
+  }
+  const script = documentRef.createElement('script');
+  script.src = '/assets/vendor/uplot/uPlot.iife.min.js';
+  script.defer = true;
+  script.dataset.uplotLoader = 'true';
+  if (typeof script.addEventListener === 'function') {
+    script.addEventListener('load', () => {
+      script.dataset.loaded = 'true';
+      if (typeof onLoad === 'function') {
+        onLoad();
+      }
+    });
+  }
+  const head = documentRef.head ?? documentRef.body;
+  if (head && typeof head.appendChild === 'function') {
+    head.appendChild(script);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Mount telemetry charts, retrying briefly if uPlot has not loaded yet.
+ *
+ * @param {Array<Object>} chartModels Chart models to render.
+ * @param {{root?: ParentNode, uPlotImpl?: Function, loadUPlot?: Function}} [options] Rendering options.
+ * @returns {Array<Object>} Instantiated uPlot charts.
+ */
+export function mountTelemetryChartsWithRetry(chartModels, { root, uPlotImpl, loadUPlot } = {}) {
+  const instances = mountTelemetryCharts(chartModels, { root, uPlotImpl });
+  if (instances.length > 0 || typeof uPlotImpl === 'function') {
+    return instances;
+  }
+  const host = root ?? globalThis.document;
+  if (!host || typeof host.querySelector !== 'function') {
+    return instances;
+  }
+  let mounted = false;
+  let attempts = 0;
+  const maxAttempts = 10;
+  const retryDelayMs = 50;
+  const retry = () => {
+    if (mounted) return;
+    attempts += 1;
+    const next = mountTelemetryCharts(chartModels, { root, uPlotImpl });
+    if (next.length > 0) {
+      mounted = true;
+      return;
+    }
+    if (attempts >= maxAttempts) {
+      return;
+    }
+    setTimeout(retry, retryDelayMs);
+  };
+  const loadFn = typeof loadUPlot === 'function' ? loadUPlot : defaultLoadUPlot;
+  loadFn({
+    documentRef: host.ownerDocument ?? globalThis.document,
+    onLoad: () => {
+      const next = mountTelemetryCharts(chartModels, { root, uPlotImpl });
+      if (next.length > 0) {
+        mounted = true;
+      }
+    },
+  });
+  setTimeout(retry, 0);
+  return instances;
+}
+
+/**
+ * Create chart markup and models for telemetry charts.
+ *
+ * @param {Object} node Normalised node payload.
+ * @param {{ nowMs?: number, chartOptions?: Object }} [options] Rendering options.
+ * @returns {{chartsHtml: string, chartModels: Array<Object>}} Chart markup and models.
+ */
+export function createTelemetryCharts(node, { nowMs = Date.now(), chartOptions = {} } = {}) {
+  const telemetrySource = node?.rawSources?.telemetry;
+  const snapshotHistory = Array.isArray(node?.rawSources?.telemetrySnapshots) && node.rawSources.telemetrySnapshots.length > 0
+    ? node.rawSources.telemetrySnapshots
+    : null;
+  const aggregatedSnapshots = Array.isArray(telemetrySource?.snapshots)
+    ? telemetrySource.snapshots
+    : null;
+  const rawSnapshots = snapshotHistory ?? aggregatedSnapshots;
+  if (!Array.isArray(rawSnapshots) || rawSnapshots.length === 0) {
+    return { chartsHtml: '', chartModels: [] };
+  }
+  const entries = rawSnapshots
+    .map(snapshot => {
+      const timestamp = resolveSnapshotTimestamp(snapshot);
+      if (timestamp == null) return null;
+      return { timestamp, snapshot };
+    })
+    .filter(entry => entry != null && entry.timestamp >= nowMs - TELEMETRY_WINDOW_MS && entry.timestamp <= nowMs)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  if (entries.length === 0) {
+    return { chartsHtml: '', chartModels: [] };
+  }
+  const chartModels = TELEMETRY_CHART_SPECS
+    .map(spec => buildTelemetryChartModel(spec, entries, nowMs, chartOptions))
+    .filter(model => model != null);
+  if (chartModels.length === 0) {
+    return { chartsHtml: '', chartModels: [] };
+  }
+  const chartsHtml = `
+    <section class="node-detail__charts">
+      <div class="node-detail__charts-grid">
+        ${chartModels.map(model => renderTelemetryChartMarkup(model)).join('')}
+      </div>
+    </section>
+  `;
+  return { chartsHtml, chartModels };
 }
 
 /**
@@ -1242,41 +1493,7 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
  * @returns {string} Chart grid markup or an empty string.
  */
 export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions = {} } = {}) {
-  const telemetrySource = node?.rawSources?.telemetry;
-  const snapshotHistory = Array.isArray(node?.rawSources?.telemetrySnapshots) && node.rawSources.telemetrySnapshots.length > 0
-    ? node.rawSources.telemetrySnapshots
-    : null;
-  const aggregatedSnapshots = Array.isArray(telemetrySource?.snapshots)
-    ? telemetrySource.snapshots
-    : null;
-  const rawSnapshots = snapshotHistory ?? aggregatedSnapshots;
-  if (!Array.isArray(rawSnapshots) || rawSnapshots.length === 0) {
-    return '';
-  }
-  const entries = rawSnapshots
-    .map(snapshot => {
-      const timestamp = resolveSnapshotTimestamp(snapshot);
-      if (timestamp == null) return null;
-      return { timestamp, snapshot };
-    })
-    .filter(entry => entry != null && entry.timestamp >= nowMs - TELEMETRY_WINDOW_MS && entry.timestamp <= nowMs)
-    .sort((a, b) => a.timestamp - b.timestamp);
-  if (entries.length === 0) {
-    return '';
-  }
-  const charts = TELEMETRY_CHART_SPECS
-    .map(spec => renderTelemetryChart(spec, entries, nowMs, chartOptions))
-    .filter(chart => stringOrNull(chart));
-  if (charts.length === 0) {
-    return '';
-  }
-  return `
-    <section class="node-detail__charts">
-      <div class="node-detail__charts-grid">
-        ${charts.join('')}
-      </div>
-    </section>
-  `;
+  return createTelemetryCharts(node, { nowMs, chartOptions }).chartsHtml;
 }
 
 /**
@@ -2298,6 +2515,7 @@ function renderTraceroutes(traces, renderShortHtml, { roleIndex = null, node = n
   *   messages?: Array<Object>,
  *   traces?: Array<Object>,
   *   renderShortHtml: Function,
+  *   chartsHtml?: string,
   * }} options Rendering options.
  * @returns {string} HTML fragment representing the detail view.
  */
@@ -2307,6 +2525,7 @@ function renderNodeDetailHtml(node, {
   traces = [],
   renderShortHtml,
   roleIndex = null,
+  chartsHtml = null,
   chartNowMs = Date.now(),
 } = {}) {
   const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
@@ -2320,7 +2539,7 @@ function renderNodeDetailHtml(node, {
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
-  const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
+  const telemetryChartsHtml = stringOrNull(chartsHtml) ?? renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
   const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
@@ -2346,7 +2565,7 @@ function renderNodeDetailHtml(node, {
     <header class="node-detail__header">
       <h2 class="node-detail__title">${badgeHtml}${nameHtml}${identifierHtml}</h2>
     </header>
-    ${chartsHtml ?? ''}
+    ${telemetryChartsHtml ?? ''}
     ${tableSection}
     ${contentHtml}
   `;
@@ -2460,15 +2679,17 @@ async function fetchTracesForNode(identifier, { fetchImpl } = {}) {
 }
 
 /**
- * Initialise the node detail page by hydrating the DOM with fetched data.
+ * Fetch node detail data and render the HTML fragment.
  *
  * @param {{
  *   document?: Document,
  *   fetchImpl?: Function,
  *   refreshImpl?: Function,
  *   renderShortHtml?: Function,
+ *   chartNowMs?: number,
+ *   chartOptions?: Object,
  * }} options Optional overrides for testing.
- * @returns {Promise<boolean>} ``true`` when the node was rendered successfully.
+ * @returns {Promise<string|{html: string, chartModels: Array<Object>}>} Rendered markup or chart models when requested.
  */
 export async function fetchNodeDetailHtml(referenceData, options = {}) {
   if (!referenceData || typeof referenceData !== 'object') {
@@ -2498,15 +2719,38 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     fetchTracesForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
   ]);
   const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
-  return renderNodeDetailHtml(node, {
+  const chartNowMs = Number.isFinite(options.chartNowMs) ? options.chartNowMs : Date.now();
+  const chartState = createTelemetryCharts(node, {
+    nowMs: chartNowMs,
+    chartOptions: options.chartOptions ?? {},
+  });
+  const html = renderNodeDetailHtml(node, {
     neighbors: node.neighbors,
     messages,
     traces,
     renderShortHtml,
     roleIndex,
+    chartsHtml: chartState.chartsHtml,
+    chartNowMs,
   });
+  if (options.returnState === true) {
+    return { html, chartModels: chartState.chartModels };
+  }
+  return html;
 }
 
+/**
+ * Initialise the standalone node detail page and mount telemetry charts.
+ *
+ * @param {{
+ *   document?: Document,
+ *   fetchImpl?: Function,
+ *   refreshImpl?: Function,
+ *   renderShortHtml?: Function,
+ *   uPlotImpl?: Function,
+ * }} options Optional overrides for testing.
+ * @returns {Promise<boolean>} ``true`` when the node was rendered successfully.
+ */
 export async function initializeNodeDetailPage(options = {}) {
   const documentRef = options.document ?? globalThis.document;
   if (!documentRef || typeof documentRef.querySelector !== 'function') {
@@ -2543,13 +2787,15 @@ export async function initializeNodeDetailPage(options = {}) {
   const privateMode = (root.dataset?.privateMode ?? '').toLowerCase() === 'true';
 
   try {
-    const html = await fetchNodeDetailHtml(referenceData, {
+    const result = await fetchNodeDetailHtml(referenceData, {
       fetchImpl: options.fetchImpl,
       refreshImpl,
       renderShortHtml: options.renderShortHtml,
       privateMode,
+      returnState: true,
     });
-    root.innerHTML = html;
+    root.innerHTML = result.html;
+    mountTelemetryChartsWithRetry(result.chartModels, { root, uPlotImpl: options.uPlotImpl });
     return true;
   } catch (error) {
     console.error('Failed to render node detail page', error);
@@ -2586,7 +2832,11 @@ export const __testUtils = {
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
+  createTelemetryCharts,
   renderTelemetryCharts,
+  mountTelemetryCharts,
+  mountTelemetryChartsWithRetry,
+  buildUPlotChartConfig,
   renderMessages,
   renderTraceroutes,
   renderTracePath,

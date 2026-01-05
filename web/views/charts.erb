@@ -13,12 +13,14 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
+<link rel="stylesheet" href="/assets/vendor/uplot/uPlot.min.css" />
+<script src="/assets/vendor/uplot/uPlot.iife.min.js" defer></script>
 <section class="charts-page">
   <header class="charts-page__intro">
     <h2>Network telemetry trends</h2>
     <p>Aggregated telemetry snapshots from every node in the past week.</p>
   </header>
-  <div id="chartsPage" class="charts-page__content">
+  <div id="chartsPage" class="charts-page__content" data-telemetry-root="true">
     <p class="charts-page__status">Loading aggregated telemetry charts…</p>
   </div>
 </section>

@@ -111,6 +111,26 @@ test('createNodeDetailOverlayManager renders fetched markup and restores focus',
   assert.equal(focusTarget.focusCalled, true);
 });
 
+test('createNodeDetailOverlayManager mounts telemetry charts for overlay content', async () => {
+  const { document, content } = createOverlayHarness();
+  const chartModels = [{ id: 'power' }];
+  let mountCall = null;
+  const manager = createNodeDetailOverlayManager({
+    document,
+    fetchNodeDetail: async () => ({ html: '<section class="node-detail">Charts</section>', chartModels }),
+    mountCharts: (models, options) => {
+      mountCall = { models, options };
+      return [];
+    },
+  });
+  assert.ok(manager);
+  await manager.open({ nodeId: '!alpha' });
+  assert.equal(content.innerHTML.includes('Charts'), true);
+  assert.ok(mountCall);
+  assert.equal(mountCall.models, chartModels);
+  assert.equal(mountCall.options.root, content);
+});
+
 test('createNodeDetailOverlayManager surfaces errors and supports escape closing', async () => {
   const { document, overlay, content } = createOverlayHarness();
   const errors = [];

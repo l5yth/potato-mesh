@@ -17,11 +17,14 @@
    short_display = node_page_short_name || "Loading"
    long_display = node_page_long_name
    identifier_display = node_page_identifier || "" %>
+<link rel="stylesheet" href="/assets/vendor/uplot/uPlot.min.css" />
+<script src="/assets/vendor/uplot/uPlot.iife.min.js" defer></script>
 <section
   id="nodeDetail"
   class="node-detail"
   data-node-reference="<%= Rack::Utils.escape_html(reference_json) %>"
   data-private-mode="<%= private_mode ? "true" : "false" %>"
+  data-telemetry-root="true"
 >
   <header class="node-detail__header">
     <h2 class="node-detail__title">

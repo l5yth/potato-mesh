@@ -994,7 +994,7 @@ body.dark .node-detail-overlay__close:hover {
 .node-detail__charts-grid {
   display: grid;
   gap: 24px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 640px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 1152px), 1fr));
 }
 
 .node-detail__chart {
@@ -1026,10 +1026,45 @@ body.dark .node-detail-overlay__close:hover {
   font-size: 1rem;
 }
 
-.node-detail__chart svg {
+.node-detail__chart-plot {
   width: 100%;
-  height: auto;
+  height: clamp(240px, 50vw, 360px);
   max-height: 420px;
+  overflow: hidden;
+}
+
+.node-detail__chart-plot .uplot {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  line-height: 0;
+  position: relative;
+}
+
+.node-detail__chart-plot .uplot .u-wrap,
+.node-detail__chart-plot .uplot .u-under,
+.node-detail__chart-plot .uplot .u-over {
+  top: 0;
+  left: 0;
+}
+
+.node-detail__chart-plot .u-axis,
+.node-detail__chart-plot .u-axis .u-label,
+.node-detail__chart-plot .u-axis .u-value,
+.node-detail__chart-plot .u-axis text,
+.node-detail__chart-plot .u-axis-label {
+  color: var(--muted) !important;
+  fill: var(--muted) !important;
+  font-size: 0.95rem;
+}
+
+.node-detail__chart-plot .u-grid {
+  stroke: rgba(12, 15, 18, 0.08);
+  stroke-width: 1;
+}
+
+body.dark .node-detail__chart-plot .u-grid {
+  stroke: rgba(255, 255, 255, 0.15);
 }
 
 .node-detail__chart-axis line {

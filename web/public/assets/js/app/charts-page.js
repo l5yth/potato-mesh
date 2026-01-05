@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { renderTelemetryCharts } from './node-page.js';
+import { createTelemetryCharts, mountTelemetryChartsWithRetry } from './node-page.js';
 
 const TELEMETRY_BUCKET_SECONDS = 60 * 60;
 const HOUR_MS = 60 * 60 * 1000;
@@ -193,6 +193,21 @@ export async function fetchAggregatedTelemetry({
     .filter(snapshot => snapshot != null);
 }
 
+/**
+ * Fetch and render aggregated telemetry charts.
+ *
+ * @param {{
+ *   document?: Document,
+ *   rootId?: string,
+ *   fetchImpl?: Function,
+ *   bucketSeconds?: number,
+ *   windowMs?: number,
+ *   createCharts?: Function,
+ *   mountCharts?: Function,
+ *   uPlotImpl?: Function,
+ * }} options Optional overrides for testing.
+ * @returns {Promise<boolean>} ``true`` when charts were rendered successfully.
+ */
 export async function initializeChartsPage(options = {}) {
   const documentRef = options.document ?? globalThis.document;
   if (!documentRef || typeof documentRef.getElementById !== 'function') {
@@ -204,7 +219,8 @@ export async function initializeChartsPage(options = {}) {
     return false;
   }
 
-  const renderCharts = typeof options.renderCharts === 'function' ? options.renderCharts : renderTelemetryCharts;
+  const createCharts = typeof options.createCharts === 'function' ? options.createCharts : createTelemetryCharts;
+  const mountCharts = typeof options.mountCharts === 'function' ? options.mountCharts : mountTelemetryChartsWithRetry;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const bucketSeconds = options.bucketSeconds ?? TELEMETRY_BUCKET_SECONDS;
   const windowMs = options.windowMs ?? CHART_WINDOW_MS;
@@ -218,7 +234,7 @@ export async function initializeChartsPage(options = {}) {
       return true;
     }
     const node = { rawSources: { telemetry: { snapshots } } };
-    const chartsHtml = renderCharts(node, {
+    const chartState = createCharts(node, {
       nowMs: Date.now(),
       chartOptions: {
         windowMs,
@@ -228,11 +244,12 @@ export async function initializeChartsPage(options = {}) {
         lineReducer: points => buildMovingAverageSeries(points, HOUR_MS),
       },
     });
-    if (!chartsHtml) {
+    if (!chartState.chartsHtml) {
       container.innerHTML = renderStatus('Telemetry snapshots are unavailable.');
       return true;
     }
-    container.innerHTML = chartsHtml;
+    container.innerHTML = chartState.chartsHtml;
+    mountCharts(chartState.chartModels, { root: container, uPlotImpl: options.uPlotImpl });
     return true;
   } catch (error) {
     console.error('Failed to render aggregated telemetry charts', error);

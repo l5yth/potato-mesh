@@ -4,7 +4,11 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "postinstall": "node ./scripts/copy-uplot.js",
     "test": "mkdir -p reports coverage && NODE_V8_COVERAGE=coverage node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=reports/javascript-junit.xml && node ./scripts/export-coverage.js"
+  },
+  "dependencies": {
+    "uplot": "^1.6.30"
   },
   "devDependencies": {
     "istanbul-lib-coverage": "^3.2.2",
