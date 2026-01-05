@@ -319,6 +319,7 @@ mod tests {
             last_message_id: Some(10),
             last_rx_time: None,
             last_rx_time_ids: vec![],
+            last_checked_at: None,
         };
         let older = sample_msg(9);
         let newer = sample_msg(11);
@@ -424,6 +425,7 @@ mod tests {
             last_message_id: None,
             last_rx_time: Some(123),
             last_rx_time_ids: vec![],
+            last_checked_at: None,
         };
 
         let params = build_fetch_params(&state);
@@ -437,6 +439,7 @@ mod tests {
             last_message_id: Some(1),
             last_rx_time: Some(123),
             last_rx_time_ids: vec![],
+            last_checked_at: None,
         };
 
         let params = build_fetch_params(&state);
@@ -450,6 +453,7 @@ mod tests {
             last_message_id: Some(1),
             last_rx_time: None,
             last_rx_time_ids: vec![],
+            last_checked_at: None,
         };
 
         let params = build_fetch_params(&state);
@@ -491,6 +495,7 @@ mod tests {
             last_message_id: Some(1),
             last_rx_time: Some(100),
             last_rx_time_ids: vec![1],
+            last_checked_at: None,
         };
 
         poll_once(&potato, &matrix, &mut state, state_str).await;
