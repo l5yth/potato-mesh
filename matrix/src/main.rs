@@ -135,6 +135,9 @@ async fn poll_once(
                 if let Some(port) = &msg.portnum {
                     if port != "TEXT_MESSAGE_APP" {
                         state.update_with(msg);
+                        if let Err(e) = state.save(state_path) {
+                            error!("Error saving state: {:?}", e);
+                        }
                         continue;
                     }
                 }
@@ -498,6 +501,49 @@ mod tests {
         assert_eq!(state.last_rx_time, Some(100));
         assert_eq!(state.last_rx_time_ids, vec![1]);
         assert!(!state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn poll_once_persists_state_for_non_text_messages() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[{"id":1,"rx_time":100,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!abcd1234","to_id":"^all","channel":1,"portnum":"POSITION_APP","text":"","rssi":-100,"hop_limit":1,"lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","snr":0.0,"node_id":"!abcd1234"}]"#,
+            )
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potatomesh_cfg = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 1,
+        };
+        let matrix_cfg = MatrixConfig {
+            homeserver: server.url(),
+            as_token: "AS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        };
+
+        let potato = PotatoClient::new(http_client.clone(), potatomesh_cfg);
+        let matrix = MatrixAppserviceClient::new(http_client, matrix_cfg);
+        let mut state = BridgeState::default();
+
+        poll_once(&potato, &matrix, &mut state, state_str).await;
+
+        mock_msgs.assert();
+        assert!(state_path.exists());
+        let loaded = BridgeState::load(state_str).unwrap();
+        assert_eq!(loaded.last_message_id, Some(1));
+        assert_eq!(loaded.last_rx_time, Some(100));
+        assert_eq!(loaded.last_rx_time_ids, vec![1]);
     }
 
     #[tokio::test]
