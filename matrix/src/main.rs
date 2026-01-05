@@ -249,11 +249,7 @@ fn modem_preset_short(preset: &str) -> String {
 /// Build plain text + HTML message bodies with inline-code metadata.
 fn format_message_bodies(prefix: &str, text: &str) -> (String, String) {
     let body = format!("`{}` {}", prefix, text);
-    let formatted_body = format!(
-        "<code>{}</code> {}",
-        escape_html(prefix),
-        escape_html(text)
-    );
+    let formatted_body = format!("<code>{}</code> {}", escape_html(prefix), escape_html(text));
     (body, formatted_body)
 }
 
