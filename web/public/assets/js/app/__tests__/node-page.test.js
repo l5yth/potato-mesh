@@ -946,13 +946,19 @@ test('initializeNodeDetailPage reports an error when refresh fails', async () =>
     throw new Error('boom');
   };
   const renderShortHtml = short => `<span>${short}</span>`;
-  const result = await initializeNodeDetailPage({
-    document: documentStub,
-    refreshImpl,
-    renderShortHtml,
-  });
-  assert.equal(result, false);
-  assert.equal(element.innerHTML.includes('Failed to load'), true);
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const result = await initializeNodeDetailPage({
+      document: documentStub,
+      refreshImpl,
+      renderShortHtml,
+    });
+    assert.equal(result, false);
+    assert.equal(element.innerHTML.includes('Failed to load'), true);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test('initializeNodeDetailPage handles missing reference payloads', async () => {

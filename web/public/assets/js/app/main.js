@@ -44,6 +44,7 @@ import {
   formatChatPresetTag
 } from './chat-format.js';
 import { initializeInstanceSelector } from './instance-selector.js';
+import { initializeMobileMenu } from './mobile-menu.js';
 import { MESSAGE_LIMIT, normaliseMessageLimit } from './message-limit.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
@@ -119,6 +120,8 @@ export function initializeApp(config) {
   const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
   const isMapView = bodyClassList ? bodyClassList.contains('view-map') : false;
   const mapZoomOverride = Number.isFinite(config.mapZoom) ? Number(config.mapZoom) : null;
+
+  initializeMobileMenu({ documentObject: document, windowObject: window });
   /**
    * Column sorter configuration for the node table.
    *

@@ -215,23 +215,212 @@ h1 {
 
 .site-header {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 4px 0;
+  margin-bottom: 8px;
+}
+
+.site-header__left,
+.site-header__right {
+  display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+}
+
+.site-header__left {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.site-header__right {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .site-title {
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+.site-title-text {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .site-title img {
-  width: 52px;
-  height: 52px;
+  width: 36px;
+  height: 36px;
   display: block;
   border-radius: 12px;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.site-nav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--fg);
+  text-decoration: none;
+  border: 1px solid transparent;
+  font-size: 14px;
+}
+
+.site-nav__link:hover {
+  background: var(--card);
+}
+
+.site-nav__link.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+  font-weight: 600;
+}
+
+.site-nav__link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.menu-toggle {
+  display: none;
+}
+
+.menu-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mobile-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.mobile-menu[hidden] {
+  display: none;
+}
+
+.mobile-menu__backdrop {
+  flex: 1 1 auto;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.mobile-menu__panel {
+  width: min(320px, 86vw);
+  background: var(--bg2);
+  color: var(--fg);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 220ms ease;
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.3);
+}
+
+.mobile-menu__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mobile-menu__title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.mobile-menu__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mobile-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-nav__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  color: var(--fg);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+
+.mobile-nav__link.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.mobile-nav__link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mobile-menu.is-open {
+  pointer-events: auto;
+}
+
+.mobile-menu.is-open .mobile-menu__backdrop {
+  opacity: 1;
+}
+
+.mobile-menu.is-open .mobile-menu__panel {
+  transform: translateX(0);
+}
+
+.menu-open {
+  overflow: hidden;
+}
+
+.section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.section-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.section-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .meta {
@@ -282,11 +471,29 @@ h1 {
 
 @media (max-width: 900px) {
   .site-header {
-    flex-direction: column;
-    align-items: flex-start;
+    margin-bottom: 4px;
   }
 
-  .instance-selector,
+  .site-header__left {
+    flex-wrap: nowrap;
+  }
+
+  .site-header__left--federation {
+    flex-wrap: wrap;
+  }
+
+  .site-nav {
+    display: none;
+  }
+
+  .menu-toggle {
+    display: inline-flex;
+  }
+
+  .instance-selector {
+    flex: 0 1 auto;
+  }
+
   .instance-select {
     width: 100%;
   }
@@ -295,6 +502,7 @@ h1 {
     min-width: 0;
   }
 }
+
 
 .pill {
   display: inline-block;
@@ -1692,10 +1900,6 @@ input[type="radio"] {
     align-items: center;
     width: 100%;
     gap: 12px;
-  }
-
-  .controls--full-screen {
-    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .controls .filter-input {
