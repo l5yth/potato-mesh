@@ -65,7 +65,8 @@ function resolveSnapshotList(entry) {
  * Build a data model describing the content for chat tabs.
  *
  * Entries outside the recent activity window, encrypted messages, and
- * channels above {@link MAX_CHANNEL_INDEX} are filtered out.
+ * channels above {@link MAX_CHANNEL_INDEX} are filtered out. Channel
+ * buckets are only created when messages are present for that channel.
  *
  * @param {{
  *   nodes?: Array<Object>,
@@ -286,26 +287,6 @@ export function buildChatTabModel({
   }
 
   logEntries.sort((a, b) => a.ts - b.ts);
-
-  let hasPrimaryBucket = false;
-  for (const bucket of channelBuckets.values()) {
-    if (bucket.index === 0) {
-      hasPrimaryBucket = true;
-      break;
-    }
-  }
-  if (!hasPrimaryBucket) {
-    const bucketKey = '0';
-    channelBuckets.set(bucketKey, {
-      key: bucketKey,
-      id: buildChannelTabId(bucketKey),
-      index: 0,
-      label: '0',
-      entries: [],
-      labelPriority: CHANNEL_LABEL_PRIORITY.INDEX,
-      isPrimaryFallback: true
-    });
-  }
 
   const channels = Array.from(channelBuckets.values()).sort((a, b) => {
     if (a.index !== b.index) {
