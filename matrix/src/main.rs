@@ -60,7 +60,10 @@ impl BridgeState {
 
     fn should_forward(&self, msg: &PotatoMessage) -> bool {
         match self.last_rx_time {
-            None => true,
+            None => match self.last_message_id {
+                None => true,
+                Some(last_id) => msg.id > last_id,
+            },
             Some(last_ts) => {
                 if msg.rx_time > last_ts {
                     true
@@ -299,6 +302,20 @@ mod tests {
         // state remains unchanged
         assert_eq!(state.last_message_id, Some(20));
         assert_eq!(state.last_rx_time, Some(20));
+    }
+
+    #[test]
+    fn bridge_state_uses_legacy_id_filter_when_rx_time_missing() {
+        let state = BridgeState {
+            last_message_id: Some(10),
+            last_rx_time: None,
+            last_rx_time_ids: vec![],
+        };
+        let older = sample_msg(9);
+        let newer = sample_msg(11);
+
+        assert!(!state.should_forward(&older));
+        assert!(state.should_forward(&newer));
     }
 
     #[test]
