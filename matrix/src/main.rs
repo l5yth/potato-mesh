@@ -216,16 +216,18 @@ async fn handle_message(
         .unwrap_or_else(|| node.long_name.clone());
 
     let preset_short = modem_preset_short(&msg.modem_preset);
-    let body = format!(
-        "[{freq}][{preset_short}][{channel}][{short}] {text}",
+    let prefix = format!(
+        "[{freq}][{preset_short}][{channel}][{short}]",
         freq = msg.lora_freq,
         preset_short = preset_short,
         channel = msg.channel_name,
         short = short,
-        text = msg.text,
     );
+    let (body, formatted_body) = format_message_bodies(&prefix, &msg.text);
 
-    matrix.send_text_message_as(&user_id, &body).await?;
+    matrix
+        .send_formatted_message_as(&user_id, &body, &formatted_body)
+        .await?;
 
     state.update_with(msg);
     Ok(())
@@ -242,6 +244,33 @@ fn modem_preset_short(preset: &str) -> String {
     } else {
         letters
     }
+}
+
+/// Build plain text + HTML message bodies with inline-code metadata.
+fn format_message_bodies(prefix: &str, text: &str) -> (String, String) {
+    let body = format!("`{}` {}", prefix, text);
+    let formatted_body = format!(
+        "<code>{}</code> {}",
+        escape_html(prefix),
+        escape_html(text)
+    );
+    (body, formatted_body)
+}
+
+/// Minimal HTML escaping for Matrix formatted_body payloads.
+fn escape_html(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -276,6 +305,18 @@ mod tests {
     fn modem_preset_short_handles_camelcase() {
         assert_eq!(modem_preset_short("LongFast"), "LF");
         assert_eq!(modem_preset_short("MediumFast"), "MF");
+    }
+
+    #[test]
+    fn format_message_bodies_escape_html() {
+        let (body, formatted) = format_message_bodies("[868][LF]", "Hello <&>");
+        assert_eq!(body, "`[868][LF]` Hello <&>");
+        assert_eq!(formatted, "<code>[868][LF]</code> Hello &lt;&amp;&gt;");
+    }
+
+    #[test]
+    fn escape_html_escapes_quotes() {
+        assert_eq!(escape_html("a\"b'c"), "a&quot;b&#39;c");
     }
 
     #[test]
@@ -621,6 +662,10 @@ mod tests {
                 .as_str(),
             )
             .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "msgtype": "m.text",
+                "format": "org.matrix.custom.html",
+            })))
             .with_status(200)
             .create();
 
