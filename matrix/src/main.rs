@@ -55,6 +55,7 @@ impl BridgeState {
         if s.last_rx_time.is_none() {
             s.last_rx_time = s.last_checked_at;
         }
+        s.last_checked_at = None;
         Ok(s)
     }
 
@@ -147,6 +148,7 @@ async fn poll_once(
                     continue;
                 }
 
+                state.update_with(msg);
                 // persist after each processed message
                 if let Err(e) = state.save(state_path) {
                     error!("Error saving state: {:?}", e);
