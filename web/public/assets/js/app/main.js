@@ -195,7 +195,7 @@ export function initializeApp(config) {
   });
   const NODE_LIMIT = 1000;
   const TRACE_LIMIT = 200;
-  const TRACE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+  const TRACE_MAX_AGE_SECONDS = 28 * 24 * 60 * 60;
   const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
