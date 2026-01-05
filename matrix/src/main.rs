@@ -24,7 +24,7 @@ use tracing::{error, info};
 
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
-use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage};
+use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
@@ -207,21 +207,16 @@ async fn handle_message(
     // Ensure puppet exists & has display name
     matrix.ensure_user_registered(&localpart).await?;
     matrix.ensure_user_joined_room(&user_id).await?;
-    matrix.set_display_name(&user_id, &node.long_name).await?;
+    let display_name = display_name_for_node(&node);
+    matrix.set_display_name(&user_id, &display_name).await?;
 
     // Format the bridged message
-    let short = node
-        .short_name
-        .clone()
-        .unwrap_or_else(|| node.long_name.clone());
-
     let preset_short = modem_preset_short(&msg.modem_preset);
     let prefix = format!(
-        "[{freq}][{preset_short}][{channel}][{short}]",
+        "[{freq}][{preset_short}][{channel}]",
         freq = msg.lora_freq,
         preset_short = preset_short,
         channel = msg.channel_name,
-        short = short,
     );
     let (body, formatted_body) = format_message_bodies(&prefix, &msg.text);
 
@@ -251,6 +246,14 @@ fn format_message_bodies(prefix: &str, text: &str) -> (String, String) {
     let body = format!("`{}` {}", prefix, text);
     let formatted_body = format!("<code>{}</code> {}", escape_html(prefix), escape_html(text));
     (body, formatted_body)
+}
+
+/// Build the Matrix display name from a node's long/short names.
+fn display_name_for_node(node: &PotatoNode) -> String {
+    match node.short_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(short) if short != node.long_name => format!("{} ({})", node.long_name, short),
+        _ => node.long_name.clone(),
+    }
 }
 
 /// Minimal HTML escaping for Matrix formatted_body payloads.
@@ -297,6 +300,21 @@ mod tests {
         }
     }
 
+    fn sample_node(short_name: Option<&str>, long_name: &str) -> PotatoNode {
+        PotatoNode {
+            node_id: "!abcd1234".to_string(),
+            short_name: short_name.map(str::to_string),
+            long_name: long_name.to_string(),
+            role: None,
+            hw_model: None,
+            last_heard: None,
+            first_heard: None,
+            latitude: None,
+            longitude: None,
+            altitude: None,
+        }
+    }
+
     #[test]
     fn modem_preset_short_handles_camelcase() {
         assert_eq!(modem_preset_short("LongFast"), "LF");
@@ -313,6 +331,21 @@ mod tests {
     #[test]
     fn escape_html_escapes_quotes() {
         assert_eq!(escape_html("a\"b'c"), "a&quot;b&#39;c");
+    }
+
+    #[test]
+    fn display_name_for_node_includes_short_when_present() {
+        let node = sample_node(Some("TN"), "Test Node");
+        assert_eq!(display_name_for_node(&node), "Test Node (TN)");
+    }
+
+    #[test]
+    fn display_name_for_node_ignores_empty_or_duplicate_short() {
+        let empty_short = sample_node(Some(""), "Test Node");
+        assert_eq!(display_name_for_node(&empty_short), "Test Node");
+
+        let duplicate_short = sample_node(Some("Test Node"), "Test Node");
+        assert_eq!(display_name_for_node(&duplicate_short), "Test Node");
     }
 
     #[test]
@@ -639,6 +672,9 @@ mod tests {
                 format!("/_matrix/client/v3/profile/{}/displayname", encoded_user).as_str(),
             )
             .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+                "displayname": "Test Node (TN)"
+            })))
             .with_status(200)
             .create();
 
@@ -660,7 +696,9 @@ mod tests {
             .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "msgtype": "m.text",
+                "body": "`[868][MF][TEST]` Ping",
                 "format": "org.matrix.custom.html",
+                "formatted_body": "<code>[868][MF][TEST]</code> Ping",
             })))
             .with_status(200)
             .create();
