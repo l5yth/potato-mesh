@@ -36,6 +36,9 @@ pub struct BridgeState {
     /// Message ids seen at the current last_rx_time for de-duplication.
     #[serde(default)]
     last_rx_time_ids: Vec<u64>,
+    /// Legacy checkpoint timestamp used before last_rx_time was added.
+    #[serde(default, skip_serializing)]
+    last_checked_at: Option<u64>,
 }
 
 impl BridgeState {
@@ -48,7 +51,10 @@ impl BridgeState {
         if data.trim().is_empty() {
             return Ok(Self::default());
         }
-        let s: Self = serde_json::from_str(&data)?;
+        let mut s: Self = serde_json::from_str(&data)?;
+        if s.last_rx_time.is_none() {
+            s.last_rx_time = s.last_checked_at;
+        }
         Ok(s)
     }
 
@@ -353,6 +359,7 @@ mod tests {
             last_message_id: Some(12345),
             last_rx_time: Some(99),
             last_rx_time_ids: vec![123],
+            last_checked_at: Some(77),
         };
         state.save(path_str).unwrap();
 
@@ -360,6 +367,7 @@ mod tests {
         assert_eq!(loaded_state.last_message_id, Some(12345));
         assert_eq!(loaded_state.last_rx_time, Some(99));
         assert_eq!(loaded_state.last_rx_time_ids, vec![123]);
+        assert_eq!(loaded_state.last_checked_at, None);
     }
 
     #[test]
@@ -385,6 +393,25 @@ mod tests {
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
         assert_eq!(state.last_rx_time, None);
+        assert!(state.last_rx_time_ids.is_empty());
+        assert_eq!(state.last_checked_at, None);
+    }
+
+    #[test]
+    fn bridge_state_migrates_legacy_checkpoint() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("legacy_state.json");
+        let path_str = file_path.to_str().unwrap();
+
+        fs::write(
+            path_str,
+            r#"{"last_message_id":42,"last_checked_at":1710000000}"#,
+        )
+        .unwrap();
+
+        let state = BridgeState::load(path_str).unwrap();
+        assert_eq!(state.last_message_id, Some(42));
+        assert_eq!(state.last_rx_time, Some(1_710_000_000));
         assert!(state.last_rx_time_ids.is_empty());
     }
 
