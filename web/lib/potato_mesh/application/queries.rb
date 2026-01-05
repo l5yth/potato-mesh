@@ -526,7 +526,7 @@ module PotatoMesh
         params = []
         where_clauses = []
         now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.week_seconds
+        min_rx_time = now - PotatoMesh::Config.trace_neighbor_window_seconds
         since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
         params << since_threshold
