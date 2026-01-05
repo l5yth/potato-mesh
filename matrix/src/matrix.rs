@@ -134,6 +134,37 @@ impl MatrixAppserviceClient {
         }
     }
 
+    /// Ensure the puppet user is joined to the configured room.
+    pub async fn ensure_user_joined_room(&self, user_id: &str) -> anyhow::Result<()> {
+        #[derive(Serialize)]
+        struct JoinReq {}
+
+        let encoded_room = urlencoding::encode(&self.cfg.room_id);
+        let encoded_user = urlencoding::encode(user_id);
+        let url = format!(
+            "{}/_matrix/client/v3/rooms/{}/join?user_id={}&{}",
+            self.cfg.homeserver,
+            encoded_room,
+            encoded_user,
+            self.auth_query()
+        );
+
+        let resp = self.http.post(&url).json(&JoinReq {}).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body_snip = resp.text().await.unwrap_or_default();
+            Err(anyhow::anyhow!(
+                "Matrix join failed for {} in {} with status {} ({})",
+                user_id,
+                self.cfg.room_id,
+                status,
+                body_snip
+            ))
+        }
+    }
+
     /// Send a plain text message into the configured room as puppet user_id.
     pub async fn send_text_message_as(&self, user_id: &str, body_text: &str) -> anyhow::Result<()> {
         #[derive(Serialize)]
@@ -355,6 +386,58 @@ mod tests {
 
         mock.assert();
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_joined_room_success() {
+        let mut server = mockito::Server::new_async().await;
+        let user_id = "@test:example.org";
+        let room_id = "!roomid:example.org";
+        let encoded_user = urlencoding::encode(user_id);
+        let encoded_room = urlencoding::encode(room_id);
+        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let path = format!("/_matrix/client/v3/rooms/{}/join", encoded_room);
+
+        let mock = server
+            .mock("POST", path.as_str())
+            .match_query(query.as_str())
+            .with_status(200)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        cfg.room_id = room_id.to_string();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_joined_room(user_id).await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_joined_room_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let user_id = "@test:example.org";
+        let room_id = "!roomid:example.org";
+        let encoded_user = urlencoding::encode(user_id);
+        let encoded_room = urlencoding::encode(room_id);
+        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let path = format!("/_matrix/client/v3/rooms/{}/join", encoded_room);
+
+        let mock = server
+            .mock("POST", path.as_str())
+            .match_query(query.as_str())
+            .with_status(403)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        cfg.room_id = room_id.to_string();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_joined_room(user_id).await;
+
+        mock.assert();
+        assert!(result.is_err());
     }
 
     #[tokio::test]

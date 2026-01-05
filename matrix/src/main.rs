@@ -38,6 +38,10 @@ impl BridgeState {
             return Ok(Self::default());
         }
         let data = fs::read_to_string(path)?;
+        // Treat empty/whitespace-only files as a fresh state.
+        if data.trim().is_empty() {
+            return Ok(Self::default());
+        }
         let s: Self = serde_json::from_str(&data)?;
         Ok(s)
     }
@@ -199,6 +203,7 @@ async fn handle_message(
 
     // Ensure puppet exists & has display name
     matrix.ensure_user_registered(&localpart).await?;
+    matrix.ensure_user_joined_room(&user_id).await?;
     matrix.set_display_name(&user_id, &node.long_name).await?;
 
     // Format the bridged message
@@ -325,6 +330,19 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         let file_path = tmp_dir.path().join("nonexistent.json");
         let path_str = file_path.to_str().unwrap();
+
+        let state = BridgeState::load(path_str).unwrap();
+        assert_eq!(state.last_message_id, None);
+        assert_eq!(state.last_checked_at, None);
+    }
+
+    #[test]
+    fn bridge_state_load_empty_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("empty.json");
+        let path_str = file_path.to_str().unwrap();
+
+        fs::write(path_str, "").unwrap();
 
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
@@ -467,6 +485,8 @@ mod tests {
         let node_id = "abcd1234";
         let user_id = format!("@potato_{}:{}", node_id, matrix_cfg.server_name);
         let encoded_user = urlencoding::encode(&user_id);
+        let room_id = &matrix_cfg.room_id;
+        let encoded_room = urlencoding::encode(room_id);
 
         let mock_get_node = server
             .mock("GET", "/api/nodes/abcd1234")
@@ -481,6 +501,15 @@ mod tests {
             .with_status(200)
             .create();
 
+        let mock_join = server
+            .mock(
+                "POST",
+                format!("/_matrix/client/v3/rooms/{}/join", encoded_room).as_str(),
+            )
+            .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .with_status(200)
+            .create();
+
         let mock_display_name = server
             .mock(
                 "PUT",
@@ -492,8 +521,6 @@ mod tests {
 
         let http_client = reqwest::Client::new();
         let matrix_client = MatrixAppserviceClient::new(http_client.clone(), matrix_cfg);
-        let room_id = &matrix_client.cfg.room_id;
-        let encoded_room = urlencoding::encode(room_id);
         let txn_id = matrix_client
             .txn_counter
             .load(std::sync::atomic::Ordering::SeqCst);
@@ -520,6 +547,7 @@ mod tests {
         assert!(result.is_ok());
         mock_get_node.assert();
         mock_register.assert();
+        mock_join.assert();
         mock_display_name.assert();
         mock_send.assert();
 
