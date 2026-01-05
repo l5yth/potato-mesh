@@ -28,7 +28,16 @@ use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
+    /// Highest message id processed by the bridge.
     last_message_id: Option<u64>,
+    /// Highest rx_time observed; used to build incremental fetch queries.
+    #[serde(default)]
+    last_rx_time: Option<u64>,
+    /// Message ids seen at the current last_rx_time for de-duplication.
+    #[serde(default)]
+    last_rx_time_ids: Vec<u64>,
+    /// Legacy checkpoint timestamp used before last_rx_time was added.
+    #[serde(default, skip_serializing)]
     last_checked_at: Option<u64>,
 }
 
@@ -42,7 +51,10 @@ impl BridgeState {
         if data.trim().is_empty() {
             return Ok(Self::default());
         }
-        let s: Self = serde_json::from_str(&data)?;
+        let mut s: Self = serde_json::from_str(&data)?;
+        if s.last_rx_time.is_none() {
+            s.last_rx_time = s.last_checked_at;
+        }
         Ok(s)
     }
 
@@ -53,17 +65,32 @@ impl BridgeState {
     }
 
     fn should_forward(&self, msg: &PotatoMessage) -> bool {
-        match self.last_message_id {
-            None => true,
-            Some(last) => msg.id > last,
+        match self.last_rx_time {
+            None => match self.last_message_id {
+                None => true,
+                Some(last_id) => msg.id > last_id,
+            },
+            Some(last_ts) => {
+                if msg.rx_time > last_ts {
+                    true
+                } else if msg.rx_time < last_ts {
+                    false
+                } else {
+                    !self.last_rx_time_ids.contains(&msg.id)
+                }
+            }
         }
     }
 
     fn update_with(&mut self, msg: &PotatoMessage) {
-        self.last_message_id = Some(match self.last_message_id {
-            None => msg.id,
-            Some(last) => last.max(msg.id),
-        });
+        self.last_message_id = Some(msg.id);
+        if self.last_rx_time.is_none() || Some(msg.rx_time) > self.last_rx_time {
+            self.last_rx_time = Some(msg.rx_time);
+            self.last_rx_time_ids = vec![msg.id];
+        } else if Some(msg.rx_time) == self.last_rx_time && !self.last_rx_time_ids.contains(&msg.id)
+        {
+            self.last_rx_time_ids.push(msg.id);
+        }
     }
 }
 
@@ -73,7 +100,7 @@ fn build_fetch_params(state: &BridgeState) -> FetchParams {
             limit: None,
             since: None,
         }
-    } else if let Some(ts) = state.last_checked_at {
+    } else if let Some(ts) = state.last_rx_time {
         FetchParams {
             limit: None,
             since: Some(ts),
@@ -86,34 +113,18 @@ fn build_fetch_params(state: &BridgeState) -> FetchParams {
     }
 }
 
-fn update_checkpoint(state: &mut BridgeState, delivered_all: bool, now_secs: u64) -> bool {
-    if !delivered_all {
-        return false;
-    }
-
-    if state.last_message_id.is_some() {
-        state.last_checked_at = Some(now_secs);
-        true
-    } else {
-        false
-    }
-}
-
 async fn poll_once(
     potato: &PotatoClient,
     matrix: &MatrixAppserviceClient,
     state: &mut BridgeState,
     state_path: &str,
-    now_secs: u64,
 ) {
     let params = build_fetch_params(state);
 
     match potato.fetch_messages(params).await {
         Ok(mut msgs) => {
-            // sort by id ascending so we process in order
-            msgs.sort_by_key(|m| m.id);
-
-            let mut delivered_all = true;
+            // sort by rx_time so we process by actual receipt time
+            msgs.sort_by_key(|m| m.rx_time);
 
             for msg in &msgs {
                 if !state.should_forward(msg) {
@@ -124,24 +135,19 @@ async fn poll_once(
                 if let Some(port) = &msg.portnum {
                     if port != "TEXT_MESSAGE_APP" {
                         state.update_with(msg);
+                        if let Err(e) = state.save(state_path) {
+                            error!("Error saving state: {:?}", e);
+                        }
                         continue;
                     }
                 }
 
                 if let Err(e) = handle_message(potato, matrix, state, msg).await {
                     error!("Error handling message {}: {:?}", msg.id, e);
-                    delivered_all = false;
                     continue;
                 }
 
                 // persist after each processed message
-                if let Err(e) = state.save(state_path) {
-                    error!("Error saving state: {:?}", e);
-                }
-            }
-
-            // Only advance checkpoint after successful delivery and a known last_message_id.
-            if update_checkpoint(state, delivered_all, now_secs) {
                 if let Err(e) = state.save(state_path) {
                     error!("Error saving state: {:?}", e);
                 }
@@ -180,12 +186,7 @@ async fn main() -> Result<()> {
     let poll_interval = Duration::from_secs(cfg.potatomesh.poll_interval_secs);
 
     loop {
-        let now_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        poll_once(&potato, &matrix, &mut state, state_path, now_secs).await;
+        poll_once(&potato, &matrix, &mut state, state_path).await;
 
         sleep(poll_interval).await;
     }
@@ -212,28 +213,33 @@ async fn handle_message(
         .clone()
         .unwrap_or_else(|| node.long_name.clone());
 
+    let preset_short = modem_preset_short(&msg.modem_preset);
     let body = format!(
-        "[{short}] {text}\n({from_id} → {to_id}, {rssi}, {snr}, {chan}/{preset})",
+        "[{freq}][{preset_short}][{channel}][{short}] {text}",
+        freq = msg.lora_freq,
+        preset_short = preset_short,
+        channel = msg.channel_name,
         short = short,
         text = msg.text,
-        from_id = msg.from_id,
-        to_id = msg.to_id,
-        rssi = msg
-            .rssi
-            .map(|v| format!("RSSI {v} dB"))
-            .unwrap_or_else(|| "RSSI n/a".to_string()),
-        snr = msg
-            .snr
-            .map(|v| format!("SNR {v} dB"))
-            .unwrap_or_else(|| "SNR n/a".to_string()),
-        chan = msg.channel_name,
-        preset = msg.modem_preset,
     );
 
     matrix.send_text_message_as(&user_id, &body).await?;
 
     state.update_with(msg);
     Ok(())
+}
+
+/// Build a compact modem preset label like "LF" for "LongFast".
+fn modem_preset_short(preset: &str) -> String {
+    let letters: String = preset
+        .chars()
+        .filter(|ch| ch.is_ascii_uppercase())
+        .collect();
+    if letters.is_empty() {
+        preset.chars().take(2).collect()
+    } else {
+        letters
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +271,12 @@ mod tests {
     }
 
     #[test]
+    fn modem_preset_short_handles_camelcase() {
+        assert_eq!(modem_preset_short("LongFast"), "LF");
+        assert_eq!(modem_preset_short("MediumFast"), "MF");
+    }
+
+    #[test]
     fn bridge_state_initially_forwards_all() {
         let state = BridgeState::default();
         let msg = sample_msg(42);
@@ -273,39 +285,72 @@ mod tests {
     }
 
     #[test]
-    fn bridge_state_tracks_highest_id_and_skips_older() {
+    fn bridge_state_tracks_latest_rx_time_and_skips_older() {
         let mut state = BridgeState::default();
         let m1 = sample_msg(10);
         let m2 = sample_msg(20);
         let m3 = sample_msg(15);
+        let m1 = PotatoMessage { rx_time: 10, ..m1 };
+        let m2 = PotatoMessage { rx_time: 20, ..m2 };
+        let m3 = PotatoMessage { rx_time: 15, ..m3 };
 
         // First message, should forward
         assert!(state.should_forward(&m1));
         state.update_with(&m1);
         assert_eq!(state.last_message_id, Some(10));
+        assert_eq!(state.last_rx_time, Some(10));
 
         // Second message, higher id, should forward
         assert!(state.should_forward(&m2));
         state.update_with(&m2);
         assert_eq!(state.last_message_id, Some(20));
+        assert_eq!(state.last_rx_time, Some(20));
 
         // Third message, lower than last, should NOT forward
         assert!(!state.should_forward(&m3));
         // state remains unchanged
         assert_eq!(state.last_message_id, Some(20));
+        assert_eq!(state.last_rx_time, Some(20));
     }
 
     #[test]
-    fn bridge_state_update_is_monotonic() {
-        let mut state = BridgeState {
-            last_message_id: Some(50),
+    fn bridge_state_uses_legacy_id_filter_when_rx_time_missing() {
+        let state = BridgeState {
+            last_message_id: Some(10),
+            last_rx_time: None,
+            last_rx_time_ids: vec![],
             last_checked_at: None,
         };
-        let m = sample_msg(40);
+        let older = sample_msg(9);
+        let newer = sample_msg(11);
 
-        state.update_with(&m); // id is lower than current
-                               // last_message_id must stay at 50
-        assert_eq!(state.last_message_id, Some(50));
+        assert!(!state.should_forward(&older));
+        assert!(state.should_forward(&newer));
+    }
+
+    #[test]
+    fn bridge_state_dedupes_same_timestamp() {
+        let mut state = BridgeState::default();
+        let m1 = PotatoMessage {
+            rx_time: 100,
+            ..sample_msg(10)
+        };
+        let m2 = PotatoMessage {
+            rx_time: 100,
+            ..sample_msg(9)
+        };
+        let dup = PotatoMessage {
+            rx_time: 100,
+            ..sample_msg(10)
+        };
+
+        assert!(state.should_forward(&m1));
+        state.update_with(&m1);
+        assert!(state.should_forward(&m2));
+        state.update_with(&m2);
+        assert!(!state.should_forward(&dup));
+        assert_eq!(state.last_rx_time, Some(100));
+        assert_eq!(state.last_rx_time_ids, vec![10, 9]);
     }
 
     #[test]
@@ -316,13 +361,17 @@ mod tests {
 
         let state = BridgeState {
             last_message_id: Some(12345),
-            last_checked_at: Some(99),
+            last_rx_time: Some(99),
+            last_rx_time_ids: vec![123],
+            last_checked_at: Some(77),
         };
         state.save(path_str).unwrap();
 
         let loaded_state = BridgeState::load(path_str).unwrap();
         assert_eq!(loaded_state.last_message_id, Some(12345));
-        assert_eq!(loaded_state.last_checked_at, Some(99));
+        assert_eq!(loaded_state.last_rx_time, Some(99));
+        assert_eq!(loaded_state.last_rx_time_ids, vec![123]);
+        assert_eq!(loaded_state.last_checked_at, None);
     }
 
     #[test]
@@ -333,7 +382,8 @@ mod tests {
 
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
-        assert_eq!(state.last_checked_at, None);
+        assert_eq!(state.last_rx_time, None);
+        assert!(state.last_rx_time_ids.is_empty());
     }
 
     #[test]
@@ -346,50 +396,36 @@ mod tests {
 
         let state = BridgeState::load(path_str).unwrap();
         assert_eq!(state.last_message_id, None);
+        assert_eq!(state.last_rx_time, None);
+        assert!(state.last_rx_time_ids.is_empty());
         assert_eq!(state.last_checked_at, None);
     }
 
     #[test]
-    fn update_checkpoint_requires_last_message_id() {
-        let mut state = BridgeState {
-            last_message_id: None,
-            last_checked_at: Some(10),
-        };
+    fn bridge_state_migrates_legacy_checkpoint() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("legacy_state.json");
+        let path_str = file_path.to_str().unwrap();
 
-        let saved = update_checkpoint(&mut state, true, 123);
-        assert!(!saved);
-        assert_eq!(state.last_checked_at, Some(10));
-    }
+        fs::write(
+            path_str,
+            r#"{"last_message_id":42,"last_checked_at":1710000000}"#,
+        )
+        .unwrap();
 
-    #[test]
-    fn update_checkpoint_skips_when_not_delivered() {
-        let mut state = BridgeState {
-            last_message_id: Some(5),
-            last_checked_at: Some(10),
-        };
-
-        let saved = update_checkpoint(&mut state, false, 123);
-        assert!(!saved);
-        assert_eq!(state.last_checked_at, Some(10));
-    }
-
-    #[test]
-    fn update_checkpoint_sets_when_safe() {
-        let mut state = BridgeState {
-            last_message_id: Some(5),
-            last_checked_at: None,
-        };
-
-        let saved = update_checkpoint(&mut state, true, 123);
-        assert!(saved);
-        assert_eq!(state.last_checked_at, Some(123));
+        let state = BridgeState::load(path_str).unwrap();
+        assert_eq!(state.last_message_id, Some(42));
+        assert_eq!(state.last_rx_time, Some(1_710_000_000));
+        assert!(state.last_rx_time_ids.is_empty());
     }
 
     #[test]
     fn fetch_params_respects_missing_last_message_id() {
         let state = BridgeState {
             last_message_id: None,
-            last_checked_at: Some(123),
+            last_rx_time: Some(123),
+            last_rx_time_ids: vec![],
+            last_checked_at: None,
         };
 
         let params = build_fetch_params(&state);
@@ -401,7 +437,9 @@ mod tests {
     fn fetch_params_uses_since_when_safe() {
         let state = BridgeState {
             last_message_id: Some(1),
-            last_checked_at: Some(123),
+            last_rx_time: Some(123),
+            last_rx_time_ids: vec![],
+            last_checked_at: None,
         };
 
         let params = build_fetch_params(&state);
@@ -413,6 +451,8 @@ mod tests {
     fn fetch_params_defaults_to_small_window() {
         let state = BridgeState {
             last_message_id: Some(1),
+            last_rx_time: None,
+            last_rx_time_ids: vec![],
             last_checked_at: None,
         };
 
@@ -422,7 +462,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn poll_once_persists_checkpoint_without_messages() {
+    async fn poll_once_leaves_state_unchanged_without_messages() {
         let tmp_dir = tempfile::tempdir().unwrap();
         let state_path = tmp_dir.path().join("state.json");
         let state_str = state_path.to_str().unwrap();
@@ -453,18 +493,62 @@ mod tests {
 
         let mut state = BridgeState {
             last_message_id: Some(1),
+            last_rx_time: Some(100),
+            last_rx_time_ids: vec![1],
             last_checked_at: None,
         };
 
-        poll_once(&potato, &matrix, &mut state, state_str, 123).await;
+        poll_once(&potato, &matrix, &mut state, state_str).await;
 
         mock_msgs.assert();
 
-        // Should have advanced checkpoint and saved it.
-        assert_eq!(state.last_checked_at, Some(123));
+        // No new data means state remains unchanged and is not persisted.
+        assert_eq!(state.last_rx_time, Some(100));
+        assert_eq!(state.last_rx_time_ids, vec![1]);
+        assert!(!state_path.exists());
+    }
+
+    #[tokio::test]
+    async fn poll_once_persists_state_for_non_text_messages() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[{"id":1,"rx_time":100,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!abcd1234","to_id":"^all","channel":1,"portnum":"POSITION_APP","text":"","rssi":-100,"hop_limit":1,"lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","snr":0.0,"node_id":"!abcd1234"}]"#,
+            )
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potatomesh_cfg = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 1,
+        };
+        let matrix_cfg = MatrixConfig {
+            homeserver: server.url(),
+            as_token: "AS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        };
+
+        let potato = PotatoClient::new(http_client.clone(), potatomesh_cfg);
+        let matrix = MatrixAppserviceClient::new(http_client, matrix_cfg);
+        let mut state = BridgeState::default();
+
+        poll_once(&potato, &matrix, &mut state, state_str).await;
+
+        mock_msgs.assert();
+        assert!(state_path.exists());
         let loaded = BridgeState::load(state_str).unwrap();
-        assert_eq!(loaded.last_checked_at, Some(123));
         assert_eq!(loaded.last_message_id, Some(1));
+        assert_eq!(loaded.last_rx_time, Some(100));
+        assert_eq!(loaded.last_rx_time_ids, vec![1]);
     }
 
     #[tokio::test]
