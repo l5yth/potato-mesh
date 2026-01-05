@@ -113,11 +113,9 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['iso-ts', 'recent-alt']);
 });
 
-test('buildChatTabModel always includes channel zero bucket', () => {
+test('buildChatTabModel skips channel buckets when there are no messages', () => {
   const model = buildChatTabModel({ nodes: [], messages: [], nowSeconds: NOW, windowSeconds: WINDOW });
-  assert.equal(model.channels.length, 1);
-  assert.equal(model.channels[0].index, 0);
-  assert.equal(model.channels[0].entries.length, 0);
+  assert.equal(model.channels.length, 0);
 });
 
 test('buildChatTabModel falls back to numeric label when no metadata provided', () => {
