@@ -158,6 +158,13 @@ module PotatoMesh
       7 * 24 * 60 * 60
     end
 
+    # Rolling retention window in seconds for trace and neighbor API queries.
+    #
+    # @return [Integer] seconds in twenty-eight days.
+    def trace_neighbor_window_seconds
+      28 * 24 * 60 * 60
+    end
+
     # Default upper bound for accepted JSON payload sizes.
     #
     # @return [Integer] byte ceiling for HTTP request bodies.

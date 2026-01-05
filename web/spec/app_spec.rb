@@ -4646,11 +4646,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/neighbors" do
-    it "excludes neighbor records older than seven days" do
+    it "excludes neighbor records older than twenty-eight days" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
-      stale_rx = now - (PotatoMesh::Config.week_seconds + 45)
+      stale_rx = now - (PotatoMesh::Config.trace_neighbor_window_seconds + 45)
       fresh_rx = now - 10
 
       with_db do |db|
@@ -5236,11 +5236,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(JSON.parse(last_response.body)).to eq([])
     end
 
-    it "excludes traces older than one week" do
+    it "excludes traces older than twenty-eight days" do
       clear_database
       now = Time.now.to_i
-      recent_rx = now - (PotatoMesh::Config.week_seconds / 2)
-      stale_rx = now - (PotatoMesh::Config.week_seconds + 60)
+      recent_rx = now - (PotatoMesh::Config.trace_neighbor_window_seconds / 2)
+      stale_rx = now - (PotatoMesh::Config.trace_neighbor_window_seconds + 60)
       payload = [
         { "id" => 50_001, "src" => 1, "dest" => 2, "rx_time" => recent_rx, "metrics" => {} },
         { "id" => 50_002, "src" => 3, "dest" => 4, "rx_time" => stale_rx, "metrics" => {} },
