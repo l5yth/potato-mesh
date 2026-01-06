@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod cli;
 mod config;
 mod matrix;
 mod potatomesh;
@@ -19,9 +20,11 @@ mod potatomesh;
 use std::{fs, path::Path};
 
 use anyhow::Result;
+use clap::Parser;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
+use crate::cli::Cli;
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
@@ -172,8 +175,18 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cfg = Config::from_default_path()?;
-    info!("Loaded config: {:?}", cfg);
+    let cli = Cli::parse();
+    let bootstrap = Config::load_with_overrides(cli.into_overrides())?;
+    info!("Loaded config: {:?}", bootstrap.config);
+    info!(
+        "Runtime context: in_container={} container_defaults={} config_path={} secrets_dir={:?}",
+        bootstrap.context.in_container,
+        bootstrap.context.container_defaults,
+        bootstrap.context.config_path,
+        bootstrap.context.secrets_dir
+    );
+
+    let cfg = bootstrap.config;
 
     let http = reqwest::Client::builder().build()?;
     let potato = PotatoClient::new(http.clone(), cfg.potatomesh.clone());

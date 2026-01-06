@@ -15,6 +15,11 @@
 
 set -e
 
+# Surface container detection for the bridge and set default secret directory.
+export CONTAINER="${CONTAINER:-1}"
+export POTATOMESH_CONTAINER_DEFAULTS="${POTATOMESH_CONTAINER_DEFAULTS:-1}"
+export POTATOMESH_SECRETS_DIR="${POTATOMESH_SECRETS_DIR:-/run/secrets}"
+
 # Default state file path from Config.toml unless overridden.
 STATE_FILE="${STATE_FILE:-/app/bridge_state.json}"
 STATE_DIR="$(dirname "$STATE_FILE")"

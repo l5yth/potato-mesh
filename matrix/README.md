@@ -54,7 +54,9 @@ This is **not** a full appservice framework; it just speaks the minimal HTTP nee
 
 ## Configuration
 
-All configuration is in `Config.toml` in the project root.
+Configuration can come from TOML, CLI flags, and environment variables. The TOML
+file is optional as long as every required setting is supplied via CLI/env/secret
+overrides.
 
 Example:
 
@@ -79,6 +81,66 @@ room_id = "!yourroomid:example.org"
 # Where to persist last seen message id
 state_file = "bridge_state.json"
 ````
+
+### CLI Overrides
+
+Run `potatomesh-matrix-bridge --help` for the full list. The most common flags:
+
+- `--config` (or `--config-path`) to point at a TOML file
+- `--state-file`
+- `--potatomesh-base-url`
+- `--potatomesh-poll-interval-secs`
+- `--matrix-homeserver`
+- `--matrix-as-token`
+- `--matrix-server-name`
+- `--matrix-room-id`
+- `--container-defaults` / `--no-container-defaults`
+
+### Environment Overrides
+
+Environment variables override CLI and TOML values:
+
+- `POTATOMESH_BASE_URL`
+- `POTATOMESH_POLL_INTERVAL_SECS`
+- `MATRIX_HOMESERVER`
+- `MATRIX_AS_TOKEN`
+- `MATRIX_SERVER_NAME`
+- `MATRIX_ROOM_ID`
+- `STATE_FILE`
+- `POTATOMESH_CONFIG_PATH` (optional TOML path)
+- `POTATOMESH_CONTAINER_DEFAULTS` (`1/0`, `true/false`)
+- `POTATOMESH_SECRETS_DIR` (default secrets directory)
+- `CONTAINER` (container detection hint)
+
+### Docker Secrets
+
+Every env var above supports a `*_FILE` companion (for example, `MATRIX_AS_TOKEN_FILE`).
+When present, the bridge reads the file contents and uses them instead of the plain env var.
+If `POTATOMESH_SECRETS_DIR` is set (or container defaults are enabled), the bridge also
+checks for files named after the env vars (for example, `/run/secrets/MATRIX_AS_TOKEN`)
+even when the `*_FILE` variable is not set.
+
+### Precedence
+
+From highest to lowest:
+
+1. `*_FILE` secret values (explicit or default secrets directory)
+2. Environment variables
+3. CLI flags
+4. TOML config
+5. Built-in defaults
+
+### Container Defaults
+
+When container defaults are enabled (auto-detected or forced):
+
+- Default config path: `/app/Config.toml`
+- Default state file: `/app/bridge_state.json`
+- Default secrets directory: `/run/secrets`
+- Default poll interval: 120 seconds
+
+Disable container defaults with `--no-container-defaults` or set
+`POTATOMESH_CONTAINER_DEFAULTS=0`.
 
 ### PotatoMesh API
 
