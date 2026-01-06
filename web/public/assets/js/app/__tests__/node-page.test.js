@@ -47,7 +47,9 @@ const {
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
+  createTelemetryCharts,
   renderTelemetryCharts,
+  buildUPlotChartConfig,
   renderMessages,
   renderTraceroutes,
   renderTracePath,
@@ -386,23 +388,10 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
     },
   };
   const html = renderTelemetryCharts(node, { nowMs });
-  const fmt = new Date(nowMs);
-  const expectedDate = String(fmt.getDate()).padStart(2, '0');
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Power metrics'), true);
   assert.equal(html.includes('Environmental telemetry'), true);
-  assert.equal(html.includes('Battery (%)'), true);
-  assert.equal(html.includes('Voltage (V)'), true);
-  assert.equal(html.includes('Current (A)'), true);
-  assert.equal(html.includes('Channel utilization (%)'), true);
-  assert.equal(html.includes('Air util TX (%)'), true);
-  assert.equal(html.includes('Utilization (%)'), true);
-  assert.equal(html.includes('Gas resistance (\u03a9)'), true);
-  assert.equal(html.includes('Air quality'), true);
-  assert.equal(html.includes('IAQ index'), true);
-  assert.equal(html.includes('Temperature (\u00b0C)'), true);
-  assert.equal(html.includes(expectedDate), true);
-  assert.equal(html.includes('node-detail__chart-point'), true);
+  assert.equal(html.includes('node-detail__chart-plot'), true);
 });
 
 test('renderTelemetryCharts expands upper bounds when overflow metrics exceed defaults', () => {
@@ -433,12 +422,18 @@ test('renderTelemetryCharts expands upper bounds when overflow metrics exceed de
       },
     },
   };
-  const html = renderTelemetryCharts(node, { nowMs });
-  assert.match(html, />7\.2<\/text>/);
-  assert.match(html, />3\.6<\/text>/);
-  assert.match(html, />45<\/text>/);
-  assert.match(html, />650<\/text>/);
-  assert.match(html, />1100<\/text>/);
+  const { chartModels } = createTelemetryCharts(node, { nowMs });
+  const powerChart = chartModels.find(model => model.id === 'power');
+  const environmentChart = chartModels.find(model => model.id === 'environment');
+  const airChart = chartModels.find(model => model.id === 'airQuality');
+  const powerConfig = buildUPlotChartConfig(powerChart);
+  const envConfig = buildUPlotChartConfig(environmentChart);
+  const airConfig = buildUPlotChartConfig(airChart);
+  assert.equal(powerConfig.options.scales.voltage.range()[1], 7.2);
+  assert.equal(powerConfig.options.scales.current.range()[1], 3.6);
+  assert.equal(envConfig.options.scales.temperature.range()[1], 45);
+  assert.equal(airConfig.options.scales.iaq.range()[1], 650);
+  assert.equal(airConfig.options.scales.pressure.range()[1], 1100);
 });
 
 test('renderTelemetryCharts keeps default bounds when metrics stay within limits', () => {
@@ -469,11 +464,17 @@ test('renderTelemetryCharts keeps default bounds when metrics stay within limits
       },
     },
   };
-  const html = renderTelemetryCharts(node, { nowMs });
-  assert.match(html, />6\.0<\/text>/);
-  assert.match(html, />3\.0<\/text>/);
-  assert.match(html, />40<\/text>/);
-  assert.match(html, />500<\/text>/);
+  const { chartModels } = createTelemetryCharts(node, { nowMs });
+  const powerChart = chartModels.find(model => model.id === 'power');
+  const environmentChart = chartModels.find(model => model.id === 'environment');
+  const airChart = chartModels.find(model => model.id === 'airQuality');
+  const powerConfig = buildUPlotChartConfig(powerChart);
+  const envConfig = buildUPlotChartConfig(environmentChart);
+  const airConfig = buildUPlotChartConfig(airChart);
+  assert.equal(powerConfig.options.scales.voltage.range()[1], 6);
+  assert.equal(powerConfig.options.scales.current.range()[1], 3);
+  assert.equal(envConfig.options.scales.temperature.range()[1], 40);
+  assert.equal(airConfig.options.scales.iaq.range()[1], 500);
 });
 
 test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
@@ -589,17 +590,18 @@ test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
     neighbors: [],
     rawSources: { node: { node_id: '!alpha', role: 'CLIENT', short_name: 'ALPH' } },
   });
-  const html = await fetchNodeDetailHtml(reference, {
+  const result = await fetchNodeDetailHtml(reference, {
     refreshImpl,
     fetchImpl,
     renderShortHtml: short => `<span class="short-name">${short}</span>`,
+    returnState: true,
   });
   assert.equal(calledUrls.some(url => url.includes('/api/messages/!alpha')), true);
   assert.equal(calledUrls.some(url => url.includes('/api/traces/!alpha')), true);
-  assert.equal(html.includes('Example Alpha'), true);
-  assert.equal(html.includes('Overlay hello'), true);
-  assert.equal(html.includes('Traceroutes'), true);
-  assert.equal(html.includes('node-detail__table'), true);
+  assert.equal(result.html.includes('Example Alpha'), true);
+  assert.equal(result.html.includes('Overlay hello'), true);
+  assert.equal(result.html.includes('Traceroutes'), true);
+  assert.equal(result.html.includes('node-detail__table'), true);
 });
 
 test('fetchNodeDetailHtml hydrates traceroute nodes with API metadata', async () => {
@@ -637,16 +639,17 @@ test('fetchNodeDetailHtml hydrates traceroute nodes with API metadata', async ()
     rawSources: { node: { node_id: '!origin', role: 'CLIENT', short_name: 'ORIG' } },
   });
 
-  const html = await fetchNodeDetailHtml(reference, {
+  const result = await fetchNodeDetailHtml(reference, {
     refreshImpl,
     fetchImpl,
     renderShortHtml: short => `<span class="short-name">${short}</span>`,
+    returnState: true,
   });
 
   assert.equal(calledUrls.some(url => url.includes('/api/nodes/!relay')), true);
   assert.equal(calledUrls.some(url => url.includes('/api/nodes/!target')), true);
-  assert.equal(html.includes('RLY1'), true);
-  assert.equal(html.includes('TGT1'), true);
+  assert.equal(result.html.includes('RLY1'), true);
+  assert.equal(result.html.includes('TGT1'), true);
 });
 
 test('fetchNodeDetailHtml requires a node identifier reference', async () => {
