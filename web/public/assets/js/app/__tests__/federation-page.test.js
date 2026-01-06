@@ -27,6 +27,9 @@ test('federation map centers on configured coordinates and follows theme filters
 
   const mapEl = createElement('div', 'map');
   registerElement('map', mapEl);
+  const mapPanel = createElement('div', 'mapPanel');
+  mapPanel.dataset.legendCollapsed = 'true';
+  registerElement('mapPanel', mapPanel);
   const statusEl = createElement('div', 'status');
   registerElement('status', statusEl);
   const tableEl = createElement('table', 'instances');
@@ -408,15 +411,18 @@ test('federation table sorting, contact rendering, and legend creation', async (
     assert.deepEqual(mapSetViewCalls[0], [[0, 0], 3]);
     assert.equal(mapFitBoundsCalls[0][0].length, 3);
 
-    assert.equal(legendContainers.length, 1);
-    const legend = legendContainers[0];
-    assert.ok(legend.className.includes('legend'));
+    assert.equal(legendContainers.length, 2);
+    const legend = legendContainers.find(container => container.className.includes('legend--instances'));
+    assert.ok(legend);
+    assert.ok(legend.className.includes('legend-hidden'));
     const legendHeader = legend.children.find(child => child.className === 'legend-header');
     const legendTitle = legendHeader && Array.isArray(legendHeader.children)
       ? legendHeader.children.find(child => child.className === 'legend-title')
       : null;
     assert.ok(legendTitle);
     assert.equal(legendTitle.textContent, 'Active nodes');
+    const legendToggle = legendContainers.find(container => container.className.includes('legend-toggle'));
+    assert.ok(legendToggle);
   } finally {
     cleanup();
   }
