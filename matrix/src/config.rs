@@ -14,8 +14,7 @@
 
 use serde::Deserialize;
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -290,9 +289,9 @@ fn read_env_u64(key: &str) -> anyhow::Result<Option<u64>> {
         Some(value) => value,
         None => return Ok(None),
     };
-    let parsed = raw.parse::<u64>().map_err(|err| {
-        anyhow::anyhow!("Invalid integer value for {}: {} ({})", key, raw, err)
-    })?;
+    let parsed = raw
+        .parse::<u64>()
+        .map_err(|err| anyhow::anyhow!("Invalid integer value for {}: {} ({})", key, raw, err))?;
     Ok(Some(parsed))
 }
 
@@ -426,15 +425,12 @@ fn resolve_container_defaults(
 }
 
 /// Apply default values and return a fully populated config.
-fn finalize_config(
-    overrides: ConfigOverrides,
-    container_defaults: bool,
-) -> anyhow::Result<Config> {
+fn finalize_config(overrides: ConfigOverrides, container_defaults: bool) -> anyhow::Result<Config> {
     let base_url = overrides
         .potatomesh
         .base_url
         .ok_or_else(|| anyhow::anyhow!("potatomesh.base_url is required"))?;
-    let poll_interval_secs = overrides.potatomesh.poll_interval_secs.unwrap_or_else(|| {
+    let poll_interval_secs = overrides.potatomesh.poll_interval_secs.unwrap_or({
         if container_defaults {
             DEFAULT_CONTAINER_POLL_INTERVAL_SECS
         } else {
