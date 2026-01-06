@@ -237,7 +237,8 @@ fn detect_container() -> bool {
 /// Detect container context from provided inputs (used for testing).
 fn detect_container_from(env_value: Option<&str>, cgroup_contents: Option<&str>) -> bool {
     if let Some(value) = env_value.map(str::trim).filter(|v| !v.is_empty()) {
-        return value != "0" && value != "false" && value != "False";
+        let normalized = value.to_ascii_lowercase();
+        return normalized != "0" && normalized != "false";
     }
 
     if let Some(cgroup) = cgroup_contents {
@@ -672,6 +673,7 @@ mod tests {
         assert!(detect_container_from(Some("true"), None));
         assert!(!detect_container_from(Some("0"), None));
         assert!(!detect_container_from(Some("false"), None));
+        assert!(!detect_container_from(Some("FALSE"), None));
     }
 
     #[test]
@@ -825,5 +827,29 @@ mod tests {
             result.context.secrets_dir,
             Some(PathBuf::from(temp_dir.path()))
         );
+    }
+
+    #[test]
+    #[serial]
+    fn read_env_bool_rejects_invalid_values() {
+        let _guard = EnvGuard::set("POTATOMESH_TEST_BOOL", "maybe");
+        let result = read_env_bool("POTATOMESH_TEST_BOOL");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn read_env_u64_rejects_invalid_values() {
+        let _guard = EnvGuard::set("POTATOMESH_TEST_U64", "not-a-number");
+        let result = read_env_u64("POTATOMESH_TEST_U64");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_secret_file_rejects_empty_contents() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(file.path(), "   ").unwrap();
+        let result = read_secret_file(file.path());
+        assert!(result.is_err());
     }
 }

@@ -95,3 +95,65 @@ impl Cli {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_overrides_map_to_config() {
+        let cli = Cli::parse_from([
+            "bridge",
+            "--config",
+            "/tmp/Config.toml",
+            "--state-file",
+            "/tmp/state.json",
+            "--potatomesh-base-url",
+            "https://potato.example/",
+            "--potatomesh-poll-interval-secs",
+            "15",
+            "--matrix-homeserver",
+            "https://matrix.example.org",
+            "--matrix-as-token",
+            "token",
+            "--matrix-server-name",
+            "example.org",
+            "--matrix-room-id",
+            "!room:example.org",
+            "--container-defaults",
+        ]);
+
+        let overrides = cli.into_overrides();
+        assert_eq!(overrides.config_path.as_deref(), Some("/tmp/Config.toml"));
+        assert_eq!(overrides.container_defaults, Some(true));
+        assert_eq!(
+            overrides.values.potatomesh.base_url.as_deref(),
+            Some("https://potato.example/")
+        );
+        assert_eq!(overrides.values.potatomesh.poll_interval_secs, Some(15));
+        assert_eq!(
+            overrides.values.matrix.homeserver.as_deref(),
+            Some("https://matrix.example.org")
+        );
+        assert_eq!(overrides.values.matrix.as_token.as_deref(), Some("token"));
+        assert_eq!(
+            overrides.values.matrix.server_name.as_deref(),
+            Some("example.org")
+        );
+        assert_eq!(
+            overrides.values.matrix.room_id.as_deref(),
+            Some("!room:example.org")
+        );
+        assert_eq!(
+            overrides.values.state.state_file.as_deref(),
+            Some("/tmp/state.json")
+        );
+    }
+
+    #[test]
+    fn cli_can_disable_container_defaults() {
+        let cli = Cli::parse_from(["bridge", "--no-container-defaults"]);
+        let overrides = cli.into_overrides();
+        assert_eq!(overrides.container_defaults, Some(false));
+    }
+}

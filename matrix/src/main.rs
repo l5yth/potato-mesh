@@ -29,6 +29,13 @@ use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
 
+fn format_runtime_context(context: &config::RuntimeContext) -> String {
+    format!(
+        "Runtime context: in_container={} container_defaults={} config_path={} secrets_dir={:?}",
+        context.in_container, context.container_defaults, context.config_path, context.secrets_dir
+    )
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
     /// Highest message id processed by the bridge.
@@ -178,13 +185,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let bootstrap = Config::load_with_overrides(cli.into_overrides())?;
     info!("Loaded config: {:?}", bootstrap.config);
-    info!(
-        "Runtime context: in_container={} container_defaults={} config_path={} secrets_dir={:?}",
-        bootstrap.context.in_container,
-        bootstrap.context.container_defaults,
-        bootstrap.context.config_path,
-        bootstrap.context.secrets_dir
-    );
+    info!("{}", format_runtime_context(&bootstrap.context));
 
     let cfg = bootstrap.config;
 
@@ -735,5 +736,21 @@ mod tests {
         mock_send.assert();
 
         assert_eq!(state.last_message_id, Some(100));
+    }
+
+    #[test]
+    fn format_runtime_context_includes_flags() {
+        let context = config::RuntimeContext {
+            in_container: true,
+            container_defaults: false,
+            config_path: "/app/Config.toml".to_string(),
+            secrets_dir: Some(std::path::PathBuf::from("/run/secrets")),
+        };
+
+        let rendered = format_runtime_context(&context);
+        assert!(rendered.contains("in_container=true"));
+        assert!(rendered.contains("container_defaults=false"));
+        assert!(rendered.contains("/app/Config.toml"));
+        assert!(rendered.contains("/run/secrets"));
     }
 }
