@@ -213,7 +213,7 @@ module PotatoMesh
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to narrow results.
-      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted node rows suitable for API responses.
       def query_nodes(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
@@ -221,7 +221,8 @@ module PotatoMesh
         db.results_as_hash = true
         now = Time.now.to_i
         min_last_heard = now - PotatoMesh::Config.week_seconds
-        since_threshold = normalize_since_threshold(since, floor: min_last_heard)
+        since_floor = node_ref ? 0 : min_last_heard
+        since_threshold = normalize_since_threshold(since, floor: since_floor)
         params = []
         where_clauses = []
 
@@ -283,7 +284,7 @@ module PotatoMesh
       # Fetch ingestor heartbeats with optional freshness filtering.
       #
       # @param limit [Integer] maximum number of ingestors to return.
-      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted ingestor rows suitable for API responses.
       def query_ingestors(limit, since: 0)
         limit = coerce_query_limit(limit)
@@ -422,7 +423,8 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
-        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
+        since_floor = node_ref ? 0 : min_rx_time
+        since_threshold = normalize_since_threshold(since, floor: since_floor)
         where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
         params << since_threshold
 
@@ -470,7 +472,7 @@ module PotatoMesh
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
-      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted neighbor rows suitable for API responses.
       def query_neighbors(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
@@ -480,7 +482,8 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
-        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
+        since_floor = node_ref ? 0 : min_rx_time
+        since_threshold = normalize_since_threshold(since, floor: since_floor)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
         params << since_threshold
 
@@ -517,7 +520,7 @@ module PotatoMesh
       #
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
-      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted telemetry rows suitable for API responses.
       def query_telemetry(limit, node_ref: nil, since: 0)
         limit = coerce_query_limit(limit)
@@ -527,7 +530,8 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
-        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
+        since_floor = node_ref ? 0 : min_rx_time
+        since_threshold = normalize_since_threshold(since, floor: since_floor)
         where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
         params << since_threshold
 

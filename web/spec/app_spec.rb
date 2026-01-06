@@ -4136,7 +4136,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "excludes nodes whose last activity is older than a week" do
+    it "excludes nodes whose last activity is older than a week from collection queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -4162,7 +4162,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(ids).not_to include("!stale-node")
 
       get "/api/nodes/!stale-node"
-      expect(last_response.status).to eq(404)
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload["node_id"]).to eq("!stale-node")
 
       get "/api/nodes/!fresh-node"
       expect(last_response).to be_ok
@@ -4532,7 +4534,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["payload_b64"]).to eq("AQI=")
     end
 
-    it "excludes position entries older than seven days" do
+    it "excludes position entries older than seven days from collection queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -4561,7 +4563,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
-      expect(filtered.map { |row| row["id"] }).to eq([2])
+      expect(filtered.map { |row| row["id"] }).to eq([2, 1])
     end
 
     it "filters positions using the since parameter for both global and node queries" do
@@ -4646,7 +4648,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/neighbors" do
-    it "excludes neighbor records older than twenty-eight days" do
+    it "excludes neighbor records older than twenty-eight days from collection queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -4688,9 +4690,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
-      expect(filtered.length).to eq(1)
-      expect(filtered.first["neighbor_id"]).to eq("!neighbor-new")
-      expect(filtered.first["rx_time"]).to eq(fresh_rx)
+      expect(filtered.length).to eq(2)
+      expect(filtered.map { |row| row["neighbor_id"] }).to eq(["!neighbor-new", "!neighbor-old"])
     end
 
     it "honours the since parameter for neighbor queries" do
@@ -4834,7 +4835,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect_same_value(second_entry["soil_temperature"], telemetry_metric(second_latest, "soil_temperature"))
     end
 
-    it "excludes telemetry entries older than seven days" do
+    it "excludes telemetry entries older than seven days from collection queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -4863,7 +4864,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
-      expect(filtered.map { |row| row["id"] }).to eq([2])
+      expect(filtered.map { |row| row["id"] }).to eq([2, 1])
     end
 
     it "filters telemetry rows using the since parameter for both global and node-scoped queries" do
