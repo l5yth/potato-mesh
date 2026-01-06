@@ -15,6 +15,7 @@
  */
 
 import { readAppConfig } from './config.js';
+import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
 
@@ -204,6 +205,31 @@ function hasNumberValue(value) {
   return toFiniteNumber(value) != null;
 }
 
+/**
+ * Toggle the legend hidden class on a container element.
+ *
+ * @param {HTMLElement|{ classList?: { toggle?: Function }, className?: string }} container Legend container.
+ * @param {boolean} hidden Whether the legend should be hidden.
+ * @returns {void}
+ */
+function toggleLegendHiddenClass(container, hidden) {
+  if (!container) return;
+  if (container.classList && typeof container.classList.toggle === 'function') {
+    container.classList.toggle('legend-hidden', hidden);
+    return;
+  }
+  if (typeof container.className === 'string') {
+    const classes = container.className.split(/\s+/).filter(Boolean);
+    const hasHidden = classes.includes('legend-hidden');
+    if (hidden && !hasHidden) {
+      classes.push('legend-hidden');
+    } else if (!hidden && hasHidden) {
+      classes.splice(classes.indexOf('legend-hidden'), 1);
+    }
+    container.className = classes.join(' ');
+  }
+}
+
 const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
 
 /**
@@ -223,6 +249,7 @@ export async function initializeFederationPage(options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const leaflet = options.leaflet || (typeof window !== 'undefined' ? window.L : null);
   const mapContainer = document.getElementById('map');
+  const mapPanel = document.getElementById('mapPanel');
   const tableEl = document.getElementById('instances');
   const tableBody = document.querySelector('#instances tbody');
   const statusEl = document.getElementById('status');
@@ -239,6 +266,13 @@ export async function initializeFederationPage(options = {}) {
   let map = null;
   let markersLayer = null;
   let tileLayer = null;
+  let legendContainer = null;
+  let legendToggleButton = null;
+  let legendVisible = true;
+  const legendCollapsedValue = mapPanel ? mapPanel.getAttribute('data-legend-collapsed') : null;
+  const legendDefaultCollapsed = legendCollapsedValue == null
+    ? true
+    : legendCollapsedValue.trim() !== 'false';
   const tableSorters = {
     name: { getValue: inst => inst.name ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     domain: { getValue: inst => inst.domain ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
@@ -355,6 +389,37 @@ export async function initializeFederationPage(options = {}) {
 
     tableBody.replaceChildren(frag);
     syncSortIndicators();
+  };
+
+  /**
+   * Update the pressed state of the legend visibility toggle button.
+   *
+   * @returns {void}
+   */
+  const updateLegendToggleState = () => {
+    if (!legendToggleButton) return;
+    const baseLabel = legendVisible ? 'Hide map legend' : 'Show map legend';
+    const baseText = legendVisible ? 'Hide legend' : 'Show legend';
+    legendToggleButton.setAttribute('aria-pressed', legendVisible ? 'true' : 'false');
+    legendToggleButton.setAttribute('aria-label', baseLabel);
+    legendToggleButton.textContent = baseText;
+  };
+
+  /**
+   * Show or hide the map legend component.
+   *
+   * @param {boolean} visible Whether the legend should be displayed.
+   * @returns {void}
+   */
+  const setLegendVisibility = visible => {
+    legendVisible = Boolean(visible);
+    if (legendContainer) {
+      toggleLegendHiddenClass(legendContainer, !legendVisible);
+      if (typeof legendContainer.setAttribute === 'function') {
+        legendContainer.setAttribute('aria-hidden', legendVisible ? 'false' : 'true');
+      }
+    }
+    updateLegendToggleState();
   };
 
   /**
@@ -483,6 +548,15 @@ export async function initializeFederationPage(options = {}) {
     const canRenderLegend =
       typeof leaflet.control === 'function' && leaflet.DomUtil && typeof leaflet.DomUtil.create === 'function';
     if (canRenderLegend) {
+      const legendMediaQuery = typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(max-width: 1024px)')
+        : null;
+      const initialLegendVisible = resolveLegendVisibility({
+        defaultCollapsed: legendDefaultCollapsed,
+        mediaQueryMatches: legendMediaQuery ? legendMediaQuery.matches : false
+      });
+      legendVisible = initialLegendVisible;
+
       const legendStops = NODE_COUNT_COLOR_STOPS.map((stop, index) => {
         const lower = index === 0 ? 0 : NODE_COUNT_COLOR_STOPS[index - 1].limit;
         const upper = stop.limit - 1;
@@ -495,7 +569,11 @@ export async function initializeFederationPage(options = {}) {
       const legend = leaflet.control({ position: 'bottomright' });
       legend.onAdd = function onAdd() {
         const container = leaflet.DomUtil.create('div', 'legend legend--instances');
+        container.id = 'federationLegend';
         container.setAttribute('aria-label', 'Active nodes legend');
+        container.setAttribute('role', 'region');
+        container.setAttribute('aria-hidden', initialLegendVisible ? 'false' : 'true');
+        toggleLegendHiddenClass(container, !initialLegendVisible);
         const header = leaflet.DomUtil.create('div', 'legend-header', container);
         const title = leaflet.DomUtil.create('span', 'legend-title', header);
         title.textContent = 'Active nodes';
@@ -508,9 +586,46 @@ export async function initializeFederationPage(options = {}) {
           const label = leaflet.DomUtil.create('span', 'legend-label', item);
           label.textContent = stop.label;
         });
+        legendContainer = container;
         return container;
       };
       legend.addTo(map);
+
+      const legendToggleControl = leaflet.control({ position: 'bottomright' });
+      legendToggleControl.onAdd = function onAdd() {
+        const container = leaflet.DomUtil.create('div', 'leaflet-control legend-toggle');
+        const button = leaflet.DomUtil.create('button', 'legend-toggle-button', container);
+        button.type = 'button';
+        button.setAttribute('aria-controls', 'federationLegend');
+        button.addEventListener?.('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          setLegendVisibility(!legendVisible);
+        });
+        legendToggleButton = button;
+        updateLegendToggleState();
+        if (leaflet.DomEvent && typeof leaflet.DomEvent.disableClickPropagation === 'function') {
+          leaflet.DomEvent.disableClickPropagation(container);
+        }
+        if (leaflet.DomEvent && typeof leaflet.DomEvent.disableScrollPropagation === 'function') {
+          leaflet.DomEvent.disableScrollPropagation(container);
+        }
+        return container;
+      };
+      legendToggleControl.addTo(map);
+
+      setLegendVisibility(initialLegendVisible);
+      if (legendMediaQuery) {
+        const changeHandler = event => {
+          if (legendDefaultCollapsed) return;
+          setLegendVisibility(!event.matches);
+        };
+        if (typeof legendMediaQuery.addEventListener === 'function') {
+          legendMediaQuery.addEventListener('change', changeHandler);
+        } else if (typeof legendMediaQuery.addListener === 'function') {
+          legendMediaQuery.addListener(changeHandler);
+        }
+      }
     }
 
     for (const instance of instances) {

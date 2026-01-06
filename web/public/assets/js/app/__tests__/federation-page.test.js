@@ -27,6 +27,9 @@ test('federation map centers on configured coordinates and follows theme filters
 
   const mapEl = createElement('div', 'map');
   registerElement('map', mapEl);
+  const mapPanel = createElement('div', 'mapPanel');
+  mapPanel.dataset.legendCollapsed = 'true';
+  registerElement('mapPanel', mapPanel);
   const statusEl = createElement('div', 'status');
   registerElement('status', statusEl);
   const tableEl = createElement('table', 'instances');
@@ -408,15 +411,192 @@ test('federation table sorting, contact rendering, and legend creation', async (
     assert.deepEqual(mapSetViewCalls[0], [[0, 0], 3]);
     assert.equal(mapFitBoundsCalls[0][0].length, 3);
 
-    assert.equal(legendContainers.length, 1);
-    const legend = legendContainers[0];
-    assert.ok(legend.className.includes('legend'));
+    assert.equal(legendContainers.length, 2);
+    const legend = legendContainers.find(container => container.className.includes('legend--instances'));
+    assert.ok(legend);
+    assert.ok(legend.className.includes('legend-hidden'));
     const legendHeader = legend.children.find(child => child.className === 'legend-header');
     const legendTitle = legendHeader && Array.isArray(legendHeader.children)
       ? legendHeader.children.find(child => child.className === 'legend-title')
       : null;
     assert.ok(legendTitle);
     assert.equal(legendTitle.textContent, 'Active nodes');
+    const legendToggle = legendContainers.find(container => container.className.includes('legend-toggle'));
+    assert.ok(legendToggle);
+  } finally {
+    cleanup();
+  }
+});
+
+test('federation legend toggle respects media query changes', async () => {
+  const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
+  const { document, createElement, registerElement, cleanup } = env;
+
+  const mapEl = createElement('div', 'map');
+  registerElement('map', mapEl);
+  const mapPanel = createElement('div', 'mapPanel');
+  mapPanel.setAttribute('data-legend-collapsed', 'false');
+  registerElement('mapPanel', mapPanel);
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  tableEl.appendChild(tbodyEl);
+
+  const configPayload = {
+    mapCenter: { lat: 0, lon: 0 },
+    mapZoom: 3,
+    tileFilters: { light: 'none', dark: 'invert(1)' }
+  };
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify(configPayload));
+
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+
+  let mediaQueryHandler = null;
+  window.matchMedia = () => ({
+    matches: false,
+    addListener(handler) {
+      mediaQueryHandler = handler;
+    }
+  });
+
+  const legendContainers = [];
+  const legendButtons = [];
+
+  const DomUtil = {
+    create(tag, className, parent) {
+      const classSet = new Set(className ? className.split(/\s+/).filter(Boolean) : []);
+      const el = {
+        tagName: tag,
+        className,
+        classList: {
+          toggle(name, force) {
+            const shouldAdd = typeof force === 'boolean' ? force : !classSet.has(name);
+            if (shouldAdd) {
+              classSet.add(name);
+            } else {
+              classSet.delete(name);
+            }
+            el.className = Array.from(classSet).join(' ');
+          }
+        },
+        children: [],
+        style: {},
+        textContent: '',
+        attributes: new Map(),
+        setAttribute(name, value) {
+          this.attributes.set(name, String(value));
+        },
+        appendChild(child) {
+          this.children.push(child);
+          return child;
+        },
+        addEventListener(event, handler) {
+          if (event === 'click') {
+            this._clickHandler = handler;
+          }
+        },
+        querySelector() {
+          return null;
+        }
+      };
+      if (parent && parent.appendChild) parent.appendChild(el);
+      if (className && className.includes('legend-toggle-button')) {
+        legendButtons.push(el);
+      }
+      return el;
+    }
+  };
+
+  const controlStub = () => {
+    const ctrl = {
+      onAdd: null,
+      container: null,
+      addTo(map) {
+        this.container = this.onAdd ? this.onAdd(map) : null;
+        legendContainers.push(this.container);
+        return this;
+      },
+      getContainer() {
+        return this.container;
+      }
+    };
+    return ctrl;
+  };
+
+  const markersLayer = {
+    addLayer() {
+      return null;
+    },
+    addTo() {
+      return this;
+    }
+  };
+
+  const leafletStub = {
+    map() {
+      return {
+        setView() {},
+        on() {},
+        fitBounds() {}
+      };
+    },
+    tileLayer() {
+      return {
+        addTo() {
+          return this;
+        },
+        getContainer() {
+          return null;
+        },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return markersLayer;
+    },
+    circleMarker() {
+      return {
+        bindPopup() {
+          return this;
+        }
+      };
+    },
+    control: controlStub,
+    DomUtil,
+    DomEvent: {
+      disableClickPropagation() {},
+      disableScrollPropagation() {}
+    }
+  };
+
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => []
+  });
+
+  try {
+    await initializeFederationPage({ config: configPayload, fetchImpl, leaflet: leafletStub });
+
+    const legend = legendContainers.find(container => container.className.includes('legend--instances'));
+    assert.ok(legend);
+    assert.ok(!legend.className.includes('legend-hidden'));
+
+    assert.equal(legendButtons.length, 1);
+    legendButtons[0]._clickHandler?.({ preventDefault() {}, stopPropagation() {} });
+    assert.ok(legend.className.includes('legend-hidden'));
+
+    if (mediaQueryHandler) {
+      mediaQueryHandler({ matches: false });
+      assert.ok(!legend.className.includes('legend-hidden'));
+    }
   } finally {
     cleanup();
   }
