@@ -15,6 +15,7 @@
  */
 
 import { fetchNodeDetailHtml } from './node-page.js';
+import { initializeNodeDetailMapPanel } from './node-detail-map.js';
 
 /**
  * Escape a string for safe HTML injection.
@@ -106,6 +107,7 @@ export function createNodeDetailOverlayManager(options = {}) {
   let lastTrigger = null;
   let isVisible = false;
   let keydownHandler = null;
+  let mapCleanup = null;
 
   function lockBodyScroll(lock) {
     if (!documentRef.body || !documentRef.body.style) {
@@ -154,6 +156,10 @@ export function createNodeDetailOverlayManager(options = {}) {
     lockBodyScroll(false);
     detachKeydown();
     requestToken += 1;
+    if (typeof mapCleanup === 'function') {
+      mapCleanup();
+      mapCleanup = null;
+    }
     const trigger = lastTrigger;
     lastTrigger = null;
     if (trigger && typeof trigger.focus === 'function') {
@@ -203,11 +209,21 @@ export function createNodeDetailOverlayManager(options = {}) {
         refreshImpl,
         renderShortHtml,
         privateMode,
+        includeMapPanel: true,
       });
       if (currentToken !== requestToken) {
         return;
       }
       content.innerHTML = html;
+      if (typeof mapCleanup === 'function') {
+        mapCleanup();
+        mapCleanup = null;
+      }
+      mapCleanup = await initializeNodeDetailMapPanel(content, reference, {
+        fetchImpl,
+        logger,
+        document: documentRef,
+      });
       if (typeof closeButton.focus === 'function') {
         closeButton.focus();
       }

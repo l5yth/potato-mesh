@@ -1199,6 +1199,61 @@ body.dark .node-detail-overlay__close:hover {
   margin: 12px 0 24px;
 }
 
+.node-detail__map-panel {
+  padding: 0 20px;
+  margin: 12px 0 24px;
+}
+
+.node-detail__map-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.node-detail__map-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.node-detail__map-staging {
+  display: none;
+}
+
+.node-detail__map-status {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.node-detail__map-slot .map-panel {
+  height: 220px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.map-panel--embedded {
+  flex: none;
+  height: 220px;
+  min-height: 0;
+}
+
+.map-panel--embedded #map {
+  height: 220px;
+  border-radius: 12px;
+  border: none;
+}
+
+.map-panel--embedded #mapLegend {
+  display: none;
+}
+
+.map-panel--embedded .map-toolbar {
+  top: 8px;
+  right: 8px;
+}
+
 .node-detail__charts-grid {
   display: grid;
   gap: 24px;

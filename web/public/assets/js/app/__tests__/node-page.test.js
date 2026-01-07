@@ -551,6 +551,23 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
   assert.equal(html.includes('Air quality'), true);
 });
 
+test('renderNodeDetailHtml includes a map panel when requested', () => {
+  const node = {
+    shortName: 'NODE',
+    nodeId: '!map',
+    role: 'CLIENT',
+    rawSources: {
+      node: { node_id: '!map', role: 'CLIENT', short_name: 'NODE' },
+    },
+  };
+  const html = renderNodeDetailHtml(node, {
+    renderShortHtml: short => `<span class="short-name">${short}</span>`,
+    includeMapPanel: true,
+  });
+  assert.equal(html.includes('node-detail__map-panel'), true);
+  assert.equal(html.includes('data-node-map-slot'), true);
+});
+
 test('fetchNodeDetailHtml renders the node layout for overlays', async () => {
   const reference = { nodeId: '!alpha' };
   const calledUrls = [];
