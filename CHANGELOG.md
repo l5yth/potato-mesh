@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## v0.5.9
+
+* Matrix: listen for synapse on port 41448 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/607>
+* Web: collapse federation map ledgend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/604>
+* Web: fix stale node queries by @l5yth in <https://github.com/l5yth/potato-mesh/pull/603>
+* Matrix: move short name to display name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/602>
+* Ci: update ruby to 4 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/601>
+* Web: display traces of last 28 days if available by @l5yth in <https://github.com/l5yth/potato-mesh/pull/599>
+* Web: establish menu structure by @l5yth in <https://github.com/l5yth/potato-mesh/pull/597>
+* Matrix: fixed the text-message checkpoint regression by @l5yth in <https://github.com/l5yth/potato-mesh/pull/595>
+* Matrix: cache seen messages by rx_time not id by @l5yth in <https://github.com/l5yth/potato-mesh/pull/594>
+* Web: hide the default '0' tab when not active by @l5yth in <https://github.com/l5yth/potato-mesh/pull/593>
+* Matrix: fix empty bridge state json by @l5yth in <https://github.com/l5yth/potato-mesh/pull/592>
+* Web: allow certain charts to overflow upper bounds by @l5yth in <https://github.com/l5yth/potato-mesh/pull/585>
+* Ingestor: support ROUTING_APP messages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/584>
+* Ci: run nix flake check on ci by @l5yth in <https://github.com/l5yth/potato-mesh/pull/583>
+* Web: hide legend by default by @l5yth in <https://github.com/l5yth/potato-mesh/pull/582>
+* Nix flake by @benjajaja in <https://github.com/l5yth/potato-mesh/pull/577>
+* Support BLE UUID format for macOS Bluetooth devices by @apo-mak in <https://github.com/l5yth/potato-mesh/pull/575>
+* Web: add mesh.qrp.ro as seed node by @l5yth in <https://github.com/l5yth/potato-mesh/pull/573>
+* Web: ensure unknown nodes for messages and traces by @l5yth in <https://github.com/l5yth/potato-mesh/pull/572>
+* Chore: bump version to 0.5.9 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/569>
+
+## v0.5.8
+
+* Web: add secondary seed node jmrp.io by @l5yth in <https://github.com/l5yth/potato-mesh/pull/568>
+* Data: implement whitelist for ingestor by @l5yth in <https://github.com/l5yth/potato-mesh/pull/567>
+* Web: add ?since= parameter to all apis by @l5yth in <https://github.com/l5yth/potato-mesh/pull/566>
+* Matrix: fix docker build by @l5yth in <https://github.com/l5yth/potato-mesh/pull/565>
+* Matrix: fix docker build by @l5yth in <https://github.com/l5yth/potato-mesh/pull/564>
+* Web: fix federation signature validation and create fallback by @l5yth in <https://github.com/l5yth/potato-mesh/pull/563>
+* Chore: update readme by @l5yth in <https://github.com/l5yth/potato-mesh/pull/561>
+* Matrix: add docker file for bridge by @l5yth in <https://github.com/l5yth/potato-mesh/pull/556>
+* Matrix: add health checks to startup by @l5yth in <https://github.com/l5yth/potato-mesh/pull/555>
+* Matrix: omit the api part in base url by @l5yth in <https://github.com/l5yth/potato-mesh/pull/554>
+* App: add utility coverage tests for main.dart by @l5yth in <https://github.com/l5yth/potato-mesh/pull/552>
+* Data: add thorough daemon unit tests by @l5yth in <https://github.com/l5yth/potato-mesh/pull/553>
+* Chore: bump version to 0.5.8 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/551>
+
 ## v0.5.7
 
 * Data: track ingestors heartbeat by @l5yth in <https://github.com/l5yth/potato-mesh/pull/549>

@@ -2,6 +2,8 @@
 
 A small Rust daemon that bridges **PotatoMesh** LoRa messages into a **Matrix** room.
 
+![matrix bridge](../scrot-0.6.png)
+
 For each PotatoMesh node, the bridge creates (or uses) a **Matrix puppet user**:
 
 - Matrix localpart: `potato_` + the hex node id (without `!`), e.g. `!67fc83cb` → `@potato_67fc83cb:example.org`
@@ -70,6 +72,8 @@ poll_interval_secs = 10
 homeserver = "https://matrix.example.org"
 # Appservice access token (from your registration.yaml)
 as_token = "YOUR_APPSERVICE_AS_TOKEN"
+# Appservice homeserver token (must match registration hs_token)
+hs_token = "SECRET_HS_TOKEN"
 # Server name (domain) part of Matrix user IDs
 server_name = "example.org"
 # Room ID to send into (must be joined by the appservice / puppets)
@@ -79,6 +83,8 @@ room_id = "!yourroomid:example.org"
 # Where to persist last seen message id
 state_file = "bridge_state.json"
 ````
+
+The `hs_token` is used to validate inbound appservice transactions. Keep it identical in `Config.toml` and your Matrix appservice registration file.
 
 ### PotatoMesh API
 

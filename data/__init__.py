@@ -18,7 +18,7 @@ The ``data.mesh`` module exposes helpers for reading Meshtastic node and
 message information before forwarding it to the accompanying web application.
 """
 
-VERSION = "0.5.9"
+VERSION = "0.5.10"
 """Semantic version identifier shared with the dashboard and front-end."""
 
 __version__ = VERSION
