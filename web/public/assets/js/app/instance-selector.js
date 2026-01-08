@@ -284,4 +284,4 @@ export async function initializeInstanceSelector(options) {
   });
 }
 
-export const __test__ = { resolveInstanceLabel };
+export const __test__ = { resolveInstanceLabel, updateFederationNavCount };
