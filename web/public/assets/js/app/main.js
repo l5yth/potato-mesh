@@ -1804,6 +1804,27 @@ export function initializeApp(config) {
   potatoMeshNamespace.getRoleColor = getRoleColor;
   potatoMeshNamespace.getRoleKey = getRoleKey;
   potatoMeshNamespace.normalizeRole = normalizeRole;
+  potatoMeshNamespace.map = map || null;
+  potatoMeshNamespace.leaflet = typeof L === 'undefined' ? null : L;
+  potatoMeshNamespace.mapLayers = {
+    markersLayer: markersLayer || null,
+    neighborLinesLayer: neighborLinesLayer || null,
+    traceLinesLayer: traceLinesLayer || null,
+  };
+  /**
+   * Expose the active map instance and Leaflet context for shared overlays.
+   *
+   * @returns {{ map: ?Object, leaflet: ?Object, layers: Object }} Map context.
+   */
+  potatoMeshNamespace.getMapContext = () => ({
+    map: map || null,
+    leaflet: typeof L === 'undefined' ? null : L,
+    layers: {
+      markersLayer: markersLayer || null,
+      neighborLinesLayer: neighborLinesLayer || null,
+      traceLinesLayer: traceLinesLayer || null,
+    },
+  });
 
   /**
    * Escape a CSS selector fragment with a defensive fallback for
@@ -3871,6 +3892,9 @@ export function initializeApp(config) {
    */
   function renderMap(nodes, nowSec) {
     if (!map || !markersLayer || !hasLeaflet) {
+      return;
+    }
+    if (mapPanel && mapPanel.classList && mapPanel.classList.contains('map-panel--embedded')) {
       return;
     }
     if (neighborLinesLayer) {
