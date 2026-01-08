@@ -62,14 +62,14 @@ async fn handle_transaction(
         .as_ref()
         .is_some_and(|token| token == &state.hs_token);
     if !token_matches {
-        return StatusCode::UNAUTHORIZED;
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({})));
     }
     let response = SynapseResponse { txn_id, payload };
     info!(
         "Status response: SynapseResponse {{ txn_id: {}, payload: {:?} }}",
         response.txn_id, response.payload
     );
-    StatusCode::OK
+    (StatusCode::OK, Json(serde_json::json!({})))
 }
 
 /// Listen for Synapse callbacks on the configured address.
