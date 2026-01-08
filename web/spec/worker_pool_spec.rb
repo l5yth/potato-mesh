@@ -18,8 +18,13 @@ require "spec_helper"
 require "timeout"
 
 RSpec.describe PotatoMesh::App::WorkerPool do
-  def with_pool(size: 2, queue: 2)
-    pool = PotatoMesh::App::WorkerPool.new(size: size, max_queue: queue, name: "spec-pool")
+  def with_pool(size: 2, queue: 2, task_timeout: nil)
+    pool = PotatoMesh::App::WorkerPool.new(
+      size: size,
+      max_queue: queue,
+      task_timeout: task_timeout,
+      name: "spec-pool",
+    )
     yield pool
   ensure
     pool&.shutdown(timeout: 0.5)
@@ -30,6 +35,13 @@ RSpec.describe PotatoMesh::App::WorkerPool do
       with_pool do |pool|
         task = pool.schedule { 21 + 21 }
         expect(task.wait(timeout: 1)).to eq(42)
+      end
+    end
+
+    it "fails tasks that exceed the configured timeout" do
+      with_pool(task_timeout: 0.01) do |pool|
+        task = pool.schedule { sleep 0.05; :late }
+        expect { task.wait(timeout: 1) }.to raise_error(described_class::TaskTimeoutError)
       end
     end
 
