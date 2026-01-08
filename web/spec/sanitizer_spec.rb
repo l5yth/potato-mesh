@@ -75,6 +75,7 @@ RSpec.describe PotatoMesh::Sanitizer do
     before do
       allow(PotatoMesh::Config).to receive_messages(
         site_name: "  Spec Mesh  ",
+        announcement: "  Next Meetup  ",
         channel: "  #Spec  ",
         frequency: " 915MHz  ",
         contact_link: "  #room:example.org  ",
@@ -84,6 +85,7 @@ RSpec.describe PotatoMesh::Sanitizer do
 
     it "provides trimmed strings" do
       expect(described_class.sanitized_site_name).to eq("Spec Mesh")
+      expect(described_class.sanitized_announcement).to eq("Next Meetup")
       expect(described_class.sanitized_channel).to eq("#Spec")
       expect(described_class.sanitized_frequency).to eq("915MHz")
       expect(described_class.sanitized_contact_link).to eq("#room:example.org")
@@ -96,6 +98,12 @@ RSpec.describe PotatoMesh::Sanitizer do
 
       expect(described_class.sanitized_contact_link).to be_nil
       expect(described_class.sanitized_contact_link_url).to be_nil
+    end
+
+    it "returns nil when the announcement is blank" do
+      allow(PotatoMesh::Config).to receive(:announcement).and_return("  ")
+
+      expect(described_class.sanitized_announcement).to be_nil
     end
 
     it "returns nil when the distance is not positive" do

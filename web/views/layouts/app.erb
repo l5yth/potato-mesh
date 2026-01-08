@@ -94,7 +94,8 @@
    refresh_info_text = full_screen_view ? nil : "#{channel} (#{frequency}) — active nodes: …"
    refresh_row_classes << "refresh-row--no-info" if refresh_info_text.nil?
    refresh_info_classes = ["refresh-info"]
-   refresh_info_classes << "refresh-info--hidden" if refresh_info_text.nil? %>
+   refresh_info_classes << "refresh-info--hidden" if refresh_info_text.nil?
+   announcement_markup = announcement_html %>
 <body
   class="<%= body_classes.join(" ") %>"
   data-app-config="<%= Rack::Utils.escape_html(app_config_json) %>"
@@ -103,6 +104,11 @@
 >
   <div class="<%= shell_classes.join(" ") %>">
     <% if show_header %>
+      <% if announcement_markup && !announcement_markup.empty? %>
+        <div class="announcement-banner" role="status" aria-live="polite">
+          <p class="announcement-banner__content"><%= announcement_markup %></p>
+        </div>
+      <% end %>
       <header class="site-header">
         <div class="site-header__left<%= federation_nav_enabled ? " site-header__left--federation" : "" %>">
           <h1 class="site-title">
@@ -128,7 +134,7 @@
             <a href="<%= nodes_nav_href %>" class="site-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
             <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
             <% if federation_nav_enabled %>
-              <a href="/federation" class="site-nav__link<%= view_mode == :federation ? " is-active" : "" %>"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
+              <a href="/federation" class="site-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
           </nav>
           <button
@@ -159,7 +165,7 @@
             <a href="<%= nodes_nav_href %>" class="mobile-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
             <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
             <% if federation_nav_enabled %>
-              <a href="/federation" class="mobile-nav__link<%= view_mode == :federation ? " is-active" : "" %>"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
+              <a href="/federation" class="mobile-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
           </nav>
         </div>

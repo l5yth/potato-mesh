@@ -30,6 +30,9 @@
   --input-border: rgba(12, 15, 18, 0.18);
   --input-placeholder: rgba(12, 15, 18, 0.45);
   --control-accent: var(--accent);
+  --announcement-bg: #fff4d6;
+  --announcement-fg: #7a3f00;
+  --announcement-border: #f0c05b;
   --pad: 16px;
   --map-tile-filter-light: grayscale(1) saturate(0) brightness(0.92) contrast(1.05);
   --map-tile-filter-dark: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
@@ -59,6 +62,9 @@ body.dark {
   --input-border: rgba(230, 235, 240, 0.24);
   --input-placeholder: rgba(230, 235, 240, 0.55);
   --control-accent: var(--accent);
+  --announcement-bg: #3b2500;
+  --announcement-fg: #ffd184;
+  --announcement-border: #a56a00;
 }
 
 html,
@@ -238,6 +244,29 @@ h1 {
 .site-header__right {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.announcement-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.6em;
+  padding: 0 var(--pad);
+  border-radius: 999px;
+  background: var(--announcement-bg);
+  color: var(--announcement-fg);
+  border: 1px solid var(--announcement-border);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.announcement-banner__content {
+  margin: 0;
+  line-height: 1.6;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .site-title {

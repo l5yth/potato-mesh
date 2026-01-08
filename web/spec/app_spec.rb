@@ -728,6 +728,34 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(sanitized_contact_link).to be_nil
       end
 
+      it "returns nil when the announcement is unset" do
+        allow(PotatoMesh::Config).to receive(:announcement).and_return(nil)
+        expect(announcement_html).to be_nil
+      end
+
+      it "renders announcement links with safe targets" do
+        allow(PotatoMesh::Config).to receive(:announcement).and_return("Visit https://example.org now.")
+
+        expect(announcement_html).to include(
+          '<a href="https://example.org" target="_blank" rel="noopener noreferrer">https://example.org</a>',
+        )
+      end
+
+      it "escapes announcement text while preserving links" do
+        allow(PotatoMesh::Config).to receive(:announcement).and_return("<b>Hi</b> https://example.org")
+
+        expect(announcement_html).to include("&lt;b&gt;Hi&lt;/b&gt;")
+        expect(announcement_html).to include(
+          '<a href="https://example.org" target="_blank" rel="noopener noreferrer">https://example.org</a>',
+        )
+      end
+
+      it "returns escaped announcement text when no links are present" do
+        allow(PotatoMesh::Config).to receive(:announcement).and_return("<hi>")
+
+        expect(announcement_html).to eq("&lt;hi&gt;")
+      end
+
       it "coerces string_or_nil inputs" do
         expect(string_or_nil("  hello \n")).to eq("hello")
         expect(string_or_nil("   ")).to be_nil

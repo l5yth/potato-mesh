@@ -191,3 +191,32 @@ test('initializeInstanceSelector navigates to the chosen instance domain', async
     env.cleanup();
   }
 });
+
+test('initializeInstanceSelector updates federation navigation labels with instance count', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+  const navLink = env.document.createElement('a');
+  navLink.classList.add('js-federation-nav');
+  navLink.textContent = 'Federation';
+  env.document.body.appendChild(navLink);
+
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return [{ domain: 'alpha.mesh' }, { domain: 'beta.mesh' }];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.equal(navLink.textContent, 'Federation (2)');
+  } finally {
+    env.cleanup();
+  }
+});
