@@ -34,6 +34,50 @@ function resolveInstanceLabel(entry) {
   return domain;
 }
 
+/**
+ * Update federation navigation labels with the instance count.
+ *
+ * @param {{
+ *   documentObject?: Document | null,
+ *   count: number
+ * }} options Configuration for updating the navigation labels.
+ * @returns {void}
+ */
+function updateFederationNavCount(options) {
+  const { documentObject, count } = options;
+
+  if (!documentObject || typeof count !== 'number' || !Number.isFinite(count)) {
+    return;
+  }
+
+  const normalizedCount = Math.max(0, Math.floor(count));
+  const root = typeof documentObject.querySelectorAll === 'function'
+    ? documentObject
+    : documentObject.body;
+
+  if (!root || typeof root.querySelectorAll !== 'function') {
+    return;
+  }
+
+  const links = Array.from(root.querySelectorAll('.js-federation-nav'));
+
+  links.forEach(link => {
+    if (!link || typeof link !== 'object') {
+      return;
+    }
+
+    const dataset = link.dataset || {};
+    const storedLabel = typeof dataset.federationLabel === 'string' ? dataset.federationLabel.trim() : '';
+    const fallbackLabel = typeof link.textContent === 'string'
+      ? link.textContent.split('(')[0].trim()
+      : 'Federation';
+    const label = storedLabel || fallbackLabel || 'Federation';
+
+    dataset.federationLabel = label;
+    link.textContent = `${label} (${normalizedCount})`;
+  });
+}
+
  /**
   * Construct a navigable URL for the provided instance domain.
   *
@@ -166,6 +210,8 @@ export async function initializeInstanceSelector(options) {
     return;
   }
 
+  updateFederationNavCount({ documentObject: doc, count: payload.length });
+
   const sanitizedDomain = typeof instanceDomain === 'string' ? instanceDomain.trim().toLowerCase() : null;
 
   const sortedEntries = payload
@@ -238,4 +284,4 @@ export async function initializeInstanceSelector(options) {
   });
 }
 
-export const __test__ = { resolveInstanceLabel };
+export const __test__ = { resolveInstanceLabel, updateFederationNavCount };

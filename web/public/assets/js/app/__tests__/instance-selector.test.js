@@ -20,7 +20,7 @@ import { createDomEnvironment } from './dom-environment.js';
 
 import { buildInstanceUrl, initializeInstanceSelector, __test__ } from '../instance-selector.js';
 
-const { resolveInstanceLabel } = __test__;
+const { resolveInstanceLabel, updateFederationNavCount } = __test__;
 
 function setupSelectElement(document) {
   const select = document.createElement('select');
@@ -187,6 +187,68 @@ test('initializeInstanceSelector navigates to the chosen instance domain', async
     select.dispatchEvent({ type: 'change', target: select });
 
     assert.equal(navigatedTo, 'https://mesh.example');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('initializeInstanceSelector updates federation navigation labels with instance count', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+  const navLink = env.document.createElement('a');
+  navLink.classList.add('js-federation-nav');
+  navLink.textContent = 'Federation';
+  env.document.body.appendChild(navLink);
+
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return [{ domain: 'alpha.mesh' }, { domain: 'beta.mesh' }];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.equal(navLink.textContent, 'Federation (2)');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('updateFederationNavCount prefers stored labels and normalizes counts', () => {
+  const env = createDomEnvironment();
+  const navLink = env.document.createElement('a');
+  navLink.classList.add('js-federation-nav');
+  navLink.textContent = 'Federation';
+  navLink.dataset.federationLabel = 'Community';
+  env.document.body.appendChild(navLink);
+
+  try {
+    updateFederationNavCount({ documentObject: env.document, count: -3 });
+
+    assert.equal(navLink.textContent, 'Community (0)');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('updateFederationNavCount falls back to existing link text when no dataset label', () => {
+  const env = createDomEnvironment();
+  const navLink = env.document.createElement('a');
+  navLink.classList.add('js-federation-nav');
+  navLink.textContent = 'Federation (9)';
+  env.document.body.appendChild(navLink);
+
+  try {
+    updateFederationNavCount({ documentObject: env.document, count: 4 });
+
+    assert.equal(navLink.textContent, 'Federation (4)');
   } finally {
     env.cleanup();
   }

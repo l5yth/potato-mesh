@@ -444,6 +444,13 @@ module PotatoMesh
       fetch_string("SITE_NAME", "PotatoMesh Demo")
     end
 
+    # Retrieve the configured announcement banner copy.
+    #
+    # @return [String, nil] announcement string when configured.
+    def announcement
+      fetch_string("ANNOUNCEMENT", nil)
+    end
+
     # Retrieve the default radio channel label.
     #
     # @return [String] channel name from configuration.

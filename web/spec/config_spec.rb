@@ -516,6 +516,24 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".announcement" do
+    it "returns nil when unset or blank" do
+      within_env("ANNOUNCEMENT" => nil) do
+        expect(described_class.announcement).to be_nil
+      end
+
+      within_env("ANNOUNCEMENT" => " \t ") do
+        expect(described_class.announcement).to be_nil
+      end
+    end
+
+    it "returns the trimmed announcement text" do
+      within_env("ANNOUNCEMENT" => "  Next Meetup  ") do
+        expect(described_class.announcement).to eq("Next Meetup")
+      end
+    end
+  end
+
   describe ".debug?" do
     it "reflects the DEBUG environment variable" do
       within_env("DEBUG" => "1") do

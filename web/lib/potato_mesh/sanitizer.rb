@@ -199,6 +199,14 @@ module PotatoMesh
       sanitized_string(Config.site_name)
     end
 
+    # Retrieve the configured announcement banner copy and normalise blank values to nil.
+    #
+    # @return [String, nil] announcement copy or +nil+ when blank.
+    def sanitized_announcement
+      value = sanitized_string(Config.announcement)
+      value.empty? ? nil : value
+    end
+
     # Retrieve the configured channel as a cleaned string.
     #
     # @return [String] trimmed configuration value.

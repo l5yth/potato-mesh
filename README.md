@@ -88,6 +88,7 @@ The web app can be configured with environment variables (defaults shown):
 | `CHANNEL` | `"#LongFast"` | Default channel name displayed in the UI. |
 | `FREQUENCY` | `"915MHz"` | Default frequency description displayed in the UI. |
 | `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer and overlays. |
+| `ANNOUNCEMENT` | _unset_ | Optional announcement banner text rendered above the header on every page. |
 | `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map on load. |
 | `MAP_ZOOM` | _unset_ | Fixed Leaflet zoom applied on first load; disables auto-fit when provided. |
 | `MAX_DISTANCE` | `42` | Maximum distance (km) before node relationships are hidden on the map. |

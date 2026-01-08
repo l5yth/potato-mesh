@@ -20,6 +20,8 @@ module PotatoMesh
     # its intended consumers to ensure consistent behaviour across the Sinatra
     # application.
     module Helpers
+      ANNOUNCEMENT_URL_PATTERN = %r{\bhttps?://[^\s<]+}i.freeze
+
       # Fetch an application level constant exposed by {PotatoMesh::Application}.
       #
       # @param name [Symbol] constant identifier to retrieve.
@@ -90,6 +92,47 @@ module PotatoMesh
       # @return [String] sanitised site label.
       def sanitized_site_name
         PotatoMesh::Sanitizer.sanitized_site_name
+      end
+
+      # Retrieve the configured announcement banner copy.
+      #
+      # @return [String, nil] sanitised announcement or nil when unset.
+      def sanitized_announcement
+        PotatoMesh::Sanitizer.sanitized_announcement
+      end
+
+      # Render the announcement copy with safe outbound links.
+      #
+      # @return [String, nil] escaped HTML snippet or nil when unset.
+      def announcement_html
+        announcement = sanitized_announcement
+        return nil unless announcement
+
+        fragments = []
+        last_index = 0
+
+        announcement.to_enum(:scan, ANNOUNCEMENT_URL_PATTERN).each do
+          match = Regexp.last_match
+          next unless match
+
+          start_index = match.begin(0)
+          end_index = match.end(0)
+
+          if start_index > last_index
+            fragments << Rack::Utils.escape_html(announcement[last_index...start_index])
+          end
+
+          url = match[0]
+          escaped_url = Rack::Utils.escape_html(url)
+          fragments << %(<a href="#{escaped_url}" target="_blank" rel="noopener noreferrer">#{escaped_url}</a>)
+          last_index = end_index
+        end
+
+        if last_index < announcement.length
+          fragments << Rack::Utils.escape_html(announcement[last_index..])
+        end
+
+        fragments.join
       end
 
       # Retrieve the configured channel.
