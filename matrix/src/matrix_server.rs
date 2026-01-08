@@ -111,6 +111,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"{}");
     }
 
     #[tokio::test]
@@ -136,5 +140,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"{}");
+    }
+
+    #[tokio::test]
+    async fn transactions_endpoint_rejects_wrong_token() {
+        let app = build_router(SynapseState {
+            hs_token: "HS_TOKEN".to_string(),
+        });
+        let payload = serde_json::json!({
+            "events": [],
+            "txn_id": "123"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/_matrix/appservice/v1/transactions/123?access_token=NOPE")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"{}");
     }
 }

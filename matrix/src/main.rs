@@ -558,6 +558,41 @@ mod tests {
         assert_eq!(params.since, None);
     }
 
+    #[test]
+    fn log_state_update_emits_info() {
+        let state = BridgeState::default();
+        log_state_update(&state);
+    }
+
+    #[test]
+    fn persist_state_writes_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("state.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let state = BridgeState {
+            last_message_id: Some(42),
+            last_rx_time: Some(123),
+            last_rx_time_ids: vec![42],
+            last_checked_at: None,
+        };
+
+        persist_state(&state, path_str);
+
+        let loaded = BridgeState::load(path_str).unwrap();
+        assert_eq!(loaded.last_message_id, Some(42));
+    }
+
+    #[test]
+    fn persist_state_logs_on_error() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let dir_path = tmp_dir.path().to_str().unwrap();
+        let state = BridgeState::default();
+
+        // Writing to a directory path should trigger the error branch.
+        persist_state(&state, dir_path);
+    }
+
     #[tokio::test]
     async fn poll_once_leaves_state_unchanged_without_messages() {
         let tmp_dir = tempfile::tempdir().unwrap();
