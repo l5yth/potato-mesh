@@ -9,6 +9,8 @@ poll_interval_secs = 60
 homeserver = "https://matrix.dod.ngo"
 # Appservice access token (from your registration.yaml)
 as_token = "INVALID_TOKEN_NOT_WORKING"
+# Homeserver token used to authenticate Synapse callbacks
+hs_token = "INVALID_TOKEN_NOT_WORKING"
 # Server name (domain) part of Matrix user IDs
 server_name = "dod.ngo"
 # Room ID to send into (must be joined by the appservice / puppets)
@@ -17,4 +19,3 @@ room_id = "!sXabOBXbVObAlZQEUs:c-base.org" # "#potato-bridge:c-base.org"
 [state]
 # Where to persist last seen message id (optional but recommended)
 state_file = "bridge_state.json"
-

@@ -25,6 +25,7 @@ pub struct PotatomeshConfig {
 pub struct MatrixConfig {
     pub homeserver: String,
     pub as_token: String,
+    pub hs_token: String,
     pub server_name: String,
     pub room_id: String,
 }
@@ -73,6 +74,7 @@ mod tests {
             [matrix]
             homeserver = "https://matrix.example.org"
             as_token = "AS_TOKEN"
+            hs_token = "HS_TOKEN"
             server_name = "example.org"
             room_id = "!roomid:example.org"
 
@@ -86,6 +88,7 @@ mod tests {
 
         assert_eq!(cfg.matrix.homeserver, "https://matrix.example.org");
         assert_eq!(cfg.matrix.as_token, "AS_TOKEN");
+        assert_eq!(cfg.matrix.hs_token, "HS_TOKEN");
         assert_eq!(cfg.matrix.server_name, "example.org");
         assert_eq!(cfg.matrix.room_id, "!roomid:example.org");
 
@@ -108,6 +111,7 @@ mod tests {
             [matrix]
             homeserver = "https://matrix.example.org"
             as_token = "AS_TOKEN"
+            hs_token = "HS_TOKEN"
             server_name = "example.org"
             room_id = "!roomid:example.org"
 
@@ -140,6 +144,7 @@ mod tests {
             [matrix]
             homeserver = "https://matrix.example.org"
             as_token = "AS_TOKEN"
+            hs_token = "HS_TOKEN"
             server_name = "example.org"
             room_id = "!roomid:example.org"
 

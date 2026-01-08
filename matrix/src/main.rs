@@ -14,17 +14,22 @@
 
 mod config;
 mod matrix;
+mod matrix_server;
 mod potatomesh;
 
-use std::{fs, path::Path};
+use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::Result;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use tracing::{error, info};
 
+#[cfg(not(test))]
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
+use crate::matrix_server::run_synapse_listener;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
+#[cfg(not(test))]
+use tokio::time::sleep;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
@@ -114,6 +119,18 @@ fn build_fetch_params(state: &BridgeState) -> FetchParams {
     }
 }
 
+/// Persist the bridge state and log any write errors.
+fn persist_state(state: &BridgeState, state_path: &str) {
+    if let Err(e) = state.save(state_path) {
+        error!("Error saving state: {:?}", e);
+    }
+}
+
+/// Emit an info log for the latest bridge state snapshot.
+fn log_state_update(state: &BridgeState) {
+    info!("Updated state: {:?}", state);
+}
+
 async fn poll_once(
     potato: &PotatoClient,
     matrix: &MatrixAppserviceClient,
@@ -136,9 +153,8 @@ async fn poll_once(
                 if let Some(port) = &msg.portnum {
                     if port != "TEXT_MESSAGE_APP" {
                         state.update_with(msg);
-                        if let Err(e) = state.save(state_path) {
-                            error!("Error saving state: {:?}", e);
-                        }
+                        log_state_update(state);
+                        persist_state(state, state_path);
                         continue;
                     }
                 }
@@ -148,11 +164,8 @@ async fn poll_once(
                     continue;
                 }
 
-                state.update_with(msg);
                 // persist after each processed message
-                if let Err(e) = state.save(state_path) {
-                    error!("Error saving state: {:?}", e);
-                }
+                persist_state(state, state_path);
             }
         }
         Err(e) => {
@@ -161,6 +174,15 @@ async fn poll_once(
     }
 }
 
+fn spawn_synapse_listener(addr: SocketAddr, token: String) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if let Err(e) = run_synapse_listener(addr, token).await {
+            error!("Synapse listener failed: {:?}", e);
+        }
+    })
+}
+
+#[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logging: RUST_LOG=info,bridge=debug,reqwest=warn ...
@@ -180,6 +202,10 @@ async fn main() -> Result<()> {
     potato.health_check().await?;
     let matrix = MatrixAppserviceClient::new(http.clone(), cfg.matrix.clone());
     matrix.health_check().await?;
+
+    let synapse_addr = SocketAddr::from(([0, 0, 0, 0], 41448));
+    let synapse_token = cfg.matrix.hs_token.clone();
+    let _synapse_handle = spawn_synapse_listener(synapse_addr, synapse_token);
 
     let state_path = &cfg.state.state_file;
     let mut state = BridgeState::load(state_path)?;
@@ -224,7 +250,9 @@ async fn handle_message(
         .send_formatted_message_as(&user_id, &body, &formatted_body)
         .await?;
 
+    info!("Bridged message: {:?}", msg);
     state.update_with(msg);
+    log_state_update(state);
     Ok(())
 }
 
@@ -538,6 +566,57 @@ mod tests {
         assert_eq!(params.since, None);
     }
 
+    #[test]
+    fn log_state_update_emits_info() {
+        let state = BridgeState::default();
+        log_state_update(&state);
+    }
+
+    #[test]
+    fn persist_state_writes_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("state.json");
+        let path_str = file_path.to_str().unwrap();
+
+        let state = BridgeState {
+            last_message_id: Some(42),
+            last_rx_time: Some(123),
+            last_rx_time_ids: vec![42],
+            last_checked_at: None,
+        };
+
+        persist_state(&state, path_str);
+
+        let loaded = BridgeState::load(path_str).unwrap();
+        assert_eq!(loaded.last_message_id, Some(42));
+    }
+
+    #[test]
+    fn persist_state_logs_on_error() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let dir_path = tmp_dir.path().to_str().unwrap();
+        let state = BridgeState::default();
+
+        // Writing to a directory path should trigger the error branch.
+        persist_state(&state, dir_path);
+    }
+
+    #[tokio::test]
+    async fn spawn_synapse_listener_starts_task() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let handle = spawn_synapse_listener(addr, "HS_TOKEN".to_string());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn spawn_synapse_listener_logs_error_on_bind_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = spawn_synapse_listener(addr, "HS_TOKEN".to_string());
+        let _ = handle.await;
+    }
+
     #[tokio::test]
     async fn poll_once_leaves_state_unchanged_without_messages() {
         let tmp_dir = tempfile::tempdir().unwrap();
@@ -561,6 +640,7 @@ mod tests {
         let matrix_cfg = MatrixConfig {
             homeserver: server.url(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         };
@@ -610,6 +690,7 @@ mod tests {
         let matrix_cfg = MatrixConfig {
             homeserver: server.url(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         };
@@ -639,6 +720,7 @@ mod tests {
         let matrix_cfg = MatrixConfig {
             homeserver: server.url(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         };
