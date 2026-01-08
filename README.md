@@ -270,6 +270,8 @@ A matrix bridge is currently being worked on. It requests messages from a config
 potato-mesh instance and forwards it to a specified matrix channel; see
 [matrix/README.md](./matrix/README.md).
 
+![matrix bridge](./scrot-0.6.png)
+
 ## Mobile App
 
 A mobile _reader_ app is currently being worked on. Stay tuned for releases and updates.

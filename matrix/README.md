@@ -2,6 +2,8 @@
 
 A small Rust daemon that bridges **PotatoMesh** LoRa messages into a **Matrix** room.
 
+![matrix bridge](../scrot-0.6.png)
+
 For each PotatoMesh node, the bridge creates (or uses) a **Matrix puppet user**:
 
 - Matrix localpart: `potato_` + the hex node id (without `!`), e.g. `!67fc83cb` → `@potato_67fc83cb:example.org`
