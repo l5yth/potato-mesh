@@ -86,6 +86,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use tokio::time::{sleep, Duration};
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -173,5 +174,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body.as_ref(), b"{}");
+    }
+
+    #[tokio::test]
+    async fn run_synapse_listener_starts_and_can_abort() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let handle =
+            tokio::spawn(async move { run_synapse_listener(addr, "HS_TOKEN".to_string()).await });
+        sleep(Duration::from_millis(10)).await;
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn run_synapse_listener_returns_error_on_bind_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let result = run_synapse_listener(addr, "HS_TOKEN".to_string()).await;
+        assert!(result.is_err());
     }
 }

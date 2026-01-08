@@ -20,13 +20,16 @@ mod potatomesh;
 use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::Result;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 use tracing::{error, info};
 
+#[cfg(not(test))]
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
 use crate::matrix_server::run_synapse_listener;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
+#[cfg(not(test))]
+use tokio::time::sleep;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
@@ -171,6 +174,15 @@ async fn poll_once(
     }
 }
 
+fn spawn_synapse_listener(addr: SocketAddr, token: String) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if let Err(e) = run_synapse_listener(addr, token).await {
+            error!("Synapse listener failed: {:?}", e);
+        }
+    })
+}
+
+#[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Logging: RUST_LOG=info,bridge=debug,reqwest=warn ...
@@ -193,11 +205,7 @@ async fn main() -> Result<()> {
 
     let synapse_addr = SocketAddr::from(([0, 0, 0, 0], 41448));
     let synapse_token = cfg.matrix.hs_token.clone();
-    tokio::spawn(async move {
-        if let Err(e) = run_synapse_listener(synapse_addr, synapse_token).await {
-            error!("Synapse listener failed: {:?}", e);
-        }
-    });
+    let _synapse_handle = spawn_synapse_listener(synapse_addr, synapse_token);
 
     let state_path = &cfg.state.state_file;
     let mut state = BridgeState::load(state_path)?;
@@ -591,6 +599,22 @@ mod tests {
 
         // Writing to a directory path should trigger the error branch.
         persist_state(&state, dir_path);
+    }
+
+    #[tokio::test]
+    async fn spawn_synapse_listener_starts_task() {
+        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let handle = spawn_synapse_listener(addr, "HS_TOKEN".to_string());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn spawn_synapse_listener_logs_error_on_bind_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = spawn_synapse_listener(addr, "HS_TOKEN".to_string());
+        let _ = handle.await;
     }
 
     #[tokio::test]
