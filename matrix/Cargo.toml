@@ -27,8 +27,10 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 urlencoding = "2"
+axum = { version = "0.7", features = ["json"] }
 
 [dev-dependencies]
 tempfile = "3"
 mockito = "1"
 serial_test = "3"
+tower = "0.5"

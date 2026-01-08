@@ -37,6 +37,8 @@ COPY --from=builder /app/target/release/potatomesh-matrix-bridge /usr/local/bin/
 COPY matrix/Config.toml /app/Config.example.toml
 COPY matrix/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
+EXPOSE 41448
+
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

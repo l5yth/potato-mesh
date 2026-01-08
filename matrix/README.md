@@ -134,7 +134,7 @@ A minimal example sketch (you **must** adjust URLs, secrets, namespaces):
 
 ```yaml
 id: potatomesh-bridge
-url: "http://your-bridge-host:8080"  # not used by this bridge if it only calls out
+url: "http://your-bridge-host:41448"
 as_token: "YOUR_APPSERVICE_AS_TOKEN"
 hs_token: "SECRET_HS_TOKEN"
 sender_localpart: "potatomesh-bridge"
@@ -145,7 +145,7 @@ namespaces:
       regex: "@potato_[0-9a-f]{8}:example.org"
 ```
 
-For this bridge, only the `as_token` and `namespaces.users` actually matter. The bridge does not accept inbound events; it only uses the `as_token` to call the homeserver.
+This bridge listens for Synapse appservice callbacks on port `41448` so it can log inbound transaction payloads. It still only forwards messages one way (PotatoMesh → Matrix), so inbound Matrix events are acknowledged but not bridged. The `as_token` and `namespaces.users` entries remain required for outbound calls, and the `url` should point at the listener.
 
 In Synapse’s `homeserver.yaml`, add the registration file under `app_service_config_files`, restart, and invite a puppet user to your target room (or use room ID directly).
 
@@ -182,6 +182,7 @@ Provide your config at `/app/Config.toml` and persist the bridge state file by m
 
 ```bash
 docker run --rm \
+  -p 41448:41448 \
   -v bridge_state:/app \
   -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
   potatomesh-matrix-bridge
@@ -191,6 +192,7 @@ If you prefer to isolate the state file from the config, mount it directly inste
 
 ```bash
 docker run --rm \
+  -p 41448:41448 \
   -v bridge_state:/app \
   -v "$(pwd)/matrix/Config.toml:/app/Config.toml:ro" \
   potatomesh-matrix-bridge

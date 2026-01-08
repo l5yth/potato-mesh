@@ -140,6 +140,8 @@ services:
       - potatomesh-network
     depends_on:
       - web-bridge
+    ports:
+      - "41448:41448"
     profiles:
       - bridge
 

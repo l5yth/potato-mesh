@@ -14,9 +14,10 @@
 
 mod config;
 mod matrix;
+mod matrix_server;
 mod potatomesh;
 
-use std::{fs, path::Path};
+use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::Result;
 use tokio::time::{sleep, Duration};
@@ -24,6 +25,7 @@ use tracing::{error, info};
 
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
+use crate::matrix_server::run_synapse_listener;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
@@ -114,6 +116,18 @@ fn build_fetch_params(state: &BridgeState) -> FetchParams {
     }
 }
 
+/// Persist the bridge state and log any write errors.
+fn persist_state(state: &BridgeState, state_path: &str) {
+    if let Err(e) = state.save(state_path) {
+        error!("Error saving state: {:?}", e);
+    }
+}
+
+/// Emit an info log for the latest bridge state snapshot.
+fn log_state_update(state: &BridgeState) {
+    info!("Updated state: {:?}", state);
+}
+
 async fn poll_once(
     potato: &PotatoClient,
     matrix: &MatrixAppserviceClient,
@@ -136,9 +150,8 @@ async fn poll_once(
                 if let Some(port) = &msg.portnum {
                     if port != "TEXT_MESSAGE_APP" {
                         state.update_with(msg);
-                        if let Err(e) = state.save(state_path) {
-                            error!("Error saving state: {:?}", e);
-                        }
+                        log_state_update(state);
+                        persist_state(state, state_path);
                         continue;
                     }
                 }
@@ -148,11 +161,8 @@ async fn poll_once(
                     continue;
                 }
 
-                state.update_with(msg);
                 // persist after each processed message
-                if let Err(e) = state.save(state_path) {
-                    error!("Error saving state: {:?}", e);
-                }
+                persist_state(state, state_path);
             }
         }
         Err(e) => {
@@ -180,6 +190,13 @@ async fn main() -> Result<()> {
     potato.health_check().await?;
     let matrix = MatrixAppserviceClient::new(http.clone(), cfg.matrix.clone());
     matrix.health_check().await?;
+
+    let synapse_addr = SocketAddr::from(([0, 0, 0, 0], 41448));
+    tokio::spawn(async move {
+        if let Err(e) = run_synapse_listener(synapse_addr).await {
+            error!("Synapse listener failed: {:?}", e);
+        }
+    });
 
     let state_path = &cfg.state.state_file;
     let mut state = BridgeState::load(state_path)?;
@@ -224,7 +241,9 @@ async fn handle_message(
         .send_formatted_message_as(&user_id, &body, &formatted_body)
         .await?;
 
+    info!("Bridged message: {:?}", msg);
     state.update_with(msg);
+    log_state_update(state);
     Ok(())
 }
 
