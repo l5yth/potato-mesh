@@ -13,15 +13,25 @@
 // limitations under the License.
 
 use axum::{
-    extract::Path,
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::post,
+    routing::put,
     Json, Router,
 };
 use serde_json::Value;
 use std::net::SocketAddr;
 use tracing::info;
+
+#[derive(Clone)]
+struct SynapseState {
+    hs_token: String,
+}
+
+#[derive(serde::Deserialize)]
+struct AuthQuery {
+    access_token: Option<String>,
+}
 
 /// Captures inbound Synapse transaction payloads for logging.
 #[derive(Debug)]
@@ -31,31 +41,40 @@ struct SynapseResponse {
 }
 
 /// Build the router that handles Synapse appservice transactions.
-fn build_router() -> Router {
-    Router::new().route(
-        "/_matrix/appservice/v1/transactions/:txn_id",
-        post(handle_transaction),
-    )
+fn build_router(state: SynapseState) -> Router {
+    Router::new()
+        .route(
+            "/_matrix/appservice/v1/transactions/:txn_id",
+            put(handle_transaction),
+        )
+        .with_state(state)
 }
 
 /// Handle inbound transaction callbacks from Synapse.
 async fn handle_transaction(
     Path(txn_id): Path<String>,
+    State(state): State<SynapseState>,
+    Query(auth): Query<AuthQuery>,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
+    let token_matches = auth
+        .access_token
+        .as_ref()
+        .is_some_and(|token| token == &state.hs_token);
+    if !token_matches {
+        return StatusCode::UNAUTHORIZED;
+    }
+    let response = SynapseResponse { txn_id, payload };
     info!(
-        "Status response: {:?}",
-        SynapseResponse {
-            txn_id,
-            payload
-        }
+        "Status response: SynapseResponse {{ txn_id: {}, payload: {:?} }}",
+        response.txn_id, response.payload
     );
     StatusCode::OK
 }
 
 /// Listen for Synapse callbacks on the configured address.
-pub async fn run_synapse_listener(addr: SocketAddr) -> anyhow::Result<()> {
-    let app = build_router();
+pub async fn run_synapse_listener(addr: SocketAddr, hs_token: String) -> anyhow::Result<()> {
+    let app = build_router(SynapseState { hs_token });
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("Synapse listener bound on {}", addr);
     axum::serve(listener, app).await?;
@@ -71,7 +90,9 @@ mod tests {
 
     #[tokio::test]
     async fn transactions_endpoint_accepts_payloads() {
-        let app = build_router();
+        let app = build_router(SynapseState {
+            hs_token: "HS_TOKEN".to_string(),
+        });
         let payload = serde_json::json!({
             "events": [],
             "txn_id": "123"
@@ -80,8 +101,8 @@ mod tests {
         let response = app
             .oneshot(
                 Request::builder()
-                    .method("POST")
-                    .uri("/_matrix/appservice/v1/transactions/123")
+                    .method("PUT")
+                    .uri("/_matrix/appservice/v1/transactions/123?access_token=HS_TOKEN")
                     .header("content-type", "application/json")
                     .body(Body::from(payload.to_string()))
                     .unwrap(),
@@ -90,5 +111,30 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn transactions_endpoint_rejects_missing_token() {
+        let app = build_router(SynapseState {
+            hs_token: "HS_TOKEN".to_string(),
+        });
+        let payload = serde_json::json!({
+            "events": [],
+            "txn_id": "123"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/_matrix/appservice/v1/transactions/123")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

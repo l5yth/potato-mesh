@@ -192,8 +192,9 @@ async fn main() -> Result<()> {
     matrix.health_check().await?;
 
     let synapse_addr = SocketAddr::from(([0, 0, 0, 0], 41448));
+    let synapse_token = cfg.matrix.hs_token.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_synapse_listener(synapse_addr).await {
+        if let Err(e) = run_synapse_listener(synapse_addr, synapse_token).await {
             error!("Synapse listener failed: {:?}", e);
         }
     });
@@ -580,6 +581,7 @@ mod tests {
         let matrix_cfg = MatrixConfig {
             homeserver: server.url(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         };
@@ -629,6 +631,7 @@ mod tests {
         let matrix_cfg = MatrixConfig {
             homeserver: server.url(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         };
@@ -658,6 +661,7 @@ mod tests {
         let matrix_cfg = MatrixConfig {
             homeserver: server.url(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         };

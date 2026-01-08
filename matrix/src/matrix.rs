@@ -232,6 +232,7 @@ mod tests {
         MatrixConfig {
             homeserver: "https://matrix.example.org".to_string(),
             as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
             server_name: "example.org".to_string(),
             room_id: "!roomid:example.org".to_string(),
         }

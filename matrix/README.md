@@ -149,6 +149,8 @@ This bridge listens for Synapse appservice callbacks on port `41448` so it can l
 
 In Synapse’s `homeserver.yaml`, add the registration file under `app_service_config_files`, restart, and invite a puppet user to your target room (or use room ID directly).
 
+The bridge validates inbound appservice callbacks by comparing the `access_token` query param to `hs_token` in `Config.toml`, so keep those values in sync.
+
 ---
 
 ## Build
