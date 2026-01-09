@@ -45,6 +45,13 @@ RSpec.describe PotatoMesh::App::WorkerPool do
       end
     end
 
+    it "ignores invalid timeout values" do
+      with_pool(task_timeout: "nope") do |pool|
+        task = pool.schedule { sleep 0.01; :ok }
+        expect(task.wait(timeout: 1)).to eq(:ok)
+      end
+    end
+
     it "propagates exceptions raised by the job block" do
       with_pool do |pool|
         task = pool.schedule { raise ArgumentError, "boom" }

@@ -205,12 +205,12 @@ module PotatoMesh
 
               begin
                 result = if @task_timeout
-                  Timeout.timeout(@task_timeout, TaskTimeoutError, "task exceeded timeout") do
+                    Timeout.timeout(@task_timeout, TaskTimeoutError, "task exceeded timeout") do
+                      block.call
+                    end
+                  else
                     block.call
                   end
-                else
-                  block.call
-                end
                 task.fulfill(result)
               rescue StandardError => e
                 task.reject(e)
