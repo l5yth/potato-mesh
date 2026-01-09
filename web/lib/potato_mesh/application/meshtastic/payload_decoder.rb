@@ -80,8 +80,13 @@ module PotatoMesh
         #
         # @return [String, nil] script path or nil when missing.
         def decoder_script_path
-          candidate = File.expand_path(DEFAULT_DECODER_RELATIVE, repo_root)
-          File.exist?(candidate) ? candidate : nil
+          repo_candidate = File.expand_path(DEFAULT_DECODER_RELATIVE, repo_root)
+          return repo_candidate if File.exist?(repo_candidate)
+
+          web_candidate = File.expand_path(DEFAULT_DECODER_RELATIVE, web_root)
+          return web_candidate if File.exist?(web_candidate)
+
+          nil
         end
 
         # Resolve the repository root directory from the application config.
@@ -89,6 +94,10 @@ module PotatoMesh
         # @return [String] absolute path to the repository root.
         def repo_root
           PotatoMesh::Config.repo_root
+        end
+
+        def web_root
+          PotatoMesh::Config.web_root
         end
 
         def find_executable(name)

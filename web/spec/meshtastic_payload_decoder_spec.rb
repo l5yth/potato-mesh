@@ -86,6 +86,19 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
     end
   end
 
+  it "falls back to the web root when the repo root is unavailable" do
+    Dir.mktmpdir do |dir|
+      script_path = File.join(dir, "data", "mesh_ingestor", "decode_payload.py")
+      FileUtils.mkdir_p(File.dirname(script_path))
+      File.write(script_path, "")
+
+      with_repo_root(Dir.mktmpdir) do
+        allow(PotatoMesh::Config).to receive(:web_root).and_return(dir)
+        expect(described_class.decoder_script_path).to eq(script_path)
+      end
+    end
+  end
+
   it "returns nil when the decoder script is missing" do
     Dir.mktmpdir do |dir|
       with_repo_root(dir) do
