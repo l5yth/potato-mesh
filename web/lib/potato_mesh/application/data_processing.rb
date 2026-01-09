@@ -1428,6 +1428,7 @@ module PotatoMesh
         {
           text: data[:text],
           portnum: data[:portnum],
+          payload: data[:payload],
           channel_name: channel_name,
         }
       end
@@ -1482,6 +1483,8 @@ module PotatoMesh
         clear_encrypted = false
         channel_index = coerce_integer(message["channel"] || message["channel_index"] || message["channelIndex"])
 
+        decrypted_payload = nil
+
         if encrypted && (text.nil? || text.to_s.strip.empty?)
           decrypted = decrypt_meshtastic_message(
             message,
@@ -1492,6 +1495,7 @@ module PotatoMesh
           )
 
           if decrypted
+            decrypted_payload = decrypted
             if portnum.nil? && decrypted[:portnum]
               portnum = decrypted[:portnum]
               message["portnum"] = portnum
@@ -1669,6 +1673,130 @@ module PotatoMesh
               end
             end
           end
+        end
+
+        if decrypted_payload
+          store_decrypted_payload(
+            db,
+            message,
+            msg_id,
+            decrypted_payload,
+            rx_time: rx_time,
+            rx_iso: rx_iso,
+            from_id: from_id,
+            to_id: to_id,
+            channel: message["channel"],
+            portnum: portnum,
+            hop_limit: message["hop_limit"],
+            snr: message["snr"],
+            rssi: message["rssi"],
+          )
+        end
+      end
+
+      # Decode and store decrypted payloads in domain-specific tables.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param message [Hash] original message payload.
+      # @param packet_id [Integer] packet identifier for the message.
+      # @param decrypted [Hash] decrypted payload metadata.
+      # @param rx_time [Integer] receive time.
+      # @param rx_iso [String] ISO 8601 receive timestamp.
+      # @param from_id [String, nil] canonical sender identifier.
+      # @param to_id [String, nil] destination identifier.
+      # @param channel [Integer, nil] channel index.
+      # @param portnum [Object, nil] port number identifier.
+      # @param hop_limit [Integer, nil] hop limit value.
+      # @param snr [Numeric, nil] signal-to-noise ratio.
+      # @param rssi [Integer, nil] RSSI value.
+      # @return [void]
+      def store_decrypted_payload(
+        db,
+        message,
+        packet_id,
+        decrypted,
+        rx_time:,
+        rx_iso:,
+        from_id:,
+        to_id:,
+        channel:,
+        portnum:,
+        hop_limit:,
+        snr:,
+        rssi:
+      )
+        payload_bytes = decrypted[:payload]
+        return unless payload_bytes
+
+        portnum_value = coerce_integer(portnum || decrypted[:portnum])
+        return unless portnum_value
+
+        payload_b64 = Base64.strict_encode64(payload_bytes)
+        supported_ports = [3, 67, 70, 71]
+        return unless supported_ports.include?(portnum_value)
+
+        decoded = PotatoMesh::App::Meshtastic::PayloadDecoder.decode(
+          portnum: portnum_value,
+          payload_b64: payload_b64,
+        )
+        return unless decoded.is_a?(Hash)
+        return unless decoded["payload"].is_a?(Hash)
+
+        common_payload = {
+          "id" => packet_id,
+          "packet_id" => packet_id,
+          "rx_time" => rx_time,
+          "rx_iso" => rx_iso,
+          "from_id" => from_id,
+          "to_id" => to_id,
+          "channel" => channel,
+          "portnum" => portnum_value.to_s,
+          "hop_limit" => hop_limit,
+          "snr" => snr,
+          "rssi" => rssi,
+          "payload_b64" => payload_b64,
+        }
+
+        case decoded["type"]
+        when "POSITION_APP"
+          payload = common_payload.merge("position" => decoded["payload"])
+          insert_position(db, payload)
+        when "TELEMETRY_APP"
+          payload = common_payload.merge("telemetry" => decoded["payload"])
+          insert_telemetry(db, payload)
+        when "NEIGHBORINFO_APP"
+          neighbor_payload = decoded["payload"]
+          neighbors = neighbor_payload["neighbors"]
+          neighbors = [] unless neighbors.is_a?(Array)
+          normalized_neighbors = neighbors.map do |neighbor|
+            next unless neighbor.is_a?(Hash)
+            {
+              "neighbor_id" => neighbor["node_id"] || neighbor["nodeId"] || neighbor["id"],
+              "snr" => neighbor["snr"],
+              "rx_time" => neighbor["last_rx_time"],
+            }.compact
+          end.compact
+          return if normalized_neighbors.empty?
+
+          payload = common_payload.merge(
+            "node_id" => neighbor_payload["node_id"] || from_id,
+            "neighbors" => normalized_neighbors,
+            "node_broadcast_interval_secs" => neighbor_payload["node_broadcast_interval_secs"],
+            "last_sent_by_id" => neighbor_payload["last_sent_by_id"],
+          )
+          insert_neighbors(db, payload)
+        when "TRACEROUTE_APP"
+          route = decoded["payload"]["route"]
+          route_back = decoded["payload"]["route_back"]
+          hops = route.is_a?(Array) ? route : route_back.is_a?(Array) ? route_back : []
+          dest = hops.last if hops.is_a?(Array) && !hops.empty?
+          src_num = coerce_integer(message["from_num"]) || resolve_node_num(from_id, message)
+          payload = common_payload.merge(
+            "src" => src_num,
+            "dest" => dest,
+            "hops" => hops,
+          )
+          insert_trace(db, payload)
         end
       end
 

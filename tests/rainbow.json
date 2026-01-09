@@ -1,0 +1,736 @@
+{
+  "59": [
+    "911",
+    "Forest",
+    "Pack"
+  ],
+  "77": [
+    "Admin",
+    "ADMIN",
+    "Den",
+    "Ice",
+    "LoRaNet",
+    "North",
+    "SOS",
+    "Sos",
+    "Wanderers"
+  ],
+  "109": [
+    "admin",
+    "NightMesh"
+  ],
+  "76": [
+    "Alert",
+    "Bavaria",
+    "Fog",
+    "Harmony",
+    "Raven"
+  ],
+  "86": [
+    "Alpha",
+    "Owl",
+    "Panther",
+    "Prairie",
+    "Thunder"
+  ],
+  "9": [
+    "AlphaNet",
+    "MeshGrid"
+  ],
+  "61": [
+    "Alpine",
+    "Bridge",
+    "Camp",
+    "Dortmund",
+    "Frontier",
+    "Jungle",
+    "Peak"
+  ],
+  "89": [
+    "Amateur",
+    "Astro",
+    "Avalanche",
+    "Bonfire",
+    "Draco",
+    "Griffin",
+    "Nightfall",
+    "Shade",
+    "Venus"
+  ],
+  "52": [
+    "Amazon",
+    "Fireline",
+    "Haze",
+    "LoRaHessen",
+    "Platinum",
+    "Sensor",
+    "Test",
+    "Zulu"
+  ],
+  "43": [
+    "Anaconda",
+    "Basalt",
+    "Blackout",
+    "Crow",
+    "Dusk",
+    "Falcon",
+    "Lima",
+    "Müggelberg"
+  ],
+  "35": [
+    "Aquila",
+    "Doctor",
+    "Echo",
+    "Kilo",
+    "Public",
+    "Wyvern"
+  ],
+  "44": [
+    "Arctic",
+    "Backup",
+    "Bronze",
+    "Corvus",
+    "Cosmos",
+    "LoRaBerlin",
+    "Neukölln",
+    "Safari"
+  ],
+  "88": [
+    "Ash",
+    "River",
+    "Syndicate"
+  ],
+  "49": [
+    "Asteroid",
+    "Carbon",
+    "Mesh"
+  ],
+  "56": [
+    "Aurora",
+    "Dune",
+    "Iron",
+    "Lava",
+    "Nomads"
+  ],
+  "55": [
+    "Base",
+    "Bolt",
+    "Hawk",
+    "Mirage",
+    "Nightwatch",
+    "Obsidian",
+    "Rock",
+    "Victor",
+    "West"
+  ],
+  "6": [
+    "Base1"
+  ],
+  "5": [
+    "Base2",
+    "DeltaNet",
+    "Mesh4",
+    "MeshMunich"
+  ],
+  "99": [
+    "BaseAlpha",
+    "BerlinNet",
+    "SouthStar"
+  ],
+  "127": [
+    "BaseBravo",
+    "Med1",
+    "Ops1",
+    "WolfDen"
+  ],
+  "111": [
+    "BaseCharlie",
+    "Comms2",
+    "GridSouth",
+    "Hub2",
+    "MeshNetwork",
+    "WolfNet"
+  ],
+  "38": [
+    "Beacon",
+    "Collective",
+    "Harbor",
+    "Lion",
+    "Meteor"
+  ],
+  "54": [
+    "Bear",
+    "Hospital",
+    "Munich",
+    "Python",
+    "Rain",
+    "Wind",
+    "Wolves"
+  ],
+  "105": [
+    "BearNet",
+    "StarNet"
+  ],
+  "48": [
+    "Beat",
+    "Berg",
+    "Beta",
+    "Downlink",
+    "Hive",
+    "Rhythm",
+    "Saxony",
+    "Sideband",
+    "Wolf"
+  ],
+  "60": [
+    "Berlin",
+    "Chat",
+    "Sierra",
+    "Signal",
+    "Wald",
+    "Zone"
+  ],
+  "15": [
+    "BerlinMesh",
+    "LongSlow",
+    "MeshBerlin",
+    "Zone3"
+  ],
+  "14": [
+    "BetaBerlin",
+    "Signal2",
+    "TangoNet",
+    "Zone2"
+  ],
+  "91": [
+    "Bison",
+    "Tal"
+  ],
+  "50": [
+    "Blizzard",
+    "Runner"
+  ],
+  "46": [
+    "Border",
+    "Nest"
+  ],
+  "47": [
+    "Borealis",
+    "Mars",
+    "Path",
+    "Ranger"
+  ],
+  "74": [
+    "Bravo",
+    "Caravan",
+    "Ost",
+    "Süd"
+  ],
+  "21": [
+    "BravoNet",
+    "EastStar",
+    "MeshCollective",
+    "SunNet"
+  ],
+  "45": [
+    "Breeze",
+    "Burrow",
+    "Gale",
+    "Saturn"
+  ],
+  "62": [
+    "Burner",
+    "Dawn",
+    "Europa",
+    "Midnight",
+    "Nightshift",
+    "Prenzlauer",
+    "Safety",
+    "Sector",
+    "Wanderer"
+  ],
+  "33": [
+    "Callisto",
+    "CQ1",
+    "Daybreak",
+    "Demo",
+    "East",
+    "LoRaMesh",
+    "Mist"
+  ],
+  "51": [
+    "Callsign",
+    "Carpet",
+    "Desert",
+    "Dragon",
+    "Friedrichshain",
+    "Help",
+    "Nebula",
+    "Safe"
+  ],
+  "37": [
+    "Campfire",
+    "City",
+    "Outsider",
+    "Sync"
+  ],
+  "98": [
+    "CampNet",
+    "Radio1",
+    "Shelter1",
+    "TangoMesh"
+  ],
+  "65": [
+    "Central",
+    "Cologne",
+    "Layer",
+    "Relay",
+    "Runners",
+    "Stone",
+    "Tempo"
+  ],
+  "72": [
+    "Chameleon",
+    "Eagle",
+    "Hilltop",
+    "Teufelsberg"
+  ],
+  "90": [
+    "Charlie",
+    "Delta",
+    "Stratum",
+    "Viper"
+  ],
+  "40": [
+    "Checkpoint",
+    "Galaxy",
+    "Jaguar",
+    "Sunset",
+    "Zeta"
+  ],
+  "25": [
+    "Checkpoint1",
+    "HAMNet"
+  ],
+  "26": [
+    "Checkpoint2",
+    "GhostNet"
+  ],
+  "84": [
+    "Cheetah",
+    "General",
+    "Outpost",
+    "Volcano"
+  ],
+  "32": [
+    "Clinic",
+    "Convoy",
+    "Daylight",
+    "Town"
+  ],
+  "83": [
+    "Cloud",
+    "Equinox",
+    "Firewatch",
+    "Fox",
+    "Radio",
+    "Shelter"
+  ],
+  "95": [
+    "Cobra",
+    "Liberty",
+    "Ridge"
+  ],
+  "58": [
+    "Colony",
+    "Fire",
+    "Ganymede",
+    "Grid",
+    "Kraken",
+    "Road",
+    "Solstice",
+    "Tundra"
+  ],
+  "82": [
+    "Comet",
+    "Flash",
+    "Lightning"
+  ],
+  "69": [
+    "Command",
+    "Control",
+    "Gamma",
+    "Ghost",
+    "Mercury",
+    "Oasis"
+  ],
+  "116": [
+    "Command1",
+    "Control1",
+    "CrowNet",
+    "MeshFrankfurt"
+  ],
+  "119": [
+    "Command2",
+    "Control2",
+    "MeshHamburg"
+  ],
+  "122": [
+    "CommandRoom",
+    "ControlRoom",
+    "SyncNet",
+    "Watch1"
+  ],
+  "93": [
+    "Comms",
+    "Fluss",
+    "Group",
+    "Hub",
+    "Pulse",
+    "Smoke"
+  ],
+  "108": [
+    "Comms1",
+    "DragonNet",
+    "Hub1"
+  ],
+  "2": [
+    "CommsNet",
+    "Mesh3",
+    "PulseNet"
+  ],
+  "80": [
+    "Commune",
+    "Freedom",
+    "Pluto",
+    "Snake",
+    "Squad",
+    "Stuttgart"
+  ],
+  "57": [
+    "Copper",
+    "Core",
+    "Spectrum",
+    "Summit"
+  ],
+  "87": [
+    "Courier",
+    "Nexus",
+    "South"
+  ],
+  "102": [
+    "Courier1"
+  ],
+  "101": [
+    "Courier2",
+    "GridNet",
+    "OpsCenter"
+  ],
+  "100": [
+    "CourierMesh",
+    "Storm1"
+  ],
+  "8": [
+    "CourierNet",
+    "Fire2",
+    "Grid2",
+    "LongFast",
+    "RescueTeam"
+  ],
+  "16": [
+    "CQ",
+    "EchoMesh",
+    "Freq2",
+    "KiloMesh",
+    "Node2",
+    "PhoenixNet",
+    "Repeater2"
+  ],
+  "34": [
+    "CQ2",
+    "Freq",
+    "Gold",
+    "Link",
+    "Repeater"
+  ],
+  "97": [
+    "DarkNet",
+    "NightshiftNet",
+    "Radio2",
+    "Shelter2"
+  ],
+  "1": [
+    "DEMO",
+    "Downlink1",
+    "NightNet",
+    "Sideband1"
+  ],
+  "31": [
+    "DemoBerlin",
+    "FieldNet",
+    "MediumFast"
+  ],
+  "70": [
+    "Diamond",
+    "Ham",
+    "HAM",
+    "Leipzig",
+    "Paramedic",
+    "Savanna"
+  ],
+  "63": [
+    "Distress",
+    "Kiez",
+    "Ruhr",
+    "Team"
+  ],
+  "36": [
+    "District",
+    "Hessen",
+    "Io",
+    "LoRaTest",
+    "Operations",
+    "Shadow",
+    "Unit"
+  ],
+  "23": [
+    "EagleNet",
+    "MeshHessen",
+    "Node5"
+  ],
+  "124": [
+    "EchoNet",
+    "KiloNet",
+    "Med2",
+    "Ops2"
+  ],
+  "75": [
+    "Emergency",
+    "EMERGENCY",
+    "Nomad",
+    "Watch"
+  ],
+  "107": [
+    "emergency",
+    "ZuluNet"
+  ],
+  "117": [
+    "EmergencyBerlin",
+    "GridNorth",
+    "MeshLeipzig",
+    "PacketNet"
+  ],
+  "64": [
+    "Epsilon",
+    "Field",
+    "Granite",
+    "Orbit",
+    "Trail",
+    "Whisper"
+  ],
+  "11": [
+    "Fire1",
+    "Grid1"
+  ],
+  "39": [
+    "Firebird",
+    "Fireteam",
+    "Quasar",
+    "Snow",
+    "Universe",
+    "Uplink"
+  ],
+  "73": [
+    "Firefly",
+    "Steel"
+  ],
+  "79": [
+    "Flock",
+    "Phoenix",
+    "PRIVATE",
+    "Private",
+    "Signals",
+    "Tiger"
+  ],
+  "12": [
+    "FoxNet",
+    "MeshRuhr",
+    "RadioNet"
+  ],
+  "78": [
+    "Foxtrot",
+    "Med",
+    "Ops"
+  ],
+  "125": [
+    "FoxtrotMesh",
+    "RepeaterHub"
+  ],
+  "17": [
+    "FoxtrotNet",
+    "Node3"
+  ],
+  "71": [
+    "Frankfurt",
+    "Gecko",
+    "Jupiter",
+    "Sensors",
+    "SENSORS",
+    "Sunrise"
+  ],
+  "19": [
+    "Freq1",
+    "HarmonyNet",
+    "Node1",
+    "RavenNet",
+    "Repeater1"
+  ],
+  "94": [
+    "Frost",
+    "Rover",
+    "Village"
+  ],
+  "85": [
+    "Glacier",
+    "Storm"
+  ],
+  "81": [
+    "Grassland",
+    "Tango",
+    "Union"
+  ],
+  "68": [
+    "Hamburg",
+    "Hydra",
+    "Medic",
+    "Titan"
+  ],
+  "104": [
+    "HawkNet"
+  ],
+  "67": [
+    "Highway",
+    "Kreuzberg",
+    "Leopard",
+    "Metro",
+    "Omega",
+    "Phantom"
+  ],
+  "41": [
+    "Hinterland",
+    "HQ2",
+    "Main",
+    "Meshtastic",
+    "Router",
+    "Valley",
+    "Wander",
+    "Wolfpack"
+  ],
+  "27": [
+    "HQ",
+    "Router2"
+  ],
+  "42": [
+    "HQ1",
+    "Lizard",
+    "Packet",
+    "Sahara",
+    "Tunnel"
+  ],
+  "112": [
+    "Layer1",
+    "Relay1",
+    "ShortFast"
+  ],
+  "115": [
+    "Layer2",
+    "Relay2",
+    "SOSBerlin"
+  ],
+  "114": [
+    "Layer3",
+    "MeshCologne"
+  ],
+  "3": [
+    "LightNet",
+    "Mesh2",
+    "WestStar",
+    "WolfMesh"
+  ],
+  "18": [
+    "LoRa"
+  ],
+  "24": [
+    "MediumSlow",
+    "Router1"
+  ],
+  "0": [
+    "Mesh1"
+  ],
+  "4": [
+    "Mesh5",
+    "OPERATIONS",
+    "Rescue1",
+    "SignalFire"
+  ],
+  "110": [
+    "MeshNet"
+  ],
+  "7": [
+    "MeshTest",
+    "Rescue2",
+    "ZuluMesh"
+  ],
+  "126": [
+    "MoonNet"
+  ],
+  "92": [
+    "Network",
+    "Scout"
+  ],
+  "22": [
+    "Node4",
+    "Uplink1"
+  ],
+  "120": [
+    "NomadMesh"
+  ],
+  "20": [
+    "NomadNet",
+    "SENSOR",
+    "TEST",
+    "test"
+  ],
+  "53": [
+    "Nord",
+    "Rescue",
+    "Secure",
+    "Silver"
+  ],
+  "121": [
+    "NorthStar",
+    "Watch2"
+  ],
+  "113": [
+    "OpsRoom"
+  ],
+  "123": [
+    "PacketRadio",
+    "ShadowNet"
+  ],
+  "66": [
+    "Polar",
+    "Woods"
+  ],
+  "13": [
+    "Signal1",
+    "Zone1"
+  ],
+  "103": [
+    "Storm2"
+  ],
+  "10": [
+    "TestBerlin",
+    "WaWi"
+  ]
+}

@@ -15,6 +15,7 @@
 # frozen_string_literal: true
 
 require "spec_helper"
+require "base64"
 require "sqlite3"
 require "json"
 require "time"
@@ -4100,6 +4101,107 @@ RSpec.describe "Potato Mesh Sinatra app" do
         else
           ENV["MESHTASTIC_PSK_B64"] = previous_psk
         end
+      end
+    end
+
+    it "stores decoded telemetry when decrypting non-text payloads" do
+      payload_bytes = "telemetry".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+      telemetry_payload = {
+        "time" => reference_time.to_i,
+        "device_metrics" => { "battery_level" => 77.5 },
+      }
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 67,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "TELEMETRY_APP",
+          "payload" => telemetry_payload,
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_001,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT id, payload_b64, battery_level FROM telemetry WHERE id = ?",
+          [900_001],
+        )
+
+        expect(row["payload_b64"]).to eq(encoded_payload)
+        expect(row["battery_level"]).to eq(77.5)
+      end
+    end
+
+    it "stores decoded positions when decrypting position payloads" do
+      payload_bytes = "position".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+      position_payload = {
+        "latitude_i" => 525598720,
+        "longitude_i" => 136577024,
+        "altitude" => 11,
+        "time" => reference_time.to_i,
+        "precision_bits" => 13,
+      }
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 3,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "POSITION_APP",
+          "payload" => position_payload,
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_002,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT id, latitude, longitude, altitude, payload_b64 FROM positions WHERE id = ?",
+          [900_002],
+        )
+
+        expect(row["payload_b64"]).to eq(encoded_payload)
+        expect(row["latitude"]).to be_within(0.0001).of(52.559872)
+        expect(row["longitude"]).to be_within(0.0001).of(13.6577024)
+        expect(row["altitude"]).to eq(11)
       end
     end
 

@@ -69,6 +69,12 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
 
       expect(hash).to eq(35)
     end
+
+    it "resolves the default PSK alias when hashing channel names" do
+      hash = described_class.channel_hash("PUBLIC", "AQ==")
+
+      expect(hash).to eq(3)
+    end
   end
 
   describe PotatoMesh::App::Meshtastic::RainbowTable do
@@ -88,6 +94,17 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     )
 
     expect(text).to eq("Nabend")
+  end
+
+  it "decrypts the public PSK alias sample payload" do
+    text = described_class.decrypt_text(
+      cipher_b64: "otu3OyMrTIUlcaisLVDyAnLW",
+      packet_id: 3_189_171_433,
+      from_id: "!7c5b0920",
+      psk_b64: "AQ==",
+    )
+
+    expect(text).to eq("FF-TB Beacon")
   end
 
   it "returns nil when the cipher text is invalid" do
