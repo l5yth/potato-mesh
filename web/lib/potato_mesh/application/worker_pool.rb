@@ -14,6 +14,8 @@
 
 # frozen_string_literal: true
 
+require "timeout"
+
 module PotatoMesh
   module App
     # WorkerPool executes submitted blocks using a bounded set of Ruby threads.
@@ -124,8 +126,9 @@ module PotatoMesh
       #
       # @param size [Integer] number of worker threads to spawn.
       # @param max_queue [Integer, nil] optional upper bound on queued jobs.
+      # @param task_timeout [Numeric, nil] optional per-task execution timeout.
       # @param name [String] prefix assigned to worker thread names.
-      def initialize(size:, max_queue: nil, name: "worker-pool")
+      def initialize(size:, max_queue: nil, task_timeout: nil, name: "worker-pool")
         raise ArgumentError, "size must be positive" unless size.is_a?(Integer) && size.positive?
 
         @name = name
@@ -133,6 +136,7 @@ module PotatoMesh
         @threads = []
         @stopped = false
         @mutex = Mutex.new
+        @task_timeout = normalize_task_timeout(task_timeout)
         spawn_workers(size)
       end
 
@@ -192,22 +196,44 @@ module PotatoMesh
           worker = Thread.new do
             Thread.current.name = "#{@name}-#{index}" if Thread.current.respond_to?(:name=)
             Thread.current.report_on_exception = false if Thread.current.respond_to?(:report_on_exception=)
+            # Daemon threads allow the process to exit even if a job is stuck.
+            Thread.current.daemon = true if Thread.current.respond_to?(:daemon=)
 
             loop do
               task, block = @queue.pop
               break if task.equal?(STOP_SIGNAL)
 
               begin
-                result = block.call
+                result = if @task_timeout
+                    Timeout.timeout(@task_timeout, TaskTimeoutError, "task exceeded timeout") do
+                      block.call
+                    end
+                  else
+                    block.call
+                  end
                 task.fulfill(result)
               rescue StandardError => e
                 task.reject(e)
               end
             end
           end
-
           @threads << worker
         end
+      end
+
+      # Normalize the per-task timeout into a positive float value.
+      #
+      # @param task_timeout [Numeric, nil] candidate timeout value.
+      # @return [Float, nil] positive timeout in seconds or nil when disabled.
+      def normalize_task_timeout(task_timeout)
+        return nil if task_timeout.nil?
+
+        value = Float(task_timeout)
+        return nil unless value.positive?
+
+        value
+      rescue ArgumentError, TypeError
+        nil
       end
     end
   end

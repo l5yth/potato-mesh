@@ -177,6 +177,7 @@ module PotatoMesh
         pool = PotatoMesh::App::WorkerPool.new(
           size: PotatoMesh::Config.federation_worker_pool_size,
           max_queue: PotatoMesh::Config.federation_worker_queue_capacity,
+          task_timeout: PotatoMesh::Config.federation_task_timeout_seconds,
           name: "potato-mesh-fed",
         )
 
@@ -442,6 +443,8 @@ module PotatoMesh
           end
         end
         thread.name = "potato-mesh-federation" if thread.respond_to?(:name=)
+        # Allow shutdown even if the announcement loop is still sleeping.
+        thread.daemon = true if thread.respond_to?(:daemon=)
         set(:federation_thread, thread)
         thread
       end
@@ -474,6 +477,8 @@ module PotatoMesh
         end
         thread.name = "potato-mesh-federation-initial" if thread.respond_to?(:name=)
         thread.report_on_exception = false if thread.respond_to?(:report_on_exception=)
+        # Avoid blocking process shutdown during delayed startup announcements.
+        thread.daemon = true if thread.respond_to?(:daemon=)
         set(:initial_federation_thread, thread)
         thread
       end
