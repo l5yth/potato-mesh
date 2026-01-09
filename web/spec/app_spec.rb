@@ -4109,7 +4109,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       encoded_payload = Base64.strict_encode64(payload_bytes)
       telemetry_payload = {
         "time" => reference_time.to_i,
-        "device_metrics" => { "battery_level" => 77.5 },
+        "deviceMetrics" => { "batteryLevel" => 77.5 },
       }
 
       allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(

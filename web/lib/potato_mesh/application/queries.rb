@@ -371,6 +371,9 @@ module PotatoMesh
           r.delete_if { |key, _| key.is_a?(Integer) }
           r["reply_id"] = coerce_integer(r["reply_id"]) if r.key?("reply_id")
           r["emoji"] = string_or_nil(r["emoji"]) if r.key?("emoji")
+          if string_or_nil(r["encrypted"])
+            r.delete("portnum")
+          end
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.strip.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first
             debug_log(

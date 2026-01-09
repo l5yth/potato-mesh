@@ -1463,6 +1463,7 @@ module PotatoMesh
             from_id = canonical_from_id
           end
         end
+        sender_present = !from_id.nil? || !coerce_integer(message["from_num"]).nil? || !trimmed_from_id.nil?
 
         raw_to_id = message["to_id"]
         raw_to_id = message["to"] if raw_to_id.nil? || raw_to_id.to_s.strip.empty?
@@ -1485,6 +1486,7 @@ module PotatoMesh
 
         decrypted_payload = nil
         decrypted_text = nil
+        decrypted_portnum = nil
 
         if encrypted && (text.nil? || text.to_s.strip.empty?)
           decrypted = decrypt_meshtastic_message(
@@ -1497,10 +1499,7 @@ module PotatoMesh
 
           if decrypted
             decrypted_payload = decrypted
-            if portnum.nil? && decrypted[:portnum]
-              portnum = decrypted[:portnum]
-              message["portnum"] = portnum
-            end
+            decrypted_portnum = decrypted[:portnum]
 
             if decrypted[:text]
               text = decrypted[:text]
@@ -1509,6 +1508,10 @@ module PotatoMesh
               encrypted = nil
               message["text"] = text
               message["channel_name"] ||= decrypted[:channel_name]
+              if portnum.nil? && decrypted_portnum
+                portnum = decrypted_portnum
+                message["portnum"] = portnum
+              end
             end
           end
         end
@@ -1569,10 +1572,11 @@ module PotatoMesh
             existing_text = existing.is_a?(Hash) ? existing["text"] : existing[2]
             existing_text_str = existing_text&.to_s
             existing_has_text = existing_text_str && !existing_text_str.strip.empty?
+            existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
+            existing_from_str = existing_from&.to_s
+            return if !sender_present && (existing_from_str.nil? || existing_from_str.strip.empty?)
 
             if from_id
-              existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
-              existing_from_str = existing_from&.to_s
               should_update = existing_from_str.nil? || existing_from_str.strip.empty?
               should_update ||= existing_from != from_id
               updates["from_id"] = from_id if should_update
@@ -1708,7 +1712,7 @@ module PotatoMesh
             from_id: from_id,
             to_id: to_id,
             channel: message["channel"],
-            portnum: portnum,
+            portnum: portnum || decrypted_portnum,
             hop_limit: message["hop_limit"],
             snr: message["snr"],
             rssi: message["rssi"],
