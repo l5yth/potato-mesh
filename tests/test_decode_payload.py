@@ -64,7 +64,9 @@ def test_decode_payload_rejects_invalid_payload():
 
 
 def test_decode_payload_rejects_unsupported_port():
-    result = decode_payload._decode_payload(999, base64.b64encode(b"ok").decode("ascii"))
+    result = decode_payload._decode_payload(
+        999, base64.b64encode(b"ok").decode("ascii")
+    )
 
     assert result["error"] == "unsupported-port"
     assert result["portnum"] == 999
@@ -89,7 +91,9 @@ def test_main_handles_invalid_json():
 
 
 def test_main_requires_portnum():
-    status, result = run_main_with_input({"payload_b64": base64.b64encode(b"ok").decode("ascii")})
+    status, result = run_main_with_input(
+        {"payload_b64": base64.b64encode(b"ok").decode("ascii")}
+    )
 
     assert status == 1
     assert result["error"] == "missing-portnum"
