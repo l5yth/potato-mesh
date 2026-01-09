@@ -28,8 +28,7 @@ module PotatoMesh
         module_function
 
         DEFAULT_PSK_B64 = "AQ=="
-        PAYLOAD_FIELD_PRIMARY = 2
-        PAYLOAD_FIELD_FALLBACK = 1
+        TEXT_MESSAGE_PORTNUM = 1
 
         # Decrypt an encrypted Meshtastic payload into UTF-8 text.
         #
@@ -40,20 +39,15 @@ module PotatoMesh
         # @param psk_b64 [String, nil] base64 PSK or alias.
         # @return [String, nil] decrypted text or nil when decryption fails.
         def decrypt_text(cipher_b64:, packet_id:, from_id: nil, from_num: nil, psk_b64: DEFAULT_PSK_B64)
-          payload = decrypt_payload_bytes(
+          data = decrypt_data(
             cipher_b64: cipher_b64,
             packet_id: packet_id,
             from_id: from_id,
             from_num: from_num,
             psk_b64: psk_b64,
           )
-          return nil unless payload
 
-          text = payload.dup.force_encoding("UTF-8")
-          return nil unless text.valid_encoding?
-          return nil if text.empty?
-
-          text
+          data && data[:text]
         end
 
         # Decrypt the Meshtastic data protobuf payload.
@@ -63,8 +57,8 @@ module PotatoMesh
         # @param from_id [String, nil] Meshtastic node identifier.
         # @param from_num [Integer, nil] numeric node identifier override.
         # @param psk_b64 [String, nil] base64 PSK or alias.
-        # @return [String, nil] payload bytes or nil when decryption fails.
-        def decrypt_payload_bytes(cipher_b64:, packet_id:, from_id: nil, from_num: nil, psk_b64: DEFAULT_PSK_B64)
+        # @return [Hash, nil] decrypted data payload details or nil when decryption fails.
+        def decrypt_data(cipher_b64:, packet_id:, from_id: nil, from_num: nil, psk_b64: DEFAULT_PSK_B64)
           ciphertext = Base64.strict_decode64(cipher_b64)
           key = ChannelHash.expanded_key(psk_b64)
           return nil unless key
@@ -80,10 +74,38 @@ module PotatoMesh
           plaintext = decrypt_aes_ctr(ciphertext, key, nonce)
           return nil unless plaintext
 
-          Protobuf.extract_field_bytes(plaintext, PAYLOAD_FIELD_PRIMARY) ||
-            Protobuf.extract_field_bytes(plaintext, PAYLOAD_FIELD_FALLBACK)
+          data = Protobuf.parse_data(plaintext)
+          return nil unless data
+
+          text = nil
+          if data[:portnum] == TEXT_MESSAGE_PORTNUM
+            candidate = data[:payload].dup.force_encoding("UTF-8")
+            text = candidate if candidate.valid_encoding? && !candidate.empty?
+          end
+
+          { portnum: data[:portnum], payload: data[:payload], text: text }
         rescue ArgumentError, OpenSSL::Cipher::CipherError
           nil
+        end
+
+        # Decrypt the Meshtastic data protobuf payload bytes.
+        #
+        # @param cipher_b64 [String] base64-encoded encrypted payload.
+        # @param packet_id [Integer] packet identifier used for the nonce.
+        # @param from_id [String, nil] Meshtastic node identifier.
+        # @param from_num [Integer, nil] numeric node identifier override.
+        # @param psk_b64 [String, nil] base64 PSK or alias.
+        # @return [String, nil] payload bytes or nil when decryption fails.
+        def decrypt_payload_bytes(cipher_b64:, packet_id:, from_id: nil, from_num: nil, psk_b64: DEFAULT_PSK_B64)
+          data = decrypt_data(
+            cipher_b64: cipher_b64,
+            packet_id: packet_id,
+            from_id: from_id,
+            from_num: from_num,
+            psk_b64: psk_b64,
+          )
+
+          data && data[:payload]
         end
 
         # Build the Meshtastic AES nonce from packet and node identifiers.

@@ -22,6 +22,47 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
   let(:packet_id) { 3_915_687_257 }
   let(:from_id) { "!9e95cf60" }
 
+  def encode_varint(value)
+    bytes = []
+    remaining = value
+
+    loop do
+      byte = remaining & 0x7f
+      remaining >>= 7
+      if remaining.zero?
+        bytes << byte
+        break
+      end
+      bytes << (byte | 0x80)
+    end
+
+    bytes.pack("C*")
+  end
+
+  def build_data_message(portnum, payload)
+    tag_portnum = (1 << 3) | 0
+    tag_payload = (2 << 3) | 2
+
+    [
+      tag_portnum,
+    ].pack("C") + encode_varint(portnum) +
+      [tag_payload].pack("C") + encode_varint(payload.bytesize) + payload
+  end
+
+  def encrypt_message(plaintext, psk_b64:, packet_id:, from_id:)
+    key = PotatoMesh::App::Meshtastic::ChannelHash.expanded_key(psk_b64)
+    from_num = described_class.normalize_node_num(from_id, nil)
+    nonce = described_class.build_nonce(packet_id, from_num)
+
+    cipher_name = key.bytesize == 16 ? "aes-128-ctr" : "aes-256-ctr"
+    cipher = OpenSSL::Cipher.new(cipher_name)
+    cipher.encrypt
+    cipher.key = key
+    cipher.iv = nonce
+
+    Base64.strict_encode64(cipher.update(plaintext) + cipher.final)
+  end
+
   describe PotatoMesh::App::Meshtastic::ChannelHash do
     it "hashes channel names with the provided PSK" do
       hash = described_class.channel_hash("BerlinMesh", psk_b64)
@@ -58,5 +99,28 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     )
 
     expect(text).to be_nil
+  end
+
+  it "ignores non-text portnums even when payload is UTF-8" do
+    payload = "OK".b
+    plaintext = build_data_message(3, payload)
+    encrypted = encrypt_message(plaintext, psk_b64: psk_b64, packet_id: packet_id, from_id: from_id)
+
+    text = described_class.decrypt_text(
+      cipher_b64: encrypted,
+      packet_id: packet_id,
+      from_id: from_id,
+      psk_b64: psk_b64,
+    )
+
+    data = described_class.decrypt_data(
+      cipher_b64: encrypted,
+      packet_id: packet_id,
+      from_id: from_id,
+      psk_b64: psk_b64,
+    )
+
+    expect(text).to be_nil
+    expect(data).to eq({ portnum: 3, payload: payload, text: nil })
   end
 end

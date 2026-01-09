@@ -1392,7 +1392,7 @@ module PotatoMesh
       # @param from_id [String, nil] canonical node identifier when available.
       # @param from_num [Integer, nil] numeric node identifier when available.
       # @param channel_index [Integer, nil] channel hash index.
-      # @return [Hash, nil] decrypted text and channel metadata when successful.
+      # @return [Hash, nil] decrypted payload metadata when parsing succeeds.
       def decrypt_meshtastic_message(message, packet_id, from_id, from_num, channel_index)
         return nil unless message.is_a?(Hash)
 
@@ -1407,14 +1407,14 @@ module PotatoMesh
         return nil unless node_num
 
         psk_b64 = PotatoMesh::Config.meshtastic_psk_b64
-        text = PotatoMesh::App::Meshtastic::Cipher.decrypt_text(
+        data = PotatoMesh::App::Meshtastic::Cipher.decrypt_data(
           cipher_b64: cipher_b64,
           packet_id: packet_id,
           from_id: from_id,
           from_num: node_num,
           psk_b64: psk_b64,
         )
-        return nil unless text
+        return nil unless data
 
         channel_name = nil
         if channel_index.is_a?(Integer)
@@ -1426,7 +1426,8 @@ module PotatoMesh
         end
 
         {
-          text: text,
+          text: data[:text],
+          portnum: data[:portnum],
           channel_name: channel_name,
         }
       end
@@ -1477,6 +1478,7 @@ module PotatoMesh
 
         encrypted = string_or_nil(message["encrypted"])
         text = message["text"]
+        portnum = message["portnum"]
         clear_encrypted = false
         channel_index = coerce_integer(message["channel"] || message["channel_index"] || message["channelIndex"])
 
@@ -1490,11 +1492,18 @@ module PotatoMesh
           )
 
           if decrypted
-            text = decrypted[:text]
-            clear_encrypted = true
-            encrypted = nil
-            message["text"] = text
-            message["channel_name"] ||= decrypted[:channel_name]
+            if portnum.nil? && decrypted[:portnum]
+              portnum = decrypted[:portnum]
+              message["portnum"] = portnum
+            end
+
+            if decrypted[:text]
+              text = decrypted[:text]
+              clear_encrypted = true
+              encrypted = nil
+              message["text"] = text
+              message["channel_name"] ||= decrypted[:channel_name]
+            end
           end
         end
 
@@ -1531,7 +1540,7 @@ module PotatoMesh
           from_id,
           to_id,
           message["channel"],
-          message["portnum"],
+          portnum,
           text,
           encrypted,
           message["snr"],
@@ -1546,7 +1555,7 @@ module PotatoMesh
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -1585,6 +1594,14 @@ module PotatoMesh
               should_update = existing_text_str.nil? || existing_text_str.strip.empty?
               should_update ||= existing_text != text
               updates["text"] = text if should_update
+            end
+
+            if portnum
+              existing_portnum = existing.is_a?(Hash) ? existing["portnum"] : existing[9]
+              existing_portnum_str = existing_portnum&.to_s
+              should_update = existing_portnum_str.nil? || existing_portnum_str.strip.empty?
+              should_update ||= existing_portnum != portnum
+              updates["portnum"] = portnum if should_update
             end
 
             unless lora_freq.nil?
@@ -1640,6 +1657,7 @@ module PotatoMesh
               fallback_updates["text"] = text if text
               fallback_updates["encrypted"] = encrypted if encrypted
               fallback_updates["encrypted"] = nil if clear_encrypted
+              fallback_updates["portnum"] = portnum if portnum
               fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
               fallback_updates["modem_preset"] = modem_preset if modem_preset
               fallback_updates["channel_name"] = channel_name if channel_name

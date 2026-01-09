@@ -25,6 +25,8 @@ module PotatoMesh
         WIRE_TYPE_64BIT = 1
         WIRE_TYPE_LENGTH_DELIMITED = 2
         WIRE_TYPE_32BIT = 5
+        DATA_PORTNUM_FIELD = 1
+        DATA_PAYLOAD_FIELD = 2
 
         # Extract a length-delimited field from a protobuf message.
         #
@@ -65,6 +67,51 @@ module PotatoMesh
           end
 
           nil
+        end
+
+        # Parse a Meshtastic Data message for the port number and payload.
+        #
+        # @param payload [String] raw protobuf-encoded bytes.
+        # @return [Hash, nil] parsed port number and payload bytes.
+        def parse_data(payload)
+          return nil unless payload
+
+          bytes = payload.bytes
+          index = 0
+          portnum = nil
+          data_payload = nil
+
+          while index < bytes.length
+            tag, index = read_varint(bytes, index)
+            return nil unless tag
+
+            field = tag >> 3
+            wire = tag & 0x7
+
+            case wire
+            when WIRE_TYPE_VARINT
+              value, index = read_varint(bytes, index)
+              return nil unless value
+              portnum = value if field == DATA_PORTNUM_FIELD
+            when WIRE_TYPE_64BIT
+              index += 8
+            when WIRE_TYPE_LENGTH_DELIMITED
+              length, index = read_varint(bytes, index)
+              return nil unless length
+              return nil if index + length > bytes.length
+              value = bytes[index, length].pack("C*")
+              index += length
+              data_payload = value if field == DATA_PAYLOAD_FIELD
+            when WIRE_TYPE_32BIT
+              index += 4
+            else
+              return nil
+            end
+          end
+
+          return nil unless portnum && data_payload
+
+          { portnum: portnum, payload: data_payload }
         end
 
         # Read a protobuf varint from a byte array.

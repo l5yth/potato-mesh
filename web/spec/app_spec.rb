@@ -4023,6 +4023,86 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "keeps encrypted payloads when the decrypted portnum is not text" do
+      psk_b64 = "Nmh7EooP2Tsc+7pvPwXLcEDDuYhk+fBo2GLnbA1Y1sg="
+      previous_psk = ENV["MESHTASTIC_PSK_B64"]
+      ENV["MESHTASTIC_PSK_B64"] = psk_b64
+
+      begin
+        encode_varint = lambda do |value|
+          bytes = []
+          remaining = value
+          loop do
+            byte = remaining & 0x7f
+            remaining >>= 7
+            if remaining.zero?
+              bytes << byte
+              break
+            end
+            bytes << (byte | 0x80)
+          end
+          bytes.pack("C*")
+        end
+
+        build_data_message = lambda do |portnum, payload|
+          tag_portnum = (1 << 3) | 0
+          tag_payload = (2 << 3) | 2
+          [
+            tag_portnum,
+          ].pack("C") + encode_varint.call(portnum) +
+            [tag_payload].pack("C") + encode_varint.call(payload.bytesize) + payload
+        end
+
+        encrypt_message = lambda do |plaintext, packet_id, from_id|
+          key = PotatoMesh::App::Meshtastic::ChannelHash.expanded_key(psk_b64)
+          from_num = PotatoMesh::App::Meshtastic::Cipher.normalize_node_num(from_id, nil)
+          nonce = PotatoMesh::App::Meshtastic::Cipher.build_nonce(packet_id, from_num)
+          cipher_name = key.bytesize == 16 ? "aes-128-ctr" : "aes-256-ctr"
+          cipher = OpenSSL::Cipher.new(cipher_name)
+          cipher.encrypt
+          cipher.key = key
+          cipher.iv = nonce
+          Base64.strict_encode64(cipher.update(plaintext) + cipher.final)
+        end
+
+        payload_bytes = "OK".b
+        plaintext = build_data_message.call(3, payload_bytes)
+        encrypted_payload = encrypt_message.call(plaintext, 3_915_687_260, "!9e95cf60")
+
+        payload = {
+          "packet_id" => 3_915_687_260,
+          "rx_time" => reference_time.to_i,
+          "rx_iso" => reference_time.utc.iso8601,
+          "from_id" => "!9e95cf60",
+          "channel" => 35,
+          "encrypted" => encrypted_payload,
+        }
+
+        post "/api/messages", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row(
+            "SELECT text, encrypted, portnum FROM messages WHERE id = ?",
+            [payload["packet_id"]],
+          )
+
+          expect(row["text"]).to be_nil
+          expect(row["encrypted"]).to eq(encrypted_payload)
+          expect(row["portnum"].to_s).to eq("3")
+        end
+      ensure
+        if previous_psk.nil?
+          ENV.delete("MESHTASTIC_PSK_B64")
+        else
+          ENV["MESHTASTIC_PSK_B64"] = previous_psk
+        end
+      end
+    end
+
     it "updates node last_heard for plaintext messages" do
       node_id = "!plainmsg01"
       initial_first = reference_time.to_i - 600
