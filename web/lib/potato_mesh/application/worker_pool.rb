@@ -217,8 +217,8 @@ module PotatoMesh
               end
             end
           end
-
-        @threads << worker
+          @threads << worker
+        end
       end
 
       # Normalize the per-task timeout into a positive float value.
@@ -237,5 +237,4 @@ module PotatoMesh
       end
     end
   end
-end
 end
