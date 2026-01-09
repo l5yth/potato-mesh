@@ -1484,6 +1484,7 @@ module PotatoMesh
         channel_index = coerce_integer(message["channel"] || message["channel_index"] || message["channelIndex"])
 
         decrypted_payload = nil
+        decrypted_text = nil
 
         if encrypted && (text.nil? || text.to_s.strip.empty?)
           decrypted = decrypt_meshtastic_message(
@@ -1503,6 +1504,7 @@ module PotatoMesh
 
             if decrypted[:text]
               text = decrypted[:text]
+              decrypted_text = text
               clear_encrypted = true
               encrypted = nil
               message["text"] = text
@@ -1564,6 +1566,9 @@ module PotatoMesh
           )
           if existing
             updates = {}
+            existing_text = existing.is_a?(Hash) ? existing["text"] : existing[2]
+            existing_text_str = existing_text&.to_s
+            existing_has_text = existing_text_str && !existing_text_str.strip.empty?
 
             if from_id
               existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
@@ -1584,7 +1589,7 @@ module PotatoMesh
             if clear_encrypted
               existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
               updates["encrypted"] = nil if existing_encrypted
-            elsif encrypted
+            elsif encrypted && !existing_has_text
               existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
               existing_encrypted_str = existing_encrypted&.to_s
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
@@ -1593,8 +1598,6 @@ module PotatoMesh
             end
 
             if text
-              existing_text = existing.is_a?(Hash) ? existing["text"] : existing[2]
-              existing_text_str = existing_text&.to_s
               should_update = existing_text_str.nil? || existing_text_str.strip.empty?
               should_update ||= existing_text != text
               updates["text"] = text if should_update
@@ -1655,11 +1658,19 @@ module PotatoMesh
                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
+              existing_row = db.get_first_row(
+                "SELECT text, encrypted FROM messages WHERE id = ?",
+                [msg_id],
+              )
+              existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
+              existing_text_str = existing_text&.to_s
+              allow_encrypted_update = existing_text_str.nil? || existing_text_str.strip.empty?
+
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
               fallback_updates["to_id"] = to_id if to_id
               fallback_updates["text"] = text if text
-              fallback_updates["encrypted"] = encrypted if encrypted
+              fallback_updates["encrypted"] = encrypted if encrypted && allow_encrypted_update
               fallback_updates["encrypted"] = nil if clear_encrypted
               fallback_updates["portnum"] = portnum if portnum
               fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
@@ -1673,6 +1684,17 @@ module PotatoMesh
               end
             end
           end
+        end
+
+        if clear_encrypted && decrypted_text
+          debug_log(
+            "Stored decrypted text message",
+            context: "data_processing.insert_message",
+            message_id: msg_id,
+            channel: message["channel"],
+            channel_name: message["channel_name"],
+            portnum: portnum,
+          )
         end
 
         if decrypted_payload
@@ -1761,9 +1783,21 @@ module PotatoMesh
         when "POSITION_APP"
           payload = common_payload.merge("position" => decoded["payload"])
           insert_position(db, payload)
+          debug_log(
+            "Stored decrypted position payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
         when "TELEMETRY_APP"
           payload = common_payload.merge("telemetry" => decoded["payload"])
           insert_telemetry(db, payload)
+          debug_log(
+            "Stored decrypted telemetry payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
         when "NEIGHBORINFO_APP"
           neighbor_payload = decoded["payload"]
           neighbors = neighbor_payload["neighbors"]
@@ -1785,6 +1819,12 @@ module PotatoMesh
             "last_sent_by_id" => neighbor_payload["last_sent_by_id"],
           )
           insert_neighbors(db, payload)
+          debug_log(
+            "Stored decrypted neighbor payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
         when "TRACEROUTE_APP"
           route = decoded["payload"]["route"]
           route_back = decoded["payload"]["route_back"]
@@ -1797,6 +1837,12 @@ module PotatoMesh
             "hops" => hops,
           )
           insert_trace(db, payload)
+          debug_log(
+            "Stored decrypted traceroute payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
         end
       end
 

@@ -107,6 +107,17 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     expect(text).to eq("FF-TB Beacon")
   end
 
+  it "decrypts another public PSK alias payload sample" do
+    text = described_class.decrypt_text(
+      cipher_b64: "Xso0VQhndJ5RJ3pfHRVRLKSA",
+      packet_id: 4_126_217_817,
+      from_id: "!1d60dd3c",
+      psk_b64: "AQ==",
+    )
+
+    expect(text).to eq("FF-ZW Beacon")
+  end
+
   it "returns nil when the cipher text is invalid" do
     text = described_class.decrypt_text(
       cipher_b64: "not-base64",
