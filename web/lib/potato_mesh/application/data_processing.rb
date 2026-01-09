@@ -1385,6 +1385,52 @@ module PotatoMesh
         end
       end
 
+      # Attempt to decrypt an encrypted Meshtastic message payload.
+      #
+      # @param message [Hash] message payload supplied by the ingestor.
+      # @param packet_id [Integer] message packet identifier.
+      # @param from_id [String, nil] canonical node identifier when available.
+      # @param from_num [Integer, nil] numeric node identifier when available.
+      # @param channel_index [Integer, nil] channel hash index.
+      # @return [Hash, nil] decrypted text and channel metadata when successful.
+      def decrypt_meshtastic_message(message, packet_id, from_id, from_num, channel_index)
+        return nil unless message.is_a?(Hash)
+
+        cipher_b64 = string_or_nil(message["encrypted"])
+        return nil unless cipher_b64
+
+        node_num = coerce_integer(from_num)
+        if node_num.nil?
+          parts = canonical_node_parts(from_id)
+          node_num = parts[1] if parts
+        end
+        return nil unless node_num
+
+        psk_b64 = PotatoMesh::Config.meshtastic_psk_b64
+        text = PotatoMesh::App::Meshtastic::Cipher.decrypt_text(
+          cipher_b64: cipher_b64,
+          packet_id: packet_id,
+          from_id: from_id,
+          from_num: node_num,
+          psk_b64: psk_b64,
+        )
+        return nil unless text
+
+        channel_name = nil
+        if channel_index.is_a?(Integer)
+          candidates = PotatoMesh::App::Meshtastic::RainbowTable.channel_names_for(
+            channel_index,
+            psk_b64: psk_b64,
+          )
+          channel_name = candidates.first if candidates.any?
+        end
+
+        {
+          text: text,
+          channel_name: channel_name,
+        }
+      end
+
       def insert_message(db, message)
         return unless message.is_a?(Hash)
 
@@ -1430,6 +1476,27 @@ module PotatoMesh
         end
 
         encrypted = string_or_nil(message["encrypted"])
+        text = message["text"]
+        clear_encrypted = false
+        channel_index = coerce_integer(message["channel"] || message["channel_index"] || message["channelIndex"])
+
+        if encrypted && (text.nil? || text.to_s.strip.empty?)
+          decrypted = decrypt_meshtastic_message(
+            message,
+            msg_id,
+            from_id,
+            message["from_num"],
+            channel_index,
+          )
+
+          if decrypted
+            text = decrypted[:text]
+            clear_encrypted = true
+            encrypted = nil
+            message["text"] = text
+            message["channel_name"] ||= decrypted[:channel_name]
+          end
+        end
 
         ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time)
         touch_node_last_seen(
@@ -1465,7 +1532,7 @@ module PotatoMesh
           to_id,
           message["channel"],
           message["portnum"],
-          message["text"],
+          text,
           encrypted,
           message["snr"],
           message["rssi"],
@@ -1479,7 +1546,7 @@ module PotatoMesh
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -1501,21 +1568,32 @@ module PotatoMesh
               updates["to_id"] = to_id if should_update
             end
 
-            if encrypted
-              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[2]
+            if clear_encrypted
+              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
+              updates["encrypted"] = nil if existing_encrypted
+            elsif encrypted
+              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
               existing_encrypted_str = existing_encrypted&.to_s
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
               should_update ||= existing_encrypted != encrypted
               updates["encrypted"] = encrypted if should_update
             end
 
+            if text
+              existing_text = existing.is_a?(Hash) ? existing["text"] : existing[2]
+              existing_text_str = existing_text&.to_s
+              should_update = existing_text_str.nil? || existing_text_str.strip.empty?
+              should_update ||= existing_text != text
+              updates["text"] = text if should_update
+            end
+
             unless lora_freq.nil?
-              existing_lora = existing.is_a?(Hash) ? existing["lora_freq"] : existing[3]
+              existing_lora = existing.is_a?(Hash) ? existing["lora_freq"] : existing[4]
               updates["lora_freq"] = lora_freq if existing_lora != lora_freq
             end
 
             if modem_preset
-              existing_preset = existing.is_a?(Hash) ? existing["modem_preset"] : existing[4]
+              existing_preset = existing.is_a?(Hash) ? existing["modem_preset"] : existing[5]
               existing_preset_str = existing_preset&.to_s
               should_update = existing_preset_str.nil? || existing_preset_str.strip.empty?
               should_update ||= existing_preset != modem_preset
@@ -1523,7 +1601,7 @@ module PotatoMesh
             end
 
             if channel_name
-              existing_channel = existing.is_a?(Hash) ? existing["channel_name"] : existing[5]
+              existing_channel = existing.is_a?(Hash) ? existing["channel_name"] : existing[6]
               existing_channel_str = existing_channel&.to_s
               should_update = existing_channel_str.nil? || existing_channel_str.strip.empty?
               should_update ||= existing_channel != channel_name
@@ -1531,12 +1609,12 @@ module PotatoMesh
             end
 
             unless reply_id.nil?
-              existing_reply = existing.is_a?(Hash) ? existing["reply_id"] : existing[6]
+              existing_reply = existing.is_a?(Hash) ? existing["reply_id"] : existing[7]
               updates["reply_id"] = reply_id if existing_reply != reply_id
             end
 
             if emoji
-              existing_emoji = existing.is_a?(Hash) ? existing["emoji"] : existing[7]
+              existing_emoji = existing.is_a?(Hash) ? existing["emoji"] : existing[8]
               existing_emoji_str = existing_emoji&.to_s
               should_update = existing_emoji_str.nil? || existing_emoji_str.strip.empty?
               should_update ||= existing_emoji != emoji
@@ -1559,7 +1637,9 @@ module PotatoMesh
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
               fallback_updates["to_id"] = to_id if to_id
+              fallback_updates["text"] = text if text
               fallback_updates["encrypted"] = encrypted if encrypted
+              fallback_updates["encrypted"] = nil if clear_encrypted
               fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
               fallback_updates["modem_preset"] = modem_preset if modem_preset
               fallback_updates["channel_name"] = channel_name if channel_name
