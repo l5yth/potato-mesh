@@ -4093,7 +4093,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
           expect(row["text"]).to be_nil
           expect(row["encrypted"]).to eq(encrypted_payload)
-          expect(row["portnum"].to_s).to eq("3")
+          expect(row["portnum"]).to be_nil
         end
       ensure
         if previous_psk.nil?
@@ -4203,6 +4203,70 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["longitude"]).to be_within(0.0001).of(13.6577024)
         expect(row["altitude"]).to eq(11)
       end
+    end
+
+    it "clears encrypted payloads when non-text payloads are decoded" do
+      payload_bytes = "position".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+      position_payload = {
+        "latitude_i" => 525598720,
+        "longitude_i" => 136577024,
+        "altitude" => 11,
+        "time" => reference_time.to_i,
+        "precision_bits" => 13,
+      }
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 3,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "POSITION_APP",
+          "payload" => position_payload,
+        },
+      )
+      allow(PotatoMesh::Application).to receive(:touch_node_last_seen).and_call_original
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_005,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT encrypted FROM messages WHERE id = ?",
+          [900_005],
+        )
+
+        expect(row["encrypted"]).to be_nil
+      end
+
+      expect(PotatoMesh::Application).to have_received(:touch_node_last_seen).with(
+        anything,
+        anything,
+        anything,
+        hash_including(source: :position),
+      )
+      expect(PotatoMesh::Application).not_to have_received(:touch_node_last_seen).with(
+        anything,
+        anything,
+        anything,
+        hash_including(source: :message),
+      )
     end
 
     it "stores decoded neighbors when decrypting neighborinfo payloads" do
