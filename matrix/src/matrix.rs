@@ -111,9 +111,7 @@ impl MatrixAppserviceClient {
         let encoded_user = urlencoding::encode(user_id);
         let url = format!(
             "{}/_matrix/client/v3/profile/{}/displayname?user_id={}",
-            self.cfg.homeserver,
-            encoded_user,
-            encoded_user
+            self.cfg.homeserver, encoded_user, encoded_user
         );
 
         let body = DisplayNameReq {
@@ -149,9 +147,7 @@ impl MatrixAppserviceClient {
         let encoded_user = urlencoding::encode(user_id);
         let url = format!(
             "{}/_matrix/client/v3/rooms/{}/join?user_id={}",
-            self.cfg.homeserver,
-            encoded_room,
-            encoded_user
+            self.cfg.homeserver, encoded_room, encoded_user
         );
 
         let resp = self
@@ -197,10 +193,7 @@ impl MatrixAppserviceClient {
 
         let url = format!(
             "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}?user_id={}",
-            self.cfg.homeserver,
-            encoded_room,
-            txn_id,
-            encoded_user
+            self.cfg.homeserver, encoded_room, txn_id, encoded_user
         );
 
         let content = MsgContent {
