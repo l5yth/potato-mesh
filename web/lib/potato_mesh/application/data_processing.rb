@@ -160,7 +160,15 @@ module PotatoMesh
         inserted
       end
 
-      def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil, source: nil)
+      def touch_node_last_seen(
+        db,
+        node_ref,
+        fallback_num = nil,
+        rx_time: nil,
+        source: nil,
+        lora_freq: nil,
+        modem_preset: nil
+      )
         timestamp = coerce_integer(rx_time)
         return unless timestamp
 
@@ -185,15 +193,19 @@ module PotatoMesh
         return if broadcast_node_ref?(node_id, fallback_num)
         return unless node_id
 
+        lora_freq = coerce_integer(lora_freq)
+        modem_preset = string_or_nil(modem_preset)
         updated = false
         with_busy_retry do
-          db.execute <<~SQL, [timestamp, timestamp, timestamp, node_id]
+          db.execute <<~SQL, [timestamp, timestamp, timestamp, lora_freq, modem_preset, node_id]
                        UPDATE nodes
                           SET last_heard = CASE
                             WHEN COALESCE(last_heard, 0) >= ? THEN last_heard
                             ELSE ?
                           END,
-                              first_heard = COALESCE(first_heard, ?)
+                              first_heard = COALESCE(first_heard, ?),
+                              lora_freq = COALESCE(?, lora_freq),
+                              modem_preset = COALESCE(?, modem_preset)
                         WHERE node_id = ?
                      SQL
           updated ||= db.changes.positive?
@@ -206,6 +218,8 @@ module PotatoMesh
             node_id: node_id,
             timestamp: timestamp,
             source: source || :unknown,
+            lora_freq: lora_freq,
+            modem_preset: modem_preset,
           )
         end
 
@@ -508,8 +522,19 @@ module PotatoMesh
           node_id = canonical if canonical
         end
 
+        lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
+        modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
+
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
-        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :position)
+        touch_node_last_seen(
+          db,
+          node_id || node_num,
+          node_num,
+          rx_time: rx_time,
+          source: :position,
+          lora_freq: lora_freq,
+          modem_preset: modem_preset,
+        )
 
         to_id = string_or_nil(payload["to_id"] || payload["to"])
 
@@ -753,7 +778,15 @@ module PotatoMesh
         end
       end
 
-      def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
+      def update_node_from_telemetry(
+        db,
+        node_id,
+        node_num,
+        rx_time,
+        metrics = {},
+        lora_freq: nil,
+        modem_preset: nil
+      )
         num = coerce_integer(node_num)
         id = string_or_nil(node_id)
         if id&.start_with?("!")
@@ -763,7 +796,15 @@ module PotatoMesh
         return unless id
 
         ensure_unknown_node(db, id, num, heard_time: rx_time)
-        touch_node_last_seen(db, id, num, rx_time: rx_time, source: :telemetry)
+        touch_node_last_seen(
+          db,
+          id,
+          num,
+          rx_time: rx_time,
+          source: :telemetry,
+          lora_freq: lora_freq,
+          modem_preset: modem_preset,
+        )
 
         battery = coerce_float(metrics[:battery_level] || metrics["battery_level"])
         voltage = coerce_float(metrics[:voltage] || metrics["voltage"])
@@ -938,6 +979,8 @@ module PotatoMesh
         rssi = coerce_integer(payload["rssi"])
         bitfield = coerce_integer(payload["bitfield"])
         payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
+        lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
+        modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
 
         telemetry_section = normalize_json_object(payload["telemetry"])
         device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])
@@ -1320,13 +1363,21 @@ module PotatoMesh
                      SQL
         end
 
-        update_node_from_telemetry(db, node_id, node_num, rx_time, {
-          battery_level: battery_level,
-          voltage: voltage,
-          channel_utilization: channel_utilization,
-          air_util_tx: air_util_tx,
-          uptime_seconds: uptime_seconds,
-        })
+        update_node_from_telemetry(
+          db,
+          node_id,
+          node_num,
+          rx_time,
+          {
+            battery_level: battery_level,
+            voltage: voltage,
+            channel_utilization: channel_utilization,
+            air_util_tx: air_util_tx,
+            uptime_seconds: uptime_seconds,
+          },
+          lora_freq: lora_freq,
+          modem_preset: modem_preset,
+        )
       end
 
       # Persist a traceroute observation and its hop path.
@@ -1756,6 +1807,8 @@ module PotatoMesh
             message["from_num"],
             rx_time: rx_time,
             source: :message,
+            lora_freq: lora_freq,
+            modem_preset: modem_preset,
           )
 
           ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time) if to_id || raw_to_id
@@ -1766,6 +1819,8 @@ module PotatoMesh
               message["to_num"],
               rx_time: rx_time,
               source: :message,
+              lora_freq: lora_freq,
+              modem_preset: modem_preset,
             )
           end
         end
@@ -1831,6 +1886,8 @@ module PotatoMesh
           "hop_limit" => hop_limit,
           "snr" => snr,
           "rssi" => rssi,
+          "lora_freq" => coerce_integer(message["lora_freq"] || message["loraFrequency"]),
+          "modem_preset" => string_or_nil(message["modem_preset"] || message["modemPreset"]),
           "payload_b64" => payload_b64,
         }
 

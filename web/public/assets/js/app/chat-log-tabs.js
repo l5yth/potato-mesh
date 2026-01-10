@@ -103,11 +103,29 @@ export function buildChatTabModel({
   const logEntries = [];
   const channelBuckets = new Map();
   const primaryChannelEnvLabel = normalisePrimaryChannelEnvLabel(primaryChannelFallbackLabel);
+  const nodeById = new Map();
+  const nodeByNum = new Map();
+  const nodeInfoKeys = new Set();
+
+  const buildNodeInfoKey = (nodeId, nodeNum, ts) => `${nodeId ?? ''}:${nodeNum ?? ''}:${ts ?? ''}`;
+  const recordNodeInfoEntry = (ts, nodeId, nodeNum) => {
+    if (ts == null) return;
+    const key = buildNodeInfoKey(nodeId, nodeNum, ts);
+    if (nodeInfoKeys.has(key)) return;
+    const node = nodeId && nodeById.has(nodeId)
+      ? nodeById.get(nodeId)
+      : (nodeNum != null && nodeByNum.has(nodeNum) ? nodeByNum.get(nodeNum) : null);
+    if (!node) return;
+    nodeInfoKeys.add(key);
+    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NODE_INFO, node, nodeId, nodeNum });
+  };
 
   for (const node of nodes || []) {
     if (!node) continue;
     const nodeId = normaliseNodeId(node);
     const nodeNum = normaliseNodeNum(node);
+    if (nodeId) nodeById.set(nodeId, node);
+    if (nodeNum != null) nodeByNum.set(nodeNum, node);
     const firstTs = resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
     if (firstTs != null && firstTs >= cutoff) {
       logEntries.push({ ts: firstTs, type: CHAT_LOG_ENTRY_TYPES.NODE_NEW, node, nodeId, nodeNum });
@@ -115,6 +133,7 @@ export function buildChatTabModel({
     const lastTs = resolveTimestampSeconds(node.last_heard ?? node.lastHeard, node.last_seen_iso ?? node.lastSeenIso);
     if (lastTs != null && lastTs >= cutoff) {
       logEntries.push({ ts: lastTs, type: CHAT_LOG_ENTRY_TYPES.NODE_INFO, node, nodeId, nodeNum });
+      nodeInfoKeys.add(buildNodeInfoKey(nodeId, nodeNum, lastTs));
     }
   }
 
@@ -130,6 +149,7 @@ export function buildChatTabModel({
       const nodeId = normaliseNodeId(snapshot);
       const nodeNum = normaliseNodeNum(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.TELEMETRY, telemetry: snapshot, nodeId, nodeNum });
+      recordNodeInfoEntry(ts, nodeId, nodeNum);
     }
   }
 
@@ -145,6 +165,7 @@ export function buildChatTabModel({
       const nodeId = normaliseNodeId(snapshot);
       const nodeNum = normaliseNodeNum(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.POSITION, position: snapshot, nodeId, nodeNum });
+      recordNodeInfoEntry(ts, nodeId, nodeNum);
     }
   }
 
@@ -158,6 +179,7 @@ export function buildChatTabModel({
       const nodeNum = normaliseNodeNum(snapshot);
       const neighborId = normaliseNeighborId(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: snapshot, nodeId, nodeNum, neighborId });
+      recordNodeInfoEntry(ts, nodeId, nodeNum);
     }
   }
 
@@ -187,6 +209,7 @@ export function buildChatTabModel({
       nodeId: firstHop.id ?? null,
       nodeNum: firstHop.num ?? null
     });
+    recordNodeInfoEntry(ts, firstHop.id ?? null, firstHop.num ?? null);
   }
 
   const encryptedLogEntries = [];

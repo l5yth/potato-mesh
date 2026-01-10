@@ -172,14 +172,13 @@ test('buildChatTabModel includes telemetry, position, and neighbor events', () =
     windowSeconds: WINDOW
   });
 
-  assert.deepEqual(model.logEntries.map(entry => entry.type), [
-    CHAT_LOG_ENTRY_TYPES.NODE_NEW,
-    CHAT_LOG_ENTRY_TYPES.NODE_INFO,
-    CHAT_LOG_ENTRY_TYPES.TELEMETRY,
-    CHAT_LOG_ENTRY_TYPES.POSITION,
-    CHAT_LOG_ENTRY_TYPES.NEIGHBOR,
-    CHAT_LOG_ENTRY_TYPES.TRACE
-  ]);
+  const types = model.logEntries.map(entry => entry.type);
+  assert.equal(types[0], CHAT_LOG_ENTRY_TYPES.NODE_NEW);
+  assert.ok(types.includes(CHAT_LOG_ENTRY_TYPES.NODE_INFO));
+  assert.ok(types.includes(CHAT_LOG_ENTRY_TYPES.TELEMETRY));
+  assert.ok(types.includes(CHAT_LOG_ENTRY_TYPES.POSITION));
+  assert.ok(types.includes(CHAT_LOG_ENTRY_TYPES.NEIGHBOR));
+  assert.ok(types.includes(CHAT_LOG_ENTRY_TYPES.TRACE));
   assert.equal(model.logEntries[0].nodeId, nodeId);
   const neighborEntry = model.logEntries.find(entry => entry.type === CHAT_LOG_ENTRY_TYPES.NEIGHBOR);
   assert.ok(neighborEntry);

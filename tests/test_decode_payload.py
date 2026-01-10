@@ -120,3 +120,30 @@ def test_main_requires_string_payload():
 
     assert status == 1
     assert result["error"] == "missing-payload"
+
+
+def test_main_success_position_payload():
+    position = mesh_pb2.Position()
+    position.latitude_i = 525598720
+    position.longitude_i = 136577024
+    payload_b64 = base64.b64encode(position.SerializeToString()).decode("ascii")
+
+    status, result = run_main_with_input({"portnum": 3, "payload_b64": payload_b64})
+
+    assert status == 0
+    assert result["type"] == "POSITION_APP"
+    assert result["payload"]["latitude_i"] == 525598720
+
+
+def test_decode_payload_handles_parse_failure():
+    class BrokenMessage:
+        def ParseFromString(self, _payload):
+            raise ValueError("boom")
+
+    decode_payload.PORTNUM_MAP[99] = ("BROKEN", BrokenMessage)
+    payload_b64 = base64.b64encode(b"\x00").decode("ascii")
+
+    result = decode_payload._decode_payload(99, payload_b64)
+
+    assert result["error"].startswith("decode-failed")
+    assert result["type"] == "BROKEN"
