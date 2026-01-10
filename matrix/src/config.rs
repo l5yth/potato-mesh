@@ -502,6 +502,28 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    struct CwdGuard {
+        original: PathBuf,
+    }
+
+    impl CwdGuard {
+        /// Switch to the provided path and restore the original cwd on drop.
+        fn enter(path: &Path) -> Self {
+            let original = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+            std::env::set_current_dir(path).unwrap();
+            Self { original }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            if std::env::set_current_dir(&self.original).is_err() {
+                let _ = std::env::set_current_dir("/");
+            }
+        }
+    }
 
     fn minimal_overrides() -> ConfigOverrides {
         ConfigOverrides {
@@ -636,8 +658,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn load_uses_container_secret_defaults() {
         let tmp_dir = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
         let secrets_dir = tmp_dir.path();
         fs::write(secrets_dir.join("matrix_as_token"), "FROM_SECRET").unwrap();
 
@@ -665,8 +689,7 @@ mod tests {
     #[serial]
     fn load_prefers_cli_token_file_over_env_value() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
 
         let token_file = tmp_dir.path().join("as_token");
         fs::write(&token_file, "CLI_SECRET").unwrap();
@@ -694,14 +717,13 @@ mod tests {
 
         let cfg = load_from_sources(cli_inputs, env_inputs, None).unwrap();
         assert_eq!(cfg.matrix.as_token, "CLI_SECRET");
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
+    #[serial]
     fn load_uses_container_default_poll_interval() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
 
         let cli_inputs = ConfigInputs {
             container_override: Some(true),
@@ -722,15 +744,13 @@ mod tests {
             cfg.potatomesh.poll_interval_secs,
             CONTAINER_POLL_INTERVAL_SECS
         );
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
     #[serial]
     fn load_uses_default_state_path_when_missing() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(tmp_dir.path()).unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
 
         let cli_inputs = ConfigInputs {
             overrides: ConfigOverrides {
@@ -748,6 +768,5 @@ mod tests {
 
         let cfg = load_from_sources(cli_inputs, ConfigInputs::default(), None).unwrap();
         assert_eq!(cfg.state.state_file, DEFAULT_STATE_FILE);
-        std::env::set_current_dir(original_dir).unwrap();
     }
 }
