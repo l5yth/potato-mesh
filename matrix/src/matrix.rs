@@ -66,10 +66,6 @@ impl MatrixAppserviceClient {
         format!("@{}:{}", localpart, self.cfg.server_name)
     }
 
-    fn auth_query(&self) -> String {
-        format!("access_token={}", urlencoding::encode(&self.cfg.as_token))
-    }
-
     /// Ensure the puppet user exists (register via appservice registration).
     pub async fn ensure_user_registered(&self, localpart: &str) -> anyhow::Result<()> {
         #[derive(Serialize)]
@@ -80,9 +76,8 @@ impl MatrixAppserviceClient {
         }
 
         let url = format!(
-            "{}/_matrix/client/v3/register?kind=user&{}",
-            self.cfg.homeserver,
-            self.auth_query()
+            "{}/_matrix/client/v3/register?kind=user",
+            self.cfg.homeserver
         );
 
         let body = RegisterReq {
@@ -90,7 +85,13 @@ impl MatrixAppserviceClient {
             username: localpart,
         };
 
-        let resp = self.http.post(&url).json(&body).send().await?;
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.cfg.as_token)
+            .json(&body)
+            .send()
+            .await?;
         if resp.status().is_success() {
             Ok(())
         } else {
@@ -109,18 +110,21 @@ impl MatrixAppserviceClient {
 
         let encoded_user = urlencoding::encode(user_id);
         let url = format!(
-            "{}/_matrix/client/v3/profile/{}/displayname?user_id={}&{}",
-            self.cfg.homeserver,
-            encoded_user,
-            encoded_user,
-            self.auth_query()
+            "{}/_matrix/client/v3/profile/{}/displayname?user_id={}",
+            self.cfg.homeserver, encoded_user, encoded_user
         );
 
         let body = DisplayNameReq {
             displayname: display_name,
         };
 
-        let resp = self.http.put(&url).json(&body).send().await?;
+        let resp = self
+            .http
+            .put(&url)
+            .bearer_auth(&self.cfg.as_token)
+            .json(&body)
+            .send()
+            .await?;
         if resp.status().is_success() {
             Ok(())
         } else {
@@ -142,14 +146,17 @@ impl MatrixAppserviceClient {
         let encoded_room = urlencoding::encode(&self.cfg.room_id);
         let encoded_user = urlencoding::encode(user_id);
         let url = format!(
-            "{}/_matrix/client/v3/rooms/{}/join?user_id={}&{}",
-            self.cfg.homeserver,
-            encoded_room,
-            encoded_user,
-            self.auth_query()
+            "{}/_matrix/client/v3/rooms/{}/join?user_id={}",
+            self.cfg.homeserver, encoded_room, encoded_user
         );
 
-        let resp = self.http.post(&url).json(&JoinReq {}).send().await?;
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.cfg.as_token)
+            .json(&JoinReq {})
+            .send()
+            .await?;
         if resp.status().is_success() {
             Ok(())
         } else {
@@ -185,12 +192,8 @@ impl MatrixAppserviceClient {
         let encoded_user = urlencoding::encode(user_id);
 
         let url = format!(
-            "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}?user_id={}&{}",
-            self.cfg.homeserver,
-            encoded_room,
-            txn_id,
-            encoded_user,
-            self.auth_query()
+            "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}?user_id={}",
+            self.cfg.homeserver, encoded_room, txn_id, encoded_user
         );
 
         let content = MsgContent {
@@ -200,7 +203,13 @@ impl MatrixAppserviceClient {
             formatted_body,
         };
 
-        let resp = self.http.put(&url).json(&content).send().await?;
+        let resp = self
+            .http
+            .put(&url)
+            .bearer_auth(&self.cfg.as_token)
+            .json(&content)
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -294,16 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn auth_query_contains_access_token() {
-        let http = reqwest::Client::builder().build().unwrap();
-        let client = MatrixAppserviceClient::new(http, dummy_cfg());
-
-        let q = client.auth_query();
-        assert!(q.starts_with("access_token="));
-        assert!(q.contains("AS_TOKEN"));
-    }
-
-    #[test]
     fn test_new_matrix_client() {
         let http_client = reqwest::Client::new();
         let config = dummy_cfg();
@@ -318,7 +317,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/_matrix/client/v3/register")
-            .match_query("kind=user&access_token=AS_TOKEN")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(200)
             .create();
 
@@ -336,7 +336,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/_matrix/client/v3/register")
-            .match_query("kind=user&access_token=AS_TOKEN")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(400) // M_USER_IN_USE
             .create();
 
@@ -354,12 +355,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let user_id = "@test:example.org";
         let encoded_user = urlencoding::encode(user_id);
-        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let query = format!("user_id={}", encoded_user);
         let path = format!("/_matrix/client/v3/profile/{}/displayname", encoded_user);
 
         let mock = server
             .mock("PUT", path.as_str())
             .match_query(query.as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(200)
             .create();
 
@@ -377,12 +379,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let user_id = "@test:example.org";
         let encoded_user = urlencoding::encode(user_id);
-        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let query = format!("user_id={}", encoded_user);
         let path = format!("/_matrix/client/v3/profile/{}/displayname", encoded_user);
 
         let mock = server
             .mock("PUT", path.as_str())
             .match_query(query.as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(500)
             .create();
 
@@ -402,12 +405,13 @@ mod tests {
         let room_id = "!roomid:example.org";
         let encoded_user = urlencoding::encode(user_id);
         let encoded_room = urlencoding::encode(room_id);
-        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let query = format!("user_id={}", encoded_user);
         let path = format!("/_matrix/client/v3/rooms/{}/join", encoded_room);
 
         let mock = server
             .mock("POST", path.as_str())
             .match_query(query.as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(200)
             .create();
 
@@ -428,12 +432,13 @@ mod tests {
         let room_id = "!roomid:example.org";
         let encoded_user = urlencoding::encode(user_id);
         let encoded_room = urlencoding::encode(room_id);
-        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let query = format!("user_id={}", encoded_user);
         let path = format!("/_matrix/client/v3/rooms/{}/join", encoded_room);
 
         let mock = server
             .mock("POST", path.as_str())
             .match_query(query.as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(403)
             .create();
 
@@ -462,7 +467,7 @@ mod tests {
             MatrixAppserviceClient::new(reqwest::Client::new(), cfg)
         };
         let txn_id = client.txn_counter.load(Ordering::SeqCst);
-        let query = format!("user_id={}&access_token=AS_TOKEN", encoded_user);
+        let query = format!("user_id={}", encoded_user);
         let path = format!(
             "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
             encoded_room, txn_id
@@ -471,6 +476,7 @@ mod tests {
         let mock = server
             .mock("PUT", path.as_str())
             .match_query(query.as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "msgtype": "m.text",
                 "body": "`[meta]` hello",
