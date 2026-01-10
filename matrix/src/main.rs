@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod cli;
 mod config;
 mod matrix;
 mod matrix_server;
@@ -20,9 +21,13 @@ mod potatomesh;
 use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::Result;
+#[cfg(not(test))]
+use clap::Parser;
 use tokio::time::Duration;
 use tracing::{error, info};
 
+#[cfg(not(test))]
+use crate::cli::Cli;
 #[cfg(not(test))]
 use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
@@ -207,7 +212,8 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cfg = Config::from_default_path()?;
+    let cli = Cli::parse();
+    let cfg = config::load(cli.to_inputs())?;
     log_config(&cfg);
 
     let http = reqwest::Client::builder().build()?;

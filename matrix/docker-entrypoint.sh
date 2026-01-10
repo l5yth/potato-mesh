@@ -15,6 +15,13 @@
 
 set -e
 
+# Default to container-aware configuration paths unless explicitly overridden.
+: "${POTATOMESH_CONTAINER:=1}"
+: "${POTATOMESH_SECRETS_DIR:=/run/secrets}"
+
+export POTATOMESH_CONTAINER
+export POTATOMESH_SECRETS_DIR
+
 # Default state file path from Config.toml unless overridden.
 STATE_FILE="${STATE_FILE:-/app/bridge_state.json}"
 STATE_DIR="$(dirname "$STATE_FILE")"
