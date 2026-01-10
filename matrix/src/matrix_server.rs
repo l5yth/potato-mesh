@@ -14,7 +14,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header::AUTHORIZATION, HeaderMap, StatusCode},
     response::IntoResponse,
     routing::put,
     Json, Router,
@@ -31,6 +31,42 @@ struct SynapseState {
 #[derive(serde::Deserialize)]
 struct AuthQuery {
     access_token: Option<String>,
+}
+
+/// Pull access tokens from supported auth headers.
+fn extract_access_token(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get(AUTHORIZATION) {
+        if let Ok(raw) = value.to_str() {
+            if let Some(token) = raw.strip_prefix("Bearer ") {
+                return Some(token.trim().to_string());
+            }
+            if let Some(token) = raw.strip_prefix("bearer ") {
+                return Some(token.trim().to_string());
+            }
+        }
+    }
+    if let Some(value) = headers.get("x-access-token") {
+        if let Ok(raw) = value.to_str() {
+            return Some(raw.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Compare tokens in constant time to avoid timing leakage.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let max_len = std::cmp::max(a_bytes.len(), b_bytes.len());
+    let mut diff = (a_bytes.len() ^ b_bytes.len()) as u8;
+
+    for idx in 0..max_len {
+        let left = *a_bytes.get(idx).unwrap_or(&0);
+        let right = *b_bytes.get(idx).unwrap_or(&0);
+        diff |= left ^ right;
+    }
+
+    diff == 0
 }
 
 /// Captures inbound Synapse transaction payloads for logging.
@@ -55,12 +91,17 @@ async fn handle_transaction(
     Path(txn_id): Path<String>,
     State(state): State<SynapseState>,
     Query(auth): Query<AuthQuery>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
-    let token_matches = auth
-        .access_token
-        .as_ref()
-        .is_some_and(|token| token == &state.hs_token);
+    let header_token = extract_access_token(&headers);
+    let token_matches = if let Some(token) = header_token.as_deref() {
+        constant_time_eq(token, &state.hs_token)
+    } else {
+        auth.access_token
+            .as_deref()
+            .is_some_and(|token| constant_time_eq(token, &state.hs_token))
+    };
     if !token_matches {
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({})));
     }
@@ -103,7 +144,8 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PUT")
-                    .uri("/_matrix/appservice/v1/transactions/123?access_token=HS_TOKEN")
+                    .uri("/_matrix/appservice/v1/transactions/123")
+                    .header("authorization", "Bearer HS_TOKEN")
                     .header("content-type", "application/json")
                     .body(Body::from(payload.to_string()))
                     .unwrap(),
@@ -161,7 +203,8 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("PUT")
-                    .uri("/_matrix/appservice/v1/transactions/123?access_token=NOPE")
+                    .uri("/_matrix/appservice/v1/transactions/123")
+                    .header("authorization", "Bearer NOPE")
                     .header("content-type", "application/json")
                     .body(Body::from(payload.to_string()))
                     .unwrap(),
@@ -174,6 +217,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body.as_ref(), b"{}");
+    }
+
+    #[tokio::test]
+    async fn transactions_endpoint_accepts_legacy_query_token() {
+        let app = build_router(SynapseState {
+            hs_token: "HS_TOKEN".to_string(),
+        });
+        let payload = serde_json::json!({
+            "events": [],
+            "txn_id": "125"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/_matrix/appservice/v1/transactions/125?access_token=HS_TOKEN")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn transactions_endpoint_accepts_x_access_token_header() {
+        let app = build_router(SynapseState {
+            hs_token: "HS_TOKEN".to_string(),
+        });
+        let payload = serde_json::json!({
+            "events": [],
+            "txn_id": "126"
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/_matrix/appservice/v1/transactions/126")
+                    .header("x-access-token", "HS_TOKEN")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
