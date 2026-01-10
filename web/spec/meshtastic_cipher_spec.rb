@@ -116,6 +116,12 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
 
       expect(key).to eq("")
     end
+
+    it "pads 17 byte PSKs up to 32 bytes" do
+      key = described_class.expanded_key(Base64.strict_encode64("x" * 17))
+
+      expect(key.bytesize).to eq(32)
+    end
   end
 
   describe PotatoMesh::App::Meshtastic::RainbowTable do
@@ -244,12 +250,29 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     expect(value).to be_nil
   end
 
+  it "normalizes floating node numbers" do
+    value = described_class.normalize_node_num(nil, 12.5)
+
+    expect(value).to eq(12)
+  end
+
   it "returns nil when the PSK is an unsupported size" do
     data = described_class.decrypt_data(
       cipher_b64: "AA==",
       packet_id: 1,
       from_id: "!9e95cf60",
       psk_b64: Base64.strict_encode64("x" * 33),
+    )
+
+    expect(data).to be_nil
+  end
+
+  it "returns nil when the PSK expands to an empty key" do
+    data = described_class.decrypt_data(
+      cipher_b64: "AA==",
+      packet_id: 1,
+      from_id: "!9e95cf60",
+      psk_b64: "",
     )
 
     expect(data).to be_nil

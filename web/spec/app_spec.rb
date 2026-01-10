@@ -4413,6 +4413,133 @@ RSpec.describe "Potato Mesh Sinatra app" do
       )
     end
 
+    it "keeps encrypted payloads when decoded neighbor data is empty" do
+      payload_bytes = "neighbor".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+      neighbor_payload = {
+        "node_id" => "!7c5b0920",
+        "neighbors" => [],
+      }
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 71,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "NEIGHBORINFO_APP",
+          "payload" => neighbor_payload,
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_006,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT encrypted FROM messages WHERE id = ?",
+          [900_006],
+        )
+
+        expect(row["encrypted"]).to eq(encoded_payload)
+      end
+    end
+
+    it "updates node modem metadata when touching last seen" do
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard) VALUES (?,?,?)",
+          ["!7c5b0920", reference_time.to_i - 10, reference_time.to_i - 10],
+        )
+
+        PotatoMesh::Application.touch_node_last_seen(
+          db,
+          "!7c5b0920",
+          nil,
+          rx_time: reference_time.to_i,
+          source: :message,
+          lora_freq: 868,
+          modem_preset: "MediumFast",
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_freq, modem_preset FROM nodes WHERE node_id = ?",
+          ["!7c5b0920"],
+        )
+
+        expect(row["lora_freq"]).to eq(868)
+        expect(row["modem_preset"]).to eq("MediumFast")
+      end
+    end
+
+    it "preserves modem metadata when touch last seen omits it" do
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard, lora_freq, modem_preset) VALUES (?,?,?,?,?)",
+          ["!7c5b0920", reference_time.to_i - 10, reference_time.to_i - 10, 868, "MediumFast"],
+        )
+
+        PotatoMesh::Application.touch_node_last_seen(
+          db,
+          "!7c5b0920",
+          nil,
+          rx_time: reference_time.to_i,
+          source: :message,
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_freq, modem_preset FROM nodes WHERE node_id = ?",
+          ["!7c5b0920"],
+        )
+
+        expect(row["lora_freq"]).to eq(868)
+        expect(row["modem_preset"]).to eq("MediumFast")
+      end
+    end
+
+    it "skips decrypted payload storage when portnum is unsupported" do
+      with_db do |db|
+        stored = PotatoMesh::Application.store_decrypted_payload(
+          db,
+          { "lora_freq" => 868, "modem_preset" => "MediumFast" },
+          900_007,
+          { payload: "ok".b, portnum: 5, text: nil },
+          rx_time: reference_time.to_i,
+          rx_iso: reference_time.utc.iso8601,
+          from_id: "!7c5b0920",
+          to_id: "^all",
+          channel: 0,
+          portnum: 5,
+          hop_limit: 2,
+          snr: 1.0,
+          rssi: -70,
+        )
+
+        expect(stored).to be(false)
+      end
+    end
+
     it "stores decoded neighbors when decrypting neighborinfo payloads" do
       payload_bytes = "neighbor".b
       encoded_payload = Base64.strict_encode64(payload_bytes)

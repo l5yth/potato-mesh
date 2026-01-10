@@ -163,4 +163,27 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
       end
     end
   end
+
+  it "returns nil when inputs are missing" do
+    expect(described_class.decode(portnum: nil, payload_b64: "AA==")).to be_nil
+    expect(described_class.decode(portnum: 3, payload_b64: nil)).to be_nil
+  end
+
+  it "falls back to PATH when configured python is blank" do
+    Dir.mktmpdir do |dir|
+      fake_bin = File.join(dir, "bin")
+      FileUtils.mkdir_p(fake_bin)
+      python_path = File.join(fake_bin, "python")
+      File.write(python_path, "#!/bin/sh\n")
+      FileUtils.chmod(0o755, python_path)
+
+      with_env("MESHTASTIC_PYTHON", " ") do
+        with_env("PATH", fake_bin) do
+          with_repo_root(dir) do
+            expect(described_class.python_executable_path).to eq(python_path)
+          end
+        end
+      end
+    end
+  end
 end

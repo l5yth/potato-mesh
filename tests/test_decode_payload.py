@@ -20,6 +20,7 @@ import json
 import sys
 
 from meshtastic.protobuf import mesh_pb2
+from meshtastic.protobuf import telemetry_pb2
 
 from data.mesh_ingestor import decode_payload
 
@@ -169,3 +170,14 @@ def test_main_entrypoint_executes():
     finally:
         sys.stdin = original_stdin
         sys.stdout = original_stdout
+
+
+def test_decode_payload_telemetry_success():
+    telemetry = telemetry_pb2.Telemetry()
+    telemetry.time = 123
+    payload_b64 = base64.b64encode(telemetry.SerializeToString()).decode("ascii")
+
+    result = decode_payload._decode_payload(67, payload_b64)
+
+    assert result["type"] == "TELEMETRY_APP"
+    assert result["payload"]["time"] == 123

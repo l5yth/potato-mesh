@@ -118,4 +118,18 @@ RSpec.describe PotatoMesh::App::Meshtastic::Protobuf do
 
     expect(described_class.extract_field_bytes(message, 1)).to be_nil
   end
+
+  it "returns nil when length-delimited field overruns payload" do
+    tag = (1 << 3) | described_class::WIRE_TYPE_LENGTH_DELIMITED
+    message = [tag].pack("C") + encode_varint(10) + "short"
+
+    expect(described_class.extract_field_bytes(message, 1)).to be_nil
+  end
+
+  it "returns nil when length varint is missing" do
+    tag = (1 << 3) | described_class::WIRE_TYPE_LENGTH_DELIMITED
+    message = [tag].pack("C")
+
+    expect(described_class.extract_field_bytes(message, 1)).to be_nil
+  end
 end
