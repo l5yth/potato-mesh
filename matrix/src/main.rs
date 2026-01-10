@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod config;
+mod cli;
 mod matrix;
 mod matrix_server;
 mod potatomesh;
@@ -20,11 +21,13 @@ mod potatomesh;
 use std::{fs, net::SocketAddr, path::Path};
 
 use anyhow::Result;
+#[cfg(not(test))]
+use clap::Parser;
 use tokio::time::Duration;
 use tracing::{error, info};
 
 #[cfg(not(test))]
-use crate::config::Config;
+use crate::cli::Cli;
 use crate::matrix::MatrixAppserviceClient;
 use crate::matrix_server::run_synapse_listener;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
@@ -194,7 +197,8 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let cfg = Config::from_default_path()?;
+    let cli = Cli::parse();
+    let cfg = config::load(cli.to_inputs())?;
     info!("Loaded config: {:?}", cfg);
 
     let http = reqwest::Client::builder().build()?;
