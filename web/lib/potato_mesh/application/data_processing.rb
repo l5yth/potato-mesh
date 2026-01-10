@@ -1659,7 +1659,7 @@ module PotatoMesh
               updates["to_id"] = to_id if should_update
             end
 
-            if clear_encrypted
+            if clear_encrypted || (decrypted_precedence && existing_encrypted_str && !existing_encrypted_str.strip.empty?)
               updates["encrypted"] = nil if existing_encrypted
             elsif encrypted && !existing_has_text
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
