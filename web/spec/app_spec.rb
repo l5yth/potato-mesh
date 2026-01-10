@@ -4750,10 +4750,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "clears encrypted data when a plaintext update arrives" do
       encrypted_payload = Base64.strict_encode64("cipher".b)
+      base_time = reference_time.to_i - 20
+      updated_time = reference_time.to_i - 10
       encrypted_message = {
         "packet_id" => 3_189_171_434,
-        "rx_time" => 1_767_957_187,
-        "rx_iso" => Time.at(1_767_957_187).utc.iso8601,
+        "rx_time" => base_time,
+        "rx_iso" => Time.at(base_time).utc.iso8601,
         "from_id" => "!7c5b0920",
         "to_id" => "^all",
         "channel" => 3,
@@ -4764,8 +4766,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       }
       plaintext_message = {
         "packet_id" => 3_189_171_434,
-        "rx_time" => 1_767_957_191,
-        "rx_iso" => Time.at(1_767_957_191).utc.iso8601,
+        "rx_time" => updated_time,
+        "rx_iso" => Time.at(updated_time).utc.iso8601,
         "from_id" => "!7c5b0920",
         "to_id" => "^all",
         "channel" => 7,
@@ -4794,7 +4796,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["rssi"]).to eq(-79)
         expect(row["hop_limit"]).to eq(5)
         expect(row["snr"]).to eq(9.75)
-        expect(row["rx_time"]).to eq(1_767_957_191)
+        expect(row["rx_time"]).to eq(updated_time)
       end
     end
 
