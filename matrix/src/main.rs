@@ -131,6 +131,19 @@ fn log_state_update(state: &BridgeState) {
     info!("Updated state: {:?}", state);
 }
 
+/// Emit a sanitized config log without sensitive tokens.
+#[cfg(not(test))]
+fn log_config(cfg: &Config) {
+    info!(
+        potatomesh_base_url = cfg.potatomesh.base_url.as_str(),
+        matrix_homeserver = cfg.matrix.homeserver.as_str(),
+        matrix_server_name = cfg.matrix.server_name.as_str(),
+        matrix_room_id = cfg.matrix.room_id.as_str(),
+        state_file = cfg.state.state_file.as_str(),
+        "Loaded config"
+    );
+}
+
 async fn poll_once(
     potato: &PotatoClient,
     matrix: &MatrixAppserviceClient,
@@ -195,7 +208,7 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::from_default_path()?;
-    info!("Loaded config: {:?}", cfg);
+    log_config(&cfg);
 
     let http = reqwest::Client::builder().build()?;
     let potato = PotatoClient::new(http.clone(), cfg.potatomesh.clone());
@@ -740,7 +753,8 @@ mod tests {
 
         let mock_register = server
             .mock("POST", "/_matrix/client/v3/register")
-            .match_query("kind=user&access_token=AS_TOKEN")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(200)
             .create();
 
@@ -749,7 +763,8 @@ mod tests {
                 "POST",
                 format!("/_matrix/client/v3/rooms/{}/join", encoded_room).as_str(),
             )
-            .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .match_query(format!("user_id={}", encoded_user).as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(200)
             .create();
 
@@ -758,7 +773,8 @@ mod tests {
                 "PUT",
                 format!("/_matrix/client/v3/profile/{}/displayname", encoded_user).as_str(),
             )
-            .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .match_query(format!("user_id={}", encoded_user).as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "displayname": "Test Node (TN)"
             })))
@@ -780,7 +796,8 @@ mod tests {
                 )
                 .as_str(),
             )
-            .match_query(format!("user_id={}&access_token=AS_TOKEN", encoded_user).as_str())
+            .match_query(format!("user_id={}", encoded_user).as_str())
+            .match_header("authorization", "Bearer AS_TOKEN")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "msgtype": "m.text",
                 "body": "`[868][MF][TEST]` Ping",
