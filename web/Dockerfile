@@ -23,6 +23,9 @@ ENV BUNDLE_FORCE_RUBY_PLATFORM=true
 # Install build dependencies and SQLite3
 RUN apk add --no-cache \
     build-base \
+    python3 \
+    py3-pip \
+    py3-virtualenv \
     sqlite-dev \
     linux-headers \
     pkgconfig
@@ -38,11 +41,16 @@ RUN bundle config set --local force_ruby_platform true && \
     bundle config set --local without 'development test' && \
     bundle install --jobs=4 --retry=3
 
+# Install Meshtastic decoder dependencies in a dedicated venv
+RUN python3 -m venv /opt/meshtastic-venv && \
+    /opt/meshtastic-venv/bin/pip install --no-cache-dir meshtastic protobuf
+
 # Production stage
 FROM ruby:3.3-alpine AS production
 
 # Install runtime dependencies
 RUN apk add --no-cache \
+    python3 \
     sqlite \
     tzdata \
     curl
@@ -56,6 +64,7 @@ WORKDIR /app
 
 # Copy installed gems from builder stage
 COPY --from=builder /usr/local/bundle /usr/local/bundle
+COPY --from=builder /opt/meshtastic-venv /opt/meshtastic-venv
 
 # Copy application code (excluding the Dockerfile which is not required at runtime)
 COPY --chown=potatomesh:potatomesh web/app.rb ./
@@ -70,6 +79,7 @@ COPY --chown=potatomesh:potatomesh web/scripts ./scripts
 
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
+COPY --chown=potatomesh:potatomesh data/mesh_ingestor/decode_payload.py /app/data/mesh_ingestor/decode_payload.py
 
 # Create data and configuration directories with correct ownership
 RUN mkdir -p /app/.local/share/potato-mesh \
@@ -85,6 +95,7 @@ EXPOSE 41447
 # Default environment variables (can be overridden by host)
 ENV RACK_ENV=production \
     APP_ENV=production \
+    MESHTASTIC_PYTHON=/opt/meshtastic-venv/bin/python \
     XDG_DATA_HOME=/app/.local/share \
     XDG_CONFIG_HOME=/app/.config \
     SITE_NAME="PotatoMesh Demo" \

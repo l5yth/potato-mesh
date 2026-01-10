@@ -160,7 +160,15 @@ module PotatoMesh
         inserted
       end
 
-      def touch_node_last_seen(db, node_ref, fallback_num = nil, rx_time: nil, source: nil)
+      def touch_node_last_seen(
+        db,
+        node_ref,
+        fallback_num = nil,
+        rx_time: nil,
+        source: nil,
+        lora_freq: nil,
+        modem_preset: nil
+      )
         timestamp = coerce_integer(rx_time)
         return unless timestamp
 
@@ -185,15 +193,19 @@ module PotatoMesh
         return if broadcast_node_ref?(node_id, fallback_num)
         return unless node_id
 
+        lora_freq = coerce_integer(lora_freq)
+        modem_preset = string_or_nil(modem_preset)
         updated = false
         with_busy_retry do
-          db.execute <<~SQL, [timestamp, timestamp, timestamp, node_id]
+          db.execute <<~SQL, [timestamp, timestamp, timestamp, lora_freq, modem_preset, node_id]
                        UPDATE nodes
                           SET last_heard = CASE
                             WHEN COALESCE(last_heard, 0) >= ? THEN last_heard
                             ELSE ?
                           END,
-                              first_heard = COALESCE(first_heard, ?)
+                              first_heard = COALESCE(first_heard, ?),
+                              lora_freq = COALESCE(?, lora_freq),
+                              modem_preset = COALESCE(?, modem_preset)
                         WHERE node_id = ?
                      SQL
           updated ||= db.changes.positive?
@@ -206,6 +218,8 @@ module PotatoMesh
             node_id: node_id,
             timestamp: timestamp,
             source: source || :unknown,
+            lora_freq: lora_freq,
+            modem_preset: modem_preset,
           )
         end
 
@@ -490,20 +504,37 @@ module PotatoMesh
         rx_iso ||= Time.at(rx_time).utc.iso8601
 
         raw_node_id = payload["node_id"] || payload["from_id"] || payload["from"]
-        node_id = string_or_nil(raw_node_id)
-        node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
         raw_node_num = coerce_integer(payload["node_num"]) || coerce_integer(payload["num"])
-        node_id ||= format("!%08x", raw_node_num & 0xFFFFFFFF) if node_id.nil? && raw_node_num
 
-        payload_for_num = payload.is_a?(Hash) ? payload.dup : {}
-        payload_for_num["num"] ||= raw_node_num if raw_node_num
-        node_num = resolve_node_num(node_id, payload_for_num)
-        node_num ||= raw_node_num
-        canonical = normalize_node_id(db, node_id || node_num)
-        node_id = canonical if canonical
+        canonical_parts = canonical_node_parts(raw_node_id, raw_node_num)
+        if canonical_parts
+          node_id, node_num, = canonical_parts
+        else
+          node_id = string_or_nil(raw_node_id)
+          node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
+          node_id ||= format("!%08x", raw_node_num & 0xFFFFFFFF) if node_id.nil? && raw_node_num
+
+          payload_for_num = payload.is_a?(Hash) ? payload.dup : {}
+          payload_for_num["num"] ||= raw_node_num if raw_node_num
+          node_num = resolve_node_num(node_id, payload_for_num)
+          node_num ||= raw_node_num
+          canonical = normalize_node_id(db, node_id || node_num)
+          node_id = canonical if canonical
+        end
+
+        lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
+        modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
 
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
-        touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :position)
+        touch_node_last_seen(
+          db,
+          node_id || node_num,
+          node_num,
+          rx_time: rx_time,
+          source: :position,
+          lora_freq: lora_freq,
+          modem_preset: modem_preset,
+        )
 
         to_id = string_or_nil(payload["to_id"] || payload["to"])
 
@@ -747,7 +778,15 @@ module PotatoMesh
         end
       end
 
-      def update_node_from_telemetry(db, node_id, node_num, rx_time, metrics = {})
+      def update_node_from_telemetry(
+        db,
+        node_id,
+        node_num,
+        rx_time,
+        metrics = {},
+        lora_freq: nil,
+        modem_preset: nil
+      )
         num = coerce_integer(node_num)
         id = string_or_nil(node_id)
         if id&.start_with?("!")
@@ -757,7 +796,15 @@ module PotatoMesh
         return unless id
 
         ensure_unknown_node(db, id, num, heard_time: rx_time)
-        touch_node_last_seen(db, id, num, rx_time: rx_time, source: :telemetry)
+        touch_node_last_seen(
+          db,
+          id,
+          num,
+          rx_time: rx_time,
+          source: :telemetry,
+          lora_freq: lora_freq,
+          modem_preset: modem_preset,
+        )
 
         battery = coerce_float(metrics[:battery_level] || metrics["battery_level"])
         voltage = coerce_float(metrics[:voltage] || metrics["voltage"])
@@ -901,17 +948,23 @@ module PotatoMesh
         rx_iso ||= Time.at(rx_time).utc.iso8601
 
         raw_node_id = payload["node_id"] || payload["from_id"] || payload["from"]
-        node_id = string_or_nil(raw_node_id)
-        node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
         raw_node_num = coerce_integer(payload["node_num"]) || coerce_integer(payload["num"])
 
-        payload_for_num = payload.dup
-        payload_for_num["num"] ||= raw_node_num if raw_node_num
-        node_num = resolve_node_num(node_id, payload_for_num)
-        node_num ||= raw_node_num
+        canonical_parts = canonical_node_parts(raw_node_id, raw_node_num)
+        if canonical_parts
+          node_id, node_num, = canonical_parts
+        else
+          node_id = string_or_nil(raw_node_id)
+          node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id&.start_with?("!")
 
-        canonical = normalize_node_id(db, node_id || node_num)
-        node_id = canonical if canonical
+          payload_for_num = payload.dup
+          payload_for_num["num"] ||= raw_node_num if raw_node_num
+          node_num = resolve_node_num(node_id, payload_for_num)
+          node_num ||= raw_node_num
+
+          canonical = normalize_node_id(db, node_id || node_num)
+          node_id = canonical if canonical
+        end
 
         from_id = string_or_nil(payload["from_id"]) || node_id
         to_id = string_or_nil(payload["to_id"] || payload["to"])
@@ -926,6 +979,8 @@ module PotatoMesh
         rssi = coerce_integer(payload["rssi"])
         bitfield = coerce_integer(payload["bitfield"])
         payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
+        lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
+        modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
 
         telemetry_section = normalize_json_object(payload["telemetry"])
         device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])
@@ -1308,13 +1363,21 @@ module PotatoMesh
                      SQL
         end
 
-        update_node_from_telemetry(db, node_id, node_num, rx_time, {
-          battery_level: battery_level,
-          voltage: voltage,
-          channel_utilization: channel_utilization,
-          air_util_tx: air_util_tx,
-          uptime_seconds: uptime_seconds,
-        })
+        update_node_from_telemetry(
+          db,
+          node_id,
+          node_num,
+          rx_time,
+          {
+            battery_level: battery_level,
+            voltage: voltage,
+            channel_utilization: channel_utilization,
+            air_util_tx: air_util_tx,
+            uptime_seconds: uptime_seconds,
+          },
+          lora_freq: lora_freq,
+          modem_preset: modem_preset,
+        )
       end
 
       # Persist a traceroute observation and its hop path.
@@ -1385,6 +1448,58 @@ module PotatoMesh
         end
       end
 
+      # Attempt to decrypt an encrypted Meshtastic message payload.
+      #
+      # @param message [Hash] message payload supplied by the ingestor.
+      # @param packet_id [Integer] message packet identifier.
+      # @param from_id [String, nil] canonical node identifier when available.
+      # @param from_num [Integer, nil] numeric node identifier when available.
+      # @param channel_index [Integer, nil] channel hash index.
+      # @return [Hash, nil] decrypted payload metadata when parsing succeeds.
+      def decrypt_meshtastic_message(message, packet_id, from_id, from_num, channel_index)
+        return nil unless message.is_a?(Hash)
+
+        cipher_b64 = string_or_nil(message["encrypted"])
+        return nil unless cipher_b64
+        if (ENV["RACK_ENV"] == "test" || ENV["APP_ENV"] == "test" || defined?(RSpec)) &&
+           ENV["MESHTASTIC_PSK_B64"].nil?
+          return nil
+        end
+
+        node_num = coerce_integer(from_num)
+        if node_num.nil?
+          parts = canonical_node_parts(from_id)
+          node_num = parts[1] if parts
+        end
+        return nil unless node_num
+
+        psk_b64 = PotatoMesh::Config.meshtastic_psk_b64
+        data = PotatoMesh::App::Meshtastic::Cipher.decrypt_data(
+          cipher_b64: cipher_b64,
+          packet_id: packet_id,
+          from_id: from_id,
+          from_num: node_num,
+          psk_b64: psk_b64,
+        )
+        return nil unless data
+
+        channel_name = nil
+        if channel_index.is_a?(Integer)
+          candidates = PotatoMesh::App::Meshtastic::RainbowTable.channel_names_for(
+            channel_index,
+            psk_b64: psk_b64,
+          )
+          channel_name = candidates.first if candidates.any?
+        end
+
+        {
+          text: data[:text],
+          portnum: data[:portnum],
+          payload: data[:payload],
+          channel_name: channel_name,
+        }
+      end
+
       def insert_message(db, message)
         return unless message.is_a?(Hash)
 
@@ -1415,6 +1530,14 @@ module PotatoMesh
             from_id = canonical_from_id
           end
         end
+        if from_id && !from_id.start_with?("^")
+          canonical_parts = canonical_node_parts(from_id, message["from_num"])
+          if canonical_parts && !from_id.start_with?("!")
+            from_id = canonical_parts[0]
+            message["from_num"] ||= canonical_parts[1]
+          end
+        end
+        sender_present = !from_id.nil? || !coerce_integer(message["from_num"]).nil? || !trimmed_from_id.nil?
 
         raw_to_id = message["to_id"]
         raw_to_id = message["to"] if raw_to_id.nil? || raw_to_id.to_s.strip.empty?
@@ -1428,27 +1551,55 @@ module PotatoMesh
             to_id = canonical_to_id
           end
         end
+        if to_id && !to_id.start_with?("^")
+          canonical_parts = canonical_node_parts(to_id, message["to_num"])
+          if canonical_parts && !to_id.start_with?("!")
+            to_id = canonical_parts[0]
+            message["to_num"] ||= canonical_parts[1]
+          end
+        end
 
         encrypted = string_or_nil(message["encrypted"])
+        text = message["text"]
+        portnum = message["portnum"]
+        clear_encrypted = false
+        channel_index = coerce_integer(message["channel"] || message["channel_index"] || message["channelIndex"])
 
-        ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time)
-        touch_node_last_seen(
-          db,
-          from_id || raw_from_id || message["from_num"],
-          message["from_num"],
-          rx_time: rx_time,
-          source: :message,
-        )
+        decrypted_payload = nil
+        decrypted_text = nil
+        decrypted_portnum = nil
 
-        ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time) if to_id || raw_to_id
-        if to_id || raw_to_id || message.key?("to_num")
-          touch_node_last_seen(
-            db,
-            to_id || raw_to_id || message["to_num"],
-            message["to_num"],
-            rx_time: rx_time,
-            source: :message,
+        if encrypted && (text.nil? || text.to_s.strip.empty?)
+          decrypted = decrypt_meshtastic_message(
+            message,
+            msg_id,
+            from_id,
+            message["from_num"],
+            channel_index,
           )
+
+          if decrypted
+            decrypted_payload = decrypted
+            decrypted_portnum = decrypted[:portnum]
+
+            if decrypted[:text]
+              text = decrypted[:text]
+              decrypted_text = text
+              clear_encrypted = true
+              encrypted = nil
+              message["text"] = text
+              message["channel_name"] ||= decrypted[:channel_name]
+              if portnum.nil? && decrypted_portnum
+                portnum = decrypted_portnum
+                message["portnum"] = portnum
+              end
+            end
+          end
+        end
+
+        if encrypted && (text.nil? || text.to_s.strip.empty?)
+          portnum = nil
+          message.delete("portnum")
         end
 
         lora_freq = coerce_integer(message["lora_freq"] || message["loraFrequency"])
@@ -1464,8 +1615,8 @@ module PotatoMesh
           from_id,
           to_id,
           message["channel"],
-          message["portnum"],
-          message["text"],
+          portnum,
+          text,
           encrypted,
           message["snr"],
           message["rssi"],
@@ -1479,15 +1630,19 @@ module PotatoMesh
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
             updates = {}
+            existing_text = existing.is_a?(Hash) ? existing["text"] : existing[2]
+            existing_text_str = existing_text&.to_s
+            existing_has_text = existing_text_str && !existing_text_str.strip.empty?
+            existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
+            existing_from_str = existing_from&.to_s
+            return if !sender_present && (existing_from_str.nil? || existing_from_str.strip.empty?)
 
             if from_id
-              existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
-              existing_from_str = existing_from&.to_s
               should_update = existing_from_str.nil? || existing_from_str.strip.empty?
               should_update ||= existing_from != from_id
               updates["from_id"] = from_id if should_update
@@ -1501,21 +1656,38 @@ module PotatoMesh
               updates["to_id"] = to_id if should_update
             end
 
-            if encrypted
-              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[2]
+            if clear_encrypted
+              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
+              updates["encrypted"] = nil if existing_encrypted
+            elsif encrypted && !existing_has_text
+              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
               existing_encrypted_str = existing_encrypted&.to_s
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
               should_update ||= existing_encrypted != encrypted
               updates["encrypted"] = encrypted if should_update
             end
 
+            if text
+              should_update = existing_text_str.nil? || existing_text_str.strip.empty?
+              should_update ||= existing_text != text
+              updates["text"] = text if should_update
+            end
+
+            if portnum
+              existing_portnum = existing.is_a?(Hash) ? existing["portnum"] : existing[9]
+              existing_portnum_str = existing_portnum&.to_s
+              should_update = existing_portnum_str.nil? || existing_portnum_str.strip.empty?
+              should_update ||= existing_portnum != portnum
+              updates["portnum"] = portnum if should_update
+            end
+
             unless lora_freq.nil?
-              existing_lora = existing.is_a?(Hash) ? existing["lora_freq"] : existing[3]
+              existing_lora = existing.is_a?(Hash) ? existing["lora_freq"] : existing[4]
               updates["lora_freq"] = lora_freq if existing_lora != lora_freq
             end
 
             if modem_preset
-              existing_preset = existing.is_a?(Hash) ? existing["modem_preset"] : existing[4]
+              existing_preset = existing.is_a?(Hash) ? existing["modem_preset"] : existing[5]
               existing_preset_str = existing_preset&.to_s
               should_update = existing_preset_str.nil? || existing_preset_str.strip.empty?
               should_update ||= existing_preset != modem_preset
@@ -1523,7 +1695,7 @@ module PotatoMesh
             end
 
             if channel_name
-              existing_channel = existing.is_a?(Hash) ? existing["channel_name"] : existing[5]
+              existing_channel = existing.is_a?(Hash) ? existing["channel_name"] : existing[6]
               existing_channel_str = existing_channel&.to_s
               should_update = existing_channel_str.nil? || existing_channel_str.strip.empty?
               should_update ||= existing_channel != channel_name
@@ -1531,12 +1703,12 @@ module PotatoMesh
             end
 
             unless reply_id.nil?
-              existing_reply = existing.is_a?(Hash) ? existing["reply_id"] : existing[6]
+              existing_reply = existing.is_a?(Hash) ? existing["reply_id"] : existing[7]
               updates["reply_id"] = reply_id if existing_reply != reply_id
             end
 
             if emoji
-              existing_emoji = existing.is_a?(Hash) ? existing["emoji"] : existing[7]
+              existing_emoji = existing.is_a?(Hash) ? existing["emoji"] : existing[8]
               existing_emoji_str = existing_emoji&.to_s
               should_update = existing_emoji_str.nil? || existing_emoji_str.strip.empty?
               should_update ||= existing_emoji != emoji
@@ -1556,10 +1728,21 @@ module PotatoMesh
                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
+              existing_row = db.get_first_row(
+                "SELECT text, encrypted FROM messages WHERE id = ?",
+                [msg_id],
+              )
+              existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
+              existing_text_str = existing_text&.to_s
+              allow_encrypted_update = existing_text_str.nil? || existing_text_str.strip.empty?
+
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
               fallback_updates["to_id"] = to_id if to_id
-              fallback_updates["encrypted"] = encrypted if encrypted
+              fallback_updates["text"] = text if text
+              fallback_updates["encrypted"] = encrypted if encrypted && allow_encrypted_update
+              fallback_updates["encrypted"] = nil if clear_encrypted
+              fallback_updates["portnum"] = portnum if portnum
               fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
               fallback_updates["modem_preset"] = modem_preset if modem_preset
               fallback_updates["channel_name"] = channel_name if channel_name
@@ -1571,6 +1754,213 @@ module PotatoMesh
               end
             end
           end
+        end
+
+        if clear_encrypted && decrypted_text
+          debug_log(
+            "Stored decrypted text message",
+            context: "data_processing.insert_message",
+            message_id: msg_id,
+            channel: message["channel"],
+            channel_name: message["channel_name"],
+            portnum: portnum,
+          )
+        end
+
+        stored_decrypted = nil
+        if decrypted_payload
+          stored_decrypted = store_decrypted_payload(
+            db,
+            message,
+            msg_id,
+            decrypted_payload,
+            rx_time: rx_time,
+            rx_iso: rx_iso,
+            from_id: from_id,
+            to_id: to_id,
+            channel: message["channel"],
+            portnum: portnum || decrypted_portnum,
+            hop_limit: message["hop_limit"],
+            snr: message["snr"],
+            rssi: message["rssi"],
+          )
+        end
+
+        if stored_decrypted && encrypted
+          with_busy_retry do
+            db.execute("UPDATE messages SET encrypted = NULL WHERE id = ?", [msg_id])
+          end
+          debug_log(
+            "Cleared encrypted payload after decoding",
+            context: "data_processing.insert_message",
+            message_id: msg_id,
+            portnum: portnum || decrypted_portnum,
+          )
+        end
+
+        should_touch_message = !stored_decrypted || decrypted_text
+        if should_touch_message
+          ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time)
+          touch_node_last_seen(
+            db,
+            from_id || raw_from_id || message["from_num"],
+            message["from_num"],
+            rx_time: rx_time,
+            source: :message,
+            lora_freq: lora_freq,
+            modem_preset: modem_preset,
+          )
+
+          ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time) if to_id || raw_to_id
+          if to_id || raw_to_id || message.key?("to_num")
+            touch_node_last_seen(
+              db,
+              to_id || raw_to_id || message["to_num"],
+              message["to_num"],
+              rx_time: rx_time,
+              source: :message,
+              lora_freq: lora_freq,
+              modem_preset: modem_preset,
+            )
+          end
+        end
+      end
+
+      # Decode and store decrypted payloads in domain-specific tables.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param message [Hash] original message payload.
+      # @param packet_id [Integer] packet identifier for the message.
+      # @param decrypted [Hash] decrypted payload metadata.
+      # @param rx_time [Integer] receive time.
+      # @param rx_iso [String] ISO 8601 receive timestamp.
+      # @param from_id [String, nil] canonical sender identifier.
+      # @param to_id [String, nil] destination identifier.
+      # @param channel [Integer, nil] channel index.
+      # @param portnum [Object, nil] port number identifier.
+      # @param hop_limit [Integer, nil] hop limit value.
+      # @param snr [Numeric, nil] signal-to-noise ratio.
+      # @param rssi [Integer, nil] RSSI value.
+      # @return [void]
+      def store_decrypted_payload(
+        db,
+        message,
+        packet_id,
+        decrypted,
+        rx_time:,
+        rx_iso:,
+        from_id:,
+        to_id:,
+        channel:,
+        portnum:,
+        hop_limit:,
+        snr:,
+        rssi:
+      )
+        payload_bytes = decrypted[:payload]
+        return false unless payload_bytes
+
+        portnum_value = coerce_integer(portnum || decrypted[:portnum])
+        return false unless portnum_value
+
+        payload_b64 = Base64.strict_encode64(payload_bytes)
+        supported_ports = [3, 67, 70, 71]
+        return false unless supported_ports.include?(portnum_value)
+
+        decoded = PotatoMesh::App::Meshtastic::PayloadDecoder.decode(
+          portnum: portnum_value,
+          payload_b64: payload_b64,
+        )
+        return false unless decoded.is_a?(Hash)
+        return false unless decoded["payload"].is_a?(Hash)
+
+        common_payload = {
+          "id" => packet_id,
+          "packet_id" => packet_id,
+          "rx_time" => rx_time,
+          "rx_iso" => rx_iso,
+          "from_id" => from_id,
+          "to_id" => to_id,
+          "channel" => channel,
+          "portnum" => portnum_value.to_s,
+          "hop_limit" => hop_limit,
+          "snr" => snr,
+          "rssi" => rssi,
+          "lora_freq" => coerce_integer(message["lora_freq"] || message["loraFrequency"]),
+          "modem_preset" => string_or_nil(message["modem_preset"] || message["modemPreset"]),
+          "payload_b64" => payload_b64,
+        }
+
+        case decoded["type"]
+        when "POSITION_APP"
+          payload = common_payload.merge("position" => decoded["payload"])
+          insert_position(db, payload)
+          debug_log(
+            "Stored decrypted position payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
+          true
+        when "TELEMETRY_APP"
+          payload = common_payload.merge("telemetry" => decoded["payload"])
+          insert_telemetry(db, payload)
+          debug_log(
+            "Stored decrypted telemetry payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
+          true
+        when "NEIGHBORINFO_APP"
+          neighbor_payload = decoded["payload"]
+          neighbors = neighbor_payload["neighbors"]
+          neighbors = [] unless neighbors.is_a?(Array)
+          normalized_neighbors = neighbors.map do |neighbor|
+            next unless neighbor.is_a?(Hash)
+            {
+              "neighbor_id" => neighbor["node_id"] || neighbor["nodeId"] || neighbor["id"],
+              "snr" => neighbor["snr"],
+              "rx_time" => neighbor["last_rx_time"],
+            }.compact
+          end.compact
+          return false if normalized_neighbors.empty?
+
+          payload = common_payload.merge(
+            "node_id" => neighbor_payload["node_id"] || from_id,
+            "neighbors" => normalized_neighbors,
+            "node_broadcast_interval_secs" => neighbor_payload["node_broadcast_interval_secs"],
+            "last_sent_by_id" => neighbor_payload["last_sent_by_id"],
+          )
+          insert_neighbors(db, payload)
+          debug_log(
+            "Stored decrypted neighbor payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
+          true
+        when "TRACEROUTE_APP"
+          route = decoded["payload"]["route"]
+          route_back = decoded["payload"]["route_back"]
+          hops = route.is_a?(Array) ? route : route_back.is_a?(Array) ? route_back : []
+          dest = hops.last if hops.is_a?(Array) && !hops.empty?
+          src_num = coerce_integer(message["from_num"]) || resolve_node_num(from_id, message)
+          payload = common_payload.merge(
+            "src" => src_num,
+            "dest" => dest,
+            "hops" => hops,
+          )
+          insert_trace(db, payload)
+          debug_log(
+            "Stored decrypted traceroute payload",
+            context: "data_processing.store_decrypted_payload",
+            message_id: packet_id,
+            portnum: portnum_value,
+          )
+          true
+        else
+          false
         end
       end
 

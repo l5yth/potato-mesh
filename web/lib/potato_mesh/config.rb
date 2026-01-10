@@ -32,6 +32,7 @@ module PotatoMesh
     DEFAULT_MAP_CENTER = "#{DEFAULT_MAP_CENTER_LAT},#{DEFAULT_MAP_CENTER_LON}"
     DEFAULT_CHANNEL = "#LongFast"
     DEFAULT_FREQUENCY = "915MHz"
+    DEFAULT_MESHTASTIC_PSK_B64 = "AQ=="
     DEFAULT_CONTACT_LINK = "#potatomesh:dod.ngo"
     DEFAULT_MAX_DISTANCE_KM = 42.0
     DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 15
@@ -463,6 +464,13 @@ module PotatoMesh
     # @return [String] frequency identifier.
     def frequency
       fetch_string("FREQUENCY", DEFAULT_FREQUENCY)
+    end
+
+    # Retrieve the Meshtastic PSK used for decrypting channel messages.
+    #
+    # @return [String] base64-encoded PSK or alias.
+    def meshtastic_psk_b64
+      fetch_string("MESHTASTIC_PSK_B64", DEFAULT_MESHTASTIC_PSK_B64)
     end
 
     # Parse the configured map centre coordinates.
