@@ -99,8 +99,24 @@ def test_main_requires_portnum():
     assert result["error"] == "missing-portnum"
 
 
+def test_main_requires_integer_portnum():
+    status, result = run_main_with_input(
+        {"portnum": "3", "payload_b64": base64.b64encode(b"ok").decode("ascii")}
+    )
+
+    assert status == 1
+    assert result["error"] == "missing-portnum"
+
+
 def test_main_requires_payload():
     status, result = run_main_with_input({"portnum": 3})
+
+    assert status == 1
+    assert result["error"] == "missing-payload"
+
+
+def test_main_requires_string_payload():
+    status, result = run_main_with_input({"portnum": 3, "payload_b64": 123})
 
     assert status == 1
     assert result["error"] == "missing-payload"

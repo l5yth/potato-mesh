@@ -75,6 +75,35 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
 
       expect(hash).to eq(3)
     end
+
+    it "expands short PSKs to AES-128 length" do
+      key = described_class.expanded_key(Base64.strict_encode64("abc"))
+
+      expect(key.bytesize).to eq(16)
+      expect(key.bytes.first(3).pack("C*")).to eq("abc")
+    end
+
+    it "returns nil for unsupported PSK sizes" do
+      key = described_class.expanded_key(Base64.strict_encode64("x" * 33))
+
+      expect(key).to be_nil
+    end
+
+    it "resolves the event PSK alias" do
+      key = described_class.expanded_key(Base64.strict_encode64([2].pack("C")))
+
+      expect(key.bytesize).to eq(32)
+    end
+
+    it "returns nil for unknown aliases" do
+      expect(described_class.default_key_for_alias(99)).to be_nil
+    end
+
+    it "xors byte arrays deterministically" do
+      value = described_class.xor_bytes([0x01, 0x02, 0x03])
+
+      expect(value).to eq(0x00)
+    end
   end
 
   describe PotatoMesh::App::Meshtastic::RainbowTable do
@@ -150,5 +179,44 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
 
     expect(text).to be_nil
     expect(data).to eq({ portnum: 3, payload: payload, text: nil })
+  end
+
+  it "normalizes packet ids from numeric strings" do
+    value = described_class.normalize_packet_id("12345")
+
+    expect(value).to eq(12_345)
+  end
+
+  it "returns nil for negative packet ids" do
+    value = described_class.normalize_packet_id(-1)
+
+    expect(value).to be_nil
+  end
+
+  it "normalizes node numbers from hex identifiers" do
+    value = described_class.normalize_node_num("0x433da83c", nil)
+
+    expect(value).to eq(0x433da83c)
+  end
+
+  it "uses the provided numeric node number when present" do
+    value = described_class.normalize_node_num("!deadbeef", 123)
+
+    expect(value).to eq(123)
+  end
+
+  it "decrypts payload bytes when requested" do
+    payload = "OK".b
+    plaintext = build_data_message(1, payload)
+    encrypted = encrypt_message(plaintext, psk_b64: psk_b64, packet_id: packet_id, from_id: from_id)
+
+    bytes = described_class.decrypt_payload_bytes(
+      cipher_b64: encrypted,
+      packet_id: packet_id,
+      from_id: from_id,
+      psk_b64: psk_b64,
+    )
+
+    expect(bytes).to eq(payload)
   end
 end

@@ -4104,6 +4104,64 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "skips decryption in test mode unless PSK is set" do
+      previous_psk = ENV["MESHTASTIC_PSK_B64"]
+      previous_rack = ENV["RACK_ENV"]
+      ENV.delete("MESHTASTIC_PSK_B64")
+      ENV["RACK_ENV"] = "test"
+
+      message = {
+        "encrypted" => "otu3OyMrTIUlcaisLVDyAnLW",
+      }
+
+      result = PotatoMesh::Application.decrypt_meshtastic_message(
+        message,
+        3_189_171_433,
+        "!7c5b0920",
+        nil,
+        3,
+      )
+
+      expect(result).to be_nil
+    ensure
+      if previous_psk.nil?
+        ENV.delete("MESHTASTIC_PSK_B64")
+      else
+        ENV["MESHTASTIC_PSK_B64"] = previous_psk
+      end
+      if previous_rack.nil?
+        ENV.delete("RACK_ENV")
+      else
+        ENV["RACK_ENV"] = previous_rack
+      end
+    end
+
+    it "touches node last seen when encrypted payloads cannot be decrypted" do
+      encoded_payload = Base64.strict_encode64("cipher".b)
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(nil)
+      allow(PotatoMesh::Application).to receive(:touch_node_last_seen).and_call_original
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 910_010,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      expect(PotatoMesh::Application).to have_received(:touch_node_last_seen).with(
+        anything,
+        anything,
+        anything,
+        hash_including(source: :message),
+      )
+    end
+
     it "stores decoded telemetry when decrypting non-text payloads" do
       payload_bytes = "telemetry".b
       encoded_payload = Base64.strict_encode64(payload_bytes)
@@ -4202,6 +4260,33 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["latitude"]).to be_within(0.0001).of(52.559872)
         expect(row["longitude"]).to be_within(0.0001).of(13.6577024)
         expect(row["altitude"]).to eq(11)
+      end
+    end
+
+    it "normalizes numeric node identifiers to hex ids" do
+      payload = {
+        "packet_id" => 920_001,
+        "rx_time" => reference_time.to_i,
+        "rx_iso" => reference_time.utc.iso8601,
+        "from_id" => "1128114236",
+        "to_id" => "2086340896",
+        "text" => "numeric ids",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT from_id, to_id FROM messages WHERE id = ?",
+          [payload["packet_id"]],
+        )
+
+        expect(row["from_id"]).to eq("!433da83c")
+        expect(row["to_id"]).to eq("!7c5b0920")
       end
     end
 

@@ -106,4 +106,44 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
       end
     end
   end
+
+  it "returns nil when the decoder process fails" do
+    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
+    allow(Open3).to receive(:capture3).and_return(["{}", "boom", instance_double(Process::Status, success?: false)])
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
+
+  it "returns nil when decoder output is invalid JSON" do
+    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
+    allow(Open3).to receive(:capture3).and_return(["not-json", "", instance_double(Process::Status, success?: true)])
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
+
+  it "returns nil when decoder output includes an error" do
+    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
+    allow(Open3).to receive(:capture3).and_return([JSON.generate("error" => "boom"), "", instance_double(Process::Status, success?: true)])
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
+
+  it "returns nil when decoder output is not a hash" do
+    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+    allow(described_class).to receive(:python_executable_path).and_return("/usr/bin/python3")
+    allow(Open3).to receive(:capture3).and_return([JSON.generate([1, 2, 3]), "", instance_double(Process::Status, success?: true)])
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
+
+  it "returns nil when the decoder executable is missing" do
+    allow(described_class).to receive(:decoder_script_path).and_return("/tmp/decoder.py")
+    allow(described_class).to receive(:python_executable_path).and_return("/missing/python")
+    allow(Open3).to receive(:capture3).and_raise(Errno::ENOENT)
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
 end
