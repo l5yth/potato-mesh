@@ -686,6 +686,212 @@ mod tests {
     }
 
     #[test]
+    fn resolve_token_prefers_explicit_value() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let token_file = tmp_dir.path().join("token");
+        fs::write(&token_file, "FROM_FILE").unwrap();
+
+        let resolved = resolve_token(
+            Some("FROM_BASE".to_string()),
+            Some("FROM_EXPLICIT".to_string()),
+            Some(token_file.to_str().unwrap()),
+            Some(tmp_dir.path().to_str().unwrap()),
+            "matrix_as_token",
+        )
+        .unwrap();
+
+        assert_eq!(resolved, Some("FROM_EXPLICIT".to_string()));
+    }
+
+    #[test]
+    fn resolve_token_reads_explicit_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let token_file = tmp_dir.path().join("token");
+        fs::write(&token_file, "FROM_FILE").unwrap();
+
+        let resolved = resolve_token(
+            None,
+            None,
+            Some(token_file.to_str().unwrap()),
+            None,
+            "matrix_as_token",
+        )
+        .unwrap();
+
+        assert_eq!(resolved, Some("FROM_FILE".to_string()));
+    }
+
+    #[test]
+    fn resolve_token_reads_default_secret_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(tmp_dir.path().join("matrix_hs_token"), "FROM_SECRET").unwrap();
+
+        let resolved = resolve_token(
+            None,
+            None,
+            None,
+            Some(tmp_dir.path().to_str().unwrap()),
+            "matrix_hs_token",
+        )
+        .unwrap();
+
+        assert_eq!(resolved, Some("FROM_SECRET".to_string()));
+    }
+
+    #[test]
+    fn resolve_token_errors_on_empty_secret_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let token_file = tmp_dir.path().join("token");
+        fs::write(&token_file, "   ").unwrap();
+
+        let result = resolve_token(
+            None,
+            None,
+            Some(token_file.to_str().unwrap()),
+            None,
+            "matrix_as_token",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_secrets_dir_prefers_explicit() {
+        let defaults = DefaultPaths {
+            config_path: "Config.toml".to_string(),
+            state_file: DEFAULT_STATE_FILE.to_string(),
+            secrets_dir: "default".to_string(),
+            poll_interval_secs: CONTAINER_POLL_INTERVAL_SECS,
+        };
+        let inputs = ConfigInputs {
+            secrets_dir: Some("explicit".to_string()),
+            ..ConfigInputs::default()
+        };
+
+        let resolved = resolve_secrets_dir(&inputs, true, &defaults);
+        assert_eq!(resolved, Some("explicit".to_string()));
+    }
+
+    #[test]
+    fn resolve_secrets_dir_container_default() {
+        let defaults = DefaultPaths {
+            config_path: "Config.toml".to_string(),
+            state_file: DEFAULT_STATE_FILE.to_string(),
+            secrets_dir: "default".to_string(),
+            poll_interval_secs: CONTAINER_POLL_INTERVAL_SECS,
+        };
+        let inputs = ConfigInputs::default();
+
+        let resolved = resolve_secrets_dir(&inputs, true, &defaults);
+        assert_eq!(resolved, Some("default".to_string()));
+        assert_eq!(resolve_secrets_dir(&inputs, false, &defaults), None);
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_base_config_prefers_explicit_path() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
+        let config_path = tmp_dir.path().join("explicit.toml");
+        fs::write(
+            &config_path,
+            r#"[potatomesh]
+base_url = "https://potatomesh.net/"
+poll_interval_secs = 10
+[matrix]
+homeserver = "https://matrix.example.org"
+as_token = "AS_TOKEN"
+hs_token = "HS_TOKEN"
+server_name = "example.org"
+room_id = "!roomid:example.org"
+[state]
+state_file = "bridge_state.json"
+"#,
+        )
+        .unwrap();
+
+        let defaults = default_paths(false);
+        let inputs = ConfigInputs {
+            config_path: Some(config_path.to_string_lossy().to_string()),
+            ..ConfigInputs::default()
+        };
+
+        let resolved = resolve_base_config(&inputs, &defaults).unwrap();
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_base_config_uses_container_path_when_present() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
+        let config_path = tmp_dir.path().join("container.toml");
+        fs::write(
+            &config_path,
+            r#"[potatomesh]
+base_url = "https://potatomesh.net/"
+poll_interval_secs = 10
+[matrix]
+homeserver = "https://matrix.example.org"
+as_token = "AS_TOKEN"
+hs_token = "HS_TOKEN"
+server_name = "example.org"
+room_id = "!roomid:example.org"
+[state]
+state_file = "bridge_state.json"
+"#,
+        )
+        .unwrap();
+
+        let defaults = DefaultPaths {
+            config_path: config_path.to_string_lossy().to_string(),
+            state_file: DEFAULT_STATE_FILE.to_string(),
+            secrets_dir: DEFAULT_SECRETS_DIR.to_string(),
+            poll_interval_secs: CONTAINER_POLL_INTERVAL_SECS,
+        };
+
+        let resolved = resolve_base_config(&ConfigInputs::default(), &defaults).unwrap();
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_base_config_uses_host_path_when_present() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
+        fs::write(
+            "Config.toml",
+            r#"[potatomesh]
+base_url = "https://potatomesh.net/"
+poll_interval_secs = 10
+[matrix]
+homeserver = "https://matrix.example.org"
+as_token = "AS_TOKEN"
+hs_token = "HS_TOKEN"
+server_name = "example.org"
+room_id = "!roomid:example.org"
+[state]
+state_file = "bridge_state.json"
+"#,
+        )
+        .unwrap();
+
+        let defaults = default_paths(false);
+        let resolved = resolve_base_config(&ConfigInputs::default(), &defaults).unwrap();
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_base_config_returns_none_when_missing() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let _guard = CwdGuard::enter(tmp_dir.path());
+        let defaults = default_paths(false);
+        let resolved = resolve_base_config(&ConfigInputs::default(), &defaults).unwrap();
+        assert!(resolved.is_none());
+    }
+
+    #[test]
     #[serial]
     fn load_prefers_cli_token_file_over_env_value() {
         let tmp_dir = tempfile::tempdir().unwrap();
