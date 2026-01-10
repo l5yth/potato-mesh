@@ -14,11 +14,16 @@
 
 use clap::{ArgAction, Parser};
 
+#[cfg(not(test))]
 use crate::config::{ConfigInputs, ConfigOverrides};
 
 /// CLI arguments for the Matrix bridge.
 #[derive(Debug, Parser)]
-#[command(name = "potatomesh-matrix-bridge", version, about = "PotatoMesh Matrix bridge")]
+#[command(
+    name = "potatomesh-matrix-bridge",
+    version,
+    about = "PotatoMesh Matrix bridge"
+)]
 pub struct Cli {
     /// Path to the configuration TOML file.
     #[arg(long, value_name = "PATH")]
@@ -66,6 +71,7 @@ pub struct Cli {
 
 impl Cli {
     /// Convert CLI args into configuration inputs.
+    #[cfg(not(test))]
     pub fn to_inputs(&self) -> ConfigInputs {
         ConfigInputs {
             config_path: self.config.clone(),
@@ -89,6 +95,7 @@ impl Cli {
 }
 
 /// Resolve container override flags into an optional boolean.
+#[cfg(not(test))]
 fn resolve_container_override(container: bool, no_container: bool) -> Option<bool> {
     match (container, no_container) {
         (true, false) => Some(true),

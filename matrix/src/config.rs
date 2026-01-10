@@ -91,22 +91,6 @@ struct PartialConfig {
     state: PartialStateConfig,
 }
 
-impl PartialConfig {
-    fn merge(&mut self, other: PartialConfig) {
-        merge_option(&mut self.potatomesh.base_url, other.potatomesh.base_url);
-        merge_option(
-            &mut self.potatomesh.poll_interval_secs,
-            other.potatomesh.poll_interval_secs,
-        );
-        merge_option(&mut self.matrix.homeserver, other.matrix.homeserver);
-        merge_option(&mut self.matrix.as_token, other.matrix.as_token);
-        merge_option(&mut self.matrix.hs_token, other.matrix.hs_token);
-        merge_option(&mut self.matrix.server_name, other.matrix.server_name);
-        merge_option(&mut self.matrix.room_id, other.matrix.room_id);
-        merge_option(&mut self.state.state_file, other.state.state_file);
-    }
-}
-
 /// Overwrite an optional value when the incoming value is present.
 fn merge_option<T>(target: &mut Option<T>, incoming: Option<T>) {
     if incoming.is_some() {
@@ -139,14 +123,8 @@ impl ConfigOverrides {
             &mut cfg.potatomesh.poll_interval_secs,
             self.potatomesh_poll_interval_secs,
         );
-        merge_option(
-            &mut cfg.matrix.homeserver,
-            self.matrix_homeserver.clone(),
-        );
-        merge_option(
-            &mut cfg.matrix.server_name,
-            self.matrix_server_name.clone(),
-        );
+        merge_option(&mut cfg.matrix.homeserver, self.matrix_homeserver.clone());
+        merge_option(&mut cfg.matrix.server_name, self.matrix_server_name.clone());
         merge_option(&mut cfg.matrix.room_id, self.matrix_room_id.clone());
         merge_option(&mut cfg.state.state_file, self.state_file.clone());
     }
@@ -192,12 +170,8 @@ impl ConfigInputs {
     }
 
     /// Load configuration inputs from the process environment.
+    #[cfg(not(test))]
     pub fn from_env() -> anyhow::Result<Self> {
-        let mut inputs = ConfigInputs::default();
-        inputs.config_path = env_var("POTATOMESH_CONFIG");
-        inputs.secrets_dir = env_var("POTATOMESH_SECRETS_DIR");
-        inputs.container_override = parse_bool_env("POTATOMESH_CONTAINER")?;
-        inputs.container_hint = env_var("CONTAINER");
         let overrides = ConfigOverrides {
             potatomesh_base_url: env_var("POTATOMESH_BASE_URL"),
             potatomesh_poll_interval_secs: parse_u64_env("POTATOMESH_POLL_INTERVAL_SECS")?,
@@ -210,13 +184,19 @@ impl ConfigInputs {
             matrix_room_id: env_var("MATRIX_ROOM_ID"),
             state_file: env_var("STATE_FILE"),
         };
-        inputs.overrides = overrides;
-        Ok(inputs)
+        Ok(ConfigInputs {
+            config_path: env_var("POTATOMESH_CONFIG"),
+            secrets_dir: env_var("POTATOMESH_SECRETS_DIR"),
+            container_override: parse_bool_env("POTATOMESH_CONTAINER")?,
+            container_hint: env_var("CONTAINER"),
+            overrides,
+        })
     }
 }
 
 impl Config {
     /// Load a full Config from a TOML file.
+    #[cfg(test)]
     pub fn load_from_file(path: &str) -> anyhow::Result<Self> {
         let contents = fs::read_to_string(path)?;
         let cfg = toml::from_str(&contents)?;
@@ -225,6 +205,7 @@ impl Config {
 }
 
 /// Load a Config by merging CLI/env overrides with an optional TOML file.
+#[cfg(not(test))]
 pub fn load(cli_inputs: ConfigInputs) -> anyhow::Result<Config> {
     let env_inputs = ConfigInputs::from_env()?;
     let cgroup_hint = read_cgroup();
@@ -463,16 +444,19 @@ fn detect_container(
 }
 
 /// Read the primary cgroup file for container detection.
+#[cfg(not(test))]
 fn read_cgroup() -> Option<String> {
     fs::read_to_string("/proc/1/cgroup").ok()
 }
 
 /// Read and trim an environment variable value.
+#[cfg(not(test))]
 fn env_var(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.trim().is_empty())
 }
 
 /// Parse a u64 environment variable value.
+#[cfg(not(test))]
 fn parse_u64_env(key: &str) -> anyhow::Result<Option<u64>> {
     match env_var(key) {
         None => Ok(None),
@@ -484,6 +468,7 @@ fn parse_u64_env(key: &str) -> anyhow::Result<Option<u64>> {
 }
 
 /// Parse a boolean environment variable value.
+#[cfg(not(test))]
 fn parse_bool_env(key: &str) -> anyhow::Result<Option<bool>> {
     match env_var(key) {
         None => Ok(None),
@@ -492,6 +477,7 @@ fn parse_bool_env(key: &str) -> anyhow::Result<Option<bool>> {
 }
 
 /// Parse a boolean string with standard truthy/falsy values.
+#[cfg(not(test))]
 fn parse_bool_value(key: &str, value: &str) -> anyhow::Result<bool> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -585,7 +571,11 @@ mod tests {
     #[test]
     fn detect_container_prefers_override() {
         assert!(detect_container(Some(true), None, None));
-        assert!(!detect_container(Some(false), Some("docker"), Some("docker")));
+        assert!(!detect_container(
+            Some(false),
+            Some("docker"),
+            Some("docker")
+        ));
     }
 
     #[test]
@@ -663,6 +653,10 @@ mod tests {
 
     #[test]
     fn load_uses_container_default_poll_interval() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp_dir.path()).unwrap();
+
         let cli_inputs = ConfigInputs {
             container_override: Some(true),
             overrides: ConfigOverrides {
@@ -678,7 +672,11 @@ mod tests {
         };
 
         let cfg = load_from_sources(cli_inputs, ConfigInputs::default(), None).unwrap();
-        assert_eq!(cfg.potatomesh.poll_interval_secs, CONTAINER_POLL_INTERVAL_SECS);
+        assert_eq!(
+            cfg.potatomesh.poll_interval_secs,
+            CONTAINER_POLL_INTERVAL_SECS
+        );
+        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]

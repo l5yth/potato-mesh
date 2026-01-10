@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod config;
 mod cli;
+mod config;
 mod matrix;
 mod matrix_server;
 mod potatomesh;
@@ -28,6 +28,8 @@ use tracing::{error, info};
 
 #[cfg(not(test))]
 use crate::cli::Cli;
+#[cfg(not(test))]
+use crate::config::Config;
 use crate::matrix::MatrixAppserviceClient;
 use crate::matrix_server::run_synapse_listener;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
