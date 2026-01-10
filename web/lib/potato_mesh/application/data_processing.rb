@@ -1602,8 +1602,6 @@ module PotatoMesh
           message.delete("portnum")
         end
 
-        decrypted_precedence = text && (clear_encrypted || encrypted.nil?)
-
         lora_freq = coerce_integer(message["lora_freq"] || message["loraFrequency"])
         modem_preset = string_or_nil(message["modem_preset"] || message["modemPreset"])
         channel_name = string_or_nil(message["channel_name"] || message["channelName"])
@@ -1643,6 +1641,9 @@ module PotatoMesh
             existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
             existing_from_str = existing_from&.to_s
             return if !sender_present && (existing_from_str.nil? || existing_from_str.strip.empty?)
+            existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
+            existing_encrypted_str = existing_encrypted&.to_s
+            decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
 
             if from_id
               should_update = existing_from_str.nil? || existing_from_str.strip.empty?
@@ -1659,11 +1660,8 @@ module PotatoMesh
             end
 
             if clear_encrypted
-              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
               updates["encrypted"] = nil if existing_encrypted
             elsif encrypted && !existing_has_text
-              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
-              existing_encrypted_str = existing_encrypted&.to_s
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
               should_update ||= existing_encrypted != encrypted
               updates["encrypted"] = encrypted if should_update
@@ -1750,6 +1748,9 @@ module PotatoMesh
               existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
               existing_text_str = existing_text&.to_s
               allow_encrypted_update = existing_text_str.nil? || existing_text_str.strip.empty?
+              existing_encrypted = existing_row.is_a?(Hash) ? existing_row["encrypted"] : existing_row&.[](1)
+              existing_encrypted_str = existing_encrypted&.to_s
+              decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
 
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id

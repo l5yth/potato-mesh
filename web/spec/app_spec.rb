@@ -4690,61 +4690,61 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["text"]).to eq(decrypted_text)
         expect(row["encrypted"]).to be_nil
       end
+    end
 
-      it "prefers decrypted message fields over encrypted ones" do
-        encrypted_payload = Base64.strict_encode64("cipher".b)
-        encrypted_message = {
-          "packet_id" => 3_189_171_433,
-          "rx_time" => 1_767_957_187,
-          "rx_iso" => Time.at(1_767_957_187).utc.iso8601,
-          "from_id" => "!7c5b0920",
-          "to_id" => "^all",
-          "channel" => 3,
-          "encrypted" => encrypted_payload,
-          "rssi" => -117,
-          "hop_limit" => 7,
-          "lora_freq" => 868,
-          "modem_preset" => "MediumFast",
-          "channel_name" => "PUBLIC",
-          "snr" => -14.0,
-        }
-        decrypted_message = {
-          "packet_id" => 3_189_171_433,
-          "rx_time" => 1_767_957_191,
-          "rx_iso" => Time.at(1_767_957_191).utc.iso8601,
-          "from_id" => "!7c5b0920",
-          "to_id" => "^all",
-          "channel" => 7,
-          "portnum" => "TEXT_MESSAGE_APP",
-          "text" => "FF-TB Beacon",
-          "rssi" => -79,
-          "hop_limit" => 5,
-          "lora_freq" => 868,
-          "modem_preset" => "MediumFast",
-          "channel_name" => "PUBLIC",
-          "snr" => 9.75,
-        }
+    it "prefers decrypted message fields over encrypted ones" do
+      encrypted_payload = Base64.strict_encode64("cipher".b)
+      encrypted_message = {
+        "packet_id" => 3_189_171_433,
+        "rx_time" => 1_767_957_187,
+        "rx_iso" => Time.at(1_767_957_187).utc.iso8601,
+        "from_id" => "!7c5b0920",
+        "to_id" => "^all",
+        "channel" => 3,
+        "encrypted" => encrypted_payload,
+        "rssi" => -117,
+        "hop_limit" => 7,
+        "lora_freq" => 868,
+        "modem_preset" => "MediumFast",
+        "channel_name" => "PUBLIC",
+        "snr" => -14.0,
+      }
+      decrypted_message = {
+        "packet_id" => 3_189_171_433,
+        "rx_time" => 1_767_957_191,
+        "rx_iso" => Time.at(1_767_957_191).utc.iso8601,
+        "from_id" => "!7c5b0920",
+        "to_id" => "^all",
+        "channel" => 7,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "FF-TB Beacon",
+        "rssi" => -79,
+        "hop_limit" => 5,
+        "lora_freq" => 868,
+        "modem_preset" => "MediumFast",
+        "channel_name" => "PUBLIC",
+        "snr" => 9.75,
+      }
 
-        with_db do |db|
-          PotatoMesh::Application.insert_message(db, encrypted_message)
-          PotatoMesh::Application.insert_message(db, decrypted_message)
-        end
+      with_db do |db|
+        PotatoMesh::Application.insert_message(db, encrypted_message)
+        PotatoMesh::Application.insert_message(db, decrypted_message)
+      end
 
-        with_db(readonly: true) do |db|
-          db.results_as_hash = true
-          row = db.get_first_row(
-            "SELECT text, encrypted, channel, rssi, hop_limit, snr, portnum FROM messages WHERE id = ?",
-            [encrypted_message["packet_id"]],
-          )
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT text, encrypted, channel, rssi, hop_limit, snr, portnum FROM messages WHERE id = ?",
+          [encrypted_message["packet_id"]],
+        )
 
-          expect(row["text"]).to eq("FF-TB Beacon")
-          expect(row["encrypted"]).to be_nil
-          expect(row["channel"]).to eq(7)
-          expect(row["rssi"]).to eq(-79)
-          expect(row["hop_limit"]).to eq(5)
-          expect(row["snr"]).to eq(9.75)
-          expect(row["portnum"]).to eq("TEXT_MESSAGE_APP")
-        end
+        expect(row["text"]).to eq("FF-TB Beacon")
+        expect(row["encrypted"]).to be_nil
+        expect(row["channel"]).to eq(7)
+        expect(row["rssi"]).to eq(-79)
+        expect(row["hop_limit"]).to eq(5)
+        expect(row["snr"]).to eq(9.75)
+        expect(row["portnum"]).to eq("TEXT_MESSAGE_APP")
       end
     end
 
