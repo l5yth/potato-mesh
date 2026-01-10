@@ -104,6 +104,18 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
 
       expect(value).to eq(0x00)
     end
+
+    it "xors byte strings deterministically" do
+      value = described_class.xor_bytes("ABC")
+
+      expect(value).to eq(0x40)
+    end
+
+    it "returns empty key material for empty PSK" do
+      key = described_class.expanded_key("")
+
+      expect(key).to eq("")
+    end
   end
 
   describe PotatoMesh::App::Meshtastic::RainbowTable do
@@ -218,5 +230,28 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     )
 
     expect(bytes).to eq(payload)
+  end
+
+  it "returns nil for non-numeric packet ids" do
+    value = described_class.normalize_packet_id("abc")
+
+    expect(value).to be_nil
+  end
+
+  it "returns nil for invalid node identifiers" do
+    value = described_class.normalize_node_num("not-hex", nil)
+
+    expect(value).to be_nil
+  end
+
+  it "returns nil when the PSK is an unsupported size" do
+    data = described_class.decrypt_data(
+      cipher_b64: "AA==",
+      packet_id: 1,
+      from_id: "!9e95cf60",
+      psk_b64: Base64.strict_encode64("x" * 33),
+    )
+
+    expect(data).to be_nil
   end
 end

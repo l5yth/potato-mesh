@@ -146,4 +146,21 @@ RSpec.describe PotatoMesh::App::Meshtastic::PayloadDecoder do
 
     expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
   end
+
+  it "returns nil when decoder paths are unavailable" do
+    allow(described_class).to receive(:decoder_script_path).and_return(nil)
+    allow(described_class).to receive(:python_executable_path).and_return(nil)
+
+    expect(described_class.decode(portnum: 3, payload_b64: "AA==")).to be_nil
+  end
+
+  it "returns nil when no python executable can be found" do
+    with_env("MESHTASTIC_PYTHON", nil) do
+      with_env("PATH", "") do
+        with_repo_root(Dir.mktmpdir) do
+          expect(described_class.python_executable_path).to be_nil
+        end
+      end
+    end
+  end
 end

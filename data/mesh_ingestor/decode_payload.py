@@ -44,7 +44,7 @@ def _decode_payload(portnum: int, payload_b64: str) -> dict[str, Any]:
     if portnum not in PORTNUM_MAP:
         return {"error": "unsupported-port", "portnum": portnum}
     try:
-        payload_bytes = base64.b64decode(payload_b64)
+        payload_bytes = base64.b64decode(payload_b64, validate=True)
     except Exception as exc:
         return {"error": f"invalid-payload: {exc}"}
 

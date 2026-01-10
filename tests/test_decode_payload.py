@@ -61,6 +61,7 @@ def test_decode_payload_rejects_invalid_payload():
     result = decode_payload._decode_payload(3, "not-base64")
 
     assert result["error"].startswith("invalid-payload")
+    assert "invalid-payload" in result["error"]
 
 
 def test_decode_payload_rejects_unsupported_port():
@@ -147,3 +148,24 @@ def test_decode_payload_handles_parse_failure():
 
     assert result["error"].startswith("decode-failed")
     assert result["type"] == "BROKEN"
+    decode_payload.PORTNUM_MAP.pop(99, None)
+
+
+def test_main_entrypoint_executes():
+    import runpy
+
+    payload = {"portnum": 3, "payload_b64": base64.b64encode(b"").decode("ascii")}
+    stdin = io.StringIO(json.dumps(payload))
+    stdout = io.StringIO()
+    original_stdin = sys.stdin
+    original_stdout = sys.stdout
+    try:
+        sys.stdin = stdin
+        sys.stdout = stdout
+        try:
+            runpy.run_module("data.mesh_ingestor.decode_payload", run_name="__main__")
+        except SystemExit as exc:
+            assert exc.code == 0
+    finally:
+        sys.stdin = original_stdin
+        sys.stdout = original_stdout

@@ -60,7 +60,7 @@ RSpec.describe PotatoMesh::App::Meshtastic::Protobuf do
     message = [
       portnum_tag,
     ].pack("C") + encode_varint(3) +
-      [payload_tag].pack("C") + encode_varint(payload.bytesize) + payload
+              [payload_tag].pack("C") + encode_varint(payload.bytesize) + payload
 
     data = described_class.parse_data(message)
 
@@ -86,5 +86,36 @@ RSpec.describe PotatoMesh::App::Meshtastic::Protobuf do
     invalid = ([0x80] * 10).pack("C*")
 
     expect(described_class.read_varint(invalid.bytes, 0)).to be_nil
+  end
+
+  it "skips 64-bit fields while searching for length-delimited bytes" do
+    target_field = 3
+    junk_tag = (1 << 3) | described_class::WIRE_TYPE_64BIT
+    target_tag = (target_field << 3) | described_class::WIRE_TYPE_LENGTH_DELIMITED
+    message = [junk_tag].pack("C") + ("\x00" * 8) +
+              [target_tag].pack("C") + encode_varint(4) + "test"
+
+    extracted = described_class.extract_field_bytes(message, target_field)
+
+    expect(extracted).to eq("test")
+  end
+
+  it "skips 32-bit fields while searching for length-delimited bytes" do
+    target_field = 4
+    junk_tag = (2 << 3) | described_class::WIRE_TYPE_32BIT
+    target_tag = (target_field << 3) | described_class::WIRE_TYPE_LENGTH_DELIMITED
+    message = [junk_tag].pack("C") + ("\x00" * 4) +
+              [target_tag].pack("C") + encode_varint(3) + "abc"
+
+    extracted = described_class.extract_field_bytes(message, target_field)
+
+    expect(extracted).to eq("abc")
+  end
+
+  it "returns nil on unsupported wire types" do
+    bad_tag = (1 << 3) | 7
+    message = [bad_tag].pack("C")
+
+    expect(described_class.extract_field_bytes(message, 1)).to be_nil
   end
 end

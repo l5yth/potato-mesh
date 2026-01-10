@@ -4162,6 +4162,34 @@ RSpec.describe "Potato Mesh Sinatra app" do
       )
     end
 
+    it "stores modem metadata when touching nodes via messages" do
+      payload = {
+        "packet_id" => 910_011,
+        "rx_time" => reference_time.to_i,
+        "rx_iso" => reference_time.utc.iso8601,
+        "from_id" => "!7c5b0920",
+        "text" => "modem metadata",
+        "lora_freq" => 868,
+        "modem_preset" => "MediumFast",
+      }
+
+      post "/api/messages", payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_freq, modem_preset FROM nodes WHERE node_id = ?",
+          ["!7c5b0920"],
+        )
+
+        expect(row["lora_freq"]).to eq(868)
+        expect(row["modem_preset"]).to eq("MediumFast")
+      end
+    end
+
     it "stores decoded telemetry when decrypting non-text payloads" do
       payload_bytes = "telemetry".b
       encoded_payload = Base64.strict_encode64(payload_bytes)
@@ -4193,6 +4221,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
             "rx_time" => reference_time.to_i,
             "rx_iso" => reference_time.utc.iso8601,
             "from_id" => "!7c5b0920",
+            "lora_freq" => 868,
+            "modem_preset" => "MediumFast",
             "encrypted" => encoded_payload,
           },
         )
@@ -4207,6 +4237,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(row["payload_b64"]).to eq(encoded_payload)
         expect(row["battery_level"]).to eq(77.5)
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_freq, modem_preset FROM nodes WHERE node_id = ?",
+          ["!7c5b0920"],
+        )
+
+        expect(row["lora_freq"]).to eq(868)
+        expect(row["modem_preset"]).to eq("MediumFast")
       end
     end
 
@@ -4244,6 +4285,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
             "rx_time" => reference_time.to_i,
             "rx_iso" => reference_time.utc.iso8601,
             "from_id" => "!7c5b0920",
+            "lora_freq" => 868,
+            "modem_preset" => "MediumFast",
             "encrypted" => encoded_payload,
           },
         )
@@ -4260,6 +4303,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["latitude"]).to be_within(0.0001).of(52.559872)
         expect(row["longitude"]).to be_within(0.0001).of(13.6577024)
         expect(row["altitude"]).to eq(11)
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT lora_freq, modem_preset FROM nodes WHERE node_id = ?",
+          ["!7c5b0920"],
+        )
+
+        expect(row["lora_freq"]).to eq(868)
+        expect(row["modem_preset"]).to eq("MediumFast")
       end
     end
 
@@ -4309,6 +4363,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           channel_name: nil,
         },
       )
+      allow(PotatoMesh::Application).to receive(:debug_log).and_call_original
       allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
         {
           "type" => "POSITION_APP",
@@ -4351,6 +4406,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
         anything,
         anything,
         hash_including(source: :message),
+      )
+      expect(PotatoMesh::Application).to have_received(:debug_log).with(
+        "Cleared encrypted payload after decoding",
+        hash_including(context: "data_processing.insert_message", message_id: 900_005, portnum: 3),
       )
     end
 
