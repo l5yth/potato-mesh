@@ -130,15 +130,25 @@ impl ConfigOverrides {
     }
 
     fn merge(self, higher: ConfigOverrides) -> ConfigOverrides {
+        let matrix_as_token = if higher.matrix_as_token_file.is_some() {
+            higher.matrix_as_token
+        } else {
+            higher.matrix_as_token.or(self.matrix_as_token)
+        };
+        let matrix_hs_token = if higher.matrix_hs_token_file.is_some() {
+            higher.matrix_hs_token
+        } else {
+            higher.matrix_hs_token.or(self.matrix_hs_token)
+        };
         ConfigOverrides {
             potatomesh_base_url: higher.potatomesh_base_url.or(self.potatomesh_base_url),
             potatomesh_poll_interval_secs: higher
                 .potatomesh_poll_interval_secs
                 .or(self.potatomesh_poll_interval_secs),
             matrix_homeserver: higher.matrix_homeserver.or(self.matrix_homeserver),
-            matrix_as_token: higher.matrix_as_token.or(self.matrix_as_token),
+            matrix_as_token,
             matrix_as_token_file: higher.matrix_as_token_file.or(self.matrix_as_token_file),
-            matrix_hs_token: higher.matrix_hs_token.or(self.matrix_hs_token),
+            matrix_hs_token,
             matrix_hs_token_file: higher.matrix_hs_token_file.or(self.matrix_hs_token_file),
             matrix_server_name: higher.matrix_server_name.or(self.matrix_server_name),
             matrix_room_id: higher.matrix_room_id.or(self.matrix_room_id),
@@ -649,6 +659,42 @@ mod tests {
 
         let cfg = load_from_sources(cli_inputs, ConfigInputs::default(), None).unwrap();
         assert_eq!(cfg.matrix.as_token, "FROM_SECRET");
+    }
+
+    #[test]
+    #[serial]
+    fn load_prefers_cli_token_file_over_env_value() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp_dir.path()).unwrap();
+
+        let token_file = tmp_dir.path().join("as_token");
+        fs::write(&token_file, "CLI_SECRET").unwrap();
+
+        let env_inputs = ConfigInputs {
+            overrides: ConfigOverrides {
+                potatomesh_base_url: Some("https://potatomesh.net/".to_string()),
+                potatomesh_poll_interval_secs: Some(10),
+                matrix_homeserver: Some("https://matrix.example.org".to_string()),
+                matrix_as_token: Some("ENV_TOKEN".to_string()),
+                matrix_hs_token: Some("HS_TOKEN".to_string()),
+                matrix_server_name: Some("example.org".to_string()),
+                matrix_room_id: Some("!roomid:example.org".to_string()),
+                ..ConfigOverrides::default()
+            },
+            ..ConfigInputs::default()
+        };
+        let cli_inputs = ConfigInputs {
+            overrides: ConfigOverrides {
+                matrix_as_token_file: Some(token_file.to_string_lossy().to_string()),
+                ..ConfigOverrides::default()
+            },
+            ..ConfigInputs::default()
+        };
+
+        let cfg = load_from_sources(cli_inputs, env_inputs, None).unwrap();
+        assert_eq!(cfg.matrix.as_token, "CLI_SECRET");
+        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
