@@ -1641,6 +1641,9 @@ module PotatoMesh
             existing_from = existing.is_a?(Hash) ? existing["from_id"] : existing[0]
             existing_from_str = existing_from&.to_s
             return if !sender_present && (existing_from_str.nil? || existing_from_str.strip.empty?)
+            existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
+            existing_encrypted_str = existing_encrypted&.to_s
+            decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
 
             if from_id
               should_update = existing_from_str.nil? || existing_from_str.strip.empty?
@@ -1656,12 +1659,9 @@ module PotatoMesh
               updates["to_id"] = to_id if should_update
             end
 
-            if clear_encrypted
-              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
+            if clear_encrypted || (decrypted_precedence && existing_encrypted_str && !existing_encrypted_str.strip.empty?)
               updates["encrypted"] = nil if existing_encrypted
             elsif encrypted && !existing_has_text
-              existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
-              existing_encrypted_str = existing_encrypted&.to_s
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
               should_update ||= existing_encrypted != encrypted
               updates["encrypted"] = encrypted if should_update
@@ -1673,11 +1673,24 @@ module PotatoMesh
               updates["text"] = text if should_update
             end
 
+            if decrypted_precedence
+              updates["channel"] = message["channel"] if message.key?("channel")
+              updates["snr"] = message["snr"] if message.key?("snr")
+              updates["rssi"] = message["rssi"] if message.key?("rssi")
+              updates["hop_limit"] = message["hop_limit"] if message.key?("hop_limit")
+              updates["lora_freq"] = lora_freq unless lora_freq.nil?
+              updates["modem_preset"] = modem_preset if modem_preset
+              updates["channel_name"] = channel_name if channel_name
+              updates["rx_time"] = rx_time if rx_time
+              updates["rx_iso"] = rx_iso if rx_iso
+            end
+
             if portnum
               existing_portnum = existing.is_a?(Hash) ? existing["portnum"] : existing[9]
               existing_portnum_str = existing_portnum&.to_s
               should_update = existing_portnum_str.nil? || existing_portnum_str.strip.empty?
               should_update ||= existing_portnum != portnum
+              should_update ||= decrypted_precedence
               updates["portnum"] = portnum if should_update
             end
 
@@ -1735,6 +1748,9 @@ module PotatoMesh
               existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
               existing_text_str = existing_text&.to_s
               allow_encrypted_update = existing_text_str.nil? || existing_text_str.strip.empty?
+              existing_encrypted = existing_row.is_a?(Hash) ? existing_row["encrypted"] : existing_row&.[](1)
+              existing_encrypted_str = existing_encrypted&.to_s
+              decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
 
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
@@ -1743,9 +1759,22 @@ module PotatoMesh
               fallback_updates["encrypted"] = encrypted if encrypted && allow_encrypted_update
               fallback_updates["encrypted"] = nil if clear_encrypted
               fallback_updates["portnum"] = portnum if portnum
-              fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
-              fallback_updates["modem_preset"] = modem_preset if modem_preset
-              fallback_updates["channel_name"] = channel_name if channel_name
+              if decrypted_precedence
+                fallback_updates["channel"] = message["channel"] if message.key?("channel")
+                fallback_updates["snr"] = message["snr"] if message.key?("snr")
+                fallback_updates["rssi"] = message["rssi"] if message.key?("rssi")
+                fallback_updates["hop_limit"] = message["hop_limit"] if message.key?("hop_limit")
+                fallback_updates["portnum"] = portnum if portnum
+                fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
+                fallback_updates["modem_preset"] = modem_preset if modem_preset
+                fallback_updates["channel_name"] = channel_name if channel_name
+                fallback_updates["rx_time"] = rx_time if rx_time
+                fallback_updates["rx_iso"] = rx_iso if rx_iso
+              else
+                fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
+                fallback_updates["modem_preset"] = modem_preset if modem_preset
+                fallback_updates["channel_name"] = channel_name if channel_name
+              end
               fallback_updates["reply_id"] = reply_id unless reply_id.nil?
               fallback_updates["emoji"] = emoji if emoji
               unless fallback_updates.empty?
