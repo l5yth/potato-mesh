@@ -4007,13 +4007,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
         with_db(readonly: true) do |db|
           db.results_as_hash = true
           row = db.get_first_row(
-            "SELECT text, encrypted, channel_name FROM messages WHERE id = ?",
+            "SELECT text, encrypted, channel_name, decrypted, decryption_confidence FROM messages WHERE id = ?",
             [payload["packet_id"]],
           )
 
           expect(row["text"]).to eq("Nabend")
           expect(row["encrypted"]).to be_nil
           expect(row["channel_name"]).to eq("BerlinMesh")
+          expect(row["decrypted"]).to eq(1)
+          expect(row["decryption_confidence"]).to be > 0.0
+          expect(row["decryption_confidence"]).to be <= 1.0
         end
       ensure
         if previous_psk.nil?
@@ -4087,13 +4090,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
         with_db(readonly: true) do |db|
           db.results_as_hash = true
           row = db.get_first_row(
-            "SELECT text, encrypted, portnum FROM messages WHERE id = ?",
+            "SELECT text, encrypted, portnum, decrypted, decryption_confidence FROM messages WHERE id = ?",
             [payload["packet_id"]],
           )
 
           expect(row["text"]).to be_nil
           expect(row["encrypted"]).to eq(encrypted_payload)
           expect(row["portnum"]).to be_nil
+          expect(row["decrypted"]).to eq(0)
+          expect(row["decryption_confidence"]).to be_nil
         end
       ensure
         if previous_psk.nil?

@@ -150,6 +150,16 @@ module PotatoMesh
           message_columns << "emoji"
         end
 
+        unless message_columns.include?("decrypted")
+          db.execute("ALTER TABLE messages ADD COLUMN decrypted INTEGER NOT NULL DEFAULT 0")
+          message_columns << "decrypted"
+        end
+
+        unless message_columns.include?("decryption_confidence")
+          db.execute("ALTER TABLE messages ADD COLUMN decryption_confidence REAL")
+          message_columns << "decryption_confidence"
+        end
+
         reply_index_exists =
           db.get_first_value(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_reply_id'",

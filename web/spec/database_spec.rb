@@ -166,6 +166,20 @@ RSpec.describe PotatoMesh::App::Database do
     expect(telemetry_columns).to include("rx_time", "battery_level")
   end
 
+  it "adds decryption metadata columns to existing messages tables" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+    end
+
+    expect(column_names_for("messages")).not_to include("decrypted", "decryption_confidence")
+
+    harness_class.ensure_schema_upgrades
+
+    message_columns = column_names_for("messages")
+    expect(message_columns).to include("decrypted", "decryption_confidence")
+  end
+
   it "creates trace tables when absent" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       db.execute("CREATE TABLE nodes(node_id TEXT)")
