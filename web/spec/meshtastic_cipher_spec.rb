@@ -143,6 +143,18 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     expect(text).to eq("Nabend")
   end
 
+  it "captures a confidence score for decrypted text" do
+    data = described_class.decrypt_data(
+      cipher_b64: cipher_b64,
+      packet_id: packet_id,
+      from_id: from_id,
+      psk_b64: psk_b64,
+    )
+
+    expect(data[:text]).to eq("Nabend")
+    expect(data[:decryption_confidence]).to be_between(0.0, 1.0)
+  end
+
   it "decrypts the public PSK alias sample payload" do
     text = described_class.decrypt_text(
       cipher_b64: "otu3OyMrTIUlcaisLVDyAnLW",
@@ -196,7 +208,7 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     )
 
     expect(text).to be_nil
-    expect(data).to eq({ portnum: 3, payload: payload, text: nil })
+    expect(data).to eq({ portnum: 3, payload: payload, text: nil, decryption_confidence: nil })
   end
 
   it "normalizes packet ids from numeric strings" do
@@ -276,5 +288,13 @@ RSpec.describe PotatoMesh::App::Meshtastic::Cipher do
     )
 
     expect(data).to be_nil
+  end
+
+  it "scores text confidence higher for longer printable content" do
+    low = described_class.text_confidence("AC")
+    high = described_class.text_confidence("This looks like a sentence.")
+
+    expect(low).to be < high
+    expect(high).to be_between(0.0, 1.0)
   end
 end

@@ -1497,6 +1497,7 @@ module PotatoMesh
           portnum: data[:portnum],
           payload: data[:payload],
           channel_name: channel_name,
+          decryption_confidence: data[:decryption_confidence],
         }
       end
 
@@ -1568,9 +1569,11 @@ module PotatoMesh
         decrypted_payload = nil
         decrypted_text = nil
         decrypted_portnum = nil
+        decrypted_flag = false
+        decryption_confidence = nil
 
         if encrypted && (text.nil? || text.to_s.strip.empty?)
-          decrypted = decrypt_meshtastic_message(
+          decrypted_data = decrypt_meshtastic_message(
             message,
             msg_id,
             from_id,
@@ -1578,17 +1581,19 @@ module PotatoMesh
             channel_index,
           )
 
-          if decrypted
-            decrypted_payload = decrypted
-            decrypted_portnum = decrypted[:portnum]
+          if decrypted_data
+            decrypted_payload = decrypted_data
+            decrypted_portnum = decrypted_data[:portnum]
 
-            if decrypted[:text]
-              text = decrypted[:text]
+            if decrypted_data[:text]
+              text = decrypted_data[:text]
               decrypted_text = text
               clear_encrypted = true
               encrypted = nil
               message["text"] = text
-              message["channel_name"] ||= decrypted[:channel_name]
+              message["channel_name"] ||= decrypted_data[:channel_name]
+              decrypted_flag = true
+              decryption_confidence = decrypted_data[:decryption_confidence] || 0.0
               if portnum.nil? && decrypted_portnum
                 portnum = decrypted_portnum
                 message["portnum"] = portnum
@@ -1626,11 +1631,13 @@ module PotatoMesh
           channel_name,
           reply_id,
           emoji,
+          decrypted_flag ? 1 : 0,
+          decryption_confidence,
         ]
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, decrypted, decryption_confidence FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -1685,6 +1692,11 @@ module PotatoMesh
               updates["rx_iso"] = rx_iso if rx_iso
             end
 
+            if clear_encrypted
+              updates["decrypted"] = 1
+              updates["decryption_confidence"] = decryption_confidence
+            end
+
             if portnum
               existing_portnum = existing.is_a?(Hash) ? existing["portnum"] : existing[9]
               existing_portnum_str = existing_portnum&.to_s
@@ -1737,8 +1749,8 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name,reply_id,emoji)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name,reply_id,emoji,decrypted,decryption_confidence)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               existing_row = db.get_first_row(
@@ -1759,6 +1771,10 @@ module PotatoMesh
               fallback_updates["encrypted"] = encrypted if encrypted && allow_encrypted_update
               fallback_updates["encrypted"] = nil if clear_encrypted
               fallback_updates["portnum"] = portnum if portnum
+              if clear_encrypted
+                fallback_updates["decrypted"] = 1
+                fallback_updates["decryption_confidence"] = decryption_confidence
+              end
               if decrypted_precedence
                 fallback_updates["channel"] = message["channel"] if message.key?("channel")
                 fallback_updates["snr"] = message["snr"] if message.key?("snr")

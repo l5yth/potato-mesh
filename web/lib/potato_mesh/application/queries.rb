@@ -357,7 +357,7 @@ module PotatoMesh
           SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
                  m.portnum, m.text, m.encrypted, m.rssi, m.hop_limit,
                  m.lora_freq, m.modem_preset, m.channel_name, m.snr,
-                 m.reply_id, m.emoji
+                 m.reply_id, m.emoji, m.decrypted, m.decryption_confidence
           FROM messages m
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n"
@@ -373,6 +373,27 @@ module PotatoMesh
           r["emoji"] = string_or_nil(r["emoji"]) if r.key?("emoji")
           if string_or_nil(r["encrypted"])
             r.delete("portnum")
+          end
+
+          if r.key?("decrypted")
+            decrypted_raw = r["decrypted"]
+            decrypted = case decrypted_raw
+              when true, false
+                decrypted_raw
+              when Integer
+                !decrypted_raw.zero?
+              when String
+                trimmed = decrypted_raw.strip
+                !trimmed.empty? && trimmed != "0" && trimmed.casecmp("false") != 0
+              else
+                !!decrypted_raw
+              end
+            r["decrypted"] = decrypted
+            r.delete("decryption_confidence") unless decrypted
+          end
+
+          if r.key?("decryption_confidence") && !r["decryption_confidence"].nil?
+            r["decryption_confidence"] = r["decryption_confidence"].to_f
           end
           if PotatoMesh::Config.debug? && (r["from_id"].nil? || r["from_id"].to_s.strip.empty?)
             raw = db.execute("SELECT * FROM messages WHERE id = ?", [r["id"]]).first

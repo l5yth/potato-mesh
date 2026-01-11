@@ -29,6 +29,8 @@ module PotatoMesh
 
         DEFAULT_PSK_B64 = "AQ=="
         TEXT_MESSAGE_PORTNUM = 1
+        # Number of characters required for full confidence scoring.
+        CONFIDENCE_LENGTH_TARGET = 8.0
 
         # Decrypt an encrypted Meshtastic payload into UTF-8 text.
         #
@@ -78,12 +80,21 @@ module PotatoMesh
           return nil unless data
 
           text = nil
+          decryption_confidence = nil
           if data[:portnum] == TEXT_MESSAGE_PORTNUM
             candidate = data[:payload].dup.force_encoding("UTF-8")
-            text = candidate if candidate.valid_encoding? && !candidate.empty?
+            if candidate.valid_encoding? && !candidate.empty?
+              text = candidate
+              decryption_confidence = text_confidence(text)
+            end
           end
 
-          { portnum: data[:portnum], payload: data[:payload], text: text }
+          {
+            portnum: data[:portnum],
+            payload: data[:payload],
+            text: text,
+            decryption_confidence: decryption_confidence,
+          }
         rescue ArgumentError, OpenSSL::Cipher::CipherError
           nil
         end
@@ -152,6 +163,25 @@ module PotatoMesh
           return trimmed.to_i(10) if trimmed.match?(/\A\d+\z/)
 
           nil
+        end
+
+        # Score the plausibility of decrypted text content.
+        #
+        # @param text [String] decrypted text candidate.
+        # @return [Float] confidence score between 0.0 and 1.0.
+        def text_confidence(text)
+          return 0.0 unless text.is_a?(String)
+          return 0.0 if text.empty?
+
+          total = text.length.to_f
+          length_score = [total / CONFIDENCE_LENGTH_TARGET, 1.0].min
+          control_count = text.scan(/[\p{Cc}\p{Cs}]/).length
+          control_ratio = control_count / total
+          acceptable_count = text.scan(/[\p{L}\p{N}\p{P}\p{S}\p{Zs}\t\n\r]/).length
+          acceptable_ratio = acceptable_count / total
+
+          score = length_score * acceptable_ratio * (1.0 - control_ratio)
+          score.clamp(0.0, 1.0)
         end
 
         # Resolve the node number from any of the supported identifiers.

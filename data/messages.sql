@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS messages (
     modem_preset TEXT,
     channel_name TEXT,
     reply_id INTEGER,
-    emoji TEXT
+    emoji TEXT,
+    decrypted INTEGER NOT NULL DEFAULT 0,
+    decryption_confidence REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);
