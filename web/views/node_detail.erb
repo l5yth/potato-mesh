@@ -39,6 +39,9 @@
     <p class="node-detail__noscript">This page requires JavaScript to display node information.</p>
   </noscript>
 </section>
+<div class="node-detail__map-staging" aria-hidden="true">
+  <%= erb :"shared/_map_panel", locals: { full_screen: false, legend_collapsed: true } %>
+</div>
 <script type="module">
   import { initializeNodeDetailPage } from '/assets/js/app/node-page.js';
   initializeNodeDetailPage();

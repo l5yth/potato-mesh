@@ -29,6 +29,7 @@ import {
   fmtTemperature,
   fmtTx,
 } from './short-info-telemetry.js';
+import { initializeNodeDetailMapPanel } from './node-detail-map.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
 const MESSAGE_LIMIT = 50;
@@ -2294,10 +2295,11 @@ function renderTraceroutes(traces, renderShortHtml, { roleIndex = null, node = n
  *
  * @param {Object} node Normalised node payload.
  * @param {{
-  *   neighbors?: Array<Object>,
-  *   messages?: Array<Object>,
+ *   neighbors?: Array<Object>,
+ *   messages?: Array<Object>,
  *   traces?: Array<Object>,
-  *   renderShortHtml: Function,
+ *   includeMapPanel?: boolean,
+ *   renderShortHtml: Function,
   * }} options Rendering options.
  * @returns {string} HTML fragment representing the detail view.
  */
@@ -2305,6 +2307,7 @@ function renderNodeDetailHtml(node, {
   neighbors = [],
   messages = [],
   traces = [],
+  includeMapPanel = false,
   renderShortHtml,
   roleIndex = null,
   chartNowMs = Date.now(),
@@ -2324,6 +2327,17 @@ function renderNodeDetailHtml(node, {
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
   const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
   const messagesHtml = renderMessages(messages, renderShortHtml, node);
+  const mapPanelHtml = includeMapPanel
+    ? `
+      <section class="node-detail__section node-detail__map-panel" data-node-map-panel>
+        <div class="node-detail__map-header">
+          <h3>Position history</h3>
+          <span class="node-detail__map-status" data-node-map-status>Loading positions…</span>
+        </div>
+        <div class="node-detail__map-slot" data-node-map-slot></div>
+      </section>
+    `
+    : '';
 
   const sections = [];
   if (neighborsHtml) {
@@ -2346,6 +2360,7 @@ function renderNodeDetailHtml(node, {
     <header class="node-detail__header">
       <h2 class="node-detail__title">${badgeHtml}${nameHtml}${identifierHtml}</h2>
     </header>
+    ${mapPanelHtml}
     ${chartsHtml ?? ''}
     ${tableSection}
     ${contentHtml}
@@ -2467,6 +2482,7 @@ async function fetchTracesForNode(identifier, { fetchImpl } = {}) {
  *   fetchImpl?: Function,
  *   refreshImpl?: Function,
  *   renderShortHtml?: Function,
+ *   includeMapPanel?: boolean,
  * }} options Optional overrides for testing.
  * @returns {Promise<boolean>} ``true`` when the node was rendered successfully.
  */
@@ -2504,6 +2520,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     traces,
     renderShortHtml,
     roleIndex,
+    includeMapPanel: options.includeMapPanel === true,
   });
 }
 
@@ -2548,8 +2565,13 @@ export async function initializeNodeDetailPage(options = {}) {
       refreshImpl,
       renderShortHtml: options.renderShortHtml,
       privateMode,
+      includeMapPanel: true,
     });
     root.innerHTML = html;
+    await initializeNodeDetailMapPanel(root, referenceData, {
+      fetchImpl: options.fetchImpl,
+      document: documentRef,
+    });
     return true;
   } catch (error) {
     console.error('Failed to render node detail page', error);
