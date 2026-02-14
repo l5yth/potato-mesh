@@ -373,8 +373,8 @@ module PotatoMesh
 
         https_failures = []
 
-        instance_uri_candidates(domain, "/api/instances").each do |uri|
-          return false if federation_shutdown_requested?
+        published = instance_uri_candidates(domain, "/api/instances").any? do |uri|
+          break false if federation_shutdown_requested?
 
           begin
             http = build_remote_http_client(uri)
@@ -392,14 +392,16 @@ module PotatoMesh
                 target: uri.to_s,
                 status: response.code,
               )
-              return true
+              true
+            else
+              debug_log(
+                "Federation announcement failed",
+                context: "federation.announce",
+                target: uri.to_s,
+                status: response.code,
+              )
+              false
             end
-            debug_log(
-              "Federation announcement failed",
-              context: "federation.announce",
-              target: uri.to_s,
-              status: response.code,
-            )
           rescue StandardError => e
             metadata = {
               context: "federation.announce",
@@ -414,9 +416,18 @@ module PotatoMesh
                 **metadata,
               )
               https_failures << metadata
-              next
+            else
+              warn_log(
+                "Federation announcement raised exception",
+                **metadata,
+              )
             end
+            false
+          end
+        end
 
+        unless published
+          https_failures.each do |metadata|
             warn_log(
               "Federation announcement raised exception",
               **metadata,
@@ -424,14 +435,7 @@ module PotatoMesh
           end
         end
 
-        https_failures.each do |metadata|
-          warn_log(
-            "Federation announcement raised exception",
-            **metadata,
-          )
-        end
-
-        false
+        published
       end
 
       # Determine whether an HTTPS announcement failure should fall back to HTTP.
@@ -459,7 +463,7 @@ module PotatoMesh
         pool = federation_worker_pool
         scheduled = []
 
-        domains.each do |domain|
+        domains.each_with_object(scheduled) do |domain, scheduled_tasks|
           break if federation_shutdown_requested?
 
           if pool
@@ -467,7 +471,7 @@ module PotatoMesh
               task = pool.schedule do
                 announce_instance_to_domain(domain, payload_json)
               end
-              scheduled << [domain, task]
+              scheduled_tasks << [domain, task]
               next
             rescue PotatoMesh::App::WorkerPool::QueueFullError
               warn_log(
@@ -508,8 +512,8 @@ module PotatoMesh
         return if scheduled.empty?
 
         timeout = PotatoMesh::Config.federation_task_timeout_seconds
-        scheduled.each do |domain, task|
-          break if federation_shutdown_requested?
+        scheduled.all? do |domain, task|
+          break false if federation_shutdown_requested?
 
           begin
             task.wait(timeout: timeout)
@@ -531,6 +535,7 @@ module PotatoMesh
               error_message: e.message,
             )
           end
+          true
         end
       end
 
@@ -806,7 +811,8 @@ module PotatoMesh
         end
         return false if federation_shutdown_requested?
 
-        pool = federation_worker_pool
+        application = is_a?(Class) ? self : self.class
+        pool = application.federation_worker_pool
         unless pool
           debug_log(
             "Skipped remote instance crawl",
@@ -817,7 +823,7 @@ module PotatoMesh
           return false
         end
 
-        claim_result = claim_federation_crawl_slot(sanitized_domain)
+        claim_result = application.claim_federation_crawl_slot(sanitized_domain)
         unless claim_result == :claimed
           debug_log(
             "Skipped remote instance crawl",
@@ -828,7 +834,6 @@ module PotatoMesh
           return false
         end
 
-        application = is_a?(Class) ? self : self.class
         pool.schedule do
           db = nil
           begin
@@ -847,9 +852,9 @@ module PotatoMesh
 
         true
       rescue PotatoMesh::App::WorkerPool::QueueFullError
-        handle_failed_federation_crawl_schedule(sanitized_domain, "worker queue saturated")
+        application.handle_failed_federation_crawl_schedule(sanitized_domain, "worker queue saturated")
       rescue PotatoMesh::App::WorkerPool::ShutdownError
-        handle_failed_federation_crawl_schedule(sanitized_domain, "worker pool shut down")
+        application.handle_failed_federation_crawl_schedule(sanitized_domain, "worker pool shut down")
       end
 
       # Handle a failed crawl schedule attempt without applying cooldown.
