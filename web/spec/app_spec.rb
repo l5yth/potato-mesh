@@ -27,6 +27,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
   let(:application_class) { PotatoMesh::Application }
   INSERT_NODE_WITH_LAST_HEARD_SQL = "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)".freeze
+  INSERT_NODE_WITH_METADATA_SQL = "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)".freeze
   SELECT_NODE_LAST_HEARD_SQL = "SELECT last_heard FROM nodes WHERE node_id = ?".freeze
 
   describe "configuration" do
@@ -5661,6 +5662,47 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload["node_id"]).to eq("!blank")
       expect(payload).not_to have_key("short_name")
       expect(payload).not_to have_key("hw_model")
+    end
+  end
+
+  describe "GET /api/stats" do
+    it "returns exact SQL-backed activity counts without list-endpoint sampling" do
+      clear_database
+      now = reference_time.to_i
+      allow(Time).to receive(:now).and_return(reference_time)
+
+      with_db do |db|
+        db.transaction
+        1005.times do |index|
+          heard = now - (index % 1800)
+          node_id = format("!%08x", index + 1)
+          db.execute(
+            INSERT_NODE_WITH_METADATA_SQL,
+            [node_id, index + 1, "n#{index}", "Node #{index}", "TBEAM", "CLIENT", heard, heard],
+          )
+        end
+        db.execute(
+          INSERT_NODE_WITH_METADATA_SQL,
+          ["!week0001", 200_001, "week", "Week Node", "TBEAM", "CLIENT", now - (2 * 86_400), now - (2 * 86_400)],
+        )
+        db.execute(
+          INSERT_NODE_WITH_METADATA_SQL,
+          ["!month001", 200_002, "month", "Month Node", "TBEAM", "CLIENT", now - (20 * 86_400), now - (20 * 86_400)],
+        )
+        db.commit
+      end
+
+      get "/api/stats"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload["sampled"]).to eq(false)
+      expect(payload["active_nodes"]).to include(
+        "hour" => 1005,
+        "day" => 1005,
+        "week" => 1006,
+        "month" => 1007,
+      )
     end
   end
 
