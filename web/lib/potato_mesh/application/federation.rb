@@ -877,11 +877,16 @@ module PotatoMesh
       #
       # @return [void]
       def initialize_federation_crawl_state!
+        @federation_crawl_init_mutex ||= Mutex.new
         return if instance_variable_defined?(:@federation_crawl_mutex) && @federation_crawl_mutex
 
-        @federation_crawl_mutex = Mutex.new
-        @federation_crawl_in_flight = Set.new
-        @federation_crawl_last_completed_at = {}
+        @federation_crawl_init_mutex.synchronize do
+          return if instance_variable_defined?(:@federation_crawl_mutex) && @federation_crawl_mutex
+
+          @federation_crawl_mutex = Mutex.new
+          @federation_crawl_in_flight = Set.new
+          @federation_crawl_last_completed_at = {}
+        end
       end
 
       # Retrieve the cooldown period used for duplicate crawl suppression.

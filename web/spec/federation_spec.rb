@@ -24,6 +24,7 @@ require "socket"
 
 RSpec.describe PotatoMesh::App::Federation do
   NODES_API_PATH = "/api/nodes".freeze
+  HTTP_CONNECTION_DOUBLE = "Net::HTTPConnection".freeze
 
   subject(:federation_helpers) do
     Class.new do
@@ -619,7 +620,7 @@ RSpec.describe PotatoMesh::App::Federation do
     end
 
     it "applies federation headers to instance fetch requests" do
-      connection = instance_double("Net::HTTPConnection")
+      connection = instance_double(HTTP_CONNECTION_DOUBLE)
       success_response = Net::HTTPOK.new("1.1", "200", "OK")
       allow(success_response).to receive(:body).and_return("{}")
       allow(success_response).to receive(:code).and_return("200")
@@ -643,7 +644,7 @@ RSpec.describe PotatoMesh::App::Federation do
     end
 
     it "wraps non-success HTTP responses" do
-      connection = instance_double("Net::HTTPConnection")
+      connection = instance_double(HTTP_CONNECTION_DOUBLE)
       failure_response = Net::HTTPBadGateway.new("1.1", "502", "Bad Gateway")
       allow(failure_response).to receive(:code).and_return("502")
 
@@ -690,7 +691,7 @@ RSpec.describe PotatoMesh::App::Federation do
     let(:payload) { "{}" }
     let(:https_uri) { URI.parse("https://remote.mesh/api/instances") }
     let(:http_uri) { URI.parse("http://remote.mesh/api/instances") }
-    let(:http_connection) { instance_double("Net::HTTPConnection") }
+    let(:http_connection) { instance_double(HTTP_CONNECTION_DOUBLE) }
     let(:success_response) { Net::HTTPOK.new("1.1", "200", "OK") }
 
     before do
@@ -817,6 +818,7 @@ RSpec.describe PotatoMesh::App::Federation do
             @settings ||= Struct.new(:federation_thread, :initial_federation_thread, :federation_worker_pool, :federation_shutdown_requested).new
           end
 
+          # No-op in this helper because tests only assert hook registration behavior.
           def shutdown_federation_background_work!(timeout: nil); end
         end
       end
@@ -1067,8 +1069,10 @@ RSpec.describe PotatoMesh::App::Federation do
             pool
           end
 
+          # No-op to keep the test helper minimal while satisfying federation logging calls.
           def debug_log(*); end
 
+          # No-op to keep the test helper minimal while satisfying federation logging calls.
           def warn_log(*); end
         end
 
@@ -1144,6 +1148,30 @@ RSpec.describe PotatoMesh::App::Federation do
   end
 
   describe ".claim_federation_crawl_slot" do
+    it "initializes crawl dedupe state safely under concurrent access" do
+      federation_helpers.instance_variable_set(:@federation_crawl_mutex, nil)
+      federation_helpers.instance_variable_set(:@federation_crawl_in_flight, nil)
+      federation_helpers.instance_variable_set(:@federation_crawl_last_completed_at, nil)
+      federation_helpers.instance_variable_set(:@federation_crawl_init_mutex, nil)
+
+      threads = Array.new(12) do
+        Thread.new do
+          federation_helpers.initialize_federation_crawl_state!
+        end
+      end
+      threads.each(&:join)
+
+      mutex = federation_helpers.instance_variable_get(:@federation_crawl_mutex)
+      in_flight = federation_helpers.instance_variable_get(:@federation_crawl_in_flight)
+      last_completed = federation_helpers.instance_variable_get(:@federation_crawl_last_completed_at)
+
+      expect(mutex).to be_a(Mutex)
+      expect(in_flight).to be_a(Set)
+      expect(last_completed).to be_a(Hash)
+      expect(in_flight).to be_empty
+      expect(last_completed).to be_empty
+    end
+
     it "returns cooldown when the domain completed recently" do
       allow(PotatoMesh::Config).to receive(:federation_crawl_cooldown_seconds).and_return(300)
       federation_helpers.clear_federation_crawl_state!
