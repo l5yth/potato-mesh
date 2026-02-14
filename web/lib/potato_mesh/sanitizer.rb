@@ -256,8 +256,7 @@ module PotatoMesh
     def sanitize_rendered_html(html)
       value = html.to_s.dup
       previous = nil
-      # Repeatedly apply the sanitization patterns until the content stabilizes.
-      # This avoids incomplete removal when multi-character matches expose
+      value.gsub!(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/mi, "")
       # additional executable tags or attributes after substitution.
       while previous != value
         previous = value.dup
