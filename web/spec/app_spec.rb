@@ -1412,6 +1412,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('<section class="imprint-page">')
     end
 
+    it "supports an optional trailing slash" do
+      get "/imprint/"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('<section class="imprint-page">')
+    end
+
     it "renders a friendly fallback when the source file is missing" do
       allow(PotatoMesh::App::Content::MdxPage).to receive(:source_path_for)
                                                     .with("imprint")

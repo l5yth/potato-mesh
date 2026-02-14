@@ -248,30 +248,24 @@ module PotatoMesh
     end
 
     # Apply a lightweight HTML sanitization pass for static page content.
-    # The sanitizer removes executable tags and event handlers, and prevents
-    # javascript/data/file URLs from being emitted in href/src attributes.
+    # The sanitizer applies an allowlist of static content tags and rewrites
+    # anchor tags to a safe canonical form.
     #
     # @param html [Object] generated HTML string.
     # @return [String] sanitized HTML safe for rendering in templates.
     def sanitize_rendered_html(html)
       value = html.to_s.dup
-      previous = nil
-      loop do
-        previous = value.dup
-        # Remove any event handler attributes with quoted values, e.g. onclick="..."
-        value.gsub!(/\s+on[a-z0-9_-]*\s*=\s*(['"]).*?\1/mi, "")
-        # Remove any event handler attributes with unquoted values, e.g. onclick=doSomething
-        value.gsub!(/\s+on[a-z0-9_-]*\s*=\s*[^\s>]+/mi, "")
-        # Strip dangerous href/src URL schemes such as javascript:, data:, or file:
-        value.gsub!(/\s+(href|src)\s*=\s*(['"])\s*(?:javascript|data|file):.*?\2/mi, "")
-        break if value == previous
+      value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
+      value.gsub!(%r{<\s*(?!/?(?:p|h1|h2|h3|ul|ol|li|a)\b)[^>]*>}mi, "")
+      value.gsub!(%r{<\s*a\b[^>]*>}mi) do |tag|
+        href = tag[/\bhref\s*=\s*(['"])(.*?)\1/i, 2].to_s.strip
+        if href.match?(/\Ahttps?:\/\/[^\s]+\z/i)
+          %(<a href="#{Rack::Utils.escape_html(href)}" target="_blank" rel="noreferrer noopener">)
+        else
+          "<a>"
+        end
       end
-        previous = value.dup
-        value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
-        value.gsub!(/\s+on[a-z]+\s*=\s*(['"]).*?\1/mi, "")
-        value.gsub!(/\s+on[a-z]+\s*=\s*[^\s>]+/mi, "")
-        value.gsub!(/\s+(href|src)\s*=\s*(['"])\s*(?:javascript|data|file):.*?\2/mi, "")
-      end
+      value.gsub!(%r{<\s*/\s*a\s*>}mi, "</a>")
       value
     end
   end

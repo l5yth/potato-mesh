@@ -77,6 +77,7 @@ COPY --chown=potatomesh:potatomesh web/public ./public
 COPY --chown=potatomesh:potatomesh web/views ./views
 COPY --chown=potatomesh:potatomesh web/content ./content
 COPY --chown=potatomesh:potatomesh web/scripts ./scripts
+RUN chmod -R a-w /app/content
 
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/

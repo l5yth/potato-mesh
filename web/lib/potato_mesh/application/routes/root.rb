@@ -198,7 +198,7 @@ module PotatoMesh
             render_root_view(:federation, view_mode: :federation)
           end
 
-          app.get "/imprint" do
+          app.get %r{/imprint/?} do
             imprint_payload = imprint_content_payload
             render_root_view(
               :imprint,
