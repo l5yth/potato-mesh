@@ -785,7 +785,7 @@ module PotatoMesh
                 INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time, ingestor)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(node_id, neighbor_id) DO UPDATE SET
-                  snr = COALESCE(excluded.snr, neighbors.snr),
+                  snr = excluded.snr,
                   rx_time = excluded.rx_time,
                   ingestor = COALESCE(NULLIF(neighbors.ingestor,''), excluded.ingestor)
               SQL

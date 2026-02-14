@@ -2931,6 +2931,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
     SELECT_MESSAGE_ENCRYPTED_SQL = "SELECT encrypted FROM messages WHERE id = ?".freeze
     NODE_INFO_LONG_NAME = "Node Info".freeze
 
+    def post_twice_for_ingestor(endpoint, first_payload, second_payload)
+      post endpoint, first_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+      post endpoint, second_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+    end
+
     it "persists messages from fixture data" do
       import_nodes_fixture
       import_messages_fixture
@@ -3029,10 +3036,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "ingestor" => "!2222bbbb",
       )
 
-      post "/api/messages", first_payload.to_json, auth_headers
-      expect(last_response).to be_ok
-      post "/api/messages", second_payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      post_twice_for_ingestor("/api/messages", first_payload, second_payload)
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
@@ -3346,10 +3350,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "ingestor" => "!bbbb2222",
         )
 
-        post "/api/positions", first_payload.to_json, auth_headers
-        expect(last_response).to be_ok
-        post "/api/positions", second_payload.to_json, auth_headers
-        expect(last_response).to be_ok
+        post_twice_for_ingestor("/api/positions", first_payload, second_payload)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
@@ -3551,10 +3552,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "ingestor" => "!bbbb8888",
         }
 
-        post "/api/neighbors", base.to_json, auth_headers
-        expect(last_response).to be_ok
-        post "/api/neighbors", update.to_json, auth_headers
-        expect(last_response).to be_ok
+        post_twice_for_ingestor("/api/neighbors", base, update)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
@@ -3563,6 +3561,38 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(rows.first["neighbor_id"]).to eq("!1a2b3c02")
           expect_same_value(rows.first["snr"], -0.5)
           expect(rows.first["ingestor"]).to eq("!aaaa9999")
+        end
+      end
+
+      it "clears stored neighbor snr when an updated entry omits snr" do
+        initial = {
+          "node_id" => "!1a2b3c10",
+          "rx_time" => reference_time.to_i - 40,
+          "neighbors" => [
+            { "node_id" => "!1a2b3c11", "snr" => -3.25 },
+          ],
+        }
+        update = {
+          "node_id" => "!1a2b3c10",
+          "rx_time" => reference_time.to_i - 20,
+          "neighbors" => [
+            { "node_id" => "!1a2b3c11" },
+          ],
+        }
+
+        post "/api/neighbors", initial.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/neighbors", update.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row(
+            "SELECT snr, rx_time FROM neighbors WHERE node_id = ? AND neighbor_id = ?",
+            ["!1a2b3c10", "!1a2b3c11"],
+          )
+          expect(row["snr"]).to be_nil
+          expect(row["rx_time"]).to eq(update["rx_time"])
         end
       end
 
@@ -3749,10 +3779,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
         updated = payload.merge("battery_level" => 80, "ingestor" => "!2222cccc")
 
-        post "/api/telemetry", payload.to_json, auth_headers
-        expect(last_response).to be_ok
-        post "/api/telemetry", updated.to_json, auth_headers
-        expect(last_response).to be_ok
+        post_twice_for_ingestor("/api/telemetry", payload, updated)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
@@ -3893,10 +3920,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
         update = payload.merge("snr" => 7.5, "ingestor" => "!bbbb0002")
 
-        post "/api/traces", payload.to_json, auth_headers
-        expect(last_response).to be_ok
-        post "/api/traces", update.to_json, auth_headers
-        expect(last_response).to be_ok
+        post_twice_for_ingestor("/api/traces", payload, update)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true

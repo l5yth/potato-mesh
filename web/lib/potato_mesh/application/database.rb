@@ -195,11 +195,23 @@ module PotatoMesh
           db.execute("ALTER TABLE telemetry ADD COLUMN ingestor TEXT")
         end
 
+        position_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='positions'").flatten
+        if position_tables.empty?
+          positions_schema = File.expand_path("../../../../data/positions.sql", __dir__)
+          db.execute_batch(File.read(positions_schema))
+        end
         position_columns = db.execute("PRAGMA table_info(positions)").map { |row| row[1] }
         unless position_columns.include?("ingestor")
           db.execute("ALTER TABLE positions ADD COLUMN ingestor TEXT")
         end
 
+        neighbor_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='neighbors'").flatten
+        if neighbor_tables.empty?
+          neighbors_schema = File.expand_path("../../../../data/neighbors.sql", __dir__)
+          db.execute_batch(File.read(neighbors_schema))
+        end
         neighbor_columns = db.execute("PRAGMA table_info(neighbors)").map { |row| row[1] }
         unless neighbor_columns.include?("ingestor")
           db.execute("ALTER TABLE neighbors ADD COLUMN ingestor TEXT")
