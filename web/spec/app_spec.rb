@@ -1402,6 +1402,46 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /imprint" do
+    it "renders the imprint page content" do
+      get "/imprint"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include("Contact")
+      expect(last_response.body).to include("maintainer@potato-mesh.invalid")
+      expect(last_response.body).to include('<section class="imprint-page">')
+    end
+
+    it "renders a friendly fallback when the source file is missing" do
+      allow(PotatoMesh::App::Content::MdxPage).to receive(:source_path_for)
+                                                    .with("imprint")
+                                                    .and_return("/tmp/potatomesh-missing-imprint.mdx")
+
+      get "/imprint"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include("The configured imprint document could not be read.")
+      expect(last_response.body).to include("The imprint content is currently unavailable. Please try again later.")
+    end
+
+    it "marks imprint as active in desktop and mobile navigation" do
+      get "/imprint"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('href="/imprint" class="site-nav__link is-active"')
+      expect(last_response.body).to include('href="/imprint" class="mobile-nav__link is-active"')
+      expect(last_response.body).to include('href="/imprint" class="site-nav__link is-active" aria-current="page"')
+      expect(last_response.body).to include('href="/imprint" class="mobile-nav__link is-active" aria-current="page"')
+    end
+
+    it "shows imprint links in both navigation menus and footer" do
+      get "/"
+
+      expect(last_response).to be_ok
+      expect(last_response.body.scan('href="/imprint"').length).to be >= 3
+    end
+  end
+
   describe "GET /chat" do
     it "renders the chat container when chat is enabled" do
       get "/chat"

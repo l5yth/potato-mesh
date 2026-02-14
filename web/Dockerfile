@@ -75,6 +75,7 @@ COPY --chown=potatomesh:potatomesh web/lib ./lib
 COPY --chown=potatomesh:potatomesh web/spec ./spec
 COPY --chown=potatomesh:potatomesh web/public ./public
 COPY --chown=potatomesh:potatomesh web/views ./views
+COPY --chown=potatomesh:potatomesh web/content ./content
 COPY --chown=potatomesh:potatomesh web/scripts ./scripts
 
 # Copy SQL schema files from data directory

@@ -1190,6 +1190,39 @@ body.dark .node-detail-overlay__close:hover {
   color: #c62828;
 }
 
+.imprint-page {
+  padding: 24px var(--pad) 40px;
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.imprint-page__intro h2 {
+  margin: 0 0 8px;
+}
+
+.imprint-page__status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.imprint-page__content {
+  margin-top: 20px;
+  line-height: 1.6;
+}
+
+.imprint-page__content h1,
+.imprint-page__content h2,
+.imprint-page__content h3 {
+  margin-top: 1.2em;
+  margin-bottom: 0.45em;
+}
+
+.imprint-page__content p,
+.imprint-page__content ul,
+.imprint-page__content ol {
+  margin: 0 0 0.9em;
+}
+
 .node-detail {
   width: 100%;
   margin: 0;

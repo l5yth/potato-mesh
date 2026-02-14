@@ -68,7 +68,7 @@
 <% body_classes = []
    body_classes << "dark" if initial_theme == "dark"
    view_mode = (defined?(current_view_mode) && current_view_mode) ? current_view_mode.to_sym : :dashboard
-   full_screen_view = view_mode != :dashboard
+   full_screen_view = !%i[dashboard imprint].include?(view_mode)
    body_classes << "view-#{view_mode}"
    shell_classes = ["page-shell"]
    shell_classes << "page-shell--full-screen" if full_screen_view
@@ -77,12 +77,12 @@
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = true
    show_meta_info = true
-   show_auto_refresh_controls = view_mode != :federation
+   show_auto_refresh_controls = !%i[federation imprint].include?(view_mode)
    show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
    map_zoom_override = defined?(map_zoom) ? map_zoom : nil
    show_info_button = true
    show_footer = !full_screen_view
-   show_filter_input = !%i[node_detail charts federation].include?(view_mode)
+   show_filter_input = !%i[node_detail charts federation imprint].include?(view_mode)
    show_auto_refresh_toggle = show_auto_refresh_controls
    show_refresh_actions = show_auto_refresh_controls || view_mode == :federation
    nodes_nav_href = "/nodes"
@@ -133,6 +133,7 @@
             <a href="/chat" class="site-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="site-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
             <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <a href="/imprint" class="site-nav__link<%= view_mode == :imprint ? " is-active" : "" %>"<%= view_mode == :imprint ? ' aria-current="page"' : "" %>>Imprint</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="site-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
@@ -164,6 +165,7 @@
             <a href="/chat" class="mobile-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="mobile-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
             <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <a href="/imprint" class="mobile-nav__link<%= view_mode == :imprint ? " is-active" : "" %>"<%= view_mode == :imprint ? ' aria-current="page"' : "" %>>Imprint</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="mobile-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
@@ -267,6 +269,8 @@
           <span class="footer-links">
             GitHub:
             <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
+            <span class="footer-separator" aria-hidden="true">—</span>
+            <a href="/imprint">Imprint</a>
             <% if contact_link && !contact_link.empty? %>
               <span class="footer-separator" aria-hidden="true">—</span>
               <span class="footer-contact">

@@ -246,5 +246,20 @@ module PotatoMesh
 
       distance
     end
+
+    # Apply a lightweight HTML sanitization pass for static page content.
+    # The sanitizer removes executable tags and event handlers, and prevents
+    # javascript/data/file URLs from being emitted in href/src attributes.
+    #
+    # @param html [Object] generated HTML string.
+    # @return [String] sanitized HTML safe for rendering in templates.
+    def sanitize_rendered_html(html)
+      value = html.to_s.dup
+      value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
+      value.gsub!(/\s+on[a-z]+\s*=\s*(['"]).*?\1/mi, "")
+      value.gsub!(/\s+on[a-z]+\s*=\s*[^\s>]+/mi, "")
+      value.gsub!(/\s+(href|src)\s*=\s*(['"])\s*(?:javascript|data|file):.*?\2/mi, "")
+      value
+    end
   end
 end

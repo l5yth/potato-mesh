@@ -77,6 +77,13 @@ module PotatoMesh
             erb template, layout: :"layouts/app", locals: merged_locals
           end
 
+          # Load static imprint content from the repository-backed MDX source.
+          #
+          # @return [Hash] rendered imprint payload with title/body metadata.
+          def imprint_content_payload
+            PotatoMesh::App::Content::MdxPage.load("imprint")
+          end
+
           # Remove keys with +nil+ values from the provided hash, returning a
           # shallow copy. Hash#compact is only available in newer Ruby
           # versions; this helper keeps behaviour consistent across supported
@@ -189,6 +196,20 @@ module PotatoMesh
           app.get %r{/federation/?} do
             halt 404 unless federation_enabled?
             render_root_view(:federation, view_mode: :federation)
+          end
+
+          app.get "/imprint" do
+            imprint_payload = imprint_content_payload
+            render_root_view(
+              :imprint,
+              view_mode: :imprint,
+              extra_locals: {
+                imprint_title: imprint_payload["title"],
+                imprint_metadata: imprint_payload["metadata"],
+                imprint_body_html: imprint_payload["body_html"],
+                imprint_content_found: imprint_payload["found"],
+              },
+            )
           end
 
           app.get "/nodes/:id" do
