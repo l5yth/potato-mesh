@@ -146,6 +146,38 @@ Container detection checks `POTATOMESH_CONTAINER`, `CONTAINER`, and `/proc/1/cgr
 
 Set `POTATOMESH_CONTAINER=0` or `--no-container` to opt out of container defaults.
 
+### Docker Compose First Run
+
+Before starting Compose, complete this preflight checklist:
+
+1. Ensure `matrix/Config.toml` exists as a regular file on the host (not a directory).
+2. Fill required Matrix values in `matrix/Config.toml`:
+   - `matrix.as_token`
+   - `matrix.hs_token`
+   - `matrix.server_name`
+   - `matrix.room_id`
+   - `matrix.homeserver`
+
+This is required because the shared Compose anchor `x-matrix-bridge-base` mounts `./matrix/Config.toml` to `/app/Config.toml`.
+Then follow the token and namespace requirements in [Matrix Appservice Setup (Synapse example)](#matrix-appservice-setup-synapse-example).
+
+#### Troubleshooting
+
+| Symptom | Likely cause | What to check |
+| --- | --- | --- |
+| `Is a directory (os error 21)` | Host mount source became a directory | `matrix/Config.toml` was missing at mount time and got created as a directory on host. |
+| `M_UNKNOWN_TOKEN` / `401 Unauthorized` | Matrix appservice token mismatch | Verify `matrix.as_token` matches your appservice registration and setup in [Matrix Appservice Setup (Synapse example)](#matrix-appservice-setup-synapse-example). |
+
+#### Recovery from accidental `Config.toml` directory creation
+
+```bash
+# from repo root
+rm -rf matrix/Config.toml
+touch matrix/Config.toml
+# then edit matrix/Config.toml and set valid matrix.as_token, matrix.hs_token,
+# matrix.server_name, matrix.room_id, and matrix.homeserver before starting compose
+```
+
 ### PotatoMesh API
 
 The bridge assumes:

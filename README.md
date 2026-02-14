@@ -252,14 +252,35 @@ services.potato-mesh = {
 
 ## Docker
 
-Docker images are published on Github for each release:
+Docker images are published on GitHub Container Registry for each release.
+Image names and tags follow the workflow format:
+`${IMAGE_PREFIX}-${service}-${architecture}:${tag}` (see `.github/workflows/docker.yml`).
 
 ```bash
-docker pull ghcr.io/l5yth/potato-mesh/web:latest      # newest release
-docker pull ghcr.io/l5yth/potato-mesh/web:v0.5.5      # pinned historical release
-docker pull ghcr.io/l5yth/potato-mesh/ingestor:latest
-docker pull ghcr.io/l5yth/potato-mesh/matrix-bridge:latest
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:latest
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-arm64:latest
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-armv7:latest
+
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:latest
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-arm64:latest
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-armv7:latest
+
+docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-amd64:latest
+docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-arm64:latest
+docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-armv7:latest
+
+# version-pinned examples
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:v0.5.5
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:v0.5.5
+docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-amd64:v0.5.5
 ```
+
+Note: `latest` is only published for non-prerelease versions. Pre-release tags
+such as `-rc`, `-beta`, `-alpha`, or `-dev` are version-tagged only.
+
+When using Compose, set `POTATOMESH_IMAGE_ARCH` in `docker-compose.yml` (or via
+environment) so service images resolve to the correct architecture variant and
+you avoid manual tag mistakes.
 
 Feel free to run the [configure.sh](./configure.sh) script to set up your
 environment. See the [Docker guide](DOCKER.md) for more details and custom
