@@ -2785,6 +2785,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(second_page[:items].map { |entry| entry["id"] }).to include("instance-c")
     end
 
+    it "continues pagination when the page-boundary marker row is malformed" do
+      clear_database
+      now = Time.now.to_i
+
+      with_db do |db|
+        insert_sql = <<~SQL
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+
+        db.execute(insert_sql, ["instance-a", "alpha.mesh", remote_key.public_key.export, "Alpha", "1.0.0", nil, nil, nil, nil, now, 0, "sig-a"])
+        db.execute(insert_sql, ["instance-b", "bravo.mesh", remote_key.public_key.export, "Bravo", "1.0.0", nil, nil, nil, nil, now, 0, "sig-b"])
+        db.execute(insert_sql, ["instance-bad", "zzy invalid", remote_key.public_key.export, "Bad", "1.0.0", nil, nil, nil, nil, now, 0, "sig-bad"])
+        db.execute(insert_sql, ["instance-z", "zzz.mesh", remote_key.public_key.export, "Zulu", "1.0.0", nil, nil, nil, nil, now, 0, "sig-z"])
+      end
+
+      first_page = application_class.load_instances_for_api(limit: 2, with_pagination: true)
+      expect(first_page[:items].map { |entry| entry["id"] }).to eq(["instance-a", "instance-b"])
+      expect(first_page[:next_cursor]).to be_a(String)
+      expect(first_page[:next_cursor]).not_to be_empty
+
+      second_page = application_class.load_instances_for_api(
+        limit: 2,
+        cursor: first_page[:next_cursor],
+        with_pagination: true,
+      )
+      expect(second_page[:items].map { |entry| entry["id"] }).to include("instance-z")
+    end
+
     context "when federation is disabled" do
       around do |example|
         original = ENV["FEDERATION"]

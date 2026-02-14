@@ -228,7 +228,11 @@ module PotatoMesh
           break if items.length > safe_limit
           break if rows.length < fetch_limit
 
-          marker_row = rows.last
+          marker_row = rows.reverse.find do |row|
+            sanitize_instance_domain(row["domain"]) && string_or_nil(row["id"])
+          end
+          break unless marker_row
+
           marker_domain = sanitize_instance_domain(marker_row["domain"])&.downcase
           marker_id = string_or_nil(marker_row["id"])
           break unless marker_domain && marker_id
