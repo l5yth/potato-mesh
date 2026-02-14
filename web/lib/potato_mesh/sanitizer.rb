@@ -256,9 +256,16 @@ module PotatoMesh
     def sanitize_rendered_html(html)
       value = html.to_s.dup
       previous = nil
-      value.gsub!(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/mi, "")
-      # additional executable tags or attributes after substitution.
-      while previous != value
+      loop do
+        previous = value.dup
+        # Remove any event handler attributes with quoted values, e.g. onclick="..."
+        value.gsub!(/\s+on[a-z0-9_-]*\s*=\s*(['"]).*?\1/mi, "")
+        # Remove any event handler attributes with unquoted values, e.g. onclick=doSomething
+        value.gsub!(/\s+on[a-z0-9_-]*\s*=\s*[^\s>]+/mi, "")
+        # Strip dangerous href/src URL schemes such as javascript:, data:, or file:
+        value.gsub!(/\s+(href|src)\s*=\s*(['"])\s*(?:javascript|data|file):.*?\2/mi, "")
+        break if value == previous
+      end
         previous = value.dup
         value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
         value.gsub!(/\s+on[a-z]+\s*=\s*(['"]).*?\1/mi, "")
