@@ -62,6 +62,18 @@ function buildModel(overrides = {}) {
   });
 }
 
+function findChannelByLabel(model, label) {
+  return model.channels.find(channel => channel.label === label);
+}
+
+function assertChannelMessages(model, { label, id, index, messageIds }) {
+  const channel = findChannelByLabel(model, label);
+  assert.ok(channel);
+  assert.equal(channel.id, id);
+  assert.equal(channel.index, index);
+  assert.deepEqual(channel.entries.map(entry => entry.message.id), messageIds);
+}
+
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
   assert.equal(model.logEntries.length, 3);
@@ -314,57 +326,53 @@ test('buildChatTabModel keeps secondary channels distinct by index even with mat
 });
 
 test('buildChatTabModel keeps unnamed secondary buckets separate when a label later arrives', () => {
-  const unnamedId = 'unnamed';
-  const namedId = 'named';
-  const label = 'SideMesh';
-  const index = 4;
-  const model = buildChatTabModel({
-    nodes: [],
-    messages: [
-      { id: unnamedId, rx_time: NOW - 15, channel: index },
-      { id: namedId, rx_time: NOW - 10, channel: index, channel_name: label }
-    ],
-    nowSeconds: NOW,
-    windowSeconds: WINDOW
-  });
+  const scenarios = [
+    {
+      index: 4,
+      label: 'SideMesh',
+      messages: [
+        { id: 'unnamed', rx_time: NOW - 15, channel: 4 },
+        { id: 'named', rx_time: NOW - 10, channel: 4, channel_name: 'SideMesh' }
+      ],
+      namedId: 'channel-secondary-4-sidemesh',
+      namedMessages: ['named'],
+      unnamedMessages: ['unnamed']
+    },
+    {
+      index: 5,
+      label: 'MeshNorth',
+      messages: [
+        { id: 'named', rx_time: NOW - 12, channel: 5, channel_name: 'MeshNorth' },
+        { id: 'unlabeled', rx_time: NOW - 8, channel: 5 }
+      ],
+      namedId: 'channel-secondary-5-meshnorth',
+      namedMessages: ['named'],
+      unnamedMessages: ['unlabeled']
+    }
+  ];
 
-  const secondaryChannels = model.channels.filter(channel => channel.index === index);
-  assert.equal(secondaryChannels.length, 2);
-  const namedChannel = secondaryChannels.find(channel => channel.label === label);
-  assert.ok(namedChannel);
-  assert.equal(namedChannel.id, 'channel-secondary-4-sidemesh');
-  assert.deepEqual(namedChannel.entries.map(entry => entry.message.id), [namedId]);
-  const unnamedChannel = secondaryChannels.find(channel => channel.label === String(index));
-  assert.ok(unnamedChannel);
-  assert.equal(unnamedChannel.id, 'channel-4');
-  assert.deepEqual(unnamedChannel.entries.map(entry => entry.message.id), [unnamedId]);
-});
-
-test('buildChatTabModel keeps unlabeled secondary messages separate from named buckets with same index', () => {
-  const namedId = 'named';
-  const unlabeledId = 'unlabeled';
-  const label = 'MeshNorth';
-  const index = 5;
-  const model = buildChatTabModel({
-    nodes: [],
-    messages: [
-      { id: namedId, rx_time: NOW - 12, channel: index, channel_name: label },
-      { id: unlabeledId, rx_time: NOW - 8, channel: index }
-    ],
-    nowSeconds: NOW,
-    windowSeconds: WINDOW
-  });
-
-  const secondaryChannels = model.channels.filter(channel => channel.index === index);
-  assert.equal(secondaryChannels.length, 2);
-  const namedChannel = secondaryChannels.find(channel => channel.label === label);
-  assert.ok(namedChannel);
-  assert.equal(namedChannel.id, 'channel-secondary-5-meshnorth');
-  assert.deepEqual(namedChannel.entries.map(entry => entry.message.id), [namedId]);
-  const unnamedChannel = secondaryChannels.find(channel => channel.label === String(index));
-  assert.ok(unnamedChannel);
-  assert.equal(unnamedChannel.id, 'channel-5');
-  assert.deepEqual(unnamedChannel.entries.map(entry => entry.message.id), [unlabeledId]);
+  for (const scenario of scenarios) {
+    const model = buildChatTabModel({
+      nodes: [],
+      messages: scenario.messages,
+      nowSeconds: NOW,
+      windowSeconds: WINDOW
+    });
+    const secondaryChannels = model.channels.filter(channel => channel.index === scenario.index);
+    assert.equal(secondaryChannels.length, 2);
+    assertChannelMessages(model, {
+      label: scenario.label,
+      id: scenario.namedId,
+      index: scenario.index,
+      messageIds: scenario.namedMessages
+    });
+    assertChannelMessages(model, {
+      label: String(scenario.index),
+      id: `channel-${scenario.index}`,
+      index: scenario.index,
+      messageIds: scenario.unnamedMessages
+    });
+  }
 });
 
 test('buildChatTabModel keeps same-index channels with different names in separate tabs', () => {
@@ -378,13 +386,30 @@ test('buildChatTabModel keeps same-index channels with different names in separa
     windowSeconds: WINDOW
   });
 
-  const publicChannel = model.channels.find(channel => channel.label === 'PUBLIC');
-  assert.ok(publicChannel);
-  assert.equal(publicChannel.id, 'channel-secondary-1-public');
-  assert.deepEqual(publicChannel.entries.map(entry => entry.message.id), ['public-msg']);
+  assertChannelMessages(model, {
+    label: 'PUBLIC',
+    id: 'channel-secondary-1-public',
+    index: 1,
+    messageIds: ['public-msg']
+  });
+  assertChannelMessages(model, {
+    label: 'BerlinMesh',
+    id: 'channel-secondary-1-berlinmesh',
+    index: 1,
+    messageIds: ['berlin-msg']
+  });
+});
 
-  const berlinChannel = model.channels.find(channel => channel.label === 'BerlinMesh');
-  assert.ok(berlinChannel);
-  assert.equal(berlinChannel.id, 'channel-secondary-1-berlinmesh');
-  assert.deepEqual(berlinChannel.entries.map(entry => entry.message.id), ['berlin-msg']);
+test('buildChatTabModel falls back to hashed id for unsluggable secondary labels', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [{ id: 'hash-fallback', rx_time: NOW - 5, channel: 2, channel_name: '###' }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const channel = findChannelByLabel(model, '###');
+  assert.ok(channel);
+  assert.equal(channel.index, 2);
+  assert.ok(channel.id.startsWith('channel-secondary-2-'));
+  assert.ok(channel.id.length > 'channel-secondary-2-'.length);
 });
