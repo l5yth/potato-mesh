@@ -2929,6 +2929,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   describe "POST /api/messages" do
     SELECT_MESSAGE_ENCRYPTED_SQL = "SELECT encrypted FROM messages WHERE id = ?".freeze
+    NODE_INFO_LONG_NAME = "Node Info".freeze
 
     it "persists messages from fixture data" do
       import_nodes_fixture
@@ -4702,7 +4703,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "last_heard" => reference_time.to_i,
         "user" => {
           "short_name" => "NODE",
-          "long_name" => "Node Info",
+          "long_name" => NODE_INFO_LONG_NAME,
           "hw_model" => "TBEAM",
           "role" => "CLIENT",
         },
@@ -4745,7 +4746,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(row["node_id"]).to eq("!7c5b0920")
         expect(row["short_name"]).to eq("NODE")
-        expect(row["long_name"]).to eq("Node Info")
+        expect(row["long_name"]).to eq(NODE_INFO_LONG_NAME)
         expect(row["hw_model"]).to eq("TBEAM")
       end
     end
@@ -4840,7 +4841,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       payload = {
         "user" => {
           "short_name" => "NODE",
-          "long_name" => "Node Info",
+          "long_name" => NODE_INFO_LONG_NAME,
           "hw_model" => "TBEAM",
           "public_key" => "pk",
           "is_unmessagable" => true,
@@ -4864,7 +4865,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       normalized = PotatoMesh::Application.send(:normalize_decrypted_nodeinfo_payload, payload)
 
       expect(normalized.dig("user", "shortName")).to eq("NODE")
-      expect(normalized.dig("user", "longName")).to eq("Node Info")
+      expect(normalized.dig("user", "longName")).to eq(NODE_INFO_LONG_NAME)
       expect(normalized.dig("user", "hwModel")).to eq("TBEAM")
       expect(normalized.dig("user", "publicKey")).to eq("pk")
       expect(normalized.dig("user", "isUnmessagable")).to be(true)
