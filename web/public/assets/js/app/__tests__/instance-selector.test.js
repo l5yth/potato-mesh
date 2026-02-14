@@ -264,6 +264,31 @@ test('initializeInstanceSelector follows paginated instance responses', async ()
   }
 });
 
+test('initializeInstanceSelector handles non-ok instance responses without adding options', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+
+  const fetchImpl = async () => ({
+    ok: false,
+    async json() {
+      return [{ domain: 'ignored.mesh' }];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.equal(select.options.length, 1);
+  } finally {
+    env.cleanup();
+  }
+});
+
 test('updateFederationNavCount prefers stored labels and normalizes counts', () => {
   const env = createDomEnvironment();
   const navLink = env.document.createElement('a');

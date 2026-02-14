@@ -163,6 +163,41 @@ module PotatoMesh
         Base64.urlsafe_encode64(JSON.generate(payload))
       end
 
+      # Parse a rowid-based time cursor payload from pagination token.
+      #
+      # @param cursor [String, nil] cursor token.
+      # @param time_key [String] payload key containing the timestamp component.
+      # @return [Array<(Integer, Integer)>, Array<(nil, nil)>] decoded time/rowid pair.
+      def decode_rowid_time_cursor(cursor, time_key:)
+        cursor_payload = decode_query_cursor(cursor)
+        return [nil, nil] unless cursor_payload
+
+        [coerce_integer(cursor_payload[time_key]), coerce_integer(cursor_payload["rowid"])]
+      end
+
+      # Build pagination metadata for rowid-keyset collections.
+      #
+      # @param items [Array<Hash>] compacted rows.
+      # @param limit [Integer] requested limit.
+      # @param time_key [String] cursor payload timestamp key.
+      # @param marker_time [Proc] extractor receiving marker row hash.
+      # @return [Hash{Symbol => Object}] items and optional next_cursor.
+      def build_rowid_pagination_response(items, limit, time_key:, marker_time:)
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            time_key => coerce_integer(marker_time.call(marker)),
+            "rowid" => coerce_integer(marker["_cursor_rowid"]),
+          })
+        end
+        paged_items.each { |item| item.delete("_cursor_time") }
+        paged_items.each { |item| item.delete("_cursor_rowid") }
+        { items: paged_items, next_cursor: next_cursor }
+      end
+
       # Return exact active-node counts across common activity windows.
       #
       # Counts are resolved directly in SQL with COUNT(*) thresholds against
@@ -618,22 +653,18 @@ module PotatoMesh
         end
 
         if with_pagination
-          cursor_payload = decode_query_cursor(cursor)
-          if cursor_payload
-            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
-            cursor_rowid = coerce_integer(cursor_payload["rowid"])
-            if cursor_rx_time && cursor_rowid
-              where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
-              params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
-            end
+          cursor_rx_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: "cursor_time")
+          if cursor_rx_time && cursor_rowid
+            where_clauses << "(COALESCE(rx_time, position_time, 0) < ? OR (COALESCE(rx_time, position_time, 0) = ? AND rowid < ?))"
+            params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
           end
         end
 
-        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid FROM positions" : "SELECT * FROM positions"
+        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid, COALESCE(rx_time, position_time, 0) AS _cursor_time FROM positions" : "SELECT * FROM positions"
         sql = "#{select_sql}\n"
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY rx_time DESC, rowid DESC
+          ORDER BY COALESCE(rx_time, position_time, 0) DESC, rowid DESC
           LIMIT ?
         SQL
         params << fetch_limit
@@ -660,18 +691,12 @@ module PotatoMesh
         items.each { |item| item.delete("_cursor_rowid") } unless with_pagination
         return items unless with_pagination
 
-        has_more = items.length > limit
-        paged_items = has_more ? items.first(limit) : items
-        next_cursor = nil
-        if has_more && !paged_items.empty?
-          marker = paged_items.last
-          next_cursor = encode_query_cursor({
-            "rx_time" => coerce_integer(marker["rx_time"]),
-            "rowid" => coerce_integer(marker["_cursor_rowid"]),
-          })
-        end
-        paged_items.each { |item| item.delete("_cursor_rowid") }
-        { items: paged_items, next_cursor: next_cursor }
+        build_rowid_pagination_response(
+          items,
+          limit,
+          time_key: "cursor_time",
+          marker_time: ->(marker) { marker["_cursor_time"] },
+        )
       ensure
         db&.close
       end
@@ -709,14 +734,10 @@ module PotatoMesh
         end
 
         if with_pagination
-          cursor_payload = decode_query_cursor(cursor)
-          if cursor_payload
-            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
-            cursor_rowid = coerce_integer(cursor_payload["rowid"])
-            if cursor_rx_time && cursor_rowid
-              where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
-              params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
-            end
+          cursor_rx_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: "rx_time")
+          if cursor_rx_time && cursor_rowid
+            where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
+            params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
           end
         end
 
@@ -740,18 +761,12 @@ module PotatoMesh
         items.each { |item| item.delete("_cursor_rowid") } unless with_pagination
         return items unless with_pagination
 
-        has_more = items.length > limit
-        paged_items = has_more ? items.first(limit) : items
-        next_cursor = nil
-        if has_more && !paged_items.empty?
-          marker = paged_items.last
-          next_cursor = encode_query_cursor({
-            "rx_time" => coerce_integer(marker["rx_time"]),
-            "rowid" => coerce_integer(marker["_cursor_rowid"]),
-          })
-        end
-        paged_items.each { |item| item.delete("_cursor_rowid") }
-        { items: paged_items, next_cursor: next_cursor }
+        build_rowid_pagination_response(
+          items,
+          limit,
+          time_key: "rx_time",
+          marker_time: ->(marker) { marker["rx_time"] },
+        )
       ensure
         db&.close
       end
@@ -789,22 +804,18 @@ module PotatoMesh
         end
 
         if with_pagination
-          cursor_payload = decode_query_cursor(cursor)
-          if cursor_payload
-            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
-            cursor_rowid = coerce_integer(cursor_payload["rowid"])
-            if cursor_rx_time && cursor_rowid
-              where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
-              params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
-            end
+          cursor_rx_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: "cursor_time")
+          if cursor_rx_time && cursor_rowid
+            where_clauses << "(COALESCE(rx_time, telemetry_time, 0) < ? OR (COALESCE(rx_time, telemetry_time, 0) = ? AND rowid < ?))"
+            params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
           end
         end
 
-        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid FROM telemetry" : "SELECT * FROM telemetry"
+        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid, COALESCE(rx_time, telemetry_time, 0) AS _cursor_time FROM telemetry" : "SELECT * FROM telemetry"
         sql = "#{select_sql}\n"
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY rx_time DESC, rowid DESC
+          ORDER BY COALESCE(rx_time, telemetry_time, 0) DESC, rowid DESC
           LIMIT ?
         SQL
         params << fetch_limit
@@ -859,18 +870,12 @@ module PotatoMesh
         items.each { |item| item.delete("_cursor_rowid") } unless with_pagination
         return items unless with_pagination
 
-        has_more = items.length > limit
-        paged_items = has_more ? items.first(limit) : items
-        next_cursor = nil
-        if has_more && !paged_items.empty?
-          marker = paged_items.last
-          next_cursor = encode_query_cursor({
-            "rx_time" => coerce_integer(marker["rx_time"]),
-            "rowid" => coerce_integer(marker["_cursor_rowid"]),
-          })
-        end
-        paged_items.each { |item| item.delete("_cursor_rowid") }
-        { items: paged_items, next_cursor: next_cursor }
+        build_rowid_pagination_response(
+          items,
+          limit,
+          time_key: "cursor_time",
+          marker_time: ->(marker) { marker["_cursor_time"] },
+        )
       ensure
         db&.close
       end

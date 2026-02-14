@@ -657,3 +657,48 @@ test('federation page tolerates fetch failures', async () => {
   await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
   cleanup();
 });
+
+test('federation page tolerates non-ok paginated instance responses', async () => {
+  const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
+  const { document, createElement, registerElement, cleanup } = env;
+
+  const mapEl = createElement('div', 'map');
+  registerElement('map', mapEl);
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify({}));
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+
+  const leafletStub = {
+    map() {
+      return { setView() {}, on() {}, getPane() { return null; } };
+    },
+    tileLayer() {
+      return {
+        addTo() { return this; },
+        getContainer() { return null; },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return { addLayer() {}, addTo() { return this; } };
+    },
+    circleMarker() {
+      return { bindPopup() { return this; } };
+    }
+  };
+
+  const fetchImpl = async () => ({ ok: false, json: async () => [] });
+
+  await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
+  assert.match(statusEl.textContent, /0 instances/);
+  cleanup();
+});

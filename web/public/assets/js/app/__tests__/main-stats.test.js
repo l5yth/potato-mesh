@@ -222,6 +222,11 @@ test('readNextCursorHeader reads cursor token from response headers', () => {
   assert.equal(readNextCursorHeader(response), 'cursor-token');
 });
 
+test('readNextCursorHeader returns null when response headers are missing', () => {
+  assert.equal(readNextCursorHeader(null), null);
+  assert.equal(readNextCursorHeader({ headers: {} }), null);
+});
+
 test('fetchPaginatedCollection follows cursor headers and merges pages', async () => {
   const calls = [];
   const pages = new Map([
@@ -252,4 +257,59 @@ test('fetchPaginatedCollection follows cursor headers and merges pages', async (
 
   assert.deepEqual(calls, ['/api/nodes?limit=2', '/api/nodes?limit=2&cursor=cursor-1']);
   assert.deepEqual(items.map((item) => item.id), ['a', 'b', 'c']);
+});
+
+test('fetchPaginatedCollection returns empty list when path is missing', async () => {
+  const items = await fetchPaginatedCollection({
+    path: '',
+    limit: 10,
+    fetchImpl: async () => ({ ok: true, headers: { get: () => null }, json: async () => [] }),
+  });
+  assert.deepEqual(items, []);
+});
+
+test('fetchPaginatedCollection enforces maxRows and propagates params', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      headers: { get: () => (url.includes('cursor=') ? null : 'next-1') },
+      async json() {
+        return [{ id: 1 }, { id: 2 }, { id: 3 }];
+      },
+    };
+  };
+  const items = await fetchPaginatedCollection({
+    path: '/api/messages',
+    limit: 3,
+    maxRows: 4,
+    params: { since: '123', encrypted: 'true' },
+    fetchImpl,
+  });
+
+  assert.equal(calls[0], '/api/messages?limit=3&since=123&encrypted=true');
+  assert.equal(items.length, 4);
+});
+
+test('fetchPaginatedCollection throws on non-ok responses', async () => {
+  await assert.rejects(
+    fetchPaginatedCollection({
+      path: '/api/messages',
+      limit: 2,
+      fetchImpl: async () => ({ ok: false, status: 503, json: async () => [] }),
+    }),
+    /HTTP 503/
+  );
+});
+
+test('fetchPaginatedCollection throws on invalid payload shapes', async () => {
+  await assert.rejects(
+    fetchPaginatedCollection({
+      path: '/api/messages',
+      limit: 2,
+      fetchImpl: async () => ({ ok: true, headers: { get: () => null }, json: async () => ({}) }),
+    }),
+    /invalid paginated payload/
+  );
 });

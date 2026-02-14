@@ -80,6 +80,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
     File.expand_path("../../tests/#{name}", __dir__)
   end
 
+  # Assert that an API collection exposes keyset pagination with a non-empty
+  # cursor and a non-empty second page.
+  #
+  # @param path [String] collection endpoint path.
+  # @param limit [Integer] page size for the test request.
+  # @return [Array<Array<Hash>, Array<Hash>, String]] first page, second page, and cursor.
+  def expect_collection_cursor_pagination(path, limit: 2)
+    get "#{path}?limit=#{limit}"
+    expect(last_response).to be_ok
+    first_page = JSON.parse(last_response.body)
+    expect(first_page.length).to eq(limit)
+    cursor = last_response.headers["X-Next-Cursor"]
+    expect(cursor).to be_a(String)
+    expect(cursor).not_to be_empty
+
+    get "#{path}?limit=#{limit}&cursor=#{URI.encode_www_form_component(cursor)}"
+    expect(last_response).to be_ok
+    second_page = JSON.parse(last_response.body)
+    expect(second_page).not_to be_empty
+
+    [first_page, second_page, cursor]
+  end
+
   # Execute the provided block with a configured SQLite connection.
   #
   # @param readonly [Boolean] whether to open the database in read-only mode.
@@ -6228,6 +6251,45 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.map { |row| row["id"] }).to eq([11])
     end
 
+    it "encodes position pagination cursors with cursor_time and advances pages" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [31, "!pos-cursor", 201, now - 10, Time.at(now - 10).utc.iso8601, now - 10, 52.0, 13.0],
+        )
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [32, "!pos-cursor", 201, now - 20, Time.at(now - 20).utc.iso8601, now - 20, 53.0, 14.0],
+        )
+        db.execute(
+          "INSERT INTO positions(id, node_id, node_num, rx_time, rx_iso, position_time, latitude, longitude) VALUES(?,?,?,?,?,?,?,?)",
+          [33, "!pos-cursor", 201, now - 30, Time.at(now - 30).utc.iso8601, now - 30, 54.0, 15.0],
+        )
+      end
+
+      get "/api/positions?limit=2"
+
+      expect(last_response).to be_ok
+      first_page = JSON.parse(last_response.body)
+      expect(first_page.map { |row| row["id"] }).to eq([31, 32])
+      cursor = last_response.headers["X-Next-Cursor"]
+      expect(cursor).to be_a(String)
+      expect(cursor).not_to be_empty
+      cursor_payload = JSON.parse(Base64.urlsafe_decode64(cursor))
+      expect(cursor_payload).to have_key("cursor_time")
+      expect(cursor_payload).not_to have_key("rx_time")
+
+      get "/api/positions?limit=2&cursor=#{URI.encode_www_form_component(cursor)}"
+
+      expect(last_response).to be_ok
+      second_page = JSON.parse(last_response.body)
+      expect(second_page.map { |row| row["id"] }).to eq([33])
+    end
+
     it "omits blank values from position responses" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
@@ -6406,6 +6468,32 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.length).to eq(1)
       expect(filtered.first).not_to have_key("snr")
     end
+
+    it "emits pagination cursor headers for neighbor collections" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!origin-cursor", "orig", "Origin", "TBEAM", "CLIENT", 0.0, now, now],
+        )
+        %w[!n-a !n-b !n-c].each do |neighbor_id|
+          db.execute(
+            "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+            [neighbor_id, "n", "Neighbor", "TBEAM", "CLIENT", 0.0, now, now],
+          )
+        end
+        db.execute("INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)", ["!origin-cursor", "!n-a", 1.0, now - 10])
+        db.execute("INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)", ["!origin-cursor", "!n-b", 2.0, now - 20])
+        db.execute("INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)", ["!origin-cursor", "!n-c", 3.0, now - 30])
+      end
+
+      first_page, second_page, = expect_collection_cursor_pagination("/api/neighbors", limit: 2)
+      expect(first_page.length).to eq(2)
+      expect(second_page.length).to eq(1)
+    end
   end
 
   describe "GET /api/telemetry" do
@@ -6464,6 +6552,22 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect_same_value(second_entry["rainfall_24h"], telemetry_metric(second_latest, "rainfall_24h", "rainfall24h"))
       expect_same_value(second_entry["soil_moisture"], telemetry_metric(second_latest, "soil_moisture"))
       expect_same_value(second_entry["soil_temperature"], telemetry_metric(second_latest, "soil_temperature"))
+    end
+
+    it "emits pagination cursor headers for telemetry collections" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute("INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level) VALUES(?,?,?,?,?,?)", [70_001, "!tele-a", now - 10, Time.at(now - 10).utc.iso8601, now - 10, 50.0])
+        db.execute("INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level) VALUES(?,?,?,?,?,?)", [70_002, "!tele-b", now - 20, Time.at(now - 20).utc.iso8601, now - 20, 60.0])
+        db.execute("INSERT INTO telemetry(id, node_id, rx_time, rx_iso, telemetry_time, battery_level) VALUES(?,?,?,?,?,?)", [70_003, "!tele-c", now - 30, Time.at(now - 30).utc.iso8601, now - 30, 70.0])
+      end
+
+      first_page, second_page, = expect_collection_cursor_pagination("/api/telemetry", limit: 2)
+      expect(first_page.length).to eq(2)
+      expect(second_page.length).to eq(1)
     end
 
     it "excludes telemetry entries older than seven days from collection queries" do
@@ -6839,6 +6943,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(earlier["request_id"]).to eq(trace_fixture.last["req"])
       expect(earlier["hops"]).to eq([0xBEADF00D, 19_088_743])
       expect(earlier["elapsed_ms"]).to eq(trace_fixture.last.dig("metrics", "latency_ms"))
+    end
+
+    it "emits pagination cursor headers for trace collections" do
+      clear_database
+      post "/api/traces", trace_fixture.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      first_page, second_page, = expect_collection_cursor_pagination("/api/traces", limit: 1)
+      expect(first_page.length).to eq(1)
+      expect(second_page.length).to eq(1)
+      expect(second_page.first["id"]).not_to eq(first_page.first["id"])
     end
 
     it "filters traces by node reference across sources" do
