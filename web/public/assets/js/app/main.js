@@ -2910,8 +2910,8 @@ export function initializeApp(config) {
    * @returns {HTMLElement} Chat log element.
    */
   function createMessageChatEntry(m) {
-    const plainText = m && m.text != null ? String(m.text).trim() : '';
-    if (plainText === 'GAA=') {
+    const plainText = m?.text != null ? String(m.text).trim() : '';
+    if (m?.encrypted && plainText === 'GAA=') {
       return null;
     }
 

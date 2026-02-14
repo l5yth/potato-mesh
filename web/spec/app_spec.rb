@@ -2928,6 +2928,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "POST /api/messages" do
+    SELECT_MESSAGE_ENCRYPTED_SQL = "SELECT encrypted FROM messages WHERE id = ?".freeze
+
     it "persists messages from fixture data" do
       import_nodes_fixture
       import_messages_fixture
@@ -4388,7 +4390,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row(
-          "SELECT encrypted FROM messages WHERE id = ?",
+          SELECT_MESSAGE_ENCRYPTED_SQL,
           [900_005],
         )
 
@@ -4452,7 +4454,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row(
-          "SELECT encrypted FROM messages WHERE id = ?",
+          SELECT_MESSAGE_ENCRYPTED_SQL,
           [900_006],
         )
 
@@ -4783,8 +4785,51 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row(
-          "SELECT encrypted FROM messages WHERE id = ?",
+          SELECT_MESSAGE_ENCRYPTED_SQL,
           [900_009],
+        )
+
+        expect(row["encrypted"]).to eq(encoded_payload)
+      end
+    end
+
+    it "keeps encrypted payloads when decoded nodeinfo payload lacks identifying user fields" do
+      payload_bytes = "nodeinfo".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 4,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "NODEINFO_APP",
+          "payload" => { "id" => "!7c5b0920", "num" => 2_085_057_824 },
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_010,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          SELECT_MESSAGE_ENCRYPTED_SQL,
+          [900_010],
         )
 
         expect(row["encrypted"]).to eq(encoded_payload)

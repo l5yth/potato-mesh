@@ -2013,12 +2013,36 @@ module PotatoMesh
       def valid_decrypted_nodeinfo_payload?(payload)
         return false unless payload.is_a?(Hash)
         return false if payload.empty?
+        return false unless payload["user"].is_a?(Hash)
 
-        return false if payload.key?("user") && !payload["user"].is_a?(Hash)
         return false if payload.key?("position") && !payload["position"].is_a?(Hash)
         return false if payload.key?("deviceMetrics") && !payload["deviceMetrics"].is_a?(Hash)
+        return false unless nodeinfo_user_has_identifying_fields?(payload["user"])
 
         true
+      end
+
+      # Validate that a decoded NodeInfo user section contains identifying data.
+      #
+      # @param user [Hash] decoded NodeInfo user payload.
+      # @return [Boolean] true when at least one identifying field is present.
+      def nodeinfo_user_has_identifying_fields?(user)
+        identifying_fields = [
+          user["id"],
+          user["shortName"],
+          user["short_name"],
+          user["longName"],
+          user["long_name"],
+          user["macaddr"],
+          user["hwModel"],
+          user["hw_model"],
+          user["publicKey"],
+          user["public_key"],
+        ]
+
+        identifying_fields.any? do |value|
+          value.is_a?(String) ? !value.strip.empty? : !value.nil?
+        end
       end
 
       def normalize_node_id(db, node_ref)

@@ -2056,7 +2056,7 @@ function renderMessages(messages, renderShortHtml, node) {
       if (!message || typeof message !== 'object') return null;
       const text = stringOrNull(message.text) || stringOrNull(message.emoji);
       if (!text) return null;
-      if (String(text).trim() === 'GAA=') return null;
+      if (message.encrypted && String(text).trim() === 'GAA=') return null;
 
       const timestamp = formatMessageTimestamp(message.rx_time, message.rx_iso);
       const metadata = extractChatMessageMetadata(message);

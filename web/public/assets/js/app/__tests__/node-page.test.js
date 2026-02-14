@@ -154,7 +154,7 @@ test('additional format helpers provide table friendly output', () => {
         channel_name: 'Primary',
         node: { short_name: 'SRCE', role: 'ROUTER', node_id: '!src' },
       },
-      { text: ' GAA= ', rx_time: 1_700_000_405 },
+      { text: ' GAA= ', encrypted: true, rx_time: 1_700_000_405 },
       { emoji: '😊', rx_time: 1_700_000_401 },
     ],
     renderShortHtml,
