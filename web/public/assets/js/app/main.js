@@ -413,6 +413,7 @@ export function initializeApp(config) {
   const TRACE_MAX_AGE_SECONDS = 28 * 24 * 60 * 60;
   const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
   const CHAT_LIMIT = MESSAGE_LIMIT;
+  const RECENT_COLLECTION_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
@@ -3683,10 +3684,12 @@ export function initializeApp(config) {
   async function fetchNodes(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
     const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    const nowSec = Math.floor(Date.now() / 1000);
     return fetchPaginatedCollection({
       path: '/api/nodes',
       limit: effectiveLimit,
-      maxRows
+      maxRows,
+      params: { since: String(nowSec - RECENT_COLLECTION_WINDOW_SECONDS) }
     });
   }
 
@@ -3716,10 +3719,12 @@ export function initializeApp(config) {
   async function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
     if (!CHAT_ENABLED) return [];
     const safeLimit = normaliseMessageLimit(limit);
+    const nowSec = Math.floor(Date.now() / 1000);
     const params = {};
     if (options && options.encrypted) {
       params.encrypted = 'true';
     }
+    params.since = String(nowSec - CHAT_RECENT_WINDOW_SECONDS);
     const maxRows = Math.max(safeLimit, safeLimit * SNAPSHOT_LIMIT);
     return fetchPaginatedCollection({
       path: '/api/messages',
@@ -3738,10 +3743,12 @@ export function initializeApp(config) {
   async function fetchNeighbors(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
     const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    const nowSec = Math.floor(Date.now() / 1000);
     return fetchPaginatedCollection({
       path: '/api/neighbors',
       limit: effectiveLimit,
-      maxRows
+      maxRows,
+      params: { since: String(nowSec - RECENT_COLLECTION_WINDOW_SECONDS) }
     });
   }
 
@@ -3755,10 +3762,12 @@ export function initializeApp(config) {
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
     const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
     const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    const nowSec = Math.floor(Date.now() / 1000);
     const traces = await fetchPaginatedCollection({
       path: '/api/traces',
       limit: effectiveLimit,
-      maxRows
+      maxRows,
+      params: { since: String(nowSec - TRACE_MAX_AGE_SECONDS) }
     });
     return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
   }
@@ -3772,10 +3781,12 @@ export function initializeApp(config) {
   async function fetchTelemetry(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
     const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    const nowSec = Math.floor(Date.now() / 1000);
     return fetchPaginatedCollection({
       path: '/api/telemetry',
       limit: effectiveLimit,
-      maxRows
+      maxRows,
+      params: { since: String(nowSec - RECENT_COLLECTION_WINDOW_SECONDS) }
     });
   }
 
@@ -3788,10 +3799,12 @@ export function initializeApp(config) {
   async function fetchPositions(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
     const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    const nowSec = Math.floor(Date.now() / 1000);
     return fetchPaginatedCollection({
       path: '/api/positions',
       limit: effectiveLimit,
-      maxRows
+      maxRows,
+      params: { since: String(nowSec - RECENT_COLLECTION_WINDOW_SECONDS) }
     });
   }
 

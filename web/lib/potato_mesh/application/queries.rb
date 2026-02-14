@@ -303,7 +303,7 @@ module PotatoMesh
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["num"])
-          return [] unless clause
+          return with_pagination ? { items: [], next_cursor: nil } : [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)
         else
@@ -353,7 +353,15 @@ module PotatoMesh
             .max
           last_candidate && last_candidate >= since_threshold
         end
-        rows.each do |r|
+
+        has_more = with_pagination && rows.length > limit
+        paged_rows = has_more ? rows.first(limit) : rows
+        marker_row = has_more ? paged_rows.last : nil
+        marker_last_heard = marker_row ? coerce_integer(marker_row["last_heard"]) : nil
+        marker_node_id = marker_row ? string_or_nil(marker_row["node_id"]) : nil
+        output_rows = with_pagination ? paged_rows : rows
+
+        output_rows.each do |r|
           r["role"] ||= "CLIENT"
           lh = r["last_heard"]&.to_i
           pt = r["position_time"]&.to_i
@@ -366,21 +374,18 @@ module PotatoMesh
           pb = r["precision_bits"]
           r["precision_bits"] = pb.to_i if pb
         end
-        items = rows.map { |row| compact_api_row(row) }
+        items = output_rows.map { |row| compact_api_row(row) }
         items.each { |item| item.delete("_cursor_rowid") }
         return items unless with_pagination
 
-        has_more = items.length > limit
-        paged_items = has_more ? items.first(limit) : items
         next_cursor = nil
-        if has_more && !paged_items.empty?
-          marker = paged_items.last
+        if has_more && marker_last_heard && marker_node_id
           next_cursor = encode_query_cursor({
-            "last_heard" => coerce_integer(marker["last_heard"]),
-            "node_id" => string_or_nil(marker["node_id"]),
+            "last_heard" => marker_last_heard,
+            "node_id" => marker_node_id,
           })
         end
-        { items: paged_items, next_cursor: next_cursor }
+        { items: items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -1020,7 +1025,7 @@ module PotatoMesh
           tokens = node_reference_tokens(node_ref)
           numeric_values = tokens[:numeric_values]
           if numeric_values.empty?
-            return []
+            return with_pagination ? { items: [], next_cursor: nil } : []
           end
           placeholders = Array.new(numeric_values.length, "?").join(", ")
           candidate_clauses = []

@@ -2719,6 +2719,49 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(combined_domains).to include("alpha.mesh", "bravo.mesh", "charlie.mesh")
     end
 
+    it "continues paginating when malformed rows are skipped during normalization" do
+      clear_database
+      now = Time.now.to_i
+
+      with_db do |db|
+        insert_sql = <<~SQL
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+
+        db.execute(
+          insert_sql,
+          ["instance-a", "alpha.mesh", remote_key.public_key.export, "Alpha", "1.0.0", nil, nil, nil, nil, now, 0, "sig-a"],
+        )
+        db.execute(
+          insert_sql,
+          ["instance-bad", "alpha bad mesh", remote_key.public_key.export, "Bad", "1.0.0", nil, nil, nil, nil, now, 0, "sig-bad"],
+        )
+        db.execute(
+          insert_sql,
+          ["instance-b", "bravo.mesh", remote_key.public_key.export, "Bravo", "1.0.0", nil, nil, nil, nil, now, 0, "sig-b"],
+        )
+        db.execute(
+          insert_sql,
+          ["instance-c", "charlie.mesh", remote_key.public_key.export, "Charlie", "1.0.0", nil, nil, nil, nil, now, 0, "sig-c"],
+        )
+      end
+
+      first_page = application_class.load_instances_for_api(limit: 2, with_pagination: true)
+      expect(first_page[:items].map { |entry| entry["id"] }).to eq(["instance-a", "instance-b"])
+      expect(first_page[:next_cursor]).to be_a(String)
+      expect(first_page[:next_cursor]).not_to be_empty
+
+      second_page = application_class.load_instances_for_api(
+        limit: 2,
+        cursor: first_page[:next_cursor],
+        with_pagination: true,
+      )
+      expect(second_page[:items].map { |entry| entry["id"] }).to include("instance-c")
+    end
+
     context "when federation is disabled" do
       around do |example|
         original = ENV["FEDERATION"]
@@ -5775,6 +5818,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
         ["!cursor-a", "!cursor-b", "!cursor-c"],
       )
     end
+
+    it "keeps paginating future-dated nodes without skipping later pages" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!future-a", 1, "a", "A", "TBEAM", "CLIENT", 0.0, now + 300, now - 1],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!future-b", 2, "b", "B", "TBEAM", "CLIENT", 0.0, now + 200, now - 1],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!future-c", 3, "c", "C", "TBEAM", "CLIENT", 0.0, now + 100, now - 1],
+        )
+      end
+
+      get "/api/nodes?limit=2"
+      expect(last_response).to be_ok
+      first_page = JSON.parse(last_response.body)
+      expect(first_page.map { |row| row["node_id"] }).to eq(["!future-a", "!future-b"])
+      cursor = last_response.headers["X-Next-Cursor"]
+      expect(cursor).to be_a(String)
+      expect(cursor).not_to be_empty
+
+      get "/api/nodes?limit=2&cursor=#{URI.encode_www_form_component(cursor)}"
+      expect(last_response).to be_ok
+      second_page = JSON.parse(last_response.body)
+      expect(second_page.map { |row| row["node_id"] }).to eq(["!future-c"])
+    end
   end
 
   describe "GET /api/stats" do
@@ -6840,6 +6917,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       scoped = JSON.parse(last_response.body)
       expect(scoped.map { |row| row["id"] }).to eq([60_002])
+    end
+
+    it "returns an empty list for non-numeric trace node references" do
+      clear_database
+      get "/api/traces/not-a-node"
+
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to eq([])
     end
   end
 

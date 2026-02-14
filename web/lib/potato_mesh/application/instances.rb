@@ -186,44 +186,56 @@ module PotatoMesh
           "last_update_time IS NOT NULL",
           "last_update_time >= ?",
         ]
-        params = [min_last_update_time]
+        items = []
+        cursor_payload = with_pagination ? decode_query_cursor(cursor) : nil
+        cursor_domain = cursor_payload ? sanitize_instance_domain(cursor_payload["domain"])&.downcase : nil
+        cursor_id = cursor_payload ? string_or_nil(cursor_payload["id"]) : nil
 
-        if with_pagination
-          cursor_payload = decode_query_cursor(cursor)
-          if cursor_payload
-            cursor_domain = sanitize_instance_domain(cursor_payload["domain"])&.downcase
-            cursor_id = string_or_nil(cursor_payload["id"])
-            if cursor_domain && cursor_id
-              where_clauses << "(LOWER(domain) > ? OR (LOWER(domain) = ? AND id > ?))"
-              params.concat([cursor_domain, cursor_domain, cursor_id])
-            end
+        loop do
+          page_where_clauses = where_clauses.dup
+          page_params = [min_last_update_time]
+          if with_pagination && cursor_domain && cursor_id
+            page_where_clauses << "(LOWER(domain) > ? OR (LOWER(domain) = ? AND id > ?))"
+            page_params.concat([cursor_domain, cursor_domain, cursor_id])
           end
+
+          sql = <<~SQL
+            SELECT id, domain, pubkey, name, version, channel, frequency,
+                   latitude, longitude, last_update_time, is_private, nodes_count, contact_link, signature
+            FROM instances
+            WHERE #{page_where_clauses.join("\n            AND ")}
+            ORDER BY LOWER(domain), id
+          SQL
+          sql += " LIMIT ?" if with_pagination
+          page_params << fetch_limit if with_pagination
+
+          rows = with_busy_retry do
+            db.execute(sql, page_params)
+          end
+
+          rows.each do |row|
+            normalized = normalize_instance_row(row)
+            next unless normalized
+
+            last_update_time = normalized["lastUpdateTime"]
+            next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
+
+            items << normalized
+          end
+
+          return items unless with_pagination
+
+          break if items.length > safe_limit
+          break if rows.length < fetch_limit
+
+          marker_row = rows.last
+          marker_domain = sanitize_instance_domain(marker_row["domain"])&.downcase
+          marker_id = string_or_nil(marker_row["id"])
+          break unless marker_domain && marker_id
+
+          cursor_domain = marker_domain
+          cursor_id = marker_id
         end
-
-        sql = <<~SQL
-          SELECT id, domain, pubkey, name, version, channel, frequency,
-                 latitude, longitude, last_update_time, is_private, nodes_count, contact_link, signature
-          FROM instances
-          WHERE #{where_clauses.join("\n            AND ")}
-          ORDER BY LOWER(domain)
-        SQL
-        sql += " LIMIT ?" if with_pagination
-        params << fetch_limit if with_pagination
-
-        rows = with_busy_retry do
-          db.execute(sql, params)
-        end
-
-        items = rows.each_with_object([]) do |row, memo|
-          normalized = normalize_instance_row(row)
-          next unless normalized
-
-          last_update_time = normalized["lastUpdateTime"]
-          next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
-
-          memo << normalized
-        end
-        return items unless with_pagination
 
         has_more = items.length > safe_limit
         paged_items = has_more ? items.first(safe_limit) : items
