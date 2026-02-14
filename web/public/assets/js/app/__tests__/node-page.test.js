@@ -154,12 +154,14 @@ test('additional format helpers provide table friendly output', () => {
         channel_name: 'Primary',
         node: { short_name: 'SRCE', role: 'ROUTER', node_id: '!src' },
       },
+      { text: ' GAA= ', encrypted: true, rx_time: 1_700_000_405 },
       { emoji: '😊', rx_time: 1_700_000_401 },
     ],
     renderShortHtml,
     nodeContext,
   );
   assert.equal(messagesHtml.includes('hello'), true);
+  assert.equal(messagesHtml.includes('GAA='), false);
   assert.equal(messagesHtml.includes('😊'), true);
   assert.match(messagesHtml, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\[868\]/);
   assert.equal(messagesHtml.includes('[868]'), true);

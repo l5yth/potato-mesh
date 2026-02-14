@@ -2910,6 +2910,14 @@ export function initializeApp(config) {
    * @returns {HTMLElement} Chat log element.
    */
   function createMessageChatEntry(m) {
+    let plainText = '';
+    if (m?.text != null) {
+      plainText = String(m.text).trim();
+    }
+    if (m?.encrypted && plainText === 'GAA=') {
+      return null;
+    }
+
     const div = document.createElement('div');
     const tsSeconds = resolveTimestampSeconds(
       m.rx_time ?? m.rxTime,
@@ -3141,18 +3149,28 @@ export function initializeApp(config) {
     }
     const getDivider = createDateDividerFactory();
     const limitedEntries = entries.slice(Math.max(entries.length - CHAT_LIMIT, 0));
+    let renderedEntries = 0;
     for (const entry of limitedEntries) {
       if (!entry || typeof entry.ts !== 'number') {
         continue;
       }
+      if (typeof renderEntry !== 'function') {
+        continue;
+      }
+      const node = renderEntry(entry);
+      if (!node) {
+        continue;
+      }
       const divider = getDivider(entry.ts);
       if (divider) fragment.appendChild(divider);
-      if (typeof renderEntry === 'function') {
-        const node = renderEntry(entry);
-        if (node) {
-          fragment.appendChild(node);
-        }
-      }
+      fragment.appendChild(node);
+      renderedEntries += 1;
+    }
+    if (renderedEntries === 0 && emptyLabel) {
+      const empty = document.createElement('p');
+      empty.className = 'chat-empty';
+      empty.textContent = emptyLabel;
+      fragment.appendChild(empty);
     }
     return fragment;
   }

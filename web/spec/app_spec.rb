@@ -2928,6 +2928,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "POST /api/messages" do
+    SELECT_MESSAGE_ENCRYPTED_SQL = "SELECT encrypted FROM messages WHERE id = ?".freeze
+    NODE_INFO_LONG_NAME = "Node Info".freeze
+
     it "persists messages from fixture data" do
       import_nodes_fixture
       import_messages_fixture
@@ -3983,7 +3986,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(node_entry["to_id"]).to eq(receiver_id)
     end
 
-    it "decrypts encrypted messages when the PSK is configured" do
+    it "keeps encrypted text-port messages even when the PSK is configured" do
       psk_b64 = "Nmh7EooP2Tsc+7pvPwXLcEDDuYhk+fBo2GLnbA1Y1sg="
       previous_psk = ENV["MESHTASTIC_PSK_B64"]
       ENV["MESHTASTIC_PSK_B64"] = psk_b64
@@ -4011,9 +4014,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
             [payload["packet_id"]],
           )
 
-          expect(row["text"]).to eq("Nabend")
-          expect(row["encrypted"]).to be_nil
-          expect(row["channel_name"]).to eq("BerlinMesh")
+          expect(row["text"]).to be_nil
+          expect(row["encrypted"]).to eq("Q1R7tgI5yXzMXu/3")
+          expect(row["channel_name"]).to be_nil
         end
       ensure
         if previous_psk.nil?
@@ -4388,7 +4391,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row(
-          "SELECT encrypted FROM messages WHERE id = ?",
+          SELECT_MESSAGE_ENCRYPTED_SQL,
           [900_005],
         )
 
@@ -4452,7 +4455,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       with_db(readonly: true) do |db|
         db.results_as_hash = true
         row = db.get_first_row(
-          "SELECT encrypted FROM messages WHERE id = ?",
+          SELECT_MESSAGE_ENCRYPTED_SQL,
           [900_006],
         )
 
@@ -4650,15 +4653,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "overwrites encrypted messages when decrypted text arrives" do
+    it "keeps encrypted messages when decrypted payload resolves to text portnum" do
       encrypted_payload = Base64.strict_encode64("cipher".b)
-      decrypted_text = "decoded"
       allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
         nil,
         {
           portnum: 1,
           payload: "plain".b,
-          text: decrypted_text,
+          text: "decoded",
           channel_name: nil,
         },
       )
@@ -4694,9 +4696,210 @@ RSpec.describe "Potato Mesh Sinatra app" do
           [910_001],
         )
 
-        expect(row["text"]).to eq(decrypted_text)
-        expect(row["encrypted"]).to be_nil
+        expect(row["text"]).to be_nil
+        expect(row["encrypted"]).to eq(encrypted_payload)
       end
+    end
+
+    it "stores decoded node data when decrypting nodeinfo payloads" do
+      payload_bytes = "nodeinfo".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+      node_payload = {
+        "id" => "!7c5b0920",
+        "num" => 2_085_057_824,
+        "last_heard" => reference_time.to_i,
+        "user" => {
+          "short_name" => "NODE",
+          "long_name" => NODE_INFO_LONG_NAME,
+          "hw_model" => "TBEAM",
+          "role" => "CLIENT",
+        },
+      }
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 4,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "NODEINFO_APP",
+          "payload" => node_payload,
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_008,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT node_id, short_name, long_name, hw_model FROM nodes WHERE node_id = ?",
+          ["!7c5b0920"],
+        )
+
+        expect(row["node_id"]).to eq("!7c5b0920")
+        expect(row["short_name"]).to eq("NODE")
+        expect(row["long_name"]).to eq(NODE_INFO_LONG_NAME)
+        expect(row["hw_model"]).to eq("TBEAM")
+      end
+    end
+
+    it "keeps encrypted payloads when decoded nodeinfo payload is invalid" do
+      payload_bytes = "nodeinfo".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 4,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "NODEINFO_APP",
+          "payload" => {},
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_009,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          SELECT_MESSAGE_ENCRYPTED_SQL,
+          [900_009],
+        )
+
+        expect(row["encrypted"]).to eq(encoded_payload)
+      end
+    end
+
+    it "keeps encrypted payloads when decoded nodeinfo payload lacks identifying user fields" do
+      payload_bytes = "nodeinfo".b
+      encoded_payload = Base64.strict_encode64(payload_bytes)
+
+      allow(PotatoMesh::Application).to receive(:decrypt_meshtastic_message).and_return(
+        {
+          portnum: 4,
+          payload: payload_bytes,
+          text: nil,
+          channel_name: nil,
+        },
+      )
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode).and_return(
+        {
+          "type" => "NODEINFO_APP",
+          "payload" => { "id" => "!7c5b0920", "num" => 2_085_057_824 },
+        },
+      )
+
+      with_db do |db|
+        PotatoMesh::Application.insert_message(
+          db,
+          {
+            "packet_id" => 900_010,
+            "rx_time" => reference_time.to_i,
+            "rx_iso" => reference_time.utc.iso8601,
+            "from_id" => "!7c5b0920",
+            "encrypted" => encoded_payload,
+          },
+        )
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          SELECT_MESSAGE_ENCRYPTED_SQL,
+          [900_010],
+        )
+
+        expect(row["encrypted"]).to eq(encoded_payload)
+      end
+    end
+
+    it "normalizes snake_case decoded nodeinfo payloads" do
+      payload = {
+        "user" => {
+          "short_name" => "NODE",
+          "long_name" => NODE_INFO_LONG_NAME,
+          "hw_model" => "TBEAM",
+          "public_key" => "pk",
+          "is_unmessagable" => true,
+        },
+        "device_metrics" => {
+          "battery_level" => 87,
+          "channel_utilization" => 12.5,
+          "air_util_tx" => 2.75,
+          "uptime_seconds" => 1200,
+        },
+        "position" => {
+          "precision_bits" => 13,
+          "location_source" => "LOC_MANUAL",
+        },
+        "last_heard" => reference_time.to_i,
+        "hops_away" => 2,
+        "is_favorite" => true,
+        "hw_model" => "TBEAM",
+      }
+
+      normalized = PotatoMesh::Application.send(:normalize_decrypted_nodeinfo_payload, payload)
+
+      expect(normalized.dig("user", "shortName")).to eq("NODE")
+      expect(normalized.dig("user", "longName")).to eq(NODE_INFO_LONG_NAME)
+      expect(normalized.dig("user", "hwModel")).to eq("TBEAM")
+      expect(normalized.dig("user", "publicKey")).to eq("pk")
+      expect(normalized.dig("user", "isUnmessagable")).to be(true)
+      expect(normalized.dig("deviceMetrics", "batteryLevel")).to eq(87)
+      expect(normalized.dig("deviceMetrics", "channelUtilization")).to eq(12.5)
+      expect(normalized.dig("deviceMetrics", "airUtilTx")).to eq(2.75)
+      expect(normalized.dig("deviceMetrics", "uptimeSeconds")).to eq(1200)
+      expect(normalized.dig("position", "precisionBits")).to eq(13)
+      expect(normalized.dig("position", "locationSource")).to eq("LOC_MANUAL")
+      expect(normalized["lastHeard"]).to eq(reference_time.to_i)
+      expect(normalized["hopsAway"]).to eq(2)
+      expect(normalized["isFavorite"]).to be(true)
+      expect(normalized["hwModel"]).to eq("TBEAM")
+    end
+
+    it "rejects malformed normalized nodeinfo payloads" do
+      invalid_payload = {
+        "user" => { "shortName" => "NODE" },
+        "deviceMetrics" => "invalid",
+        "position" => "invalid",
+      }
+
+      valid = PotatoMesh::Application.send(:valid_decrypted_nodeinfo_payload?, invalid_payload)
+      normalized = PotatoMesh::Application.send(:normalize_decrypted_nodeinfo_payload, nil)
+
+      expect(valid).to be(false)
+      expect(normalized).to eq({})
     end
 
     it "prefers decrypted message fields over encrypted ones" do
