@@ -26,6 +26,8 @@ require "socket"
 RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
   let(:application_class) { PotatoMesh::Application }
+  INSERT_NODE_WITH_LAST_HEARD_SQL = "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)".freeze
+  SELECT_NODE_LAST_HEARD_SQL = "SELECT last_heard FROM nodes WHERE node_id = ?".freeze
 
   describe "configuration" do
     it "sets the default HTTP port to the baked-in value" do
@@ -926,7 +928,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db do |db|
           db.execute(
-            "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+            INSERT_NODE_WITH_LAST_HEARD_SQL,
             [node_id, node_num, rx_time - 120, rx_time - 180],
           )
 
@@ -2865,7 +2867,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         count = db.get_first_value("SELECT COUNT(*) FROM nodes WHERE node_id = ?", [node["node_id"]])
         expect(count).to eq(1)
 
-        last_heard = db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [node["node_id"]])
+        last_heard = db.get_first_value(SELECT_NODE_LAST_HEARD_SQL, [node["node_id"]])
         expect(last_heard).to eq(expected_last_heard(node))
       end
     end
@@ -3521,11 +3523,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db do |db|
           db.execute(
-            "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+            INSERT_NODE_WITH_LAST_HEARD_SQL,
             [reporter_id, 0xabc123ef, prior_last_heard, prior_last_heard],
           )
           db.execute(
-            "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+            INSERT_NODE_WITH_LAST_HEARD_SQL,
             [existing_neighbor_id, 0x00ff0011, prior_last_heard, prior_last_heard],
           )
         end
@@ -3546,8 +3548,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
-          reporter_row = db.get_first_row("SELECT last_heard FROM nodes WHERE node_id = ?", [reporter_id])
-          neighbor_row = db.get_first_row("SELECT last_heard FROM nodes WHERE node_id = ?", [existing_neighbor_id])
+          reporter_row = db.get_first_row(SELECT_NODE_LAST_HEARD_SQL, [reporter_id])
+          neighbor_row = db.get_first_row(SELECT_NODE_LAST_HEARD_SQL, [existing_neighbor_id])
 
           expect(reporter_row["last_heard"]).to eq(rx_time)
           expect(neighbor_row["last_heard"]).to eq(prior_last_heard)
@@ -4242,7 +4244,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["encrypted"]).to eq(encrypted_b64)
 
         node_row = db.get_first_row(
-          "SELECT last_heard FROM nodes WHERE node_id = ?",
+          SELECT_NODE_LAST_HEARD_SQL,
           [sender_id],
         )
 
