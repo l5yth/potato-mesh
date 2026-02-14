@@ -149,6 +149,9 @@ module PotatoMesh
           db.execute("ALTER TABLE messages ADD COLUMN emoji TEXT")
           message_columns << "emoji"
         end
+        unless message_columns.include?("ingestor")
+          db.execute("ALTER TABLE messages ADD COLUMN ingestor TEXT")
+        end
 
         reply_index_exists =
           db.get_first_value(
@@ -188,6 +191,19 @@ module PotatoMesh
           db.execute("ALTER TABLE telemetry ADD COLUMN #{name} #{type}")
           telemetry_columns << name
         end
+        unless telemetry_columns.include?("ingestor")
+          db.execute("ALTER TABLE telemetry ADD COLUMN ingestor TEXT")
+        end
+
+        position_columns = db.execute("PRAGMA table_info(positions)").map { |row| row[1] }
+        unless position_columns.include?("ingestor")
+          db.execute("ALTER TABLE positions ADD COLUMN ingestor TEXT")
+        end
+
+        neighbor_columns = db.execute("PRAGMA table_info(neighbors)").map { |row| row[1] }
+        unless neighbor_columns.include?("ingestor")
+          db.execute("ALTER TABLE neighbors ADD COLUMN ingestor TEXT")
+        end
 
         trace_tables =
           db.execute(
@@ -196,6 +212,10 @@ module PotatoMesh
         unless trace_tables.include?("traces") && trace_tables.include?("trace_hops")
           traces_schema = File.expand_path("../../../../data/traces.sql", __dir__)
           db.execute_batch(File.read(traces_schema))
+        end
+        trace_columns = db.execute("PRAGMA table_info(traces)").map { |row| row[1] }
+        unless trace_columns.include?("ingestor")
+          db.execute("ALTER TABLE traces ADD COLUMN ingestor TEXT")
         end
 
         ingestor_tables =

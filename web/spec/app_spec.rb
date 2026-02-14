@@ -3014,6 +3014,39 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(reaction_row["emoji"]).to eq("🔥")
     end
 
+    it "stores message ingestor and preserves the first reporter" do
+      first_payload = {
+        "id" => 77_001,
+        "rx_time" => reference_time.to_i - 10,
+        "from_id" => "!ingmsg01",
+        "channel" => 0,
+        "portnum" => "TEXT_MESSAGE_APP",
+        "text" => "first reporter",
+        "ingestor" => "!1111aaaa",
+      }
+      second_payload = first_payload.merge(
+        "text" => "updated text",
+        "ingestor" => "!2222bbbb",
+      )
+
+      post "/api/messages", first_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+      post "/api/messages", second_payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row("SELECT text, ingestor FROM messages WHERE id = ?", [first_payload["id"]])
+        expect(row["text"]).to eq("updated text")
+        expect(row["ingestor"]).to eq("!1111aaaa")
+      end
+
+      get "/api/messages?limit=10"
+      expect(last_response).to be_ok
+      row = JSON.parse(last_response.body).find { |entry| entry["id"] == first_payload["id"] }
+      expect(row["ingestor"]).to eq("!1111aaaa")
+    end
+
     it "creates hidden nodes for unknown message senders" do
       payload = {
         "id" => 9_999,
@@ -3299,6 +3332,33 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
+      it "stores position ingestor and preserves the first reporter" do
+        first_payload = {
+          "id" => 19_001,
+          "node_id" => "!ingpos01",
+          "rx_time" => reference_time.to_i - 80,
+          "latitude" => 52.1,
+          "longitude" => 13.2,
+          "ingestor" => "!aaaa1111",
+        }
+        second_payload = first_payload.merge(
+          "latitude" => 53.3,
+          "ingestor" => "!bbbb2222",
+        )
+
+        post "/api/positions", first_payload.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/positions", second_payload.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT latitude, ingestor FROM positions WHERE id = ?", [first_payload["id"]])
+          expect_same_value(row["latitude"], 53.3)
+          expect(row["ingestor"]).to eq("!aaaa1111")
+        end
+      end
+
       it "fills first_heard when updating an existing node without one" do
         node_id = "!specposfh"
         rx_time = reference_time.to_i - 90
@@ -3470,6 +3530,40 @@ RSpec.describe "Potato Mesh Sinatra app" do
         get "/api/neighbors"
         expect(last_response).to be_ok
         expect(JSON.parse(last_response.body)).to be_empty
+      end
+
+      it "stores neighbor ingestor and preserves the first reporter per tuple" do
+        base = {
+          "node_id" => "!1a2b3c01",
+          "rx_time" => reference_time.to_i - 45,
+          "neighbors" => [
+            { "node_id" => "!1a2b3c02", "snr" => -1.5 },
+            { "node_id" => "!1a2b3c03", "snr" => -2.5 },
+          ],
+          "ingestor" => "!aaaa9999",
+        }
+        update = {
+          "node_id" => "!1a2b3c01",
+          "rx_time" => reference_time.to_i - 30,
+          "neighbors" => [
+            { "node_id" => "!1a2b3c02", "snr" => -0.5 },
+          ],
+          "ingestor" => "!bbbb8888",
+        }
+
+        post "/api/neighbors", base.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/neighbors", update.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          rows = db.execute("SELECT neighbor_id, snr, ingestor FROM neighbors WHERE node_id = ? ORDER BY neighbor_id", ["!1a2b3c01"])
+          expect(rows.size).to eq(1)
+          expect(rows.first["neighbor_id"]).to eq("!1a2b3c02")
+          expect_same_value(rows.first["snr"], -0.5)
+          expect(rows.first["ingestor"]).to eq("!aaaa9999")
+        end
       end
 
       it "returns 400 when more than 1000 neighbor packets are provided" do
@@ -3644,6 +3738,30 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
       end
 
+      it "stores telemetry ingestor and preserves the first reporter" do
+        payload = {
+          "id" => 23_001,
+          "node_id" => "!ingtel01",
+          "rx_time" => reference_time.to_i - 70,
+          "telemetry" => { "deviceMetrics" => { "batteryLevel" => 90 } },
+          "battery_level" => 90,
+          "ingestor" => "!1111bbbb",
+        }
+        updated = payload.merge("battery_level" => 80, "ingestor" => "!2222cccc")
+
+        post "/api/telemetry", payload.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/telemetry", updated.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT battery_level, ingestor FROM telemetry WHERE id = ?", [payload["id"]])
+          expect_same_value(row["battery_level"], 80.0)
+          expect(row["ingestor"]).to eq("!1111bbbb")
+        end
+      end
+
       it "returns 400 when more than 1000 telemetry packets are provided" do
         payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
 
@@ -3761,6 +3879,31 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         expect(last_response.status).to eq(400)
         expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+      end
+
+      it "stores trace ingestor and preserves the first reporter" do
+        payload = {
+          "id" => 31_001,
+          "request_id" => 77,
+          "src" => 0x10000001,
+          "dest" => 0x10000002,
+          "rx_time" => reference_time.to_i - 50,
+          "hops" => [0x10000001, 0x10000002],
+          "ingestor" => "!aaaa0001",
+        }
+        update = payload.merge("snr" => 7.5, "ingestor" => "!bbbb0002")
+
+        post "/api/traces", payload.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/traces", update.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT snr, ingestor FROM traces WHERE id = ?", [payload["id"]])
+          expect_same_value(row["snr"], 7.5)
+          expect(row["ingestor"]).to eq("!aaaa0001")
+        end
       end
 
       it "returns 400 when more than 1000 traces are provided" do

@@ -424,6 +424,7 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
         "hop_limit": hop_limit,
         "bitfield": bitfield,
         "payload_b64": payload_b64,
+        "ingestor": host_node_id(),
     }
     if raw_payload:
         position_payload["raw"] = raw_payload
@@ -568,6 +569,7 @@ def store_traceroute_packet(packet: Mapping, decoded: Mapping) -> None:
         "rssi": rssi,
         "snr": snr,
         "elapsed_ms": elapsed_ms,
+        "ingestor": host_node_id(),
     }
 
     _queue_post_json(
@@ -935,6 +937,7 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         "rssi": rssi,
         "hop_limit": hop_limit,
         "payload_b64": payload_b64,
+        "ingestor": host_node_id(),
     }
 
     if battery_level is not None:
@@ -1263,6 +1266,7 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
         "neighbors": neighbor_entries,
         "rx_time": rx_time,
         "rx_iso": _iso(rx_time),
+        "ingestor": host_node_id(),
     }
 
     if node_broadcast_interval is not None:
@@ -1520,6 +1524,7 @@ def store_packet_dict(packet: Mapping) -> None:
         "hop_limit": int(hop) if hop is not None else None,
         "reply_id": reply_id,
         "emoji": emoji,
+        "ingestor": host_node_id(),
     }
 
     if not encrypted_flag and channel_name_value:

@@ -788,6 +788,7 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 868
     mesh.config.MODEM_PRESET = "MediumFast"
+    mesh.register_host_node_id("!f00dbabe")
 
     packet = {
         "id": 123,
@@ -823,6 +824,7 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert payload["rssi"] == -70
     assert payload["reply_id"] is None
     assert payload["emoji"] is None
+    assert payload["ingestor"] == "!f00dbabe"
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
     assert priority == mesh._MESSAGE_POST_PRIORITY
@@ -879,6 +881,7 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 868
     mesh.config.MODEM_PRESET = "MediumFast"
+    mesh.register_host_node_id("!f00dbabe")
 
     packet = {
         "id": 200498337,
@@ -946,6 +949,7 @@ def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     )
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
+    assert payload["ingestor"] == "!f00dbabe"
     assert payload["raw"]["time"] == 1_758_624_189
 
 
@@ -960,6 +964,7 @@ def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 868
     mesh.config.MODEM_PRESET = "MediumFast"
+    mesh.register_host_node_id("!f00dbabe")
 
     packet = {
         "id": 2049886869,
@@ -1004,6 +1009,7 @@ def test_store_packet_dict_posts_neighborinfo(mesh_module, monkeypatch):
     assert neighbors[2]["neighbor_num"] == 0x0BAD_C0DE
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
+    assert payload["ingestor"] == "!f00dbabe"
 
 
 def test_store_packet_dict_handles_nodeinfo_packet(mesh_module, monkeypatch):
@@ -2282,6 +2288,7 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 868
     mesh.config.MODEM_PRESET = "MediumFast"
+    mesh.register_host_node_id("!f00dbabe")
 
     packet = {
         "id": 1_256_091_342,
@@ -2334,6 +2341,7 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     assert payload["current"] == pytest.approx(0.0715)
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
+    assert payload["ingestor"] == "!f00dbabe"
 
 
 def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatch):
@@ -2477,6 +2485,7 @@ def test_store_packet_dict_handles_traceroute_packet(mesh_module, monkeypatch):
 
     mesh.config.LORA_FREQ = 915
     mesh.config.MODEM_PRESET = "LongFast"
+    mesh.register_host_node_id("!f00dbabe")
 
     packet = {
         "id": 2_934_054_466,
@@ -2518,6 +2527,7 @@ def test_store_packet_dict_handles_traceroute_packet(mesh_module, monkeypatch):
     assert "elapsed_ms" in payload
     assert payload["lora_freq"] == 915
     assert payload["modem_preset"] == "LongFast"
+    assert payload["ingestor"] == "!f00dbabe"
 
 
 def test_traceroute_hop_normalization_supports_mappings(mesh_module, monkeypatch):
