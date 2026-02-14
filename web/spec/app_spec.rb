@@ -4836,6 +4836,64 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "normalizes snake_case decoded nodeinfo payloads" do
+      payload = {
+        "user" => {
+          "short_name" => "NODE",
+          "long_name" => "Node Info",
+          "hw_model" => "TBEAM",
+          "public_key" => "pk",
+          "is_unmessagable" => true,
+        },
+        "device_metrics" => {
+          "battery_level" => 87,
+          "channel_utilization" => 12.5,
+          "air_util_tx" => 2.75,
+          "uptime_seconds" => 1200,
+        },
+        "position" => {
+          "precision_bits" => 13,
+          "location_source" => "LOC_MANUAL",
+        },
+        "last_heard" => reference_time.to_i,
+        "hops_away" => 2,
+        "is_favorite" => true,
+        "hw_model" => "TBEAM",
+      }
+
+      normalized = PotatoMesh::Application.send(:normalize_decrypted_nodeinfo_payload, payload)
+
+      expect(normalized.dig("user", "shortName")).to eq("NODE")
+      expect(normalized.dig("user", "longName")).to eq("Node Info")
+      expect(normalized.dig("user", "hwModel")).to eq("TBEAM")
+      expect(normalized.dig("user", "publicKey")).to eq("pk")
+      expect(normalized.dig("user", "isUnmessagable")).to be(true)
+      expect(normalized.dig("deviceMetrics", "batteryLevel")).to eq(87)
+      expect(normalized.dig("deviceMetrics", "channelUtilization")).to eq(12.5)
+      expect(normalized.dig("deviceMetrics", "airUtilTx")).to eq(2.75)
+      expect(normalized.dig("deviceMetrics", "uptimeSeconds")).to eq(1200)
+      expect(normalized.dig("position", "precisionBits")).to eq(13)
+      expect(normalized.dig("position", "locationSource")).to eq("LOC_MANUAL")
+      expect(normalized["lastHeard"]).to eq(reference_time.to_i)
+      expect(normalized["hopsAway"]).to eq(2)
+      expect(normalized["isFavorite"]).to be(true)
+      expect(normalized["hwModel"]).to eq("TBEAM")
+    end
+
+    it "rejects malformed normalized nodeinfo payloads" do
+      invalid_payload = {
+        "user" => { "shortName" => "NODE" },
+        "deviceMetrics" => "invalid",
+        "position" => "invalid",
+      }
+
+      valid = PotatoMesh::Application.send(:valid_decrypted_nodeinfo_payload?, invalid_payload)
+      normalized = PotatoMesh::Application.send(:normalize_decrypted_nodeinfo_payload, nil)
+
+      expect(valid).to be(false)
+      expect(normalized).to eq({})
+    end
+
     it "prefers decrypted message fields over encrypted ones" do
       encrypted_payload = Base64.strict_encode64("cipher".b)
       encrypted_message = {
