@@ -1918,7 +1918,7 @@ module PotatoMesh
           )
           true
         when "NODEINFO_APP"
-          node_payload = decoded["payload"]
+          node_payload = normalize_decrypted_nodeinfo_payload(decoded["payload"])
           return false unless valid_decrypted_nodeinfo_payload?(node_payload)
 
           node_id = string_or_nil(node_payload["id"]) || from_id
@@ -2020,6 +2020,53 @@ module PotatoMesh
         return false unless nodeinfo_user_has_identifying_fields?(payload["user"])
 
         true
+      end
+
+      # Normalize decoded NodeInfo payload keys for +upsert_node+ compatibility.
+      #
+      # The Python decoder preserves protobuf field names, so nested hashes may
+      # use +snake_case+ keys that +upsert_node+ does not read.
+      #
+      # @param payload [Object] decoded NodeInfo payload.
+      # @return [Hash] normalized payload hash.
+      def normalize_decrypted_nodeinfo_payload(payload)
+        return {} unless payload.is_a?(Hash)
+
+        user = payload["user"]
+        normalized_user = user.is_a?(Hash) ? user.dup : nil
+        if normalized_user
+          normalized_user["shortName"] ||= normalized_user["short_name"]
+          normalized_user["longName"] ||= normalized_user["long_name"]
+          normalized_user["hwModel"] ||= normalized_user["hw_model"]
+          normalized_user["publicKey"] ||= normalized_user["public_key"]
+          normalized_user["isUnmessagable"] = normalized_user["is_unmessagable"] if normalized_user.key?("is_unmessagable")
+        end
+
+        metrics = payload["deviceMetrics"] || payload["device_metrics"]
+        normalized_metrics = metrics.is_a?(Hash) ? metrics.dup : nil
+        if normalized_metrics
+          normalized_metrics["batteryLevel"] ||= normalized_metrics["battery_level"]
+          normalized_metrics["channelUtilization"] ||= normalized_metrics["channel_utilization"]
+          normalized_metrics["airUtilTx"] ||= normalized_metrics["air_util_tx"]
+          normalized_metrics["uptimeSeconds"] ||= normalized_metrics["uptime_seconds"]
+        end
+
+        position = payload["position"]
+        normalized_position = position.is_a?(Hash) ? position.dup : nil
+        if normalized_position
+          normalized_position["precisionBits"] ||= normalized_position["precision_bits"]
+          normalized_position["locationSource"] ||= normalized_position["location_source"]
+        end
+
+        normalized = payload.dup
+        normalized["user"] = normalized_user if normalized_user
+        normalized["deviceMetrics"] = normalized_metrics if normalized_metrics
+        normalized["position"] = normalized_position if normalized_position
+        normalized["lastHeard"] ||= normalized["last_heard"]
+        normalized["hopsAway"] ||= normalized["hops_away"]
+        normalized["isFavorite"] = normalized["is_favorite"] if normalized.key?("is_favorite")
+        normalized["hwModel"] ||= normalized["hw_model"]
+        normalized
       end
 
       # Validate that a decoded NodeInfo user section contains identifying data.

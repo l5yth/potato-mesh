@@ -4699,11 +4699,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       node_payload = {
         "id" => "!7c5b0920",
         "num" => 2_085_057_824,
-        "lastHeard" => reference_time.to_i,
+        "last_heard" => reference_time.to_i,
         "user" => {
-          "shortName" => "NODE",
-          "longName" => "Node Info",
-          "hwModel" => "TBEAM",
+          "short_name" => "NODE",
+          "long_name" => "Node Info",
+          "hw_model" => "TBEAM",
           "role" => "CLIENT",
         },
       }
