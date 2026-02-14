@@ -791,6 +791,29 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(result).to be(false)
     end
 
+    it "does not apply cooldown when scheduling fails due to queue saturation" do
+      allow(PotatoMesh::Config).to receive(:federation_crawl_cooldown_seconds).and_return(300)
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::QueueFullError, "full")
+
+      first = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 1,
+        overall_limit: 2,
+      )
+      second = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 1,
+        overall_limit: 2,
+      )
+
+      expect(first).to be(false)
+      expect(second).to be(false)
+      expect(federation_helpers.debug_messages).not_to include(
+        a_string_including("recent crawl completed"),
+      )
+    end
+
     it "logs when the worker pool is shutting down" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
       allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::ShutdownError, "closed")
@@ -841,6 +864,35 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(captured_job).not_to be_nil
       captured_job.call
       expect(db).to have_received(:close)
+    end
+
+    it "releases the crawl slot when opening the database fails" do
+      allow(federation_helpers).to receive(:federation_crawl_cooldown_seconds).and_return(0)
+      captured_job = nil
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule) do |&block|
+        captured_job = block
+        instance_double(PotatoMesh::App::WorkerPool::Task)
+      end
+      allow(federation_helpers).to receive(:open_database).and_raise(SQLite3::Exception, "db unavailable")
+      allow(federation_helpers).to receive(:ingest_known_instances_from!)
+
+      first = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+      expect(first).to be(true)
+      expect(captured_job).not_to be_nil
+
+      expect { captured_job.call }.to raise_error(SQLite3::Exception, "db unavailable")
+
+      second = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+      expect(second).to be(true)
     end
   end
 

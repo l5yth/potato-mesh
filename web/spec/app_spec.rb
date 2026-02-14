@@ -406,7 +406,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "stores and clears the initial federation thread" do
       delay = 3
       allow(PotatoMesh::Config).to receive(:initial_federation_delay_seconds).and_return(delay)
-      expect(Kernel).to receive(:sleep).with(delay)
+      expect(app).to receive(:federation_sleep_with_shutdown).with(delay).and_return(true)
       expect(app).to receive(:announce_instance_to_all_domains)
       allow(Thread).to receive(:new) do |&block|
         dummy_thread.block = block

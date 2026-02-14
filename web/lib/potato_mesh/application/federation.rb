@@ -816,8 +816,9 @@ module PotatoMesh
 
         application = is_a?(Class) ? self : self.class
         pool.schedule do
-          db = application.open_database
+          db = nil
           begin
+            db = application.open_database
             application.ingest_known_instances_from!(
               db,
               sanitized_domain,
@@ -832,21 +833,23 @@ module PotatoMesh
 
         true
       rescue PotatoMesh::App::WorkerPool::QueueFullError
-        release_federation_crawl_slot(sanitized_domain)
-        warn_log(
-          "Skipped remote instance crawl",
-          context: "federation.instances",
-          domain: sanitized_domain,
-          reason: "worker queue saturated",
-        )
-        false
+        handle_failed_federation_crawl_schedule(sanitized_domain, "worker queue saturated")
       rescue PotatoMesh::App::WorkerPool::ShutdownError
-        release_federation_crawl_slot(sanitized_domain)
+        handle_failed_federation_crawl_schedule(sanitized_domain, "worker pool shut down")
+      end
+
+      # Handle a failed crawl schedule attempt without applying cooldown.
+      #
+      # @param domain [String] canonical domain that failed to schedule.
+      # @param reason [String] human-readable failure reason.
+      # @return [Boolean] always false because scheduling did not succeed.
+      def handle_failed_federation_crawl_schedule(domain, reason)
+        release_federation_crawl_slot(domain, record_completion: false)
         warn_log(
           "Skipped remote instance crawl",
           context: "federation.instances",
-          domain: sanitized_domain,
-          reason: "worker pool shut down",
+          domain: domain,
+          reason: reason,
         )
         false
       end
@@ -892,14 +895,15 @@ module PotatoMesh
       # Release an in-flight crawl claim and record completion timestamp.
       #
       # @param domain [String] canonical domain name.
+      # @param record_completion [Boolean] true to apply cooldown tracking.
       # @return [void]
-      def release_federation_crawl_slot(domain)
+      def release_federation_crawl_slot(domain, record_completion: true)
         return unless domain
 
         initialize_federation_crawl_state!
         @federation_crawl_mutex.synchronize do
           @federation_crawl_in_flight.delete(domain)
-          @federation_crawl_last_completed_at[domain] = Time.now.to_i
+          @federation_crawl_last_completed_at[domain] = Time.now.to_i if record_completion
         end
       end
 
