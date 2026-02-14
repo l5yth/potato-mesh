@@ -466,6 +466,40 @@ RSpec.describe PotatoMesh::App::Federation do
       )
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(9))
     end
+
+    it "skips remote entries when both full and window node feeds are unavailable" do
+      now = Time.at(1_700_000_000)
+      configure_remote_node_window(now)
+      recent_path = "/api/nodes?since=#{now.to_i - 900}&limit=1000"
+
+      mapping = stats_mapping(
+        now:,
+        stats_response: [{ "active_nodes" => { "hour" => 3, "day" => 3, "week" => 3, "month" => 3 }, "sampled" => false }, :stats],
+        full_nodes_response: [nil, ["full data unavailable"]],
+        window_nodes_response: [nil, ["window unavailable"]],
+      )
+      captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
+      upserted = []
+      allow(federation_helpers).to receive(:upsert_instance_record) do |_db, attrs, _signature|
+        upserted << attrs
+      end
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], NODES_API_PATH],
+        [attributes_list[1][:domain], NODES_API_PATH],
+        [attributes_list[2][:domain], NODES_API_PATH],
+      )
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], recent_path],
+        [attributes_list[1][:domain], recent_path],
+        [attributes_list[2][:domain], recent_path],
+      )
+      expect(upserted).to be_empty
+      expect(federation_helpers.warn_messages).to include("Failed to load remote node data")
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(3))
+    end
   end
 
   describe ".upsert_instance_record" do

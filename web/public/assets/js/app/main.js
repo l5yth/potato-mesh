@@ -122,6 +122,57 @@ export function normaliseActiveNodeStatsPayload(payload) {
   };
 }
 
+const ACTIVE_NODE_STATS_CACHE_TTL_MS = 30_000;
+let activeNodeStatsCache = null;
+let activeNodeStatsFetchPromise = null;
+let activeNodeStatsFetchImpl = null;
+
+/**
+ * Fetch active-node stats from the dedicated API endpoint with short-lived caching.
+ *
+ * @param {Function} fetchImpl Fetch implementation.
+ * @returns {Promise<{hour: number, day: number, week: number, month: number, sampled: boolean} | null>} Normalized stats or null.
+ */
+async function fetchRemoteActiveNodeStats(fetchImpl) {
+  const nowMs = Date.now();
+  if (
+    activeNodeStatsCache &&
+    activeNodeStatsCache.fetchImpl === fetchImpl &&
+    activeNodeStatsCache.expiresAt > nowMs
+  ) {
+    return activeNodeStatsCache.stats;
+  }
+  if (activeNodeStatsFetchPromise && activeNodeStatsFetchImpl === fetchImpl) {
+    return activeNodeStatsFetchPromise;
+  }
+
+  activeNodeStatsFetchImpl = fetchImpl;
+  activeNodeStatsFetchPromise = (async () => {
+    const response = await fetchImpl('/api/stats', { cache: 'no-store' });
+    if (!response?.ok) {
+      throw new Error(`stats HTTP ${response?.status ?? 'unknown'}`);
+    }
+    const payload = await response.json();
+    const normalized = normaliseActiveNodeStatsPayload(payload);
+    if (!normalized) {
+      throw new Error('invalid stats payload');
+    }
+    activeNodeStatsCache = {
+      fetchImpl,
+      expiresAt: Date.now() + ACTIVE_NODE_STATS_CACHE_TTL_MS,
+      stats: normalized
+    };
+    return normalized;
+  })();
+
+  try {
+    return await activeNodeStatsFetchPromise;
+  } finally {
+    activeNodeStatsFetchPromise = null;
+    activeNodeStatsFetchImpl = null;
+  }
+}
+
 /**
  * Fetch active-node stats from the dedicated API endpoint with local fallback.
  *
@@ -134,15 +185,8 @@ export function normaliseActiveNodeStatsPayload(payload) {
  */
 export async function fetchActiveNodeStats({ nodes, nowSeconds, fetchImpl = fetch }) {
   try {
-    const response = await fetchImpl('/api/stats', { cache: 'no-store' });
-    if (!response?.ok) {
-      throw new Error(`stats HTTP ${response?.status ?? 'unknown'}`);
-    }
-    const payload = await response.json();
-    const normalized = normaliseActiveNodeStatsPayload(payload);
-    if (normalized) {
-      return normalized;
-    }
+    const normalized = await fetchRemoteActiveNodeStats(fetchImpl);
+    if (normalized) return normalized;
     throw new Error('invalid stats payload');
   } catch (error) {
     console.debug('Failed to fetch /api/stats; using local active-node counts.', error);

@@ -116,6 +116,28 @@ test('fetchActiveNodeStats uses /api/stats when available', async () => {
   });
 });
 
+test('fetchActiveNodeStats reuses cached /api/stats response for repeated calls', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      async json() {
+        return {
+          active_nodes: { hour: 2, day: 4, week: 6, month: 8 },
+          sampled: false,
+        };
+      },
+    };
+  };
+
+  const first = await fetchActiveNodeStats({ nodes: [], nowSeconds: NOW, fetchImpl });
+  const second = await fetchActiveNodeStats({ nodes: [], nowSeconds: NOW, fetchImpl });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(first, second);
+});
+
 test('fetchActiveNodeStats falls back to local counts when stats fetch fails', async () => {
   const nodes = [
     { last_heard: NOW - 120 },
