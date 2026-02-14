@@ -255,10 +255,17 @@ module PotatoMesh
     # @return [String] sanitized HTML safe for rendering in templates.
     def sanitize_rendered_html(html)
       value = html.to_s.dup
-      value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
-      value.gsub!(/\s+on[a-z]+\s*=\s*(['"]).*?\1/mi, "")
-      value.gsub!(/\s+on[a-z]+\s*=\s*[^\s>]+/mi, "")
-      value.gsub!(/\s+(href|src)\s*=\s*(['"])\s*(?:javascript|data|file):.*?\2/mi, "")
+      previous = nil
+      # Repeatedly apply the sanitization patterns until the content stabilizes.
+      # This avoids incomplete removal when multi-character matches expose
+      # additional executable tags or attributes after substitution.
+      while previous != value
+        previous = value.dup
+        value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
+        value.gsub!(/\s+on[a-z]+\s*=\s*(['"]).*?\1/mi, "")
+        value.gsub!(/\s+on[a-z]+\s*=\s*[^\s>]+/mi, "")
+        value.gsub!(/\s+(href|src)\s*=\s*(['"])\s*(?:javascript|data|file):.*?\2/mi, "")
+      end
       value
     end
   end
