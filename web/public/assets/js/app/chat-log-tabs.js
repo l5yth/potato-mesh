@@ -20,7 +20,7 @@ import { extractModemMetadata } from './node-modem-metadata.js';
  * Highest channel index that should be represented within the tab view.
  * @type {number}
  */
-export const MAX_CHANNEL_INDEX = 9;
+export const MAX_CHANNEL_INDEX = 255;
 
 /**
  * Discrete event types that can appear in the chat activity log.
@@ -245,27 +245,11 @@ export function buildChatTabModel({
       modemPreset,
       envFallbackLabel: primaryChannelEnvLabel
     });
-    const nameBucketKey = safeIndex > 0 ? buildSecondaryNameBucketKey(labelInfo) : null;
+    const nameBucketKey = safeIndex > 0 ? buildSecondaryNameBucketKey(safeIndex, labelInfo) : null;
     const primaryBucketKey = safeIndex === 0 && labelInfo.label !== '0' ? buildPrimaryBucketKey(labelInfo.label) : '0';
 
-    let bucketKey = safeIndex === 0 ? primaryBucketKey : nameBucketKey ?? String(safeIndex);
+    const bucketKey = safeIndex === 0 ? primaryBucketKey : nameBucketKey ?? String(safeIndex);
     let bucket = channelBuckets.get(bucketKey);
-
-    if (!bucket && safeIndex > 0) {
-      const existingBucketKey = findExistingBucketKeyByIndex(channelBuckets, safeIndex);
-      if (existingBucketKey) {
-        bucketKey = existingBucketKey;
-        bucket = channelBuckets.get(existingBucketKey);
-      }
-    }
-
-    if (bucket && nameBucketKey && bucket.key !== nameBucketKey) {
-      channelBuckets.delete(bucket.key);
-      bucket.key = nameBucketKey;
-      bucket.id = buildChannelTabId(nameBucketKey);
-      channelBuckets.set(nameBucketKey, bucket);
-      bucketKey = nameBucketKey;
-    }
 
     if (!bucket) {
       bucket = {
@@ -569,42 +553,32 @@ function buildPrimaryBucketKey(primaryChannelLabel) {
   return '0';
 }
 
-function buildSecondaryNameBucketKey(labelInfo) {
+function buildSecondaryNameBucketKey(index, labelInfo) {
   const label = labelInfo?.label ?? null;
   const priority = labelInfo?.priority ?? CHANNEL_LABEL_PRIORITY.INDEX;
-  if (priority !== CHANNEL_LABEL_PRIORITY.NAME || !label) {
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+  if (safeIndex <= 0 || priority !== CHANNEL_LABEL_PRIORITY.NAME || !label) {
     return null;
   }
   const trimmedLabel = label.trim().toLowerCase();
   if (!trimmedLabel.length) {
     return null;
   }
-  return `secondary::${trimmedLabel}`;
-}
-
-function findExistingBucketKeyByIndex(channelBuckets, targetIndex) {
-  if (!channelBuckets || !Number.isFinite(targetIndex) || targetIndex <= 0) {
-    return null;
-  }
-  const normalizedTarget = Math.trunc(targetIndex);
-  for (const [key, bucket] of channelBuckets.entries()) {
-    if (!bucket || !Number.isFinite(bucket.index)) {
-      continue;
-    }
-    if (Math.trunc(bucket.index) !== normalizedTarget) {
-      continue;
-    }
-    if (bucket.index === 0) {
-      continue;
-    }
-    return key;
-  }
-  return null;
+  return `secondary::${safeIndex}::${trimmedLabel}`;
 }
 
 function buildChannelTabId(bucketKey) {
   if (bucketKey === '0') {
     return 'channel-0';
+  }
+  const secondaryParts = String(bucketKey).match(/^secondary::(\d+)::(.+)$/);
+  if (secondaryParts) {
+    const secondaryIndex = secondaryParts[1];
+    const secondaryLabelSlug = slugify(secondaryParts[2]);
+    if (secondaryLabelSlug) {
+      return `channel-secondary-${secondaryIndex}-${secondaryLabelSlug}`;
+    }
+    return `channel-secondary-${secondaryIndex}-${hashChannelKey(bucketKey)}`;
   }
   const slug = slugify(bucketKey);
   if (slug) {
