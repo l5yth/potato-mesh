@@ -25,6 +25,7 @@ require "socket"
 RSpec.describe PotatoMesh::App::Federation do
   NODES_API_PATH = "/api/nodes".freeze
   STATS_API_PATH = "/api/stats".freeze
+  FULL_DATA_UNAVAILABLE_REASON = "full data unavailable".freeze
   HTTP_CONNECTION_DOUBLE = "Net::HTTPConnection".freeze
 
   subject(:federation_helpers) do
@@ -429,7 +430,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [nil, ["stats unavailable"]],
-        full_nodes_response: [nil, ["full data unavailable"]],
+        full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
         window_nodes_response: [node_payload, :nodes],
       )
       stub_ingest_fetches(mapping)
@@ -447,7 +448,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [{ "active_nodes" => { "hour" => 9, "day" => 10, "week" => 11, "month" => 12 }, "sampled" => false }, :stats],
-        full_nodes_response: [nil, ["full data unavailable"]],
+        full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
         window_nodes_response: [node_payload, :nodes],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
@@ -467,6 +468,24 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(9))
     end
 
+    it "handles URI metadata from malformed /api/stats payloads without crashing" do
+      now = Time.at(1_700_000_000)
+      configure_remote_node_window(now)
+
+      mapping = stats_mapping(
+        now:,
+        stats_response: [{ "unexpected" => "shape" }, URI.parse("https://ally-0.mesh/api/stats")],
+        full_nodes_response: [node_payload.take(2), :nodes],
+        window_nodes_response: [node_payload, :nodes],
+      )
+      stub_ingest_fetches(mapping)
+
+      expect do
+        federation_helpers.ingest_known_instances_from!(db, seed_domain)
+      end.not_to raise_error
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
+    end
+
     it "skips remote entries when both full and window node feeds are unavailable" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
@@ -475,7 +494,7 @@ RSpec.describe PotatoMesh::App::Federation do
       mapping = stats_mapping(
         now:,
         stats_response: [{ "active_nodes" => { "hour" => 3, "day" => 3, "week" => 3, "month" => 3 }, "sampled" => false }, :stats],
-        full_nodes_response: [nil, ["full data unavailable"]],
+        full_nodes_response: [nil, [FULL_DATA_UNAVAILABLE_REASON]],
         window_nodes_response: [nil, ["window unavailable"]],
       )
       captured_paths = stub_ingest_fetches(mapping, capture_paths: true)

@@ -135,11 +135,7 @@ let activeNodeStatsFetchImpl = null;
  */
 async function fetchRemoteActiveNodeStats(fetchImpl) {
   const nowMs = Date.now();
-  if (
-    activeNodeStatsCache &&
-    activeNodeStatsCache.fetchImpl === fetchImpl &&
-    activeNodeStatsCache.expiresAt > nowMs
-  ) {
+  if (activeNodeStatsCache?.fetchImpl === fetchImpl && activeNodeStatsCache.expiresAt > nowMs) {
     return activeNodeStatsCache.stats;
   }
   if (activeNodeStatsFetchPromise && activeNodeStatsFetchImpl === fetchImpl) {

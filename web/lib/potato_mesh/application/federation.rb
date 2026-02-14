@@ -1096,7 +1096,7 @@ module PotatoMesh
             attributes[:nodes_count] = remote_nodes.length
           end
 
-          if stats_count.nil? && stats_metadata && !stats_metadata.empty?
+          if stats_count.nil? && Array(stats_metadata).any?
             debug_log(
               "Remote instance /api/stats unavailable; using node list fallback",
               context: "federation.instances",
