@@ -68,6 +68,27 @@ test('normaliseActiveNodeStatsPayload validates and normalizes API payload', () 
   assert.equal(normaliseActiveNodeStatsPayload({}), null);
 });
 
+test('normaliseActiveNodeStatsPayload rejects malformed stat values', () => {
+  assert.equal(
+    normaliseActiveNodeStatsPayload({ active_nodes: { hour: 'x', day: 1, week: 1, month: 1 } }),
+    null
+  );
+  assert.equal(
+    normaliseActiveNodeStatsPayload({ active_nodes: null }),
+    null
+  );
+});
+
+test('normaliseActiveNodeStatsPayload clamps negatives and truncates floats', () => {
+  assert.deepEqual(
+    normaliseActiveNodeStatsPayload({
+      active_nodes: { hour: -1.9, day: 2.8, week: 3.1, month: 4.9 },
+      sampled: 1
+    }),
+    { hour: 0, day: 2, week: 3, month: 4, sampled: true }
+  );
+});
+
 test('fetchActiveNodeStats uses /api/stats when available', async () => {
   const calls = [];
   const fetchImpl = async (url) => {
@@ -115,6 +136,31 @@ test('fetchActiveNodeStats falls back to local counts when stats fetch fails', a
   });
 });
 
+test('fetchActiveNodeStats falls back to local counts on non-OK HTTP responses', async () => {
+  const stats = await fetchActiveNodeStats({
+    nodes: [{ last_heard: NOW - 10 }],
+    nowSeconds: NOW,
+    fetchImpl: async () => ({ ok: false, status: 503 })
+  });
+  assert.equal(stats.sampled, true);
+  assert.equal(stats.hour, 1);
+});
+
+test('fetchActiveNodeStats falls back to local counts on invalid payloads', async () => {
+  const stats = await fetchActiveNodeStats({
+    nodes: [{ last_heard: NOW - (31 * 86_400) }],
+    nowSeconds: NOW,
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { active_nodes: { hour: 'bad' } };
+      }
+    })
+  });
+  assert.equal(stats.sampled, true);
+  assert.equal(stats.month, 0);
+});
+
 test('formatActiveNodeStatsText emits expected dashboard string', () => {
   const text = formatActiveNodeStatsText({
     channel: 'LongFast',
@@ -125,5 +171,18 @@ test('formatActiveNodeStatsText emits expected dashboard string', () => {
   assert.equal(
     text,
     'LongFast (868MHz) — active nodes: 1/hour, 2/day, 3/week, 4/month.'
+  );
+});
+
+test('formatActiveNodeStatsText appends sampled marker when local fallback is used', () => {
+  const text = formatActiveNodeStatsText({
+    channel: 'LongFast',
+    frequency: '868MHz',
+    stats: { hour: 9, day: 8, week: 7, month: 6, sampled: true },
+  });
+
+  assert.equal(
+    text,
+    'LongFast (868MHz) — active nodes: 9/hour, 8/day, 7/week, 6/month (sampled).'
   );
 });
