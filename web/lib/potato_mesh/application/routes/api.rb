@@ -67,6 +67,14 @@ module PotatoMesh
             query_nodes(limit, since: params["since"]).to_json
           end
 
+          app.get "/api/stats" do
+            content_type :json
+            {
+              active_nodes: query_active_node_stats,
+              sampled: false,
+            }.to_json
+          end
+
           app.get "/api/nodes/:id" do
             content_type :json
             node_ref = string_or_nil(params["id"])

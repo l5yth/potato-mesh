@@ -5664,6 +5664,47 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /api/stats" do
+    it "returns exact SQL-backed activity counts without list-endpoint sampling" do
+      clear_database
+      now = reference_time.to_i
+      allow(Time).to receive(:now).and_return(reference_time)
+
+      with_db do |db|
+        db.transaction
+        1005.times do |index|
+          heard = now - (index % 1800)
+          node_id = format("!%08x", index + 1)
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+            [node_id, index + 1, "n#{index}", "Node #{index}", "TBEAM", "CLIENT", heard, heard],
+          )
+        end
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!week0001", 200_001, "week", "Week Node", "TBEAM", "CLIENT", now - (2 * 86_400), now - (2 * 86_400)],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!month001", 200_002, "month", "Month Node", "TBEAM", "CLIENT", now - (20 * 86_400), now - (20 * 86_400)],
+        )
+        db.commit
+      end
+
+      get "/api/stats"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload["sampled"]).to eq(false)
+      expect(payload["active_nodes"]).to include(
+        "hour" => 1005,
+        "day" => 1005,
+        "week" => 1006,
+        "month" => 1007,
+      )
+    end
+  end
+
   describe "GET /api/messages" do
     it "returns the stored messages with canonical node references when encrypted messages are included" do
       import_nodes_fixture

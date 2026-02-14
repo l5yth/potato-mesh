@@ -739,6 +739,34 @@ module PotatoMesh
         [nil, errors]
       end
 
+      # Resolve the best matching active-node count from a remote /api/stats payload.
+      #
+      # @param payload [Hash, nil] decoded JSON payload from /api/stats.
+      # @param max_age_seconds [Integer] activity window currently expected for federation freshness.
+      # @return [Integer, nil] selected active-node count when available.
+      def remote_active_node_count_from_stats(payload, max_age_seconds:)
+        return nil unless payload.is_a?(Hash)
+
+        active_nodes = payload["active_nodes"]
+        return nil unless active_nodes.is_a?(Hash)
+
+        age = coerce_integer(max_age_seconds) || 0
+        key = if age <= 3600
+            "hour"
+          elsif age <= 86_400
+            "day"
+          elsif age <= PotatoMesh::Config.week_seconds
+            "week"
+          else
+            "month"
+          end
+
+        value = coerce_integer(active_nodes[key])
+        return nil unless value
+
+        [value, 0].max
+      end
+
       # Parse a remote federation instance payload into canonical attributes.
       #
       # @param payload [Hash] JSON object describing a remote instance.
@@ -1049,21 +1077,36 @@ module PotatoMesh
 
           attributes[:is_private] = false if attributes[:is_private].nil?
 
-          nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
-          nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
-          if nodes_since_window.is_a?(Array)
-            attributes[:nodes_count] = nodes_since_window.length
-          elsif nodes_since_metadata
-            warn_log(
-              "Failed to load remote node window",
-              context: "federation.instances",
-              domain: attributes[:domain],
-              reason: Array(nodes_since_metadata).map(&:to_s).join("; "),
-            )
-          end
+          stats_payload, stats_metadata = fetch_instance_json(attributes[:domain], "/api/stats")
+          stats_count = remote_active_node_count_from_stats(
+            stats_payload,
+            max_age_seconds: PotatoMesh::Config.remote_instance_max_node_age,
+          )
+          attributes[:nodes_count] = stats_count if stats_count
 
           remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
-          remote_nodes ||= nodes_since_window if nodes_since_window.is_a?(Array)
+          nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
+          nodes_since_window = nil
+          nodes_since_metadata = nil
+          unless remote_nodes
+            nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
+            remote_nodes = nodes_since_window if nodes_since_window.is_a?(Array)
+            if attributes[:nodes_count].nil? && nodes_since_window.is_a?(Array)
+              attributes[:nodes_count] = nodes_since_window.length
+            end
+          end
+          if attributes[:nodes_count].nil? && remote_nodes.is_a?(Array)
+            attributes[:nodes_count] = remote_nodes.length
+          end
+
+          if stats_count.nil? && stats_metadata && !stats_metadata.empty?
+            debug_log(
+              "Remote instance /api/stats unavailable; using node list fallback",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              reason: Array(stats_metadata).map(&:to_s).join("; "),
+            )
+          end
           unless remote_nodes
             warn_log(
               "Failed to load remote node data",

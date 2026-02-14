@@ -329,15 +329,17 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
     end
 
-    it "requests an expanded recent node window when counting remote activity" do
+    it "prefers /api/stats when counting remote activity" do
       now = Time.at(1_700_000_000)
       allow(Time).to receive(:now).and_return(now)
       allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
-      recent_cutoff = now.to_i - 900
 
       mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
       attributes_list.each_with_index do |attributes, index|
-        mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/stats"]] = [
+          { "active_nodes" => { "hour" => 5, "day" => 7, "week" => 9, "month" => 11 }, "sampled" => false },
+          :stats,
+        ]
         mapping[[attributes[:domain], NODES_API_PATH]] = [node_payload, :nodes]
         mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
         allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(payload_entries[index]).and_return([attributes, "signature-#{index}", nil])
@@ -355,9 +357,46 @@ RSpec.describe PotatoMesh::App::Federation do
       federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
-        [attributes_list[1][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
-        [attributes_list[2][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
+        [attributes_list[0][:domain], "/api/stats"],
+        [attributes_list[1][:domain], "/api/stats"],
+        [attributes_list[2][:domain], "/api/stats"],
+      )
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], NODES_API_PATH],
+        [attributes_list[1][:domain], NODES_API_PATH],
+        [attributes_list[2][:domain], NODES_API_PATH],
+      )
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(5))
+    end
+
+    it "falls back to /api/nodes when /api/stats is unavailable" do
+      now = Time.at(1_700_000_000)
+      allow(Time).to receive(:now).and_return(now)
+      allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
+
+      mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
+      attributes_list.each_with_index do |attributes, index|
+        mapping[[attributes[:domain], "/api/stats"]] = [nil, ["stats unavailable"]]
+        mapping[[attributes[:domain], NODES_API_PATH]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
+        allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(payload_entries[index]).and_return([attributes, "signature-#{index}", nil])
+      end
+
+      captured_paths = []
+      allow(federation_helpers).to receive(:fetch_instance_json) do |host, path|
+        captured_paths << [host, path]
+        mapping.fetch([host, path]) { [nil, []] }
+      end
+      allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
+      allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
+      allow(federation_helpers).to receive(:upsert_instance_record)
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], "/api/stats"],
+        [attributes_list[1][:domain], "/api/stats"],
+        [attributes_list[2][:domain], "/api/stats"],
       )
       expect(captured_paths).to include(
         [attributes_list[0][:domain], NODES_API_PATH],
@@ -365,39 +404,6 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[2][:domain], NODES_API_PATH],
       )
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
-    end
-
-    it "falls back to full node data when the recent window request fails" do
-      now = Time.at(1_700_000_000)
-      allow(Time).to receive(:now).and_return(now)
-      allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
-      recent_cutoff = now.to_i - 900
-
-      mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
-      attributes_list.each_with_index do |attributes, index|
-        mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = [nil, ["no window"]]
-        mapping[[attributes[:domain], NODES_API_PATH]] = [node_payload, :nodes]
-        mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
-        allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(payload_entries[index]).and_return([attributes, "signature-#{index}", nil])
-      end
-
-      captured_paths = []
-      allow(federation_helpers).to receive(:fetch_instance_json) do |host, path|
-        captured_paths << [host, path]
-        mapping.fetch([host, path]) { [nil, []] }
-      end
-      allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
-      allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
-      allow(federation_helpers).to receive(:upsert_instance_record)
-
-      federation_helpers.ingest_known_instances_from!(db, seed_domain)
-
-      expect(captured_paths).to include(
-        [attributes_list[0][:domain], NODES_API_PATH],
-        [attributes_list[1][:domain], NODES_API_PATH],
-        [attributes_list[2][:domain], NODES_API_PATH],
-      )
-      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(be_nil)
     end
 
     it "falls back to recent node window when full node data is unavailable" do
@@ -408,6 +414,7 @@ RSpec.describe PotatoMesh::App::Federation do
 
       mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
       attributes_list.each_with_index do |attributes, index|
+        mapping[[attributes[:domain], "/api/stats"]] = [nil, ["stats unavailable"]]
         mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = [node_payload, :nodes]
         mapping[[attributes[:domain], NODES_API_PATH]] = [nil, ["full data unavailable"]]
         mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]

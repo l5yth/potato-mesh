@@ -127,6 +127,43 @@ module PotatoMesh
         [threshold, floor].max
       end
 
+      # Return exact active-node counts across common activity windows.
+      #
+      # Counts are resolved directly in SQL with COUNT(*) thresholds against
+      # +nodes.last_heard+ to avoid sampling bias from list endpoint limits.
+      #
+      # @param now [Integer] reference unix timestamp in seconds.
+      # @param db [SQLite3::Database, nil] optional open database handle to reuse.
+      # @return [Hash{String => Integer}] counts keyed by hour/day/week/month.
+      def query_active_node_stats(now: Time.now.to_i, db: nil)
+        handle = db || open_database(readonly: true)
+        handle.results_as_hash = true
+        reference_now = coerce_integer(now) || Time.now.to_i
+        hour_cutoff = reference_now - 3600
+        day_cutoff = reference_now - 86_400
+        week_cutoff = reference_now - PotatoMesh::Config.week_seconds
+        month_cutoff = reference_now - (30 * 24 * 60 * 60)
+        private_filter = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        sql = <<~SQL
+          SELECT
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS hour_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS day_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS week_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS month_count
+        SQL
+        row = with_busy_retry do
+          handle.get_first_row(sql, [hour_cutoff, day_cutoff, week_cutoff, month_cutoff])
+        end || {}
+        {
+          "hour" => row["hour_count"].to_i,
+          "day" => row["day_count"].to_i,
+          "week" => row["week_count"].to_i,
+          "month" => row["month_count"].to_i,
+        }
+      ensure
+        handle&.close unless db
+      end
+
       def node_reference_tokens(node_ref)
         parts = canonical_node_parts(node_ref)
         canonical_id, numeric_id = parts ? parts[0, 2] : [nil, nil]
