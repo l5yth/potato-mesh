@@ -406,7 +406,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "stores and clears the initial federation thread" do
       delay = 3
       allow(PotatoMesh::Config).to receive(:initial_federation_delay_seconds).and_return(delay)
-      expect(Kernel).to receive(:sleep).with(delay)
+      expect(app).to receive(:federation_sleep_with_shutdown).with(delay).and_return(true)
       expect(app).to receive(:announce_instance_to_all_domains)
       allow(Thread).to receive(:new) do |&block|
         dummy_thread.block = block
@@ -4636,10 +4636,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "SELECT hop_index, node_id FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
           [900_004],
         )
+        hop_node_ids = hop_rows.map do |row|
+          if row.is_a?(Hash)
+            row["node_id"] || row[:node_id] || row[1]
+          else
+            row[1]
+          end
+        end
 
         expect(trace_row["id"]).to eq(900_004)
         expect(trace_row["dest"]).to eq(4)
-        expect(hop_rows.map { |row| row[1] }).to eq([1, 2, 3, 4])
+        expect(hop_node_ids).to eq([1, 2, 3, 4])
       end
     end
 

@@ -139,7 +139,10 @@ module PotatoMesh
       set :public_folder, File.expand_path("../../public", __dir__)
       set :views, File.expand_path("../../views", __dir__)
       set :federation_thread, nil
+      set :initial_federation_thread, nil
       set :federation_worker_pool, nil
+      set :federation_shutdown_requested, false
+      set :federation_shutdown_hook_installed, false
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
 

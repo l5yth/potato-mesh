@@ -29,7 +29,6 @@ if SCRIPT_DIR in sys.path:
 from google.protobuf.json_format import MessageToDict
 from meshtastic.protobuf import mesh_pb2, telemetry_pb2
 
-
 PORTNUM_MAP: Dict[int, Tuple[str, Any]] = {
     3: ("POSITION_APP", mesh_pb2.Position),
     4: ("NODEINFO_APP", mesh_pb2.NodeInfo),
