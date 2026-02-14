@@ -556,20 +556,28 @@ function buildPrimaryBucketKey(primaryChannelLabel) {
 function buildSecondaryNameBucketKey(index, labelInfo) {
   const label = labelInfo?.label ?? null;
   const priority = labelInfo?.priority ?? CHANNEL_LABEL_PRIORITY.INDEX;
-  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
-  if (safeIndex <= 0 || priority !== CHANNEL_LABEL_PRIORITY.NAME || !label) {
+  if (!Number.isFinite(index) || index <= 0 || priority !== CHANNEL_LABEL_PRIORITY.NAME || !label) {
     return null;
   }
   const trimmedLabel = label.trim().toLowerCase();
   if (!trimmedLabel.length) {
     return null;
   }
-  return `secondary::${safeIndex}::${trimmedLabel}`;
+  return `secondary-name::${trimmedLabel}`;
 }
 
 function buildChannelTabId(bucketKey) {
   if (bucketKey === '0') {
     return 'channel-0';
+  }
+  const secondaryNameParts = /^secondary-name::(.+)$/.exec(String(bucketKey));
+  if (secondaryNameParts) {
+    const secondaryLabelSlug = slugify(secondaryNameParts[1]);
+    const secondaryHash = hashChannelKey(bucketKey);
+    if (secondaryLabelSlug) {
+      return `channel-secondary-name-${secondaryLabelSlug}-${secondaryHash}`;
+    }
+    return `channel-secondary-name-${secondaryHash}`;
   }
   const secondaryParts = /^secondary::(\d+)::(.+)$/.exec(String(bucketKey));
   if (secondaryParts) {
