@@ -4636,10 +4636,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "SELECT hop_index, node_id FROM trace_hops WHERE trace_id = ? ORDER BY hop_index",
           [900_004],
         )
+        hop_node_ids = hop_rows.map do |row|
+          if row.is_a?(Hash)
+            row["node_id"] || row[:node_id] || row[1]
+          else
+            row[1]
+          end
+        end
 
         expect(trace_row["id"]).to eq(900_004)
         expect(trace_row["dest"]).to eq(4)
-        expect(hop_rows.map { |row| row[1] }).to eq([1, 2, 3, 4])
+        expect(hop_node_ids).to eq([1, 2, 3, 4])
       end
     end
 

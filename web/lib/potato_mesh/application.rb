@@ -142,6 +142,7 @@ module PotatoMesh
       set :initial_federation_thread, nil
       set :federation_worker_pool, nil
       set :federation_shutdown_requested, false
+      set :federation_shutdown_hook_installed, false
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
 

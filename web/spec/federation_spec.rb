@@ -58,6 +58,7 @@ RSpec.describe PotatoMesh::App::Federation do
             :initial_federation_thread,
             :federation_worker_pool,
             :federation_shutdown_requested,
+            :federation_shutdown_hook_installed,
           ).new
         end
 
@@ -355,7 +356,7 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[1][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
         [attributes_list[2][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
       )
-      expect(captured_paths).not_to include(
+      expect(captured_paths).to include(
         [attributes_list[0][:domain], "/api/nodes"],
         [attributes_list[1][:domain], "/api/nodes"],
         [attributes_list[2][:domain], "/api/nodes"],
@@ -394,6 +395,32 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[2][:domain], "/api/nodes"],
       )
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(be_nil)
+    end
+
+    it "falls back to recent node window when full node data is unavailable" do
+      now = Time.at(1_700_000_000)
+      allow(Time).to receive(:now).and_return(now)
+      allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
+      recent_cutoff = now.to_i - 900
+
+      mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
+      attributes_list.each_with_index do |attributes, index|
+        mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/nodes"]] = [nil, ["full data unavailable"]]
+        mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
+        allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(payload_entries[index]).and_return([attributes, "signature-#{index}", nil])
+      end
+
+      allow(federation_helpers).to receive(:fetch_instance_json) do |host, path|
+        mapping.fetch([host, path]) { [nil, []] }
+      end
+      allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
+      allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
+      allow(federation_helpers).to receive(:upsert_instance_record)
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
     end
   end
 
@@ -696,6 +723,14 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers.ensure_federation_worker_pool!).to be_nil
     end
 
+    it "returns nil when federation shutdown has been requested" do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      federation_helpers.request_federation_shutdown!
+
+      expect(federation_helpers.ensure_federation_worker_pool!).to be_nil
+      expect(federation_helpers.send(:settings).federation_worker_pool).to be_nil
+    end
+
     it "creates and memoizes the worker pool" do
       allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
 
@@ -705,6 +740,27 @@ RSpec.describe PotatoMesh::App::Federation do
     ensure
       pool&.shutdown(timeout: 0.05)
       federation_helpers.set(:federation_worker_pool, nil)
+    end
+  end
+
+  describe ".ensure_federation_shutdown_hook!" do
+    it "registers a single at_exit hook when called repeatedly" do
+      allow(federation_helpers).to receive(:at_exit)
+
+      federation_helpers.ensure_federation_shutdown_hook!
+      federation_helpers.ensure_federation_shutdown_hook!
+
+      expect(federation_helpers).to have_received(:at_exit).once
+      expect(federation_helpers.send(:settings).federation_shutdown_hook_installed).to be(true)
+    end
+
+    it "delegates hook installation from instances to the application class" do
+      class_with_instance = Class.new do
+        include PotatoMesh::App::Federation
+      end
+
+      expect(class_with_instance).to receive(:ensure_federation_shutdown_hook!).once
+      class_with_instance.new.ensure_federation_shutdown_hook!
     end
   end
 

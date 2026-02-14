@@ -172,7 +172,8 @@ module PotatoMesh
       # @return [PotatoMesh::App::WorkerPool, nil] active worker pool if created.
       def ensure_federation_worker_pool!
         return nil unless federation_enabled?
-        clear_federation_shutdown_request!
+        return nil if federation_shutdown_requested?
+
         ensure_federation_shutdown_hook!
 
         existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
@@ -193,12 +194,25 @@ module PotatoMesh
       #
       # @return [void]
       def ensure_federation_shutdown_hook!
-        return if instance_variable_defined?(:@federation_shutdown_hook_installed) && @federation_shutdown_hook_installed
+        application = is_a?(Class) ? self : self.class
+        return application.ensure_federation_shutdown_hook! unless application.equal?(self)
 
-        @federation_shutdown_hook_installed = true
+        installed = if respond_to?(:settings) && settings.respond_to?(:federation_shutdown_hook_installed)
+            settings.federation_shutdown_hook_installed
+          else
+            instance_variable_defined?(:@federation_shutdown_hook_installed) && @federation_shutdown_hook_installed
+          end
+        return if installed
+
+        if respond_to?(:set) && settings.respond_to?(:federation_shutdown_hook_installed=)
+          set(:federation_shutdown_hook_installed, true)
+        else
+          @federation_shutdown_hook_installed = true
+        end
+
         at_exit do
           begin
-            shutdown_federation_background_work!(timeout: PotatoMesh::Config.federation_shutdown_timeout_seconds)
+            application.shutdown_federation_background_work!(timeout: PotatoMesh::Config.federation_shutdown_timeout_seconds)
           rescue StandardError
             # Suppress shutdown errors during interpreter teardown.
           end
@@ -1038,13 +1052,8 @@ module PotatoMesh
             )
           end
 
-          remote_nodes = nil
-          node_metadata = nil
-          if nodes_since_window.is_a?(Array)
-            remote_nodes = nodes_since_window
-          else
-            remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
-          end
+          remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
+          remote_nodes ||= nodes_since_window if nodes_since_window.is_a?(Array)
           unless remote_nodes
             warn_log(
               "Failed to load remote node data",
