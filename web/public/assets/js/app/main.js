@@ -2910,6 +2910,11 @@ export function initializeApp(config) {
    * @returns {HTMLElement} Chat log element.
    */
   function createMessageChatEntry(m) {
+    const plainText = m && m.text != null ? String(m.text).trim() : '';
+    if (plainText === 'GAA=') {
+      return null;
+    }
+
     const div = document.createElement('div');
     const tsSeconds = resolveTimestampSeconds(
       m.rx_time ?? m.rxTime,
