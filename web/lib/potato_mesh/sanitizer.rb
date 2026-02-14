@@ -26,6 +26,9 @@ module PotatoMesh
   module Sanitizer
     module_function
 
+    SANITIZED_STATIC_TAGS = %w[p h1 h2 h3 ul ol li].freeze
+    SANITIZED_ALLOWED_TAGS = (SANITIZED_STATIC_TAGS + ["a"]).freeze
+
     # Coerce an arbitrary value into a trimmed string unless the content is
     # empty.
     #
@@ -254,19 +257,78 @@ module PotatoMesh
     # @param html [Object] generated HTML string.
     # @return [String] sanitized HTML safe for rendering in templates.
     def sanitize_rendered_html(html)
-      value = html.to_s.dup
-      value.gsub!(%r{<\s*(script|style|iframe|object|embed)[^>]*>.*?<\s*/\s*\1\s*>}mi, "")
-      value.gsub!(%r{<\s*(?!/?(?:p|h1|h2|h3|ul|ol|li|a)\b)[^>]*>}mi, "")
-      value.gsub!(%r{<\s*a\b[^>]*>}mi) do |tag|
-        href = tag[/\bhref\s*=\s*(['"])(.*?)\1/i, 2].to_s.strip
-        if href.match?(/\Ahttps?:\/\/[^\s]+\z/i)
-          %(<a href="#{Rack::Utils.escape_html(href)}" target="_blank" rel="noreferrer noopener">)
-        else
-          "<a>"
+      source = html.to_s
+      output = +""
+      cursor = 0
+
+      while cursor < source.length
+        open_index = source.index("<", cursor)
+        unless open_index
+          output << Rack::Utils.escape_html(source[cursor..].to_s)
+          break
         end
+
+        output << Rack::Utils.escape_html(source[cursor...open_index].to_s)
+        close_index = source.index(">", open_index + 1)
+        unless close_index
+          output << Rack::Utils.escape_html(source[open_index..].to_s)
+          break
+        end
+
+        token = source[open_index..close_index]
+        output << sanitize_html_tag_token(token)
+        cursor = close_index + 1
       end
-      value.gsub!(%r{<\s*/\s*a\s*>}mi, "</a>")
-      value
+
+      output
+    end
+
+    # Sanitize a raw HTML tag token by rebuilding only allowlisted tags.
+    #
+    # @param token [String] raw token including surrounding angle brackets.
+    # @return [String] sanitized token or escaped literal text.
+    def sanitize_html_tag_token(token)
+      inner = token[1..-2].to_s.strip
+      return Rack::Utils.escape_html(token) if inner.empty?
+
+      if inner.start_with?("/")
+        name = inner[1..].to_s.strip.downcase
+        return "</#{name}>" if SANITIZED_ALLOWED_TAGS.include?(name) && name.match?(/\A[a-z0-9]+\z/)
+
+        return Rack::Utils.escape_html(token)
+      end
+
+      name, attributes = inner.split(/\s+/, 2)
+      tag_name = name.to_s.downcase
+      return "<#{tag_name}>" if SANITIZED_STATIC_TAGS.include?(tag_name) && attributes.nil?
+      return sanitized_anchor_open_tag(attributes.to_s) if tag_name == "a"
+
+      Rack::Utils.escape_html(token)
+    end
+
+    # Build a safe canonical anchor opening tag from arbitrary raw attributes.
+    #
+    # @param raw_attributes [String] source attributes from the original token.
+    # @return [String] safe anchor opening tag.
+    def sanitized_anchor_open_tag(raw_attributes)
+      href = extract_sanitized_anchor_href(raw_attributes)
+      return "<a>" unless href
+
+      %(<a href="#{Rack::Utils.escape_html(href)}" target="_blank" rel="noreferrer noopener">)
+    end
+
+    # Extract a validated HTTP/HTTPS href from an anchor attribute string.
+    #
+    # @param raw_attributes [String] source attributes from an anchor tag.
+    # @return [String, nil] validated href when present and safe.
+    def extract_sanitized_anchor_href(raw_attributes)
+      match = raw_attributes.to_s.match(/\bhref\s*=\s*(['"])(.*?)\1/i)
+      return nil unless match
+
+      href = match[2].to_s.strip
+      return nil unless href.match?(/\Ahttps?:\/\/[^\s]+\z/i)
+
+      href
     end
   end
 end

@@ -1258,6 +1258,73 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "content rendering helpers" do
+    describe "PotatoMesh::App::Content::MdxPage" do
+      let(:mdx_page) { PotatoMesh::App::Content::MdxPage }
+
+      it "returns empty metadata for invalid YAML frontmatter" do
+        metadata = mdx_page.parse_metadata("title: [")
+        expect(metadata).to eq({})
+      end
+
+      it "returns empty metadata when parsed YAML is not a hash" do
+        metadata = mdx_page.parse_metadata("- one\n- two\n")
+        expect(metadata).to eq({})
+      end
+
+      it "extracts frontmatter and strips leading comments" do
+        content = <<~MDX
+          <!-- header comment -->
+          ---
+          title: Example
+          contact: contact@example.org
+          ---
+          ## Hello
+        MDX
+
+        metadata, body = mdx_page.extract_frontmatter(content)
+        expect(metadata).to include("title" => "Example", "contact" => "contact@example.org")
+        expect(body).to include("## Hello")
+      end
+
+      it "renders markdown and keeps non-http markdown links as escaped text" do
+        html = mdx_page.markdown_to_html("## Heading\n- one\n- [unsafe](ftp://example.org)")
+        expect(html).to include("<h2>Heading</h2>")
+        expect(html).to include("<ul>")
+        expect(html).to include("[unsafe](ftp://example.org)")
+      end
+
+      it "falls back when reading a source file raises a permissions error" do
+        allow(mdx_page).to receive(:source_path_for).with("imprint").and_return("/tmp/imprint.mdx")
+        allow(File).to receive(:file?).with("/tmp/imprint.mdx").and_return(true)
+        allow(File).to receive(:readable?).with("/tmp/imprint.mdx").and_return(true)
+        allow(File).to receive(:read).with("/tmp/imprint.mdx").and_raise(Errno::EACCES)
+
+        payload = mdx_page.load("imprint")
+        expect(payload["found"]).to eq(false)
+        expect(payload["title"]).to eq("Imprint")
+      end
+    end
+
+    describe "#sanitize_rendered_html" do
+      it "escapes incomplete tags and unsupported tokens while preserving allowed tags" do
+        html = PotatoMesh::Sanitizer.sanitize_rendered_html("<p>Hello<script>x</script><strong>no</strong><")
+        expect(html).to include("<p>Hello")
+        expect(html).to include("&lt;script&gt;x&lt;/script&gt;")
+        expect(html).to include("&lt;strong&gt;no&lt;/strong&gt;")
+        expect(html).to include("&lt;")
+      end
+
+      it "normalizes safe anchors and degrades unsafe href values" do
+        safe = PotatoMesh::Sanitizer.sanitize_rendered_html('<a href="https://example.org">ok</a>')
+        unsafe = PotatoMesh::Sanitizer.sanitize_rendered_html('<a href="javascript:alert(1)">bad</a>')
+        expect(safe).to include('href="https://example.org"')
+        expect(safe).to include('rel="noreferrer noopener"')
+        expect(unsafe).to include("<a>bad</a>")
+      end
+    end
+  end
+
   describe "GET /potatomesh-logo.svg" do
     it "serves the cached SVG asset when present" do
       get "/potatomesh-logo.svg"
