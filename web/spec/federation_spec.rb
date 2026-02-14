@@ -57,6 +57,7 @@ RSpec.describe PotatoMesh::App::Federation do
             :federation_thread,
             :initial_federation_thread,
             :federation_worker_pool,
+            :federation_shutdown_requested,
           ).new
         end
 
@@ -77,10 +78,12 @@ RSpec.describe PotatoMesh::App::Federation do
     federation_helpers.instance_variable_set(:@remote_instance_verify_callback, nil)
     federation_helpers.reset_debug_messages
     federation_helpers.reset_warn_messages
+    federation_helpers.clear_federation_crawl_state!
     federation_helpers.shutdown_federation_worker_pool!
   end
 
   after do
+    federation_helpers.clear_federation_crawl_state!
     federation_helpers.shutdown_federation_worker_pool!
   end
 
@@ -352,7 +355,45 @@ RSpec.describe PotatoMesh::App::Federation do
         [attributes_list[1][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
         [attributes_list[2][:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"],
       )
+      expect(captured_paths).not_to include(
+        [attributes_list[0][:domain], "/api/nodes"],
+        [attributes_list[1][:domain], "/api/nodes"],
+        [attributes_list[2][:domain], "/api/nodes"],
+      )
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
+    end
+
+    it "falls back to full node data when the recent window request fails" do
+      now = Time.at(1_700_000_000)
+      allow(Time).to receive(:now).and_return(now)
+      allow(PotatoMesh::Config).to receive(:remote_instance_max_node_age).and_return(900)
+      recent_cutoff = now.to_i - 900
+
+      mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
+      attributes_list.each_with_index do |attributes, index|
+        mapping[[attributes[:domain], "/api/nodes?since=#{recent_cutoff}&limit=1000"]] = [nil, ["no window"]]
+        mapping[[attributes[:domain], "/api/nodes"]] = [node_payload, :nodes]
+        mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
+        allow(federation_helpers).to receive(:remote_instance_attributes_from_payload).with(payload_entries[index]).and_return([attributes, "signature-#{index}", nil])
+      end
+
+      captured_paths = []
+      allow(federation_helpers).to receive(:fetch_instance_json) do |host, path|
+        captured_paths << [host, path]
+        mapping.fetch([host, path]) { [nil, []] }
+      end
+      allow(federation_helpers).to receive(:verify_instance_signature).and_return(true)
+      allow(federation_helpers).to receive(:validate_remote_nodes).and_return([true, nil])
+      allow(federation_helpers).to receive(:upsert_instance_record)
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], "/api/nodes"],
+        [attributes_list[1][:domain], "/api/nodes"],
+        [attributes_list[2][:domain], "/api/nodes"],
+      )
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(be_nil)
     end
   end
 
@@ -683,6 +724,10 @@ RSpec.describe PotatoMesh::App::Federation do
   describe ".enqueue_federation_crawl" do
     let(:pool) { instance_double(PotatoMesh::App::WorkerPool) }
 
+    before do
+      allow(PotatoMesh::Config).to receive(:federation_crawl_cooldown_seconds).and_return(300)
+    end
+
     it "returns false and logs when the pool is unavailable" do
       allow(federation_helpers).to receive(:federation_worker_pool).and_return(nil)
 
@@ -765,6 +810,63 @@ RSpec.describe PotatoMesh::App::Federation do
       )
 
       expect(result).to be(false)
+    end
+
+    it "deduplicates crawls while a domain crawl is already in flight" do
+      db = instance_double(SQLite3::Database)
+      allow(db).to receive(:close)
+      captured_job = nil
+
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule) do |&block|
+        captured_job = block
+        instance_double(PotatoMesh::App::WorkerPool::Task)
+      end
+      allow(federation_helpers).to receive(:open_database).and_return(db)
+      allow(federation_helpers).to receive(:ingest_known_instances_from!)
+
+      first = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+      second = federation_helpers.enqueue_federation_crawl(
+        "remote.mesh",
+        per_response_limit: 5,
+        overall_limit: 9,
+      )
+
+      expect(first).to be(true)
+      expect(second).to be(false)
+      expect(captured_job).not_to be_nil
+      captured_job.call
+      expect(db).to have_received(:close)
+    end
+  end
+
+  describe ".shutdown_federation_background_work!" do
+    it "marks shutdown and clears announcer references" do
+      initial_thread = instance_double(Thread)
+      recurring_thread = instance_double(Thread)
+      pool = instance_double(PotatoMesh::App::WorkerPool)
+      allow(PotatoMesh::Config).to receive(:federation_shutdown_timeout_seconds).and_return(0.05)
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(0.05)
+
+      [initial_thread, recurring_thread].each do |thread|
+        allow(thread).to receive(:alive?).and_return(false)
+      end
+      allow(pool).to receive(:shutdown)
+
+      federation_helpers.set(:initial_federation_thread, initial_thread)
+      federation_helpers.set(:federation_thread, recurring_thread)
+      federation_helpers.set(:federation_worker_pool, pool)
+
+      federation_helpers.shutdown_federation_background_work!
+
+      expect(federation_helpers.federation_shutdown_requested?).to be(true)
+      expect(federation_helpers.send(:settings).initial_federation_thread).to be_nil
+      expect(federation_helpers.send(:settings).federation_thread).to be_nil
+      expect(federation_helpers.send(:settings).federation_worker_pool).to be_nil
     end
   end
 

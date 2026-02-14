@@ -239,6 +239,30 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".remote_instance_request_timeout" do
+    it "returns the baked-in request timeout when unset" do
+      within_env("REMOTE_INSTANCE_REQUEST_TIMEOUT" => nil) do
+        expect(described_class.remote_instance_request_timeout).to eq(
+          PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_REQUEST_TIMEOUT,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("REMOTE_INSTANCE_REQUEST_TIMEOUT" => "19") do
+        expect(described_class.remote_instance_request_timeout).to eq(19)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("REMOTE_INSTANCE_REQUEST_TIMEOUT" => "0") do
+        expect(described_class.remote_instance_request_timeout).to eq(
+          PotatoMesh::Config::DEFAULT_REMOTE_INSTANCE_REQUEST_TIMEOUT,
+        )
+      end
+    end
+  end
+
   describe ".federation_max_instances_per_response" do
     it "returns the baked-in response limit when unset" do
       within_env("FEDERATION_MAX_INSTANCES_PER_RESPONSE" => nil) do
@@ -354,6 +378,54 @@ RSpec.describe PotatoMesh::Config do
       within_env("FEDERATION_TASK_TIMEOUT" => "-7") do
         expect(described_class.federation_task_timeout_seconds).to eq(
           PotatoMesh::Config::DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS,
+        )
+      end
+    end
+  end
+
+  describe ".federation_shutdown_timeout_seconds" do
+    it "returns the default shutdown timeout when unset" do
+      within_env("FEDERATION_SHUTDOWN_TIMEOUT" => nil) do
+        expect(described_class.federation_shutdown_timeout_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_SHUTDOWN_TIMEOUT" => "9") do
+        expect(described_class.federation_shutdown_timeout_seconds).to eq(9)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_SHUTDOWN_TIMEOUT" => "-1") do
+        expect(described_class.federation_shutdown_timeout_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS,
+        )
+      end
+    end
+  end
+
+  describe ".federation_crawl_cooldown_seconds" do
+    it "returns the default crawl cooldown when unset" do
+      within_env("FEDERATION_CRAWL_COOLDOWN" => nil) do
+        expect(described_class.federation_crawl_cooldown_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("FEDERATION_CRAWL_COOLDOWN" => "17") do
+        expect(described_class.federation_crawl_cooldown_seconds).to eq(17)
+      end
+    end
+
+    it "rejects invalid overrides" do
+      within_env("FEDERATION_CRAWL_COOLDOWN" => "0") do
+        expect(described_class.federation_crawl_cooldown_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS,
         )
       end
     end

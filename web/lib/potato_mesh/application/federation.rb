@@ -17,6 +17,8 @@
 module PotatoMesh
   module App
     module Federation
+      FEDERATION_SLEEP_SLICE_SECONDS = 0.2
+
       # Resolve the canonical domain for the running instance.
       #
       # @return [String, nil] sanitized instance domain or nil outside production.
@@ -170,6 +172,8 @@ module PotatoMesh
       # @return [PotatoMesh::App::WorkerPool, nil] active worker pool if created.
       def ensure_federation_worker_pool!
         return nil unless federation_enabled?
+        clear_federation_shutdown_request!
+        ensure_federation_shutdown_hook!
 
         existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
         return existing if existing&.alive?
@@ -181,16 +185,64 @@ module PotatoMesh
           name: "potato-mesh-fed",
         )
 
+        set(:federation_worker_pool, pool) if respond_to?(:set)
+        pool
+      end
+
+      # Ensure federation background workers are torn down during process exit.
+      #
+      # @return [void]
+      def ensure_federation_shutdown_hook!
+        return if instance_variable_defined?(:@federation_shutdown_hook_installed) && @federation_shutdown_hook_installed
+
+        @federation_shutdown_hook_installed = true
         at_exit do
           begin
-            pool.shutdown(timeout: PotatoMesh::Config.federation_task_timeout_seconds)
+            shutdown_federation_background_work!(timeout: PotatoMesh::Config.federation_shutdown_timeout_seconds)
           rescue StandardError
             # Suppress shutdown errors during interpreter teardown.
           end
         end
+      end
 
-        set(:federation_worker_pool, pool) if respond_to?(:set)
-        pool
+      # Check whether federation workers have received a shutdown request.
+      #
+      # @return [Boolean] true when stop has been requested.
+      def federation_shutdown_requested?
+        return false unless respond_to?(:settings)
+        return false unless settings.respond_to?(:federation_shutdown_requested)
+
+        settings.federation_shutdown_requested == true
+      end
+
+      # Mark federation background work as shutting down.
+      #
+      # @return [void]
+      def request_federation_shutdown!
+        set(:federation_shutdown_requested, true) if respond_to?(:set)
+      end
+
+      # Clear any previously requested federation shutdown marker.
+      #
+      # @return [void]
+      def clear_federation_shutdown_request!
+        set(:federation_shutdown_requested, false) if respond_to?(:set)
+      end
+
+      # Sleep in short intervals so federation loops can react to shutdown.
+      #
+      # @param seconds [Numeric] target sleep duration.
+      # @return [Boolean] true when the full delay elapsed without shutdown.
+      def federation_sleep_with_shutdown(seconds)
+        remaining = seconds.to_f
+        while remaining.positive?
+          return false if federation_shutdown_requested?
+
+          slice = [remaining, FEDERATION_SLEEP_SLICE_SECONDS].min
+          Kernel.sleep(slice)
+          remaining -= slice
+        end
+        !federation_shutdown_requested?
       end
 
       # Shutdown and clear the federation worker pool if present.
@@ -212,6 +264,44 @@ module PotatoMesh
         ensure
           set(:federation_worker_pool, nil) if respond_to?(:set)
         end
+      end
+
+      # Gracefully terminate federation background loops and worker pool tasks.
+      #
+      # @param timeout [Numeric, nil] maximum join time applied per thread.
+      # @return [void]
+      def shutdown_federation_background_work!(timeout: nil)
+        request_federation_shutdown!
+        timeout_value = timeout || PotatoMesh::Config.federation_shutdown_timeout_seconds
+        stop_federation_thread!(:initial_federation_thread, timeout: timeout_value)
+        stop_federation_thread!(:federation_thread, timeout: timeout_value)
+        shutdown_federation_worker_pool!
+        clear_federation_crawl_state!
+      end
+
+      # Stop a specific federation thread setting and clear its reference.
+      #
+      # @param setting_name [Symbol] settings key storing the thread object.
+      # @param timeout [Numeric] seconds to wait for clean thread exit.
+      # @return [void]
+      def stop_federation_thread!(setting_name, timeout:)
+        return unless respond_to?(:settings)
+        return unless settings.respond_to?(setting_name)
+
+        thread = settings.public_send(setting_name)
+        if thread&.alive?
+          begin
+            thread.wakeup if thread.respond_to?(:wakeup)
+          rescue ThreadError
+            # The thread may not currently be sleeping; continue shutdown.
+          end
+          thread.join(timeout)
+          if thread.alive?
+            thread.kill
+            thread.join(0.1)
+          end
+        end
+        set(setting_name, nil) if respond_to?(:set)
       end
 
       def federation_target_domains(self_domain)
@@ -265,16 +355,21 @@ module PotatoMesh
 
       def announce_instance_to_domain(domain, payload_json)
         return false unless domain && !domain.empty?
+        return false if federation_shutdown_requested?
 
         https_failures = []
 
         instance_uri_candidates(domain, "/api/instances").each do |uri|
+          return false if federation_shutdown_requested?
+
           begin
             http = build_remote_http_client(uri)
-            response = http.start do |connection|
-              request = build_federation_http_request(Net::HTTP::Post, uri)
-              request.body = payload_json
-              connection.request(request)
+            response = Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
+              http.start do |connection|
+                request = build_federation_http_request(Net::HTTP::Post, uri)
+                request.body = payload_json
+                connection.request(request)
+              end
             end
             if response.is_a?(Net::HTTPSuccess)
               debug_log(
@@ -342,6 +437,7 @@ module PotatoMesh
 
       def announce_instance_to_all_domains
         return unless federation_enabled?
+        return if federation_shutdown_requested?
 
         attributes, signature = ensure_self_instance_record!
         payload_json = JSON.generate(instance_announcement_payload(attributes, signature))
@@ -350,6 +446,8 @@ module PotatoMesh
         scheduled = []
 
         domains.each do |domain|
+          break if federation_shutdown_requested?
+
           if pool
             begin
               task = pool.schedule do
@@ -397,6 +495,8 @@ module PotatoMesh
 
         timeout = PotatoMesh::Config.federation_task_timeout_seconds
         scheduled.each do |domain, task|
+          break if federation_shutdown_requested?
+
           begin
             task.wait(timeout: timeout)
           rescue PotatoMesh::App::WorkerPool::TaskTimeoutError => e
@@ -423,13 +523,16 @@ module PotatoMesh
       def start_federation_announcer!
         # Federation broadcasts must not execute when federation support is disabled.
         return nil unless federation_enabled?
+        clear_federation_shutdown_request!
+        ensure_federation_shutdown_hook!
 
         existing = settings.federation_thread
         return existing if existing&.alive?
 
         thread = Thread.new do
           loop do
-            sleep PotatoMesh::Config.federation_announcement_interval
+            break unless federation_sleep_with_shutdown(PotatoMesh::Config.federation_announcement_interval)
+
             begin
               announce_instance_to_all_domains
             rescue StandardError => e
@@ -455,6 +558,8 @@ module PotatoMesh
       def start_initial_federation_announcement!
         # Skip the initial broadcast entirely when federation is disabled.
         return nil unless federation_enabled?
+        clear_federation_shutdown_request!
+        ensure_federation_shutdown_hook!
 
         existing = settings.respond_to?(:initial_federation_thread) ? settings.initial_federation_thread : nil
         return existing if existing&.alive?
@@ -462,7 +567,12 @@ module PotatoMesh
         thread = Thread.new do
           begin
             delay = PotatoMesh::Config.initial_federation_delay_seconds
-            Kernel.sleep(delay) if delay.positive?
+            if delay.positive?
+              completed = federation_sleep_with_shutdown(delay)
+              next unless completed
+            end
+            next if federation_shutdown_requested?
+
             announce_instance_to_all_domains
           rescue StandardError => e
             warn_log(
@@ -523,15 +633,19 @@ module PotatoMesh
       end
 
       def perform_instance_http_request(uri)
+        raise InstanceFetchError, "federation shutdown requested" if federation_shutdown_requested?
+
         http = build_remote_http_client(uri)
-        http.start do |connection|
-          request = build_federation_http_request(Net::HTTP::Get, uri)
-          response = connection.request(request)
-          case response
-          when Net::HTTPSuccess
-            response.body
-          else
-            raise InstanceFetchError, "unexpected response #{response.code}"
+        Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
+          http.start do |connection|
+            request = build_federation_http_request(Net::HTTP::Get, uri)
+            response = connection.request(request)
+            case response
+            when Net::HTTPSuccess
+              response.body
+            else
+              raise InstanceFetchError, "unexpected response #{response.code}"
+            end
           end
         end
       rescue StandardError => e
@@ -588,8 +702,12 @@ module PotatoMesh
       end
 
       def fetch_instance_json(domain, path)
+        return [nil, ["federation shutdown requested"]] if federation_shutdown_requested?
+
         errors = []
         instance_uri_candidates(domain, path).each do |uri|
+          break if federation_shutdown_requested?
+
           begin
             body = perform_instance_http_request(uri)
             return [JSON.parse(body), uri] if body
@@ -662,13 +780,36 @@ module PotatoMesh
       # @param overall_limit [Integer, nil] maximum unique domains visited.
       # @return [Boolean] true when the crawl was scheduled successfully.
       def enqueue_federation_crawl(domain, per_response_limit:, overall_limit:)
+        sanitized_domain = sanitize_instance_domain(domain)
+        unless sanitized_domain
+          warn_log(
+            "Skipped remote instance crawl",
+            context: "federation.instances",
+            domain: domain,
+            reason: "invalid domain",
+          )
+          return false
+        end
+        return false if federation_shutdown_requested?
+
         pool = federation_worker_pool
         unless pool
           debug_log(
             "Skipped remote instance crawl",
             context: "federation.instances",
-            domain: domain,
+            domain: sanitized_domain,
             reason: "federation disabled",
+          )
+          return false
+        end
+
+        claim_result = claim_federation_crawl_slot(sanitized_domain)
+        unless claim_result == :claimed
+          debug_log(
+            "Skipped remote instance crawl",
+            context: "federation.instances",
+            domain: sanitized_domain,
+            reason: claim_result == :in_flight ? "crawl already in flight" : "recent crawl completed",
           )
           return false
         end
@@ -679,32 +820,98 @@ module PotatoMesh
           begin
             application.ingest_known_instances_from!(
               db,
-              domain,
+              sanitized_domain,
               per_response_limit: per_response_limit,
               overall_limit: overall_limit,
             )
           ensure
             db&.close
+            application.release_federation_crawl_slot(sanitized_domain)
           end
         end
 
         true
       rescue PotatoMesh::App::WorkerPool::QueueFullError
+        release_federation_crawl_slot(sanitized_domain)
         warn_log(
           "Skipped remote instance crawl",
           context: "federation.instances",
-          domain: domain,
+          domain: sanitized_domain,
           reason: "worker queue saturated",
         )
         false
       rescue PotatoMesh::App::WorkerPool::ShutdownError
+        release_federation_crawl_slot(sanitized_domain)
         warn_log(
           "Skipped remote instance crawl",
           context: "federation.instances",
-          domain: domain,
+          domain: sanitized_domain,
           reason: "worker pool shut down",
         )
         false
+      end
+
+      # Initialize shared in-memory state used to deduplicate crawl scheduling.
+      #
+      # @return [void]
+      def initialize_federation_crawl_state!
+        return if instance_variable_defined?(:@federation_crawl_mutex) && @federation_crawl_mutex
+
+        @federation_crawl_mutex = Mutex.new
+        @federation_crawl_in_flight = Set.new
+        @federation_crawl_last_completed_at = {}
+      end
+
+      # Retrieve the cooldown period used for duplicate crawl suppression.
+      #
+      # @return [Integer] seconds a domain remains in cooldown after completion.
+      def federation_crawl_cooldown_seconds
+        PotatoMesh::Config.federation_crawl_cooldown_seconds
+      end
+
+      # Mark a domain crawl as claimed if no active or recent crawl exists.
+      #
+      # @param domain [String] canonical domain name.
+      # @return [Symbol] +:claimed+, +:in_flight+, or +:cooldown+.
+      def claim_federation_crawl_slot(domain)
+        initialize_federation_crawl_state!
+        now = Time.now.to_i
+        @federation_crawl_mutex.synchronize do
+          return :in_flight if @federation_crawl_in_flight.include?(domain)
+
+          last_completed = @federation_crawl_last_completed_at[domain]
+          if last_completed && now - last_completed < federation_crawl_cooldown_seconds
+            return :cooldown
+          end
+
+          @federation_crawl_in_flight << domain
+          :claimed
+        end
+      end
+
+      # Release an in-flight crawl claim and record completion timestamp.
+      #
+      # @param domain [String] canonical domain name.
+      # @return [void]
+      def release_federation_crawl_slot(domain)
+        return unless domain
+
+        initialize_federation_crawl_state!
+        @federation_crawl_mutex.synchronize do
+          @federation_crawl_in_flight.delete(domain)
+          @federation_crawl_last_completed_at[domain] = Time.now.to_i
+        end
+      end
+
+      # Clear all in-memory crawl scheduling state.
+      #
+      # @return [void]
+      def clear_federation_crawl_state!
+        initialize_federation_crawl_state!
+        @federation_crawl_mutex.synchronize do
+          @federation_crawl_in_flight.clear
+          @federation_crawl_last_completed_at.clear
+        end
       end
 
       # Recursively ingest federation records exposed by the supplied domain.
@@ -724,6 +931,7 @@ module PotatoMesh
       )
         sanitized = sanitize_instance_domain(domain)
         return visited || Set.new unless sanitized
+        return visited || Set.new if federation_shutdown_requested?
 
         visited ||= Set.new
 
@@ -758,6 +966,8 @@ module PotatoMesh
         processed_entries = 0
         recent_cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
         payload.each do |entry|
+          break if federation_shutdown_requested?
+
           if per_response_limit && per_response_limit.positive? && processed_entries >= per_response_limit
             debug_log(
               "Skipped remote instance entry due to response limit",
@@ -824,8 +1034,13 @@ module PotatoMesh
             )
           end
 
-          remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
-          remote_nodes ||= nodes_since_window if nodes_since_window.is_a?(Array)
+          remote_nodes = nil
+          node_metadata = nil
+          if nodes_since_window.is_a?(Array)
+            remote_nodes = nodes_since_window
+          else
+            remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
+          end
           unless remote_nodes
             warn_log(
               "Failed to load remote node data",

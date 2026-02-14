@@ -37,11 +37,14 @@ module PotatoMesh
     DEFAULT_MAX_DISTANCE_KM = 42.0
     DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 15
     DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 60
+    DEFAULT_REMOTE_INSTANCE_REQUEST_TIMEOUT = 30
     DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE = 64
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
     DEFAULT_FEDERATION_WORKER_POOL_SIZE = 4
     DEFAULT_FEDERATION_WORKER_QUEUE_CAPACITY = 128
     DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS = 120
+    DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS = 3
+    DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS = 300
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
     DEFAULT_FEDERATION_SEED_DOMAINS = %w[potatomesh.net potatomesh.jmrp.io mesh.qrp.ro].freeze
 
@@ -350,6 +353,16 @@ module PotatoMesh
       )
     end
 
+    # End-to-end timeout applied to each outbound federation HTTP request.
+    #
+    # @return [Integer] maximum request duration in seconds.
+    def remote_instance_request_timeout
+      fetch_positive_integer(
+        "REMOTE_INSTANCE_REQUEST_TIMEOUT",
+        DEFAULT_REMOTE_INSTANCE_REQUEST_TIMEOUT,
+      )
+    end
+
     # Limit the number of remote instances processed from a single response.
     #
     # @return [Integer] maximum entries processed per /api/instances payload.
@@ -397,6 +410,26 @@ module PotatoMesh
       fetch_positive_integer(
         "FEDERATION_TASK_TIMEOUT",
         DEFAULT_FEDERATION_TASK_TIMEOUT_SECONDS,
+      )
+    end
+
+    # Determine how long shutdown waits before forcing federation thread exit.
+    #
+    # @return [Integer] per-thread shutdown timeout in seconds.
+    def federation_shutdown_timeout_seconds
+      fetch_positive_integer(
+        "FEDERATION_SHUTDOWN_TIMEOUT",
+        DEFAULT_FEDERATION_SHUTDOWN_TIMEOUT_SECONDS,
+      )
+    end
+
+    # Define how long finished crawl domains remain on cooldown.
+    #
+    # @return [Integer] cooldown window in seconds.
+    def federation_crawl_cooldown_seconds
+      fetch_positive_integer(
+        "FEDERATION_CRAWL_COOLDOWN",
+        DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS,
       )
     end
 
