@@ -2644,6 +2644,81 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "supports cursor pagination for instance catalogs" do
+      clear_database
+      now = Time.now.to_i
+
+      with_db do |db|
+        upsert_instance_record(
+          db,
+          {
+            id: "instance-a",
+            domain: "alpha.mesh",
+            pubkey: remote_key.public_key.export,
+            name: "Alpha",
+            version: "1.0.0",
+            channel: "#LongFast",
+            frequency: "868MHz",
+            latitude: nil,
+            longitude: nil,
+            last_update_time: now,
+            is_private: false,
+          },
+          "sig-a",
+        )
+        upsert_instance_record(
+          db,
+          {
+            id: "instance-b",
+            domain: "bravo.mesh",
+            pubkey: remote_key.public_key.export,
+            name: "Bravo",
+            version: "1.0.0",
+            channel: "#LongFast",
+            frequency: "868MHz",
+            latitude: nil,
+            longitude: nil,
+            last_update_time: now,
+            is_private: false,
+          },
+          "sig-b",
+        )
+        upsert_instance_record(
+          db,
+          {
+            id: "instance-c",
+            domain: "charlie.mesh",
+            pubkey: remote_key.public_key.export,
+            name: "Charlie",
+            version: "1.0.0",
+            channel: "#LongFast",
+            frequency: "868MHz",
+            latitude: nil,
+            longitude: nil,
+            last_update_time: now,
+            is_private: false,
+          },
+          "sig-c",
+        )
+      end
+
+      get "/api/instances?limit=2"
+      expect(last_response).to be_ok
+      first_page = JSON.parse(last_response.body)
+      expect(first_page.length).to eq(2)
+      cursor = last_response.headers["X-Next-Cursor"]
+      expect(cursor).to be_a(String)
+      expect(cursor).not_to be_empty
+
+      get "/api/instances?limit=2&cursor=#{URI.encode_www_form_component(cursor)}"
+      expect(last_response).to be_ok
+      second_page = JSON.parse(last_response.body)
+      expect(second_page.length).to be >= 1
+
+      combined_domains = (first_page + second_page).map { |entry| entry["domain"] }
+      expect(combined_domains).to include("alpha.mesh", "bravo.mesh", "charlie.mesh")
+    end
+
     context "when federation is disabled" do
       around do |example|
         original = ENV["FEDERATION"]
@@ -5662,6 +5737,43 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload["node_id"]).to eq("!blank")
       expect(payload).not_to have_key("short_name")
       expect(payload).not_to have_key("hw_model")
+    end
+
+    it "emits keyset cursor headers for multi-page collection responses" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!cursor-a", 1, "a", "A", "TBEAM", "CLIENT", 0.0, now - 1, now - 1],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!cursor-b", 2, "b", "B", "TBEAM", "CLIENT", 0.0, now - 2, now - 2],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!cursor-c", 3, "c", "C", "TBEAM", "CLIENT", 0.0, now - 3, now - 3],
+        )
+      end
+
+      get "/api/nodes?limit=2"
+      expect(last_response).to be_ok
+      first_page = JSON.parse(last_response.body)
+      expect(first_page.length).to eq(2)
+      cursor = last_response.headers["X-Next-Cursor"]
+      expect(cursor).to be_a(String)
+      expect(cursor).not_to be_empty
+
+      get "/api/nodes?limit=2&cursor=#{URI.encode_www_form_component(cursor)}"
+      expect(last_response).to be_ok
+      second_page = JSON.parse(last_response.body)
+      expect(second_page.length).to eq(1)
+      expect((first_page + second_page).map { |row| row["node_id"] }).to eq(
+        ["!cursor-a", "!cursor-b", "!cursor-c"],
+      )
     end
   end
 

@@ -165,29 +165,56 @@ module PotatoMesh
       # malformed rows gracefully. The dataset is restricted to records updated
       # within the rolling window defined by PotatoMesh::Config.week_seconds.
       #
-      # @return [Array<Hash>] list of cleaned instance payloads.
-      def load_instances_for_api
+      # @param limit [Integer, nil] optional page size used when pagination is enabled.
+      # @param cursor [String, nil] optional keyset cursor for pagination.
+      # @param with_pagination [Boolean] when true, return items and next cursor metadata.
+      # @return [Array<Hash>, Hash] list of cleaned instance payloads or pagination metadata hash.
+      def load_instances_for_api(limit: nil, cursor: nil, with_pagination: false)
         clean_duplicate_instances!
 
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
         min_last_update_time = now - PotatoMesh::Config.week_seconds
+        safe_limit = coerce_query_limit(limit) if with_pagination
+        fetch_limit = with_pagination ? safe_limit + 1 : nil
+        where_clauses = [
+          "domain IS NOT NULL",
+          "TRIM(domain) != ''",
+          "pubkey IS NOT NULL",
+          "TRIM(pubkey) != ''",
+          "last_update_time IS NOT NULL",
+          "last_update_time >= ?",
+        ]
+        params = [min_last_update_time]
+
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_domain = sanitize_instance_domain(cursor_payload["domain"])&.downcase
+            cursor_id = string_or_nil(cursor_payload["id"])
+            if cursor_domain && cursor_id
+              where_clauses << "(LOWER(domain) > ? OR (LOWER(domain) = ? AND id > ?))"
+              params.concat([cursor_domain, cursor_domain, cursor_id])
+            end
+          end
+        end
+
         sql = <<~SQL
           SELECT id, domain, pubkey, name, version, channel, frequency,
                  latitude, longitude, last_update_time, is_private, nodes_count, contact_link, signature
           FROM instances
-          WHERE domain IS NOT NULL AND TRIM(domain) != ''
-            AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
-            AND last_update_time IS NOT NULL AND last_update_time >= ?
+          WHERE #{where_clauses.join("\n            AND ")}
           ORDER BY LOWER(domain)
         SQL
+        sql += " LIMIT ?" if with_pagination
+        params << fetch_limit if with_pagination
 
         rows = with_busy_retry do
-          db.execute(sql, min_last_update_time)
+          db.execute(sql, params)
         end
 
-        rows.each_with_object([]) do |row, memo|
+        items = rows.each_with_object([]) do |row, memo|
           normalized = normalize_instance_row(row)
           next unless normalized
 
@@ -196,6 +223,20 @@ module PotatoMesh
 
           memo << normalized
         end
+        return items unless with_pagination
+
+        has_more = items.length > safe_limit
+        paged_items = has_more ? items.first(safe_limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "domain" => string_or_nil(marker["domain"]),
+            "id" => string_or_nil(marker["id"]),
+          })
+        end
+
+        { items: paged_items, next_cursor: next_cursor }
       rescue SQLite3::Exception => e
         warn_log(
           "Failed to load instance records",
@@ -203,7 +244,7 @@ module PotatoMesh
           error_class: e.class.name,
           error_message: e.message,
         )
-        []
+        with_pagination ? { items: [], next_cursor: nil } : []
       ensure
         db&.close
       end

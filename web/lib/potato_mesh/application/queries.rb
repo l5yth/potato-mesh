@@ -127,6 +127,42 @@ module PotatoMesh
         [threshold, floor].max
       end
 
+      # Normalise an optional upper-bound timestamp for keyset pagination.
+      #
+      # @param before [Object] requested upper bound expressed as unix seconds.
+      # @param ceiling [Integer] maximum allowable timestamp.
+      # @return [Integer, nil] normalized upper bound or nil when absent.
+      def normalize_before_threshold(before, ceiling: Time.now.to_i)
+        value = coerce_integer(before)
+        return nil if value.nil?
+
+        value = 0 if value.negative?
+        [value, ceiling].min
+      end
+
+      # Decode a keyset cursor token previously emitted by {encode_query_cursor}.
+      #
+      # @param token [String, nil] base64 cursor token.
+      # @return [Hash, nil] decoded cursor payload.
+      def decode_query_cursor(token)
+        value = string_or_nil(token)
+        return nil unless value
+
+        decoded = Base64.urlsafe_decode64(value)
+        parsed = JSON.parse(decoded)
+        parsed.is_a?(Hash) ? parsed : nil
+      rescue ArgumentError, JSON::ParserError
+        nil
+      end
+
+      # Encode a cursor payload for keyset pagination transport.
+      #
+      # @param payload [Hash] cursor components.
+      # @return [String] URL-safe base64 cursor token.
+      def encode_query_cursor(payload)
+        Base64.urlsafe_encode64(JSON.generate(payload))
+      end
+
       # Return exact active-node counts across common activity windows.
       #
       # Counts are resolved directly in SQL with COUNT(*) thresholds against
@@ -252,14 +288,16 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to narrow results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted node rows suitable for API responses.
-      def query_nodes(limit, node_ref: nil, since: 0)
+      def query_nodes(limit, node_ref: nil, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
         min_last_heard = now - PotatoMesh::Config.week_seconds
         since_floor = node_ref ? 0 : min_last_heard
         since_threshold = normalize_since_threshold(since, floor: since_floor)
+        before_threshold = normalize_before_threshold(before, ceiling: now)
         params = []
         where_clauses = []
 
@@ -271,6 +309,21 @@ module PotatoMesh
         else
           where_clauses << "last_heard >= ?"
           params << since_threshold
+        end
+        if before_threshold
+          where_clauses << "last_heard <= ?"
+          params << before_threshold
+        end
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_last_heard = coerce_integer(cursor_payload["last_heard"])
+            cursor_node_id = string_or_nil(cursor_payload["node_id"])
+            if cursor_last_heard && cursor_node_id
+              where_clauses << "(last_heard < ? OR (last_heard = ? AND node_id < ?))"
+              params.concat([cursor_last_heard, cursor_last_heard, cursor_node_id])
+            end
+          end
         end
 
         if private_mode?
@@ -287,10 +340,10 @@ module PotatoMesh
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY last_heard DESC
+          ORDER BY last_heard DESC, node_id DESC
           LIMIT ?
         SQL
-        params << limit
+        params << fetch_limit
 
         rows = db.execute(sql, params)
         rows = rows.select do |r|
@@ -313,7 +366,21 @@ module PotatoMesh
           pb = r["precision_bits"]
           r["precision_bits"] = pb.to_i if pb
         end
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        items.each { |item| item.delete("_cursor_rowid") }
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "last_heard" => coerce_integer(marker["last_heard"]),
+            "node_id" => string_or_nil(marker["node_id"]),
+          })
+        end
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -323,22 +390,41 @@ module PotatoMesh
       # @param limit [Integer] maximum number of ingestors to return.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted ingestor rows suitable for API responses.
-      def query_ingestors(limit, since: 0)
+      def query_ingestors(limit, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
         cutoff = now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: cutoff)
+        before_threshold = normalize_before_threshold(before, ceiling: now)
+        where_clauses = ["last_seen_time >= ?"]
+        params = [since_threshold]
+        if before_threshold
+          where_clauses << "last_seen_time <= ?"
+          params << before_threshold
+        end
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_last_seen = coerce_integer(cursor_payload["last_seen_time"])
+            cursor_node_id = string_or_nil(cursor_payload["node_id"])
+            if cursor_last_seen && cursor_node_id
+              where_clauses << "(last_seen_time < ? OR (last_seen_time = ? AND node_id < ?))"
+              params.concat([cursor_last_seen, cursor_last_seen, cursor_node_id])
+            end
+          end
+        end
         sql = <<~SQL
           SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset
           FROM ingestors
-          WHERE last_seen_time >= ?
-          ORDER BY last_seen_time DESC
+          WHERE #{where_clauses.join(" AND ")}
+          ORDER BY last_seen_time DESC, node_id DESC
           LIMIT ?
         SQL
 
-        rows = db.execute(sql, [since_threshold, limit])
+        rows = db.execute(sql, params + [fetch_limit])
         rows.each do |row|
           row.delete_if { |key, _| key.is_a?(Integer) }
           start_time = coerce_integer(row["start_time"])
@@ -354,7 +440,21 @@ module PotatoMesh
           row["last_seen_iso"] = Time.at(last_seen_time).utc.iso8601 if last_seen_time
         end
 
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        items.each { |item| item.delete("_cursor_rowid") }
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "last_seen_time" => coerce_integer(marker["last_seen_time"]),
+            "node_id" => string_or_nil(marker["node_id"]),
+          })
+        end
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -366,9 +466,11 @@ module PotatoMesh
       # @param include_encrypted [Boolean] when true, include encrypted payloads in the response.
       # @param since [Integer] unix timestamp threshold; messages with rx_time older than this are excluded.
       # @return [Array<Hash>] compacted message rows safe for API responses.
-      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0)
+      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         since_threshold = normalize_since_threshold(since, floor: 0)
+        before_threshold = normalize_before_threshold(before)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -378,9 +480,24 @@ module PotatoMesh
         include_encrypted = !!include_encrypted
         where_clauses << "m.rx_time >= ?"
         params << since_threshold
+        if before_threshold
+          where_clauses << "m.rx_time <= ?"
+          params << before_threshold
+        end
 
         unless include_encrypted
           where_clauses << "COALESCE(TRIM(m.encrypted), '') = ''"
+        end
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
+            cursor_id = string_or_nil(cursor_payload["id"])
+            if cursor_rx_time && cursor_id
+              where_clauses << "(m.rx_time < ? OR (m.rx_time = ? AND m.id < ?))"
+              params.concat([cursor_rx_time, cursor_rx_time, cursor_id])
+            end
+          end
         end
 
         if node_ref
@@ -399,10 +516,10 @@ module PotatoMesh
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n"
         sql += <<~SQL
-          ORDER BY m.rx_time DESC
+          ORDER BY m.rx_time DESC, m.id DESC
           LIMIT ?
         SQL
-        params << limit
+        params << fetch_limit
         rows = db.execute(sql, params)
         rows.each do |r|
           r.delete_if { |key, _| key.is_a?(Integer) }
@@ -444,7 +561,21 @@ module PotatoMesh
             )
           end
         end
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        items.each { |item| item.delete("_cursor_rowid") }
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "rx_time" => coerce_integer(marker["rx_time"]),
+            "id" => string_or_nil(marker["id"]),
+          })
+        end
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -455,8 +586,9 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
       # @return [Array<Hash>] compacted position rows suitable for API responses.
-      def query_positions(limit, node_ref: nil, since: 0)
+      def query_positions(limit, node_ref: nil, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -465,8 +597,13 @@ module PotatoMesh
         min_rx_time = now - PotatoMesh::Config.week_seconds
         since_floor = node_ref ? 0 : min_rx_time
         since_threshold = normalize_since_threshold(since, floor: since_floor)
+        before_threshold = normalize_before_threshold(before, ceiling: now)
         where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
         params << since_threshold
+        if before_threshold
+          where_clauses << "COALESCE(rx_time, position_time, 0) <= ?"
+          params << before_threshold
+        end
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -475,15 +612,26 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        sql = <<~SQL
-          SELECT * FROM positions
-        SQL
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
+            cursor_rowid = coerce_integer(cursor_payload["rowid"])
+            if cursor_rx_time && cursor_rowid
+              where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
+              params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
+            end
+          end
+        end
+
+        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid FROM positions" : "SELECT * FROM positions"
+        sql = "#{select_sql}\n"
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY rx_time DESC
+          ORDER BY rx_time DESC, rowid DESC
           LIMIT ?
         SQL
-        params << limit
+        params << fetch_limit
         rows = db.execute(sql, params)
         rows.each do |r|
           rx_time = coerce_integer(r["rx_time"])
@@ -503,7 +651,22 @@ module PotatoMesh
           r["pdop"] = coerce_float(r["pdop"])
           r["snr"] = coerce_float(r["snr"])
         end
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        items.each { |item| item.delete("_cursor_rowid") } unless with_pagination
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "rx_time" => coerce_integer(marker["rx_time"]),
+            "rowid" => coerce_integer(marker["_cursor_rowid"]),
+          })
+        end
+        paged_items.each { |item| item.delete("_cursor_rowid") }
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -514,8 +677,9 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted neighbor rows suitable for API responses.
-      def query_neighbors(limit, node_ref: nil, since: 0)
+      def query_neighbors(limit, node_ref: nil, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -524,8 +688,13 @@ module PotatoMesh
         min_rx_time = now - PotatoMesh::Config.week_seconds
         since_floor = node_ref ? 0 : min_rx_time
         since_threshold = normalize_since_threshold(since, floor: since_floor)
+        before_threshold = normalize_before_threshold(before, ceiling: now)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
         params << since_threshold
+        if before_threshold
+          where_clauses << "COALESCE(rx_time, 0) <= ?"
+          params << before_threshold
+        end
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id", "neighbor_id"])
@@ -534,15 +703,26 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        sql = <<~SQL
-          SELECT * FROM neighbors
-        SQL
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
+            cursor_rowid = coerce_integer(cursor_payload["rowid"])
+            if cursor_rx_time && cursor_rowid
+              where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
+              params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
+            end
+          end
+        end
+
+        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid FROM neighbors" : "SELECT * FROM neighbors"
+        sql = "#{select_sql}\n"
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY rx_time DESC
+          ORDER BY rx_time DESC, rowid DESC
           LIMIT ?
         SQL
-        params << limit
+        params << fetch_limit
         rows = db.execute(sql, params)
         rows.each do |r|
           rx_time = coerce_integer(r["rx_time"])
@@ -551,7 +731,22 @@ module PotatoMesh
           r["rx_iso"] = Time.at(rx_time).utc.iso8601 if rx_time
           r["snr"] = coerce_float(r["snr"])
         end
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        items.each { |item| item.delete("_cursor_rowid") } unless with_pagination
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "rx_time" => coerce_integer(marker["rx_time"]),
+            "rowid" => coerce_integer(marker["_cursor_rowid"]),
+          })
+        end
+        paged_items.each { |item| item.delete("_cursor_rowid") }
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -562,8 +757,9 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted telemetry rows suitable for API responses.
-      def query_telemetry(limit, node_ref: nil, since: 0)
+      def query_telemetry(limit, node_ref: nil, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -572,8 +768,13 @@ module PotatoMesh
         min_rx_time = now - PotatoMesh::Config.week_seconds
         since_floor = node_ref ? 0 : min_rx_time
         since_threshold = normalize_since_threshold(since, floor: since_floor)
+        before_threshold = normalize_before_threshold(before, ceiling: now)
         where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
         params << since_threshold
+        if before_threshold
+          where_clauses << "COALESCE(rx_time, telemetry_time, 0) <= ?"
+          params << before_threshold
+        end
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -582,15 +783,26 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        sql = <<~SQL
-          SELECT * FROM telemetry
-        SQL
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
+            cursor_rowid = coerce_integer(cursor_payload["rowid"])
+            if cursor_rx_time && cursor_rowid
+              where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
+              params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
+            end
+          end
+        end
+
+        select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid FROM telemetry" : "SELECT * FROM telemetry"
+        sql = "#{select_sql}\n"
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY rx_time DESC
+          ORDER BY rx_time DESC, rowid DESC
           LIMIT ?
         SQL
-        params << limit
+        params << fetch_limit
         rows = db.execute(sql, params)
         rows.each do |r|
           rx_time = coerce_integer(r["rx_time"])
@@ -638,7 +850,22 @@ module PotatoMesh
           r["soil_moisture"] = coerce_integer(r["soil_moisture"])
           r["soil_temperature"] = coerce_float(r["soil_temperature"])
         end
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        items.each { |item| item.delete("_cursor_rowid") } unless with_pagination
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "rx_time" => coerce_integer(marker["rx_time"]),
+            "rowid" => coerce_integer(marker["_cursor_rowid"]),
+          })
+        end
+        paged_items.each { |item| item.delete("_cursor_rowid") }
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end
@@ -771,8 +998,9 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
       # @return [Array<Hash>] compacted trace rows suitable for API responses.
-      def query_traces(limit, node_ref: nil, since: 0)
+      def query_traces(limit, node_ref: nil, since: 0, before: nil, cursor: nil, with_pagination: false)
         limit = coerce_query_limit(limit)
+        fetch_limit = with_pagination ? limit + 1 : limit
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []
@@ -780,8 +1008,13 @@ module PotatoMesh
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.trace_neighbor_window_seconds
         since_threshold = normalize_since_threshold(since, floor: min_rx_time)
+        before_threshold = normalize_before_threshold(before, ceiling: now)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
         params << since_threshold
+        if before_threshold
+          where_clauses << "COALESCE(rx_time, 0) <= ?"
+          params << before_threshold
+        end
 
         if node_ref
           tokens = node_reference_tokens(node_ref)
@@ -798,16 +1031,28 @@ module PotatoMesh
           3.times { params.concat(numeric_values) }
         end
 
+        if with_pagination
+          cursor_payload = decode_query_cursor(cursor)
+          if cursor_payload
+            cursor_rx_time = coerce_integer(cursor_payload["rx_time"])
+            cursor_id = coerce_integer(cursor_payload["id"])
+            if cursor_rx_time && cursor_id
+              where_clauses << "(rx_time < ? OR (rx_time = ? AND id < ?))"
+              params.concat([cursor_rx_time, cursor_rx_time, cursor_id])
+            end
+          end
+        end
+
         sql = <<~SQL
           SELECT id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms
           FROM traces
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
         sql += <<~SQL
-          ORDER BY rx_time DESC
+          ORDER BY rx_time DESC, id DESC
           LIMIT ?
         SQL
-        params << limit
+        params << fetch_limit
         rows = db.execute(sql, params)
 
         trace_ids = rows.map { |row| coerce_integer(row["id"]) }.compact
@@ -844,7 +1089,20 @@ module PotatoMesh
             r["hops"] = hops_by_trace[trace_id]
           end
         end
-        rows.map { |row| compact_api_row(row) }
+        items = rows.map { |row| compact_api_row(row) }
+        return items unless with_pagination
+
+        has_more = items.length > limit
+        paged_items = has_more ? items.first(limit) : items
+        next_cursor = nil
+        if has_more && !paged_items.empty?
+          marker = paged_items.last
+          next_cursor = encode_query_cursor({
+            "rx_time" => coerce_integer(marker["rx_time"]),
+            "id" => coerce_integer(marker["id"]),
+          })
+        end
+        { items: paged_items, next_cursor: next_cursor }
       ensure
         db&.close
       end

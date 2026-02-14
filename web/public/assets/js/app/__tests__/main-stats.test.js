@@ -19,9 +19,11 @@ import assert from 'node:assert/strict';
 
 import {
   computeLocalActiveNodeStats,
+  fetchPaginatedCollection,
   fetchActiveNodeStats,
   formatActiveNodeStatsText,
   normaliseActiveNodeStatsPayload,
+  readNextCursorHeader,
 } from '../main.js';
 
 const NOW = 1_700_000_000;
@@ -207,4 +209,47 @@ test('formatActiveNodeStatsText appends sampled marker when local fallback is us
     text,
     'LongFast (868MHz) — active nodes: 9/hour, 8/day, 7/week, 6/month (sampled).'
   );
+});
+
+test('readNextCursorHeader reads cursor token from response headers', () => {
+  const response = {
+    headers: {
+      get(name) {
+        return name === 'X-Next-Cursor' ? 'cursor-token' : null;
+      },
+    },
+  };
+  assert.equal(readNextCursorHeader(response), 'cursor-token');
+});
+
+test('fetchPaginatedCollection follows cursor headers and merges pages', async () => {
+  const calls = [];
+  const pages = new Map([
+    ['/api/nodes?limit=2', { items: [{ id: 'a' }, { id: 'b' }], next: 'cursor-1' }],
+    ['/api/nodes?limit=2&cursor=cursor-1', { items: [{ id: 'c' }], next: null }],
+  ]);
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const page = pages.get(url);
+    if (!page) {
+      throw new Error(`unexpected url ${url}`);
+    }
+    return {
+      ok: true,
+      headers: { get: (name) => (name === 'X-Next-Cursor' ? page.next : null) },
+      async json() {
+        return page.items;
+      },
+    };
+  };
+
+  const items = await fetchPaginatedCollection({
+    path: '/api/nodes',
+    limit: 2,
+    maxRows: 10,
+    fetchImpl,
+  });
+
+  assert.deepEqual(calls, ['/api/nodes?limit=2', '/api/nodes?limit=2&cursor=cursor-1']);
+  assert.deepEqual(items.map((item) => item.id), ['a', 'b', 'c']);
 });

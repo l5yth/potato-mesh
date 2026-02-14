@@ -208,6 +208,83 @@ export function formatActiveNodeStatsText({ channel, frequency, stats }) {
 }
 
 /**
+ * Parse the next-page cursor header from an API response.
+ *
+ * @param {*} response Fetch response candidate.
+ * @returns {string|null} Cursor token for the next page.
+ */
+export function readNextCursorHeader(response) {
+  const headers = response && response.headers;
+  if (!headers || typeof headers.get !== 'function') {
+    return null;
+  }
+  const cursor = headers.get('X-Next-Cursor');
+  return cursor && String(cursor).trim().length > 0 ? String(cursor).trim() : null;
+}
+
+/**
+ * Fetch an API collection endpoint using keyset cursor pagination.
+ *
+ * @param {{
+ *   path: string,
+ *   limit: number,
+ *   maxRows?: number,
+ *   params?: Record<string, string>,
+ *   fetchImpl?: Function
+ * }} options Request options.
+ * @returns {Promise<Array<Object>>} Aggregated array of collection rows.
+ */
+export async function fetchPaginatedCollection({
+  path,
+  limit,
+  maxRows = 5000,
+  params = {},
+  fetchImpl = fetch
+}) {
+  const safePath = typeof path === 'string' ? path : '';
+  if (!safePath) {
+    return [];
+  }
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+  const safeMaxRows = Number.isFinite(maxRows) && maxRows > 0 ? Math.floor(maxRows) : safeLimit;
+  const results = [];
+  let cursor = null;
+  let pageCount = 0;
+
+  while (results.length < safeMaxRows && pageCount < 100) {
+    const query = new URLSearchParams({ limit: String(safeLimit) });
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value == null) return;
+      const text = String(value).trim();
+      if (!text) return;
+      query.set(key, text);
+    });
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+    const response = await fetchImpl(`${safePath}?${query.toString()}`, { cache: 'no-store' });
+    if (!response || !response.ok) {
+      throw new Error('HTTP ' + (response ? response.status : 'unknown'));
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      throw new Error('invalid paginated payload');
+    }
+    if (payload.length === 0) {
+      break;
+    }
+    results.push(...payload);
+    cursor = readNextCursorHeader(response);
+    pageCount += 1;
+    if (!cursor) {
+      break;
+    }
+  }
+
+  return results.slice(0, safeMaxRows);
+}
+
+/**
  * Entry point for the interactive dashboard. Wires up event listeners,
  * initializes the map, and triggers the first data refresh cycle.
  *
@@ -3605,9 +3682,12 @@ export function initializeApp(config) {
    */
   async function fetchNodes(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/nodes?limit=${effectiveLimit}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    return fetchPaginatedCollection({
+      path: '/api/nodes',
+      limit: effectiveLimit,
+      maxRows
+    });
   }
 
   /**
@@ -3636,14 +3716,17 @@ export function initializeApp(config) {
   async function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
     if (!CHAT_ENABLED) return [];
     const safeLimit = normaliseMessageLimit(limit);
-    const params = new URLSearchParams({ limit: String(safeLimit) });
+    const params = {};
     if (options && options.encrypted) {
-      params.set('encrypted', 'true');
+      params.encrypted = 'true';
     }
-    const query = params.toString();
-    const r = await fetch(`/api/messages?${query}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    const maxRows = Math.max(safeLimit, safeLimit * SNAPSHOT_LIMIT);
+    return fetchPaginatedCollection({
+      path: '/api/messages',
+      limit: safeLimit,
+      maxRows,
+      params
+    });
   }
 
   /**
@@ -3654,9 +3737,12 @@ export function initializeApp(config) {
    */
   async function fetchNeighbors(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/neighbors?limit=${effectiveLimit}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    return fetchPaginatedCollection({
+      path: '/api/neighbors',
+      limit: effectiveLimit,
+      maxRows
+    });
   }
 
   /**
@@ -3668,9 +3754,12 @@ export function initializeApp(config) {
   async function fetchTraces(limit = TRACE_LIMIT) {
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
     const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
-    const r = await fetch(`/api/traces?limit=${effectiveLimit}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const traces = await r.json();
+    const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    const traces = await fetchPaginatedCollection({
+      path: '/api/traces',
+      limit: effectiveLimit,
+      maxRows
+    });
     return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
   }
 
@@ -3682,9 +3771,12 @@ export function initializeApp(config) {
    */
   async function fetchTelemetry(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/telemetry?limit=${effectiveLimit}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    return fetchPaginatedCollection({
+      path: '/api/telemetry',
+      limit: effectiveLimit,
+      maxRows
+    });
   }
 
   /**
@@ -3695,9 +3787,12 @@ export function initializeApp(config) {
    */
   async function fetchPositions(limit = NODE_LIMIT) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/positions?limit=${effectiveLimit}`, { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
+    const maxRows = Math.max(effectiveLimit, effectiveLimit * SNAPSHOT_LIMIT);
+    return fetchPaginatedCollection({
+      path: '/api/positions',
+      limit: effectiveLimit,
+      maxRows
+    });
   }
 
   /**

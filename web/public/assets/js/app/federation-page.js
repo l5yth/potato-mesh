@@ -80,6 +80,59 @@ function buildInstanceUrl(domain) {
   return `https://${trimmed}`;
 }
 
+/**
+ * Read the next-page cursor token from response headers.
+ *
+ * @param {*} response Fetch response candidate.
+ * @returns {string|null} Cursor token when present.
+ */
+function readNextCursorHeader(response) {
+  const headers = response && response.headers;
+  if (!headers || typeof headers.get !== 'function') return null;
+  const cursor = headers.get('X-Next-Cursor');
+  return cursor && String(cursor).trim() ? String(cursor).trim() : null;
+}
+
+/**
+ * Fetch all federation instances using keyset cursor pagination.
+ *
+ * @param {Function} fetchImpl Fetch-compatible function.
+ * @returns {Promise<Array<Object>>} Combined instance rows.
+ */
+async function fetchAllInstances(fetchImpl) {
+  const results = [];
+  let cursor = null;
+  let pageCount = 0;
+  const limit = 500;
+
+  while (pageCount < 100) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+
+    const response = await fetchImpl(`/api/instances?${query.toString()}`, {
+      headers: { Accept: 'application/json' },
+      credentials: 'omit'
+    });
+    if (!response || !response.ok || typeof response.json !== 'function') {
+      return results;
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload) || payload.length === 0) {
+      return results;
+    }
+    results.push(...payload);
+    cursor = readNextCursorHeader(response);
+    pageCount += 1;
+    if (!cursor) {
+      return results;
+    }
+  }
+
+  return results;
+}
+
 const NODE_COUNT_COLOR_STOPS = [
   { limit: 100, color: roleColors.CLIENT_HIDDEN },
   { limit: 200, color: roleColors.SENSOR },
@@ -524,13 +577,7 @@ export async function initializeFederationPage(options = {}) {
   // Fetch instances data
   let instances = [];
   try {
-    const response = await fetchImpl('/api/instances', {
-      headers: { Accept: 'application/json' },
-      credentials: 'omit'
-    });
-    if (response.ok) {
-      instances = await response.json();
-    }
+    instances = await fetchAllInstances(fetchImpl);
   } catch (err) {
     console.warn('Failed to fetch federation instances', err);
   }

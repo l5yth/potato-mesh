@@ -64,7 +64,15 @@ module PotatoMesh
           app.get "/api/nodes" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_nodes(limit, since: params["since"]).to_json
+            result = query_nodes(
+              limit,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/stats" do
@@ -88,7 +96,15 @@ module PotatoMesh
           app.get "/api/ingestors" do
             content_type :json
             limit = coerce_query_limit(params["limit"])
-            query_ingestors(limit, since: params["since"]).to_json
+            result = query_ingestors(
+              limit,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/messages" do
@@ -97,7 +113,16 @@ module PotatoMesh
             include_encrypted = coerce_boolean(params["encrypted"]) || false
             since = coerce_integer(params["since"])
             since = 0 if since.nil? || since.negative?
-            query_messages(limit, include_encrypted: include_encrypted, since: since).to_json
+            result = query_messages(
+              limit,
+              include_encrypted: include_encrypted,
+              since: since,
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/messages/:id" do
@@ -108,18 +133,31 @@ module PotatoMesh
             include_encrypted = coerce_boolean(params["encrypted"]) || false
             since = coerce_integer(params["since"])
             since = 0 if since.nil? || since.negative?
-            query_messages(
+            result = query_messages(
               limit,
               node_ref: node_ref,
               include_encrypted: include_encrypted,
               since: since,
-            ).to_json
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/positions" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_positions(limit, since: params["since"]).to_json
+            result = query_positions(
+              limit,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/positions/:id" do
@@ -127,13 +165,30 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_positions(limit, node_ref: node_ref, since: params["since"]).to_json
+            result = query_positions(
+              limit,
+              node_ref: node_ref,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/neighbors" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_neighbors(limit, since: params["since"]).to_json
+            result = query_neighbors(
+              limit,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/neighbors/:id" do
@@ -141,13 +196,30 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_neighbors(limit, node_ref: node_ref, since: params["since"]).to_json
+            result = query_neighbors(
+              limit,
+              node_ref: node_ref,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/telemetry" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_telemetry(limit, since: params["since"]).to_json
+            result = query_telemetry(
+              limit,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/telemetry/aggregated" do
@@ -190,13 +262,30 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_telemetry(limit, node_ref: node_ref, since: params["since"]).to_json
+            result = query_telemetry(
+              limit,
+              node_ref: node_ref,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/traces" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_traces(limit, since: params["since"]).to_json
+            result = query_traces(
+              limit,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/traces/:id" do
@@ -204,7 +293,16 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_traces(limit, node_ref: node_ref, since: params["since"]).to_json
+            result = query_traces(
+              limit,
+              node_ref: node_ref,
+              since: params["since"],
+              before: params["before"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            result[:items].to_json
           end
 
           app.get "/api/instances" do
@@ -213,8 +311,13 @@ module PotatoMesh
 
             content_type :json
             ensure_self_instance_record!
-            payload = load_instances_for_api
-            JSON.generate(payload)
+            result = load_instances_for_api(
+              limit: params["limit"],
+              cursor: params["cursor"],
+              with_pagination: true,
+            )
+            response["X-Next-Cursor"] = result[:next_cursor] if result[:next_cursor]
+            JSON.generate(result[:items])
           end
         end
       end

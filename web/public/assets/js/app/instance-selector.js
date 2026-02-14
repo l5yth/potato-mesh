@@ -78,6 +78,64 @@ function updateFederationNavCount(options) {
   });
 }
 
+/**
+ * Read the next-page cursor header from an HTTP response.
+ *
+ * @param {*} response Fetch response candidate.
+ * @returns {string|null} Cursor token when available.
+ */
+function readNextCursorHeader(response) {
+  const headers = response && response.headers;
+  if (!headers || typeof headers.get !== 'function') {
+    return null;
+  }
+  const cursor = headers.get('X-Next-Cursor');
+  return cursor && String(cursor).trim().length > 0 ? String(cursor).trim() : null;
+}
+
+/**
+ * Load federation instances across paginated API responses.
+ *
+ * @param {Function} fetchImpl Fetch-compatible function.
+ * @returns {Promise<Array<Object>>} Combined instance payload rows.
+ */
+async function fetchAllInstances(fetchImpl) {
+  const results = [];
+  let cursor = null;
+  let pageCount = 0;
+  const limit = 500;
+
+  while (pageCount < 100) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+
+    const response = await fetchImpl(`/api/instances?${query.toString()}`, {
+      headers: { Accept: 'application/json' },
+      credentials: 'omit',
+    });
+
+    if (!response || typeof response.json !== 'function' || !response.ok) {
+      return results;
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload) || payload.length === 0) {
+      return results;
+    }
+
+    results.push(...payload);
+    cursor = readNextCursorHeader(response);
+    pageCount += 1;
+    if (!cursor) {
+      return results;
+    }
+  }
+
+  return results;
+}
+
  /**
   * Construct a navigable URL for the provided instance domain.
   *
@@ -179,30 +237,11 @@ export async function initializeInstanceSelector(options) {
     return;
   }
 
-  let response;
-  try {
-    response = await fetchImpl('/api/instances', {
-      headers: { Accept: 'application/json' },
-      credentials: 'omit',
-    });
-  } catch (error) {
-    console.warn('Failed to load federation instances', error);
-    return;
-  }
-
-  if (!response || typeof response.json !== 'function') {
-    return;
-  }
-
-  if (!response.ok) {
-    return;
-  }
-
   let payload;
   try {
-    payload = await response.json();
+    payload = await fetchAllInstances(fetchImpl);
   } catch (error) {
-    console.warn('Invalid federation instances payload', error);
+    console.warn('Failed to load federation instances', error);
     return;
   }
 

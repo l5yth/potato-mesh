@@ -221,6 +221,49 @@ test('initializeInstanceSelector updates federation navigation labels with insta
   }
 });
 
+test('initializeInstanceSelector follows paginated instance responses', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+  const calls = [];
+
+  const fetchImpl = async url => {
+    calls.push(url);
+    if (url === '/api/instances?limit=500') {
+      return {
+        ok: true,
+        headers: { get: name => (name === 'X-Next-Cursor' ? 'cursor-1' : null) },
+        async json() {
+          return [{ domain: 'alpha.mesh' }];
+        }
+      };
+    }
+    if (url === '/api/instances?limit=500&cursor=cursor-1') {
+      return {
+        ok: true,
+        headers: { get: () => null },
+        async json() {
+          return [{ domain: 'bravo.mesh' }];
+        }
+      };
+    }
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.deepEqual(calls, ['/api/instances?limit=500', '/api/instances?limit=500&cursor=cursor-1']);
+    assert.equal(select.options.length, 3);
+  } finally {
+    env.cleanup();
+  }
+});
+
 test('updateFederationNavCount prefers stored labels and normalizes counts', () => {
   const env = createDomEnvironment();
   const navLink = env.document.createElement('a');
