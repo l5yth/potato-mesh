@@ -2935,6 +2935,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     NEIGHBOR_PRIMARY_ID = "!1a2b3c02".freeze
     NEIGHBOR_SNR_CLEAR_ROOT_ID = "!1a2b3c10".freeze
     NEIGHBOR_SNR_CLEAR_PEER_ID = "!1a2b3c11".freeze
+    NEIGHBOR_CHUNK_ROOT_ID = "!1a2b3c30".freeze
 
     def post_twice_for_ingestor(endpoint, first_payload, second_payload)
       post endpoint, first_payload.to_json, auth_headers
@@ -3538,6 +3539,33 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(JSON.parse(last_response.body)).to be_empty
       end
 
+      it "removes stored neighbors when a later packet contains no neighbors" do
+        seed_payload = {
+          "node_id" => "!cafed00d",
+          "rx_time" => reference_time.to_i - 50,
+          "neighbors" => [
+            { "node_id" => "!deadbeef", "snr" => -2.0 },
+          ],
+          "ingestor" => "!aaaa1111",
+        }
+        empty_payload = {
+          "node_id" => "!cafed00d",
+          "rx_time" => reference_time.to_i - 10,
+          "neighbors" => [],
+          "ingestor" => "!bbbb2222",
+        }
+
+        post "/api/neighbors", seed_payload.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/neighbors", empty_payload.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          remaining = db.get_first_value("SELECT COUNT(*) FROM neighbors WHERE node_id = ?", ["!cafed00d"])
+          expect(remaining).to eq(0)
+        end
+      end
+
       it "stores neighbor ingestor and preserves the first reporter per tuple" do
         base = {
           "node_id" => NEIGHBOR_ROOT_ID,
@@ -3606,12 +3634,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
           { "node_id" => format("!%08x", 0x2000_0000 + i), "snr" => -2.0 }
         end
         initial = {
-          "node_id" => "!1a2b3c30",
+          "node_id" => NEIGHBOR_CHUNK_ROOT_ID,
           "rx_time" => reference_time.to_i - 35,
           "neighbors" => initial_neighbors,
         }
         update = {
-          "node_id" => "!1a2b3c30",
+          "node_id" => NEIGHBOR_CHUNK_ROOT_ID,
           "rx_time" => reference_time.to_i - 25,
           "neighbors" => [
             { "node_id" => "!20000000", "snr" => -1.0 },
@@ -3626,7 +3654,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         with_db(readonly: true) do |db|
           count = db.get_first_value(
             "SELECT COUNT(*) FROM neighbors WHERE node_id = ?",
-            ["!1a2b3c30"],
+            [NEIGHBOR_CHUNK_ROOT_ID],
           )
           expect(count).to eq(1)
         end
