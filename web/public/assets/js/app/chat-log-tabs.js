@@ -571,14 +571,15 @@ function buildChannelTabId(bucketKey) {
   if (bucketKey === '0') {
     return 'channel-0';
   }
-  const secondaryParts = String(bucketKey).match(/^secondary::(\d+)::(.+)$/);
+  const secondaryParts = /^secondary::(\d+)::(.+)$/.exec(String(bucketKey));
   if (secondaryParts) {
     const secondaryIndex = secondaryParts[1];
     const secondaryLabelSlug = slugify(secondaryParts[2]);
+    const secondaryHash = hashChannelKey(bucketKey);
     if (secondaryLabelSlug) {
-      return `channel-secondary-${secondaryIndex}-${secondaryLabelSlug}`;
+      return `channel-secondary-${secondaryIndex}-${secondaryLabelSlug}-${secondaryHash}`;
     }
-    return `channel-secondary-${secondaryIndex}-${hashChannelKey(bucketKey)}`;
+    return `channel-secondary-${secondaryIndex}-${secondaryHash}`;
   }
   const slug = slugify(bucketKey);
   if (slug) {

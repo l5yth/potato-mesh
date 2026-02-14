@@ -69,7 +69,11 @@ function findChannelByLabel(model, label) {
 function assertChannelMessages(model, { label, id, index, messageIds }) {
   const channel = findChannelByLabel(model, label);
   assert.ok(channel);
-  assert.equal(channel.id, id);
+  if (id instanceof RegExp) {
+    assert.match(channel.id, id);
+  } else {
+    assert.equal(channel.id, id);
+  }
   assert.equal(channel.index, index);
   assert.deepEqual(channel.entries.map(entry => entry.message.id), messageIds);
 }
@@ -126,7 +130,7 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
 
   const secondaryChannel = channelByLabel.BerlinMesh;
   assert.equal(secondaryChannel.index, 1);
-  assert.equal(secondaryChannel.id, 'channel-secondary-1-berlinmesh');
+  assert.match(secondaryChannel.id, /^channel-secondary-1-berlinmesh-[a-z0-9]+$/);
   assert.equal(secondaryChannel.entries.length, 1);
   assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['recent-alt']);
 });
@@ -316,12 +320,12 @@ test('buildChatTabModel keeps secondary channels distinct by index even with mat
 
   const secondaryFirstChannel = meshChannels.find(channel => channel.index === 7);
   assert.ok(secondaryFirstChannel);
-  assert.equal(secondaryFirstChannel.id, 'channel-secondary-7-meshtown');
+  assert.match(secondaryFirstChannel.id, /^channel-secondary-7-meshtown-[a-z0-9]+$/);
   assert.deepEqual(secondaryFirstChannel.entries.map(entry => entry.message.id), [secondaryFirstId]);
 
   const secondarySecondChannel = meshChannels.find(channel => channel.index === 3);
   assert.ok(secondarySecondChannel);
-  assert.equal(secondarySecondChannel.id, 'channel-secondary-3-meshtown');
+  assert.match(secondarySecondChannel.id, /^channel-secondary-3-meshtown-[a-z0-9]+$/);
   assert.deepEqual(secondarySecondChannel.entries.map(entry => entry.message.id), [secondarySecondId]);
 });
 
@@ -334,7 +338,7 @@ test('buildChatTabModel keeps unnamed secondary buckets separate when a label la
         { id: 'unnamed', rx_time: NOW - 15, channel: 4 },
         { id: 'named', rx_time: NOW - 10, channel: 4, channel_name: 'SideMesh' }
       ],
-      namedId: 'channel-secondary-4-sidemesh',
+      namedId: /^channel-secondary-4-sidemesh-[a-z0-9]+$/,
       namedMessages: ['named'],
       unnamedMessages: ['unnamed']
     },
@@ -345,7 +349,7 @@ test('buildChatTabModel keeps unnamed secondary buckets separate when a label la
         { id: 'named', rx_time: NOW - 12, channel: 5, channel_name: 'MeshNorth' },
         { id: 'unlabeled', rx_time: NOW - 8, channel: 5 }
       ],
-      namedId: 'channel-secondary-5-meshnorth',
+      namedId: /^channel-secondary-5-meshnorth-[a-z0-9]+$/,
       namedMessages: ['named'],
       unnamedMessages: ['unlabeled']
     }
@@ -388,16 +392,36 @@ test('buildChatTabModel keeps same-index channels with different names in separa
 
   assertChannelMessages(model, {
     label: 'PUBLIC',
-    id: 'channel-secondary-1-public',
+    id: /^channel-secondary-1-public-[a-z0-9]+$/,
     index: 1,
     messageIds: ['public-msg']
   });
   assertChannelMessages(model, {
     label: 'BerlinMesh',
-    id: 'channel-secondary-1-berlinmesh',
+    id: /^channel-secondary-1-berlinmesh-[a-z0-9]+$/,
     index: 1,
     messageIds: ['berlin-msg']
   });
+});
+
+test('buildChatTabModel keeps same-index slug-colliding labels on distinct tab ids', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: 'foo-space', rx_time: NOW - 10, channel: 1, channel_name: 'Foo Bar' },
+      { id: 'foo-dash', rx_time: NOW - 8, channel: 1, channel_name: 'Foo-Bar' }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+
+  const fooSpaceChannel = findChannelByLabel(model, 'Foo Bar');
+  const fooDashChannel = findChannelByLabel(model, 'Foo-Bar');
+  assert.ok(fooSpaceChannel);
+  assert.ok(fooDashChannel);
+  assert.match(fooSpaceChannel.id, /^channel-secondary-1-foo-bar-[a-z0-9]+$/);
+  assert.match(fooDashChannel.id, /^channel-secondary-1-foo-bar-[a-z0-9]+$/);
+  assert.notEqual(fooSpaceChannel.id, fooDashChannel.id);
 });
 
 test('buildChatTabModel falls back to hashed id for unsluggable secondary labels', () => {
