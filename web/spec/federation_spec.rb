@@ -24,6 +24,7 @@ require "socket"
 
 RSpec.describe PotatoMesh::App::Federation do
   NODES_API_PATH = "/api/nodes".freeze
+  STATS_API_PATH = "/api/stats".freeze
   HTTP_CONNECTION_DOUBLE = "Net::HTTPConnection".freeze
 
   subject(:federation_helpers) do
@@ -303,7 +304,7 @@ RSpec.describe PotatoMesh::App::Federation do
       recent_cutoff = now.to_i - 900
       mapping = { [seed_domain, "/api/instances"] => [payload_entries, :instances] }
       attributes_list.each do |attributes|
-        mapping[[attributes[:domain], "/api/stats"]] = stats_response
+        mapping[[attributes[:domain], STATS_API_PATH]] = stats_response
         mapping[[attributes[:domain], NODES_API_PATH]] = full_nodes_response
         mapping[[attributes[:domain], "/api/instances"]] = [[], :instances]
         next unless window_nodes_response
@@ -374,9 +375,9 @@ RSpec.describe PotatoMesh::App::Federation do
       federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], "/api/stats"],
-        [attributes_list[1][:domain], "/api/stats"],
-        [attributes_list[2][:domain], "/api/stats"],
+        [attributes_list[0][:domain], STATS_API_PATH],
+        [attributes_list[1][:domain], STATS_API_PATH],
+        [attributes_list[2][:domain], STATS_API_PATH],
       )
       expect(captured_paths).to include(
         [attributes_list[0][:domain], NODES_API_PATH],
@@ -404,9 +405,9 @@ RSpec.describe PotatoMesh::App::Federation do
       federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(captured_paths).to include(
-        [attributes_list[0][:domain], "/api/stats"],
-        [attributes_list[1][:domain], "/api/stats"],
-        [attributes_list[2][:domain], "/api/stats"],
+        [attributes_list[0][:domain], STATS_API_PATH],
+        [attributes_list[1][:domain], STATS_API_PATH],
+        [attributes_list[2][:domain], STATS_API_PATH],
       )
       expect(captured_paths).to include(
         [attributes_list[0][:domain], NODES_API_PATH],
@@ -436,6 +437,34 @@ RSpec.describe PotatoMesh::App::Federation do
       federation_helpers.ingest_known_instances_from!(db, seed_domain)
 
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(node_payload.length))
+    end
+
+    it "uses recent node window fallback when stats succeed but full node data is unavailable" do
+      now = Time.at(1_700_000_000)
+      configure_remote_node_window(now)
+      recent_path = "/api/nodes?since=#{now.to_i - 900}&limit=1000"
+
+      mapping = stats_mapping(
+        now:,
+        stats_response: [{ "active_nodes" => { "hour" => 9, "day" => 10, "week" => 11, "month" => 12 }, "sampled" => false }, :stats],
+        full_nodes_response: [nil, ["full data unavailable"]],
+        window_nodes_response: [node_payload, :nodes],
+      )
+      captured_paths = stub_ingest_fetches(mapping, capture_paths: true)
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], STATS_API_PATH],
+        [attributes_list[1][:domain], STATS_API_PATH],
+        [attributes_list[2][:domain], STATS_API_PATH],
+      )
+      expect(captured_paths).to include(
+        [attributes_list[0][:domain], recent_path],
+        [attributes_list[1][:domain], recent_path],
+        [attributes_list[2][:domain], recent_path],
+      )
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(9))
     end
   end
 

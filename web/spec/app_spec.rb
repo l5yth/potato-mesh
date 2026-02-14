@@ -27,6 +27,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   let(:app) { Sinatra::Application }
   let(:application_class) { PotatoMesh::Application }
   INSERT_NODE_WITH_LAST_HEARD_SQL = "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)".freeze
+  INSERT_NODE_WITH_METADATA_SQL = "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)".freeze
   SELECT_NODE_LAST_HEARD_SQL = "SELECT last_heard FROM nodes WHERE node_id = ?".freeze
 
   describe "configuration" do
@@ -5676,16 +5677,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
           heard = now - (index % 1800)
           node_id = format("!%08x", index + 1)
           db.execute(
-            "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+            INSERT_NODE_WITH_METADATA_SQL,
             [node_id, index + 1, "n#{index}", "Node #{index}", "TBEAM", "CLIENT", heard, heard],
           )
         end
         db.execute(
-          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          INSERT_NODE_WITH_METADATA_SQL,
           ["!week0001", 200_001, "week", "Week Node", "TBEAM", "CLIENT", now - (2 * 86_400), now - (2 * 86_400)],
         )
         db.execute(
-          "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          INSERT_NODE_WITH_METADATA_SQL,
           ["!month001", 200_002, "month", "Month Node", "TBEAM", "CLIENT", now - (20 * 86_400), now - (20 * 86_400)],
         )
         db.commit

@@ -135,8 +135,8 @@ export function normaliseActiveNodeStatsPayload(payload) {
 export async function fetchActiveNodeStats({ nodes, nowSeconds, fetchImpl = fetch }) {
   try {
     const response = await fetchImpl('/api/stats', { cache: 'no-store' });
-    if (!response || !response.ok) {
-      throw new Error(`stats HTTP ${response ? response.status : 'unknown'}`);
+    if (!response?.ok) {
+      throw new Error(`stats HTTP ${response?.status ?? 'unknown'}`);
     }
     const payload = await response.json();
     const normalized = normaliseActiveNodeStatsPayload(payload);
@@ -144,7 +144,8 @@ export async function fetchActiveNodeStats({ nodes, nowSeconds, fetchImpl = fetc
       return normalized;
     }
     throw new Error('invalid stats payload');
-  } catch (_error) {
+  } catch (error) {
+    console.debug('Failed to fetch /api/stats; using local active-node counts.', error);
     return computeLocalActiveNodeStats(nodes, nowSeconds);
   }
 }

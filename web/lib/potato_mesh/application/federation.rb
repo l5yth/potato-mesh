@@ -1085,19 +1085,13 @@ module PotatoMesh
           attributes[:nodes_count] = stats_count if stats_count
 
           nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
-          nodes_since_window = nil
-          nodes_since_metadata = nil
-          if stats_count.nil?
-            nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
-            if attributes[:nodes_count].nil? && nodes_since_window.is_a?(Array)
-              attributes[:nodes_count] = nodes_since_window.length
-            end
+          nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
+          if stats_count.nil? && attributes[:nodes_count].nil? && nodes_since_window.is_a?(Array)
+            attributes[:nodes_count] = nodes_since_window.length
           end
 
           remote_nodes, node_metadata = fetch_instance_json(attributes[:domain], "/api/nodes")
-          unless remote_nodes
-            remote_nodes = nodes_since_window if nodes_since_window.is_a?(Array)
-          end
+          remote_nodes = nodes_since_window if remote_nodes.nil? && nodes_since_window.is_a?(Array)
           if attributes[:nodes_count].nil? && remote_nodes.is_a?(Array)
             attributes[:nodes_count] = remote_nodes.length
           end
