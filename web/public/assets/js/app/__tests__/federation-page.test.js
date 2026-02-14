@@ -21,6 +21,55 @@ import { createDomEnvironment } from './dom-environment.js';
 import { initializeFederationPage } from '../federation-page.js';
 import { roleColors } from '../role-helpers.js';
 
+function createFailureScenarioPage(env) {
+  const { document, createElement, registerElement } = env;
+  registerElement('map', createElement('div', 'map'));
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify({}));
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+  return { statusEl };
+}
+
+function createMinimalLeafletStub() {
+  return {
+    map() {
+      return {
+        setView() {},
+        on() {},
+        getPane() {
+          return null;
+        }
+      };
+    },
+    tileLayer() {
+      return {
+        addTo() {
+          return this;
+        },
+        getContainer() {
+          return null;
+        },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return { addLayer() {}, addTo() { return this; } };
+    },
+    circleMarker() {
+      return { bindPopup() { return this; } };
+    }
+  };
+}
+
 test('federation map centers on configured coordinates and follows theme filters', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: true });
   const { document, window, createElement, registerElement, cleanup } = env;
@@ -604,51 +653,9 @@ test('federation legend toggle respects media query changes', async () => {
 
 test('federation page tolerates fetch failures', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
-  const { document, createElement, registerElement, cleanup } = env;
-
-  const mapEl = createElement('div', 'map');
-  registerElement('map', mapEl);
-  const statusEl = createElement('div', 'status');
-  registerElement('status', statusEl);
-  const tableEl = createElement('table', 'instances');
-  const tbodyEl = createElement('tbody');
-  registerElement('instances', tableEl);
-  const configEl = createElement('div');
-  configEl.setAttribute('data-app-config', JSON.stringify({}));
-  document.querySelector = selector => {
-    if (selector === '[data-app-config]') return configEl;
-    if (selector === '#instances tbody') return tbodyEl;
-    return null;
-  };
-
-  const leafletStub = {
-    map() {
-      return {
-        setView() {},
-        on() {},
-        getPane() {
-          return null;
-        }
-      };
-    },
-    tileLayer() {
-      return {
-        addTo() {
-          return this;
-        },
-        getContainer() {
-          return null;
-        },
-        on() {}
-      };
-    },
-    layerGroup() {
-      return { addLayer() {}, addTo() { return this; } };
-    },
-    circleMarker() {
-      return { bindPopup() { return this; } };
-    }
-  };
+  const { cleanup } = env;
+  createFailureScenarioPage(env);
+  const leafletStub = createMinimalLeafletStub();
 
   const fetchImpl = async () => {
     throw new Error('boom');
@@ -660,41 +667,9 @@ test('federation page tolerates fetch failures', async () => {
 
 test('federation page tolerates non-ok paginated instance responses', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
-  const { document, createElement, registerElement, cleanup } = env;
-
-  const mapEl = createElement('div', 'map');
-  registerElement('map', mapEl);
-  const statusEl = createElement('div', 'status');
-  registerElement('status', statusEl);
-  const tableEl = createElement('table', 'instances');
-  const tbodyEl = createElement('tbody');
-  registerElement('instances', tableEl);
-  const configEl = createElement('div');
-  configEl.setAttribute('data-app-config', JSON.stringify({}));
-  document.querySelector = selector => {
-    if (selector === '[data-app-config]') return configEl;
-    if (selector === '#instances tbody') return tbodyEl;
-    return null;
-  };
-
-  const leafletStub = {
-    map() {
-      return { setView() {}, on() {}, getPane() { return null; } };
-    },
-    tileLayer() {
-      return {
-        addTo() { return this; },
-        getContainer() { return null; },
-        on() {}
-      };
-    },
-    layerGroup() {
-      return { addLayer() {}, addTo() { return this; } };
-    },
-    circleMarker() {
-      return { bindPopup() { return this; } };
-    }
-  };
+  const { statusEl } = createFailureScenarioPage(env);
+  const { cleanup } = env;
+  const leafletStub = createMinimalLeafletStub();
 
   const fetchImpl = async () => ({ ok: false, json: async () => [] });
 

@@ -140,6 +140,35 @@ test('fetchActiveNodeStats reuses cached /api/stats response for repeated calls'
   assert.deepEqual(first, second);
 });
 
+test('fetchActiveNodeStats does not reuse cache across different fetch implementations', async () => {
+  const callsA = [];
+  const callsB = [];
+  const fetchImplA = async (url) => {
+    callsA.push(url);
+    return {
+      ok: true,
+      async json() {
+        return { active_nodes: { hour: 1, day: 1, week: 1, month: 1 }, sampled: false };
+      },
+    };
+  };
+  const fetchImplB = async (url) => {
+    callsB.push(url);
+    return {
+      ok: true,
+      async json() {
+        return { active_nodes: { hour: 2, day: 2, week: 2, month: 2 }, sampled: false };
+      },
+    };
+  };
+
+  await fetchActiveNodeStats({ nodes: [], nowSeconds: NOW, fetchImpl: fetchImplA });
+  await fetchActiveNodeStats({ nodes: [], nowSeconds: NOW, fetchImpl: fetchImplB });
+
+  assert.equal(callsA.length, 1);
+  assert.equal(callsB.length, 1);
+});
+
 test('fetchActiveNodeStats falls back to local counts when stats fetch fails', async () => {
   const nodes = [
     { last_heard: NOW - 120 },
@@ -312,4 +341,59 @@ test('fetchPaginatedCollection throws on invalid payload shapes', async () => {
     }),
     /invalid paginated payload/
   );
+});
+
+test('fetchPaginatedCollection ignores blank params and defaults invalid limits', async () => {
+  const calls = [];
+  const items = await fetchPaginatedCollection({
+    path: '/api/messages',
+    limit: 0,
+    maxRows: 0,
+    params: { since: ' ', encrypted: null, scope: 'recent' },
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return {
+        ok: true,
+        headers: { get: () => null },
+        async json() {
+          return [{ id: 1 }];
+        },
+      };
+    },
+  });
+
+  assert.deepEqual(items, [{ id: 1 }]);
+  assert.equal(calls[0], '/api/messages?limit=200&scope=recent');
+});
+
+test('fetchPaginatedCollection stops when a page is empty even if cursor was present', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url === '/api/nodes?limit=2') {
+      return {
+        ok: true,
+        headers: { get: (name) => (name === 'X-Next-Cursor' ? 'cursor-1' : null) },
+        async json() {
+          return [{ id: 'a' }];
+        },
+      };
+    }
+    return {
+      ok: true,
+      headers: { get: () => null },
+      async json() {
+        return [];
+      },
+    };
+  };
+
+  const items = await fetchPaginatedCollection({
+    path: '/api/nodes',
+    limit: 2,
+    fetchImpl,
+  });
+
+  assert.deepEqual(items, [{ id: 'a' }]);
+  assert.deepEqual(calls, ['/api/nodes?limit=2', '/api/nodes?limit=2&cursor=cursor-1']);
 });

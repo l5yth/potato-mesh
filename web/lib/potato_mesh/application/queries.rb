@@ -198,6 +198,54 @@ module PotatoMesh
         { items: paged_items, next_cursor: next_cursor }
       end
 
+      # Append normalized since/before predicates for time-windowed collections.
+      #
+      # @param where_clauses [Array<String>] mutable SQL predicate fragments.
+      # @param params [Array<Object>] mutable SQL bind parameters.
+      # @param since [Object] lower-bound timestamp candidate.
+      # @param before [Object] upper-bound timestamp candidate.
+      # @param since_floor [Integer] minimum accepted since threshold.
+      # @param ceiling [Integer] maximum accepted before threshold.
+      # @param time_expression [String] SQL expression used for temporal filtering.
+      # @return [Integer] normalized since threshold.
+      def append_time_window_filters!(
+        where_clauses:,
+        params:,
+        since:,
+        before:,
+        since_floor:,
+        ceiling:,
+        time_expression:
+      )
+        since_threshold = normalize_since_threshold(since, floor: since_floor)
+        before_threshold = normalize_before_threshold(before, ceiling: ceiling)
+
+        where_clauses << "#{time_expression} >= ?"
+        params << since_threshold
+        if before_threshold
+          where_clauses << "#{time_expression} <= ?"
+          params << before_threshold
+        end
+
+        since_threshold
+      end
+
+      # Append rowid/timestamp keyset predicates for descending time-ordered tables.
+      #
+      # @param where_clauses [Array<String>] mutable SQL predicate fragments.
+      # @param params [Array<Object>] mutable SQL bind parameters.
+      # @param cursor [String, nil] encoded cursor token.
+      # @param time_key [String] cursor payload timestamp key.
+      # @param time_expression [String] SQL timestamp expression used for ordering.
+      # @return [void]
+      def append_rowid_time_cursor_filter!(where_clauses:, params:, cursor:, time_key:, time_expression:)
+        cursor_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: time_key)
+        return unless cursor_time && cursor_rowid
+
+        where_clauses << "(#{time_expression} < ? OR (#{time_expression} = ? AND rowid < ?))"
+        params.concat([cursor_time, cursor_time, cursor_rowid])
+      end
+
       # Return exact active-node counts across common activity windows.
       #
       # Counts are resolved directly in SQL with COUNT(*) thresholds against
@@ -635,15 +683,17 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        time_expression = "COALESCE(rx_time, position_time, 0)"
         since_floor = node_ref ? 0 : min_rx_time
-        since_threshold = normalize_since_threshold(since, floor: since_floor)
-        before_threshold = normalize_before_threshold(before, ceiling: now)
-        where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
-        params << since_threshold
-        if before_threshold
-          where_clauses << "COALESCE(rx_time, position_time, 0) <= ?"
-          params << before_threshold
-        end
+        append_time_window_filters!(
+          where_clauses: where_clauses,
+          params: params,
+          since: since,
+          before: before,
+          since_floor: since_floor,
+          ceiling: now,
+          time_expression: time_expression,
+        )
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -652,13 +702,13 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if with_pagination
-          cursor_rx_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: "cursor_time")
-          if cursor_rx_time && cursor_rowid
-            where_clauses << "(COALESCE(rx_time, position_time, 0) < ? OR (COALESCE(rx_time, position_time, 0) = ? AND rowid < ?))"
-            params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
-          end
-        end
+        append_rowid_time_cursor_filter!(
+          where_clauses: where_clauses,
+          params: params,
+          cursor: cursor,
+          time_key: "cursor_time",
+          time_expression: time_expression,
+        ) if with_pagination
 
         select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid, COALESCE(rx_time, position_time, 0) AS _cursor_time FROM positions" : "SELECT * FROM positions"
         sql = "#{select_sql}\n"
@@ -716,15 +766,17 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        time_expression = "COALESCE(rx_time, 0)"
         since_floor = node_ref ? 0 : min_rx_time
-        since_threshold = normalize_since_threshold(since, floor: since_floor)
-        before_threshold = normalize_before_threshold(before, ceiling: now)
-        where_clauses << "COALESCE(rx_time, 0) >= ?"
-        params << since_threshold
-        if before_threshold
-          where_clauses << "COALESCE(rx_time, 0) <= ?"
-          params << before_threshold
-        end
+        append_time_window_filters!(
+          where_clauses: where_clauses,
+          params: params,
+          since: since,
+          before: before,
+          since_floor: since_floor,
+          ceiling: now,
+          time_expression: time_expression,
+        )
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id", "neighbor_id"])
@@ -733,13 +785,13 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if with_pagination
-          cursor_rx_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: "rx_time")
-          if cursor_rx_time && cursor_rowid
-            where_clauses << "(rx_time < ? OR (rx_time = ? AND rowid < ?))"
-            params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
-          end
-        end
+        append_rowid_time_cursor_filter!(
+          where_clauses: where_clauses,
+          params: params,
+          cursor: cursor,
+          time_key: "rx_time",
+          time_expression: "rx_time",
+        ) if with_pagination
 
         select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid FROM neighbors" : "SELECT * FROM neighbors"
         sql = "#{select_sql}\n"
@@ -786,15 +838,17 @@ module PotatoMesh
         where_clauses = []
         now = Time.now.to_i
         min_rx_time = now - PotatoMesh::Config.week_seconds
+        time_expression = "COALESCE(rx_time, telemetry_time, 0)"
         since_floor = node_ref ? 0 : min_rx_time
-        since_threshold = normalize_since_threshold(since, floor: since_floor)
-        before_threshold = normalize_before_threshold(before, ceiling: now)
-        where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
-        params << since_threshold
-        if before_threshold
-          where_clauses << "COALESCE(rx_time, telemetry_time, 0) <= ?"
-          params << before_threshold
-        end
+        append_time_window_filters!(
+          where_clauses: where_clauses,
+          params: params,
+          since: since,
+          before: before,
+          since_floor: since_floor,
+          ceiling: now,
+          time_expression: time_expression,
+        )
 
         if node_ref
           clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
@@ -803,13 +857,13 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if with_pagination
-          cursor_rx_time, cursor_rowid = decode_rowid_time_cursor(cursor, time_key: "cursor_time")
-          if cursor_rx_time && cursor_rowid
-            where_clauses << "(COALESCE(rx_time, telemetry_time, 0) < ? OR (COALESCE(rx_time, telemetry_time, 0) = ? AND rowid < ?))"
-            params.concat([cursor_rx_time, cursor_rx_time, cursor_rowid])
-          end
-        end
+        append_rowid_time_cursor_filter!(
+          where_clauses: where_clauses,
+          params: params,
+          cursor: cursor,
+          time_key: "cursor_time",
+          time_expression: time_expression,
+        ) if with_pagination
 
         select_sql = with_pagination ? "SELECT *, rowid AS _cursor_rowid, COALESCE(rx_time, telemetry_time, 0) AS _cursor_time FROM telemetry" : "SELECT * FROM telemetry"
         sql = "#{select_sql}\n"

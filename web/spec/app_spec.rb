@@ -2816,6 +2816,47 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(second_page[:items].map { |entry| entry["id"] }).to include("instance-z")
     end
 
+    it "continues scanning when a full fetched page contains only malformed rows" do
+      clear_database
+      now = Time.now.to_i
+
+      with_db do |db|
+        insert_sql = <<~SQL
+          INSERT INTO instances (
+            id, domain, pubkey, name, version, channel, frequency,
+            latitude, longitude, last_update_time, is_private, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+
+        db.execute(insert_sql, ["instance-a", "alpha.mesh", remote_key.public_key.export, "Alpha", "1.0.0", nil, nil, nil, nil, now, 0, "sig-a"])
+        db.execute(insert_sql, ["instance-bad-1", "bad domain 1", remote_key.public_key.export, "Bad 1", "1.0.0", nil, nil, nil, nil, now, 0, "sig-b1"])
+        db.execute(insert_sql, ["instance-bad-2", "bad domain 2", remote_key.public_key.export, "Bad 2", "1.0.0", nil, nil, nil, nil, now, 0, "sig-b2"])
+        db.execute(insert_sql, ["instance-z", "zzz.mesh", remote_key.public_key.export, "Zulu", "1.0.0", nil, nil, nil, nil, now, 0, "sig-z"])
+      end
+
+      first_page = application_class.load_instances_for_api(limit: 1, with_pagination: true)
+      expect(first_page[:items].map { |entry| entry["id"] }).to eq(["instance-a"])
+      expect(first_page[:next_cursor]).to be_a(String)
+      expect(first_page[:next_cursor]).not_to be_empty
+
+      seen_ids = first_page[:items].map { |entry| entry["id"] }
+      cursor = first_page[:next_cursor]
+      5.times do
+        break unless cursor
+
+        page = application_class.load_instances_for_api(
+          limit: 1,
+          cursor: cursor,
+          with_pagination: true,
+        )
+        seen_ids.concat(page[:items].map { |entry| entry["id"] })
+        cursor = page[:next_cursor]
+        break if seen_ids.include?("instance-z")
+      end
+
+      expect(seen_ids).to include("instance-z")
+    end
+
     context "when federation is disabled" do
       around do |example|
         original = ENV["FEDERATION"]
@@ -5745,7 +5786,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload["node_id"]).to eq("!fresh-node")
     end
 
-    it "filters node results using the since parameter for collections and single lookups" do
+    it "filters node collection results using since and before parameters" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -5766,8 +5807,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/api/nodes?since=#{recent_last_heard}"
 
       expect(last_response).to be_ok
-      payload = JSON.parse(last_response.body)
-      expect(payload.map { |row| row["node_id"] }).to eq(["!recent-node"])
+      since_payload = JSON.parse(last_response.body)
+      expect(since_payload.map { |row| row["node_id"] }).to eq(["!recent-node"])
 
       get "/api/nodes/!older-node?since=#{recent_last_heard}"
       expect(last_response.status).to eq(404)
@@ -5776,6 +5817,20 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       detail = JSON.parse(last_response.body)
       expect(detail["node_id"]).to eq("!recent-node")
+
+      get "/api/nodes?before=#{older_last_heard}"
+      expect(last_response).to be_ok
+      before_payload = JSON.parse(last_response.body)
+      expect(before_payload.map { |row| row["node_id"] }).to eq(["!older-node"])
+
+      # Node detail route currently supports `since`, but not `before`.
+      get "/api/nodes/!older-node"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)["node_id"]).to eq("!older-node")
+
+      get "/api/nodes/!recent-node"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)["node_id"]).to eq("!recent-node")
     end
 
     it "omits blank values from node responses" do
@@ -6082,7 +6137,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "filters messages by the since parameter while defaulting to the full history" do
+    it "filters messages by since and before parameters while defaulting to full history" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -6122,6 +6177,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       scoped = JSON.parse(last_response.body)
       expect(scoped.map { |row| row["id"] }).to eq([2])
+
+      get "/api/messages?before=#{stale_rx}"
+      expect(last_response).to be_ok
+      before_payload = JSON.parse(last_response.body)
+      expect(before_payload.map { |row| row["id"] }).to eq([1])
+
+      get "/api/messages/!old?before=#{stale_rx}"
+      expect(last_response).to be_ok
+      scoped_payload = JSON.parse(last_response.body)
+      expect(scoped_payload.map { |row| row["id"] }).to eq([1])
     end
   end
 
@@ -6251,7 +6316,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(filtered.map { |row| row["id"] }).to eq([2, 1])
     end
 
-    it "filters positions using the since parameter for both global and node queries" do
+    it "filters positions using since and before parameters for global and node queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
@@ -6280,6 +6345,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
       expect(filtered.map { |row| row["id"] }).to eq([11])
+
+      get "/api/positions?before=#{older_rx}"
+
+      expect(last_response).to be_ok
+      before_payload = JSON.parse(last_response.body)
+      expect(before_payload.map { |row| row["id"] }).to eq([10])
+
+      get "/api/positions/!pos-since?before=#{older_rx}"
+
+      expect(last_response).to be_ok
+      before_filtered = JSON.parse(last_response.body)
+      expect(before_filtered.map { |row| row["id"] }).to eq([10])
     end
 
     it "encodes position pagination cursors with cursor_time and advances pages" do

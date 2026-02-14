@@ -179,6 +179,8 @@ module PotatoMesh
         safe_limit = coerce_query_limit(limit) if with_pagination
         fetch_limit = with_pagination ? safe_limit + 1 : nil
         where_clauses = [
+          "id IS NOT NULL",
+          "TRIM(id) != ''",
           "domain IS NOT NULL",
           "TRIM(domain) != ''",
           "pubkey IS NOT NULL",
@@ -229,11 +231,11 @@ module PotatoMesh
           break if rows.length < fetch_limit
 
           marker_row = rows.reverse.find do |row|
-            sanitize_instance_domain(row["domain"]) && string_or_nil(row["id"])
+            string_or_nil(row["domain"]) && string_or_nil(row["id"])
           end
           break unless marker_row
 
-          marker_domain = sanitize_instance_domain(marker_row["domain"])&.downcase
+          marker_domain = string_or_nil(marker_row["domain"])&.downcase
           marker_id = string_or_nil(marker_row["id"])
           break unless marker_domain && marker_id
 
