@@ -62,6 +62,22 @@ function buildModel(overrides = {}) {
   });
 }
 
+function findChannelByLabel(model, label) {
+  return model.channels.find(channel => channel.label === label);
+}
+
+function assertChannelMessages(model, { label, id, index, messageIds }) {
+  const channel = findChannelByLabel(model, label);
+  assert.ok(channel);
+  if (id instanceof RegExp) {
+    assert.match(channel.id, id);
+  } else {
+    assert.equal(channel.id, id);
+  }
+  assert.equal(channel.index, index);
+  assert.deepEqual(channel.entries.map(entry => entry.message.id), messageIds);
+}
+
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
   assert.equal(model.logEntries.length, 3);
@@ -75,12 +91,13 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
     ['recent-node', 'iso-node', 'encrypted']
   );
 
-  assert.equal(model.channels.length, 5);
+  assert.equal(model.channels.length, 6);
   assert.deepEqual(model.channels.map(channel => channel.label), [
     'EnvDefault',
     'Fallback',
     'MediumFast',
     'ShortFast',
+    '1',
     'BerlinMesh'
   ]);
 
@@ -106,11 +123,16 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   assert.equal(presetChannel.id, 'channel-0-shortfast');
   assert.deepEqual(presetChannel.entries.map(entry => entry.message.id), ['primary-preset']);
 
+  const unnamedSecondaryChannel = channelByLabel['1'];
+  assert.equal(unnamedSecondaryChannel.index, 1);
+  assert.equal(unnamedSecondaryChannel.id, 'channel-1');
+  assert.deepEqual(unnamedSecondaryChannel.entries.map(entry => entry.message.id), ['iso-ts']);
+
   const secondaryChannel = channelByLabel.BerlinMesh;
   assert.equal(secondaryChannel.index, 1);
-  assert.equal(secondaryChannel.id, 'channel-secondary-berlinmesh');
-  assert.equal(secondaryChannel.entries.length, 2);
-  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['iso-ts', 'recent-alt']);
+  assert.match(secondaryChannel.id, /^channel-secondary-1-berlinmesh-[a-z0-9]+$/);
+  assert.equal(secondaryChannel.entries.length, 1);
+  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['recent-alt']);
 });
 
 test('buildChatTabModel skips channel buckets when there are no messages', () => {
@@ -272,7 +294,7 @@ test('buildChatTabModel ignores plaintext log-only entries', () => {
   assert.equal(encryptedEntries[0]?.message?.id, 'enc');
 });
 
-test('buildChatTabModel merges secondary channels with matching labels regardless of index', () => {
+test('buildChatTabModel keeps secondary channels distinct by index even with matching labels', () => {
   const primaryId = 'primary';
   const secondaryFirstId = 'secondary-one';
   const secondarySecondId = 'secondary-two';
@@ -289,62 +311,129 @@ test('buildChatTabModel merges secondary channels with matching labels regardles
   });
 
   const meshChannels = model.channels.filter(channel => channel.label === label);
-  assert.equal(meshChannels.length, 2);
+  assert.equal(meshChannels.length, 3);
 
   const primaryChannel = meshChannels.find(channel => channel.index === 0);
   assert.ok(primaryChannel);
   assert.equal(primaryChannel.entries.length, 1);
   assert.equal(primaryChannel.entries[0]?.message?.id, primaryId);
 
-  const secondaryChannel = meshChannels.find(channel => channel.index > 0);
-  assert.ok(secondaryChannel);
-  assert.equal(secondaryChannel.id, 'channel-secondary-meshtown');
-  assert.equal(secondaryChannel.index, 3);
-  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), [secondaryFirstId, secondarySecondId]);
+  const secondaryFirstChannel = meshChannels.find(channel => channel.index === 7);
+  assert.ok(secondaryFirstChannel);
+  assert.match(secondaryFirstChannel.id, /^channel-secondary-7-meshtown-[a-z0-9]+$/);
+  assert.deepEqual(secondaryFirstChannel.entries.map(entry => entry.message.id), [secondaryFirstId]);
+
+  const secondarySecondChannel = meshChannels.find(channel => channel.index === 3);
+  assert.ok(secondarySecondChannel);
+  assert.match(secondarySecondChannel.id, /^channel-secondary-3-meshtown-[a-z0-9]+$/);
+  assert.deepEqual(secondarySecondChannel.entries.map(entry => entry.message.id), [secondarySecondId]);
 });
 
-test('buildChatTabModel rekeys unnamed secondary buckets when a label later arrives', () => {
-  const unnamedId = 'unnamed';
-  const namedId = 'named';
-  const label = 'SideMesh';
-  const index = 4;
+test('buildChatTabModel keeps unnamed secondary buckets separate when a label later arrives', () => {
+  const scenarios = [
+    {
+      index: 4,
+      label: 'SideMesh',
+      messages: [
+        { id: 'unnamed', rx_time: NOW - 15, channel: 4 },
+        { id: 'named', rx_time: NOW - 10, channel: 4, channel_name: 'SideMesh' }
+      ],
+      namedId: /^channel-secondary-4-sidemesh-[a-z0-9]+$/,
+      namedMessages: ['named'],
+      unnamedMessages: ['unnamed']
+    },
+    {
+      index: 5,
+      label: 'MeshNorth',
+      messages: [
+        { id: 'named', rx_time: NOW - 12, channel: 5, channel_name: 'MeshNorth' },
+        { id: 'unlabeled', rx_time: NOW - 8, channel: 5 }
+      ],
+      namedId: /^channel-secondary-5-meshnorth-[a-z0-9]+$/,
+      namedMessages: ['named'],
+      unnamedMessages: ['unlabeled']
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const model = buildChatTabModel({
+      nodes: [],
+      messages: scenario.messages,
+      nowSeconds: NOW,
+      windowSeconds: WINDOW
+    });
+    const secondaryChannels = model.channels.filter(channel => channel.index === scenario.index);
+    assert.equal(secondaryChannels.length, 2);
+    assertChannelMessages(model, {
+      label: scenario.label,
+      id: scenario.namedId,
+      index: scenario.index,
+      messageIds: scenario.namedMessages
+    });
+    assertChannelMessages(model, {
+      label: String(scenario.index),
+      id: `channel-${scenario.index}`,
+      index: scenario.index,
+      messageIds: scenario.unnamedMessages
+    });
+  }
+});
+
+test('buildChatTabModel keeps same-index channels with different names in separate tabs', () => {
   const model = buildChatTabModel({
     nodes: [],
     messages: [
-      { id: unnamedId, rx_time: NOW - 15, channel: index },
-      { id: namedId, rx_time: NOW - 10, channel: index, channel_name: label }
+      { id: 'public-msg', rx_time: NOW - 12, channel: 1, channel_name: 'PUBLIC' },
+      { id: 'berlin-msg', rx_time: NOW - 8, channel: 1, channel_name: 'BerlinMesh' }
     ],
     nowSeconds: NOW,
     windowSeconds: WINDOW
   });
 
-  const secondaryChannels = model.channels.filter(channel => channel.index === index);
-  assert.equal(secondaryChannels.length, 1);
-  const [secondaryChannel] = secondaryChannels;
-  assert.equal(secondaryChannel.id, 'channel-secondary-sidemesh');
-  assert.equal(secondaryChannel.label, label);
-  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), [unnamedId, namedId]);
+  assertChannelMessages(model, {
+    label: 'PUBLIC',
+    id: /^channel-secondary-1-public-[a-z0-9]+$/,
+    index: 1,
+    messageIds: ['public-msg']
+  });
+  assertChannelMessages(model, {
+    label: 'BerlinMesh',
+    id: /^channel-secondary-1-berlinmesh-[a-z0-9]+$/,
+    index: 1,
+    messageIds: ['berlin-msg']
+  });
 });
 
-test('buildChatTabModel merges unlabeled secondary messages into existing named buckets by index', () => {
-  const namedId = 'named';
-  const unlabeledId = 'unlabeled';
-  const label = 'MeshNorth';
-  const index = 5;
+test('buildChatTabModel keeps same-index slug-colliding labels on distinct tab ids', () => {
   const model = buildChatTabModel({
     nodes: [],
     messages: [
-      { id: namedId, rx_time: NOW - 12, channel: index, channel_name: label },
-      { id: unlabeledId, rx_time: NOW - 8, channel: index }
+      { id: 'foo-space', rx_time: NOW - 10, channel: 1, channel_name: 'Foo Bar' },
+      { id: 'foo-dash', rx_time: NOW - 8, channel: 1, channel_name: 'Foo-Bar' }
     ],
     nowSeconds: NOW,
     windowSeconds: WINDOW
   });
 
-  const secondaryChannels = model.channels.filter(channel => channel.index === index);
-  assert.equal(secondaryChannels.length, 1);
-  const [secondaryChannel] = secondaryChannels;
-  assert.equal(secondaryChannel.id, 'channel-secondary-meshnorth');
-  assert.equal(secondaryChannel.label, label);
-  assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), [namedId, unlabeledId]);
+  const fooSpaceChannel = findChannelByLabel(model, 'Foo Bar');
+  const fooDashChannel = findChannelByLabel(model, 'Foo-Bar');
+  assert.ok(fooSpaceChannel);
+  assert.ok(fooDashChannel);
+  assert.match(fooSpaceChannel.id, /^channel-secondary-1-foo-bar-[a-z0-9]+$/);
+  assert.match(fooDashChannel.id, /^channel-secondary-1-foo-bar-[a-z0-9]+$/);
+  assert.notEqual(fooSpaceChannel.id, fooDashChannel.id);
+});
+
+test('buildChatTabModel falls back to hashed id for unsluggable secondary labels', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [{ id: 'hash-fallback', rx_time: NOW - 5, channel: 2, channel_name: '###' }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const channel = findChannelByLabel(model, '###');
+  assert.ok(channel);
+  assert.equal(channel.index, 2);
+  assert.ok(channel.id.startsWith('channel-secondary-2-'));
+  assert.ok(channel.id.length > 'channel-secondary-2-'.length);
 });
