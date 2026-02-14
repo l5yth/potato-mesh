@@ -133,6 +133,8 @@ services:
   matrix-bridge:
     <<: *matrix-bridge-base
     network_mode: host
+    profiles:
+      - matrix
     depends_on:
       - web
     extra_hosts:
