@@ -81,7 +81,12 @@ x-matrix-bridge-base: &matrix-bridge-base
   image: ghcr.io/l5yth/potato-mesh-matrix-bridge-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:${POTATOMESH_IMAGE_TAG:-latest}
   volumes:
     - potatomesh_matrix_bridge_state:/app
-    - ./matrix/Config.toml:/app/Config.toml:ro
+    - type: bind
+      source: ./matrix/Config.toml
+      target: /app/Config.toml
+      read_only: true
+      bind:
+        create_host_path: false
   restart: unless-stopped
   deploy:
     resources:
@@ -128,6 +133,8 @@ services:
   matrix-bridge:
     <<: *matrix-bridge-base
     network_mode: host
+    profiles:
+      - matrix
     depends_on:
       - web
     extra_hosts:
