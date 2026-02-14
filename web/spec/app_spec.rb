@@ -2929,8 +2929,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   describe "POST /api/messages" do
     SELECT_MESSAGE_ENCRYPTED_SQL = "SELECT encrypted FROM messages WHERE id = ?".freeze
+    SELECT_NEIGHBOR_COUNT_BY_NODE_SQL = "SELECT COUNT(*) FROM neighbors WHERE node_id = ?".freeze
     NODE_INFO_LONG_NAME = "Node Info".freeze
     FIRST_MESSAGE_INGESTOR_ID = "!1111aaaa".freeze
+    SHARED_TEST_INGESTOR_ID = "!aaaa1111".freeze
+    DEADBEEF_NODE_ID = "!deadbeef".freeze
+    NEIGHBOR_EMPTY_UPDATE_ROOT_ID = "!cafed00d".freeze
     NEIGHBOR_ROOT_ID = "!1a2b3c01".freeze
     NEIGHBOR_PRIMARY_ID = "!1a2b3c02".freeze
     NEIGHBOR_SNR_CLEAR_ROOT_ID = "!1a2b3c10".freeze
@@ -3121,7 +3125,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "id" => 10_001,
         "rx_time" => reference_time.to_i,
         "from_id" => "!cafef00d",
-        "to_id" => "!deadbeef",
+        "to_id" => DEADBEEF_NODE_ID,
         "channel" => 0,
         "portnum" => "TEXT_MESSAGE_APP",
         "text" => "Spec participant placeholder",
@@ -3138,12 +3142,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
           <<~SQL,
           SELECT node_id, num, short_name, long_name, role, last_heard, first_heard
           FROM nodes
-          WHERE node_id IN ("!cafef00d", "!deadbeef")
+          WHERE node_id IN ("!cafef00d", "#{DEADBEEF_NODE_ID}")
           ORDER BY node_id
         SQL
         )
 
-        expect(rows.map { |row| row["node_id"] }).to contain_exactly("!cafef00d", "!deadbeef")
+        expect(rows.map { |row| row["node_id"] }).to contain_exactly("!cafef00d", DEADBEEF_NODE_ID)
         rows.each do |row|
           expect(row["num"]).to be_an(Integer)
           expect(row["role"]).to eq("CLIENT_HIDDEN")
@@ -3349,7 +3353,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "rx_time" => reference_time.to_i - 80,
           "latitude" => 52.1,
           "longitude" => 13.2,
-          "ingestor" => "!aaaa1111",
+          "ingestor" => SHARED_TEST_INGESTOR_ID,
         }
         second_payload = first_payload.merge(
           "latitude" => 53.3,
@@ -3362,7 +3366,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           db.results_as_hash = true
           row = db.get_first_row("SELECT latitude, ingestor FROM positions WHERE id = ?", [first_payload["id"]])
           expect_same_value(row["latitude"], 53.3)
-          expect(row["ingestor"]).to eq("!aaaa1111")
+          expect(row["ingestor"]).to eq(SHARED_TEST_INGESTOR_ID)
         end
       end
 
@@ -3541,15 +3545,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       it "removes stored neighbors when a later packet contains no neighbors" do
         seed_payload = {
-          "node_id" => "!cafed00d",
+          "node_id" => NEIGHBOR_EMPTY_UPDATE_ROOT_ID,
           "rx_time" => reference_time.to_i - 50,
           "neighbors" => [
-            { "node_id" => "!deadbeef", "snr" => -2.0 },
+            { "node_id" => DEADBEEF_NODE_ID, "snr" => -2.0 },
           ],
-          "ingestor" => "!aaaa1111",
+          "ingestor" => SHARED_TEST_INGESTOR_ID,
         }
         empty_payload = {
-          "node_id" => "!cafed00d",
+          "node_id" => NEIGHBOR_EMPTY_UPDATE_ROOT_ID,
           "rx_time" => reference_time.to_i - 10,
           "neighbors" => [],
           "ingestor" => "!bbbb2222",
@@ -3561,7 +3565,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_response).to be_ok
 
         with_db(readonly: true) do |db|
-          remaining = db.get_first_value("SELECT COUNT(*) FROM neighbors WHERE node_id = ?", ["!cafed00d"])
+          remaining = db.get_first_value(SELECT_NEIGHBOR_COUNT_BY_NODE_SQL, [NEIGHBOR_EMPTY_UPDATE_ROOT_ID])
           expect(remaining).to eq(0)
         end
       end
@@ -3653,7 +3657,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db(readonly: true) do |db|
           count = db.get_first_value(
-            "SELECT COUNT(*) FROM neighbors WHERE node_id = ?",
+            SELECT_NEIGHBOR_COUNT_BY_NODE_SQL,
             [NEIGHBOR_CHUNK_ROOT_ID],
           )
           expect(count).to eq(1)
@@ -3693,7 +3697,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db(readonly: true) do |db|
           count = db.get_first_value(
-            "SELECT COUNT(*) FROM neighbors WHERE node_id = ?",
+            SELECT_NEIGHBOR_COUNT_BY_NODE_SQL,
             ["!1a2b3c20"],
           )
           expect(count).to eq(1_100)
