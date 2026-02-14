@@ -3512,6 +3512,48 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
+      it "does not update existing neighbor last_heard from third-party neighbor reports" do
+        reporter_id = "!abc123ef"
+        existing_neighbor_id = "!00ff0011"
+        prior_last_heard = reference_time.to_i - 4 * 60 * 60
+        rx_time = reference_time.to_i - 60 * 60
+        neighbor_rx_time = rx_time - 120
+
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+            [reporter_id, 0xabc123ef, prior_last_heard, prior_last_heard],
+          )
+          db.execute(
+            "INSERT INTO nodes(node_id, num, last_heard, first_heard) VALUES (?,?,?,?)",
+            [existing_neighbor_id, 0x00ff0011, prior_last_heard, prior_last_heard],
+          )
+        end
+
+        payload = {
+          "node_id" => reporter_id,
+          "node_num" => 0xabc123ef,
+          "rx_time" => rx_time,
+          "neighbors" => [
+            { "node_id" => existing_neighbor_id, "snr" => -7.5, "rx_time" => neighbor_rx_time },
+          ],
+        }
+
+        post "/api/neighbors", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          reporter_row = db.get_first_row("SELECT last_heard FROM nodes WHERE node_id = ?", [reporter_id])
+          neighbor_row = db.get_first_row("SELECT last_heard FROM nodes WHERE node_id = ?", [existing_neighbor_id])
+
+          expect(reporter_row["last_heard"]).to eq(rx_time)
+          expect(neighbor_row["last_heard"]).to eq(prior_last_heard)
+        end
+      end
+
       it "handles broadcasts with no neighbors" do
         rx_time = reference_time.to_i - 60
         payload = {

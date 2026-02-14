@@ -761,7 +761,6 @@ module PotatoMesh
           snr = coerce_float(neighbor["snr"])
 
           ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time)
-          touch_node_last_seen(db, neighbor_id || neighbor_num, neighbor_num, rx_time: entry_rx_time, source: :neighborinfo)
 
           neighbor_entries << [neighbor_id, snr, entry_rx_time, ingestor]
         end
