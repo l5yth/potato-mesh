@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS neighbors (
     neighbor_id TEXT NOT NULL,
     snr         REAL,
     rx_time     INTEGER NOT NULL,
+    ingestor    TEXT,
     PRIMARY KEY (node_id, neighbor_id),
     FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE,
     FOREIGN KEY (neighbor_id) REFERENCES nodes(node_id) ON DELETE CASCADE

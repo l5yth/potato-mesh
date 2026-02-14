@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS positions (
     rssi           INTEGER,
     hop_limit      INTEGER,
     bitfield       INTEGER,
-    payload_b64    TEXT
+    payload_b64    TEXT,
+    ingestor       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_positions_rx_time ON positions(rx_time);

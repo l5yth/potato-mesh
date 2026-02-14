@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS traces (
     rx_iso      TEXT NOT NULL,
     rssi        INTEGER,
     snr         REAL,
-    elapsed_ms  INTEGER
+    elapsed_ms  INTEGER,
+    ingestor    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS trace_hops (

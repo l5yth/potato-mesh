@@ -184,6 +184,65 @@ RSpec.describe PotatoMesh::App::Database do
     expect(hop_columns).to include("trace_id", "hop_index", "node_id")
   end
 
+  it "creates positions and neighbors tables when absent" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      db.execute("CREATE TABLE telemetry(id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT)")
+    end
+
+    expect(column_names_for("positions")).to be_empty
+    expect(column_names_for("neighbors")).to be_empty
+
+    harness_class.ensure_schema_upgrades
+
+    positions_columns = column_names_for("positions")
+    expect(positions_columns).to include("id", "node_id", "rx_time", "ingestor")
+
+    neighbors_columns = column_names_for("neighbors")
+    expect(neighbors_columns).to include("node_id", "neighbor_id", "rx_time", "ingestor")
+  end
+
+  it "adds ingestor columns to legacy positions neighbors and traces tables" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      db.execute("CREATE TABLE telemetry(id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT)")
+      db.execute <<~SQL
+                   CREATE TABLE positions (
+                     id INTEGER PRIMARY KEY,
+                     rx_time INTEGER,
+                     rx_iso TEXT,
+                     node_id TEXT
+                   )
+                 SQL
+      db.execute <<~SQL
+                   CREATE TABLE neighbors (
+                     node_id TEXT,
+                     neighbor_id TEXT,
+                     rx_time INTEGER
+                   )
+                 SQL
+      db.execute <<~SQL
+                   CREATE TABLE traces (
+                     id INTEGER PRIMARY KEY,
+                     request_id INTEGER,
+                     src TEXT,
+                     dest TEXT,
+                     rx_time INTEGER,
+                     rx_iso TEXT
+                   )
+                 SQL
+      db.execute("CREATE TABLE trace_hops(trace_id INTEGER, hop_index INTEGER, node_id TEXT)")
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    expect(column_names_for("positions")).to include("ingestor")
+    expect(column_names_for("neighbors")).to include("ingestor")
+    expect(column_names_for("traces")).to include("ingestor")
+  end
+
   it "adds the contact_link column to existing instances tables" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       db.execute("CREATE TABLE nodes(node_id TEXT)")
