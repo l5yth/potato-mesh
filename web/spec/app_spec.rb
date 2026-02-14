@@ -2930,6 +2930,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
   describe "POST /api/messages" do
     SELECT_MESSAGE_ENCRYPTED_SQL = "SELECT encrypted FROM messages WHERE id = ?".freeze
     NODE_INFO_LONG_NAME = "Node Info".freeze
+    FIRST_MESSAGE_INGESTOR_ID = "!1111aaaa".freeze
+    NEIGHBOR_ROOT_ID = "!1a2b3c01".freeze
+    NEIGHBOR_PRIMARY_ID = "!1a2b3c02".freeze
+    NEIGHBOR_SNR_CLEAR_ROOT_ID = "!1a2b3c10".freeze
+    NEIGHBOR_SNR_CLEAR_PEER_ID = "!1a2b3c11".freeze
 
     def post_twice_for_ingestor(endpoint, first_payload, second_payload)
       post endpoint, first_payload.to_json, auth_headers
@@ -3029,7 +3034,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "channel" => 0,
         "portnum" => "TEXT_MESSAGE_APP",
         "text" => "first reporter",
-        "ingestor" => "!1111aaaa",
+        "ingestor" => FIRST_MESSAGE_INGESTOR_ID,
       }
       second_payload = first_payload.merge(
         "text" => "updated text",
@@ -3042,13 +3047,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.results_as_hash = true
         row = db.get_first_row("SELECT text, ingestor FROM messages WHERE id = ?", [first_payload["id"]])
         expect(row["text"]).to eq("updated text")
-        expect(row["ingestor"]).to eq("!1111aaaa")
+        expect(row["ingestor"]).to eq(FIRST_MESSAGE_INGESTOR_ID)
       end
 
       get "/api/messages?limit=10"
       expect(last_response).to be_ok
       row = JSON.parse(last_response.body).find { |entry| entry["id"] == first_payload["id"] }
-      expect(row["ingestor"]).to eq("!1111aaaa")
+      expect(row["ingestor"]).to eq(FIRST_MESSAGE_INGESTOR_ID)
     end
 
     it "creates hidden nodes for unknown message senders" do
@@ -3535,19 +3540,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       it "stores neighbor ingestor and preserves the first reporter per tuple" do
         base = {
-          "node_id" => "!1a2b3c01",
+          "node_id" => NEIGHBOR_ROOT_ID,
           "rx_time" => reference_time.to_i - 45,
           "neighbors" => [
-            { "node_id" => "!1a2b3c02", "snr" => -1.5 },
+            { "node_id" => NEIGHBOR_PRIMARY_ID, "snr" => -1.5 },
             { "node_id" => "!1a2b3c03", "snr" => -2.5 },
           ],
           "ingestor" => "!aaaa9999",
         }
         update = {
-          "node_id" => "!1a2b3c01",
+          "node_id" => NEIGHBOR_ROOT_ID,
           "rx_time" => reference_time.to_i - 30,
           "neighbors" => [
-            { "node_id" => "!1a2b3c02", "snr" => -0.5 },
+            { "node_id" => NEIGHBOR_PRIMARY_ID, "snr" => -0.5 },
           ],
           "ingestor" => "!bbbb8888",
         }
@@ -3556,9 +3561,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
-          rows = db.execute("SELECT neighbor_id, snr, ingestor FROM neighbors WHERE node_id = ? ORDER BY neighbor_id", ["!1a2b3c01"])
+          rows = db.execute("SELECT neighbor_id, snr, ingestor FROM neighbors WHERE node_id = ? ORDER BY neighbor_id", [NEIGHBOR_ROOT_ID])
           expect(rows.size).to eq(1)
-          expect(rows.first["neighbor_id"]).to eq("!1a2b3c02")
+          expect(rows.first["neighbor_id"]).to eq(NEIGHBOR_PRIMARY_ID)
           expect_same_value(rows.first["snr"], -0.5)
           expect(rows.first["ingestor"]).to eq("!aaaa9999")
         end
@@ -3566,17 +3571,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       it "clears stored neighbor snr when an updated entry omits snr" do
         initial = {
-          "node_id" => "!1a2b3c10",
+          "node_id" => NEIGHBOR_SNR_CLEAR_ROOT_ID,
           "rx_time" => reference_time.to_i - 40,
           "neighbors" => [
-            { "node_id" => "!1a2b3c11", "snr" => -3.25 },
+            { "node_id" => NEIGHBOR_SNR_CLEAR_PEER_ID, "snr" => -3.25 },
           ],
         }
         update = {
-          "node_id" => "!1a2b3c10",
+          "node_id" => NEIGHBOR_SNR_CLEAR_ROOT_ID,
           "rx_time" => reference_time.to_i - 20,
           "neighbors" => [
-            { "node_id" => "!1a2b3c11" },
+            { "node_id" => NEIGHBOR_SNR_CLEAR_PEER_ID },
           ],
         }
 
@@ -3589,10 +3594,41 @@ RSpec.describe "Potato Mesh Sinatra app" do
           db.results_as_hash = true
           row = db.get_first_row(
             "SELECT snr, rx_time FROM neighbors WHERE node_id = ? AND neighbor_id = ?",
-            ["!1a2b3c10", "!1a2b3c11"],
+            [NEIGHBOR_SNR_CLEAR_ROOT_ID, NEIGHBOR_SNR_CLEAR_PEER_ID],
           )
           expect(row["snr"]).to be_nil
           expect(row["rx_time"]).to eq(update["rx_time"])
+        end
+      end
+
+      it "removes stale neighbors in chunked deletes" do
+        initial_neighbors = Array.new(1_100) do |i|
+          { "node_id" => format("!%08x", 0x2000_0000 + i), "snr" => -2.0 }
+        end
+        initial = {
+          "node_id" => "!1a2b3c30",
+          "rx_time" => reference_time.to_i - 35,
+          "neighbors" => initial_neighbors,
+        }
+        update = {
+          "node_id" => "!1a2b3c30",
+          "rx_time" => reference_time.to_i - 25,
+          "neighbors" => [
+            { "node_id" => "!20000000", "snr" => -1.0 },
+          ],
+        }
+
+        post "/api/neighbors", initial.to_json, auth_headers
+        expect(last_response).to be_ok
+        post "/api/neighbors", update.to_json, auth_headers
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value(
+            "SELECT COUNT(*) FROM neighbors WHERE node_id = ?",
+            ["!1a2b3c30"],
+          )
+          expect(count).to eq(1)
         end
       end
 
@@ -3609,6 +3645,30 @@ RSpec.describe "Potato Mesh Sinatra app" do
         with_db(readonly: true) do |db|
           count = db.get_first_value("SELECT COUNT(*) FROM neighbors")
           expect(count).to eq(0)
+        end
+      end
+
+      it "handles large neighbor lists without SQLite bind overflows" do
+        neighbors = Array.new(1_100) do |i|
+          { "node_id" => format("!%08x", 0x1000_0000 + i), "snr" => -1.0 }
+        end
+        payload = {
+          "node_id" => "!1a2b3c20",
+          "rx_time" => reference_time.to_i - 15,
+          "neighbors" => neighbors,
+        }
+
+        post "/api/neighbors", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value(
+            "SELECT COUNT(*) FROM neighbors WHERE node_id = ?",
+            ["!1a2b3c20"],
+          )
+          expect(count).to eq(1_100)
         end
       end
     end

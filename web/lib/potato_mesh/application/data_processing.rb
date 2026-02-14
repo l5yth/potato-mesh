@@ -771,12 +771,19 @@ module PotatoMesh
             if neighbor_entries.empty?
               db.execute("DELETE FROM neighbors WHERE node_id = ?", [node_id])
             else
-              expected_neighbors = neighbor_entries.map(&:first)
-              placeholders = expected_neighbors.map { "?" }.join(",")
-              db.execute(
-                "DELETE FROM neighbors WHERE node_id = ? AND neighbor_id NOT IN (#{placeholders})",
-                [node_id] + expected_neighbors,
-              )
+              expected_neighbors = neighbor_entries.map(&:first).uniq
+              existing_neighbors = db.execute(
+                "SELECT neighbor_id FROM neighbors WHERE node_id = ?",
+                [node_id],
+              ).flatten
+              stale_neighbors = existing_neighbors - expected_neighbors
+              stale_neighbors.each_slice(500) do |slice|
+                placeholders = slice.map { "?" }.join(",")
+                db.execute(
+                  "DELETE FROM neighbors WHERE node_id = ? AND neighbor_id IN (#{placeholders})",
+                  [node_id] + slice,
+                )
+              end
             end
 
             neighbor_entries.each do |neighbor_id, snr_value, heard_time, reporter_id|
