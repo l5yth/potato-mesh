@@ -15,6 +15,10 @@
  */
 
 import { readAppConfig } from './config.js';
+import {
+  filterDisplayableFederationInstances,
+  resolveFederationSiteNameForDisplay
+} from './federation-instance-display.js';
 import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
@@ -274,7 +278,12 @@ export async function initializeFederationPage(options = {}) {
     ? true
     : legendCollapsedValue.trim() !== 'false';
   const tableSorters = {
-    name: { getValue: inst => inst.name ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+    name: {
+      getValue: inst => resolveFederationSiteNameForDisplay(inst),
+      compare: compareString,
+      hasValue: hasStringValue,
+      defaultDirection: 'asc'
+    },
     domain: { getValue: inst => inst.domain ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     contact: { getValue: inst => inst.contactLink ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     version: { getValue: inst => inst.version ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
@@ -363,7 +372,8 @@ export async function initializeFederationPage(options = {}) {
     for (const instance of sorted) {
       const tr = document.createElement('tr');
       const url = buildInstanceUrl(instance.domain);
-      const nameHtml = instance.name ? escapeHtml(instance.name) : '<em>—</em>';
+      const displayName = resolveFederationSiteNameForDisplay(instance);
+      const nameHtml = displayName ? escapeHtml(displayName) : '<em>—</em>';
       const domainHtml = url
         ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(instance.domain || '')}</a>`
         : escapeHtml(instance.domain || '');
@@ -529,7 +539,7 @@ export async function initializeFederationPage(options = {}) {
       credentials: 'omit'
     });
     if (response.ok) {
-      instances = await response.json();
+      instances = filterDisplayableFederationInstances(await response.json());
     }
   } catch (err) {
     console.warn('Failed to fetch federation instances', err);
@@ -636,7 +646,8 @@ export async function initializeFederationPage(options = {}) {
 
       bounds.push([lat, lon]);
 
-      const name = instance.name || instance.domain || 'Unknown';
+      const displayName = resolveFederationSiteNameForDisplay(instance);
+      const name = displayName || instance.domain || 'Unknown';
       const url = buildInstanceUrl(instance.domain);
       const nodeCountValue = toFiniteNumber(instance.nodesCount ?? instance.nodes_count);
       const popupLines = [

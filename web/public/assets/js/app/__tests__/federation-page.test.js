@@ -657,3 +657,100 @@ test('federation page tolerates fetch failures', async () => {
   await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
   cleanup();
 });
+
+test('federation page suppresses spammy site names and truncates long names in visible UI', async () => {
+  const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
+  const { document, createElement, registerElement, cleanup } = env;
+
+  const mapEl = createElement('div', 'map');
+  registerElement('map', mapEl);
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  tableEl.appendChild(tbodyEl);
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify({ mapCenter: { lat: 0, lon: 0 }, mapZoom: 3 }));
+
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+
+  const markerPopups = [];
+  const leafletStub = {
+    map() {
+      return {
+        setView() {},
+        on() {},
+        fitBounds() {},
+        getPane() {
+          return null;
+        }
+      };
+    },
+    tileLayer() {
+      return {
+        addTo() {
+          return this;
+        },
+        getContainer() {
+          return null;
+        },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return {
+        addLayer() {},
+        addTo() {
+          return this;
+        }
+      };
+    },
+    circleMarker() {
+      return {
+        bindPopup(html) {
+          markerPopups.push(html);
+          return this;
+        }
+      };
+    }
+  };
+
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'visible.mesh',
+        name: 'abcdefghijklmnopqrstuvwxyz1234567890',
+        latitude: 1,
+        longitude: 1,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 30
+      },
+      {
+        domain: 'spam.mesh',
+        name: 'www.spam.example buy now',
+        latitude: 2,
+        longitude: 2,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
+
+    assert.equal(statusEl.textContent, '1 instances');
+    assert.equal(tbodyEl.childNodes.length, 1);
+    assert.match(tbodyEl.childNodes[0].innerHTML, /abcdefghijklmnopqrstuvwxyz12345\.\.\./);
+    assert.doesNotMatch(tbodyEl.childNodes[0].innerHTML, /spam\.mesh/);
+    assert.equal(markerPopups.length, 1);
+    assert.match(markerPopups[0], /abcdefghijklmnopqrstuvwxyz12345\.\.\./);
+    assert.doesNotMatch(markerPopups[0], /www\.spam\.example/);
+  } finally {
+    cleanup();
+  }
+});
