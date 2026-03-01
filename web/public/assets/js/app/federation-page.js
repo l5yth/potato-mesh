@@ -17,6 +17,7 @@
 import { readAppConfig } from './config.js';
 import {
   filterDisplayableFederationInstances,
+  resolveFederationSiteName,
   resolveFederationSiteNameForDisplay
 } from './federation-instance-display.js';
 import { resolveLegendVisibility } from './map-legend-visibility.js';
@@ -279,7 +280,7 @@ export async function initializeFederationPage(options = {}) {
     : legendCollapsedValue.trim() !== 'false';
   const tableSorters = {
     name: {
-      getValue: inst => resolveFederationSiteNameForDisplay(inst),
+      getValue: inst => resolveFederationSiteName(inst),
       compare: compareString,
       hasValue: hasStringValue,
       defaultDirection: 'asc'

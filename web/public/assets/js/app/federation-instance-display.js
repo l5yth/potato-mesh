@@ -15,7 +15,8 @@
  */
 
 const MAX_VISIBLE_SITE_NAME_LENGTH = 32;
-const TRUNCATED_SITE_NAME_LENGTH = 31;
+const TRUNCATION_SUFFIX = '...';
+const TRUNCATED_SITE_NAME_LENGTH = MAX_VISIBLE_SITE_NAME_LENGTH - TRUNCATION_SUFFIX.length;
 const SUPPRESSED_SITE_NAME_PATTERN = /(?:^|[^a-z0-9])(?:https?:\/\/|www\.)\S+/i;
 
 /**
@@ -30,6 +31,20 @@ function readSiteName(entry) {
   }
 
   return typeof entry.name === 'string' ? entry.name.trim() : '';
+}
+
+/**
+ * Read a federated instance domain as a trimmed string.
+ *
+ * @param {{ domain?: string } | null | undefined} entry Federation instance payload entry.
+ * @returns {string} Trimmed domain or an empty string when absent.
+ */
+function readDomain(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return '';
+  }
+
+  return typeof entry.domain === 'string' ? entry.domain.trim() : '';
 }
 
 /**
@@ -54,8 +69,8 @@ export function isSuppressedFederationSiteName(name) {
 /**
  * Truncate an instance site name for frontend display without mutating source data.
  *
- * Names longer than 32 characters are shortened to the first 31 characters plus an
- * ellipsis so the selector and table remain readable.
+ * Names longer than 32 characters are shortened to stay within that 32-character
+ * budget including the trailing ellipsis.
  *
  * @param {string} name Remote site name.
  * @returns {string} Display-ready site name.
@@ -70,7 +85,7 @@ export function truncateFederationSiteName(name) {
     return trimmed;
   }
 
-  return `${trimmed.slice(0, TRUNCATED_SITE_NAME_LENGTH)}...`;
+  return `${trimmed.slice(0, TRUNCATED_SITE_NAME_LENGTH)}${TRUNCATION_SUFFIX}`;
 }
 
 /**
@@ -95,10 +110,34 @@ export function resolveFederationSiteNameForDisplay(entry) {
 }
 
 /**
- * Determine the most suitable label for an instance list entry.
+ * Resolve the original trimmed site name for a federation instance.
+ *
+ * @param {{ name?: string } | null | undefined} entry Federation instance payload entry.
+ * @returns {string} Full trimmed site name or an empty string when absent.
+ */
+export function resolveFederationSiteName(entry) {
+  return readSiteName(entry);
+}
+
+/**
+ * Determine the full sort value for an instance selector entry.
+ *
+ * Sorting must use the original trimmed site name so truncation does not collapse
+ * multiple entries into the same comparison key.
  *
  * @param {{ name?: string, domain?: string } | null | undefined} entry Federation instance payload entry.
- * @returns {string} Preferred display label falling back to the domain.
+ * @returns {string} Full trimmed site name falling back to the domain.
+ */
+export function resolveFederationInstanceSortValue(entry) {
+  const siteName = resolveFederationSiteName(entry);
+  return siteName || readDomain(entry);
+}
+
+/**
+ * Determine the most suitable display label for an instance list entry.
+ *
+ * @param {{ name?: string, domain?: string } | null | undefined} entry Federation instance payload entry.
+ * @returns {string} Display label falling back to the domain.
  */
 export function resolveFederationInstanceLabel(entry) {
   const siteName = resolveFederationSiteNameForDisplay(entry);
@@ -106,11 +145,7 @@ export function resolveFederationInstanceLabel(entry) {
     return siteName;
   }
 
-  if (!entry || typeof entry !== 'object') {
-    return '';
-  }
-
-  return typeof entry.domain === 'string' ? entry.domain.trim() : '';
+  return readDomain(entry);
 }
 
 /**
@@ -129,7 +164,9 @@ export function filterDisplayableFederationInstances(entries) {
 
 export const __test__ = {
   MAX_VISIBLE_SITE_NAME_LENGTH,
+  TRUNCATION_SUFFIX,
   TRUNCATED_SITE_NAME_LENGTH,
+  readDomain,
   readSiteName,
   SUPPRESSED_SITE_NAME_PATTERN
 };

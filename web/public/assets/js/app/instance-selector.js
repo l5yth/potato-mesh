@@ -16,7 +16,8 @@
 
 import {
   filterDisplayableFederationInstances,
-  resolveFederationInstanceLabel
+  resolveFederationInstanceLabel,
+  resolveFederationInstanceSortValue
 } from './federation-instance-display.js';
 
 /**
@@ -211,10 +212,11 @@ export async function initializeInstanceSelector(options) {
     .map(entry => ({
       domain: entry.domain.trim(),
       label: resolveInstanceLabel(entry),
+      sortLabel: resolveFederationInstanceSortValue(entry),
     }))
     .sort((a, b) => {
-      const labelA = a.label || a.domain;
-      const labelB = b.label || b.domain;
+      const labelA = a.sortLabel || a.domain;
+      const labelB = b.sortLabel || b.domain;
       return labelA.localeCompare(labelB, undefined, { sensitivity: 'base' });
     });
 

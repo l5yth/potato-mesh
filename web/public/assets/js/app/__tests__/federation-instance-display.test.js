@@ -21,6 +21,7 @@ import {
   filterDisplayableFederationInstances,
   isSuppressedFederationSiteName,
   resolveFederationInstanceLabel,
+  resolveFederationInstanceSortValue,
   resolveFederationSiteNameForDisplay,
   shouldDisplayFederationInstance,
   truncateFederationSiteName
@@ -38,8 +39,9 @@ test('truncateFederationSiteName shortens names longer than 32 characters', () =
   assert.equal(truncateFederationSiteName('Short Mesh'), 'Short Mesh');
   assert.equal(
     truncateFederationSiteName('abcdefghijklmnopqrstuvwxyz1234567890'),
-    'abcdefghijklmnopqrstuvwxyz12345...'
+    'abcdefghijklmnopqrstuvwxyz123...'
   );
+  assert.equal(truncateFederationSiteName('abcdefghijklmnopqrstuvwxyz123456').length, 32);
   assert.equal(truncateFederationSiteName(null), '');
 });
 
@@ -58,4 +60,5 @@ test('display helpers filter suppressed names and preserve original domains', ()
   ]);
   assert.equal(resolveFederationSiteNameForDisplay(entries[0]), 'Normal Mesh');
   assert.equal(resolveFederationInstanceLabel(entries[2]), 'unnamed.mesh');
+  assert.equal(resolveFederationInstanceSortValue(entries[0]), 'Normal Mesh');
 });
