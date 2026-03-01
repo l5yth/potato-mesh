@@ -55,8 +55,38 @@ def _javascript_package_version() -> str:
     raise AssertionError("package.json does not expose a string version")
 
 
+def _flutter_package_version() -> str:
+    pubspec_path = REPO_ROOT / "app" / "pubspec.yaml"
+    for line in pubspec_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version:"):
+            version = line.split(":", 1)[1].strip()
+            if version:
+                return version
+            break
+    raise AssertionError("pubspec.yaml does not expose a version")
+
+
+def _rust_package_version() -> str:
+    cargo_path = REPO_ROOT / "matrix" / "Cargo.toml"
+    inside_package = False
+    for line in cargo_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "[package]":
+            inside_package = True
+            continue
+        if inside_package and stripped.startswith("[") and stripped.endswith("]"):
+            break
+        if inside_package:
+            literal = re.match(
+                r'version\s*=\s*["\'](?P<version>[^"\']+)["\']', stripped
+            )
+            if literal:
+                return literal.group("version")
+    raise AssertionError("Cargo.toml does not expose a package version")
+
+
 def test_version_identifiers_match_across_languages() -> None:
-    """Guard against version drift between Python, Ruby, and JavaScript."""
+    """Guard against version drift between Python, Ruby, JavaScript, Flutter, and Rust."""
 
     python_version = getattr(data, "__version__", None)
     assert (
@@ -65,5 +95,13 @@ def test_version_identifiers_match_across_languages() -> None:
 
     ruby_version = _ruby_fallback_version()
     javascript_version = _javascript_package_version()
+    flutter_version = _flutter_package_version()
+    rust_version = _rust_package_version()
 
-    assert python_version == ruby_version == javascript_version
+    assert (
+        python_version
+        == ruby_version
+        == javascript_version
+        == flutter_version
+        == rust_version
+    )

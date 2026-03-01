@@ -1,6 +1,6 @@
 {
   "name": "potato-mesh",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "type": "module",
   "private": true,
   "scripts": {
