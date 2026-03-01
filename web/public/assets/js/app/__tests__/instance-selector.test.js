@@ -154,6 +154,75 @@ test('initializeInstanceSelector populates options alphabetically and selects th
   }
 });
 
+test('initializeInstanceSelector hides suppressed names and truncates long labels', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+  const navLink = env.document.createElement('a');
+  navLink.classList.add('js-federation-nav');
+  navLink.textContent = 'Federation';
+  env.document.body.appendChild(navLink);
+
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return [
+        { name: 'Visit https://spam.example now', domain: 'spam.mesh' },
+        { name: 'abcdefghijklmnopqrstuvwxyz1234567890', domain: 'long.mesh' },
+        { name: 'Alpha Mesh', domain: 'alpha.mesh' }
+      ];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.equal(select.options.length, 3);
+    assert.equal(select.options[1].textContent, 'abcdefghijklmnopqrstuvwxyz123...');
+    assert.equal(select.options[2].textContent, 'Alpha Mesh');
+    assert.equal(navLink.textContent, 'Federation (2)');
+    assert.equal(select.options.some(option => option.value === 'spam.mesh'), false);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('initializeInstanceSelector sorts by full site names before truncating labels', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+  const sharedPrefix = 'abcdefghijklmnopqrstuvwxyz123';
+
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return [
+        { name: `${sharedPrefix}zeta suffix`, domain: 'zeta.mesh' },
+        { name: `${sharedPrefix}alpha suffix`, domain: 'alpha.mesh' }
+      ];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.equal(select.options[1].value, 'alpha.mesh');
+    assert.equal(select.options[2].value, 'zeta.mesh');
+    assert.equal(select.options[1].textContent, 'abcdefghijklmnopqrstuvwxyz123...');
+    assert.equal(select.options[2].textContent, 'abcdefghijklmnopqrstuvwxyz123...');
+  } finally {
+    env.cleanup();
+  }
+});
+
 test('initializeInstanceSelector navigates to the chosen instance domain', async () => {
   const env = createDomEnvironment();
   const select = setupSelectElement(env.document);

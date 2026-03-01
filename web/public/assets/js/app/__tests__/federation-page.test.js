@@ -21,6 +21,74 @@ import { createDomEnvironment } from './dom-environment.js';
 import { initializeFederationPage } from '../federation-page.js';
 import { roleColors } from '../role-helpers.js';
 
+function createBasicFederationPageHarness() {
+  const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
+  const { document, createElement, registerElement } = env;
+
+  const mapEl = createElement('div', 'map');
+  registerElement('map', mapEl);
+  const statusEl = createElement('div', 'status');
+  registerElement('status', statusEl);
+  const tableEl = createElement('table', 'instances');
+  const tbodyEl = createElement('tbody');
+  registerElement('instances', tableEl);
+  tableEl.appendChild(tbodyEl);
+  const configEl = createElement('div');
+  configEl.setAttribute('data-app-config', JSON.stringify({ mapCenter: { lat: 0, lon: 0 }, mapZoom: 3 }));
+
+  document.querySelector = selector => {
+    if (selector === '[data-app-config]') return configEl;
+    if (selector === '#instances tbody') return tbodyEl;
+    return null;
+  };
+
+  return { ...env, statusEl, tbodyEl };
+}
+
+function createBasicLeafletStub(options = {}) {
+  const { markerPopups = null, fitBounds = false } = options;
+
+  return {
+    map() {
+      return {
+        setView() {},
+        on() {},
+        fitBounds: fitBounds ? () => {} : undefined,
+        getPane() {
+          return null;
+        }
+      };
+    },
+    tileLayer() {
+      return {
+        addTo() {
+          return this;
+        },
+        getContainer() {
+          return null;
+        },
+        on() {}
+      };
+    },
+    layerGroup() {
+      return {
+        addLayer() {},
+        addTo() {
+          return this;
+        }
+      };
+    },
+    circleMarker() {
+      return {
+        bindPopup(html) {
+          markerPopups?.push(html);
+          return this;
+        }
+      };
+    }
+  };
+}
+
 test('federation map centers on configured coordinates and follows theme filters', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: true });
   const { document, window, createElement, registerElement, cleanup } = env;
@@ -603,57 +671,141 @@ test('federation legend toggle respects media query changes', async () => {
 });
 
 test('federation page tolerates fetch failures', async () => {
+  const { cleanup } = createBasicFederationPageHarness();
+
+  const fetchImpl = async () => {
+    throw new Error('boom');
+  };
+
+  const leafletStub = createBasicLeafletStub();
+  await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
+  cleanup();
+});
+
+test('federation page suppresses spammy site names and truncates long names in visible UI', async () => {
+  const { cleanup, statusEl, tbodyEl } = createBasicFederationPageHarness();
+  const markerPopups = [];
+  const leafletStub = createBasicLeafletStub({ markerPopups, fitBounds: true });
+
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'visible.mesh',
+        name: 'abcdefghijklmnopqrstuvwxyz1234567890',
+        latitude: 1,
+        longitude: 1,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 30
+      },
+      {
+        domain: 'spam.mesh',
+        name: 'www.spam.example buy now',
+        latitude: 2,
+        longitude: 2,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
+
+    assert.equal(statusEl.textContent, '1 instances');
+    assert.equal(tbodyEl.childNodes.length, 1);
+    assert.match(tbodyEl.childNodes[0].innerHTML, /abcdefghijklmnopqrstuvwxyz123\.\.\./);
+    assert.doesNotMatch(tbodyEl.childNodes[0].innerHTML, /spam\.mesh/);
+    assert.equal(markerPopups.length, 1);
+    assert.match(markerPopups[0], /abcdefghijklmnopqrstuvwxyz123\.\.\./);
+    assert.doesNotMatch(markerPopups[0], /www\.spam\.example/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('federation page sorts by full site names before truncating visible labels', async () => {
   const env = createDomEnvironment({ includeBody: true, bodyHasDarkClass: false });
   const { document, createElement, registerElement, cleanup } = env;
+  const sharedPrefix = 'abcdefghijklmnopqrstuvwxyz123';
 
   const mapEl = createElement('div', 'map');
   registerElement('map', mapEl);
   const statusEl = createElement('div', 'status');
   registerElement('status', statusEl);
+
   const tableEl = createElement('table', 'instances');
   const tbodyEl = createElement('tbody');
   registerElement('instances', tableEl);
+  tableEl.appendChild(tbodyEl);
+
+  const headerNameTh = createElement('th');
+  const headerName = createElement('span');
+  headerName.classList.add('sort-header');
+  headerName.dataset.sortKey = 'name';
+  headerName.dataset.sortLabel = 'Name';
+  headerNameTh.appendChild(headerName);
+
+  const ths = [headerNameTh];
+  const headers = [headerName];
+  const headerHandlers = new Map();
+  headers.forEach(header => {
+    header.addEventListener = (event, handler) => {
+      const existing = headerHandlers.get(header) || {};
+      existing[event] = handler;
+      headerHandlers.set(header, existing);
+    };
+    header.closest = () => ths.find(th => th.childNodes.includes(header));
+    header.querySelector = () => null;
+  });
+
+  tableEl.querySelectorAll = selector => {
+    if (selector === 'thead .sort-header[data-sort-key]') return headers;
+    if (selector === 'thead th') return ths;
+    return [];
+  };
+
   const configEl = createElement('div');
-  configEl.setAttribute('data-app-config', JSON.stringify({}));
+  configEl.setAttribute('data-app-config', JSON.stringify({ mapCenter: { lat: 0, lon: 0 }, mapZoom: 3 }));
+
   document.querySelector = selector => {
     if (selector === '[data-app-config]') return configEl;
     if (selector === '#instances tbody') return tbodyEl;
     return null;
   };
 
-  const leafletStub = {
-    map() {
-      return {
-        setView() {},
-        on() {},
-        getPane() {
-          return null;
-        }
-      };
-    },
-    tileLayer() {
-      return {
-        addTo() {
-          return this;
-        },
-        getContainer() {
-          return null;
-        },
-        on() {}
-      };
-    },
-    layerGroup() {
-      return { addLayer() {}, addTo() { return this; } };
-    },
-    circleMarker() {
-      return { bindPopup() { return this; } };
-    }
-  };
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'zeta.mesh',
+        name: `${sharedPrefix}zeta suffix`,
+        latitude: 1,
+        longitude: 1,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 30
+      },
+      {
+        domain: 'alpha.mesh',
+        name: `${sharedPrefix}alpha suffix`,
+        latitude: 2,
+        longitude: 2,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60
+      }
+    ]
+  });
 
-  const fetchImpl = async () => {
-    throw new Error('boom');
-  };
+  try {
+    await initializeFederationPage({
+      config: {},
+      fetchImpl,
+      leaflet: createBasicLeafletStub({ fitBounds: true })
+    });
 
-  await initializeFederationPage({ config: {}, fetchImpl, leaflet: leafletStub });
-  cleanup();
+    const nameHandlers = headerHandlers.get(headerName);
+    nameHandlers.click();
+    assert.match(tbodyEl.childNodes[0].innerHTML, /alpha\.mesh/);
+    assert.match(tbodyEl.childNodes[1].innerHTML, /zeta\.mesh/);
+    assert.match(tbodyEl.childNodes[0].innerHTML, /abcdefghijklmnopqrstuvwxyz123\.\.\./);
+    assert.match(tbodyEl.childNodes[1].innerHTML, /abcdefghijklmnopqrstuvwxyz123\.\.\./);
+  } finally {
+    cleanup();
+  }
 });

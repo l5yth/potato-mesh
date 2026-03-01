@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+import {
+  filterDisplayableFederationInstances,
+  resolveFederationInstanceLabel,
+  resolveFederationInstanceSortValue
+} from './federation-instance-display.js';
+
 /**
  * Determine the most suitable label for an instance list entry.
  *
@@ -21,17 +27,7 @@
  * @returns {string} Preferred display label falling back to the domain.
  */
 function resolveInstanceLabel(entry) {
-  if (!entry || typeof entry !== 'object') {
-    return '';
-  }
-
-  const name = typeof entry.name === 'string' ? entry.name.trim() : '';
-  if (name.length > 0) {
-    return name;
-  }
-
-  const domain = typeof entry.domain === 'string' ? entry.domain.trim() : '';
-  return domain;
+  return resolveFederationInstanceLabel(entry);
 }
 
 /**
@@ -206,23 +202,21 @@ export async function initializeInstanceSelector(options) {
     return;
   }
 
-  if (!Array.isArray(payload)) {
-    return;
-  }
-
-  updateFederationNavCount({ documentObject: doc, count: payload.length });
+  const visibleEntries = filterDisplayableFederationInstances(payload);
+  updateFederationNavCount({ documentObject: doc, count: visibleEntries.length });
 
   const sanitizedDomain = typeof instanceDomain === 'string' ? instanceDomain.trim().toLowerCase() : null;
 
-  const sortedEntries = payload
+  const sortedEntries = visibleEntries
     .filter(entry => entry && typeof entry.domain === 'string' && entry.domain.trim() !== '')
     .map(entry => ({
       domain: entry.domain.trim(),
       label: resolveInstanceLabel(entry),
+      sortLabel: resolveFederationInstanceSortValue(entry),
     }))
     .sort((a, b) => {
-      const labelA = a.label || a.domain;
-      const labelB = b.label || b.domain;
+      const labelA = a.sortLabel || a.domain;
+      const labelB = b.sortLabel || b.domain;
       return labelA.localeCompare(labelB, undefined, { sensitivity: 'base' });
     });
 
