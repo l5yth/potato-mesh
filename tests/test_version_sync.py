@@ -77,7 +77,9 @@ def _rust_package_version() -> str:
         if inside_package and stripped.startswith("[") and stripped.endswith("]"):
             break
         if inside_package:
-            literal = re.match(r'version\s*=\s*["\'](?P<version>[^"\']+)["\']', stripped)
+            literal = re.match(
+                r'version\s*=\s*["\'](?P<version>[^"\']+)["\']', stripped
+            )
             if literal:
                 return literal.group("version")
     raise AssertionError("Cargo.toml does not expose a package version")
@@ -96,4 +98,10 @@ def test_version_identifiers_match_across_languages() -> None:
     flutter_version = _flutter_package_version()
     rust_version = _rust_package_version()
 
-    assert python_version == ruby_version == javascript_version == flutter_version == rust_version
+    assert (
+        python_version
+        == ruby_version
+        == javascript_version
+        == flutter_version
+        == rust_version
+    )
