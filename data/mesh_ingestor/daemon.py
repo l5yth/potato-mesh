@@ -24,6 +24,8 @@ import time
 from pubsub import pub
 
 from . import config, handlers, ingestors, interfaces
+from .provider import Provider
+from .providers.meshtastic import MeshtasticProvider
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
@@ -243,10 +245,12 @@ def _connected_state(candidate) -> bool | None:
         return None
 
 
-def main(existing_interface=None) -> None:
+def main(existing_interface=None, *, provider: Provider | None = None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
-    subscribed = _subscribe_receive_topics()
+    provider = provider or MeshtasticProvider()
+
+    subscribed = provider.subscribe()
     if subscribed:
         config._debug_log(
             "Subscribed to receive topics",
@@ -312,17 +316,11 @@ def main(existing_interface=None) -> None:
         while not stop.is_set():
             if iface is None:
                 try:
-                    if active_candidate:
-                        iface, resolved_target = interfaces._create_serial_interface(
-                            active_candidate
-                        )
-                    else:
-                        iface, resolved_target = interfaces._create_default_interface()
-                        active_candidate = resolved_target
-                    interfaces._ensure_radio_metadata(iface)
-                    interfaces._ensure_channel_metadata(iface)
+                    iface, resolved_target, active_candidate = provider.connect(
+                        active_candidate=active_candidate
+                    )
                     handlers.register_host_node_id(
-                        interfaces._extract_host_node_id(iface)
+                        provider.extract_host_node_id(iface)
                     )
                     ingestors.set_ingestor_node_id(handlers.host_node_id())
                     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
@@ -415,8 +413,8 @@ def main(existing_interface=None) -> None:
 
             if not initial_snapshot_sent:
                 try:
-                    nodes = getattr(iface, "nodes", {}) or {}
-                    node_items = _node_items_snapshot(nodes)
+                    node_items = list(provider.node_snapshot_items(iface))
+                    node_items = _node_items_snapshot(dict(node_items))
                     if node_items is None:
                         config._debug_log(
                             "Skipping node snapshot due to concurrent modification",

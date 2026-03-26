@@ -33,6 +33,9 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.message import DecodeError
 from google.protobuf.message import Message as ProtoMessage
 
+from .node_identity import canonical_node_id as _canonical_node_id
+from .node_identity import node_num_from_id as _node_num_from_id
+
 _CLI_ROLE_MODULE_NAMES: tuple[str, ...] = (
     "meshtastic.cli.common",
     "meshtastic.cli.roles",
@@ -427,91 +430,6 @@ def _pkt_to_dict(packet) -> dict:
         return json.loads(json.dumps(packet, default=lambda o: str(o)))
     except Exception:
         return {"_unparsed": str(packet)}
-
-
-def _canonical_node_id(value) -> str | None:
-    """Convert node identifiers into the canonical ``!xxxxxxxx`` format.
-
-    Parameters:
-        value: Input identifier which may be an int, float or string.
-
-    Returns:
-        The canonical identifier or ``None`` if conversion fails.
-    """
-
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            num = int(value)
-        except (TypeError, ValueError):
-            return None
-        if num < 0:
-            return None
-        return f"!{num & 0xFFFFFFFF:08x}"
-    if not isinstance(value, str):
-        return None
-
-    trimmed = value.strip()
-    if not trimmed:
-        return None
-    if trimmed.startswith("^"):
-        return trimmed
-    if trimmed.startswith("!"):
-        body = trimmed[1:]
-    elif trimmed.lower().startswith("0x"):
-        body = trimmed[2:]
-    elif trimmed.isdigit():
-        try:
-            return f"!{int(trimmed, 10) & 0xFFFFFFFF:08x}"
-        except ValueError:
-            return None
-    else:
-        body = trimmed
-
-    if not body:
-        return None
-    try:
-        return f"!{int(body, 16) & 0xFFFFFFFF:08x}"
-    except ValueError:
-        return None
-
-
-def _node_num_from_id(node_id) -> int | None:
-    """Extract the numeric node ID from a canonical identifier.
-
-    Parameters:
-        node_id: Identifier value accepted by :func:`_canonical_node_id`.
-
-    Returns:
-        The numeric node ID or ``None`` when parsing fails.
-    """
-
-    if node_id is None:
-        return None
-    if isinstance(node_id, (int, float)):
-        try:
-            num = int(node_id)
-        except (TypeError, ValueError):
-            return None
-        return num if num >= 0 else None
-    if not isinstance(node_id, str):
-        return None
-
-    trimmed = node_id.strip()
-    if not trimmed:
-        return None
-    if trimmed.startswith("!"):
-        trimmed = trimmed[1:]
-    if trimmed.lower().startswith("0x"):
-        trimmed = trimmed[2:]
-    try:
-        return int(trimmed, 16)
-    except ValueError:
-        try:
-            return int(trimmed, 10)
-        except ValueError:
-            return None
 
 
 def _merge_mappings(base, extra):
