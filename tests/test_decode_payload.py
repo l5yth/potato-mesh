@@ -19,8 +19,10 @@ import io
 import json
 import sys
 
-from meshtastic.protobuf import mesh_pb2
-from meshtastic.protobuf import telemetry_pb2
+import pytest
+
+mesh_pb2 = pytest.importorskip("meshtastic.protobuf.mesh_pb2")
+telemetry_pb2 = pytest.importorskip("meshtastic.protobuf.telemetry_pb2")
 
 from data.mesh_ingestor import decode_payload
 
