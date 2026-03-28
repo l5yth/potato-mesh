@@ -18,6 +18,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -63,7 +65,7 @@ def test_message_event_accepts_optional_fields():
         "rssi": -90,
     }
     assert event["text"] == "hello"
-    assert event["snr"] == 4.5
+    assert event["snr"] == pytest.approx(4.5)
 
 
 def test_position_event_schema():
@@ -92,7 +94,7 @@ def test_position_event_optional_fields():
         "altitude": 10.0,
         "node_id": "!aabbccdd",
     }
-    assert event["latitude"] == 37.7749
+    assert event["latitude"] == pytest.approx(37.7749)
 
 
 def test_telemetry_event_schema():

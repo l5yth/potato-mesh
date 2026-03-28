@@ -151,3 +151,26 @@ def test_node_snapshot_items_returns_empty_after_retry_exhaustion(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     result = MeshtasticProvider().node_snapshot_items(FakeIface())
     assert result == []
+
+
+def test_meshtastic_subscribe_is_idempotent(monkeypatch):
+    """Calling subscribe() twice returns the cached list without re-subscribing."""
+    import data.mesh_ingestor.providers.meshtastic as _m
+
+    subscribe_calls: list[str] = []
+
+    monkeypatch.setattr(
+        _m,
+        "pub",
+        types.SimpleNamespace(
+            subscribe=lambda _h, topic: subscribe_calls.append(topic)
+        ),
+    )
+
+    provider = MeshtasticProvider()
+    first = provider.subscribe()
+    second = provider.subscribe()
+
+    assert first == second
+    # pub.subscribe should only have been called once (first invocation)
+    assert len(subscribe_calls) == len(first)

@@ -514,6 +514,38 @@ def _check_inactivity_reconnect(state: _DaemonState) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Loop iteration helper
+# ---------------------------------------------------------------------------
+
+
+def _loop_iteration(state: _DaemonState) -> bool:
+    """Execute one pass of the daemon main loop.
+
+    Encapsulates the per-iteration ``continue`` decisions so that
+    :func:`main` stays within the allowed cognitive-complexity budget.
+
+    Returns:
+        ``True`` when the loop should start the next iteration immediately
+        (equivalent to a ``continue``); ``False`` when the full pass
+        completed and the caller should sleep before iterating again.
+    """
+
+    if state.iface is None and not _try_connect(state):
+        return True
+    if _check_energy_saving(state):
+        return True
+    if not state.initial_snapshot_sent and not _try_send_snapshot(state):
+        return True
+    if _check_inactivity_reconnect(state):
+        return True
+    state.ingestor_announcement_sent = _process_ingestor_heartbeat(
+        state.iface, ingestor_announcement_sent=state.ingestor_announcement_sent
+    )
+    state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -574,19 +606,8 @@ def main(*, provider: Provider | None = None) -> None:
 
     try:
         while not state.stop.is_set():
-            if state.iface is None and not _try_connect(state):
-                continue
-            if _check_energy_saving(state):
-                continue
-            if not state.initial_snapshot_sent and not _try_send_snapshot(state):
-                continue
-            if _check_inactivity_reconnect(state):
-                continue
-            state.ingestor_announcement_sent = _process_ingestor_heartbeat(
-                state.iface, ingestor_announcement_sent=state.ingestor_announcement_sent
-            )
-            state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
-            state.stop.wait(config.SNAPSHOT_SECS)
+            if not _loop_iteration(state):
+                state.stop.wait(config.SNAPSHOT_SECS)
     except KeyboardInterrupt:  # pragma: no cover - interactive only
         config._debug_log(
             "Received KeyboardInterrupt; shutting down",
@@ -601,6 +622,7 @@ def main(*, provider: Provider | None = None) -> None:
 __all__ = [
     "_RECEIVE_TOPICS",
     "_advance_retry_delay",
+    "_loop_iteration",
     "_check_energy_saving",
     "_check_inactivity_reconnect",
     "_connected_state",

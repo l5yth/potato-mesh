@@ -435,3 +435,391 @@ def test_main_inactivity_reconnect(monkeypatch):
 
     daemon.main()
     assert any(event.is_set() for event in FakeEvent.instances)
+
+
+# ---------------------------------------------------------------------------
+# Helper: build a minimal _DaemonState for unit tests
+# ---------------------------------------------------------------------------
+
+
+def _make_state(**overrides):
+    """Return a :class:`daemon._DaemonState` with sensible defaults.
+
+    Any keyword argument is forwarded as a field override via ``setattr``
+    after construction, so callers only need to supply fields under test.
+    """
+    state = daemon._DaemonState(
+        provider=None,  # type: ignore[arg-type]
+        stop=FakeEvent(),  # type: ignore[arg-type]
+        configured_port=None,
+        inactivity_reconnect_secs=0.0,
+        energy_saving_enabled=False,
+        energy_online_secs=0.0,
+        energy_sleep_secs=0.0,
+        retry_delay=0.0,
+        last_seen_packet_monotonic=None,
+        active_candidate=None,
+    )
+    for key, val in overrides.items():
+        setattr(state, key, val)
+    return state
+
+
+# ---------------------------------------------------------------------------
+# _advance_retry_delay
+# ---------------------------------------------------------------------------
+
+
+def test_advance_retry_delay_disabled(monkeypatch):
+    """Returns current delay unchanged when the max is zero."""
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
+    assert daemon._advance_retry_delay(5.0) == 5.0
+
+
+def test_advance_retry_delay_bootstrap(monkeypatch):
+    """Seeds from initial config when current delay is zero (first call)."""
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 60.0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 3.0)
+    assert daemon._advance_retry_delay(0.0) == 3.0
+
+
+def test_advance_retry_delay_doubles_and_caps(monkeypatch):
+    """Doubles current delay and caps at the configured maximum."""
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 10.0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 1.0)
+    assert daemon._advance_retry_delay(3.0) == 6.0
+    assert daemon._advance_retry_delay(7.0) == 10.0
+
+
+# ---------------------------------------------------------------------------
+# _energy_sleep
+# ---------------------------------------------------------------------------
+
+
+def test_energy_sleep_no_op_when_disabled():
+    """No wait issued when energy saving is disabled."""
+    state = _make_state(energy_saving_enabled=False, energy_sleep_secs=1.0)
+    daemon._energy_sleep(state, "reason")
+    assert not state.stop.wait_calls
+
+
+def test_energy_sleep_no_op_when_zero_secs():
+    """No wait issued when sleep duration is zero."""
+    state = _make_state(energy_saving_enabled=True, energy_sleep_secs=0.0)
+    daemon._energy_sleep(state, "reason")
+    assert not state.stop.wait_calls
+
+
+def test_energy_sleep_emits_debug_log(monkeypatch):
+    """Debug log is emitted when DEBUG is enabled."""
+    state = _make_state(energy_saving_enabled=True, energy_sleep_secs=2.0)
+    logged = []
+    monkeypatch.setattr(daemon.config, "DEBUG", True)
+    monkeypatch.setattr(
+        daemon.config, "_debug_log", lambda msg, **_kw: logged.append(msg)
+    )
+    daemon._energy_sleep(state, "wake up")
+    assert any("wake up" in m for m in logged)
+    assert state.stop.wait_calls == [2.0]
+
+
+def test_energy_sleep_waits_when_debug_off(monkeypatch):
+    """Wait is issued for the configured duration when DEBUG is off."""
+    state = _make_state(energy_saving_enabled=True, energy_sleep_secs=1.5)
+    monkeypatch.setattr(daemon.config, "DEBUG", False)
+    daemon._energy_sleep(state, "reason")
+    assert state.stop.wait_calls == [1.5]
+
+
+# ---------------------------------------------------------------------------
+# _try_connect
+# ---------------------------------------------------------------------------
+
+
+def test_try_connect_no_available_interface_raises_system_exit(monkeypatch):
+    """NoAvailableMeshInterface propagates as SystemExit(1)."""
+
+    class _NoIface:
+        def connect(self, *, active_candidate):
+            raise daemon.interfaces.NoAvailableMeshInterface("none")
+
+        def extract_host_node_id(self, iface):
+            return None
+
+    state = _make_state(active_candidate="serial0", configured_port="serial0")
+    state.provider = _NoIface()  # type: ignore[assignment]
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+    with pytest.raises(SystemExit):
+        daemon._try_connect(state)
+
+
+def test_try_connect_generic_failure_resets_candidate(monkeypatch):
+    """Connect failure in auto-detect mode clears the active candidate."""
+
+    class _FailProvider:
+        def connect(self, *, active_candidate):
+            raise OSError("device busy")
+
+        def extract_host_node_id(self, iface):
+            return None
+
+    state = _make_state(active_candidate="serial0", configured_port=None)
+    state.provider = _FailProvider()  # type: ignore[assignment]
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+
+    result = daemon._try_connect(state)
+    assert result is False
+    assert state.active_candidate is None
+    assert state.announced_target is False
+
+
+def test_try_connect_sets_energy_session_deadline(monkeypatch):
+    """Energy-saving deadline is assigned when online duration is positive."""
+
+    class _OkProvider:
+        def connect(self, *, active_candidate):
+            return DummyInterface(), active_candidate, active_candidate
+
+        def extract_host_node_id(self, iface):
+            return "!host"
+
+    state = _make_state(
+        active_candidate="serial0",
+        configured_port="serial0",
+        energy_saving_enabled=True,
+        energy_online_secs=30.0,
+    )
+    state.provider = _OkProvider()  # type: ignore[assignment]
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: "!host")
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None
+    )
+
+    result = daemon._try_connect(state)
+    assert result is True
+    assert state.energy_session_deadline is not None
+
+
+# ---------------------------------------------------------------------------
+# _check_energy_saving
+# ---------------------------------------------------------------------------
+
+
+def test_check_energy_saving_session_expired(monkeypatch):
+    """Iface is closed and True returned when the session deadline has passed."""
+    state = _make_state(energy_saving_enabled=True)
+    state.iface = DummyInterface()
+    state.energy_session_deadline = 0.0
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 1.0)
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+
+    result = daemon._check_energy_saving(state)
+    assert result is True
+    assert state.iface is None
+    assert state.energy_session_deadline is None
+
+
+def test_check_energy_saving_ble_client_disconnected(monkeypatch):
+    """Iface is closed and True returned when the BLE client reference is gone."""
+    state = _make_state(energy_saving_enabled=True)
+    state.iface = DummyInterface(client_present=False)
+    state.energy_session_deadline = None
+    monkeypatch.setattr(daemon, "_is_ble_interface", lambda _: True)
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+
+    result = daemon._check_energy_saving(state)
+    assert result is True
+    assert state.iface is None
+
+
+# ---------------------------------------------------------------------------
+# _try_send_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_try_send_snapshot_empty_nodes():
+    """Returns True without setting initial_snapshot_sent when no nodes exist."""
+
+    class _EmptyProvider:
+        def node_snapshot_items(self, iface):
+            return []
+
+    state = _make_state()
+    state.iface = DummyInterface(nodes={})
+    state.provider = _EmptyProvider()  # type: ignore[assignment]
+
+    result = daemon._try_send_snapshot(state)
+    assert result is True
+    assert state.initial_snapshot_sent is False
+
+
+def test_try_send_snapshot_upsert_failure_is_non_fatal(monkeypatch):
+    """Upsert errors are logged but do not abort the snapshot pass."""
+
+    class _OneNodeProvider:
+        def node_snapshot_items(self, iface):
+            return [("!node1", {"id": 1})]
+
+    def _raise(*_a, **_k):
+        raise ValueError("bad node")
+
+    state = _make_state()
+    state.iface = DummyInterface()
+    state.provider = _OneNodeProvider()  # type: ignore[assignment]
+    logged = []
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *a, **kw: logged.append(kw))
+    monkeypatch.setattr(daemon.config, "DEBUG", False)
+    monkeypatch.setattr(daemon.handlers, "upsert_node", _raise)
+
+    result = daemon._try_send_snapshot(state)
+    assert result is True
+    assert state.initial_snapshot_sent is True
+    assert any(c.get("context") == "daemon.snapshot" for c in logged)
+
+
+def test_try_send_snapshot_upsert_failure_debug_payload(monkeypatch):
+    """The node payload is logged when DEBUG is enabled and upsert fails."""
+
+    class _OneNodeProvider:
+        def node_snapshot_items(self, iface):
+            return [("!node1", {"id": 1})]
+
+    def _raise(*_a, **_k):
+        raise ValueError("bad")
+
+    state = _make_state()
+    state.iface = DummyInterface()
+    state.provider = _OneNodeProvider()  # type: ignore[assignment]
+    logged = []
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *a, **kw: logged.append(kw))
+    monkeypatch.setattr(daemon.config, "DEBUG", True)
+    monkeypatch.setattr(daemon.handlers, "upsert_node", _raise)
+
+    daemon._try_send_snapshot(state)
+    assert any("node" in c for c in logged)
+
+
+def test_try_send_snapshot_outer_exception_resets_iface(monkeypatch):
+    """An exception from node_snapshot_items resets the interface and returns False."""
+
+    class _BrokenProvider:
+        def node_snapshot_items(self, iface):
+            raise RuntimeError("boom")
+
+    state = _make_state()
+    state.iface = DummyInterface()
+    state.provider = _BrokenProvider()  # type: ignore[assignment]
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
+
+    result = daemon._try_send_snapshot(state)
+    assert result is False
+    assert state.iface is None
+
+
+# ---------------------------------------------------------------------------
+# _check_inactivity_reconnect (additional branches)
+# ---------------------------------------------------------------------------
+
+
+def test_check_inactivity_reconnect_throttles_rapid_reconnects(monkeypatch):
+    """A reconnect within the inactivity window is suppressed."""
+    state = _make_state(inactivity_reconnect_secs=60.0)
+    state.iface = DummyInterface(is_connected=False)
+    state.iface_connected_at = 0.0
+    state.last_inactivity_reconnect = 1.0  # recent
+
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+
+    assert daemon._check_inactivity_reconnect(state) is False
+
+
+def test_check_inactivity_reconnect_uses_connected_at_when_no_packets(monkeypatch):
+    """Uses iface_connected_at as the activity baseline when no packets seen."""
+    state = _make_state(inactivity_reconnect_secs=60.0)
+    state.iface = DummyInterface(is_connected=True)
+    state.iface_connected_at = 5.0
+    state.last_inactivity_reconnect = None
+
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+
+    # 10.0 - 5.0 = 5.0 < 60.0 → not triggered
+    assert daemon._check_inactivity_reconnect(state) is False
+
+
+def test_check_inactivity_reconnect_uses_now_when_no_baseline(monkeypatch):
+    """Falls back to current time when neither packets nor connected_at is set."""
+    state = _make_state(inactivity_reconnect_secs=60.0)
+    state.iface = DummyInterface(is_connected=True)
+    state.iface_connected_at = None
+    state.last_inactivity_reconnect = None
+
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+
+    # latest_activity = now(10.0); inactivity_elapsed = 0.0 < 60.0 → not triggered
+    assert daemon._check_inactivity_reconnect(state) is False
+
+
+# ---------------------------------------------------------------------------
+# _loop_iteration
+# ---------------------------------------------------------------------------
+
+
+def test_loop_iteration_connect_fails_returns_true(monkeypatch):
+    """Returns True (continue) when iface is absent and connect fails."""
+    state = _make_state()
+    state.iface = None
+    monkeypatch.setattr(daemon, "_try_connect", lambda s: False)
+    assert daemon._loop_iteration(state) is True
+
+
+def test_loop_iteration_energy_saving_triggers_returns_true(monkeypatch):
+    """Returns True (continue) when energy saving disconnects the interface."""
+    state = _make_state()
+    state.iface = object()
+    monkeypatch.setattr(daemon, "_check_energy_saving", lambda s: True)
+    assert daemon._loop_iteration(state) is True
+
+
+def test_loop_iteration_snapshot_fails_returns_true(monkeypatch):
+    """Returns True (continue) when the initial snapshot fails."""
+    state = _make_state()
+    state.iface = object()
+    state.initial_snapshot_sent = False
+    monkeypatch.setattr(daemon, "_check_energy_saving", lambda s: False)
+    monkeypatch.setattr(daemon, "_try_send_snapshot", lambda s: False)
+    assert daemon._loop_iteration(state) is True
+
+
+def test_loop_iteration_inactivity_triggers_returns_true(monkeypatch):
+    """Returns True (continue) when inactivity reconnect fires."""
+    state = _make_state()
+    state.iface = object()
+    state.initial_snapshot_sent = True
+    monkeypatch.setattr(daemon, "_check_energy_saving", lambda s: False)
+    monkeypatch.setattr(daemon, "_check_inactivity_reconnect", lambda s: True)
+    assert daemon._loop_iteration(state) is True
+
+
+def test_loop_iteration_full_pass_returns_false(monkeypatch):
+    """Returns False (sleep) after a complete iteration with no early exits."""
+    state = _make_state()
+    state.iface = object()
+    state.initial_snapshot_sent = True
+    monkeypatch.setattr(daemon, "_check_energy_saving", lambda s: False)
+    monkeypatch.setattr(daemon, "_check_inactivity_reconnect", lambda s: False)
+    monkeypatch.setattr(
+        daemon, "_process_ingestor_heartbeat", lambda iface, **_kw: False
+    )
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    assert daemon._loop_iteration(state) is False
