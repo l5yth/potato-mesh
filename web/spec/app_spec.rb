@@ -2781,6 +2781,42 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "preserves existing coordinates when a subsequent upsert has no position data" do
+      node_id = "!f7e74be6"
+      first_heard = reference_time.to_i - 3600
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard, latitude, longitude, altitude, position_time) VALUES (?,?,?,?,?,?,?)",
+          [node_id, first_heard, first_heard, 53.8673152, 27.5283968, 271, first_heard],
+        )
+      end
+
+      nodeinfo_payload = {
+        node_id => {
+          "user" => { "shortName" => "MUTE", "longName" => "ClientMute", "hwModel" => "HELTEC_MESH_POCKET", "role" => "CLIENT_MUTE" },
+          "lastHeard" => reference_time.to_i,
+        },
+      }
+
+      post "/api/nodes", nodeinfo_payload.to_json, auth_headers
+
+      expect(last_response).to be_ok
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT latitude, longitude, altitude, position_time FROM nodes WHERE node_id = ?",
+          [node_id],
+        )
+
+        expect(row["latitude"]).to be_within(1e-6).of(53.8673152)
+        expect(row["longitude"]).to be_within(1e-6).of(27.5283968)
+        expect(row["altitude"]).to be_within(0.01).of(271)
+        expect(row["position_time"]).to eq(first_heard)
+      end
+    end
+
     it "returns 400 when more than 1000 nodes are provided" do
       payload = (0..1000).each_with_object({}) do |i, acc|
         acc["node-#{i}"] = {}
