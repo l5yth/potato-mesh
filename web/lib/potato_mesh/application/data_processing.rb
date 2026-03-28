@@ -357,9 +357,14 @@ module PotatoMesh
                          is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
                          first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                          battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
-                         air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds, position_time=excluded.position_time,
-                         location_source=excluded.location_source, precision_bits=excluded.precision_bits, latitude=excluded.latitude, longitude=excluded.longitude,
-                         altitude=excluded.altitude, lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset
+                         air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
+                         position_time=COALESCE(excluded.position_time, nodes.position_time),
+                         location_source=COALESCE(excluded.location_source, nodes.location_source),
+                         precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
+                         latitude=COALESCE(excluded.latitude, nodes.latitude),
+                         longitude=COALESCE(excluded.longitude, nodes.longitude),
+                         altitude=COALESCE(excluded.altitude, nodes.altitude),
+                         lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset
                        WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                      SQL
         end
