@@ -35,7 +35,8 @@ module PotatoMesh
             unless data.is_a?(Hash)
               halt 400, { error: "invalid payload" }.to_json
             end
-            halt 400, { error: "too many nodes" }.to_json if data.size > 1000
+            node_count = data.count { |k, _| k != "ingestor" }
+            halt 400, { error: "too many nodes" }.to_json if node_count > 1000
             db = open_database
             ingestor_node_id = string_or_nil(data["ingestor"])
             protocol = resolve_protocol(db, ingestor_node_id)

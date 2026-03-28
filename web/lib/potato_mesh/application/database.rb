@@ -129,6 +129,7 @@ module PotatoMesh
         unless node_columns.include?("protocol")
           db.execute("ALTER TABLE nodes ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
         end
+        db.execute("UPDATE nodes SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
 
         message_columns = db.execute("PRAGMA table_info(messages)").map { |row| row[1] }
 
@@ -160,6 +161,7 @@ module PotatoMesh
         unless message_columns.include?("protocol")
           db.execute("ALTER TABLE messages ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
         end
+        db.execute("UPDATE messages SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
 
         reply_index_exists =
           db.get_first_value(
@@ -206,6 +208,7 @@ module PotatoMesh
         unless telemetry_columns.include?("protocol")
           db.execute("ALTER TABLE telemetry ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
         end
+        db.execute("UPDATE telemetry SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
 
         position_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='positions'").flatten
@@ -221,6 +224,7 @@ module PotatoMesh
         unless position_columns.include?("protocol")
           db.execute("ALTER TABLE positions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
         end
+        db.execute("UPDATE positions SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
 
         neighbor_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='neighbors'").flatten
@@ -236,6 +240,7 @@ module PotatoMesh
         unless neighbor_columns.include?("protocol")
           db.execute("ALTER TABLE neighbors ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
         end
+        db.execute("UPDATE neighbors SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
 
         trace_tables =
           db.execute(
@@ -253,6 +258,7 @@ module PotatoMesh
         unless trace_columns.include?("protocol")
           db.execute("ALTER TABLE traces ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
         end
+        db.execute("UPDATE traces SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
 
         ingestor_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ingestors'").flatten
@@ -274,6 +280,7 @@ module PotatoMesh
           unless ingestor_columns.include?("protocol")
             db.execute("ALTER TABLE ingestors ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
           end
+          db.execute("UPDATE ingestors SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

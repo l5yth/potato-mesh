@@ -20,6 +20,7 @@ module PotatoMesh
       MAX_QUERY_LIMIT = 1000
       DEFAULT_TELEMETRY_WINDOW_SECONDS = 86_400
       DEFAULT_TELEMETRY_BUCKET_SECONDS = 300
+      PROTOCOL_CLAUSE = "protocol = ?".freeze
       TELEMETRY_ZERO_INVALID_COLUMNS = %w[battery_level voltage].freeze
       TELEMETRY_AGGREGATE_COLUMNS =
         %w[
@@ -93,6 +94,22 @@ module PotatoMesh
         return nil if value.respond_to?(:zero?) && value.zero?
 
         value
+      end
+
+      # Append a protocol equality clause to an existing WHERE clause list when a
+      # protocol filter is specified. Mutates +where_clauses+ and +params+ in place.
+      #
+      # @param where_clauses [Array<String>] accumulating WHERE conditions.
+      # @param params [Array] accumulating bind parameters.
+      # @param protocol [String, nil] optional protocol value to filter by.
+      # @param table_alias [String, nil] optional table alias prefix (e.g. "m" → "m.protocol = ?").
+      # @return [void]
+      def append_protocol_filter(where_clauses, params, protocol, table_alias: nil)
+        return unless protocol
+
+        clause = table_alias ? "#{table_alias}.#{PROTOCOL_CLAUSE}" : PROTOCOL_CLAUSE
+        where_clauses << clause
+        params << protocol
       end
 
       # Normalise a caller-provided limit to a sane, positive integer.
@@ -277,10 +294,7 @@ module PotatoMesh
           where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
         end
 
-        if protocol
-          where_clauses << "protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
           SELECT node_id, short_name, long_name, hw_model, role, snr,
@@ -337,10 +351,7 @@ module PotatoMesh
         since_threshold = normalize_since_threshold(since, floor: cutoff)
         where_clauses = ["last_seen_time >= ?"]
         params = [since_threshold]
-        if protocol
-          where_clauses << "protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol)
         sql = <<~SQL
           SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol
           FROM ingestors
@@ -402,10 +413,7 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if protocol
-          where_clauses << "m.protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol, table_alias: "m")
 
         sql = <<~SQL
           SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
@@ -492,10 +500,7 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if protocol
-          where_clauses << "protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
           SELECT * FROM positions
@@ -556,10 +561,7 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if protocol
-          where_clauses << "protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
           SELECT * FROM neighbors
@@ -609,10 +611,7 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
-        if protocol
-          where_clauses << "protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
           SELECT * FROM telemetry
@@ -830,10 +829,7 @@ module PotatoMesh
           3.times { params.concat(numeric_values) }
         end
 
-        if protocol
-          where_clauses << "protocol = ?"
-          params << protocol
-        end
+        append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
           SELECT id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, protocol

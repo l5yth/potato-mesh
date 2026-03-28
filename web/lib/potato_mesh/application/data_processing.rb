@@ -17,6 +17,19 @@
 module PotatoMesh
   module App
     module DataProcessing
+      # Coerce a Ruby boolean into a SQLite integer (1/0) while passing through
+      # any other value unchanged. Used when writing boolean node fields.
+      #
+      # @param value [Boolean, Object] value to coerce.
+      # @return [Integer, Object] 1, 0, or the original value.
+      def coerce_bool(value)
+        case value
+        when true then 1
+        when false then 0
+        else value
+        end
+      end
+
       def resolve_node_num(node_id, payload)
         raw = payload["num"]
 
@@ -118,7 +131,7 @@ module PotatoMesh
         normalized == "ffffffff"
       end
 
-      def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil)
+      def ensure_unknown_node(db, node_ref, fallback_num = nil, heard_time: nil, protocol: "meshtastic")
         parts = canonical_node_parts(node_ref, fallback_num)
         return unless parts
 
@@ -131,7 +144,8 @@ module PotatoMesh
         )
         return if existing
 
-        long_name = "Unknown #{short_id}"
+        protocol_label = (protocol || "meshtastic").split(/[-_]/).map(&:capitalize).join
+        long_name = "#{protocol_label} #{short_id}"
         heard_time = coerce_integer(heard_time)
         inserted = false
 
@@ -300,13 +314,6 @@ module PotatoMesh
         lh = now if lh && lh > now
         lh = pt if pt && (!lh || lh < pt)
         lh ||= now
-        bool = ->(v) {
-          case v
-          when true then 1
-          when false then 0
-          else v
-          end
-        }
         node_num = resolve_node_num(node_id, n)
 
         update_prometheus_metrics(node_id, user, role, met, pos)
@@ -323,8 +330,8 @@ module PotatoMesh
           user["hwModel"] || n["hwModel"],
           role,
           user["publicKey"],
-          bool.call(user["isUnmessagable"]),
-          bool.call(n["isFavorite"]),
+          coerce_bool(user["isUnmessagable"]),
+          coerce_bool(n["isFavorite"]),
           n["hopsAway"],
           n["snr"],
           lh,
@@ -533,8 +540,10 @@ module PotatoMesh
 
         lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
         modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
+        ingestor = string_or_nil(payload["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
 
-        ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
+        ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(
           db,
           node_id || node_num,
@@ -625,8 +634,6 @@ module PotatoMesh
 
         payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
         payload_b64 ||= string_or_nil(position_section.dig("payload", "__bytes_b64__"))
-        ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
 
         row = [
           pos_id,
@@ -732,12 +739,13 @@ module PotatoMesh
 
         node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id.start_with?("!")
 
-        ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time)
+        ingestor = string_or_nil(payload["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
+
+        ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo)
 
         neighbor_entries = []
-        ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
         neighbors_payload = payload["neighbors"]
         neighbors_list = neighbors_payload.is_a?(Array) ? neighbors_payload : []
 
@@ -773,7 +781,7 @@ module PotatoMesh
           entry_rx_time = now if entry_rx_time && entry_rx_time > now
           snr = coerce_float(neighbor["snr"])
 
-          ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time)
+          ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time, protocol: protocol)
 
           neighbor_entries << [neighbor_id, snr, entry_rx_time, ingestor, protocol]
         end
@@ -823,7 +831,8 @@ module PotatoMesh
         rx_time,
         metrics = {},
         lora_freq: nil,
-        modem_preset: nil
+        modem_preset: nil,
+        protocol: "meshtastic"
       )
         num = coerce_integer(node_num)
         id = string_or_nil(node_id)
@@ -833,7 +842,7 @@ module PotatoMesh
         id ||= format("!%08x", num & 0xFFFFFFFF) if num
         return unless id
 
-        ensure_unknown_node(db, id, num, heard_time: rx_time)
+        ensure_unknown_node(db, id, num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(
           db,
           id,
@@ -1437,6 +1446,7 @@ module PotatoMesh
           },
           lora_freq: lora_freq,
           modem_preset: modem_preset,
+          protocol: protocol,
         )
       end
 
@@ -1478,7 +1488,7 @@ module PotatoMesh
 
         all_nodes = [src, dest, *hops].compact.uniq
         all_nodes.each do |node|
-          ensure_unknown_node(db, node, node, heard_time: rx_time)
+          ensure_unknown_node(db, node, node, heard_time: rx_time, protocol: protocol)
           touch_node_last_seen(db, node, node, rx_time: rx_time, source: :trace)
         end
 
@@ -1789,9 +1799,8 @@ module PotatoMesh
             end
 
             existing_protocol = existing.is_a?(Hash) ? existing["protocol"] : existing[11]
-            if existing_protocol.nil? || existing_protocol == "meshtastic"
-              updates["protocol"] = protocol if protocol != "meshtastic"
-            end
+            return if existing_protocol && existing_protocol != "meshtastic" && existing_protocol != protocol
+            updates["protocol"] = protocol if (existing_protocol.nil? || existing_protocol == "meshtastic") && protocol != "meshtastic"
 
             unless updates.empty?
               assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
@@ -1898,7 +1907,7 @@ module PotatoMesh
 
         should_touch_message = !stored_decrypted
         if should_touch_message
-          ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time)
+          ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time, protocol: protocol)
           touch_node_last_seen(
             db,
             from_id || raw_from_id || message["from_num"],
@@ -1909,7 +1918,7 @@ module PotatoMesh
             modem_preset: modem_preset,
           )
 
-          ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time) if to_id || raw_to_id
+          ensure_unknown_node(db, to_id || raw_to_id, message["to_num"], heard_time: rx_time, protocol: protocol) if to_id || raw_to_id
           if to_id || raw_to_id || message.key?("to_num")
             touch_node_last_seen(
               db,

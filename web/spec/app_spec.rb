@@ -2929,7 +2929,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         )
 
         expect(row["short_name"]).to eq("ABCD")
-        expect(row["long_name"]).to eq("Unknown ABCD")
+        expect(row["long_name"]).to eq("Meshtastic ABCD")
         expect(row["role"]).to eq("CLIENT_HIDDEN")
         expect(row["last_heard"]).to eq(reference_time.to_i)
         expect(row["first_heard"]).to eq(reference_time.to_i)
@@ -3128,7 +3128,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["node_id"]).to eq("!feedf00d")
         expect(row["num"]).to eq(0xfeedf00d)
         expect(row["short_name"]).to eq("F00D")
-        expect(row["long_name"]).to eq("Unknown F00D")
+        expect(row["long_name"]).to eq("Meshtastic F00D")
         expect(row["role"]).to eq("CLIENT_HIDDEN")
         expect(row["last_heard"]).to eq(payload["rx_time"])
         expect(row["first_heard"]).to eq(payload["rx_time"])
@@ -3191,7 +3191,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(row["num"]).to be_an(Integer)
           expect(row["role"]).to eq("CLIENT_HIDDEN")
           expect(row["short_name"]).to eq(row["node_id"][-4, 4].upcase)
-          expect(row["long_name"]).to eq("Unknown #{row["short_name"]}")
+          expect(row["long_name"]).to eq("Meshtastic #{row["short_name"]}")
           expect(row["last_heard"]).to eq(reference_time.to_i)
           expect(row["first_heard"]).to eq(reference_time.to_i)
         end
@@ -3380,7 +3380,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(row["node_id"]).to eq("!0badc0de")
           expect(row["num"]).to eq(0x0badc0de)
           expect(row["short_name"]).to eq("C0DE")
-          expect(row["long_name"]).to eq("Unknown C0DE")
+          expect(row["long_name"]).to eq("Meshtastic C0DE")
           expect(row["role"]).to eq("CLIENT_HIDDEN")
         end
       end
