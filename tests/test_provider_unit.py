@@ -107,3 +107,43 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
     daemon.main(provider=FakeProvider())
     assert calls["connect"] >= 1
 
+
+def test_node_snapshot_items_retries_on_concurrent_mutation(monkeypatch):
+    """node_snapshot_items must retry on dict-mutation RuntimeError, not raise."""
+    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
+
+    attempt = {"n": 0}
+
+    class MutatingNodes:
+        def items(self):
+            attempt["n"] += 1
+            if attempt["n"] < 3:
+                raise RuntimeError("dictionary changed size during iteration")
+            return [("!aabbccdd", {"num": 1})]
+
+    class FakeIface:
+        nodes = MutatingNodes()
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    result = MeshtasticProvider().node_snapshot_items(FakeIface())
+    assert result == [("!aabbccdd", {"num": 1})]
+    assert attempt["n"] == 3
+
+
+def test_node_snapshot_items_returns_empty_after_retry_exhaustion(monkeypatch):
+    """node_snapshot_items returns [] (non-fatal) when all retries fail."""
+    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
+    import data.mesh_ingestor.providers.meshtastic as _mod
+
+    class AlwaysMutating:
+        def items(self):
+            raise RuntimeError("dictionary changed size during iteration")
+
+    class FakeIface:
+        nodes = AlwaysMutating()
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    result = MeshtasticProvider().node_snapshot_items(FakeIface())
+    assert result == []
+

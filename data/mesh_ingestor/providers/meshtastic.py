@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 
-from .. import daemon as _daemon, interfaces
+from .. import config, daemon as _daemon, interfaces
 
 
 class MeshtasticProvider:
@@ -62,9 +63,20 @@ class MeshtasticProvider:
     def extract_host_node_id(self, iface: object) -> str | None:
         return interfaces._extract_host_node_id(iface)
 
-    def node_snapshot_items(self, iface: object) -> Iterable[tuple[str, object]]:
+    def node_snapshot_items(self, iface: object) -> list[tuple[str, object]]:
         nodes = getattr(iface, "nodes", {}) or {}
-        return list(nodes.items())
+        for _ in range(3):
+            try:
+                return list(nodes.items())
+            except RuntimeError as err:
+                if "dictionary changed size during iteration" not in str(err):
+                    raise
+                time.sleep(0)
+        config._debug_log(
+            "Skipping node snapshot due to concurrent modification",
+            context="meshtastic.snapshot",
+        )
+        return []
 
 
 __all__ = ["MeshtasticProvider"]
