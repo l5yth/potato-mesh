@@ -26,9 +26,17 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
+from data.mesh_ingestor.provider import Provider  # noqa: E402 - path setup
 from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
+
+
+def test_meshtastic_provider_satisfies_protocol():
+    """MeshtasticProvider must structurally satisfy the Provider Protocol."""
+    required = {"name", "subscribe", "connect", "extract_host_node_id", "node_snapshot_items"}
+    missing = required - set(dir(MeshtasticProvider))
+    assert not missing, f"MeshtasticProvider is missing Protocol members: {missing}"
 
 
 def test_daemon_main_uses_provider_connect(monkeypatch):

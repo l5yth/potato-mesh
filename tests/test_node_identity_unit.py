@@ -52,3 +52,25 @@ def test_node_num_from_id_parses_canonical_and_hex():
     assert node_num_from_id(123) == 123
 
 
+def test_canonical_node_id_rejects_none_and_empty():
+    assert canonical_node_id(None) is None
+    assert canonical_node_id("") is None
+    assert canonical_node_id("   ") is None
+
+
+def test_canonical_node_id_rejects_negative():
+    assert canonical_node_id(-1) is None
+    assert canonical_node_id(-0xABCDEF01) is None
+
+
+def test_canonical_node_id_truncates_overflow():
+    # Values wider than 32 bits are masked, not rejected.
+    assert canonical_node_id(0x1_ABCDEF01) == "!abcdef01"
+
+
+def test_node_num_from_id_rejects_none_and_empty():
+    assert node_num_from_id(None) is None
+    assert node_num_from_id("") is None
+    assert node_num_from_id("not-hex") is None
+
+

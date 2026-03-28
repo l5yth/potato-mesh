@@ -18,15 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .. import interfaces
-from ..provider import ProviderCapability
+from .. import daemon as _daemon, interfaces
 
 
 class MeshtasticProvider:
     """Meshtastic ingestion provider (current default)."""
 
     name = "meshtastic"
-    capabilities = ProviderCapability.NODE_SNAPSHOT | ProviderCapability.HEARTBEATS
 
     def __init__(self):
         self._subscribed: list[str] = []
@@ -37,12 +35,7 @@ class MeshtasticProvider:
         if self._subscribed:
             return list(self._subscribed)
 
-        # Delegate to the historical subscription helper in `daemon.py` so unit
-        # tests can monkeypatch the subscription mechanism via `daemon.pub`.
-        from .. import daemon as _daemon  # local import avoids module cycles
-
         topics = _daemon._subscribe_receive_topics()
-
         self._subscribed = topics
         return list(topics)
 
@@ -71,13 +64,7 @@ class MeshtasticProvider:
 
     def node_snapshot_items(self, iface: object) -> Iterable[tuple[str, object]]:
         nodes = getattr(iface, "nodes", {}) or {}
-        items_callable = getattr(nodes, "items", None)
-        if callable(items_callable):
-            return list(items_callable())
-        if hasattr(nodes, "__iter__") and hasattr(nodes, "__getitem__"):
-            keys = list(nodes)
-            return [(key, nodes[key]) for key in keys]
-        return []
+        return list(nodes.items())
 
 
 __all__ = ["MeshtasticProvider"]

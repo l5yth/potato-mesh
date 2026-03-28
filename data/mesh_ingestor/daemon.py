@@ -25,7 +25,6 @@ from pubsub import pub
 
 from . import config, handlers, ingestors, interfaces
 from .provider import Provider
-from .providers.meshtastic import MeshtasticProvider
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
@@ -199,11 +198,6 @@ def _process_ingestor_heartbeat(iface, *, ingestor_announcement_sent: bool) -> b
     if heartbeat_sent and not ingestor_announcement_sent:
         return True
     return ingestor_announcement_sent
-    iface_cls = getattr(iface_obj, "__class__", None)
-    if iface_cls is None:
-        return False
-    module_name = getattr(iface_cls, "__module__", "") or ""
-    return "ble_interface" in module_name
 
 
 def _connected_state(candidate) -> bool | None:
@@ -245,10 +239,12 @@ def _connected_state(candidate) -> bool | None:
         return None
 
 
-def main(existing_interface=None, *, provider: Provider | None = None) -> None:
+def main(*, provider: Provider | None = None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
-    provider = provider or MeshtasticProvider()
+    if provider is None:
+        from .providers.meshtastic import MeshtasticProvider
+        provider = MeshtasticProvider()
 
     subscribed = provider.subscribe()
     if subscribed:
@@ -259,7 +255,7 @@ def main(existing_interface=None, *, provider: Provider | None = None) -> None:
             topics=subscribed,
         )
 
-    iface = existing_interface
+    iface = None
     resolved_target = None
     retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
 
@@ -413,8 +409,8 @@ def main(existing_interface=None, *, provider: Provider | None = None) -> None:
 
             if not initial_snapshot_sent:
                 try:
-                    node_items = list(provider.node_snapshot_items(iface))
-                    node_items = _node_items_snapshot(dict(node_items))
+                    raw_snapshot = list(provider.node_snapshot_items(iface))
+                    node_items = _node_items_snapshot(dict(raw_snapshot))
                     if node_items is None:
                         config._debug_log(
                             "Skipping node snapshot due to concurrent modification",

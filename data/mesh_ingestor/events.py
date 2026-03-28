@@ -27,10 +27,13 @@ from __future__ import annotations
 from typing import NotRequired, TypedDict
 
 
-class MessageEvent(TypedDict, total=False):
+class _MessageEventRequired(TypedDict):
     id: int
     rx_time: int
     rx_iso: str
+
+
+class MessageEvent(_MessageEventRequired, total=False):
     from_id: object
     to_id: object
     channel: int
@@ -48,15 +51,18 @@ class MessageEvent(TypedDict, total=False):
     modem_preset: str
 
 
-class PositionEvent(TypedDict, total=False):
+class _PositionEventRequired(TypedDict):
     id: int
+    rx_time: int
+    rx_iso: str
+
+
+class PositionEvent(_PositionEventRequired, total=False):
     node_id: str
     node_num: int | None
     num: int | None
     from_id: str | None
     to_id: object
-    rx_time: int
-    rx_iso: str
     latitude: float | None
     longitude: float | None
     altitude: float | None
@@ -78,14 +84,17 @@ class PositionEvent(TypedDict, total=False):
     modem_preset: str
 
 
-class TelemetryEvent(TypedDict, total=False):
+class _TelemetryEventRequired(TypedDict):
     id: int
+    rx_time: int
+    rx_iso: str
+
+
+class TelemetryEvent(_TelemetryEventRequired, total=False):
     node_id: str | None
     node_num: int | None
     from_id: object
     to_id: object
-    rx_time: int
-    rx_iso: str
     telemetry_time: int | None
     channel: int
     portnum: str | None
@@ -102,20 +111,26 @@ class TelemetryEvent(TypedDict, total=False):
     # evolves over time.
 
 
-class NeighborEntry(TypedDict, total=False):
+class _NeighborEntryRequired(TypedDict):
+    rx_time: int
+    rx_iso: str
+
+
+class NeighborEntry(_NeighborEntryRequired, total=False):
     neighbor_id: str
     neighbor_num: int | None
     snr: float | None
+
+
+class _NeighborsSnapshotRequired(TypedDict):
+    node_id: str
     rx_time: int
     rx_iso: str
 
 
-class NeighborsSnapshot(TypedDict, total=False):
-    node_id: str
+class NeighborsSnapshot(_NeighborsSnapshotRequired, total=False):
     node_num: int | None
     neighbors: list[NeighborEntry]
-    rx_time: int
-    rx_iso: str
     node_broadcast_interval_secs: int | None
     last_sent_by_id: str | None
     ingestor: str | None
@@ -123,14 +138,17 @@ class NeighborsSnapshot(TypedDict, total=False):
     modem_preset: str
 
 
-class TraceEvent(TypedDict, total=False):
+class _TraceEventRequired(TypedDict):
+    hops: list[int]
+    rx_time: int
+    rx_iso: str
+
+
+class TraceEvent(_TraceEventRequired, total=False):
     id: int | None
     request_id: int | None
     src: int | None
     dest: int | None
-    rx_time: int
-    rx_iso: str
-    hops: list[int]
     rssi: int | None
     snr: float | None
     elapsed_ms: int | None
