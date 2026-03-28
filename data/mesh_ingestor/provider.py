@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterable
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 class ProviderCapability(enum.Flag):
@@ -34,6 +34,7 @@ class ProviderCapability(enum.Flag):
     HEARTBEATS = enum.auto()
 
 
+@runtime_checkable
 class Provider(Protocol):
     """Abstract source of mesh observations."""
 
@@ -62,4 +63,3 @@ __all__ = [
     "Provider",
     "ProviderCapability",
 ]
-

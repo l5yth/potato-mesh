@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
 
-from .. import config, daemon as _daemon, interfaces
+from pubsub import pub
+
+from .. import config, daemon as _daemon, handlers, interfaces
 
 
 class MeshtasticProvider:
@@ -36,9 +37,15 @@ class MeshtasticProvider:
         if self._subscribed:
             return list(self._subscribed)
 
-        topics = _daemon._subscribe_receive_topics()
-        self._subscribed = topics
-        return list(topics)
+        subscribed = []
+        for topic in _daemon._RECEIVE_TOPICS:
+            try:
+                pub.subscribe(handlers.on_receive, topic)
+                subscribed.append(topic)
+            except Exception as exc:  # pragma: no cover
+                config._debug_log(f"failed to subscribe to {topic!r}: {exc}")
+        self._subscribed = subscribed
+        return list(subscribed)
 
     def connect(
         self, *, active_candidate: str | None
@@ -50,7 +57,9 @@ class MeshtasticProvider:
         next_candidate = active_candidate
 
         if active_candidate:
-            iface, resolved_target = interfaces._create_serial_interface(active_candidate)
+            iface, resolved_target = interfaces._create_serial_interface(
+                active_candidate
+            )
         else:
             iface, resolved_target = interfaces._create_default_interface()
             next_candidate = resolved_target
@@ -80,4 +89,3 @@ class MeshtasticProvider:
 
 
 __all__ = ["MeshtasticProvider"]
-

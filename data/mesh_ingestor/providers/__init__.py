@@ -23,4 +23,3 @@ from __future__ import annotations
 from .meshtastic import MeshtasticProvider
 
 __all__ = ["MeshtasticProvider"]
-

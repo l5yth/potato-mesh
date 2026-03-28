@@ -179,4 +179,3 @@ __all__ = [
     "TelemetryEvent",
     "TraceEvent",
 ]
-

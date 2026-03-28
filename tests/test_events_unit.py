@@ -33,8 +33,20 @@ from data.mesh_ingestor.events import (  # noqa: E402 - path setup
 )
 
 
+def test_message_event_schema():
+    assert MessageEvent.__required_keys__ == frozenset({"id", "rx_time", "rx_iso"})
+    assert "text" in MessageEvent.__optional_keys__
+    assert "from_id" in MessageEvent.__optional_keys__
+    assert "snr" in MessageEvent.__optional_keys__
+    assert "rssi" in MessageEvent.__optional_keys__
+
+
 def test_message_event_requires_id_rx_time_rx_iso():
-    event: MessageEvent = {"id": 1, "rx_time": 1700000000, "rx_iso": "2023-11-14T00:00:00Z"}
+    event: MessageEvent = {
+        "id": 1,
+        "rx_time": 1700000000,
+        "rx_iso": "2023-11-14T00:00:00Z",
+    }
     assert event["id"] == 1
     assert event["rx_time"] == 1700000000
     assert event["rx_iso"] == "2023-11-14T00:00:00Z"
@@ -54,8 +66,19 @@ def test_message_event_accepts_optional_fields():
     assert event["snr"] == 4.5
 
 
+def test_position_event_schema():
+    assert PositionEvent.__required_keys__ == frozenset({"id", "rx_time", "rx_iso"})
+    assert "latitude" in PositionEvent.__optional_keys__
+    assert "longitude" in PositionEvent.__optional_keys__
+    assert "node_id" in PositionEvent.__optional_keys__
+
+
 def test_position_event_required_fields():
-    event: PositionEvent = {"id": 10, "rx_time": 1700000002, "rx_iso": "2023-11-14T00:00:02Z"}
+    event: PositionEvent = {
+        "id": 10,
+        "rx_time": 1700000002,
+        "rx_iso": "2023-11-14T00:00:02Z",
+    }
     assert event["id"] == 10
 
 
@@ -72,8 +95,18 @@ def test_position_event_optional_fields():
     assert event["latitude"] == 37.7749
 
 
+def test_telemetry_event_schema():
+    assert TelemetryEvent.__required_keys__ == frozenset({"id", "rx_time", "rx_iso"})
+    assert "payload_b64" in TelemetryEvent.__optional_keys__
+    assert "snr" in TelemetryEvent.__optional_keys__
+
+
 def test_telemetry_event_required_fields():
-    event: TelemetryEvent = {"id": 20, "rx_time": 1700000004, "rx_iso": "2023-11-14T00:00:04Z"}
+    event: TelemetryEvent = {
+        "id": 20,
+        "rx_time": 1700000004,
+        "rx_iso": "2023-11-14T00:00:04Z",
+    }
     assert event["id"] == 20
 
 
@@ -89,6 +122,12 @@ def test_telemetry_event_optional_fields():
     assert event["payload_b64"] == "AAEC"
 
 
+def test_neighbor_entry_schema():
+    assert NeighborEntry.__required_keys__ == frozenset({"rx_time", "rx_iso"})
+    assert "neighbor_id" in NeighborEntry.__optional_keys__
+    assert "snr" in NeighborEntry.__optional_keys__
+
+
 def test_neighbor_entry_required_fields():
     entry: NeighborEntry = {"rx_time": 1700000006, "rx_iso": "2023-11-14T00:00:06Z"}
     assert entry["rx_time"] == 1700000006
@@ -102,6 +141,14 @@ def test_neighbor_entry_optional_fields():
         "snr": 6.0,
     }
     assert entry["neighbor_id"] == "!11223344"
+
+
+def test_neighbors_snapshot_schema():
+    assert NeighborsSnapshot.__required_keys__ == frozenset(
+        {"node_id", "rx_time", "rx_iso"}
+    )
+    assert "neighbors" in NeighborsSnapshot.__optional_keys__
+    assert "node_broadcast_interval_secs" in NeighborsSnapshot.__optional_keys__
 
 
 def test_neighbors_snapshot_required_fields():
@@ -124,6 +171,12 @@ def test_neighbors_snapshot_optional_fields():
     assert snap["node_broadcast_interval_secs"] == 900
 
 
+def test_trace_event_schema():
+    assert TraceEvent.__required_keys__ == frozenset({"hops", "rx_time", "rx_iso"})
+    assert "elapsed_ms" in TraceEvent.__optional_keys__
+    assert "snr" in TraceEvent.__optional_keys__
+
+
 def test_trace_event_required_fields():
     event: TraceEvent = {
         "hops": [1, 2, 3],
@@ -142,6 +195,16 @@ def test_trace_event_optional_fields():
         "snr": 2.5,
     }
     assert event["elapsed_ms"] == 42
+
+
+def test_ingestor_heartbeat_schema():
+    # IngestorHeartbeat uses total=True with NotRequired fields. Under
+    # `from __future__ import annotations` the TypedDict metaclass cannot
+    # evaluate the annotation strings at class creation time, so
+    # NotRequired keys appear in __required_keys__ rather than
+    # __optional_keys__. Verify the four always-present keys are included.
+    always_required = {"node_id", "start_time", "last_seen_time", "version"}
+    assert always_required <= IngestorHeartbeat.__required_keys__
 
 
 def test_ingestor_heartbeat_all_fields():

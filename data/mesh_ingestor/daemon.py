@@ -280,6 +280,7 @@ def _advance_retry_delay(current: float) -> float:
 
     if config._RECONNECT_MAX_DELAY_SECS <= 0:
         return current
+    # `current == 0` on the very first call (bootstrap); seed from config.
     next_delay = current * 2 if current else config._RECONNECT_INITIAL_DELAY_SECS
     return min(next_delay, config._RECONNECT_MAX_DELAY_SECS)
 
@@ -368,20 +369,20 @@ def _check_energy_saving(state: _DaemonState) -> bool:
     if not state.energy_saving_enabled or state.iface is None:
         return False
 
-    session_expired = (
+    if (
         state.energy_session_deadline is not None
         and time.monotonic() >= state.energy_session_deadline
-    )
-    ble_dropped = (
+    ):
+        reason = "disconnected after session"
+        log_msg = "Energy saving disconnect"
+    elif (
         _is_ble_interface(state.iface)
         and getattr(state.iface, "client", object()) is None
-    )
-
-    if not session_expired and not ble_dropped:
+    ):
+        reason = "BLE client disconnected"
+        log_msg = "Energy saving BLE disconnect"
+    else:
         return False
-
-    reason = "disconnected after session" if session_expired else "BLE client disconnected"
-    log_msg = "Energy saving disconnect" if session_expired else "Energy saving BLE disconnect"
     config._debug_log(log_msg, context="daemon.energy", severity="info")
     _close_interface(state.iface)
     state.iface = None
@@ -475,9 +476,14 @@ def _check_inactivity_reconnect(state: _DaemonState) -> bool:
         latest_activity = now
 
     inactivity_elapsed = now - latest_activity
-    believed_disconnected = _connected_state(getattr(state.iface, "isConnected", None)) is False
+    believed_disconnected = (
+        _connected_state(getattr(state.iface, "isConnected", None)) is False
+    )
 
-    if not believed_disconnected and inactivity_elapsed < state.inactivity_reconnect_secs:
+    if (
+        not believed_disconnected
+        and inactivity_elapsed < state.inactivity_reconnect_secs
+    ):
         return False
 
     if (
@@ -517,6 +523,7 @@ def main(*, provider: Provider | None = None) -> None:
 
     if provider is None:
         from .providers.meshtastic import MeshtasticProvider
+
         provider = MeshtasticProvider()
 
     subscribed = provider.subscribe()
@@ -593,7 +600,6 @@ def main(*, provider: Provider | None = None) -> None:
 
 __all__ = [
     "_RECEIVE_TOPICS",
-    "_DaemonState",
     "_advance_retry_delay",
     "_check_energy_saving",
     "_check_inactivity_reconnect",

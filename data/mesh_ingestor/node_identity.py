@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from typing import Final
 
-
 CANONICAL_PREFIX: Final[str] = "!"
 
 
@@ -114,4 +113,3 @@ __all__ = [
     "canonical_node_id",
     "node_num_from_id",
 ]
-

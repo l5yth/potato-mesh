@@ -72,5 +72,3 @@ def test_node_num_from_id_rejects_none_and_empty():
     assert node_num_from_id(None) is None
     assert node_num_from_id("") is None
     assert node_num_from_id("not-hex") is None
-
-

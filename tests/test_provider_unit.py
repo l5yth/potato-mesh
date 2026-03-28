@@ -34,9 +34,7 @@ from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
 
 def test_meshtastic_provider_satisfies_protocol():
     """MeshtasticProvider must structurally satisfy the Provider Protocol."""
-    required = {"name", "subscribe", "connect", "extract_host_node_id", "node_snapshot_items"}
-    missing = required - set(dir(MeshtasticProvider))
-    assert not missing, f"MeshtasticProvider is missing Protocol members: {missing}"
+    assert isinstance(MeshtasticProvider(), Provider)
 
 
 def test_daemon_main_uses_provider_connect(monkeypatch):
@@ -48,6 +46,7 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
 
         def connect(self, *, active_candidate):  # type: ignore[override]
             calls["connect"] += 1
+
             # Return a minimal iface and stop immediately via Event.
             class Iface:
                 nodes = {}
@@ -97,12 +96,18 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr(daemon.handlers, "register_host_node_id", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: "!host")
     monkeypatch.setattr(daemon.handlers, "upsert_node", lambda *_a, **_k: None)
     monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
-    monkeypatch.setattr(daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None)
-    monkeypatch.setattr(daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
 
     daemon.main(provider=FakeProvider())
     assert calls["connect"] >= 1
@@ -146,4 +151,3 @@ def test_node_snapshot_items_returns_empty_after_retry_exhaustion(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     result = MeshtasticProvider().node_snapshot_items(FakeIface())
     assert result == []
-
