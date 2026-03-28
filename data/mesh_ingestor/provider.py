@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterable
-from typing import Protocol
+from typing import Protocol, runtime_checkable
+
 
 class ProviderCapability(enum.Flag):
     """Feature flags describing what a provider can supply."""
@@ -33,11 +34,11 @@ class ProviderCapability(enum.Flag):
     HEARTBEATS = enum.auto()
 
 
+@runtime_checkable
 class Provider(Protocol):
     """Abstract source of mesh observations."""
 
     name: str
-    capabilities: ProviderCapability
 
     def subscribe(self) -> list[str]:
         """Subscribe to any async receive callbacks and return topic names."""
@@ -62,4 +63,3 @@ __all__ = [
     "Provider",
     "ProviderCapability",
 ]
-

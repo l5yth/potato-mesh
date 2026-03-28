@@ -26,9 +26,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
+from data.mesh_ingestor.provider import Provider  # noqa: E402 - path setup
 from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
+
+
+def test_meshtastic_provider_satisfies_protocol():
+    """MeshtasticProvider must structurally satisfy the Provider Protocol."""
+    assert isinstance(MeshtasticProvider(), Provider)
 
 
 def test_daemon_main_uses_provider_connect(monkeypatch):
@@ -40,6 +46,7 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
 
         def connect(self, *, active_candidate):  # type: ignore[override]
             calls["connect"] += 1
+
             # Return a minimal iface and stop immediately via Event.
             class Iface:
                 nodes = {}
@@ -89,13 +96,81 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
         ),
     )
 
-    monkeypatch.setattr(daemon.handlers, "register_host_node_id", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: "!host")
     monkeypatch.setattr(daemon.handlers, "upsert_node", lambda *_a, **_k: None)
     monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
-    monkeypatch.setattr(daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None)
-    monkeypatch.setattr(daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
 
     daemon.main(provider=FakeProvider())
     assert calls["connect"] >= 1
 
+
+def test_node_snapshot_items_retries_on_concurrent_mutation(monkeypatch):
+    """node_snapshot_items must retry on dict-mutation RuntimeError, not raise."""
+    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
+
+    attempt = {"n": 0}
+
+    class MutatingNodes:
+        def items(self):
+            attempt["n"] += 1
+            if attempt["n"] < 3:
+                raise RuntimeError("dictionary changed size during iteration")
+            return [("!aabbccdd", {"num": 1})]
+
+    class FakeIface:
+        nodes = MutatingNodes()
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    result = MeshtasticProvider().node_snapshot_items(FakeIface())
+    assert result == [("!aabbccdd", {"num": 1})]
+    assert attempt["n"] == 3
+
+
+def test_node_snapshot_items_returns_empty_after_retry_exhaustion(monkeypatch):
+    """node_snapshot_items returns [] (non-fatal) when all retries fail."""
+    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
+    import data.mesh_ingestor.providers.meshtastic as _mod
+
+    class AlwaysMutating:
+        def items(self):
+            raise RuntimeError("dictionary changed size during iteration")
+
+    class FakeIface:
+        nodes = AlwaysMutating()
+
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    result = MeshtasticProvider().node_snapshot_items(FakeIface())
+    assert result == []
+
+
+def test_meshtastic_subscribe_is_idempotent(monkeypatch):
+    """Calling subscribe() twice returns the cached list without re-subscribing."""
+    import data.mesh_ingestor.providers.meshtastic as _m
+
+    subscribe_calls: list[str] = []
+
+    monkeypatch.setattr(
+        _m,
+        "pub",
+        types.SimpleNamespace(
+            subscribe=lambda _h, topic: subscribe_calls.append(topic)
+        ),
+    )
+
+    provider = MeshtasticProvider()
+    first = provider.subscribe()
+    second = provider.subscribe()
+
+    assert first == second
+    # pub.subscribe should only have been called once (first invocation)
+    assert len(subscribe_calls) == len(first)

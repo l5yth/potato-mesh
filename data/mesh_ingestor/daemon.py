@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import signal
 import threading
@@ -25,7 +26,6 @@ from pubsub import pub
 
 from . import config, handlers, ingestors, interfaces
 from .provider import Provider
-from .providers.meshtastic import MeshtasticProvider
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
@@ -199,11 +199,6 @@ def _process_ingestor_heartbeat(iface, *, ingestor_announcement_sent: bool) -> b
     if heartbeat_sent and not ingestor_announcement_sent:
         return True
     return ingestor_announcement_sent
-    iface_cls = getattr(iface_obj, "__class__", None)
-    if iface_cls is None:
-        return False
-    module_name = getattr(iface_cls, "__module__", "") or ""
-    return "ble_interface" in module_name
 
 
 def _connected_state(candidate) -> bool | None:
@@ -245,10 +240,323 @@ def _connected_state(candidate) -> bool | None:
         return None
 
 
-def main(existing_interface=None, *, provider: Provider | None = None) -> None:
+# ---------------------------------------------------------------------------
+# Loop state container
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class _DaemonState:
+    """All mutable state for the :func:`main` daemon loop."""
+
+    provider: Provider
+    stop: threading.Event
+    configured_port: str | None
+    inactivity_reconnect_secs: float
+    energy_saving_enabled: bool
+    energy_online_secs: float
+    energy_sleep_secs: float
+    retry_delay: float
+    last_seen_packet_monotonic: float | None
+    active_candidate: str | None
+
+    iface: object = None
+    resolved_target: str | None = None
+    initial_snapshot_sent: bool = False
+    energy_session_deadline: float | None = None
+    iface_connected_at: float | None = None
+    last_inactivity_reconnect: float | None = None
+    ingestor_announcement_sent: bool = False
+    announced_target: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Per-iteration helpers (each returns True when the caller should `continue`)
+# ---------------------------------------------------------------------------
+
+
+def _advance_retry_delay(current: float) -> float:
+    """Return the next exponential-backoff retry delay."""
+
+    if config._RECONNECT_MAX_DELAY_SECS <= 0:
+        return current
+    # `current == 0` on the very first call (bootstrap); seed from config.
+    next_delay = current * 2 if current else config._RECONNECT_INITIAL_DELAY_SECS
+    return min(next_delay, config._RECONNECT_MAX_DELAY_SECS)
+
+
+def _energy_sleep(state: _DaemonState, reason: str) -> None:
+    """Sleep for the configured energy-saving interval."""
+
+    if not state.energy_saving_enabled or state.energy_sleep_secs <= 0:
+        return
+    if config.DEBUG:
+        config._debug_log(
+            f"energy saving: {reason}; sleeping for {state.energy_sleep_secs:g}s"
+        )
+    state.stop.wait(state.energy_sleep_secs)
+
+
+def _try_connect(state: _DaemonState) -> bool:
+    """Attempt to establish the mesh interface.
+
+    Returns:
+        ``True`` when connected and the loop should proceed; ``False`` when
+        the connection failed and the caller should ``continue``.
+    """
+
+    try:
+        state.iface, state.resolved_target, state.active_candidate = (
+            state.provider.connect(active_candidate=state.active_candidate)
+        )
+        handlers.register_host_node_id(state.provider.extract_host_node_id(state.iface))
+        ingestors.set_ingestor_node_id(handlers.host_node_id())
+        state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
+        state.initial_snapshot_sent = False
+        if not state.announced_target and state.resolved_target:
+            config._debug_log(
+                "Using mesh interface",
+                context="daemon.interface",
+                severity="info",
+                target=state.resolved_target,
+            )
+            state.announced_target = True
+        if state.energy_saving_enabled and state.energy_online_secs > 0:
+            state.energy_session_deadline = time.monotonic() + state.energy_online_secs
+        else:
+            state.energy_session_deadline = None
+        state.iface_connected_at = time.monotonic()
+        # Seed the inactivity tracking from the connection time so a
+        # reconnect is given a full inactivity window even when the
+        # handler still reports the previous packet timestamp.
+        state.last_seen_packet_monotonic = state.iface_connected_at
+        state.last_inactivity_reconnect = None
+        return True
+    except interfaces.NoAvailableMeshInterface as exc:
+        config._debug_log(
+            "No mesh interface available",
+            context="daemon.interface",
+            severity="error",
+            error_message=str(exc),
+        )
+        _close_interface(state.iface)
+        raise SystemExit(1) from exc
+    except Exception as exc:
+        config._debug_log(
+            "Failed to create mesh interface",
+            context="daemon.interface",
+            severity="warn",
+            candidate=state.active_candidate or "auto",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+        if state.configured_port is None:
+            state.active_candidate = None
+            state.announced_target = False
+        state.stop.wait(state.retry_delay)
+        state.retry_delay = _advance_retry_delay(state.retry_delay)
+        return False
+
+
+def _check_energy_saving(state: _DaemonState) -> bool:
+    """Disconnect and sleep when energy-saving conditions are met.
+
+    Returns:
+        ``True`` when the interface was closed and the caller should
+        ``continue``; ``False`` otherwise.
+    """
+
+    if not state.energy_saving_enabled or state.iface is None:
+        return False
+
+    if (
+        state.energy_session_deadline is not None
+        and time.monotonic() >= state.energy_session_deadline
+    ):
+        reason = "disconnected after session"
+        log_msg = "Energy saving disconnect"
+    elif (
+        _is_ble_interface(state.iface)
+        and getattr(state.iface, "client", object()) is None
+    ):
+        reason = "BLE client disconnected"
+        log_msg = "Energy saving BLE disconnect"
+    else:
+        return False
+    config._debug_log(log_msg, context="daemon.energy", severity="info")
+    _close_interface(state.iface)
+    state.iface = None
+    state.announced_target = False
+    state.initial_snapshot_sent = False
+    state.energy_session_deadline = None
+    _energy_sleep(state, reason)
+    return True
+
+
+def _try_send_snapshot(state: _DaemonState) -> bool:
+    """Send the initial node snapshot via the provider.
+
+    Returns:
+        ``True`` when the snapshot succeeded (or no nodes exist yet); ``False``
+        when a hard error occurred and the caller should ``continue``.
+    """
+
+    try:
+        node_items = state.provider.node_snapshot_items(state.iface)
+        processed_any = False
+        for node_id, node in node_items:
+            processed_any = True
+            try:
+                handlers.upsert_node(node_id, node)
+            except Exception as exc:
+                config._debug_log(
+                    "Failed to update node snapshot",
+                    context="daemon.snapshot",
+                    severity="warn",
+                    node_id=node_id,
+                    error_class=exc.__class__.__name__,
+                    error_message=str(exc),
+                )
+                if config.DEBUG:
+                    config._debug_log(
+                        "Snapshot node payload",
+                        context="daemon.snapshot",
+                        node=node,
+                    )
+        if processed_any:
+            state.initial_snapshot_sent = True
+        return True
+    except Exception as exc:
+        config._debug_log(
+            "Snapshot refresh failed",
+            context="daemon.snapshot",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+        _close_interface(state.iface)
+        state.iface = None
+        state.stop.wait(state.retry_delay)
+        state.retry_delay = _advance_retry_delay(state.retry_delay)
+        return False
+
+
+def _check_inactivity_reconnect(state: _DaemonState) -> bool:
+    """Reconnect when the interface has been silent for too long.
+
+    Returns:
+        ``True`` when a reconnect was triggered and the caller should
+        ``continue``; ``False`` otherwise.
+    """
+
+    if state.iface is None or state.inactivity_reconnect_secs <= 0:
+        return False
+
+    now = time.monotonic()
+    iface_activity = handlers.last_packet_monotonic()
+
+    if (
+        iface_activity is not None
+        and state.iface_connected_at is not None
+        and iface_activity < state.iface_connected_at
+    ):
+        iface_activity = state.iface_connected_at
+
+    if iface_activity is not None and (
+        state.last_seen_packet_monotonic is None
+        or iface_activity > state.last_seen_packet_monotonic
+    ):
+        state.last_seen_packet_monotonic = iface_activity
+        state.last_inactivity_reconnect = None
+
+    latest_activity = iface_activity
+    if latest_activity is None and state.iface_connected_at is not None:
+        latest_activity = state.iface_connected_at
+    if latest_activity is None:
+        latest_activity = now
+
+    inactivity_elapsed = now - latest_activity
+    believed_disconnected = (
+        _connected_state(getattr(state.iface, "isConnected", None)) is False
+    )
+
+    if (
+        not believed_disconnected
+        and inactivity_elapsed < state.inactivity_reconnect_secs
+    ):
+        return False
+
+    if (
+        state.last_inactivity_reconnect is not None
+        and now - state.last_inactivity_reconnect < state.inactivity_reconnect_secs
+    ):
+        return False
+
+    reason = (
+        "disconnected"
+        if believed_disconnected
+        else f"no data for {inactivity_elapsed:.0f}s"
+    )
+    config._debug_log(
+        "Mesh interface inactivity detected",
+        context="daemon.interface",
+        severity="warn",
+        reason=reason,
+    )
+    state.last_inactivity_reconnect = now
+    _close_interface(state.iface)
+    state.iface = None
+    state.announced_target = False
+    state.initial_snapshot_sent = False
+    state.energy_session_deadline = None
+    state.iface_connected_at = None
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Loop iteration helper
+# ---------------------------------------------------------------------------
+
+
+def _loop_iteration(state: _DaemonState) -> bool:
+    """Execute one pass of the daemon main loop.
+
+    Encapsulates the per-iteration ``continue`` decisions so that
+    :func:`main` stays within the allowed cognitive-complexity budget.
+
+    Returns:
+        ``True`` when the loop should start the next iteration immediately
+        (equivalent to a ``continue``); ``False`` when the full pass
+        completed and the caller should sleep before iterating again.
+    """
+
+    if state.iface is None and not _try_connect(state):
+        return True
+    if _check_energy_saving(state):
+        return True
+    if not state.initial_snapshot_sent and not _try_send_snapshot(state):
+        return True
+    if _check_inactivity_reconnect(state):
+        return True
+    state.ingestor_announcement_sent = _process_ingestor_heartbeat(
+        state.iface, ingestor_announcement_sent=state.ingestor_announcement_sent
+    )
+    state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main(*, provider: Provider | None = None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
-    provider = provider or MeshtasticProvider()
+    if provider is None:
+        from .providers.meshtastic import MeshtasticProvider
+
+        provider = MeshtasticProvider()
 
     subscribed = provider.subscribe()
     if subscribed:
@@ -259,307 +567,72 @@ def main(existing_interface=None, *, provider: Provider | None = None) -> None:
             topics=subscribed,
         )
 
-    iface = existing_interface
-    resolved_target = None
-    retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
-
-    stop = threading.Event()
-    initial_snapshot_sent = False
-    energy_session_deadline = None
-    iface_connected_at: float | None = None
-    last_seen_packet_monotonic = handlers.last_packet_monotonic()
-    last_inactivity_reconnect: float | None = None
-    inactivity_reconnect_secs = max(
-        0.0, getattr(config, "_INACTIVITY_RECONNECT_SECS", 0.0)
+    state = _DaemonState(
+        provider=provider,
+        stop=threading.Event(),
+        configured_port=config.CONNECTION,
+        inactivity_reconnect_secs=max(
+            0.0, getattr(config, "_INACTIVITY_RECONNECT_SECS", 0.0)
+        ),
+        energy_saving_enabled=config.ENERGY_SAVING,
+        energy_online_secs=max(0.0, config._ENERGY_ONLINE_DURATION_SECS),
+        energy_sleep_secs=max(0.0, config._ENERGY_SLEEP_SECS),
+        retry_delay=max(0.0, config._RECONNECT_INITIAL_DELAY_SECS),
+        last_seen_packet_monotonic=handlers.last_packet_monotonic(),
+        active_candidate=config.CONNECTION,
     )
-    ingestor_announcement_sent = False
-
-    energy_saving_enabled = config.ENERGY_SAVING
-    energy_online_secs = max(0.0, config._ENERGY_ONLINE_DURATION_SECS)
-    energy_sleep_secs = max(0.0, config._ENERGY_SLEEP_SECS)
-
-    def _energy_sleep(reason: str) -> None:
-        if not energy_saving_enabled or energy_sleep_secs <= 0:
-            return
-        if config.DEBUG:
-            config._debug_log(
-                f"energy saving: {reason}; sleeping for {energy_sleep_secs:g}s"
-            )
-        stop.wait(energy_sleep_secs)
 
     def handle_sigterm(*_args) -> None:
-        stop.set()
+        state.stop.set()
 
     def handle_sigint(signum, frame) -> None:
-        if stop.is_set():
+        if state.stop.is_set():
             signal.default_int_handler(signum, frame)
             return
-        stop.set()
+        state.stop.set()
 
     if threading.current_thread() == threading.main_thread():
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGTERM, handle_sigterm)
 
-    target = config.INSTANCE or "(no INSTANCE_DOMAIN configured)"
-    configured_port = config.CONNECTION
-    active_candidate = configured_port
-    announced_target = False
     config._debug_log(
         "Mesh daemon starting",
         context="daemon.main",
         severity="info",
-        target=target,
-        port=configured_port or "auto",
+        target=config.INSTANCE or "(no INSTANCE_DOMAIN configured)",
+        port=config.CONNECTION or "auto",
         channel=config.CHANNEL_INDEX,
     )
+
     try:
-        while not stop.is_set():
-            if iface is None:
-                try:
-                    iface, resolved_target, active_candidate = provider.connect(
-                        active_candidate=active_candidate
-                    )
-                    handlers.register_host_node_id(
-                        provider.extract_host_node_id(iface)
-                    )
-                    ingestors.set_ingestor_node_id(handlers.host_node_id())
-                    retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
-                    initial_snapshot_sent = False
-                    if not announced_target and resolved_target:
-                        config._debug_log(
-                            "Using mesh interface",
-                            context="daemon.interface",
-                            severity="info",
-                            target=resolved_target,
-                        )
-                        announced_target = True
-                    if energy_saving_enabled and energy_online_secs > 0:
-                        energy_session_deadline = time.monotonic() + energy_online_secs
-                    else:
-                        energy_session_deadline = None
-                    iface_connected_at = time.monotonic()
-                    # Seed the inactivity tracking from the connection time so a
-                    # reconnect is given a full inactivity window even when the
-                    # handler still reports the previous packet timestamp.
-                    last_seen_packet_monotonic = iface_connected_at
-                    last_inactivity_reconnect = None
-                except interfaces.NoAvailableMeshInterface as exc:
-                    config._debug_log(
-                        "No mesh interface available",
-                        context="daemon.interface",
-                        severity="error",
-                        error_message=str(exc),
-                    )
-                    _close_interface(iface)
-                    raise SystemExit(1) from exc
-                except Exception as exc:
-                    candidate_desc = active_candidate or "auto"
-                    config._debug_log(
-                        "Failed to create mesh interface",
-                        context="daemon.interface",
-                        severity="warn",
-                        candidate=candidate_desc,
-                        error_class=exc.__class__.__name__,
-                        error_message=str(exc),
-                    )
-                    if configured_port is None:
-                        active_candidate = None
-                        announced_target = False
-                    stop.wait(retry_delay)
-                    if config._RECONNECT_MAX_DELAY_SECS > 0:
-                        retry_delay = min(
-                            (
-                                retry_delay * 2
-                                if retry_delay
-                                else config._RECONNECT_INITIAL_DELAY_SECS
-                            ),
-                            config._RECONNECT_MAX_DELAY_SECS,
-                        )
-                    continue
-
-            if energy_saving_enabled and iface is not None:
-                if (
-                    energy_session_deadline is not None
-                    and time.monotonic() >= energy_session_deadline
-                ):
-                    config._debug_log(
-                        "Energy saving disconnect",
-                        context="daemon.energy",
-                        severity="info",
-                    )
-                    _close_interface(iface)
-                    iface = None
-                    announced_target = False
-                    initial_snapshot_sent = False
-                    energy_session_deadline = None
-                    _energy_sleep("disconnected after session")
-                    continue
-                if (
-                    _is_ble_interface(iface)
-                    and getattr(iface, "client", object()) is None
-                ):
-                    config._debug_log(
-                        "Energy saving BLE disconnect",
-                        context="daemon.energy",
-                        severity="info",
-                    )
-                    _close_interface(iface)
-                    iface = None
-                    announced_target = False
-                    initial_snapshot_sent = False
-                    energy_session_deadline = None
-                    _energy_sleep("BLE client disconnected")
-                    continue
-
-            if not initial_snapshot_sent:
-                try:
-                    node_items = list(provider.node_snapshot_items(iface))
-                    node_items = _node_items_snapshot(dict(node_items))
-                    if node_items is None:
-                        config._debug_log(
-                            "Skipping node snapshot due to concurrent modification",
-                            context="daemon.snapshot",
-                        )
-                    else:
-                        processed_snapshot_item = False
-                        for node_id, node in node_items:
-                            processed_snapshot_item = True
-                            try:
-                                handlers.upsert_node(node_id, node)
-                            except Exception as exc:
-                                config._debug_log(
-                                    "Failed to update node snapshot",
-                                    context="daemon.snapshot",
-                                    severity="warn",
-                                    node_id=node_id,
-                                    error_class=exc.__class__.__name__,
-                                    error_message=str(exc),
-                                )
-                                if config.DEBUG:
-                                    config._debug_log(
-                                        "Snapshot node payload",
-                                        context="daemon.snapshot",
-                                        node=node,
-                                    )
-                        if processed_snapshot_item:
-                            initial_snapshot_sent = True
-                except Exception as exc:
-                    config._debug_log(
-                        "Snapshot refresh failed",
-                        context="daemon.snapshot",
-                        severity="warn",
-                        error_class=exc.__class__.__name__,
-                        error_message=str(exc),
-                    )
-                    _close_interface(iface)
-                    iface = None
-                    stop.wait(retry_delay)
-                    if config._RECONNECT_MAX_DELAY_SECS > 0:
-                        retry_delay = min(
-                            (
-                                retry_delay * 2
-                                if retry_delay
-                                else config._RECONNECT_INITIAL_DELAY_SECS
-                            ),
-                            config._RECONNECT_MAX_DELAY_SECS,
-                        )
-                    continue
-
-            if iface is not None and inactivity_reconnect_secs > 0:
-                now_monotonic = time.monotonic()
-                iface_activity = handlers.last_packet_monotonic()
-                if (
-                    iface_activity is not None
-                    and iface_connected_at is not None
-                    and iface_activity < iface_connected_at
-                ):
-                    iface_activity = iface_connected_at
-                if iface_activity is not None and (
-                    last_seen_packet_monotonic is None
-                    or iface_activity > last_seen_packet_monotonic
-                ):
-                    last_seen_packet_monotonic = iface_activity
-                    last_inactivity_reconnect = None
-
-                latest_activity = iface_activity
-                if latest_activity is None and iface_connected_at is not None:
-                    latest_activity = iface_connected_at
-                if latest_activity is None:
-                    latest_activity = now_monotonic
-
-                inactivity_elapsed = now_monotonic - latest_activity
-
-                connected_attr = getattr(iface, "isConnected", None)
-                believed_disconnected = False
-                connected_state = _connected_state(connected_attr)
-                if connected_state is None:
-                    if callable(connected_attr):
-                        try:
-                            believed_disconnected = not bool(connected_attr())
-                        except Exception:
-                            believed_disconnected = False
-                    elif connected_attr is not None:
-                        try:
-                            believed_disconnected = not bool(connected_attr)
-                        except Exception:  # pragma: no cover - defensive guard
-                            believed_disconnected = False
-                else:
-                    believed_disconnected = not connected_state
-
-                should_reconnect = believed_disconnected or (
-                    inactivity_elapsed >= inactivity_reconnect_secs
-                )
-
-                if should_reconnect:
-                    if (
-                        last_inactivity_reconnect is None
-                        or now_monotonic - last_inactivity_reconnect
-                        >= inactivity_reconnect_secs
-                    ):
-                        reason = (
-                            "disconnected"
-                            if believed_disconnected
-                            else f"no data for {inactivity_elapsed:.0f}s"
-                        )
-                        config._debug_log(
-                            "Mesh interface inactivity detected",
-                            context="daemon.interface",
-                            severity="warn",
-                            reason=reason,
-                        )
-                        last_inactivity_reconnect = now_monotonic
-                        _close_interface(iface)
-                        iface = None
-                        announced_target = False
-                        initial_snapshot_sent = False
-                        energy_session_deadline = None
-                        iface_connected_at = None
-                        continue
-
-            ingestor_announcement_sent = _process_ingestor_heartbeat(
-                iface, ingestor_announcement_sent=ingestor_announcement_sent
-            )
-
-            retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
-            stop.wait(config.SNAPSHOT_SECS)
+        while not state.stop.is_set():
+            if not _loop_iteration(state):
+                state.stop.wait(config.SNAPSHOT_SECS)
     except KeyboardInterrupt:  # pragma: no cover - interactive only
         config._debug_log(
             "Received KeyboardInterrupt; shutting down",
             context="daemon.main",
             severity="info",
         )
-        stop.set()
+        state.stop.set()
     finally:
-        _close_interface(iface)
+        _close_interface(state.iface)
 
 
 __all__ = [
     "_RECEIVE_TOPICS",
-    "_event_wait_allows_default_timeout",
-    "_node_items_snapshot",
-    "_subscribe_receive_topics",
-    "_is_ble_interface",
-    "_process_ingestor_heartbeat",
+    "_advance_retry_delay",
+    "_loop_iteration",
+    "_check_energy_saving",
+    "_check_inactivity_reconnect",
     "_connected_state",
+    "_energy_sleep",
+    "_event_wait_allows_default_timeout",
+    "_is_ble_interface",
+    "_node_items_snapshot",
+    "_process_ingestor_heartbeat",
+    "_subscribe_receive_topics",
+    "_try_connect",
+    "_try_send_snapshot",
     "main",
 ]

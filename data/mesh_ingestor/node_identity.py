@@ -25,8 +25,7 @@ from __future__ import annotations
 
 from typing import Final
 
-
-_CANONICAL_PREFIX: Final[str] = "!"
+CANONICAL_PREFIX: Final[str] = "!"
 
 
 def canonical_node_id(value: object) -> str | None:
@@ -48,7 +47,7 @@ def canonical_node_id(value: object) -> str | None:
             return None
         if num < 0:
             return None
-        return f"{_CANONICAL_PREFIX}{num & 0xFFFFFFFF:08x}"
+        return f"{CANONICAL_PREFIX}{num & 0xFFFFFFFF:08x}"
     if not isinstance(value, str):
         return None
 
@@ -59,13 +58,13 @@ def canonical_node_id(value: object) -> str | None:
         # Meshtastic special destinations like "^all" are not node ids; callers
         # that already accept them should keep passing them through unchanged.
         return trimmed
-    if trimmed.startswith(_CANONICAL_PREFIX):
+    if trimmed.startswith(CANONICAL_PREFIX):
         body = trimmed[1:]
     elif trimmed.lower().startswith("0x"):
         body = trimmed[2:]
     elif trimmed.isdigit():
         try:
-            return f"{_CANONICAL_PREFIX}{int(trimmed, 10) & 0xFFFFFFFF:08x}"
+            return f"{CANONICAL_PREFIX}{int(trimmed, 10) & 0xFFFFFFFF:08x}"
         except ValueError:
             return None
     else:
@@ -74,7 +73,7 @@ def canonical_node_id(value: object) -> str | None:
     if not body:
         return None
     try:
-        return f"{_CANONICAL_PREFIX}{int(body, 16) & 0xFFFFFFFF:08x}"
+        return f"{CANONICAL_PREFIX}{int(body, 16) & 0xFFFFFFFF:08x}"
     except ValueError:
         return None
 
@@ -96,7 +95,7 @@ def node_num_from_id(node_id: object) -> int | None:
     trimmed = node_id.strip()
     if not trimmed:
         return None
-    if trimmed.startswith(_CANONICAL_PREFIX):
+    if trimmed.startswith(CANONICAL_PREFIX):
         trimmed = trimmed[1:]
     if trimmed.lower().startswith("0x"):
         trimmed = trimmed[2:]
@@ -110,7 +109,7 @@ def node_num_from_id(node_id: object) -> int | None:
 
 
 __all__ = [
+    "CANONICAL_PREFIX",
     "canonical_node_id",
     "node_num_from_id",
 ]
-

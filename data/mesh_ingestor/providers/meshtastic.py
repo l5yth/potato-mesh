@@ -16,17 +16,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import time
 
-from .. import interfaces
-from ..provider import ProviderCapability
+from pubsub import pub
+
+from .. import config, daemon as _daemon, handlers, interfaces
 
 
 class MeshtasticProvider:
     """Meshtastic ingestion provider (current default)."""
 
     name = "meshtastic"
-    capabilities = ProviderCapability.NODE_SNAPSHOT | ProviderCapability.HEARTBEATS
 
     def __init__(self):
         self._subscribed: list[str] = []
@@ -37,14 +37,15 @@ class MeshtasticProvider:
         if self._subscribed:
             return list(self._subscribed)
 
-        # Delegate to the historical subscription helper in `daemon.py` so unit
-        # tests can monkeypatch the subscription mechanism via `daemon.pub`.
-        from .. import daemon as _daemon  # local import avoids module cycles
-
-        topics = _daemon._subscribe_receive_topics()
-
-        self._subscribed = topics
-        return list(topics)
+        subscribed = []
+        for topic in _daemon._RECEIVE_TOPICS:
+            try:
+                pub.subscribe(handlers.on_receive, topic)
+                subscribed.append(topic)
+            except Exception as exc:  # pragma: no cover
+                config._debug_log(f"failed to subscribe to {topic!r}: {exc}")
+        self._subscribed = subscribed
+        return list(subscribed)
 
     def connect(
         self, *, active_candidate: str | None
@@ -56,7 +57,9 @@ class MeshtasticProvider:
         next_candidate = active_candidate
 
         if active_candidate:
-            iface, resolved_target = interfaces._create_serial_interface(active_candidate)
+            iface, resolved_target = interfaces._create_serial_interface(
+                active_candidate
+            )
         else:
             iface, resolved_target = interfaces._create_default_interface()
             next_candidate = resolved_target
@@ -69,16 +72,20 @@ class MeshtasticProvider:
     def extract_host_node_id(self, iface: object) -> str | None:
         return interfaces._extract_host_node_id(iface)
 
-    def node_snapshot_items(self, iface: object) -> Iterable[tuple[str, object]]:
+    def node_snapshot_items(self, iface: object) -> list[tuple[str, object]]:
         nodes = getattr(iface, "nodes", {}) or {}
-        items_callable = getattr(nodes, "items", None)
-        if callable(items_callable):
-            return list(items_callable())
-        if hasattr(nodes, "__iter__") and hasattr(nodes, "__getitem__"):
-            keys = list(nodes)
-            return [(key, nodes[key]) for key in keys]
+        for _ in range(3):
+            try:
+                return list(nodes.items())
+            except RuntimeError as err:
+                if "dictionary changed size during iteration" not in str(err):
+                    raise
+                time.sleep(0)
+        config._debug_log(
+            "Skipping node snapshot due to concurrent modification",
+            context="meshtastic.snapshot",
+        )
         return []
 
 
 __all__ = ["MeshtasticProvider"]
-
