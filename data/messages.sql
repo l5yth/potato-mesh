@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS messages (
     channel_name TEXT,
     reply_id INTEGER,
     emoji TEXT,
-    ingestor TEXT
+    ingestor TEXT,
+    protocol TEXT NOT NULL DEFAULT 'meshtastic'
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rx_time   ON messages(rx_time);

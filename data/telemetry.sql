@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS telemetry (
     rainfall_24h            REAL,
     soil_moisture           INTEGER,
     soil_temperature        REAL,
-    ingestor                TEXT
+    ingestor                TEXT,
+    protocol                TEXT NOT NULL DEFAULT 'meshtastic'
 );
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_rx_time ON telemetry(rx_time);

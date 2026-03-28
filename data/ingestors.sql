@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS ingestors (
   last_seen_time INTEGER NOT NULL,
   version        TEXT,
   lora_freq      INTEGER,
-  modem_preset   TEXT
+  modem_preset   TEXT,
+  protocol       TEXT NOT NULL DEFAULT 'meshtastic'
 );
 
 CREATE INDEX IF NOT EXISTS idx_ingestors_last_seen ON ingestors(last_seen_time);

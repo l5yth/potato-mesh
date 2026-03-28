@@ -24,9 +24,11 @@ Future providers should emit payloads that match these shapes (keys + types), wh
 
 #### `POST /api/nodes`
 
-Payload is a mapping keyed by canonical node id:
+Payload is a mapping keyed by canonical node id, with an optional top-level `”ingestor”` key:
 
-- `{ "!abcdef01": { ... node fields ... } }`
+- `{ “!abcdef01”: { ... node fields ... }, “ingestor”: “!ingestornodeid” }`
+
+When `”ingestor”` is present the protocol is inherited from the registered ingestor (see `POST /api/ingestors`); omitting it defaults to `”meshtastic”`.
 
 Node entry fields are “Meshtastic-ish” (camelCase) and may include:
 
@@ -104,4 +106,11 @@ Heartbeat payload:
 - `start_time` (int), `last_seen_time` (int)
 - `version` (string)
 - Optional: `lora_freq`, `modem_preset`
+- Optional: `protocol` (string; e.g. `"meshtastic"`, `"meshcore"`) — declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent
+
+**Protocol propagation**: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field will inherit its `protocol` value at write time.
+
+### GET endpoint filtering
+
+All collection GET endpoints (`/api/nodes`, `/api/messages`, `/api/positions`, `/api/telemetry`, `/api/traces`, `/api/neighbors`, `/api/ingestors`) accept an optional `?protocol=<value>` query parameter. When present, only records whose `protocol` column matches the given value are returned. The `protocol` field is included in all GET responses.
 

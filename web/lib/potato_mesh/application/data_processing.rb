@@ -131,7 +131,7 @@ module PotatoMesh
         )
         return if existing
 
-        long_name = "Meshtastic #{short_id}"
+        long_name = "Unknown #{short_id}"
         heard_time = coerce_integer(heard_time)
         inserted = false
 
@@ -254,11 +254,12 @@ module PotatoMesh
         return false unless version
         lora_freq = coerce_integer(payload["lora_freq"])
         modem_preset = string_or_nil(payload["modem_preset"])
+        protocol = string_or_nil(payload["protocol"]) || "meshtastic"
 
         with_busy_retry do
-          db.execute <<~SQL, [node_id, start_time, last_seen_time, version, lora_freq, modem_preset]
-                       INSERT INTO ingestors(node_id, start_time, last_seen_time, version, lora_freq, modem_preset)
-                            VALUES(?,?,?,?,?,?)
+          db.execute <<~SQL, [node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol]
+                       INSERT INTO ingestors(node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol)
+                            VALUES(?,?,?,?,?,?,?)
                        ON CONFLICT(node_id) DO UPDATE SET
                          start_time = CASE
                            WHEN excluded.start_time > ingestors.start_time THEN excluded.start_time
@@ -270,7 +271,8 @@ module PotatoMesh
                          END,
                          version = COALESCE(excluded.version, ingestors.version),
                          lora_freq = COALESCE(excluded.lora_freq, ingestors.lora_freq),
-                         modem_preset = COALESCE(excluded.modem_preset, ingestors.modem_preset)
+                         modem_preset = COALESCE(excluded.modem_preset, ingestors.modem_preset),
+                         protocol = excluded.protocol
                      SQL
         end
 
@@ -286,7 +288,7 @@ module PotatoMesh
         false
       end
 
-      def upsert_node(db, node_id, n)
+      def upsert_node(db, node_id, n, protocol: "meshtastic")
         user = n["user"] || {}
         met = n["deviceMetrics"] || {}
         pos = n["position"] || {}
@@ -344,13 +346,14 @@ module PotatoMesh
           pos["altitude"],
           lora_freq,
           modem_preset,
+          protocol,
         ]
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
                                          hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                         position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                         position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(node_id) DO UPDATE SET
                          num=excluded.num, short_name=excluded.short_name, long_name=excluded.long_name, macaddr=excluded.macaddr,
                          hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
@@ -364,7 +367,8 @@ module PotatoMesh
                          latitude=COALESCE(excluded.latitude, nodes.latitude),
                          longitude=COALESCE(excluded.longitude, nodes.longitude),
                          altitude=COALESCE(excluded.altitude, nodes.altitude),
-                         lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset
+                         lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset,
+                         protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol)
                        WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                      SQL
         end
@@ -622,6 +626,7 @@ module PotatoMesh
         payload_b64 = string_or_nil(payload["payload_b64"] || payload["payload"])
         payload_b64 ||= string_or_nil(position_section.dig("payload", "__bytes_b64__"))
         ingestor = string_or_nil(payload["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
 
         row = [
           pos_id,
@@ -646,13 +651,14 @@ module PotatoMesh
           bitfield,
           payload_b64,
           ingestor,
+          protocol,
         ]
 
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO positions(id,node_id,node_num,rx_time,rx_iso,position_time,to_id,latitude,longitude,altitude,location_source,
-                                             precision_bits,sats_in_view,pdop,ground_speed,ground_track,snr,rssi,hop_limit,bitfield,payload_b64,ingestor)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                             precision_bits,sats_in_view,pdop,ground_speed,ground_track,snr,rssi,hop_limit,bitfield,payload_b64,ingestor,protocol)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(id) DO UPDATE SET
                          node_id=COALESCE(excluded.node_id,positions.node_id),
                          node_num=COALESCE(excluded.node_num,positions.node_num),
@@ -674,7 +680,8 @@ module PotatoMesh
                          hop_limit=COALESCE(excluded.hop_limit,positions.hop_limit),
                          bitfield=COALESCE(excluded.bitfield,positions.bitfield),
                          payload_b64=COALESCE(excluded.payload_b64,positions.payload_b64),
-                         ingestor=COALESCE(NULLIF(positions.ingestor,''), excluded.ingestor)
+                         ingestor=COALESCE(NULLIF(positions.ingestor,''), excluded.ingestor),
+                         protocol=COALESCE(NULLIF(positions.protocol,'meshtastic'), excluded.protocol)
                      SQL
         end
 
@@ -730,6 +737,7 @@ module PotatoMesh
 
         neighbor_entries = []
         ingestor = string_or_nil(payload["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
         neighbors_payload = payload["neighbors"]
         neighbors_list = neighbors_payload.is_a?(Array) ? neighbors_payload : []
 
@@ -767,7 +775,7 @@ module PotatoMesh
 
           ensure_unknown_node(db, neighbor_id || neighbor_num, neighbor_num, heard_time: entry_rx_time)
 
-          neighbor_entries << [neighbor_id, snr, entry_rx_time, ingestor]
+          neighbor_entries << [neighbor_id, snr, entry_rx_time, ingestor, protocol]
         end
 
         with_busy_retry do
@@ -790,17 +798,18 @@ module PotatoMesh
               end
             end
 
-            neighbor_entries.each do |neighbor_id, snr_value, heard_time, reporter_id|
+            neighbor_entries.each do |neighbor_id, snr_value, heard_time, reporter_id, proto|
               db.execute(
                 <<~SQL,
-                INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time, ingestor)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time, ingestor, protocol)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id, neighbor_id) DO UPDATE SET
                   snr = excluded.snr,
                   rx_time = excluded.rx_time,
-                  ingestor = COALESCE(NULLIF(neighbors.ingestor,''), excluded.ingestor)
+                  ingestor = COALESCE(NULLIF(neighbors.ingestor,''), excluded.ingestor),
+                  protocol = COALESCE(NULLIF(neighbors.protocol,'meshtastic'), excluded.protocol)
               SQL
-                [node_id, neighbor_id, snr_value, heard_time, reporter_id],
+                [node_id, neighbor_id, snr_value, heard_time, reporter_id, proto],
               )
             end
           end
@@ -926,6 +935,22 @@ module PotatoMesh
 
       private :resolve_numeric_metric
 
+      # Look up the protocol registered by a given ingestor node.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param ingestor_node_id [String, nil] the node_id of the reporting ingestor.
+      # @return [String] protocol string; defaults to "meshtastic" when absent or unknown.
+      def resolve_protocol(db, ingestor_node_id)
+        return "meshtastic" if ingestor_node_id.nil? || ingestor_node_id.to_s.strip.empty?
+
+        db.get_first_value(
+          "SELECT protocol FROM ingestors WHERE node_id = ? LIMIT 1",
+          [ingestor_node_id],
+        ) || "meshtastic"
+      end
+
+      private :resolve_protocol
+
       # Normalise a traceroute hop entry to a numeric node identifier.
       #
       # @param hop [Object] raw hop entry from the payload.
@@ -1011,6 +1036,7 @@ module PotatoMesh
         lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
         modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
         ingestor = string_or_nil(payload["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
 
         telemetry_section = normalize_json_object(payload["telemetry"])
         device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])
@@ -1341,6 +1367,7 @@ module PotatoMesh
           soil_moisture,
           soil_temperature,
           ingestor,
+          protocol,
         ]
 
         placeholders = Array.new(row.length, "?").join(",")
@@ -1348,7 +1375,7 @@ module PotatoMesh
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO telemetry(id,node_id,node_num,from_id,to_id,rx_time,rx_iso,telemetry_time,channel,portnum,hop_limit,snr,rssi,bitfield,payload_b64,
-                                             battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,gas_resistance,current,iaq,distance,lux,white_lux,ir_lux,uv_lux,wind_direction,wind_speed,weight,wind_gust,wind_lull,radiation,rainfall_1h,rainfall_24h,soil_moisture,soil_temperature,ingestor)
+                                             battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,gas_resistance,current,iaq,distance,lux,white_lux,ir_lux,uv_lux,wind_direction,wind_speed,weight,wind_gust,wind_lull,radiation,rainfall_1h,rainfall_24h,soil_moisture,soil_temperature,ingestor,protocol)
                        VALUES (#{placeholders})
                        ON CONFLICT(id) DO UPDATE SET
                          node_id=COALESCE(excluded.node_id,telemetry.node_id),
@@ -1391,7 +1418,8 @@ module PotatoMesh
                          rainfall_24h=COALESCE(excluded.rainfall_24h,telemetry.rainfall_24h),
                          soil_moisture=COALESCE(excluded.soil_moisture,telemetry.soil_moisture),
                          soil_temperature=COALESCE(excluded.soil_temperature,telemetry.soil_temperature),
-                         ingestor=COALESCE(NULLIF(telemetry.ingestor,''), excluded.ingestor)
+                         ingestor=COALESCE(NULLIF(telemetry.ingestor,''), excluded.ingestor),
+                         protocol=COALESCE(NULLIF(telemetry.protocol,'meshtastic'), excluded.protocol)
                      SQL
         end
 
@@ -1443,6 +1471,7 @@ module PotatoMesh
             metrics&.[]("latencyMs"),
         )
         ingestor = string_or_nil(payload["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
 
         hops_value = payload.key?("hops") ? payload["hops"] : payload["path"]
         hops = normalize_trace_hops(hops_value)
@@ -1454,9 +1483,9 @@ module PotatoMesh
         end
 
         with_busy_retry do
-          db.execute <<~SQL, [trace_identifier, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, ingestor]
-                       INSERT INTO traces(id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, ingestor)
-                            VALUES(?,?,?,?,?,?,?,?,?,?)
+          db.execute <<~SQL, [trace_identifier, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, ingestor, protocol]
+                       INSERT INTO traces(id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, ingestor, protocol)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(id) DO UPDATE SET
                          request_id=COALESCE(excluded.request_id,traces.request_id),
                          src=COALESCE(excluded.src,traces.src),
@@ -1466,7 +1495,8 @@ module PotatoMesh
                          rssi=COALESCE(excluded.rssi,traces.rssi),
                          snr=COALESCE(excluded.snr,traces.snr),
                          elapsed_ms=COALESCE(excluded.elapsed_ms,traces.elapsed_ms),
-                         ingestor=COALESCE(NULLIF(traces.ingestor,''), excluded.ingestor)
+                         ingestor=COALESCE(NULLIF(traces.ingestor,''), excluded.ingestor),
+                         protocol=COALESCE(NULLIF(traces.protocol,'meshtastic'), excluded.protocol)
                      SQL
 
           trace_id = trace_identifier || db.last_insert_row_id
@@ -1628,6 +1658,7 @@ module PotatoMesh
         reply_id = coerce_integer(message["reply_id"] || message["replyId"])
         emoji = string_or_nil(message["emoji"])
         ingestor = string_or_nil(message["ingestor"])
+        protocol = resolve_protocol(db, ingestor)
 
         row = [
           msg_id,
@@ -1648,11 +1679,12 @@ module PotatoMesh
           reply_id,
           emoji,
           ingestor,
+          protocol,
         ]
 
         with_busy_retry do
           existing = db.get_first_row(
-            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor FROM messages WHERE id = ?",
+            "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol FROM messages WHERE id = ?",
             [msg_id],
           )
           if existing
@@ -1756,6 +1788,11 @@ module PotatoMesh
               updates["ingestor"] = ingestor if existing_ingestor.nil?
             end
 
+            existing_protocol = existing.is_a?(Hash) ? existing["protocol"] : existing[11]
+            if existing_protocol.nil? || existing_protocol == "meshtastic"
+              updates["protocol"] = protocol if protocol != "meshtastic"
+            end
+
             unless updates.empty?
               assignments = updates.keys.map { |column| "#{column} = ?" }.join(", ")
               db.execute("UPDATE messages SET #{assignments} WHERE id = ?", updates.values + [msg_id])
@@ -1765,8 +1802,8 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name,reply_id,emoji,ingestor)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name,reply_id,emoji,ingestor,protocol)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               existing_row = db.get_first_row(
@@ -1808,6 +1845,7 @@ module PotatoMesh
               fallback_updates["reply_id"] = reply_id unless reply_id.nil?
               fallback_updates["emoji"] = emoji if emoji
               fallback_updates["ingestor"] = ingestor if ingestor && existing_ingestor.nil?
+              fallback_updates["protocol"] = protocol if protocol != "meshtastic"
               unless fallback_updates.empty?
                 assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
                 db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])

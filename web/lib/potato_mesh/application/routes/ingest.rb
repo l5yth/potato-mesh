@@ -37,8 +37,11 @@ module PotatoMesh
             end
             halt 400, { error: "too many nodes" }.to_json if data.size > 1000
             db = open_database
+            ingestor_node_id = string_or_nil(data["ingestor"])
+            protocol = resolve_protocol(db, ingestor_node_id)
             data.each do |node_id, node|
-              upsert_node(db, node_id, node)
+              next if node_id == "ingestor"
+              upsert_node(db, node_id, node, protocol: protocol)
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
             { status: "ok" }.to_json

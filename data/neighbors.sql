@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS neighbors (
     snr         REAL,
     rx_time     INTEGER NOT NULL,
     ingestor    TEXT,
+    protocol    TEXT NOT NULL DEFAULT 'meshtastic',
     PRIMARY KEY (node_id, neighbor_id),
     FOREIGN KEY (node_id) REFERENCES nodes(node_id) ON DELETE CASCADE,
     FOREIGN KEY (neighbor_id) REFERENCES nodes(node_id) ON DELETE CASCADE

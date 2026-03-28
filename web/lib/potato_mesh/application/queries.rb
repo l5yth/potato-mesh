@@ -252,7 +252,7 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to narrow results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted node rows suitable for API responses.
-      def query_nodes(limit, node_ref: nil, since: 0)
+      def query_nodes(limit, node_ref: nil, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -277,12 +277,17 @@ module PotatoMesh
           where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
         end
 
+        if protocol
+          where_clauses << "protocol = ?"
+          params << protocol
+        end
+
         sql = <<~SQL
           SELECT node_id, short_name, long_name, hw_model, role, snr,
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
                  position_time, location_source, precision_bits,
-                 latitude, longitude, altitude, lora_freq, modem_preset
+                 latitude, longitude, altitude, lora_freq, modem_preset, protocol
           FROM nodes
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
@@ -323,22 +328,29 @@ module PotatoMesh
       # @param limit [Integer] maximum number of ingestors to return.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted ingestor rows suitable for API responses.
-      def query_ingestors(limit, since: 0)
+      def query_ingestors(limit, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
         cutoff = now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: cutoff)
+        where_clauses = ["last_seen_time >= ?"]
+        params = [since_threshold]
+        if protocol
+          where_clauses << "protocol = ?"
+          params << protocol
+        end
         sql = <<~SQL
-          SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset
+          SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol
           FROM ingestors
-          WHERE last_seen_time >= ?
+          WHERE #{where_clauses.join(" AND ")}
           ORDER BY last_seen_time DESC
           LIMIT ?
         SQL
+        params << limit
 
-        rows = db.execute(sql, [since_threshold, limit])
+        rows = db.execute(sql, params)
         rows.each do |row|
           row.delete_if { |key, _| key.is_a?(Integer) }
           start_time = coerce_integer(row["start_time"])
@@ -366,7 +378,7 @@ module PotatoMesh
       # @param include_encrypted [Boolean] when true, include encrypted payloads in the response.
       # @param since [Integer] unix timestamp threshold; messages with rx_time older than this are excluded.
       # @return [Array<Hash>] compacted message rows safe for API responses.
-      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0)
+      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         since_threshold = normalize_since_threshold(since, floor: 0)
         db = open_database(readonly: true)
@@ -390,11 +402,16 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
+        if protocol
+          where_clauses << "m.protocol = ?"
+          params << protocol
+        end
+
         sql = <<~SQL
           SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
                  m.portnum, m.text, m.encrypted, m.rssi, m.hop_limit,
                  m.lora_freq, m.modem_preset, m.channel_name, m.snr,
-                 m.reply_id, m.emoji, m.ingestor
+                 m.reply_id, m.emoji, m.ingestor, m.protocol
           FROM messages m
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n"
@@ -455,7 +472,7 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
       # @return [Array<Hash>] compacted position rows suitable for API responses.
-      def query_positions(limit, node_ref: nil, since: 0)
+      def query_positions(limit, node_ref: nil, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -473,6 +490,11 @@ module PotatoMesh
           return [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)
+        end
+
+        if protocol
+          where_clauses << "protocol = ?"
+          params << protocol
         end
 
         sql = <<~SQL
@@ -514,7 +536,7 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted neighbor rows suitable for API responses.
-      def query_neighbors(limit, node_ref: nil, since: 0)
+      def query_neighbors(limit, node_ref: nil, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -532,6 +554,11 @@ module PotatoMesh
           return [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)
+        end
+
+        if protocol
+          where_clauses << "protocol = ?"
+          params << protocol
         end
 
         sql = <<~SQL
@@ -562,7 +589,7 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
       # @return [Array<Hash>] compacted telemetry rows suitable for API responses.
-      def query_telemetry(limit, node_ref: nil, since: 0)
+      def query_telemetry(limit, node_ref: nil, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -580,6 +607,11 @@ module PotatoMesh
           return [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)
+        end
+
+        if protocol
+          where_clauses << "protocol = ?"
+          params << protocol
         end
 
         sql = <<~SQL
@@ -771,7 +803,7 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
       # @return [Array<Hash>] compacted trace rows suitable for API responses.
-      def query_traces(limit, node_ref: nil, since: 0)
+      def query_traces(limit, node_ref: nil, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -798,8 +830,13 @@ module PotatoMesh
           3.times { params.concat(numeric_values) }
         end
 
+        if protocol
+          where_clauses << "protocol = ?"
+          params << protocol
+        end
+
         sql = <<~SQL
-          SELECT id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms
+          SELECT id, request_id, src, dest, rx_time, rx_iso, rssi, snr, elapsed_ms, protocol
           FROM traces
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
