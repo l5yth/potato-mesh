@@ -249,6 +249,35 @@ RSpec.describe "Multi-protocol support" do
         expect(row["protocol"]).to eq("meshcore")
       end
     end
+
+    it "does not overwrite a meshcore message via the constraint-fallback path" do
+      # Seed the message directly in the DB so the first INSERT triggers a
+      # constraint exception, exercising the rescue SQLite3::ConstraintException
+      # fallback path rather than the primary update branch.
+      with_db do |db|
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, text, protocol) VALUES(?,?,?,?,?)",
+          [501, now - 20, Time.at(now - 20).utc.iso8601, "meshcore seeded", "meshcore"],
+        )
+      end
+
+      # A Meshtastic payload arrives with the same packet ID and new text.
+      # The fallback path must not overwrite the existing meshcore record.
+      meshtastic_msg = {
+        id: 501,
+        rx_time: now - 5,
+        rx_iso: Time.at(now - 5).utc.iso8601,
+        text: "meshtastic fallback attempt",
+      }
+      post "/api/messages", [meshtastic_msg].to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT text, protocol FROM messages WHERE id = ?", [501])
+        expect(row["text"]).to eq("meshcore seeded")
+        expect(row["protocol"]).to eq("meshcore")
+      end
+    end
   end
 
   describe "POST /api/nodes with ingestor key" do

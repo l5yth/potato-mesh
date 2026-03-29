@@ -61,8 +61,9 @@ module PotatoMesh
             messages = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many messages" }.to_json if messages.size > 1000
             db = open_database
+            protocol_cache = {}
             messages.each do |msg|
-              insert_message(db, msg)
+              insert_message(db, msg, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -309,8 +310,9 @@ module PotatoMesh
             positions = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many positions" }.to_json if positions.size > 1000
             db = open_database
+            protocol_cache = {}
             positions.each do |pos|
-              insert_position(db, pos)
+              insert_position(db, pos, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -328,8 +330,9 @@ module PotatoMesh
             neighbor_payloads = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many neighbor packets" }.to_json if neighbor_payloads.size > 1000
             db = open_database
+            protocol_cache = {}
             neighbor_payloads.each do |packet|
-              insert_neighbors(db, packet)
+              insert_neighbors(db, packet, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -347,8 +350,9 @@ module PotatoMesh
             telemetry_packets = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many telemetry packets" }.to_json if telemetry_packets.size > 1000
             db = open_database
+            protocol_cache = {}
             telemetry_packets.each do |packet|
-              insert_telemetry(db, packet)
+              insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -366,8 +370,9 @@ module PotatoMesh
             trace_packets = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many traces" }.to_json if trace_packets.size > 1000
             db = open_database
+            protocol_cache = {}
             trace_packets.each do |packet|
-              insert_trace(db, packet)
+              insert_trace(db, packet, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure

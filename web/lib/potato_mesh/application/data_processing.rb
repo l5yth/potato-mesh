@@ -144,7 +144,7 @@ module PotatoMesh
         )
         return if existing
 
-        protocol_label = (protocol || "meshtastic").split(/[-_]/).map(&:capitalize).join
+        protocol_label = protocol.split(/[-_]/).map(&:capitalize).join
         long_name = "#{protocol_label} #{short_id}"
         heard_time = coerce_integer(heard_time)
         inserted = false
@@ -509,7 +509,7 @@ module PotatoMesh
         end
       end
 
-      def insert_position(db, payload)
+      def insert_position(db, payload, protocol_cache: nil)
         pos_id = coerce_integer(payload["id"] || payload["packet_id"])
         return unless pos_id
 
@@ -541,7 +541,7 @@ module PotatoMesh
         lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
         modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
+        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
 
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(
@@ -707,7 +707,7 @@ module PotatoMesh
         )
       end
 
-      def insert_neighbors(db, payload)
+      def insert_neighbors(db, payload, protocol_cache: nil)
         return unless payload.is_a?(Hash)
 
         now = Time.now.to_i
@@ -740,7 +740,7 @@ module PotatoMesh
         node_id = "!#{node_id.delete_prefix("!").downcase}" if node_id.start_with?("!")
 
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
+        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
 
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(db, node_id || node_num, node_num, rx_time: rx_time, source: :neighborinfo)
@@ -948,9 +948,22 @@ module PotatoMesh
       #
       # @param db [SQLite3::Database] open database handle.
       # @param ingestor_node_id [String, nil] the node_id of the reporting ingestor.
+      # @param cache [Hash, nil] optional per-request memoization hash; pass a shared
+      #   Hash instance across a batch to avoid redundant DB lookups per record.
       # @return [String] protocol string; defaults to "meshtastic" when absent or unknown.
-      def resolve_protocol(db, ingestor_node_id)
+      def resolve_protocol(db, ingestor_node_id, cache: nil)
         return "meshtastic" if ingestor_node_id.nil? || ingestor_node_id.to_s.strip.empty?
+
+        if cache
+          return cache[ingestor_node_id] if cache.key?(ingestor_node_id)
+
+          result = db.get_first_value(
+            "SELECT protocol FROM ingestors WHERE node_id = ? LIMIT 1",
+            [ingestor_node_id],
+          ) || "meshtastic"
+          cache[ingestor_node_id] = result
+          return result
+        end
 
         db.get_first_value(
           "SELECT protocol FROM ingestors WHERE node_id = ? LIMIT 1",
@@ -998,7 +1011,7 @@ module PotatoMesh
         hop_entries.filter_map { |entry| coerce_trace_node_id(entry) }
       end
 
-      def insert_telemetry(db, payload)
+      def insert_telemetry(db, payload, protocol_cache: nil)
         return unless payload.is_a?(Hash)
 
         telemetry_id = coerce_integer(payload["id"] || payload["packet_id"])
@@ -1045,7 +1058,7 @@ module PotatoMesh
         lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
         modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
+        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
 
         telemetry_section = normalize_json_object(payload["telemetry"])
         device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])
@@ -1455,7 +1468,7 @@ module PotatoMesh
       # @param db [SQLite3::Database] open database handle.
       # @param payload [Hash] traceroute payload as produced by the ingestor.
       # @return [void]
-      def insert_trace(db, payload)
+      def insert_trace(db, payload, protocol_cache: nil)
         return unless payload.is_a?(Hash)
 
         trace_identifier = coerce_integer(payload["id"] || payload["packet_id"] || payload["packetId"])
@@ -1481,7 +1494,7 @@ module PotatoMesh
             metrics&.[]("latencyMs"),
         )
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
+        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
 
         hops_value = payload.key?("hops") ? payload["hops"] : payload["path"]
         hops = normalize_trace_hops(hops_value)
@@ -1574,7 +1587,7 @@ module PotatoMesh
         }
       end
 
-      def insert_message(db, message)
+      def insert_message(db, message, protocol_cache: nil)
         return unless message.is_a?(Hash)
 
         msg_id = coerce_integer(message["id"] || message["packet_id"])
@@ -1668,7 +1681,7 @@ module PotatoMesh
         reply_id = coerce_integer(message["reply_id"] || message["replyId"])
         emoji = string_or_nil(message["emoji"])
         ingestor = string_or_nil(message["ingestor"])
-        protocol = resolve_protocol(db, ingestor)
+        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
 
         row = [
           msg_id,
@@ -1816,7 +1829,7 @@ module PotatoMesh
                          SQL
             rescue SQLite3::ConstraintException
               existing_row = db.get_first_row(
-                "SELECT text, encrypted, ingestor FROM messages WHERE id = ?",
+                "SELECT text, encrypted, ingestor, protocol FROM messages WHERE id = ?",
                 [msg_id],
               )
               existing_text = existing_row.is_a?(Hash) ? existing_row["text"] : existing_row&.[](0)
@@ -1826,6 +1839,10 @@ module PotatoMesh
               existing_encrypted_str = existing_encrypted&.to_s
               existing_ingestor = existing_row.is_a?(Hash) ? existing_row["ingestor"] : existing_row&.[](2)
               existing_ingestor = string_or_nil(existing_ingestor)
+              existing_fallback_protocol = existing_row.is_a?(Hash) ? existing_row["protocol"] : existing_row&.[](3)
+              # Guard against cross-protocol contamination in the constraint fallback path,
+              # mirroring the same guard applied in the primary update path above.
+              return if existing_fallback_protocol && existing_fallback_protocol != "meshtastic" && existing_fallback_protocol != protocol
               decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
 
               fallback_updates = {}
@@ -1854,7 +1871,7 @@ module PotatoMesh
               fallback_updates["reply_id"] = reply_id unless reply_id.nil?
               fallback_updates["emoji"] = emoji if emoji
               fallback_updates["ingestor"] = ingestor if ingestor && existing_ingestor.nil?
-              fallback_updates["protocol"] = protocol if protocol != "meshtastic"
+              fallback_updates["protocol"] = protocol if (existing_fallback_protocol.nil? || existing_fallback_protocol == "meshtastic") && protocol != "meshtastic"
               unless fallback_updates.empty?
                 assignments = fallback_updates.keys.map { |column| "#{column} = ?" }.join(", ")
                 db.execute("UPDATE messages SET #{assignments} WHERE id = ?", fallback_updates.values + [msg_id])
