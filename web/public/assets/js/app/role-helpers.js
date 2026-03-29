@@ -39,18 +39,42 @@ export const roleIdToName = Object.freeze({
   12: 'CLIENT_BASE',
 });
 
-// Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
+/**
+ * Meshtastic role colour palette — warm gradient from mint-green (hidden/quiet
+ * nodes) through amber and orange to burnt-sienna (high-priority routers).
+ *
+ * Firmware 2.7.10 / Android 2.7.0 roles (see issue #177).
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
 export const roleColors = Object.freeze({
-  CLIENT_HIDDEN: '#A9CBE8',
-  SENSOR: '#A8D5BA',
-  TRACKER: '#B9DFAC',
-  CLIENT_MUTE: '#CDE7A9',
-  CLIENT: '#E8E6A1',
-  CLIENT_BASE: '#F6D0A6',
-  REPEATER: '#F7B7A3',
-  ROUTER_LATE: '#F29AA3',
-  ROUTER: '#E88B94',
-  LOST_AND_FOUND: '#C3A8E8'
+  CLIENT_HIDDEN: '#A8D8B0',
+  SENSOR: '#B2D880',
+  TRACKER: '#C8D866',
+  CLIENT_MUTE: '#DFCF52',
+  CLIENT: '#ECC044',
+  CLIENT_BASE: '#F0A834',
+  REPEATER: '#F08824',
+  ROUTER_LATE: '#E86C1C',
+  ROUTER: '#D44E14',
+  LOST_AND_FOUND: '#C0300C',
+});
+
+/**
+ * MeshCore role colour palette — cool grey-blue gradient used to distinguish
+ * MeshCore nodes from Meshtastic nodes in future protocol-aware views.
+ *
+ * These colours are defined now for completeness but are not yet applied to
+ * live UI surfaces — see the protocol-aware legend work that will follow once
+ * MeshCore ingest is implemented.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const meshcoreRoleColors = Object.freeze({
+  REPEATER: '#C8D0DC',
+  ROOM_SERVER: '#8AAAC6',
+  SENSOR: '#4A7EB4',
+  COMPANION: '#1A5498',
 });
 
 export const roleRenderOrder = Object.freeze({

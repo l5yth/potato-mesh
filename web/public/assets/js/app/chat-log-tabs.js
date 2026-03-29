@@ -259,7 +259,8 @@ export function buildChatTabModel({
         label: labelInfo.label,
         entries: [],
         labelPriority: labelInfo.priority,
-        isPrimaryFallback: bucketKey === '0'
+        isPrimaryFallback: bucketKey === '0',
+        protocol: message.protocol ?? null
       };
       channelBuckets.set(bucketKey, bucket);
     } else {

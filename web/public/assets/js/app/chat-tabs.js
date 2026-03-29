@@ -80,7 +80,14 @@ export function renderChatTabs({
     button.setAttribute('role', 'tab');
     button.setAttribute('id', `chat-tab-${uniqueId}`);
     button.dataset.tabId = uniqueId;
-    button.textContent = tab.label || '';
+    if (tab.iconHtml) {
+      const iconWrapper = document.createElement('span');
+      iconWrapper.innerHTML = tab.iconHtml;
+      button.appendChild(iconWrapper);
+      button.appendChild(document.createTextNode(tab.label || ''));
+    } else {
+      button.textContent = tab.label || '';
+    }
     button.setAttribute('aria-selected', 'false');
     button.setAttribute('tabindex', '-1');
 

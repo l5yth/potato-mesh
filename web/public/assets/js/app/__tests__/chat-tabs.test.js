@@ -113,6 +113,13 @@ class MockElement {
   }
 }
 
+class MockTextNode {
+  constructor(text) {
+    this.textContent = String(text);
+    this.nodeType = 3;
+  }
+}
+
 function createMockDocument() {
   return {
     createElement(tag) {
@@ -120,6 +127,9 @@ function createMockDocument() {
     },
     createDocumentFragment() {
       return new MockFragment();
+    },
+    createTextNode(text) {
+      return new MockTextNode(text);
     }
   };
 }
@@ -191,4 +201,40 @@ test('renderChatTabs clears container when no tabs exist', () => {
   assert.equal(active, null);
   assert.equal(container.children.length, 0);
   assert.equal(container.dataset.activeTab, '');
+});
+
+test('renderChatTabs renders icon child when tab.iconHtml is provided', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  const tabs = [
+    { id: 'channel-0', label: 'LongFast', iconHtml: '<img src="/assets/img/meshtastic.svg">' }
+  ];
+
+  renderChatTabs({ document, container, tabs });
+
+  const [tabList] = container.children;
+  const button = tabList.children[0];
+  // Button should have two children: a span wrapping the icon HTML, and a text node
+  assert.equal(button.children.length, 2);
+  const iconSpan = button.children[0];
+  assert.ok(iconSpan.tagName === 'SPAN' || iconSpan.innerHTML !== undefined, 'first child should be a span with icon HTML');
+  const textNode = button.children[1];
+  assert.ok(typeof textNode.textContent === 'string', 'second child should be a text node');
+  assert.equal(textNode.textContent, 'LongFast');
+});
+
+test('renderChatTabs uses textContent when no iconHtml is provided', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  const tabs = [{ id: 'log', label: 'Log' }];
+
+  renderChatTabs({ document, container, tabs });
+
+  const [tabList] = container.children;
+  const button = tabList.children[0];
+  assert.equal(button.textContent, 'Log');
+  // No icon child elements
+  assert.equal(button.children.length, 0);
 });

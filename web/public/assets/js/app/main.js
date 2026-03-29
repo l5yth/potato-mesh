@@ -68,6 +68,7 @@ import {
   roleColors,
   roleRenderOrder,
 } from './role-helpers.js';
+import { isMeshtasticProtocol, meshtasticIconHtml } from './protocol-helpers.js';
 
 /**
  * Compute active-node counts from a local node array.
@@ -1461,8 +1462,8 @@ export function initializeApp(config) {
    */
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
-    const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
-    neighborLinesToggleButton.textContent = label;
+    const label = neighborLinesVisible ? 'Hide Meshtastic neighbor lines' : 'Show Meshtastic neighbor lines';
+    neighborLinesToggleButton.innerHTML = `${meshtasticIconHtml()} ${label}`;
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1493,8 +1494,8 @@ export function initializeApp(config) {
    */
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
-    const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
-    traceLinesToggleButton.textContent = label;
+    const label = traceLinesVisible ? 'Hide Meshtastic trace lines' : 'Show Meshtastic trace lines';
+    traceLinesToggleButton.innerHTML = `${meshtasticIconHtml()} ${label}`;
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1583,6 +1584,14 @@ export function initializeApp(config) {
       item.type = 'button';
       item.setAttribute('aria-pressed', 'false');
         item.dataset.role = role;
+        const icon = L.DomUtil.create('img', 'protocol-icon protocol-icon--meshtastic', item);
+        icon.src = '/assets/img/meshtastic.svg';
+        icon.alt = 'Meshtastic';
+        icon.width = 12;
+        icon.height = 12;
+        icon.setAttribute('aria-hidden', 'true');
+        icon.setAttribute('loading', 'lazy');
+        icon.setAttribute('decoding', 'async');
         const swatch = L.DomUtil.create('span', 'legend-swatch', item);
         swatch.style.background = color;
         swatch.setAttribute('aria-hidden', 'true');
@@ -2096,7 +2105,7 @@ export function initializeApp(config) {
    */
   function buildMapPopupHtml(node, nowSec) {
     const lines = [];
-    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id);
+    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id, 'node-long-link', node?.protocol);
     if (longNameLink) {
       lines.push(`<b>${longNameLink}</b>`);
     }
@@ -2273,6 +2282,11 @@ export function initializeApp(config) {
       }
     }
 
+    const protocolRaw = source.protocol;
+    if (protocolRaw != null && typeof protocolRaw === 'string') {
+      normalized.protocol = protocolRaw;
+    }
+
     return normalized;
   }
 
@@ -2310,7 +2324,7 @@ export function initializeApp(config) {
     const heading = normalized.longName || normalized.shortName || normalized.nodeId || '';
     let headingHtml = '';
     if (normalized.longName) {
-      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId);
+      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId, 'node-long-link', normalized.protocol);
       if (link) {
         headingHtml = `<strong>${link}</strong><br/>`;
       }
@@ -2675,8 +2689,10 @@ export function initializeApp(config) {
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     const longNameDisplay = longName != null ? String(longName) : '';
     const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {});
+    const announcementProtocol = (nodeData || metadataSource || {}).protocol;
+    const announcementIconPrefix = isMeshtasticProtocol(announcementProtocol) ? `${meshtasticIconHtml()} ` : '';
     div.className = 'chat-entry-node';
-    div.innerHTML = `${prefix}${presetTag} ${shortHtml} ${messageHtml}`;
+    div.innerHTML = `${prefix}${presetTag} ${announcementIconPrefix}${shortHtml} ${messageHtml}`;
     return div;
   }
 
@@ -3065,6 +3081,7 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
+    const nodeProtocolPrefix = isMeshtasticProtocol(m.node?.protocol) ? `${meshtasticIconHtml()} ` : '';
     const replyPrefix = resolveReplyPrefix({
       message: m,
       messagesById,
@@ -3101,7 +3118,7 @@ export function initializeApp(config) {
     });
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefix}${presetTag} ${short} ${text}`;
+    div.innerHTML = `${prefix}${presetTag} ${nodeProtocolPrefix}${short} ${text}`;
     return div;
   }
 
@@ -3234,6 +3251,7 @@ export function initializeApp(config) {
     const channelTabs = filteredChannels.map(channel => ({
       id: channel.id || `channel-${channel.index}`,
       label: channel.label,
+      iconHtml: isMeshtasticProtocol(channel.protocol) ? meshtasticIconHtml() : null,
       content: buildChatFragment({
         entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
         renderEntry: entry => createMessageChatEntry(entry.item),
@@ -3426,24 +3444,29 @@ export function initializeApp(config) {
   /**
    * Render a linked long name pointing to the node detail view.
    *
+   * When {@code protocol} is ``"meshtastic"`` or absent the Meshtastic logo is
+   * prepended to the displayed name to indicate the node's mesh backend.
+   *
    * @param {string|null} longName Display name.
    * @param {string|null} identifier Node identifier.
    * @param {string} [className='node-long-link'] Optional class attribute.
+   * @param {string|null} [protocol=null] Protocol string from the API.
    * @returns {string} Escaped HTML snippet.
    */
-  function renderNodeLongNameLink(longName, identifier, className = 'node-long-link') {
+  function renderNodeLongNameLink(longName, identifier, className = 'node-long-link', protocol = null) {
     const text = normalizeNodeNameValue(longName);
     if (!text) return '';
+    const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
     const href = buildNodeDetailHref(identifier);
     if (!href) {
-      return escapeHtml(text);
+      return `${iconPrefix}${escapeHtml(text)}`;
     }
     const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
     const canonicalIdentifier = canonicalNodeIdentifier(identifier);
     const dataAttrs = canonicalIdentifier
       ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalIdentifier)}"`
       : ' data-node-detail-link="true"';
-    return `<a${classAttr} href="${href}"${dataAttrs}>${escapeHtml(text)}</a>`;
+    return `<a${classAttr} href="${href}"${dataAttrs}>${iconPrefix}${escapeHtml(text)}</a>`;
   }
 
   /**
@@ -3968,7 +3991,7 @@ export function initializeApp(config) {
       const loraFrequencyText = formatLoraFrequencyMHz(modemMetadata.loraFreq);
       const loraFrequencyDisplay = loraFrequencyText ? escapeHtml(loraFrequencyText) : '';
       const modemPresetDisplay = modemMetadata.modemPreset ? escapeHtml(modemMetadata.modemPreset) : '';
-      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
+      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id, 'node-long-link', n.protocol);
       tr.innerHTML = `
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
