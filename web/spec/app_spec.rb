@@ -216,6 +216,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
   # @param expected [Object] expected value.
   # @param tolerance [Float] acceptable delta for floating point values.
   # @return [void]
+  def expect_same_value(actual, expected, tolerance: 1e-6)
+    if expected.nil?
+      expect(actual).to be_nil
+    elsif expected.is_a?(Float)
+      expect(actual).to be_within(tolerance).of(expected)
+    else
+      expect(actual).to eq(expected)
+    end
+  end
+
   # Fetch the stored telemetry_type for a given row id and assert it equals
   # +expected+.  Avoids repeating the with_db / SELECT / expect triple across
   # multiple telemetry_type inference tests.
@@ -228,16 +238,6 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.results_as_hash = true
       row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [id])
       expect(row["telemetry_type"]).to eq(expected)
-    end
-  end
-
-  def expect_same_value(actual, expected, tolerance: 1e-6)
-    if expected.nil?
-      expect(actual).to be_nil
-    elsif expected.is_a?(Float)
-      expect(actual).to be_within(tolerance).of(expected)
-    else
-      expect(actual).to eq(expected)
     end
   end
 

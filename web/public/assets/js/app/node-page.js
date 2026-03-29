@@ -1021,6 +1021,11 @@ function classifySnapshot(snapshot) {
     snapshot.environment_metrics?.temperature != null ||
     snapshot.environmentMetrics?.temperature != null;
   if (hasEnv) return 'environment';
+  // device_metrics also carries a `voltage` field (~4.2 V for battery), so a
+  // device row with `voltage` but none of the four battery-discriminator fields
+  // above would be misclassified as 'power'.  This is consistent with the SQL
+  // backfill and is negligible in practice (firmware always sends at least
+  // battery_level or channel_utilization alongside voltage).
   if (snapshot.current != null || snapshot.voltage != null) return 'power';
   if (snapshot.iaq != null || snapshot.gas_resistance != null) return 'environment';
   return 'unknown';
