@@ -35,10 +35,14 @@ module PotatoMesh
             unless data.is_a?(Hash)
               halt 400, { error: "invalid payload" }.to_json
             end
-            halt 400, { error: "too many nodes" }.to_json if data.size > 1000
+            node_count = data.count { |k, _| k != "ingestor" }
+            halt 400, { error: "too many nodes" }.to_json if node_count > 1000
             db = open_database
+            ingestor_node_id = string_or_nil(data["ingestor"])
+            protocol = resolve_protocol(db, ingestor_node_id)
             data.each do |node_id, node|
-              upsert_node(db, node_id, node)
+              next if node_id == "ingestor"
+              upsert_node(db, node_id, node, protocol: protocol)
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
             { status: "ok" }.to_json
@@ -57,8 +61,9 @@ module PotatoMesh
             messages = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many messages" }.to_json if messages.size > 1000
             db = open_database
+            protocol_cache = {}
             messages.each do |msg|
-              insert_message(db, msg)
+              insert_message(db, msg, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -305,8 +310,9 @@ module PotatoMesh
             positions = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many positions" }.to_json if positions.size > 1000
             db = open_database
+            protocol_cache = {}
             positions.each do |pos|
-              insert_position(db, pos)
+              insert_position(db, pos, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -324,8 +330,9 @@ module PotatoMesh
             neighbor_payloads = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many neighbor packets" }.to_json if neighbor_payloads.size > 1000
             db = open_database
+            protocol_cache = {}
             neighbor_payloads.each do |packet|
-              insert_neighbors(db, packet)
+              insert_neighbors(db, packet, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -343,8 +350,9 @@ module PotatoMesh
             telemetry_packets = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many telemetry packets" }.to_json if telemetry_packets.size > 1000
             db = open_database
+            protocol_cache = {}
             telemetry_packets.each do |packet|
-              insert_telemetry(db, packet)
+              insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure
@@ -362,8 +370,9 @@ module PotatoMesh
             trace_packets = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many traces" }.to_json if trace_packets.size > 1000
             db = open_database
+            protocol_cache = {}
             trace_packets.each do |packet|
-              insert_trace(db, packet)
+              insert_trace(db, packet, protocol_cache: protocol_cache)
             end
             { status: "ok" }.to_json
           ensure

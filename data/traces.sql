@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS traces (
     rssi        INTEGER,
     snr         REAL,
     elapsed_ms  INTEGER,
-    ingestor    TEXT
+    ingestor    TEXT,
+    protocol    TEXT NOT NULL DEFAULT 'meshtastic'
 );
 
 CREATE TABLE IF NOT EXISTS trace_hops (

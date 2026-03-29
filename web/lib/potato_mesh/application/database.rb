@@ -126,6 +126,11 @@ module PotatoMesh
           db.execute("ALTER TABLE nodes ADD COLUMN modem_preset TEXT")
         end
 
+        unless node_columns.include?("protocol")
+          db.execute("ALTER TABLE nodes ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+          db.execute("UPDATE nodes SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+        end
+
         message_columns = db.execute("PRAGMA table_info(messages)").map { |row| row[1] }
 
         unless message_columns.include?("lora_freq")
@@ -151,6 +156,11 @@ module PotatoMesh
         end
         unless message_columns.include?("ingestor")
           db.execute("ALTER TABLE messages ADD COLUMN ingestor TEXT")
+        end
+
+        unless message_columns.include?("protocol")
+          db.execute("ALTER TABLE messages ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+          db.execute("UPDATE messages SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
         end
 
         reply_index_exists =
@@ -195,6 +205,11 @@ module PotatoMesh
           db.execute("ALTER TABLE telemetry ADD COLUMN ingestor TEXT")
         end
 
+        unless telemetry_columns.include?("protocol")
+          db.execute("ALTER TABLE telemetry ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+          db.execute("UPDATE telemetry SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+        end
+
         position_tables =
           db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='positions'").flatten
         if position_tables.empty?
@@ -204,6 +219,11 @@ module PotatoMesh
         position_columns = db.execute("PRAGMA table_info(positions)").map { |row| row[1] }
         unless position_columns.include?("ingestor")
           db.execute("ALTER TABLE positions ADD COLUMN ingestor TEXT")
+        end
+
+        unless position_columns.include?("protocol")
+          db.execute("ALTER TABLE positions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+          db.execute("UPDATE positions SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
         end
 
         neighbor_tables =
@@ -217,6 +237,11 @@ module PotatoMesh
           db.execute("ALTER TABLE neighbors ADD COLUMN ingestor TEXT")
         end
 
+        unless neighbor_columns.include?("protocol")
+          db.execute("ALTER TABLE neighbors ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+          db.execute("UPDATE neighbors SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+        end
+
         trace_tables =
           db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('traces','trace_hops')",
@@ -228,6 +253,11 @@ module PotatoMesh
         trace_columns = db.execute("PRAGMA table_info(traces)").map { |row| row[1] }
         unless trace_columns.include?("ingestor")
           db.execute("ALTER TABLE traces ADD COLUMN ingestor TEXT")
+        end
+
+        unless trace_columns.include?("protocol")
+          db.execute("ALTER TABLE traces ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+          db.execute("UPDATE traces SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
         end
 
         ingestor_tables =
@@ -245,6 +275,11 @@ module PotatoMesh
           end
           unless ingestor_columns.include?("modem_preset")
             db.execute("ALTER TABLE ingestors ADD COLUMN modem_preset TEXT")
+          end
+
+          unless ingestor_columns.include?("protocol")
+            db.execute("ALTER TABLE ingestors ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+            db.execute("UPDATE ingestors SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
           end
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
