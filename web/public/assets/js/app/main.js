@@ -4521,14 +4521,6 @@ export function initializeApp(config) {
    *
    * @type {{ buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function }}
    */
-  return {
-    _testUtils: {
-      buildMapPopupHtml,
-      normalizeOverlaySource,
-      createAnnouncementEntry,
-      createMessageChatEntry,
-    },
-  };
   if (refreshBtn) {
     refreshBtn.addEventListener('click', refresh);
   }
@@ -4584,6 +4576,15 @@ export function initializeApp(config) {
       });
     });
   }
+
+  return {
+    _testUtils: {
+      buildMapPopupHtml,
+      normalizeOverlaySource,
+      createAnnouncementEntry,
+      createMessageChatEntry,
+    },
+  };
 }
 
 
