@@ -48,8 +48,9 @@ const TRACE_LIMIT = 200;
  */
 const TELEMETRY_CHART_SPECS = Object.freeze([
   {
-    id: 'power',
-    title: 'Power metrics',
+    id: 'device-health',
+    title: 'Device health',
+    typeFilter: ['device', 'unknown'],
     axes: [
       {
         id: 'battery',
@@ -70,16 +71,6 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         color: '#9ebcda',
         allowUpperOverflow: true,
       },
-      {
-        id: 'current',
-        position: 'rightSecondary',
-        label: 'Current (A)',
-        min: 0,
-        max: 3,
-        ticks: 3,
-        color: '#3182bd',
-        allowUpperOverflow: true,
-      },
     ],
     series: [
       {
@@ -91,6 +82,44 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
         fields: ['battery', 'battery_level', 'batteryLevel'],
         valueFormatter: value => `${value.toFixed(1)}%`,
       },
+      {
+        id: 'voltage',
+        axis: 'voltage',
+        color: '#9ebcda',
+        label: 'Voltage',
+        legend: 'Voltage (V)',
+        fields: ['voltage', 'voltageReading'],
+        valueFormatter: value => `${value.toFixed(2)} V`,
+      },
+    ],
+  },
+  {
+    id: 'power-sensor',
+    title: 'Power sensor',
+    typeFilter: ['power'],
+    axes: [
+      {
+        id: 'voltage',
+        position: 'left',
+        label: 'Voltage (V)',
+        min: 0,
+        max: 6,
+        ticks: 3,
+        color: '#9ebcda',
+        allowUpperOverflow: true,
+      },
+      {
+        id: 'current',
+        position: 'right',
+        label: 'Current (A)',
+        min: 0,
+        max: 3,
+        ticks: 3,
+        color: '#3182bd',
+        allowUpperOverflow: true,
+      },
+    ],
+    series: [
       {
         id: 'voltage',
         axis: 'voltage',
@@ -114,6 +143,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
   {
     id: 'channel',
     title: 'Channel utilization',
+    typeFilter: ['device', 'unknown'],
     axes: [
       {
         id: 'channel',
@@ -149,6 +179,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
   {
     id: 'environment',
     title: 'Environmental telemetry',
+    typeFilter: ['environment'],
     axes: [
       {
         id: 'temperature',
@@ -195,6 +226,7 @@ const TELEMETRY_CHART_SPECS = Object.freeze([
   {
     id: 'airQuality',
     title: 'Air quality',
+    typeFilter: ['environment', 'air_quality'],
     axes: [
       {
         id: 'pressure',
@@ -960,6 +992,46 @@ function collectSnapshotContainers(snapshot) {
 }
 
 /**
+ * Infer the telemetry subtype for a snapshot.
+ *
+ * Uses the stored ``telemetry_type`` field when available.  Falls back to
+ * field-presence heuristics for rows that pre-date the discriminator column.
+ *
+ * @param {Object} snapshot Telemetry snapshot payload.
+ * @returns {string} One of ``'device'``, ``'environment'``, ``'power'``,
+ *   ``'air_quality'``, or ``'unknown'``.
+ */
+function classifySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return 'unknown';
+  const stored = stringOrNull(snapshot.telemetry_type);
+  if (stored) return stored;
+  // Heuristics for legacy rows — check both flat and nested shapes.
+  const hasBattery =
+    snapshot.battery_level != null ||
+    snapshot.channel_utilization != null ||
+    snapshot.air_util_tx != null ||
+    snapshot.uptime_seconds != null ||
+    snapshot.device_metrics?.battery_level != null ||
+    snapshot.deviceMetrics?.batteryLevel != null;
+  if (hasBattery) return 'device';
+  const hasEnv =
+    snapshot.temperature != null ||
+    snapshot.relative_humidity != null ||
+    snapshot.barometric_pressure != null ||
+    snapshot.environment_metrics?.temperature != null ||
+    snapshot.environmentMetrics?.temperature != null;
+  if (hasEnv) return 'environment';
+  // device_metrics also carries a `voltage` field (~4.2 V for battery), so a
+  // device row with `voltage` but none of the four battery-discriminator fields
+  // above would be misclassified as 'power'.  This is consistent with the SQL
+  // backfill and is negligible in practice (firmware always sends at least
+  // battery_level or channel_utilization alongside voltage).
+  if (snapshot.current != null || snapshot.voltage != null) return 'power';
+  if (snapshot.iaq != null || snapshot.gas_resistance != null) return 'environment';
+  return 'unknown';
+}
+
+/**
  * Extract the first numeric telemetry value that matches one of the provided
  * field names.
  *
@@ -1161,10 +1233,13 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
   const timeRangeLabel = stringOrNull(chartOptions.timeRangeLabel) ?? 'Last 7 days';
   const domainEnd = nowMs;
   const domainStart = nowMs - windowMs;
+  const effectiveEntries = Array.isArray(spec.typeFilter) && !chartOptions.isAggregated
+    ? entries.filter(e => spec.typeFilter.includes(classifySnapshot(e.snapshot)))
+    : entries;
   const dims = createChartDimensions(spec);
   const seriesEntries = spec.series
     .map(series => {
-      const points = buildSeriesPoints(entries, series.fields, domainStart, domainEnd);
+      const points = buildSeriesPoints(effectiveEntries, series.fields, domainStart, domainEnd);
       if (points.length === 0) return null;
       return { config: series, axisId: series.axis, points };
     })
@@ -1264,8 +1339,9 @@ export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions =
   if (entries.length === 0) {
     return '';
   }
+  const isAggregated = snapshotHistory == null && aggregatedSnapshots != null;
   const charts = TELEMETRY_CHART_SPECS
-    .map(spec => renderTelemetryChart(spec, entries, nowMs, chartOptions))
+    .map(spec => renderTelemetryChart(spec, entries, nowMs, { ...chartOptions, isAggregated }))
     .filter(chart => stringOrNull(chart));
   if (charts.length === 0) {
     return '';
@@ -2587,6 +2663,7 @@ export const __testUtils = {
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
+  classifySnapshot,
   renderTelemetryCharts,
   renderMessages,
   renderTraceroutes,

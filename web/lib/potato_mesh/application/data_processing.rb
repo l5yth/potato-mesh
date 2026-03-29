@@ -1065,6 +1065,21 @@ module PotatoMesh
         device_metrics ||= normalize_json_object(telemetry_section["deviceMetrics"]) if telemetry_section&.key?("deviceMetrics")
         environment_metrics = normalize_json_object(payload["environment_metrics"] || payload["environmentMetrics"])
         environment_metrics ||= normalize_json_object(telemetry_section["environmentMetrics"]) if telemetry_section&.key?("environmentMetrics")
+        power_metrics = normalize_json_object(payload["power_metrics"] || payload["powerMetrics"])
+        power_metrics ||= normalize_json_object(telemetry_section["powerMetrics"]) if telemetry_section&.key?("powerMetrics")
+        air_quality_metrics = normalize_json_object(payload["air_quality_metrics"] || payload["airQualityMetrics"])
+        air_quality_metrics ||= normalize_json_object(telemetry_section["airQualityMetrics"]) if telemetry_section&.key?("airQualityMetrics")
+
+        telemetry_type = string_or_nil(payload["telemetry_type"])
+        telemetry_type ||= if device_metrics&.any?
+            "device"
+          elsif environment_metrics&.any?
+            "environment"
+          elsif power_metrics&.any?
+            "power"
+          elsif air_quality_metrics&.any?
+            "air_quality"
+          end
 
         sources = {
           payload: payload,
@@ -1390,6 +1405,7 @@ module PotatoMesh
           soil_temperature,
           ingestor,
           protocol,
+          telemetry_type,
         ]
 
         placeholders = Array.new(row.length, "?").join(",")
@@ -1397,7 +1413,7 @@ module PotatoMesh
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO telemetry(id,node_id,node_num,from_id,to_id,rx_time,rx_iso,telemetry_time,channel,portnum,hop_limit,snr,rssi,bitfield,payload_b64,
-                                             battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,gas_resistance,current,iaq,distance,lux,white_lux,ir_lux,uv_lux,wind_direction,wind_speed,weight,wind_gust,wind_lull,radiation,rainfall_1h,rainfall_24h,soil_moisture,soil_temperature,ingestor,protocol)
+                                             battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,gas_resistance,current,iaq,distance,lux,white_lux,ir_lux,uv_lux,wind_direction,wind_speed,weight,wind_gust,wind_lull,radiation,rainfall_1h,rainfall_24h,soil_moisture,soil_temperature,ingestor,protocol,telemetry_type)
                        VALUES (#{placeholders})
                        ON CONFLICT(id) DO UPDATE SET
                          node_id=COALESCE(excluded.node_id,telemetry.node_id),
@@ -1441,7 +1457,8 @@ module PotatoMesh
                          soil_moisture=COALESCE(excluded.soil_moisture,telemetry.soil_moisture),
                          soil_temperature=COALESCE(excluded.soil_temperature,telemetry.soil_temperature),
                          ingestor=COALESCE(NULLIF(telemetry.ingestor,''), excluded.ingestor),
-                         protocol=COALESCE(NULLIF(telemetry.protocol,'meshtastic'), excluded.protocol)
+                         protocol=COALESCE(NULLIF(telemetry.protocol,'meshtastic'), excluded.protocol),
+                         telemetry_type=COALESCE(excluded.telemetry_type,telemetry.telemetry_type)
                      SQL
         end
 

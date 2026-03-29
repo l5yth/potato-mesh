@@ -2342,6 +2342,7 @@ def test_store_packet_dict_handles_telemetry_packet(mesh_module, monkeypatch):
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
     assert payload["ingestor"] == "!f00dbabe"
+    assert payload["telemetry_type"] == "device"
 
 
 def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatch):
@@ -2421,6 +2422,109 @@ def test_store_packet_dict_handles_environment_telemetry(mesh_module, monkeypatc
     assert payload["soil_temperature"] == pytest.approx(18.9)
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
+    assert payload["telemetry_type"] == "environment"
+
+
+def test_store_packet_dict_handles_power_telemetry(mesh_module, monkeypatch):
+    """Power-metrics packets are tagged telemetry_type='power'."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 3_000_000_001,
+        "rxTime": 1_758_030_000,
+        "fromId": "!aabbccdd",
+        "toId": "^all",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_758_030_000,
+                "powerMetrics": {
+                    "ch1Voltage": 5.02,
+                    "ch1Current": 0.48,
+                },
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["telemetry_type"] == "power"
+
+
+def test_store_packet_dict_handles_air_quality_telemetry(mesh_module, monkeypatch):
+    """Air-quality-metrics packets are tagged telemetry_type='air_quality'."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 3_000_000_003,
+        "rxTime": 1_758_032_000,
+        "fromId": "!aabbccdd",
+        "toId": "^all",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_758_032_000,
+                "airQualityMetrics": {
+                    "pm10Standard": 4,
+                    "pm25Standard": 8,
+                    "iaq": 65,
+                },
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["telemetry_type"] == "air_quality"
+
+
+def test_store_packet_dict_telemetry_type_absent_for_unknown_subtype(
+    mesh_module, monkeypatch
+):
+    """Packets with no recognised sub-object do not include telemetry_type in the payload."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 3_000_000_002,
+        "rxTime": 1_758_031_000,
+        "fromId": "!aabbccdd",
+        "toId": "^all",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_758_031_000,
+                "someUnknownMetrics": {"foo": 1},
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert "telemetry_type" not in payload
 
 
 def test_store_packet_dict_throttles_host_telemetry(mesh_module, monkeypatch):

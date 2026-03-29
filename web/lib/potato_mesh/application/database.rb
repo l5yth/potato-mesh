@@ -204,6 +204,9 @@ module PotatoMesh
         unless telemetry_columns.include?("ingestor")
           db.execute("ALTER TABLE telemetry ADD COLUMN ingestor TEXT")
         end
+        unless telemetry_columns.include?("telemetry_type")
+          db.execute("ALTER TABLE telemetry ADD COLUMN telemetry_type TEXT")
+        end
 
         unless telemetry_columns.include?("protocol")
           db.execute("ALTER TABLE telemetry ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")

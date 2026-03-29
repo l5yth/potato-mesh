@@ -226,6 +226,21 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  # Fetch the stored telemetry_type for a given row id and assert it equals
+  # +expected+.  Avoids repeating the with_db / SELECT / expect triple across
+  # multiple telemetry_type inference tests.
+  #
+  # @param id [Integer] telemetry row id to look up.
+  # @param expected [String] expected telemetry_type value.
+  # @return [void]
+  def expect_stored_telemetry_type(id, expected)
+    with_db(readonly: true) do |db|
+      db.results_as_hash = true
+      row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [id])
+      expect(row["telemetry_type"]).to eq(expected)
+    end
+  end
+
   # Assert that an API response either omits blank values or matches the
   # expected non-blank value.
   #
@@ -3960,6 +3975,95 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect_same_value(row["battery_level"], 80.0)
           expect(row["ingestor"]).to eq("!1111bbbb")
         end
+      end
+
+      it "infers telemetry_type='device' from device_metrics in the payload" do
+        payload = [
+          {
+            "id" => 24_001,
+            "node_id" => "!teltype01",
+            "rx_time" => reference_time.to_i - 10,
+            "device_metrics" => { "battery_level" => 85, "voltage" => 4.1 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect_stored_telemetry_type(24_001, "device")
+      end
+
+      it "infers telemetry_type='environment' from environment_metrics in the payload" do
+        payload = [
+          {
+            "id" => 24_002,
+            "node_id" => "!teltype02",
+            "rx_time" => reference_time.to_i - 20,
+            "environment_metrics" => { "temperature" => 22.5, "relativeHumidity" => 50 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect_stored_telemetry_type(24_002, "environment")
+      end
+
+      it "accepts an explicit telemetry_type from the payload" do
+        payload = [
+          {
+            "id" => 24_003,
+            "node_id" => "!teltype03",
+            "rx_time" => reference_time.to_i - 30,
+            "telemetry_type" => "power",
+            "voltage" => 5.0,
+            "current" => 0.48,
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect_stored_telemetry_type(24_003, "power")
+      end
+
+      it "includes telemetry_type in GET /api/telemetry/:id response" do
+        payload = [
+          {
+            "id" => 24_004,
+            "node_id" => "!teltype04",
+            "rx_time" => reference_time.to_i - 5,
+            "device_metrics" => { "battery_level" => 70, "channelUtilization" => 30 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        get "/api/telemetry/!teltype04", {}, auth_headers
+
+        expect(last_response).to be_ok
+        entries = JSON.parse(last_response.body)
+        entry = entries.find { |e| e["id"] == 24_004 }
+        expect(entry).not_to be_nil
+        expect(entry["telemetry_type"]).to eq("device")
+      end
+
+      it "infers telemetry_type='air_quality' from air_quality_metrics in the payload" do
+        payload = [
+          {
+            "id" => 24_005,
+            "node_id" => "!teltype05",
+            "rx_time" => reference_time.to_i - 40,
+            "air_quality_metrics" => { "iaq" => 72, "pm25" => 8 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        expect_stored_telemetry_type(24_005, "air_quality")
       end
 
       it "returns 400 when more than 1000 telemetry packets are provided" do

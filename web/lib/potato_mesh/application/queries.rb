@@ -668,6 +668,7 @@ module PotatoMesh
           r["rainfall_24h"] = coerce_float(r["rainfall_24h"])
           r["soil_moisture"] = coerce_integer(r["soil_moisture"])
           r["soil_temperature"] = coerce_float(r["soil_temperature"])
+          r["telemetry_type"] = string_or_nil(r["telemetry_type"])
         end
         rows.map { |row| compact_api_row(row) }
       ensure

@@ -75,6 +75,7 @@ Single telemetry payload:
 - RF: `snr` (float|nil), `rssi` (int|nil)
 - Raw: `payload_b64` (string; may be empty string when unknown)
 - Metrics: many optional snake_case keys (`battery_level`, `voltage`, `temperature`, etc.)
+- Subtype: `telemetry_type` (string|nil) — optional discriminator identifying which Meshtastic protobuf oneof was set; one of `"device"`, `"environment"`, `"power"`, or `"air_quality"`. Ingestors that detect the subtype SHOULD include this field; omit rather than send `null` when unknown. The web app infers the type from metric-field presence when absent, so old ingestors remain compatible.
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
 
 #### `POST /api/neighbors`
