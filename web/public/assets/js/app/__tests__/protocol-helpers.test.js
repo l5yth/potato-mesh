@@ -17,7 +17,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isMeshtasticProtocol, meshtasticIconHtml, isMeshcoreProtocol, meshcoreIconHtml } from '../protocol-helpers.js';
+import {
+  isMeshtasticProtocol,
+  meshtasticIconHtml,
+  isMeshcoreProtocol,
+  meshcoreIconHtml,
+  MESHTASTIC_ICON_SRC,
+  MESHCORE_ICON_SRC,
+} from '../protocol-helpers.js';
 
 test('isMeshtasticProtocol — null is Meshtastic (default)', () => {
   assert.equal(isMeshtasticProtocol(null), true);
@@ -85,4 +92,12 @@ test('meshcoreIconHtml — returns img element HTML', () => {
   assert.ok(html.includes('meshcore.svg'), 'should reference meshcore.svg');
   assert.ok(html.includes('protocol-icon--meshcore'), 'should carry CSS class');
   assert.ok(html.includes('aria-hidden="true"'), 'should be hidden from AT');
+});
+
+test('MESHTASTIC_ICON_SRC is referenced by meshtasticIconHtml', () => {
+  assert.ok(meshtasticIconHtml().includes(MESHTASTIC_ICON_SRC), 'icon HTML must embed the src constant');
+});
+
+test('MESHCORE_ICON_SRC is referenced by meshcoreIconHtml', () => {
+  assert.ok(meshcoreIconHtml().includes(MESHCORE_ICON_SRC), 'icon HTML must embed the src constant');
 });

@@ -214,29 +214,31 @@ test('renderChatTabs clears container when no tabs exist', () => {
   assert.equal(container.dataset.activeTab, '');
 });
 
-test('renderChatTabs renders icon child when tab.iconHtml is provided', () => {
+test('renderChatTabs renders icon img child when tab.iconSrc is provided', () => {
   const document = createMockDocument();
   const container = new MockElement('div');
 
   const tabs = [
-    { id: 'channel-0', label: 'LongFast', iconHtml: '<img src="/assets/img/meshtastic.svg">' }
+    { id: 'channel-0', label: 'LongFast', iconSrc: '/assets/img/meshtastic.svg' }
   ];
 
   renderChatTabs({ document, container, tabs });
 
   const [tabList] = container.children;
   const button = tabList.children[0];
-  // Button has one element child (the icon <span>) and one text node — two childNodes total.
-  assert.equal(button.children.length, 1, 'should have exactly one element child (icon span)');
-  assert.equal(button.childNodes.length, 2, 'should have two child nodes (icon span + text node)');
-  const iconSpan = button.children[0];
-  assert.equal(iconSpan.tagName, 'SPAN', 'first element child should be a span');
+  // Button has one element child (the icon <img>) and one text node — two childNodes total.
+  assert.equal(button.children.length, 1, 'should have exactly one element child (icon img)');
+  assert.equal(button.childNodes.length, 2, 'should have two child nodes (icon img + text node)');
+  const iconImg = button.children[0];
+  assert.equal(iconImg.tagName, 'IMG', 'first element child should be an img');
+  assert.equal(iconImg.getAttribute('src'), '/assets/img/meshtastic.svg', 'img src should match iconSrc');
+  assert.equal(iconImg.getAttribute('aria-hidden'), 'true', 'img should be hidden from AT');
   const textNode = button.childNodes[1];
   assert.equal(textNode.nodeType, 3, 'second child node should be a text node');
   assert.equal(textNode.textContent, 'LongFast');
 });
 
-test('renderChatTabs uses textContent when no iconHtml is provided', () => {
+test('renderChatTabs uses textContent when no iconSrc is provided', () => {
   const document = createMockDocument();
   const container = new MockElement('div');
 

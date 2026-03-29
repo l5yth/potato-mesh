@@ -68,7 +68,7 @@ import {
   roleColors,
   roleRenderOrder,
 } from './role-helpers.js';
-import { isMeshtasticProtocol, meshtasticIconHtml } from './protocol-helpers.js';
+import { isMeshtasticProtocol, meshtasticIconHtml, MESHTASTIC_ICON_SRC } from './protocol-helpers.js';
 
 /**
  * Compute active-node counts from a local node array.
@@ -226,8 +226,12 @@ export function escapeHtml(str) {
 /**
  * Normalise node name fields by trimming whitespace.
  *
+ * Unlike {@link stringOrNull} in node-page.js (which returns ``null`` for blank
+ * values), this function returns an empty string — the expected shape for
+ * display-only name fields where a falsy string is preferable to ``null``.
+ *
  * @param {*} value Raw name value.
- * @returns {string} Sanitised name string.
+ * @returns {string} Sanitised name string, or empty string when blank/absent.
  */
 export function normalizeNodeNameValue(value) {
   if (value == null) return '';
@@ -1668,14 +1672,9 @@ export function initializeApp(config) {
       item.type = 'button';
       item.setAttribute('aria-pressed', 'false');
         item.dataset.role = role;
-        const icon = L.DomUtil.create('img', 'protocol-icon protocol-icon--meshtastic', item);
-        icon.setAttribute('src', '/assets/img/meshtastic.svg');
-        icon.setAttribute('alt', '');
-        icon.setAttribute('width', '12');
-        icon.setAttribute('height', '12');
-        icon.setAttribute('aria-hidden', 'true');
-        icon.setAttribute('loading', 'lazy');
-        icon.setAttribute('decoding', 'async');
+        const iconTmp = document.createElement('span');
+        iconTmp.innerHTML = meshtasticIconHtml();
+        item.appendChild(iconTmp.firstChild);
         const swatch = L.DomUtil.create('span', 'legend-swatch', item);
         swatch.style.background = color;
         swatch.setAttribute('aria-hidden', 'true');
@@ -3320,7 +3319,7 @@ export function initializeApp(config) {
     const channelTabs = filteredChannels.map(channel => ({
       id: channel.id || `channel-${channel.index}`,
       label: channel.label,
-      iconHtml: isMeshtasticProtocol(channel.protocol) ? meshtasticIconHtml() : null,
+      iconSrc: isMeshtasticProtocol(channel.protocol) ? MESHTASTIC_ICON_SRC : null,
       content: buildChatFragment({
         entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
         renderEntry: entry => createMessageChatEntry(entry.item),
@@ -4572,7 +4571,7 @@ export function initializeApp(config) {
 }
 
 
-export const __test__ = {
+export const __testUtils = {
   escapeHtml,
   normalizeNodeNameValue,
   buildNodeDetailHref,

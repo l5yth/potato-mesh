@@ -77,6 +77,23 @@ export const meshcoreRoleColors = Object.freeze({
   COMPANION: '#1A5498',
 });
 
+/**
+ * Return the role colour palette appropriate for the given protocol.
+ *
+ * Defaults to {@link roleColors} (Meshtastic) for absent or unrecognised
+ * protocol values so existing callers are unaffected when MeshCore ingest
+ * is not yet active.
+ *
+ * @param {string|null|undefined} protocol Protocol string from the API.
+ * @returns {Readonly<Record<string, string>>} Role colour map.
+ */
+export function getRoleColors(protocol) {
+  if (protocol != null && String(protocol).trim() === 'meshcore') {
+    return meshcoreRoleColors;
+  }
+  return roleColors;
+}
+
 export const roleRenderOrder = Object.freeze({
   CLIENT_HIDDEN: 1,
   SENSOR: 2,

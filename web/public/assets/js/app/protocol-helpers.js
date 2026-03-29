@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/** Relative URL of the Meshtastic protocol icon asset. */
+export const MESHTASTIC_ICON_SRC = '/assets/img/meshtastic.svg';
+
+/** Relative URL of the MeshCore protocol icon asset. */
+export const MESHCORE_ICON_SRC = '/assets/img/meshcore.svg';
+
 /**
  * Return true when the protocol value represents Meshtastic or is absent.
  *
@@ -39,7 +45,7 @@ export function isMeshtasticProtocol(protocol) {
  * @returns {string} HTML string containing an {@code <img>} element.
  */
 export function meshtasticIconHtml() {
-  return '<img src="/assets/img/meshtastic.svg" alt="" width="12" height="12"' +
+  return `<img src="${MESHTASTIC_ICON_SRC}" alt="" width="12" height="12"` +
     ' class="protocol-icon protocol-icon--meshtastic" loading="lazy" decoding="async"' +
     ' aria-hidden="true">';
 }
@@ -64,7 +70,7 @@ export function isMeshcoreProtocol(protocol) {
  * @returns {string} HTML string containing an {@code <img>} element.
  */
 export function meshcoreIconHtml() {
-  return '<img src="/assets/img/meshcore.svg" alt="" width="12" height="12"' +
+  return `<img src="${MESHCORE_ICON_SRC}" alt="" width="12" height="12"` +
     ' class="protocol-icon protocol-icon--meshcore" loading="lazy" decoding="async"' +
     ' aria-hidden="true">';
 }
