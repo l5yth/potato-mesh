@@ -61,6 +61,26 @@ const {
   fetchTracesForNode,
 } = __testUtils;
 
+/**
+ * Builds a node fixture whose telemetry comes from the aggregated API path
+ * (node.rawSources.telemetry.snapshots). typeFilter is skipped for this path
+ * so all series data is visible regardless of telemetry_type.
+ * @param {object[]} snapshots
+ */
+function makeAggregatedNode(snapshots) {
+  return { rawSources: { telemetry: { snapshots } } };
+}
+
+/**
+ * Builds a node fixture whose telemetry comes from the per-packet history path
+ * (node.rawSources.telemetrySnapshots). typeFilter IS applied for this path,
+ * so device/power/environment rows are separated by chart.
+ * @param {object[]} snapshots
+ */
+function makeHistoryNode(snapshots) {
+  return { rawSources: { telemetrySnapshots: snapshots } };
+}
+
 test('format helpers normalise values as expected', () => {
   assert.equal(stringOrNull('  foo  '), 'foo');
   assert.equal(stringOrNull(''), null);
@@ -346,31 +366,25 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
 test('renderTelemetryCharts renders condensed scatter charts when telemetry exists', () => {
   const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
   const nowSeconds = Math.floor(nowMs / 1000);
-  const node = {
-    rawSources: {
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: nowSeconds - 60,
-            telemetry_type: 'device',
-            battery_level: 80,
-            voltage: 4.1,
-            channel_utilization: 40,
-            air_util_tx: 22,
-          },
-          {
-            rx_time: nowSeconds - 3_600,
-            telemetry_type: 'environment',
-            temperature: 18.4,
-            relative_humidity: 52,
-            barometric_pressure: 1000,
-            gas_resistance: 2000,
-            iaq: 88,
-          },
-        ],
-      },
+  const node = makeAggregatedNode([
+    {
+      rx_time: nowSeconds - 60,
+      telemetry_type: 'device',
+      battery_level: 80,
+      voltage: 4.1,
+      channel_utilization: 40,
+      air_util_tx: 22,
     },
-  };
+    {
+      rx_time: nowSeconds - 3_600,
+      telemetry_type: 'environment',
+      temperature: 18.4,
+      relative_humidity: 52,
+      barometric_pressure: 1000,
+      gas_resistance: 2000,
+      iaq: 88,
+    },
+  ]);
   const html = renderTelemetryCharts(node, { nowMs });
   const fmt = new Date(nowMs);
   const expectedDate = String(fmt.getDate()).padStart(2, '0');
@@ -393,31 +407,25 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
 test('renderTelemetryCharts expands upper bounds when overflow metrics exceed defaults', () => {
   const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
   const nowSeconds = Math.floor(nowMs / 1000);
-  const node = {
-    rawSources: {
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: nowSeconds - 120,
-            telemetry_type: 'device',
-            battery_level: 90,
-            voltage: 7.2,
-            channel_utilization: 45,
-            air_util_tx: 18,
-          },
-          {
-            rx_time: nowSeconds - 180,
-            telemetry_type: 'environment',
-            temperature: 45,
-            relative_humidity: 48,
-            barometric_pressure: 1250,
-            gas_resistance: 1200,
-            iaq: 650,
-          },
-        ],
-      },
+  const node = makeAggregatedNode([
+    {
+      rx_time: nowSeconds - 120,
+      telemetry_type: 'device',
+      battery_level: 90,
+      voltage: 7.2,
+      channel_utilization: 45,
+      air_util_tx: 18,
     },
-  };
+    {
+      rx_time: nowSeconds - 180,
+      telemetry_type: 'environment',
+      temperature: 45,
+      relative_humidity: 48,
+      barometric_pressure: 1250,
+      gas_resistance: 1200,
+      iaq: 650,
+    },
+  ]);
   const html = renderTelemetryCharts(node, { nowMs });
   assert.match(html, />7\.2<\/text>/);
   assert.match(html, />45<\/text>/);
@@ -428,31 +436,25 @@ test('renderTelemetryCharts expands upper bounds when overflow metrics exceed de
 test('renderTelemetryCharts keeps default bounds when metrics stay within limits', () => {
   const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
   const nowSeconds = Math.floor(nowMs / 1000);
-  const node = {
-    rawSources: {
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: nowSeconds - 180,
-            telemetry_type: 'device',
-            battery_level: 70,
-            voltage: 4.5,
-            channel_utilization: 35,
-            air_util_tx: 15,
-          },
-          {
-            rx_time: nowSeconds - 240,
-            telemetry_type: 'environment',
-            temperature: 25,
-            relative_humidity: 50,
-            barometric_pressure: 1015,
-            gas_resistance: 1500,
-            iaq: 200,
-          },
-        ],
-      },
+  const node = makeAggregatedNode([
+    {
+      rx_time: nowSeconds - 180,
+      telemetry_type: 'device',
+      battery_level: 70,
+      voltage: 4.5,
+      channel_utilization: 35,
+      air_util_tx: 15,
     },
-  };
+    {
+      rx_time: nowSeconds - 240,
+      telemetry_type: 'environment',
+      temperature: 25,
+      relative_humidity: 50,
+      barometric_pressure: 1015,
+      gas_resistance: 1500,
+      iaq: 200,
+    },
+  ]);
   const html = renderTelemetryCharts(node, { nowMs });
   assert.match(html, />6\.0<\/text>/);
   assert.match(html, />40<\/text>/);
@@ -490,27 +492,21 @@ test('classifySnapshot falls back to field-presence heuristics for legacy rows',
 test('renderTelemetryCharts shows device-health chart for device snapshots and power-sensor chart for power snapshots', () => {
   const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
   const nowSeconds = Math.floor(nowMs / 1000);
-  const node = {
-    rawSources: {
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: nowSeconds - 60,
-            telemetry_type: 'device',
-            battery_level: 80,
-            voltage: 4.1,
-            channel_utilization: 40,
-          },
-          {
-            rx_time: nowSeconds - 120,
-            telemetry_type: 'power',
-            voltage: 5.0,
-            current: 0.5,
-          },
-        ],
-      },
+  const node = makeHistoryNode([
+    {
+      rx_time: nowSeconds - 60,
+      telemetry_type: 'device',
+      battery_level: 80,
+      voltage: 4.1,
+      channel_utilization: 40,
     },
-  };
+    {
+      rx_time: nowSeconds - 120,
+      telemetry_type: 'power',
+      voltage: 5.0,
+      current: 0.5,
+    },
+  ]);
   const html = renderTelemetryCharts(node, { nowMs });
   assert.equal(html.includes('Device health'), true, 'Device health chart should render');
   assert.equal(html.includes('Battery (%)'), true, 'Battery series label from device chart');
@@ -521,46 +517,53 @@ test('renderTelemetryCharts shows device-health chart for device snapshots and p
 test('renderTelemetryCharts backward compat: old rows without telemetry_type render via heuristics', () => {
   const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
   const nowSeconds = Math.floor(nowMs / 1000);
-  const node = {
-    rawSources: {
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: nowSeconds - 60,
-            battery_level: 75,
-            voltage: 4.08,
-            channel_utilization: 30,
-          },
-        ],
-      },
+  const node = makeHistoryNode([
+    {
+      rx_time: nowSeconds - 60,
+      battery_level: 75,
+      voltage: 4.08,
+      channel_utilization: 30,
     },
-  };
+  ]);
   const html = renderTelemetryCharts(node, { nowMs });
   assert.equal(html.includes('Device health'), true, 'Device health renders via battery_level heuristic');
   assert.equal(html.includes('Battery (%)'), true, 'Battery series present');
 });
 
-test('renderTelemetryCharts power-sensor chart does not include device snapshots', () => {
+test('renderTelemetryCharts power-sensor chart does not include device snapshots (per-packet history)', () => {
   const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
   const nowSeconds = Math.floor(nowMs / 1000);
-  const node = {
-    rawSources: {
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: nowSeconds - 60,
-            telemetry_type: 'device',
-            battery_level: 80,
-            voltage: 4.1,
-          },
-        ],
-      },
+  // Per-packet history path: typeFilter IS applied, so device rows are excluded from power-sensor chart
+  const node = makeHistoryNode([
+    {
+      rx_time: nowSeconds - 60,
+      telemetry_type: 'device',
+      battery_level: 80,
+      voltage: 4.1,
     },
-  };
+  ]);
   const html = renderTelemetryCharts(node, { nowMs });
-  // Device health renders; power sensor should not appear (no power-typed snapshots)
   assert.equal(html.includes('Device health'), true, 'Device health renders');
   assert.equal(html.includes('Power sensor'), false, 'Power sensor should not render with only device snapshots');
+});
+
+test('renderTelemetryCharts aggregated mixed-bucket without telemetry_type shows all series', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  // Aggregated path: typeFilter is skipped; a bucket combining battery + temperature shows both charts
+  const node = makeAggregatedNode([
+    {
+      rx_time: nowSeconds - 60,
+      battery_level: 80,
+      voltage: 4.1,
+      channel_utilization: 30,
+      temperature: 21.5,
+      relative_humidity: 55,
+    },
+  ]);
+  const html = renderTelemetryCharts(node, { nowMs });
+  assert.equal(html.includes('Device health'), true, 'Device health renders from battery field');
+  assert.equal(html.includes('Environmental telemetry'), true, 'Environment renders from temperature field');
 });
 
 test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
@@ -612,25 +615,23 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
     role: 'CLIENT',
     rawSources: {
       node: { node_id: '!abcd', role: 'CLIENT', short_name: 'NODE' },
-      telemetry: {
-        snapshots: [
-          {
-            rx_time: Math.floor(nowMs / 1000) - 120,
-            telemetry_type: 'device',
-            battery_level: 75,
-            voltage: 4.08,
-            channel_utilization: 30,
-          },
-          {
-            rx_time: Math.floor(nowMs / 1000) - 180,
-            telemetry_type: 'environment',
-            temperature: 20,
-            relative_humidity: 45,
-            barometric_pressure: 990,
-            gas_resistance: 1800,
-          },
-        ],
-      },
+      ...makeAggregatedNode([
+        {
+          rx_time: Math.floor(nowMs / 1000) - 120,
+          telemetry_type: 'device',
+          battery_level: 75,
+          voltage: 4.08,
+          channel_utilization: 30,
+        },
+        {
+          rx_time: Math.floor(nowMs / 1000) - 180,
+          telemetry_type: 'environment',
+          temperature: 20,
+          relative_humidity: 45,
+          barometric_pressure: 990,
+          gas_resistance: 1800,
+        },
+      ]).rawSources,
     },
   };
   const html = renderNodeDetailHtml(node, {

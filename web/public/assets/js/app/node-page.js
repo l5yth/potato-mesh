@@ -1228,7 +1228,7 @@ function renderTelemetryChart(spec, entries, nowMs, chartOptions = {}) {
   const timeRangeLabel = stringOrNull(chartOptions.timeRangeLabel) ?? 'Last 7 days';
   const domainEnd = nowMs;
   const domainStart = nowMs - windowMs;
-  const effectiveEntries = Array.isArray(spec.typeFilter)
+  const effectiveEntries = Array.isArray(spec.typeFilter) && !chartOptions.isAggregated
     ? entries.filter(e => spec.typeFilter.includes(classifySnapshot(e.snapshot)))
     : entries;
   const dims = createChartDimensions(spec);
@@ -1334,8 +1334,9 @@ export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions =
   if (entries.length === 0) {
     return '';
   }
+  const isAggregated = snapshotHistory == null && aggregatedSnapshots != null;
   const charts = TELEMETRY_CHART_SPECS
-    .map(spec => renderTelemetryChart(spec, entries, nowMs, chartOptions))
+    .map(spec => renderTelemetryChart(spec, entries, nowMs, { ...chartOptions, isAggregated }))
     .filter(chart => stringOrNull(chart));
   if (charts.length === 0) {
     return '';

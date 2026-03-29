@@ -2459,6 +2459,41 @@ def test_store_packet_dict_handles_power_telemetry(mesh_module, monkeypatch):
     assert payload["telemetry_type"] == "power"
 
 
+def test_store_packet_dict_handles_air_quality_telemetry(mesh_module, monkeypatch):
+    """Air-quality-metrics packets are tagged telemetry_type='air_quality'."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 3_000_000_003,
+        "rxTime": 1_758_032_000,
+        "fromId": "!aabbccdd",
+        "toId": "^all",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_758_032_000,
+                "airQualityMetrics": {
+                    "pm10Standard": 4,
+                    "pm25Standard": 8,
+                    "iaq": 65,
+                },
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload["telemetry_type"] == "air_quality"
+
+
 def test_store_packet_dict_telemetry_type_absent_for_unknown_subtype(
     mesh_module, monkeypatch
 ):

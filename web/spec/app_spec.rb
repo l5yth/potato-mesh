@@ -4050,6 +4050,27 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(entry["telemetry_type"]).to eq("device")
       end
 
+      it "infers telemetry_type='air_quality' from air_quality_metrics in the payload" do
+        payload = [
+          {
+            "id" => 24_005,
+            "node_id" => "!teltype05",
+            "rx_time" => reference_time.to_i - 40,
+            "air_quality_metrics" => { "iaq" => 72, "pm25" => 8 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_005])
+          expect(row["telemetry_type"]).to eq("air_quality")
+        end
+      end
+
       it "returns 400 when more than 1000 telemetry packets are provided" do
         payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
 
