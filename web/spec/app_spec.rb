@@ -216,6 +216,21 @@ RSpec.describe "Potato Mesh Sinatra app" do
   # @param expected [Object] expected value.
   # @param tolerance [Float] acceptable delta for floating point values.
   # @return [void]
+  # Fetch the stored telemetry_type for a given row id and assert it equals
+  # +expected+.  Avoids repeating the with_db / SELECT / expect triple across
+  # multiple telemetry_type inference tests.
+  #
+  # @param id [Integer] telemetry row id to look up.
+  # @param expected [String] expected telemetry_type value.
+  # @return [void]
+  def expect_stored_telemetry_type(id, expected)
+    with_db(readonly: true) do |db|
+      db.results_as_hash = true
+      row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [id])
+      expect(row["telemetry_type"]).to eq(expected)
+    end
+  end
+
   def expect_same_value(actual, expected, tolerance: 1e-6)
     if expected.nil?
       expect(actual).to be_nil
@@ -3975,12 +3990,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         post "/api/telemetry", payload.to_json, auth_headers
 
         expect(last_response).to be_ok
-
-        with_db(readonly: true) do |db|
-          db.results_as_hash = true
-          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_001])
-          expect(row["telemetry_type"]).to eq("device")
-        end
+        expect_stored_telemetry_type(24_001, "device")
       end
 
       it "infers telemetry_type='environment' from environment_metrics in the payload" do
@@ -3996,12 +4006,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         post "/api/telemetry", payload.to_json, auth_headers
 
         expect(last_response).to be_ok
-
-        with_db(readonly: true) do |db|
-          db.results_as_hash = true
-          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_002])
-          expect(row["telemetry_type"]).to eq("environment")
-        end
+        expect_stored_telemetry_type(24_002, "environment")
       end
 
       it "accepts an explicit telemetry_type from the payload" do
@@ -4019,12 +4024,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         post "/api/telemetry", payload.to_json, auth_headers
 
         expect(last_response).to be_ok
-
-        with_db(readonly: true) do |db|
-          db.results_as_hash = true
-          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_003])
-          expect(row["telemetry_type"]).to eq("power")
-        end
+        expect_stored_telemetry_type(24_003, "power")
       end
 
       it "includes telemetry_type in GET /api/telemetry/:id response" do
@@ -4063,12 +4063,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         post "/api/telemetry", payload.to_json, auth_headers
 
         expect(last_response).to be_ok
-
-        with_db(readonly: true) do |db|
-          db.results_as_hash = true
-          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_005])
-          expect(row["telemetry_type"]).to eq("air_quality")
-        end
+        expect_stored_telemetry_type(24_005, "air_quality")
       end
 
       it "returns 400 when more than 1000 telemetry packets are provided" do

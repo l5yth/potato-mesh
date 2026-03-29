@@ -67,6 +67,11 @@ const {
  * so all series data is visible regardless of telemetry_type.
  * @param {object[]} snapshots
  */
+// Shared time anchor used by most chart tests.  One fixed value lets Sonar
+// identify the setup as a constant rather than repeated literal.
+const CHART_NOW_MS = Date.UTC(2025, 0, 8, 12, 0, 0);
+const CHART_NOW_SECONDS = Math.floor(CHART_NOW_MS / 1000);
+
 function makeAggregatedNode(snapshots) {
   return { rawSources: { telemetry: { snapshots } } };
 }
@@ -364,8 +369,8 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
 });
 
 test('renderTelemetryCharts renders condensed scatter charts when telemetry exists', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   const node = makeAggregatedNode([
     {
       rx_time: nowSeconds - 60,
@@ -405,8 +410,8 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
 });
 
 test('renderTelemetryCharts expands upper bounds when overflow metrics exceed defaults', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   const node = makeAggregatedNode([
     {
       rx_time: nowSeconds - 120,
@@ -434,8 +439,8 @@ test('renderTelemetryCharts expands upper bounds when overflow metrics exceed de
 });
 
 test('renderTelemetryCharts keeps default bounds when metrics stay within limits', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   const node = makeAggregatedNode([
     {
       rx_time: nowSeconds - 180,
@@ -490,8 +495,8 @@ test('classifySnapshot falls back to field-presence heuristics for legacy rows',
 });
 
 test('renderTelemetryCharts shows device-health chart for device snapshots and power-sensor chart for power snapshots', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   const node = makeHistoryNode([
     {
       rx_time: nowSeconds - 60,
@@ -515,8 +520,8 @@ test('renderTelemetryCharts shows device-health chart for device snapshots and p
 });
 
 test('renderTelemetryCharts backward compat: old rows without telemetry_type render via heuristics', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   const node = makeHistoryNode([
     {
       rx_time: nowSeconds - 60,
@@ -531,8 +536,8 @@ test('renderTelemetryCharts backward compat: old rows without telemetry_type ren
 });
 
 test('renderTelemetryCharts power-sensor chart does not include device snapshots (per-packet history)', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   // Per-packet history path: typeFilter IS applied, so device rows are excluded from power-sensor chart
   const node = makeHistoryNode([
     {
@@ -548,8 +553,8 @@ test('renderTelemetryCharts power-sensor chart does not include device snapshots
 });
 
 test('renderTelemetryCharts aggregated mixed-bucket without telemetry_type shows all series', () => {
-  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
-  const nowSeconds = Math.floor(nowMs / 1000);
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
   // Aggregated path: typeFilter is skipped; a bucket combining battery + temperature shows both charts
   const node = makeAggregatedNode([
     {
