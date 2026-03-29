@@ -311,7 +311,8 @@ export function renderNodeLongNameLink(longName, identifier, className = 'node-l
  *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string }
  * }} config Normalized application configuration.
- * @returns {void}
+ * @returns {{ _testUtils: Object }} Object whose ``_testUtils`` property exposes
+ *   inner closures for unit tests. Production callers may ignore this.
  */
 export function initializeApp(config) {
   const statusEl = document.getElementById('status');
@@ -1550,7 +1551,7 @@ export function initializeApp(config) {
    */
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
-    const label = neighborLinesVisible ? 'Hide Meshtastic neighbor lines' : 'Show Meshtastic neighbor lines';
+    const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
     neighborLinesToggleButton.innerHTML = `${meshtasticIconHtml()} ${label}`;
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
@@ -1582,7 +1583,7 @@ export function initializeApp(config) {
    */
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
-    const label = traceLinesVisible ? 'Hide Meshtastic trace lines' : 'Show Meshtastic trace lines';
+    const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
     traceLinesToggleButton.innerHTML = `${meshtasticIconHtml()} ${label}`;
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
@@ -4513,6 +4514,21 @@ export function initializeApp(config) {
 
   refresh();
   restartAutoRefresh();
+
+  /**
+   * Inner functions exposed for unit tests. Production callers should ignore
+   * this return value — it is only populated to support test coverage.
+   *
+   * @type {{ buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function }}
+   */
+  return {
+    _testUtils: {
+      buildMapPopupHtml,
+      normalizeOverlaySource,
+      createAnnouncementEntry,
+      createMessageChatEntry,
+    },
+  };
   if (refreshBtn) {
     refreshBtn.addEventListener('click', refresh);
   }
