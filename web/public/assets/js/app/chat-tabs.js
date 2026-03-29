@@ -17,10 +17,15 @@
 /**
  * Render an accessible tab interface within ``container``.
  *
+ * When a tab carries an ``iconHtml`` string it is injected via ``innerHTML``
+ * into a wrapper ``<span>`` — callers **must** only pass trusted, internal
+ * HTML (e.g. from {@code meshtasticIconHtml()}).  The ``label`` field is
+ * always inserted as a text node and is safe for arbitrary strings.
+ *
  * @param {{
  *   document: Document,
  *   container: HTMLElement,
- *   tabs: Array<{ id: string, label: string, content: Node|null }>,
+ *   tabs: Array<{ id: string, label: string, iconHtml?: string|null, content: Node|null }>,
  *   previousActiveTabId?: string|null,
  *   defaultActiveTabId?: string|null
  * }} options Rendering parameters.

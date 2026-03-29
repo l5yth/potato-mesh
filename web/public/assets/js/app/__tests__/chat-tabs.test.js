@@ -56,7 +56,10 @@ class MockFragment {
 class MockElement {
   constructor(tagName) {
     this.tagName = tagName.toUpperCase();
+    // children mirrors HTMLElement.children: element nodes only.
     this.children = [];
+    // childNodes mirrors HTMLElement.childNodes: all nodes including text.
+    this.childNodes = [];
     this.attributes = new Map();
     this.dataset = {};
     this.classList = new MockClassList();
@@ -67,18 +70,26 @@ class MockElement {
   }
 
   appendChild(node) {
-    this.children.push(node);
+    this.childNodes.push(node);
+    if (node instanceof MockElement) {
+      this.children.push(node);
+    }
     return node;
   }
 
   replaceChildren(...nodes) {
     this.children = [];
+    this.childNodes = [];
     for (const node of nodes) {
       if (!node) continue;
       if (node.isFragment && Array.isArray(node.children)) {
         this.children.push(...node.children);
+        this.childNodes.push(...node.children);
       } else {
-        this.children.push(node);
+        this.childNodes.push(node);
+        if (node instanceof MockElement) {
+          this.children.push(node);
+        }
       }
     }
   }
@@ -215,12 +226,13 @@ test('renderChatTabs renders icon child when tab.iconHtml is provided', () => {
 
   const [tabList] = container.children;
   const button = tabList.children[0];
-  // Button should have two children: a span wrapping the icon HTML, and a text node
-  assert.equal(button.children.length, 2);
+  // Button has one element child (the icon <span>) and one text node — two childNodes total.
+  assert.equal(button.children.length, 1, 'should have exactly one element child (icon span)');
+  assert.equal(button.childNodes.length, 2, 'should have two child nodes (icon span + text node)');
   const iconSpan = button.children[0];
-  assert.ok(iconSpan.tagName === 'SPAN' || iconSpan.innerHTML !== undefined, 'first child should be a span with icon HTML');
-  const textNode = button.children[1];
-  assert.ok(typeof textNode.textContent === 'string', 'second child should be a text node');
+  assert.equal(iconSpan.tagName, 'SPAN', 'first element child should be a span');
+  const textNode = button.childNodes[1];
+  assert.equal(textNode.nodeType, 3, 'second child node should be a text node');
   assert.equal(textNode.textContent, 'LongFast');
 });
 

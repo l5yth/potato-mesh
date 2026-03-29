@@ -39,7 +39,7 @@ export function isMeshtasticProtocol(protocol) {
  * @returns {string} HTML string containing an {@code <img>} element.
  */
 export function meshtasticIconHtml() {
-  return '<img src="/assets/img/meshtastic.svg" alt="Meshtastic" width="12" height="12"' +
+  return '<img src="/assets/img/meshtastic.svg" alt="" width="12" height="12"' +
     ' class="protocol-icon protocol-icon--meshtastic" loading="lazy" decoding="async"' +
     ' aria-hidden="true">';
 }
@@ -64,9 +64,8 @@ export function isMeshcoreProtocol(protocol) {
  * @returns {string} HTML string containing an {@code <img>} element.
  */
 export function meshcoreIconHtml() {
-  return '<img src="/assets/img/meshcore.svg" alt="MeshCore" width="12" height="12"' +
+  return '<img src="/assets/img/meshcore.svg" alt="" width="12" height="12"' +
     ' class="protocol-icon protocol-icon--meshcore" loading="lazy" decoding="async"' +
     ' aria-hidden="true">';
 }
 
-export const __test__ = { isMeshtasticProtocol, meshtasticIconHtml, isMeshcoreProtocol, meshcoreIconHtml };

@@ -209,6 +209,90 @@ export function formatActiveNodeStatsText({ channel, frequency, stats }) {
 }
 
 /**
+ * Escape a string for safe HTML insertion.
+ *
+ * @param {string} str Raw string.
+ * @returns {string} Escaped HTML string.
+ */
+export function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Normalise node name fields by trimming whitespace.
+ *
+ * @param {*} value Raw name value.
+ * @returns {string} Sanitised name string.
+ */
+export function normalizeNodeNameValue(value) {
+  if (value == null) return '';
+  const str = String(value).trim();
+  return str.length ? str : '';
+}
+
+/**
+ * Compute the node detail path for a given identifier.
+ *
+ * @param {string|null} identifier Node identifier.
+ * @returns {string|null} Detail path.
+ */
+export function buildNodeDetailHref(identifier) {
+  if (identifier == null) return null;
+  const trimmed = String(identifier).trim();
+  if (!trimmed) return null;
+  const body = trimmed.startsWith('!') ? trimmed.slice(1) : trimmed;
+  if (!body) return null;
+  const encoded = encodeURIComponent(body);
+  return `/nodes/!${encoded}`;
+}
+
+/**
+ * Ensure ``identifier`` includes the canonical ``!`` prefix.
+ *
+ * @param {*} identifier Candidate identifier.
+ * @returns {string|null} Canonical identifier or ``null``.
+ */
+export function canonicalNodeIdentifier(identifier) {
+  if (identifier == null) return null;
+  const trimmed = String(identifier).trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith('!') ? trimmed : `!${trimmed}`;
+}
+
+/**
+ * Render a linked long name pointing to the node detail view.
+ *
+ * When {@code protocol} is ``"meshtastic"`` or absent the Meshtastic logo is
+ * prepended to the displayed name to indicate the node's mesh backend.
+ *
+ * @param {string|null} longName Display name.
+ * @param {string|null} identifier Node identifier.
+ * @param {string} [className='node-long-link'] Optional class attribute.
+ * @param {string|null} [protocol=null] Protocol string from the API.
+ * @returns {string} Escaped HTML snippet.
+ */
+export function renderNodeLongNameLink(longName, identifier, className = 'node-long-link', protocol = null) {
+  const text = normalizeNodeNameValue(longName);
+  if (!text) return '';
+  const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
+  const href = buildNodeDetailHref(identifier);
+  if (!href) {
+    return `${iconPrefix}${escapeHtml(text)}`;
+  }
+  const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
+  const canonicalId = canonicalNodeIdentifier(identifier);
+  const dataAttrs = canonicalId
+    ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalId)}"`
+    : ' data-node-detail-link="true"';
+  return `<a${classAttr} href="${href}"${dataAttrs}>${iconPrefix}${escapeHtml(text)}</a>`;
+}
+
+/**
  * Entry point for the interactive dashboard. Wires up event listeners,
  * initializes the map, and triggers the first data refresh cycle.
  *
@@ -1585,10 +1669,10 @@ export function initializeApp(config) {
       item.setAttribute('aria-pressed', 'false');
         item.dataset.role = role;
         const icon = L.DomUtil.create('img', 'protocol-icon protocol-icon--meshtastic', item);
-        icon.src = '/assets/img/meshtastic.svg';
-        icon.alt = 'Meshtastic';
-        icon.width = 12;
-        icon.height = 12;
+        icon.setAttribute('src', '/assets/img/meshtastic.svg');
+        icon.setAttribute('alt', '');
+        icon.setAttribute('width', '12');
+        icon.setAttribute('height', '12');
         icon.setAttribute('aria-hidden', 'true');
         icon.setAttribute('loading', 'lazy');
         icon.setAttribute('decoding', 'async');
@@ -1888,21 +1972,6 @@ export function initializeApp(config) {
   });
 
   // --- Helpers ---
-  /**
-   * Escape a string for safe HTML insertion.
-   *
-   * @param {string} str Raw string.
-   * @returns {string} Escaped HTML string.
-   */
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
   /**
    * Render a short name badge with role-based styling.
    *
@@ -3401,75 +3470,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Normalise node name fields by trimming whitespace.
-   *
-   * @param {*} value Raw name value.
-   * @returns {string} Sanitised name string.
-   */
-  function normalizeNodeNameValue(value) {
-    if (value == null) return '';
-    const str = String(value).trim();
-    return str.length ? str : '';
-  }
-
-  /**
-   * Compute the node detail path for a given identifier.
-   *
-   * @param {string|null} identifier Node identifier.
-   * @returns {string|null} Detail path.
-   */
-  function buildNodeDetailHref(identifier) {
-    if (identifier == null) return null;
-    const trimmed = String(identifier).trim();
-    if (!trimmed) return null;
-    const body = trimmed.startsWith('!') ? trimmed.slice(1) : trimmed;
-    if (!body) return null;
-    const encoded = encodeURIComponent(body);
-    return `/nodes/!${encoded}`;
-  }
-
-  /**
-   * Ensure ``identifier`` includes the canonical ``!`` prefix.
-   *
-   * @param {*} identifier Candidate identifier.
-   * @returns {string|null} Canonical identifier or ``null``.
-   */
-  function canonicalNodeIdentifier(identifier) {
-    if (identifier == null) return null;
-    const trimmed = String(identifier).trim();
-    if (!trimmed) return null;
-    return trimmed.startsWith('!') ? trimmed : `!${trimmed}`;
-  }
-
-  /**
-   * Render a linked long name pointing to the node detail view.
-   *
-   * When {@code protocol} is ``"meshtastic"`` or absent the Meshtastic logo is
-   * prepended to the displayed name to indicate the node's mesh backend.
-   *
-   * @param {string|null} longName Display name.
-   * @param {string|null} identifier Node identifier.
-   * @param {string} [className='node-long-link'] Optional class attribute.
-   * @param {string|null} [protocol=null] Protocol string from the API.
-   * @returns {string} Escaped HTML snippet.
-   */
-  function renderNodeLongNameLink(longName, identifier, className = 'node-long-link', protocol = null) {
-    const text = normalizeNodeNameValue(longName);
-    if (!text) return '';
-    const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
-    const href = buildNodeDetailHref(identifier);
-    if (!href) {
-      return `${iconPrefix}${escapeHtml(text)}`;
-    }
-    const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
-    const canonicalIdentifier = canonicalNodeIdentifier(identifier);
-    const dataAttrs = canonicalIdentifier
-      ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalIdentifier)}"`
-      : ' data-node-detail-link="true"';
-    return `<a${classAttr} href="${href}"${dataAttrs}>${iconPrefix}${escapeHtml(text)}</a>`;
-  }
-
-  /**
    * Determine whether a long name link should trigger the overlay behaviour.
    *
    * @param {?Element} link Anchor element.
@@ -4570,3 +4570,12 @@ export function initializeApp(config) {
     });
   }
 }
+
+
+export const __test__ = {
+  escapeHtml,
+  normalizeNodeNameValue,
+  buildNodeDetailHref,
+  canonicalNodeIdentifier,
+  renderNodeLongNameLink,
+};
