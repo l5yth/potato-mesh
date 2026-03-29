@@ -640,6 +640,29 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
 
     telemetry_time = _coerce_int(_first(telemetry_section, "time", default=None))
 
+    _dm = telemetry_section.get("deviceMetrics") or telemetry_section.get(
+        "device_metrics"
+    )
+    _em = telemetry_section.get("environmentMetrics") or telemetry_section.get(
+        "environment_metrics"
+    )
+    _pm = telemetry_section.get("powerMetrics") or telemetry_section.get(
+        "power_metrics"
+    )
+    _aq = telemetry_section.get("airQualityMetrics") or telemetry_section.get(
+        "air_quality_metrics"
+    )
+    if isinstance(_dm, Mapping):
+        telemetry_type: str | None = "device"
+    elif isinstance(_em, Mapping):
+        telemetry_type = "environment"
+    elif isinstance(_pm, Mapping):
+        telemetry_type = "power"
+    elif isinstance(_aq, Mapping):
+        telemetry_type = "air_quality"
+    else:
+        telemetry_type = None
+
     channel = _coerce_int(_first(decoded, "channel", default=None))
     if channel is None:
         channel = _coerce_int(_first(packet, "channel", default=None))
@@ -992,6 +1015,8 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         telemetry_payload["soil_moisture"] = soil_moisture
     if soil_temperature is not None:
         telemetry_payload["soil_temperature"] = soil_temperature
+    if telemetry_type is not None:
+        telemetry_payload["telemetry_type"] = telemetry_type
 
     _queue_post_json(
         "/api/telemetry",

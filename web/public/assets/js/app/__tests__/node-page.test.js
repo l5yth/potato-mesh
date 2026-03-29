@@ -47,6 +47,7 @@ const {
   categoriseNeighbors,
   renderNeighborGroups,
   renderSingleNodeTable,
+  classifySnapshot,
   renderTelemetryCharts,
   renderMessages,
   renderTraceroutes,
@@ -351,37 +352,20 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
         snapshots: [
           {
             rx_time: nowSeconds - 60,
-            device_metrics: {
-              battery_level: 80,
-              voltage: 4.1,
-              channel_utilization: 40,
-              air_util_tx: 22,
-              current: 0.75,
-            },
-            environment_metrics: {
-              temperature: 19.5,
-              relative_humidity: 55,
-              barometric_pressure: 995,
-              gas_resistance: 1500,
-              iaq: 83,
-            },
+            telemetry_type: 'device',
+            battery_level: 80,
+            voltage: 4.1,
+            channel_utilization: 40,
+            air_util_tx: 22,
           },
           {
             rx_time: nowSeconds - 3_600,
-            deviceMetrics: {
-              batteryLevel: 78,
-              voltage: 4.05,
-              channelUtilization: 35,
-              airUtilTx: 20,
-              current: 0.65,
-            },
-            environmentMetrics: {
-              temperature: 18.4,
-              relativeHumidity: 52,
-              barometricPressure: 1000,
-              gasResistance: 2000,
-              iaq: 88,
-            },
+            telemetry_type: 'environment',
+            temperature: 18.4,
+            relative_humidity: 52,
+            barometric_pressure: 1000,
+            gas_resistance: 2000,
+            iaq: 88,
           },
         ],
       },
@@ -391,11 +375,10 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   const fmt = new Date(nowMs);
   const expectedDate = String(fmt.getDate()).padStart(2, '0');
   assert.equal(html.includes('node-detail__charts'), true);
-  assert.equal(html.includes('Power metrics'), true);
+  assert.equal(html.includes('Device health'), true);
   assert.equal(html.includes('Environmental telemetry'), true);
   assert.equal(html.includes('Battery (%)'), true);
   assert.equal(html.includes('Voltage (V)'), true);
-  assert.equal(html.includes('Current (A)'), true);
   assert.equal(html.includes('Channel utilization (%)'), true);
   assert.equal(html.includes('Air util TX (%)'), true);
   assert.equal(html.includes('Utilization (%)'), true);
@@ -416,20 +399,20 @@ test('renderTelemetryCharts expands upper bounds when overflow metrics exceed de
         snapshots: [
           {
             rx_time: nowSeconds - 120,
-            device_metrics: {
-              battery_level: 90,
-              voltage: 7.2,
-              current: 3.6,
-              channel_utilization: 45,
-              air_util_tx: 18,
-            },
-            environment_metrics: {
-              temperature: 45,
-              relative_humidity: 48,
-              barometric_pressure: 1250,
-              gas_resistance: 1200,
-              iaq: 650,
-            },
+            telemetry_type: 'device',
+            battery_level: 90,
+            voltage: 7.2,
+            channel_utilization: 45,
+            air_util_tx: 18,
+          },
+          {
+            rx_time: nowSeconds - 180,
+            telemetry_type: 'environment',
+            temperature: 45,
+            relative_humidity: 48,
+            barometric_pressure: 1250,
+            gas_resistance: 1200,
+            iaq: 650,
           },
         ],
       },
@@ -437,7 +420,6 @@ test('renderTelemetryCharts expands upper bounds when overflow metrics exceed de
   };
   const html = renderTelemetryCharts(node, { nowMs });
   assert.match(html, />7\.2<\/text>/);
-  assert.match(html, />3\.6<\/text>/);
   assert.match(html, />45<\/text>/);
   assert.match(html, />650<\/text>/);
   assert.match(html, />1100<\/text>/);
@@ -452,20 +434,20 @@ test('renderTelemetryCharts keeps default bounds when metrics stay within limits
         snapshots: [
           {
             rx_time: nowSeconds - 180,
-            device_metrics: {
-              battery_level: 70,
-              voltage: 4.5,
-              current: 1.5,
-              channel_utilization: 35,
-              air_util_tx: 15,
-            },
-            environment_metrics: {
-              temperature: 25,
-              relative_humidity: 50,
-              barometric_pressure: 1015,
-              gas_resistance: 1500,
-              iaq: 200,
-            },
+            telemetry_type: 'device',
+            battery_level: 70,
+            voltage: 4.5,
+            channel_utilization: 35,
+            air_util_tx: 15,
+          },
+          {
+            rx_time: nowSeconds - 240,
+            telemetry_type: 'environment',
+            temperature: 25,
+            relative_humidity: 50,
+            barometric_pressure: 1015,
+            gas_resistance: 1500,
+            iaq: 200,
           },
         ],
       },
@@ -473,9 +455,112 @@ test('renderTelemetryCharts keeps default bounds when metrics stay within limits
   };
   const html = renderTelemetryCharts(node, { nowMs });
   assert.match(html, />6\.0<\/text>/);
-  assert.match(html, />3\.0<\/text>/);
   assert.match(html, />40<\/text>/);
   assert.match(html, />500<\/text>/);
+});
+
+test('classifySnapshot returns stored telemetry_type when present', () => {
+  assert.equal(classifySnapshot({ telemetry_type: 'device' }), 'device');
+  assert.equal(classifySnapshot({ telemetry_type: 'environment' }), 'environment');
+  assert.equal(classifySnapshot({ telemetry_type: 'power' }), 'power');
+  assert.equal(classifySnapshot({ telemetry_type: 'air_quality' }), 'air_quality');
+});
+
+test('classifySnapshot falls back to field-presence heuristics for legacy rows', () => {
+  // Flat battery field → device
+  assert.equal(classifySnapshot({ battery_level: 80 }), 'device');
+  // channel_utilization → device
+  assert.equal(classifySnapshot({ channel_utilization: 40 }), 'device');
+  // Nested device_metrics shape → device
+  assert.equal(classifySnapshot({ device_metrics: { battery_level: 80 } }), 'device');
+  // Nested camelCase shape → device
+  assert.equal(classifySnapshot({ deviceMetrics: { batteryLevel: 78 } }), 'device');
+  // Flat temperature → environment
+  assert.equal(classifySnapshot({ temperature: 21.5 }), 'environment');
+  // Nested environment_metrics → environment
+  assert.equal(classifySnapshot({ environment_metrics: { temperature: 20 } }), 'environment');
+  // voltage+current with no battery → power
+  assert.equal(classifySnapshot({ current: 0.5, voltage: 5.0 }), 'power');
+  // Empty or null → unknown
+  assert.equal(classifySnapshot({}), 'unknown');
+  assert.equal(classifySnapshot(null), 'unknown');
+  assert.equal(classifySnapshot(undefined), 'unknown');
+});
+
+test('renderTelemetryCharts shows device-health chart for device snapshots and power-sensor chart for power snapshots', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const node = {
+    rawSources: {
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: nowSeconds - 60,
+            telemetry_type: 'device',
+            battery_level: 80,
+            voltage: 4.1,
+            channel_utilization: 40,
+          },
+          {
+            rx_time: nowSeconds - 120,
+            telemetry_type: 'power',
+            voltage: 5.0,
+            current: 0.5,
+          },
+        ],
+      },
+    },
+  };
+  const html = renderTelemetryCharts(node, { nowMs });
+  assert.equal(html.includes('Device health'), true, 'Device health chart should render');
+  assert.equal(html.includes('Battery (%)'), true, 'Battery series label from device chart');
+  assert.equal(html.includes('Power sensor'), true, 'Power sensor chart should render');
+  assert.equal(html.includes('Current (A)'), true, 'Current series label from power chart');
+});
+
+test('renderTelemetryCharts backward compat: old rows without telemetry_type render via heuristics', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const node = {
+    rawSources: {
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: nowSeconds - 60,
+            battery_level: 75,
+            voltage: 4.08,
+            channel_utilization: 30,
+          },
+        ],
+      },
+    },
+  };
+  const html = renderTelemetryCharts(node, { nowMs });
+  assert.equal(html.includes('Device health'), true, 'Device health renders via battery_level heuristic');
+  assert.equal(html.includes('Battery (%)'), true, 'Battery series present');
+});
+
+test('renderTelemetryCharts power-sensor chart does not include device snapshots', () => {
+  const nowMs = Date.UTC(2025, 0, 8, 12, 0, 0);
+  const nowSeconds = Math.floor(nowMs / 1000);
+  const node = {
+    rawSources: {
+      telemetry: {
+        snapshots: [
+          {
+            rx_time: nowSeconds - 60,
+            telemetry_type: 'device',
+            battery_level: 80,
+            voltage: 4.1,
+          },
+        ],
+      },
+    },
+  };
+  const html = renderTelemetryCharts(node, { nowMs });
+  // Device health renders; power sensor should not appear (no power-typed snapshots)
+  assert.equal(html.includes('Device health'), true, 'Device health renders');
+  assert.equal(html.includes('Power sensor'), false, 'Power sensor should not render with only device snapshots');
 });
 
 test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
@@ -531,10 +616,14 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
         snapshots: [
           {
             rx_time: Math.floor(nowMs / 1000) - 120,
+            telemetry_type: 'device',
             battery_level: 75,
             voltage: 4.08,
             channel_utilization: 30,
-            current: 0.42,
+          },
+          {
+            rx_time: Math.floor(nowMs / 1000) - 180,
+            telemetry_type: 'environment',
             temperature: 20,
             relative_humidity: 45,
             barometric_pressure: 990,
@@ -549,7 +638,7 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
     chartNowMs: nowMs,
   });
   assert.equal(html.includes('node-detail__charts'), true);
-  assert.equal(html.includes('Power metrics'), true);
+  assert.equal(html.includes('Device health'), true);
   assert.equal(html.includes('Air quality'), true);
 });
 

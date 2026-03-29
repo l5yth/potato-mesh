@@ -3962,6 +3962,94 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
       end
 
+      it "infers telemetry_type='device' from device_metrics in the payload" do
+        payload = [
+          {
+            "id" => 24_001,
+            "node_id" => "!teltype01",
+            "rx_time" => reference_time.to_i - 10,
+            "device_metrics" => { "battery_level" => 85, "voltage" => 4.1 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_001])
+          expect(row["telemetry_type"]).to eq("device")
+        end
+      end
+
+      it "infers telemetry_type='environment' from environment_metrics in the payload" do
+        payload = [
+          {
+            "id" => 24_002,
+            "node_id" => "!teltype02",
+            "rx_time" => reference_time.to_i - 20,
+            "environment_metrics" => { "temperature" => 22.5, "relativeHumidity" => 50 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_002])
+          expect(row["telemetry_type"]).to eq("environment")
+        end
+      end
+
+      it "accepts an explicit telemetry_type from the payload" do
+        payload = [
+          {
+            "id" => 24_003,
+            "node_id" => "!teltype03",
+            "rx_time" => reference_time.to_i - 30,
+            "telemetry_type" => "power",
+            "voltage" => 5.0,
+            "current" => 0.48,
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT telemetry_type FROM telemetry WHERE id = ?", [24_003])
+          expect(row["telemetry_type"]).to eq("power")
+        end
+      end
+
+      it "includes telemetry_type in GET /api/telemetry/:id response" do
+        payload = [
+          {
+            "id" => 24_004,
+            "node_id" => "!teltype04",
+            "rx_time" => reference_time.to_i - 5,
+            "device_metrics" => { "battery_level" => 70, "channelUtilization" => 30 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+
+        get "/api/telemetry/!teltype04", {}, auth_headers
+
+        expect(last_response).to be_ok
+        entries = JSON.parse(last_response.body)
+        entry = entries.find { |e| e["id"] == 24_004 }
+        expect(entry).not_to be_nil
+        expect(entry["telemetry_type"]).to eq("device")
+      end
+
       it "returns 400 when more than 1000 telemetry packets are provided" do
         payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
 
