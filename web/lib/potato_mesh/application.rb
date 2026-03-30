@@ -157,8 +157,8 @@ module PotatoMesh
 
       perform_initial_filesystem_setup!
       cleanup_legacy_well_known_artifacts
-      init_db unless db_schema_present?
       ensure_schema_upgrades
+      init_db unless db_schema_present?
 
       log_instance_domain_resolution
       log_instance_public_key

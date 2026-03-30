@@ -76,3 +76,4 @@ web/node_modules/
 
 # Debug symbols
 ignored.txt
+ignored-*.txt

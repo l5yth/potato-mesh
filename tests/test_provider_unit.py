@@ -32,8 +32,13 @@ from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
 )
 from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
     MeshcoreProvider,
+    _MeshcoreInterface,
+    _contact_to_node_dict,
     _is_tcp_target,
+    _meshcore_node_id,
+    _pubkey_prefix_to_node_id,
     _record_meshcore_message,
+    _self_info_to_node_dict,
 )
 
 
@@ -220,6 +225,30 @@ def test_meshcore_connect_rejects_tcp_targets(target, monkeypatch):
         MeshcoreProvider().connect(active_candidate=target)
 
 
+def _fake_run_meshcore(*, error=None, host_node_id=None):
+    """Return a fake ``_run_meshcore`` coroutine for use in connect() tests.
+
+    The coroutine immediately signals success (or the given error) without
+    opening a real serial port, then waits for the stop event so that
+    ``_MeshcoreInterface.close()`` works correctly.
+    """
+    import asyncio as _asyncio
+
+    async def _fake(iface, target, connected_event, error_holder):
+        stop = _asyncio.Event()
+        iface._stop_event = stop
+        if error is not None:
+            error_holder[0] = error
+        else:
+            iface.isConnected = True
+            if host_node_id is not None:
+                iface.host_node_id = host_node_id
+        connected_event.set()
+        await stop.wait()
+
+    return _fake
+
+
 @pytest.mark.parametrize(
     "target",
     [
@@ -235,6 +264,7 @@ def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
     """connect() must succeed for serial ports, BLE addresses, and None (auto)."""
     import data.mesh_ingestor.providers.meshcore as _mod
 
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     iface, resolved, next_candidate = MeshcoreProvider().connect(
@@ -243,12 +273,14 @@ def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
     assert iface is not None
     assert resolved == target
     assert next_candidate == target
+    iface.close()
 
 
 def test_meshcore_connect_returns_closeable_interface(monkeypatch):
     """The interface returned by connect() must expose a close() method."""
     import data.mesh_ingestor.providers.meshcore as _mod
 
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
@@ -257,18 +289,68 @@ def test_meshcore_connect_returns_closeable_interface(monkeypatch):
 
 
 def test_meshcore_extract_host_node_id_none_by_default(monkeypatch):
-    """extract_host_node_id returns None for a freshly-created stub interface."""
+    """extract_host_node_id returns None when the interface has no host_node_id."""
     import data.mesh_ingestor.providers.meshcore as _mod
 
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
     assert MeshcoreProvider().extract_host_node_id(iface) is None
+    iface.close()
 
 
-def test_meshcore_node_snapshot_items_empty():
-    """node_snapshot_items must return an empty list in the skeleton phase."""
+def test_meshcore_extract_host_node_id_set_on_connect(monkeypatch):
+    """extract_host_node_id returns the node ID set by the connection handler."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(
+        _mod, "_run_meshcore", _fake_run_meshcore(host_node_id="!aabbccdd")
+    )
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+    assert MeshcoreProvider().extract_host_node_id(iface) == "!aabbccdd"
+    iface.close()
+
+
+def test_meshcore_connect_propagates_connection_error(monkeypatch):
+    """connect() must re-raise a ConnectionError when the handshake fails."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    exc = ConnectionError("no response")
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore(error=exc))
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    with pytest.raises(ConnectionError, match="no response"):
+        MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+
+def test_meshcore_node_snapshot_items_non_interface():
+    """node_snapshot_items must return [] for any non-_MeshcoreInterface object."""
     assert MeshcoreProvider().node_snapshot_items(object()) == []
+
+
+def test_meshcore_node_snapshot_items_with_contacts(monkeypatch):
+    """node_snapshot_items returns contacts converted to node dicts."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact(
+        {"public_key": pub_key, "adv_name": "Alice", "last_advert": 1000}
+    )
+
+    items = MeshcoreProvider().node_snapshot_items(iface)
+    assert len(items) == 1
+    node_id, node_dict = items[0]
+    assert node_id == "!aabbccdd"
+    assert node_dict["user"]["longName"] == "Alice"
+    iface.close()
 
 
 def test_is_tcp_target_detects_host_port():
@@ -347,3 +429,168 @@ def test_record_meshcore_message_appends_multiple(monkeypatch, tmp_path):
 
     lines = [l for l in log_path.read_text(encoding="utf-8").splitlines() if l]
     assert len(lines) == 2
+
+
+# ---------------------------------------------------------------------------
+# _meshcore_node_id
+# ---------------------------------------------------------------------------
+
+
+def test_meshcore_node_id_derives_from_first_four_bytes():
+    """_meshcore_node_id returns !xxxxxxxx from the first 8 hex chars."""
+    assert _meshcore_node_id("aabbccdd" + "00" * 28) == "!aabbccdd"
+
+
+def test_meshcore_node_id_lowercases_hex():
+    """_meshcore_node_id must lowercase the hex digits."""
+    assert _meshcore_node_id("AABBCCDD" + "00" * 28) == "!aabbccdd"
+
+
+def test_meshcore_node_id_none_on_empty():
+    """_meshcore_node_id returns None for an empty or too-short key."""
+    assert _meshcore_node_id("") is None
+    assert _meshcore_node_id("abc") is None
+    assert _meshcore_node_id(None) is None  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# _pubkey_prefix_to_node_id
+# ---------------------------------------------------------------------------
+
+
+def test_pubkey_prefix_finds_matching_contact():
+    """_pubkey_prefix_to_node_id returns the node ID for a matching prefix."""
+    pub_key = "aabbccddee11" + "00" * 26
+    contacts = {pub_key: {}}
+    result = _pubkey_prefix_to_node_id(contacts, "aabbccddee11")
+    assert result == "!aabbccdd"
+
+
+def test_pubkey_prefix_returns_none_on_no_match():
+    """_pubkey_prefix_to_node_id returns None when no contact matches."""
+    contacts = {"aabbccddee11" + "00" * 26: {}}
+    assert _pubkey_prefix_to_node_id(contacts, "ffeeddccbbaa") is None
+
+
+def test_pubkey_prefix_returns_none_for_empty_contacts():
+    """_pubkey_prefix_to_node_id returns None for an empty contacts dict."""
+    assert _pubkey_prefix_to_node_id({}, "aabbccddee11") is None
+
+
+# ---------------------------------------------------------------------------
+# _contact_to_node_dict
+# ---------------------------------------------------------------------------
+
+
+def test_contact_to_node_dict_basic_fields():
+    """_contact_to_node_dict populates user and lastHeard from a contact."""
+    contact = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "adv_name": "Alice",
+        "last_advert": 1700000000,
+    }
+    node = _contact_to_node_dict(contact)
+    assert node["lastHeard"] == 1700000000
+    assert node["user"]["longName"] == "Alice"
+    assert node["user"]["shortName"] == "Alic"
+    assert node["user"]["publicKey"] == contact["public_key"]
+
+
+def test_contact_to_node_dict_includes_position_when_nonzero():
+    """_contact_to_node_dict adds position when lat/lon are non-zero."""
+    contact = {
+        "public_key": "aa" * 32,
+        "adv_name": "Node",
+        "adv_lat": 51.5,
+        "adv_lon": -0.1,
+    }
+    node = _contact_to_node_dict(contact)
+    assert "position" in node
+    assert node["position"]["latitude"] == 51.5
+    assert node["position"]["longitude"] == -0.1
+
+
+def test_contact_to_node_dict_omits_position_at_origin():
+    """_contact_to_node_dict omits position when lat=0 and lon=0."""
+    contact = {
+        "public_key": "aa" * 32,
+        "adv_name": "Node",
+        "adv_lat": 0.0,
+        "adv_lon": 0.0,
+    }
+    node = _contact_to_node_dict(contact)
+    assert "position" not in node
+
+
+# ---------------------------------------------------------------------------
+# _self_info_to_node_dict
+# ---------------------------------------------------------------------------
+
+
+def test_self_info_to_node_dict_basic_fields():
+    """_self_info_to_node_dict maps name and public_key to user dict."""
+    self_info = {"name": "MyNode", "public_key": "bb" * 32}
+    node = _self_info_to_node_dict(self_info)
+    assert node["user"]["longName"] == "MyNode"
+    assert node["user"]["shortName"] == "MyNo"
+    assert node["user"]["publicKey"] == "bb" * 32
+    assert isinstance(node["lastHeard"], int)
+
+
+def test_self_info_to_node_dict_includes_position():
+    """_self_info_to_node_dict adds position when lat/lon are non-zero."""
+    self_info = {
+        "name": "N",
+        "public_key": "cc" * 32,
+        "adv_lat": 48.8,
+        "adv_lon": 2.35,
+    }
+    node = _self_info_to_node_dict(self_info)
+    assert node["position"]["latitude"] == 48.8
+    assert node["position"]["longitude"] == 2.35
+
+
+# ---------------------------------------------------------------------------
+# _MeshcoreInterface contact management
+# ---------------------------------------------------------------------------
+
+
+def test_interface_update_and_snapshot_contacts():
+    """_update_contact stores contacts; contacts_snapshot returns node entries."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Bob", "last_advert": 1})
+    snapshot = iface.contacts_snapshot()
+    assert len(snapshot) == 1
+    node_id, node_dict = snapshot[0]
+    assert node_id == "!aabbccdd"
+    assert node_dict["user"]["longName"] == "Bob"
+
+
+def test_interface_lookup_node_id_by_prefix():
+    """lookup_node_id finds a contact by its 6-byte public-key prefix."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccddee11" + "00" * 26
+    iface._update_contact({"public_key": pub_key, "adv_name": "C"})
+    result = iface.lookup_node_id("aabbccddee11")
+    assert result == "!aabbccdd"
+
+
+def test_interface_lookup_node_id_returns_none_on_miss():
+    """lookup_node_id returns None when no contact matches the prefix."""
+    iface = _MeshcoreInterface(target=None)
+    assert iface.lookup_node_id("ffeeddccbbaa") is None
+
+
+def test_interface_contacts_snapshot_skips_short_keys():
+    """contacts_snapshot ignores contacts whose public_key is too short for a node ID."""
+    iface = _MeshcoreInterface(target=None)
+    iface._update_contact({"public_key": "abc", "adv_name": "Short"})
+    assert iface.contacts_snapshot() == []
+
+
+def test_interface_close_is_idempotent():
+    """_MeshcoreInterface.close() must not raise when called multiple times."""
+    iface = _MeshcoreInterface(target=None)
+    iface.close()
+    iface.close()  # must not raise
