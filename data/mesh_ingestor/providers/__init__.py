@@ -14,12 +14,13 @@
 
 """Provider implementations.
 
-This package contains protocol-specific provider implementations (Meshtastic
-today, others in the future).
+This package contains protocol-specific provider implementations (Meshtastic,
+MeshCore, and others in the future).
 """
 
 from __future__ import annotations
 
+from .meshcore import MeshcoreProvider
 from .meshtastic import MeshtasticProvider
 
-__all__ = ["MeshtasticProvider"]
+__all__ = ["MeshtasticProvider", "MeshcoreProvider"]
