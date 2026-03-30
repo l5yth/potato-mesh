@@ -145,6 +145,7 @@ void main() {
       if (request.url.path == '/api/messages') {
         sinces.add(request.url.queryParameters['since'] ?? '');
         expect(request.url.queryParameters['limit'], '1000');
+        expect(request.url.queryParameters['protocol'], 'meshtastic');
         if (sinces.length == 1) {
           return http.Response(
             jsonEncode([

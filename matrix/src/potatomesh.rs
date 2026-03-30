@@ -19,6 +19,11 @@ use tokio::sync::RwLock;
 
 use crate::config::PotatomeshConfig;
 
+/// Protocol identifier sent as a query parameter to restrict API results to
+/// Meshtastic data only. Other protocols (e.g. MeshCore) are excluded until
+/// the clients are updated to support them.
+const PROTOCOL_FILTER: &str = "meshtastic";
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct PotatoMessage {
@@ -131,7 +136,10 @@ impl PotatoClient {
     }
 
     pub async fn fetch_messages(&self, params: FetchParams) -> anyhow::Result<Vec<PotatoMessage>> {
-        let mut req = self.http.get(self.messages_url());
+        let mut req = self
+            .http
+            .get(self.messages_url())
+            .query(&[("protocol", PROTOCOL_FILTER)]);
         if let Some(limit) = params.limit {
             req = req.query(&[("limit", limit)]);
         }
@@ -336,7 +344,10 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query(mockito::Matcher::Any) // allow optional query params
+            .match_query(mockito::Matcher::UrlEncoded(
+                "protocol".into(),
+                "meshtastic".into(),
+            ))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -427,7 +438,10 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query(mockito::Matcher::Any)
+            .match_query(mockito::Matcher::UrlEncoded(
+                "protocol".into(),
+                PROTOCOL_FILTER.into(),
+            ))
             .with_status(500)
             .create();
 
@@ -448,7 +462,11 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query("limit=10&since=123")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("protocol".into(), PROTOCOL_FILTER.into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "10".into()),
+                mockito::Matcher::UrlEncoded("since".into(), "123".into()),
+            ]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body("[]")

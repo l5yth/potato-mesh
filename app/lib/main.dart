@@ -2944,6 +2944,9 @@ class MeshNode {
   }
 }
 
+/// The protocol identifier sent to the API to filter results to Meshtastic only.
+const String _kProtocolFilter = 'meshtastic';
+
 /// Build a messages API URI for a given domain or absolute URL.
 Uri _buildMessagesUri(String domain, {int since = 0, int limit = 1000}) {
   final trimmed = domain.trim();
@@ -2951,6 +2954,7 @@ Uri _buildMessagesUri(String domain, {int since = 0, int limit = 1000}) {
     'limit': limit.toString(),
     'encrypted': 'false',
     'since': since.toString(),
+    'protocol': _kProtocolFilter,
   };
   if (trimmed.isEmpty) {
     return Uri.https('potatomesh.net', '/api/messages', params);
@@ -2988,7 +2992,7 @@ Uri _buildNodeUri(String domain, String nodeId) {
 /// Build the bulk nodes API URI for fetching recent nodes.
 Uri _buildNodesUri(String domain, {int limit = 1000}) {
   final trimmedDomain = domain.trim();
-  final params = {'limit': limit.toString()};
+  final params = {'limit': limit.toString(), 'protocol': _kProtocolFilter};
 
   if (trimmedDomain.isEmpty) {
     return Uri.https('potatomesh.net', '/api/nodes', params);

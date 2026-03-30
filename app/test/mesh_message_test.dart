@@ -206,8 +206,10 @@ void main() {
 
       expect(calls[0].host, 'mesh.example.org');
       expect(calls[0].path, '/api/messages');
+      expect(calls[0].queryParameters['protocol'], 'meshtastic');
       expect(calls[1].scheme, 'https');
       expect(calls[1].path, '/api/messages');
+      expect(calls[1].queryParameters['protocol'], 'meshtastic');
     });
   });
 
