@@ -214,11 +214,11 @@ def test_ingestor_heartbeat_all_fields():
         "node_id": "!aabbccdd",
         "start_time": 1700000000,
         "last_seen_time": 1700000012,
-        "version": "0.5.11",
+        "version": "0.5.12",
         "lora_freq": 906875,
         "modem_preset": "LONG_FAST",
     }
-    assert hb["version"] == "0.5.11"
+    assert hb["version"] == "0.5.12"
     assert hb["lora_freq"] == 906875
 
 
@@ -227,6 +227,6 @@ def test_ingestor_heartbeat_without_optional_fields():
         "node_id": "!aabbccdd",
         "start_time": 1700000000,
         "last_seen_time": 1700000013,
-        "version": "0.5.11",
+        "version": "0.5.12",
     }
     assert "lora_freq" not in hb

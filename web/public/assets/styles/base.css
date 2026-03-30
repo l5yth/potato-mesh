@@ -326,6 +326,9 @@ h1 {
   outline-offset: 2px;
 }
 
+/* Compound selector required: .icon-button { display: inline-flex } (below) shares
+   the same specificity and appears later in the source, so it would otherwise win
+   and keep the toggle permanently visible above the 900px breakpoint. */
 .icon-button.menu-toggle {
   display: none;
 }
