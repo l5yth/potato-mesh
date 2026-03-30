@@ -30,8 +30,10 @@ from pathlib import Path
 
 from . import channels, config, queue
 
-_IGNORED_PACKET_LOG_PATH = Path(__file__).resolve().parents[2] / "ignored.txt"
-"""Filesystem path that stores ignored packets when debugging."""
+_IGNORED_PACKET_LOG_PATH = (
+    Path(__file__).resolve().parents[2] / "ignored-meshtastic.txt"
+)
+"""Filesystem path that stores ignored Meshtastic packets when debugging."""
 
 _IGNORED_PACKET_LOCK = threading.Lock()
 """Lock guarding writes to :data:`_IGNORED_PACKET_LOG_PATH`."""
@@ -62,7 +64,7 @@ def _ignored_packet_default(value: object) -> object:
 
 
 def _record_ignored_packet(packet: Mapping | object, *, reason: str) -> None:
-    """Persist packet details to :data:`ignored.txt` during debugging."""
+    """Persist packet details to :data:`ignored-meshtastic.txt` during debugging."""
 
     if not config.DEBUG:
         return

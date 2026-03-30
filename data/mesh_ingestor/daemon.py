@@ -554,9 +554,14 @@ def main(*, provider: Provider | None = None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
     if provider is None:
-        from .providers.meshtastic import MeshtasticProvider
+        if config.PROVIDER == "meshcore":
+            from .providers.meshcore import MeshcoreProvider
 
-        provider = MeshtasticProvider()
+            provider = MeshcoreProvider()
+        else:
+            from .providers.meshtastic import MeshtasticProvider
+
+            provider = MeshtasticProvider()
 
     subscribed = provider.subscribe()
     if subscribed:

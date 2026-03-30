@@ -30,6 +30,11 @@ from data.mesh_ingestor.provider import Provider  # noqa: E402 - path setup
 from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
+from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
+    MeshcoreProvider,
+    _is_tcp_target,
+    _record_meshcore_message,
+)
 
 
 def test_meshtastic_provider_satisfies_protocol():
@@ -174,3 +179,171 @@ def test_meshtastic_subscribe_is_idempotent(monkeypatch):
     assert first == second
     # pub.subscribe should only have been called once (first invocation)
     assert len(subscribe_calls) == len(first)
+
+
+# ---------------------------------------------------------------------------
+# MeshcoreProvider tests
+# ---------------------------------------------------------------------------
+
+
+def test_meshcore_provider_satisfies_protocol():
+    """MeshcoreProvider must structurally satisfy the Provider Protocol."""
+    assert isinstance(MeshcoreProvider(), Provider)
+
+
+def test_meshcore_provider_name():
+    """MeshcoreProvider.name must be 'meshcore'."""
+    assert MeshcoreProvider().name == "meshcore"
+
+
+def test_meshcore_subscribe_returns_empty_list():
+    """MeshCore has no pubsub topics; subscribe() must return an empty list."""
+    assert MeshcoreProvider().subscribe() == []
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "meshnode.local:4403",
+        "meshtastic.local:4403",
+        "hostname:1234",
+        "otherhost:80",
+    ],
+)
+def test_meshcore_connect_rejects_tcp_targets(target, monkeypatch):
+    """connect() must raise ValueError for TCP host:port targets."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    with pytest.raises(ValueError, match="TCP/IP"):
+        MeshcoreProvider().connect(active_candidate=target)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/dev/ttyUSB0",
+        "/dev/ttyACM0",
+        "COM3",
+        "AA:BB:CC:DD:EE:FF",
+        "12345678-1234-1234-1234-123456789abc",
+        None,
+    ],
+)
+def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
+    """connect() must succeed for serial ports, BLE addresses, and None (auto)."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, resolved, next_candidate = MeshcoreProvider().connect(
+        active_candidate=target
+    )
+    assert iface is not None
+    assert resolved == target
+    assert next_candidate == target
+
+
+def test_meshcore_connect_returns_closeable_interface(monkeypatch):
+    """The interface returned by connect() must expose a close() method."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+    assert callable(getattr(iface, "close", None))
+    iface.close()  # must not raise
+
+
+def test_meshcore_extract_host_node_id_none_by_default(monkeypatch):
+    """extract_host_node_id returns None for a freshly-created stub interface."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+    assert MeshcoreProvider().extract_host_node_id(iface) is None
+
+
+def test_meshcore_node_snapshot_items_empty():
+    """node_snapshot_items must return an empty list in the skeleton phase."""
+    assert MeshcoreProvider().node_snapshot_items(object()) == []
+
+
+def test_is_tcp_target_detects_host_port():
+    """_is_tcp_target must return True for host:port strings."""
+    assert _is_tcp_target("meshnode.local:4403") is True
+    assert _is_tcp_target("meshtastic.local:4403") is True
+
+
+def test_is_tcp_target_rejects_serial_ble():
+    """_is_tcp_target must return False for serial paths and BLE addresses."""
+    assert _is_tcp_target("/dev/ttyUSB0") is False
+    assert _is_tcp_target("AA:BB:CC:DD:EE:FF") is False
+    assert _is_tcp_target("COM3") is False
+    # BLE MAC address whose final octet is all-decimal must not be a false positive.
+    assert _is_tcp_target("AA:BB:CC:DD:EE:12") is False
+
+
+def test_record_meshcore_message_skipped_without_debug(monkeypatch, tmp_path):
+    """_record_meshcore_message must not write anything when DEBUG is False."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "DEBUG", False)
+    log_path = tmp_path / "ignored-meshcore.txt"
+    monkeypatch.setattr(_mod, "_IGNORED_MESSAGE_LOG_PATH", log_path)
+
+    _record_meshcore_message({"key": "value"}, source="/dev/ttyUSB0")
+
+    assert not log_path.exists()
+
+
+def test_record_meshcore_message_writes_with_debug(monkeypatch, tmp_path):
+    """_record_meshcore_message must append a JSON line when DEBUG=1."""
+    import json as _json
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "DEBUG", True)
+    log_path = tmp_path / "ignored-meshcore.txt"
+    monkeypatch.setattr(_mod, "_IGNORED_MESSAGE_LOG_PATH", log_path)
+
+    _record_meshcore_message({"hello": "world"}, source="/dev/ttyUSB0")
+
+    assert log_path.exists()
+    line = log_path.read_text(encoding="utf-8").strip()
+    entry = _json.loads(line)
+    assert entry["source"] == "/dev/ttyUSB0"
+    assert "timestamp" in entry
+    assert "message" in entry
+
+
+def test_record_meshcore_message_serialises_bytes(monkeypatch, tmp_path):
+    """bytes values in the message must be base64-encoded, not repr'd."""
+    import json as _json
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "DEBUG", True)
+    log_path = tmp_path / "ignored-meshcore.txt"
+    monkeypatch.setattr(_mod, "_IGNORED_MESSAGE_LOG_PATH", log_path)
+
+    _record_meshcore_message({"payload": b"\xde\xad\xbe\xef"}, source="ble")
+
+    entry = _json.loads(log_path.read_text(encoding="utf-8").strip())
+    # The dict should be preserved and bytes base64-encoded, not str()'d.
+    assert entry["message"] == {"payload": "3q2+7w=="}
+
+
+def test_record_meshcore_message_appends_multiple(monkeypatch, tmp_path):
+    """_record_meshcore_message must append successive entries on separate lines."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "DEBUG", True)
+    log_path = tmp_path / "ignored-meshcore.txt"
+    monkeypatch.setattr(_mod, "_IGNORED_MESSAGE_LOG_PATH", log_path)
+
+    _record_meshcore_message("first", source="ble")
+    _record_meshcore_message("second", source="ble")
+
+    lines = [l for l in log_path.read_text(encoding="utf-8").splitlines() if l]
+    assert len(lines) == 2

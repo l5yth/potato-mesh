@@ -14,12 +14,26 @@
 
 """Provider implementations.
 
-This package contains protocol-specific provider implementations (Meshtastic
-today, others in the future).
+This package contains protocol-specific provider implementations (Meshtastic,
+MeshCore, and others in the future).
 """
 
 from __future__ import annotations
 
 from .meshtastic import MeshtasticProvider
 
-__all__ = ["MeshtasticProvider"]
+
+def __getattr__(name: str) -> object:
+    """Lazy-load provider classes that carry optional heavy dependencies.
+
+    ``MeshcoreProvider`` is imported on demand so that the MeshCore library
+    (once wired in) is not loaded at startup when ``PROVIDER=meshtastic``.
+    """
+    if name == "MeshcoreProvider":
+        from .meshcore import MeshcoreProvider
+
+        return MeshcoreProvider
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["MeshtasticProvider", "MeshcoreProvider"]

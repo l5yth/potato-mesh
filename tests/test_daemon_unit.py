@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import threading
 import types
@@ -27,7 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from data.mesh_ingestor import daemon
+from data.mesh_ingestor import daemon  # noqa: E402 - path setup
+import data.mesh_ingestor.config as _cfg_module  # noqa: E402 - path setup
 
 
 class FakeEvent:
@@ -823,3 +825,127 @@ def test_loop_iteration_full_pass_returns_false(monkeypatch):
     )
     monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
     assert daemon._loop_iteration(state) is False
+
+
+# ---------------------------------------------------------------------------
+# PROVIDER env-var selection
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_fake_provider(name: str):
+    """Return a minimal provider-like object that causes main() to exit quickly."""
+
+    class FakeIface:
+        def close(self):
+            return None
+
+    class FakeProvider:
+        def subscribe(self):
+            return []
+
+        def connect(self, *, active_candidate):
+            return FakeIface(), "fake", active_candidate
+
+        def extract_host_node_id(self, iface):
+            return None
+
+        def node_snapshot_items(self, iface):
+            return []
+
+    fp = FakeProvider()
+    fp.name = name
+    return fp
+
+
+def _patch_daemon_for_fast_exit(monkeypatch):
+    """Apply monkeypatches that make daemon.main() return after one iteration."""
+    _configure_common_defaults(monkeypatch)
+    monkeypatch.setattr(daemon.config, "CONNECTION", "fake")
+    monkeypatch.setattr(
+        daemon,
+        "threading",
+        types.SimpleNamespace(
+            Event=AutoSetEvent,
+            current_thread=daemon.threading.current_thread,
+            main_thread=daemon.threading.main_thread,
+        ),
+    )
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: None)
+    monkeypatch.setattr(daemon.handlers, "upsert_node", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
+
+
+def _reload_config() -> types.ModuleType:
+    """Reload and return the config module, picking up any env-var changes."""
+    importlib.reload(_cfg_module)
+    return _cfg_module
+
+
+@pytest.fixture()
+def reset_provider_config():
+    """Reload config after the test so PROVIDER changes don't leak across tests."""
+    yield
+    import os
+
+    os.environ.pop("PROVIDER", None)
+    _reload_config()
+
+
+@pytest.mark.parametrize(
+    "env_value, expected",
+    [
+        (None, "meshtastic"),
+        ("meshcore", "meshcore"),
+    ],
+)
+def test_config_provider_env(monkeypatch, reset_provider_config, env_value, expected):
+    """PROVIDER env var selects the provider; absent defaults to 'meshtastic'."""
+    if env_value is None:
+        monkeypatch.delenv("PROVIDER", raising=False)
+    else:
+        monkeypatch.setenv("PROVIDER", env_value)
+    assert _reload_config().PROVIDER == expected
+
+
+def test_config_provider_unknown_raises(monkeypatch, reset_provider_config):
+    """An unrecognised PROVIDER value must raise ValueError at import time."""
+    monkeypatch.setenv("PROVIDER", "reticulum")
+    with pytest.raises(ValueError, match="PROVIDER"):
+        _reload_config()
+
+
+@pytest.mark.parametrize(
+    "provider_name, module_path, class_name",
+    [
+        ("meshtastic", "data.mesh_ingestor.providers.meshtastic", "MeshtasticProvider"),
+        ("meshcore", "data.mesh_ingestor.providers.meshcore", "MeshcoreProvider"),
+    ],
+)
+def test_daemon_main_selects_provider(
+    monkeypatch, provider_name, module_path, class_name
+):
+    """main() must instantiate the correct provider class based on PROVIDER."""
+    mod = importlib.import_module(module_path)
+    instantiated = []
+
+    def make_provider():
+        p = _make_minimal_fake_provider(provider_name)
+        instantiated.append(p)
+        return p
+
+    _patch_daemon_for_fast_exit(monkeypatch)
+    monkeypatch.setattr(daemon.config, "PROVIDER", provider_name)
+    monkeypatch.setattr(mod, class_name, make_provider)
+
+    daemon.main()
+    assert len(instantiated) == 1
+    assert instantiated[0].name == provider_name
