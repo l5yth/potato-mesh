@@ -212,6 +212,32 @@ class MockElement {
   }
 
   /**
+   * Register an event handler for the given event type.
+   *
+   * @param {string} event Event type.
+   * @param {Function} handler Callback to invoke.
+   * @returns {void}
+   */
+  addEventListener(event, handler) {
+    if (!this._listeners) this._listeners = new Map();
+    if (!this._listeners.has(event)) this._listeners.set(event, []);
+    this._listeners.get(event).push(handler);
+  }
+
+  /**
+   * Remove a previously registered event handler.
+   *
+   * @param {string} event Event type.
+   * @param {Function} handler Callback to remove.
+   * @returns {void}
+   */
+  removeEventListener(event, handler) {
+    if (!this._listeners || !this._listeners.has(event)) return;
+    const remaining = this._listeners.get(event).filter(h => h !== handler);
+    this._listeners.set(event, remaining);
+  }
+
+  /**
    * Very small querySelectorAll implementation that supports ``.class`` lookups
    * used in unit tests.
    *
@@ -302,6 +328,9 @@ export function createDomEnvironment(options = {}) {
     },
     createElement(tagName) {
       return new MockElement(tagName, registry);
+    },
+    createTextNode(text) {
+      return String(text);
     },
     createDocumentFragment() {
       const fragment = new MockElement('fragment', null);

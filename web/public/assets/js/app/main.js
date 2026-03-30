@@ -68,6 +68,7 @@ import {
   roleColors,
   roleRenderOrder,
 } from './role-helpers.js';
+import { isMeshtasticProtocol, meshtasticIconHtml, MESHTASTIC_ICON_SRC } from './protocol-helpers.js';
 
 /**
  * Compute active-node counts from a local node array.
@@ -208,6 +209,93 @@ export function formatActiveNodeStatsText({ channel, frequency, stats }) {
 }
 
 /**
+ * Escape a string for safe HTML insertion.
+ *
+ * @param {string} str Raw string.
+ * @returns {string} Escaped HTML string.
+ */
+export function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Normalise node name fields by trimming whitespace.
+ *
+ * Unlike {@link stringOrNull} in node-page.js (which returns ``null`` for blank
+ * values), this function returns an empty string — the expected shape for
+ * display-only name fields where a falsy string is preferable to ``null``.
+ *
+ * @param {*} value Raw name value.
+ * @returns {string} Sanitised name string, or empty string when blank/absent.
+ */
+export function normalizeNodeNameValue(value) {
+  if (value == null) return '';
+  const str = String(value).trim();
+  return str.length ? str : '';
+}
+
+/**
+ * Compute the node detail path for a given identifier.
+ *
+ * @param {string|null} identifier Node identifier.
+ * @returns {string|null} Detail path.
+ */
+export function buildNodeDetailHref(identifier) {
+  if (identifier == null) return null;
+  const trimmed = String(identifier).trim();
+  if (!trimmed) return null;
+  const body = trimmed.startsWith('!') ? trimmed.slice(1) : trimmed;
+  if (!body) return null;
+  const encoded = encodeURIComponent(body);
+  return `/nodes/!${encoded}`;
+}
+
+/**
+ * Ensure ``identifier`` includes the canonical ``!`` prefix.
+ *
+ * @param {*} identifier Candidate identifier.
+ * @returns {string|null} Canonical identifier or ``null``.
+ */
+export function canonicalNodeIdentifier(identifier) {
+  if (identifier == null) return null;
+  const trimmed = String(identifier).trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith('!') ? trimmed : `!${trimmed}`;
+}
+
+/**
+ * Render a linked long name pointing to the node detail view.
+ *
+ * When {@code protocol} is ``"meshtastic"`` or absent the Meshtastic logo is
+ * prepended to the displayed name to indicate the node's mesh backend.
+ *
+ * @param {string|null} longName Display name.
+ * @param {string|null} identifier Node identifier.
+ * @param {{ className?: string, protocol?: string|null }} [options] Rendering options.
+ * @returns {string} Escaped HTML snippet.
+ */
+export function renderNodeLongNameLink(longName, identifier, { className = 'node-long-link', protocol = null } = {}) {
+  const text = normalizeNodeNameValue(longName);
+  if (!text) return '';
+  const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
+  const href = buildNodeDetailHref(identifier);
+  if (!href) {
+    return `${iconPrefix}${escapeHtml(text)}`;
+  }
+  const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
+  const canonicalId = canonicalNodeIdentifier(identifier);
+  const dataAttrs = canonicalId
+    ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalId)}"`
+    : ' data-node-detail-link="true"';
+  return `<a${classAttr} href="${href}"${dataAttrs}>${iconPrefix}${escapeHtml(text)}</a>`;
+}
+
+/**
  * Entry point for the interactive dashboard. Wires up event listeners,
  * initializes the map, and triggers the first data refresh cycle.
  *
@@ -222,7 +310,8 @@ export function formatActiveNodeStatsText({ channel, frequency, stats }) {
  *   maxDistanceKm: number,
  *   tileFilters: { light: string, dark: string }
  * }} config Normalized application configuration.
- * @returns {void}
+ * @returns {{ _testUtils: Object }} Object whose ``_testUtils`` property exposes
+ *   inner closures for unit tests. Production callers may ignore this.
  */
 export function initializeApp(config) {
   const statusEl = document.getElementById('status');
@@ -1459,10 +1548,32 @@ export function initializeApp(config) {
    *
    * @returns {void}
    */
+  /**
+   * Build a Meshtastic protocol icon ``<img>`` element via DOM APIs.
+   *
+   * Used wherever an icon node must be appended rather than injected via
+   * ``innerHTML``.  Mirrors the attribute set used by {@link meshtasticIconHtml}
+   * so the rendered output is identical.
+   *
+   * @returns {HTMLImageElement} Icon element ready to append.
+   */
+  function buildMeshtasticIconImg() {
+    const img = document.createElement('img');
+    img.setAttribute('src', MESHTASTIC_ICON_SRC);
+    img.setAttribute('alt', '');
+    img.setAttribute('width', '12');
+    img.setAttribute('height', '12');
+    img.setAttribute('aria-hidden', 'true');
+    img.setAttribute('loading', 'lazy');
+    img.setAttribute('decoding', 'async');
+    img.className = 'protocol-icon protocol-icon--meshtastic';
+    return img;
+  }
+
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
-    neighborLinesToggleButton.textContent = label;
+    neighborLinesToggleButton.replaceChildren(buildMeshtasticIconImg(), document.createTextNode(` ${label}`));
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1494,7 +1605,7 @@ export function initializeApp(config) {
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
     const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
-    traceLinesToggleButton.textContent = label;
+    traceLinesToggleButton.replaceChildren(buildMeshtasticIconImg(), document.createTextNode(` ${label}`));
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1583,6 +1694,7 @@ export function initializeApp(config) {
       item.type = 'button';
       item.setAttribute('aria-pressed', 'false');
         item.dataset.role = role;
+        item.appendChild(buildMeshtasticIconImg());
         const swatch = L.DomUtil.create('span', 'legend-swatch', item);
         swatch.style.background = color;
         swatch.setAttribute('aria-hidden', 'true');
@@ -1880,21 +1992,6 @@ export function initializeApp(config) {
 
   // --- Helpers ---
   /**
-   * Escape a string for safe HTML insertion.
-   *
-   * @param {string} str Raw string.
-   * @returns {string} Escaped HTML string.
-   */
-  function escapeHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  /**
    * Render a short name badge with role-based styling.
    *
    * @param {string} short Short node identifier.
@@ -2096,7 +2193,7 @@ export function initializeApp(config) {
    */
   function buildMapPopupHtml(node, nowSec) {
     const lines = [];
-    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id);
+    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id, { protocol: node?.protocol });
     if (longNameLink) {
       lines.push(`<b>${longNameLink}</b>`);
     }
@@ -2273,6 +2370,11 @@ export function initializeApp(config) {
       }
     }
 
+    const protocolRaw = source.protocol;
+    if (protocolRaw != null && typeof protocolRaw === 'string') {
+      normalized.protocol = protocolRaw;
+    }
+
     return normalized;
   }
 
@@ -2310,7 +2412,7 @@ export function initializeApp(config) {
     const heading = normalized.longName || normalized.shortName || normalized.nodeId || '';
     let headingHtml = '';
     if (normalized.longName) {
-      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId);
+      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId, { protocol: normalized.protocol });
       if (link) {
         headingHtml = `<strong>${link}</strong><br/>`;
       }
@@ -2675,8 +2777,10 @@ export function initializeApp(config) {
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     const longNameDisplay = longName != null ? String(longName) : '';
     const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {});
+    const announcementProtocol = (nodeData || metadataSource || {}).protocol;
+    const announcementIconPrefix = isMeshtasticProtocol(announcementProtocol) ? `${meshtasticIconHtml()} ` : '';
     div.className = 'chat-entry-node';
-    div.innerHTML = `${prefix}${presetTag} ${shortHtml} ${messageHtml}`;
+    div.innerHTML = `${prefix}${presetTag} ${announcementIconPrefix}${shortHtml} ${messageHtml}`;
     return div;
   }
 
@@ -3065,6 +3169,7 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
+    const nodeProtocolPrefix = isMeshtasticProtocol(m.node?.protocol) ? `${meshtasticIconHtml()} ` : '';
     const replyPrefix = resolveReplyPrefix({
       message: m,
       messagesById,
@@ -3101,7 +3206,7 @@ export function initializeApp(config) {
     });
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefix}${presetTag} ${short} ${text}`;
+    div.innerHTML = `${prefix}${presetTag} ${nodeProtocolPrefix}${short} ${text}`;
     return div;
   }
 
@@ -3234,6 +3339,7 @@ export function initializeApp(config) {
     const channelTabs = filteredChannels.map(channel => ({
       id: channel.id || `channel-${channel.index}`,
       label: channel.label,
+      iconSrc: isMeshtasticProtocol(channel.protocol) ? MESHTASTIC_ICON_SRC : null,
       content: buildChatFragment({
         entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
         renderEntry: entry => createMessageChatEntry(entry.item),
@@ -3380,70 +3486,6 @@ export function initializeApp(config) {
     const n = Number(value);
     if (!Number.isFinite(n)) return '';
     return `${n.toFixed(1)} dB`;
-  }
-
-  /**
-   * Normalise node name fields by trimming whitespace.
-   *
-   * @param {*} value Raw name value.
-   * @returns {string} Sanitised name string.
-   */
-  function normalizeNodeNameValue(value) {
-    if (value == null) return '';
-    const str = String(value).trim();
-    return str.length ? str : '';
-  }
-
-  /**
-   * Compute the node detail path for a given identifier.
-   *
-   * @param {string|null} identifier Node identifier.
-   * @returns {string|null} Detail path.
-   */
-  function buildNodeDetailHref(identifier) {
-    if (identifier == null) return null;
-    const trimmed = String(identifier).trim();
-    if (!trimmed) return null;
-    const body = trimmed.startsWith('!') ? trimmed.slice(1) : trimmed;
-    if (!body) return null;
-    const encoded = encodeURIComponent(body);
-    return `/nodes/!${encoded}`;
-  }
-
-  /**
-   * Ensure ``identifier`` includes the canonical ``!`` prefix.
-   *
-   * @param {*} identifier Candidate identifier.
-   * @returns {string|null} Canonical identifier or ``null``.
-   */
-  function canonicalNodeIdentifier(identifier) {
-    if (identifier == null) return null;
-    const trimmed = String(identifier).trim();
-    if (!trimmed) return null;
-    return trimmed.startsWith('!') ? trimmed : `!${trimmed}`;
-  }
-
-  /**
-   * Render a linked long name pointing to the node detail view.
-   *
-   * @param {string|null} longName Display name.
-   * @param {string|null} identifier Node identifier.
-   * @param {string} [className='node-long-link'] Optional class attribute.
-   * @returns {string} Escaped HTML snippet.
-   */
-  function renderNodeLongNameLink(longName, identifier, className = 'node-long-link') {
-    const text = normalizeNodeNameValue(longName);
-    if (!text) return '';
-    const href = buildNodeDetailHref(identifier);
-    if (!href) {
-      return escapeHtml(text);
-    }
-    const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
-    const canonicalIdentifier = canonicalNodeIdentifier(identifier);
-    const dataAttrs = canonicalIdentifier
-      ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalIdentifier)}"`
-      : ' data-node-detail-link="true"';
-    return `<a${classAttr} href="${href}"${dataAttrs}>${escapeHtml(text)}</a>`;
   }
 
   /**
@@ -3968,7 +4010,7 @@ export function initializeApp(config) {
       const loraFrequencyText = formatLoraFrequencyMHz(modemMetadata.loraFreq);
       const loraFrequencyDisplay = loraFrequencyText ? escapeHtml(loraFrequencyText) : '';
       const modemPresetDisplay = modemMetadata.modemPreset ? escapeHtml(modemMetadata.modemPreset) : '';
-      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
+      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id, { protocol: n.protocol });
       tr.innerHTML = `
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
@@ -4491,6 +4533,7 @@ export function initializeApp(config) {
 
   refresh();
   restartAutoRefresh();
+
   if (refreshBtn) {
     refreshBtn.addEventListener('click', refresh);
   }
@@ -4546,4 +4589,19 @@ export function initializeApp(config) {
       });
     });
   }
+
+  /**
+   * Inner closures exposed for unit tests. Production callers should ignore
+   * this return value.
+   *
+   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function } }}
+   */
+  return {
+    _testUtils: {
+      buildMapPopupHtml,
+      normalizeOverlaySource,
+      createAnnouncementEntry,
+      createMessageChatEntry,
+    },
+  };
 }

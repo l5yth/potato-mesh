@@ -360,7 +360,8 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     10_000,
   );
   assert.equal(html.includes('<table'), true);
-  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">Example Node<\/a>/);
+  assert.ok(html.includes('meshtastic.svg'), 'default protocol should show meshtastic icon in long name link');
+  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">.*Example Node<\/a>/s);
   assert.equal(html.includes('66.0%'), true);
   assert.equal(html.includes('1.230%'), true);
   assert.equal(html.includes('52.52000'), true);
@@ -603,7 +604,8 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('Heard by'), true);
   assert.equal(html.includes('We hear'), true);
   assert.equal(html.includes('Messages'), true);
-  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">Example Node<\/a>/);
+  assert.ok(html.includes('meshtastic.svg'), 'default protocol should show meshtastic icon in heading and table');
+  assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">.*Example Node<\/a>/s);
   assert.equal(html.includes('PEER'), true);
   assert.equal(html.includes('ALLY'), true);
   assert.equal(html.includes('Traceroutes'), true);
@@ -646,6 +648,127 @@ test('renderNodeDetailHtml embeds telemetry charts when snapshots are present', 
   assert.equal(html.includes('node-detail__charts'), true);
   assert.equal(html.includes('Device health'), true);
   assert.equal(html.includes('Air quality'), true);
+});
+
+// --- Protocol icon in renderSingleNodeTable ---
+
+test('renderSingleNodeTable shows meshtastic icon for meshtastic protocol in long name link', () => {
+  const node = {
+    shortName: 'A',
+    longName: 'Alice',
+    nodeId: '!aa',
+    role: 'CLIENT',
+    protocol: 'meshtastic',
+    rawSources: { node: { node_id: '!aa', role: 'CLIENT' } },
+  };
+  const html = renderSingleNodeTable(node, (short, role) => `<span data-role="${role}">${short}</span>`, 0);
+  assert.ok(html.includes('meshtastic.svg'), 'meshtastic protocol should show icon in long name link');
+});
+
+test('renderSingleNodeTable shows meshtastic icon when protocol is absent in long name link', () => {
+  const node = {
+    shortName: 'A',
+    longName: 'Alice',
+    nodeId: '!aa',
+    role: 'CLIENT',
+    rawSources: { node: { node_id: '!aa', role: 'CLIENT' } },
+  };
+  const html = renderSingleNodeTable(node, (short, role) => `<span data-role="${role}">${short}</span>`, 0);
+  assert.ok(html.includes('meshtastic.svg'), 'absent protocol should show meshtastic icon in long name link');
+});
+
+test('renderSingleNodeTable omits meshtastic icon for meshcore protocol in long name link', () => {
+  const node = {
+    shortName: 'M',
+    longName: 'MeshCore Node',
+    nodeId: '!mc',
+    role: 'REPEATER',
+    protocol: 'meshcore',
+    rawSources: { node: { node_id: '!mc', role: 'REPEATER' } },
+  };
+  const html = renderSingleNodeTable(node, (short, role) => `<span data-role="${role}">${short}</span>`, 0);
+  assert.ok(!html.includes('meshtastic.svg'), 'meshcore protocol should not show meshtastic icon in long name link');
+});
+
+// --- Protocol icon in renderNodeDetailHtml heading ---
+
+test('renderNodeDetailHtml shows meshtastic icon in heading for meshtastic protocol', () => {
+  const html = renderNodeDetailHtml(
+    { shortName: 'A', longName: 'Alice', nodeId: '!aa', role: 'CLIENT', protocol: 'meshtastic' },
+    { renderShortHtml: short => `<span>${short}</span>` },
+  );
+  assert.ok(html.includes('meshtastic.svg'), 'meshtastic protocol should show icon in heading');
+});
+
+test('renderNodeDetailHtml shows meshtastic icon in heading when protocol is absent', () => {
+  const html = renderNodeDetailHtml(
+    { shortName: 'A', longName: 'Alice', nodeId: '!aa', role: 'CLIENT' },
+    { renderShortHtml: short => `<span>${short}</span>` },
+  );
+  assert.ok(html.includes('meshtastic.svg'), 'absent protocol should show meshtastic icon in heading');
+});
+
+test('renderNodeDetailHtml omits meshtastic icon in heading for meshcore protocol', () => {
+  const html = renderNodeDetailHtml(
+    { shortName: 'M', longName: 'MeshCore Node', nodeId: '!mc', role: 'REPEATER', protocol: 'meshcore' },
+    { renderShortHtml: short => `<span>${short}</span>` },
+  );
+  assert.ok(!html.includes('meshtastic.svg'), 'meshcore protocol should not show icon in heading');
+});
+
+// --- Protocol icon in renderMessages chat ---
+
+test('renderMessages prefixes meshtastic icon for meshtastic node protocol', () => {
+  const nodeContext = {
+    shortName: 'SRC',
+    longName: 'Source',
+    role: 'CLIENT',
+    nodeId: '!src',
+    nodeNum: 1,
+    rawSources: { node: { node_id: '!src', role: 'CLIENT', short_name: 'SRC' } },
+    protocol: 'meshtastic',
+  };
+  const html = renderMessages(
+    [{ text: 'hello', rx_time: 1_700_000_000, node: { short_name: 'SRC', role: 'CLIENT', protocol: 'meshtastic' } }],
+    (short, role) => `<span data-role="${role}">${short}</span>`,
+    nodeContext,
+  );
+  assert.ok(html.includes('meshtastic.svg'), 'meshtastic node chat entry should show icon');
+});
+
+test('renderMessages prefixes meshtastic icon when node protocol is absent', () => {
+  const nodeContext = {
+    shortName: 'SRC',
+    longName: 'Source',
+    role: 'CLIENT',
+    nodeId: '!src',
+    nodeNum: 1,
+    rawSources: { node: { node_id: '!src', role: 'CLIENT', short_name: 'SRC' } },
+  };
+  const html = renderMessages(
+    [{ text: 'hello', rx_time: 1_700_000_000, node: { short_name: 'SRC', role: 'CLIENT' } }],
+    (short, role) => `<span data-role="${role}">${short}</span>`,
+    nodeContext,
+  );
+  assert.ok(html.includes('meshtastic.svg'), 'absent node protocol chat entry should show meshtastic icon');
+});
+
+test('renderMessages omits meshtastic icon for meshcore node protocol', () => {
+  const nodeContext = {
+    shortName: 'MC',
+    longName: 'MeshCore',
+    role: 'REPEATER',
+    nodeId: '!mc',
+    nodeNum: 2,
+    rawSources: { node: { node_id: '!mc', role: 'REPEATER', short_name: 'MC' } },
+    protocol: 'meshcore',
+  };
+  const html = renderMessages(
+    [{ text: 'test', rx_time: 1_700_000_000, node: { short_name: 'MC', role: 'REPEATER', protocol: 'meshcore' } }],
+    (short, role) => `<span data-role="${role}">${short}</span>`,
+    nodeContext,
+  );
+  assert.ok(!html.includes('meshtastic.svg'), 'meshcore node chat entry should not show meshtastic icon');
 });
 
 test('fetchNodeDetailHtml renders the node layout for overlays', async () => {

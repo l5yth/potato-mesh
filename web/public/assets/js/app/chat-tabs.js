@@ -17,10 +17,16 @@
 /**
  * Render an accessible tab interface within ``container``.
  *
+ * When a tab carries an ``iconSrc`` URL the icon is rendered as an
+ * {@code <img>} element built entirely via DOM APIs — no ``innerHTML`` is
+ * involved so the value is safe even if it originates from user-controlled
+ * data (img src does not execute script).  The ``label`` field is always
+ * inserted as a text node.
+ *
  * @param {{
  *   document: Document,
  *   container: HTMLElement,
- *   tabs: Array<{ id: string, label: string, content: Node|null }>,
+ *   tabs: Array<{ id: string, label: string, iconSrc?: string|null, content: Node|null }>,
  *   previousActiveTabId?: string|null,
  *   defaultActiveTabId?: string|null
  * }} options Rendering parameters.
@@ -80,7 +86,21 @@ export function renderChatTabs({
     button.setAttribute('role', 'tab');
     button.setAttribute('id', `chat-tab-${uniqueId}`);
     button.dataset.tabId = uniqueId;
-    button.textContent = tab.label || '';
+    if (tab.iconSrc) {
+      const icon = document.createElement('img');
+      icon.setAttribute('src', tab.iconSrc);
+      icon.setAttribute('alt', '');
+      icon.setAttribute('width', '12');
+      icon.setAttribute('height', '12');
+      icon.setAttribute('aria-hidden', 'true');
+      icon.setAttribute('loading', 'lazy');
+      icon.setAttribute('decoding', 'async');
+      icon.className = 'protocol-icon';
+      button.appendChild(icon);
+      button.appendChild(document.createTextNode(tab.label || ''));
+    } else {
+      button.textContent = tab.label || '';
+    }
     button.setAttribute('aria-selected', 'false');
     button.setAttribute('tabindex', '-1');
 

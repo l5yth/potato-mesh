@@ -56,7 +56,10 @@ class MockFragment {
 class MockElement {
   constructor(tagName) {
     this.tagName = tagName.toUpperCase();
+    // children mirrors HTMLElement.children: element nodes only.
     this.children = [];
+    // childNodes mirrors HTMLElement.childNodes: all nodes including text.
+    this.childNodes = [];
     this.attributes = new Map();
     this.dataset = {};
     this.classList = new MockClassList();
@@ -67,18 +70,26 @@ class MockElement {
   }
 
   appendChild(node) {
-    this.children.push(node);
+    this.childNodes.push(node);
+    if (node instanceof MockElement) {
+      this.children.push(node);
+    }
     return node;
   }
 
   replaceChildren(...nodes) {
     this.children = [];
+    this.childNodes = [];
     for (const node of nodes) {
       if (!node) continue;
       if (node.isFragment && Array.isArray(node.children)) {
         this.children.push(...node.children);
+        this.childNodes.push(...node.children);
       } else {
-        this.children.push(node);
+        this.childNodes.push(node);
+        if (node instanceof MockElement) {
+          this.children.push(node);
+        }
       }
     }
   }
@@ -113,6 +124,13 @@ class MockElement {
   }
 }
 
+class MockTextNode {
+  constructor(text) {
+    this.textContent = String(text);
+    this.nodeType = 3;
+  }
+}
+
 function createMockDocument() {
   return {
     createElement(tag) {
@@ -120,6 +138,9 @@ function createMockDocument() {
     },
     createDocumentFragment() {
       return new MockFragment();
+    },
+    createTextNode(text) {
+      return new MockTextNode(text);
     }
   };
 }
@@ -191,4 +212,43 @@ test('renderChatTabs clears container when no tabs exist', () => {
   assert.equal(active, null);
   assert.equal(container.children.length, 0);
   assert.equal(container.dataset.activeTab, '');
+});
+
+test('renderChatTabs renders icon img child when tab.iconSrc is provided', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  const tabs = [
+    { id: 'channel-0', label: 'LongFast', iconSrc: '/assets/img/meshtastic.svg' }
+  ];
+
+  renderChatTabs({ document, container, tabs });
+
+  const [tabList] = container.children;
+  const button = tabList.children[0];
+  // Button has one element child (the icon <img>) and one text node — two childNodes total.
+  assert.equal(button.children.length, 1, 'should have exactly one element child (icon img)');
+  assert.equal(button.childNodes.length, 2, 'should have two child nodes (icon img + text node)');
+  const iconImg = button.children[0];
+  assert.equal(iconImg.tagName, 'IMG', 'first element child should be an img');
+  assert.equal(iconImg.getAttribute('src'), '/assets/img/meshtastic.svg', 'img src should match iconSrc');
+  assert.equal(iconImg.getAttribute('aria-hidden'), 'true', 'img should be hidden from AT');
+  const textNode = button.childNodes[1];
+  assert.equal(textNode.nodeType, 3, 'second child node should be a text node');
+  assert.equal(textNode.textContent, 'LongFast');
+});
+
+test('renderChatTabs uses textContent when no iconSrc is provided', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  const tabs = [{ id: 'log', label: 'Log' }];
+
+  renderChatTabs({ document, container, tabs });
+
+  const [tabList] = container.children;
+  const button = tabList.children[0];
+  assert.equal(button.textContent, 'Log');
+  // No icon child elements
+  assert.equal(button.children.length, 0);
 });

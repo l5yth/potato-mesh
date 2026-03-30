@@ -15,6 +15,7 @@
  */
 
 import { refreshNodeInformation } from './node-details.js';
+import { isMeshtasticProtocol, meshtasticIconHtml } from './protocol-helpers.js';
 import {
   extractChatMessageMetadata,
   formatChatChannelTag,
@@ -367,22 +368,23 @@ function canonicalNodeIdentifier(identifier) {
  *
  * @param {string|null} longName Long name text.
  * @param {string|null} identifier Node identifier.
- * @param {{ className?: string }} [options] Rendering options.
+ * @param {{ className?: string, protocol?: string|null }} [options] Rendering options.
  * @returns {string} Escaped HTML string.
  */
-function renderNodeLongNameLink(longName, identifier, { className = 'node-long-link' } = {}) {
+function renderNodeLongNameLink(longName, identifier, { className = 'node-long-link', protocol = null } = {}) {
   const text = stringOrNull(longName);
   if (!text) return '';
+  const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
   const href = buildNodeDetailHref(identifier);
   if (!href) {
-    return escapeHtml(text);
+    return `${iconPrefix}${escapeHtml(text)}`;
   }
   const classAttr = className ? ` class="${escapeHtml(className)}"` : '';
   const canonicalIdentifier = canonicalNodeIdentifier(identifier);
   const dataAttrs = canonicalIdentifier
     ? ` data-node-detail-link="true" data-node-id="${escapeHtml(canonicalIdentifier)}"`
     : ' data-node-detail-link="true"';
-  return `<a${classAttr} href="${href}"${dataAttrs}>${escapeHtml(text)}</a>`;
+  return `<a${classAttr} href="${href}"${dataAttrs}>${iconPrefix}${escapeHtml(text)}</a>`;
 }
 
 /**
@@ -2032,7 +2034,8 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
   const nodeId = stringOrNull(node.nodeId ?? node.node_id) ?? '';
   const shortName = stringOrNull(node.shortName ?? node.short_name) ?? null;
   const longName = stringOrNull(node.longName ?? node.long_name);
-  const longNameLink = renderNodeLongNameLink(longName, nodeId);
+  const protocol = stringOrNull(node.protocol) ?? null;
+  const longNameLink = renderNodeLongNameLink(longName, nodeId, { protocol });
   const role = stringOrNull(node.role) ?? 'CLIENT';
   const numericId = numberOrNull(node.nodeNum ?? node.node_num ?? node.num);
   const badgeSource = node.rawSources?.node && typeof node.rawSources.node === 'object'
@@ -2163,6 +2166,8 @@ function renderMessages(messages, renderShortHtml, node) {
       const channelTag = formatChatChannelTag({ channelName: metadata.channelName });
 
       const messageNode = message.node && typeof message.node === 'object' ? message.node : null;
+      const messageProtocol = stringOrNull(messageNode?.protocol ?? fallbackNode?.protocol) ?? null;
+      const protocolIconHtml = isMeshtasticProtocol(messageProtocol) ? `${meshtasticIconHtml()} ` : '';
       const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
         shortName: messageNode?.short_name ?? messageNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
         longName: messageNode?.long_name ?? messageNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
@@ -2186,7 +2191,7 @@ function renderMessages(messages, renderShortHtml, node) {
         source: messageNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<li>${prefix}${presetTag}${channelTag} ${badgeHtml} ${escapeHtml(text)}</li>`;
+      return `<li>${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${escapeHtml(text)}</li>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
@@ -2396,6 +2401,7 @@ function renderNodeDetailHtml(node, {
   });
   const longName = stringOrNull(node.longName ?? node.long_name);
   const identifier = stringOrNull(node.nodeId ?? node.node_id);
+  const nodeProtocol = stringOrNull(node.protocol) ?? null;
   const tableHtml = renderSingleNodeTable(node, renderShortHtml);
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
@@ -2414,7 +2420,8 @@ function renderNodeDetailHtml(node, {
   }
 
   const identifierHtml = identifier ? `<span class="node-detail__identifier">[${escapeHtml(identifier)}]</span>` : '';
-  const nameHtml = longName ? `<span class="node-detail__name">${escapeHtml(longName)}</span>` : '';
+  const iconPrefix = isMeshtasticProtocol(nodeProtocol) ? `${meshtasticIconHtml()} ` : '';
+  const nameHtml = longName ? `<span class="node-detail__name">${iconPrefix}${escapeHtml(longName)}</span>` : '';
   const badgeHtml = `<span class="node-detail__badge">${roleAwareBadge}</span>`;
   const tableSection = tableHtml ? `<div class="node-detail__table">${tableHtml}</div>` : '';
   const contentHtml = sections.length > 0 ? `<div class="node-detail__content">${sections.join('')}</div>` : '';

@@ -21,6 +21,9 @@ import {
   getRoleColor,
   getRoleKey,
   getRoleRenderPriority,
+  getRoleColors,
+  meshcoreRoleColors,
+  roleColors,
   normalizeRole,
   translateRoleId,
 } from '../role-helpers.js';
@@ -51,4 +54,19 @@ test('role key and color lookups prefer known values with uppercase fallback', (
 test('render priority uses canonical role keys and defaults to zero for unknowns', () => {
   assert.equal(getRoleRenderPriority('ROUTER'), getRoleRenderPriority(2));
   assert.equal(getRoleRenderPriority('custom-role'), 0);
+});
+
+test('getRoleColors returns Meshtastic palette for null/undefined/meshtastic', () => {
+  assert.equal(getRoleColors(null), roleColors);
+  assert.equal(getRoleColors(undefined), roleColors);
+  assert.equal(getRoleColors('meshtastic'), roleColors);
+  assert.equal(getRoleColors(''), roleColors);
+});
+
+test('getRoleColors returns MeshCore palette for meshcore protocol', () => {
+  assert.equal(getRoleColors('meshcore'), meshcoreRoleColors);
+});
+
+test('getRoleColors returns Meshtastic palette for unknown protocols', () => {
+  assert.equal(getRoleColors('reticulum'), roleColors);
 });

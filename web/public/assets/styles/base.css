@@ -1732,6 +1732,12 @@ input[type="radio"] {
   border-radius: 2px;
 }
 
+.protocol-icon {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 2px;
+}
+
 .legend-hidden {
   display: none !important;
 }

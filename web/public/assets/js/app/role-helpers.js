@@ -39,19 +39,64 @@ export const roleIdToName = Object.freeze({
   12: 'CLIENT_BASE',
 });
 
-// Firmware 2.7.10 / Android 2.7.0 roles and colors (see issue #177)
+/**
+ * Meshtastic role colour palette — warm yellow-green to burnt-orange gradient
+ * that provides higher contrast than the previous blue-tinted palette, making
+ * role distinctions more legible on both light and dark map tiles.
+ *
+ * Updated from the original blue-cool palette (see PR #657) to improve
+ * readability alongside the MeshCore grey-blue palette.
+ *
+ * Firmware 2.7.10 / Android 2.7.0 roles (see issue #177).
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
 export const roleColors = Object.freeze({
-  CLIENT_HIDDEN: '#A9CBE8',
-  SENSOR: '#A8D5BA',
-  TRACKER: '#B9DFAC',
-  CLIENT_MUTE: '#CDE7A9',
-  CLIENT: '#E8E6A1',
-  CLIENT_BASE: '#F6D0A6',
-  REPEATER: '#F7B7A3',
-  ROUTER_LATE: '#F29AA3',
-  ROUTER: '#E88B94',
-  LOST_AND_FOUND: '#C3A8E8'
+  CLIENT_HIDDEN: '#A8D8B0',
+  SENSOR: '#B2D880',
+  TRACKER: '#C8D866',
+  CLIENT_MUTE: '#DFCF52',
+  CLIENT: '#ECC044',
+  CLIENT_BASE: '#F0A834',
+  REPEATER: '#F08824',
+  ROUTER_LATE: '#E86C1C',
+  ROUTER: '#D44E14',
+  LOST_AND_FOUND: '#C0300C',
 });
+
+/**
+ * MeshCore role colour palette — cool grey-blue gradient used to distinguish
+ * MeshCore nodes from Meshtastic nodes in future protocol-aware views.
+ *
+ * These colours are defined now for completeness but are not yet applied to
+ * live UI surfaces — see the protocol-aware legend work that will follow once
+ * MeshCore ingest is implemented.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const meshcoreRoleColors = Object.freeze({
+  REPEATER: '#C8D0DC',
+  ROOM_SERVER: '#8AAAC6',
+  SENSOR: '#4A7EB4',
+  COMPANION: '#1A5498',
+});
+
+/**
+ * Return the role colour palette appropriate for the given protocol.
+ *
+ * Defaults to {@link roleColors} (Meshtastic) for absent or unrecognised
+ * protocol values so existing callers are unaffected when MeshCore ingest
+ * is not yet active.
+ *
+ * @param {string|null|undefined} protocol Protocol string from the API.
+ * @returns {Readonly<Record<string, string>>} Role colour map.
+ */
+export function getRoleColors(protocol) {
+  if (protocol != null && String(protocol).trim() === 'meshcore') {
+    return meshcoreRoleColors;
+  }
+  return roleColors;
+}
 
 export const roleRenderOrder = Object.freeze({
   CLIENT_HIDDEN: 1,
