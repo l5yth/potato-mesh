@@ -87,7 +87,7 @@ RSpec.describe "Multi-protocol support" do
       node_id: node_id,
       start_time: now - 60,
       last_seen_time: now,
-      version: "0.5.11",
+      version: "0.5.12",
     }
     payload[:protocol] = protocol if protocol
     post "/api/ingestors", payload.to_json, auth_headers
@@ -446,7 +446,7 @@ RSpec.describe "Multi-protocol support" do
       with_db do |db|
         db.execute(
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version, protocol) VALUES(?,?,?,?,?)",
-          [MESH_INGESTOR_ID, now - 60, now, "0.5.11", "meshtastic"],
+          [MESH_INGESTOR_ID, now - 60, now, "0.5.12", "meshtastic"],
         )
       end
 

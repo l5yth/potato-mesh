@@ -326,7 +326,10 @@ h1 {
   outline-offset: 2px;
 }
 
-.menu-toggle {
+/* Compound selector required: .icon-button { display: inline-flex } (below) shares
+   the same specificity and appears later in the source, so it would otherwise win
+   and keep the toggle permanently visible above the 900px breakpoint. */
+.icon-button.menu-toggle {
   display: none;
 }
 
@@ -515,7 +518,7 @@ h1 {
     display: none;
   }
 
-  .menu-toggle {
+  .icon-button.menu-toggle {
     display: inline-flex;
   }
 
@@ -805,6 +808,17 @@ body.view-map .map-panel--full #map {
 
 .full-screen-section--chat .chat-panel {
   height: 100%;
+}
+
+body.view-chat {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body.view-chat .page-shell {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .view-chat .page-main--full-screen {
