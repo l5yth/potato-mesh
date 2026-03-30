@@ -38,6 +38,11 @@ _IGNORED_PACKET_LOG_PATH = (
 _IGNORED_PACKET_LOCK = threading.Lock()
 """Lock guarding writes to :data:`_IGNORED_PACKET_LOG_PATH`."""
 
+_VALID_TELEMETRY_TYPES: frozenset[str] = frozenset(
+    {"device", "environment", "power", "air_quality"}
+)
+"""Allowed values for the ``telemetry_type`` discriminator field."""
+
 _HOST_TELEMETRY_INTERVAL_SECS = 60 * 60
 """Minimum interval between accepted host telemetry packets."""
 
@@ -654,6 +659,10 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     _aq = telemetry_section.get("airQualityMetrics") or telemetry_section.get(
         "air_quality_metrics"
     )
+    # Priority order matters: deviceMetrics is checked first because the device
+    # sub-object also carries a voltage field that overlaps with powerMetrics.
+    # Meshtastic uses a protobuf oneof so only one sub-object can be populated per
+    # packet; the elif chain handles any hypothetical overlap from future providers.
     if isinstance(_dm, Mapping):
         telemetry_type: str | None = "device"
     elif isinstance(_em, Mapping):
@@ -663,6 +672,14 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     elif isinstance(_aq, Mapping):
         telemetry_type = "air_quality"
     else:
+        telemetry_type = None
+
+    if telemetry_type is not None and telemetry_type not in _VALID_TELEMETRY_TYPES:
+        config._debug_log(
+            "Unexpected telemetry_type value; dropping field",
+            context="handlers.store_telemetry",
+            telemetry_type=telemetry_type,
+        )
         telemetry_type = None
 
     channel = _coerce_int(_first(decoded, "channel", default=None))

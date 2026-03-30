@@ -26,4 +26,14 @@ ALTER TABLE positions ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic';
 ALTER TABLE telemetry ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic';
 ALTER TABLE traces    ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic';
 ALTER TABLE neighbors ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic';
+
+-- Indices to support ?protocol= filtering on every entity endpoint without
+-- full table scans as multi-protocol traffic grows.
+CREATE INDEX IF NOT EXISTS idx_ingestors_protocol ON ingestors(protocol);
+CREATE INDEX IF NOT EXISTS idx_nodes_protocol     ON nodes(protocol);
+CREATE INDEX IF NOT EXISTS idx_messages_protocol  ON messages(protocol);
+CREATE INDEX IF NOT EXISTS idx_positions_protocol ON positions(protocol);
+CREATE INDEX IF NOT EXISTS idx_telemetry_protocol ON telemetry(protocol);
+CREATE INDEX IF NOT EXISTS idx_traces_protocol    ON traces(protocol);
+CREATE INDEX IF NOT EXISTS idx_neighbors_protocol ON neighbors(protocol);
 COMMIT;

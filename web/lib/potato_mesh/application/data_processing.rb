@@ -1070,7 +1070,9 @@ module PotatoMesh
         air_quality_metrics = normalize_json_object(payload["air_quality_metrics"] || payload["airQualityMetrics"])
         air_quality_metrics ||= normalize_json_object(telemetry_section["airQualityMetrics"]) if telemetry_section&.key?("airQualityMetrics")
 
+        valid_telemetry_types = %w[device environment power air_quality].freeze
         telemetry_type = string_or_nil(payload["telemetry_type"])
+        telemetry_type = nil unless valid_telemetry_types.include?(telemetry_type)
         telemetry_type ||= if device_metrics&.any?
             "device"
           elsif environment_metrics&.any?
