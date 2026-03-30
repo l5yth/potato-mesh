@@ -65,6 +65,21 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
+_KNOWN_PROVIDERS = ("meshtastic", "meshcore")
+
+_raw_provider = os.environ.get("PROVIDER", "meshtastic").strip().lower()
+if _raw_provider not in _KNOWN_PROVIDERS:
+    raise ValueError(
+        f"Unknown PROVIDER={_raw_provider!r}. "
+        f"Valid options: {', '.join(_KNOWN_PROVIDERS)}"
+    )
+
+PROVIDER = _raw_provider
+"""Active ingestion provider, selected via the :envvar:`PROVIDER` environment variable.
+
+Accepted values are ``meshtastic`` (default) and ``meshcore``.
+"""
+
 
 def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
     """Normalise a comma-separated list of channel names.

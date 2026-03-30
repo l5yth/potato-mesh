@@ -30,7 +30,9 @@ from pathlib import Path
 
 from . import channels, config, queue
 
-_IGNORED_PACKET_LOG_PATH = Path(__file__).resolve().parents[2] / "ignored-meshtastic.txt"
+_IGNORED_PACKET_LOG_PATH = (
+    Path(__file__).resolve().parents[2] / "ignored-meshtastic.txt"
+)
 """Filesystem path that stores ignored Meshtastic packets when debugging."""
 
 _IGNORED_PACKET_LOCK = threading.Lock()

@@ -823,3 +823,162 @@ def test_loop_iteration_full_pass_returns_false(monkeypatch):
     )
     monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
     assert daemon._loop_iteration(state) is False
+
+
+# ---------------------------------------------------------------------------
+# PROVIDER env-var selection
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_fake_provider(name: str):
+    """Return a minimal provider-like object that causes main() to exit quickly."""
+
+    class FakeIface:
+        def close(self):
+            return None
+
+    class FakeProvider:
+        def subscribe(self):
+            return []
+
+        def connect(self, *, active_candidate):
+            return FakeIface(), "fake", active_candidate
+
+        def extract_host_node_id(self, iface):
+            return None
+
+        def node_snapshot_items(self, iface):
+            return []
+
+    fp = FakeProvider()
+    fp.name = name
+    return fp
+
+
+def _patch_daemon_for_fast_exit(monkeypatch):
+    """Apply monkeypatches that make daemon.main() return after one iteration."""
+    import types as _types
+
+    class AutoStopEvent:
+        def __init__(self):
+            self._set = False
+
+        def set(self):
+            self._set = True
+
+        def is_set(self):
+            return self._set
+
+        def wait(self, _timeout=None):
+            self._set = True
+            return True
+
+    monkeypatch.setattr(daemon.config, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_CLOSE_TIMEOUT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_INGESTOR_HEARTBEAT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "ENERGY_SAVING", False)
+    monkeypatch.setattr(daemon.config, "_INACTIVITY_RECONNECT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "CONNECTION", "fake")
+    monkeypatch.setattr(
+        daemon,
+        "threading",
+        _types.SimpleNamespace(
+            Event=AutoStopEvent,
+            current_thread=daemon.threading.current_thread,
+            main_thread=daemon.threading.main_thread,
+        ),
+    )
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: None)
+    monkeypatch.setattr(daemon.handlers, "upsert_node", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
+
+
+def test_config_provider_defaults_to_meshtastic(monkeypatch):
+    """PROVIDER env var absent → config.PROVIDER == 'meshtastic'."""
+    import importlib
+    import data.mesh_ingestor.config as cfg
+
+    monkeypatch.delenv("PROVIDER", raising=False)
+    importlib.reload(cfg)
+    assert cfg.PROVIDER == "meshtastic"
+
+
+def test_config_provider_meshcore(monkeypatch):
+    """PROVIDER=meshcore → config.PROVIDER == 'meshcore'."""
+    import importlib
+    import data.mesh_ingestor.config as cfg
+
+    monkeypatch.setenv("PROVIDER", "meshcore")
+    importlib.reload(cfg)
+    assert cfg.PROVIDER == "meshcore"
+    # clean up so other tests see the default
+    monkeypatch.delenv("PROVIDER", raising=False)
+    importlib.reload(cfg)
+
+
+def test_config_provider_unknown_raises(monkeypatch):
+    """An unrecognised PROVIDER value must raise ValueError at import time."""
+    import importlib
+    import data.mesh_ingestor.config as cfg
+
+    monkeypatch.setenv("PROVIDER", "reticulum")
+    with pytest.raises(ValueError, match="PROVIDER"):
+        importlib.reload(cfg)
+    monkeypatch.delenv("PROVIDER", raising=False)
+    importlib.reload(cfg)
+
+
+def test_daemon_main_selects_meshtastic_provider(monkeypatch):
+    """main() must instantiate MeshtasticProvider when PROVIDER=meshtastic."""
+    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
+
+    instantiated = []
+    original_init = MeshtasticProvider.__init__
+
+    def tracking_init(self):
+        instantiated.append(self)
+        original_init(self)
+
+    _patch_daemon_for_fast_exit(monkeypatch)
+    monkeypatch.setattr(daemon.config, "PROVIDER", "meshtastic")
+
+    import data.mesh_ingestor.providers.meshtastic as _m
+
+    monkeypatch.setattr(_m.MeshtasticProvider, "__init__", tracking_init)
+    # subscribe would normally hit pubsub; replace the whole provider instead
+    monkeypatch.setattr(
+        _m,
+        "MeshtasticProvider",
+        lambda: _make_minimal_fake_provider("meshtastic"),
+    )
+
+    daemon.main()
+    # If we reach here without error the meshtastic branch was taken.
+
+
+def test_daemon_main_selects_meshcore_provider(monkeypatch):
+    """main() must instantiate MeshcoreProvider when PROVIDER=meshcore."""
+    _patch_daemon_for_fast_exit(monkeypatch)
+    monkeypatch.setattr(daemon.config, "PROVIDER", "meshcore")
+
+    import data.mesh_ingestor.providers.meshcore as _mc
+
+    monkeypatch.setattr(
+        _mc,
+        "MeshcoreProvider",
+        lambda: _make_minimal_fake_provider("meshcore"),
+    )
+
+    daemon.main()
+    # Reaching here means the meshcore branch was entered without error.

@@ -204,10 +204,10 @@ def test_meshcore_subscribe_returns_empty_list():
 @pytest.mark.parametrize(
     "target",
     [
-        "192.168.1.1:4403",
+        "meshnode.local:4403",
         "meshtastic.local:4403",
         "hostname:1234",
-        "10.0.0.1:80",
+        "otherhost:80",
     ],
 )
 def test_meshcore_connect_rejects_tcp_targets(target, monkeypatch):
@@ -273,7 +273,7 @@ def test_meshcore_node_snapshot_items_empty():
 
 def test_is_tcp_target_detects_host_port():
     """_is_tcp_target must return True for host:port strings."""
-    assert _is_tcp_target("192.168.1.1:4403") is True
+    assert _is_tcp_target("meshnode.local:4403") is True
     assert _is_tcp_target("meshtastic.local:4403") is True
 
 

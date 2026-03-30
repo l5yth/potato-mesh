@@ -40,9 +40,7 @@ from .. import config
 # Debug log file
 # ---------------------------------------------------------------------------
 
-_IGNORED_MESSAGE_LOG_PATH = (
-    Path(__file__).resolve().parents[3] / "ignored-meshcore.txt"
-)
+_IGNORED_MESSAGE_LOG_PATH = Path(__file__).resolve().parents[3] / "ignored-meshcore.txt"
 """Filesystem path that stores raw MeshCore messages when ``DEBUG=1``."""
 
 _IGNORED_MESSAGE_LOCK = threading.Lock()
@@ -175,7 +173,7 @@ class MeshcoreProvider:
         """Return the host node identifier from the MeshCore interface."""
         return getattr(iface, "host_node_id", None)
 
-    def node_snapshot_items(self, iface: object) -> list[tuple[str, object]]:
+    def node_snapshot_items(self, _iface: object) -> list[tuple[str, object]]:
         """Return an initial node snapshot.
 
         MeshCore node snapshots are not yet implemented; an empty list is
