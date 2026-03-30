@@ -4066,6 +4066,24 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect_stored_telemetry_type(24_005, "air_quality")
       end
 
+      it "rejects an invalid telemetry_type and falls back to metric inference" do
+        payload = [
+          {
+            "id" => 24_006,
+            "node_id" => "!teltype06",
+            "rx_time" => reference_time.to_i - 50,
+            "telemetry_type" => "bogus_value",
+            "device_metrics" => { "battery_level" => 55, "channel_utilization" => 20 },
+          },
+        ]
+
+        post "/api/telemetry", payload.to_json, auth_headers
+
+        expect(last_response).to be_ok
+        # Invalid explicit type must be discarded; device_metrics inference takes over.
+        expect_stored_telemetry_type(24_006, "device")
+      end
+
       it "returns 400 when more than 1000 telemetry packets are provided" do
         payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
 

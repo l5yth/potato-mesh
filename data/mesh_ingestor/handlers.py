@@ -678,6 +678,8 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         config._debug_log(
             "Unexpected telemetry_type value; dropping field",
             context="handlers.store_telemetry",
+            severity="warning",
+            always=True,
             telemetry_type=telemetry_type,
         )
         telemetry_type = None
