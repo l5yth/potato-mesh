@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import threading
 import types
@@ -27,7 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from data.mesh_ingestor import daemon
+from data.mesh_ingestor import daemon  # noqa: E402 - path setup
+import data.mesh_ingestor.config as _cfg_module  # noqa: E402 - path setup
 
 
 class FakeEvent:
@@ -904,85 +906,68 @@ def _patch_daemon_for_fast_exit(monkeypatch):
     )
 
 
+def _reload_config() -> types.ModuleType:
+    """Reload and return the config module, picking up any env-var changes."""
+    importlib.reload(_cfg_module)
+    return _cfg_module
+
+
 @pytest.fixture()
 def reset_provider_config():
     """Reload config after the test so PROVIDER changes don't leak across tests."""
     yield
-    import importlib
     import os
-    import data.mesh_ingestor.config as cfg
 
     os.environ.pop("PROVIDER", None)
-    importlib.reload(cfg)
+    _reload_config()
 
 
-def test_config_provider_defaults_to_meshtastic(monkeypatch, reset_provider_config):
-    """PROVIDER env var absent → config.PROVIDER == 'meshtastic'."""
-    import importlib
-    import data.mesh_ingestor.config as cfg
-
-    monkeypatch.delenv("PROVIDER", raising=False)
-    importlib.reload(cfg)
-    assert cfg.PROVIDER == "meshtastic"
-
-
-def test_config_provider_meshcore(monkeypatch, reset_provider_config):
-    """PROVIDER=meshcore → config.PROVIDER == 'meshcore'."""
-    import importlib
-    import data.mesh_ingestor.config as cfg
-
-    monkeypatch.setenv("PROVIDER", "meshcore")
-    importlib.reload(cfg)
-    assert cfg.PROVIDER == "meshcore"
+@pytest.mark.parametrize(
+    "env_value, expected",
+    [
+        (None, "meshtastic"),
+        ("meshcore", "meshcore"),
+    ],
+)
+def test_config_provider_env(monkeypatch, reset_provider_config, env_value, expected):
+    """PROVIDER env var selects the provider; absent defaults to 'meshtastic'."""
+    if env_value is None:
+        monkeypatch.delenv("PROVIDER", raising=False)
+    else:
+        monkeypatch.setenv("PROVIDER", env_value)
+    assert _reload_config().PROVIDER == expected
 
 
 def test_config_provider_unknown_raises(monkeypatch, reset_provider_config):
     """An unrecognised PROVIDER value must raise ValueError at import time."""
-    import importlib
-    import data.mesh_ingestor.config as cfg
-
     monkeypatch.setenv("PROVIDER", "reticulum")
     with pytest.raises(ValueError, match="PROVIDER"):
-        importlib.reload(cfg)
+        _reload_config()
 
 
-def test_daemon_main_selects_meshtastic_provider(monkeypatch):
-    """main() must instantiate MeshtasticProvider when PROVIDER=meshtastic."""
+@pytest.mark.parametrize(
+    "provider_name, module_path, class_name",
+    [
+        ("meshtastic", "data.mesh_ingestor.providers.meshtastic", "MeshtasticProvider"),
+        ("meshcore", "data.mesh_ingestor.providers.meshcore", "MeshcoreProvider"),
+    ],
+)
+def test_daemon_main_selects_provider(
+    monkeypatch, provider_name, module_path, class_name
+):
+    """main() must instantiate the correct provider class based on PROVIDER."""
+    mod = importlib.import_module(module_path)
     instantiated = []
 
-    def make_meshtastic():
-        p = _make_minimal_fake_provider("meshtastic")
+    def make_provider():
+        p = _make_minimal_fake_provider(provider_name)
         instantiated.append(p)
         return p
 
     _patch_daemon_for_fast_exit(monkeypatch)
-    monkeypatch.setattr(daemon.config, "PROVIDER", "meshtastic")
-
-    import data.mesh_ingestor.providers.meshtastic as _m
-
-    monkeypatch.setattr(_m, "MeshtasticProvider", make_meshtastic)
+    monkeypatch.setattr(daemon.config, "PROVIDER", provider_name)
+    monkeypatch.setattr(mod, class_name, make_provider)
 
     daemon.main()
     assert len(instantiated) == 1
-    assert instantiated[0].name == "meshtastic"
-
-
-def test_daemon_main_selects_meshcore_provider(monkeypatch):
-    """main() must instantiate MeshcoreProvider when PROVIDER=meshcore."""
-    instantiated = []
-
-    def make_meshcore():
-        p = _make_minimal_fake_provider("meshcore")
-        instantiated.append(p)
-        return p
-
-    _patch_daemon_for_fast_exit(monkeypatch)
-    monkeypatch.setattr(daemon.config, "PROVIDER", "meshcore")
-
-    import data.mesh_ingestor.providers.meshcore as _mc
-
-    monkeypatch.setattr(_mc, "MeshcoreProvider", make_meshcore)
-
-    daemon.main()
-    assert len(instantiated) == 1
-    assert instantiated[0].name == "meshcore"
+    assert instantiated[0].name == provider_name
