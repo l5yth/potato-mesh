@@ -282,6 +282,8 @@ def test_is_tcp_target_rejects_serial_ble():
     assert _is_tcp_target("/dev/ttyUSB0") is False
     assert _is_tcp_target("AA:BB:CC:DD:EE:FF") is False
     assert _is_tcp_target("COM3") is False
+    # BLE MAC address whose final octet is all-decimal must not be a false positive.
+    assert _is_tcp_target("AA:BB:CC:DD:EE:12") is False
 
 
 def test_record_meshcore_message_skipped_without_debug(monkeypatch, tmp_path):
@@ -314,6 +316,22 @@ def test_record_meshcore_message_writes_with_debug(monkeypatch, tmp_path):
     assert entry["source"] == "/dev/ttyUSB0"
     assert "timestamp" in entry
     assert "message" in entry
+
+
+def test_record_meshcore_message_serialises_bytes(monkeypatch, tmp_path):
+    """bytes values in the message must be base64-encoded, not repr'd."""
+    import json as _json
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "DEBUG", True)
+    log_path = tmp_path / "ignored-meshcore.txt"
+    monkeypatch.setattr(_mod, "_IGNORED_MESSAGE_LOG_PATH", log_path)
+
+    _record_meshcore_message({"payload": b"\xde\xad\xbe\xef"}, source="ble")
+
+    entry = _json.loads(log_path.read_text(encoding="utf-8").strip())
+    # The dict should be preserved and bytes base64-encoded, not str()'d.
+    assert entry["message"] == {"payload": "3q2+7w=="}
 
 
 def test_record_meshcore_message_appends_multiple(monkeypatch, tmp_path):

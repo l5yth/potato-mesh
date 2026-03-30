@@ -28,6 +28,7 @@ web API.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import threading
@@ -50,13 +51,40 @@ _IGNORED_MESSAGE_LOCK = threading.Lock()
 # Helpers
 # ---------------------------------------------------------------------------
 
-_TCP_TARGET_RE = re.compile(r":\d+$")
-"""Pattern that matches a ``host:port`` style TCP target."""
+_TCP_TARGET_RE = re.compile(r"[^:]+:\d{1,5}")
+"""Pattern matching a ``host:port`` TCP target (exactly one colon, port 1–5 digits).
+
+Using ``fullmatch`` ensures BLE MAC addresses (``AA:BB:CC:DD:EE:12``) are not
+mistaken for TCP targets — the multiple colons in a MAC prevent a full match.
+"""
 
 
 def _is_tcp_target(target: str) -> bool:
-    """Return ``True`` when *target* looks like a TCP ``host:port`` address."""
-    return bool(_TCP_TARGET_RE.search(target))
+    """Return ``True`` when *target* looks like a TCP ``host:port`` address.
+
+    BLE MAC addresses such as ``AA:BB:CC:DD:EE:12`` are correctly rejected
+    because they contain more than one colon, which prevents a full match
+    against the ``[^:]+:\\d{1,5}`` pattern.
+    """
+    return bool(_TCP_TARGET_RE.fullmatch(target))
+
+
+def _to_json_safe(value: object) -> object:
+    """Recursively convert *value* to a JSON-serialisable form.
+
+    Handles the common types present in mesh protocol messages: dicts, lists,
+    bytes (base64-encoded), and primitives.  Anything else is coerced via
+    ``str()``.
+    """
+    if isinstance(value, dict):
+        return {str(k): _to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_json_safe(v) for v in value]
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _record_meshcore_message(message: object, *, source: str) -> None:
@@ -75,7 +103,7 @@ def _record_meshcore_message(message: object, *, source: str) -> None:
 
     timestamp = datetime.now(timezone.utc).isoformat()
     entry = {
-        "message": str(message),
+        "message": _to_json_safe(message),
         "source": source,
         "timestamp": timestamp,
     }

@@ -904,7 +904,19 @@ def _patch_daemon_for_fast_exit(monkeypatch):
     )
 
 
-def test_config_provider_defaults_to_meshtastic(monkeypatch):
+@pytest.fixture()
+def reset_provider_config():
+    """Reload config after the test so PROVIDER changes don't leak across tests."""
+    yield
+    import importlib
+    import os
+    import data.mesh_ingestor.config as cfg
+
+    os.environ.pop("PROVIDER", None)
+    importlib.reload(cfg)
+
+
+def test_config_provider_defaults_to_meshtastic(monkeypatch, reset_provider_config):
     """PROVIDER env var absent → config.PROVIDER == 'meshtastic'."""
     import importlib
     import data.mesh_ingestor.config as cfg
@@ -914,7 +926,7 @@ def test_config_provider_defaults_to_meshtastic(monkeypatch):
     assert cfg.PROVIDER == "meshtastic"
 
 
-def test_config_provider_meshcore(monkeypatch):
+def test_config_provider_meshcore(monkeypatch, reset_provider_config):
     """PROVIDER=meshcore → config.PROVIDER == 'meshcore'."""
     import importlib
     import data.mesh_ingestor.config as cfg
@@ -922,12 +934,9 @@ def test_config_provider_meshcore(monkeypatch):
     monkeypatch.setenv("PROVIDER", "meshcore")
     importlib.reload(cfg)
     assert cfg.PROVIDER == "meshcore"
-    # clean up so other tests see the default
-    monkeypatch.delenv("PROVIDER", raising=False)
-    importlib.reload(cfg)
 
 
-def test_config_provider_unknown_raises(monkeypatch):
+def test_config_provider_unknown_raises(monkeypatch, reset_provider_config):
     """An unrecognised PROVIDER value must raise ValueError at import time."""
     import importlib
     import data.mesh_ingestor.config as cfg
@@ -935,50 +944,45 @@ def test_config_provider_unknown_raises(monkeypatch):
     monkeypatch.setenv("PROVIDER", "reticulum")
     with pytest.raises(ValueError, match="PROVIDER"):
         importlib.reload(cfg)
-    monkeypatch.delenv("PROVIDER", raising=False)
-    importlib.reload(cfg)
 
 
 def test_daemon_main_selects_meshtastic_provider(monkeypatch):
     """main() must instantiate MeshtasticProvider when PROVIDER=meshtastic."""
-    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
-
     instantiated = []
-    original_init = MeshtasticProvider.__init__
 
-    def tracking_init(self):
-        instantiated.append(self)
-        original_init(self)
+    def make_meshtastic():
+        p = _make_minimal_fake_provider("meshtastic")
+        instantiated.append(p)
+        return p
 
     _patch_daemon_for_fast_exit(monkeypatch)
     monkeypatch.setattr(daemon.config, "PROVIDER", "meshtastic")
 
     import data.mesh_ingestor.providers.meshtastic as _m
 
-    monkeypatch.setattr(_m.MeshtasticProvider, "__init__", tracking_init)
-    # subscribe would normally hit pubsub; replace the whole provider instead
-    monkeypatch.setattr(
-        _m,
-        "MeshtasticProvider",
-        lambda: _make_minimal_fake_provider("meshtastic"),
-    )
+    monkeypatch.setattr(_m, "MeshtasticProvider", make_meshtastic)
 
     daemon.main()
-    # If we reach here without error the meshtastic branch was taken.
+    assert len(instantiated) == 1
+    assert instantiated[0].name == "meshtastic"
 
 
 def test_daemon_main_selects_meshcore_provider(monkeypatch):
     """main() must instantiate MeshcoreProvider when PROVIDER=meshcore."""
+    instantiated = []
+
+    def make_meshcore():
+        p = _make_minimal_fake_provider("meshcore")
+        instantiated.append(p)
+        return p
+
     _patch_daemon_for_fast_exit(monkeypatch)
     monkeypatch.setattr(daemon.config, "PROVIDER", "meshcore")
 
     import data.mesh_ingestor.providers.meshcore as _mc
 
-    monkeypatch.setattr(
-        _mc,
-        "MeshcoreProvider",
-        lambda: _make_minimal_fake_provider("meshcore"),
-    )
+    monkeypatch.setattr(_mc, "MeshcoreProvider", make_meshcore)
 
     daemon.main()
-    # Reaching here means the meshcore branch was entered without error.
+    assert len(instantiated) == 1
+    assert instantiated[0].name == "meshcore"
