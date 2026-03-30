@@ -859,35 +859,13 @@ def _make_minimal_fake_provider(name: str):
 
 def _patch_daemon_for_fast_exit(monkeypatch):
     """Apply monkeypatches that make daemon.main() return after one iteration."""
-    import types as _types
-
-    class AutoStopEvent:
-        def __init__(self):
-            self._set = False
-
-        def set(self):
-            self._set = True
-
-        def is_set(self):
-            return self._set
-
-        def wait(self, _timeout=None):
-            self._set = True
-            return True
-
-    monkeypatch.setattr(daemon.config, "SNAPSHOT_SECS", 0)
-    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
-    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
-    monkeypatch.setattr(daemon.config, "_CLOSE_TIMEOUT_SECS", 0)
-    monkeypatch.setattr(daemon.config, "_INGESTOR_HEARTBEAT_SECS", 0)
-    monkeypatch.setattr(daemon.config, "ENERGY_SAVING", False)
-    monkeypatch.setattr(daemon.config, "_INACTIVITY_RECONNECT_SECS", 0)
+    _configure_common_defaults(monkeypatch)
     monkeypatch.setattr(daemon.config, "CONNECTION", "fake")
     monkeypatch.setattr(
         daemon,
         "threading",
-        _types.SimpleNamespace(
-            Event=AutoStopEvent,
+        types.SimpleNamespace(
+            Event=AutoSetEvent,
             current_thread=daemon.threading.current_thread,
             main_thread=daemon.threading.main_thread,
         ),
