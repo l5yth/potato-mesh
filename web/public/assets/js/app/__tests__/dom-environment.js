@@ -329,6 +329,9 @@ export function createDomEnvironment(options = {}) {
     createElement(tagName) {
       return new MockElement(tagName, registry);
     },
+    createTextNode(text) {
+      return String(text);
+    },
     createDocumentFragment() {
       const fragment = new MockElement('fragment', null);
       fragment.childNodes = [];

@@ -260,6 +260,9 @@ export function buildChatTabModel({
         entries: [],
         labelPriority: labelInfo.priority,
         isPrimaryFallback: bucketKey === '0',
+        // Protocol is captured from the first message that creates the bucket.
+        // In practice all messages in a bucket share the same ingestor/protocol,
+        // so subsequent messages don't update this field.
         protocol: message.protocol ?? null
       };
       channelBuckets.set(bucketKey, bucket);

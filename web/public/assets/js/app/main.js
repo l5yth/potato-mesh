@@ -276,11 +276,10 @@ export function canonicalNodeIdentifier(identifier) {
  *
  * @param {string|null} longName Display name.
  * @param {string|null} identifier Node identifier.
- * @param {string} [className='node-long-link'] Optional class attribute.
- * @param {string|null} [protocol=null] Protocol string from the API.
+ * @param {{ className?: string, protocol?: string|null }} [options] Rendering options.
  * @returns {string} Escaped HTML snippet.
  */
-export function renderNodeLongNameLink(longName, identifier, className = 'node-long-link', protocol = null) {
+export function renderNodeLongNameLink(longName, identifier, { className = 'node-long-link', protocol = null } = {}) {
   const text = normalizeNodeNameValue(longName);
   if (!text) return '';
   const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
@@ -1549,10 +1548,32 @@ export function initializeApp(config) {
    *
    * @returns {void}
    */
+  /**
+   * Build a Meshtastic protocol icon ``<img>`` element via DOM APIs.
+   *
+   * Used wherever an icon node must be appended rather than injected via
+   * ``innerHTML``.  Mirrors the attribute set used by {@link meshtasticIconHtml}
+   * so the rendered output is identical.
+   *
+   * @returns {HTMLImageElement} Icon element ready to append.
+   */
+  function buildMeshtasticIconImg() {
+    const img = document.createElement('img');
+    img.setAttribute('src', MESHTASTIC_ICON_SRC);
+    img.setAttribute('alt', '');
+    img.setAttribute('width', '12');
+    img.setAttribute('height', '12');
+    img.setAttribute('aria-hidden', 'true');
+    img.setAttribute('loading', 'lazy');
+    img.setAttribute('decoding', 'async');
+    img.className = 'protocol-icon protocol-icon--meshtastic';
+    return img;
+  }
+
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
-    neighborLinesToggleButton.innerHTML = `${meshtasticIconHtml()} ${label}`;
+    neighborLinesToggleButton.replaceChildren(buildMeshtasticIconImg(), document.createTextNode(` ${label}`));
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1584,7 +1605,7 @@ export function initializeApp(config) {
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
     const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
-    traceLinesToggleButton.innerHTML = `${meshtasticIconHtml()} ${label}`;
+    traceLinesToggleButton.replaceChildren(buildMeshtasticIconImg(), document.createTextNode(` ${label}`));
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1673,9 +1694,7 @@ export function initializeApp(config) {
       item.type = 'button';
       item.setAttribute('aria-pressed', 'false');
         item.dataset.role = role;
-        const iconTmp = document.createElement('span');
-        iconTmp.innerHTML = meshtasticIconHtml();
-        item.appendChild(iconTmp.firstChild);
+        item.appendChild(buildMeshtasticIconImg());
         const swatch = L.DomUtil.create('span', 'legend-swatch', item);
         swatch.style.background = color;
         swatch.setAttribute('aria-hidden', 'true');
@@ -2174,7 +2193,7 @@ export function initializeApp(config) {
    */
   function buildMapPopupHtml(node, nowSec) {
     const lines = [];
-    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id, 'node-long-link', node?.protocol);
+    const longNameLink = renderNodeLongNameLink(node?.long_name, node?.node_id, { protocol: node?.protocol });
     if (longNameLink) {
       lines.push(`<b>${longNameLink}</b>`);
     }
@@ -2393,7 +2412,7 @@ export function initializeApp(config) {
     const heading = normalized.longName || normalized.shortName || normalized.nodeId || '';
     let headingHtml = '';
     if (normalized.longName) {
-      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId, 'node-long-link', normalized.protocol);
+      const link = renderNodeLongNameLink(normalized.longName, normalized.nodeId, { protocol: normalized.protocol });
       if (link) {
         headingHtml = `<strong>${link}</strong><br/>`;
       }
@@ -3991,7 +4010,7 @@ export function initializeApp(config) {
       const loraFrequencyText = formatLoraFrequencyMHz(modemMetadata.loraFreq);
       const loraFrequencyDisplay = loraFrequencyText ? escapeHtml(loraFrequencyText) : '';
       const modemPresetDisplay = modemMetadata.modemPreset ? escapeHtml(modemMetadata.modemPreset) : '';
-      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id, 'node-long-link', n.protocol);
+      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id, { protocol: n.protocol });
       tr.innerHTML = `
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
@@ -4515,12 +4534,6 @@ export function initializeApp(config) {
   refresh();
   restartAutoRefresh();
 
-  /**
-   * Inner functions exposed for unit tests. Production callers should ignore
-   * this return value — it is only populated to support test coverage.
-   *
-   * @type {{ buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function }}
-   */
   if (refreshBtn) {
     refreshBtn.addEventListener('click', refresh);
   }
@@ -4577,6 +4590,12 @@ export function initializeApp(config) {
     });
   }
 
+  /**
+   * Inner closures exposed for unit tests. Production callers should ignore
+   * this return value.
+   *
+   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function } }}
+   */
   return {
     _testUtils: {
       buildMapPopupHtml,
@@ -4586,12 +4605,3 @@ export function initializeApp(config) {
     },
   };
 }
-
-
-export const __testUtils = {
-  escapeHtml,
-  normalizeNodeNameValue,
-  buildNodeDetailHref,
-  canonicalNodeIdentifier,
-  renderNodeLongNameLink,
-};

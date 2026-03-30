@@ -27,6 +27,11 @@ export const MESHCORE_ICON_SRC = '/assets/img/meshcore.svg';
  * defaults all records to ``"meshtastic"`` and pre-existing records that
  * predate the protocol column carry an implicit Meshtastic origin.
  *
+ * Comparison is case-sensitive: only the lowercase value ``"meshtastic"``
+ * matches — mixed-case strings such as ``"Meshtastic"`` return ``false``.
+ * The backend always stores protocol values in lowercase, so this is
+ * intentional.
+ *
  * @param {string|null|undefined} protocol Protocol string from the API.
  * @returns {boolean} Whether the protocol is (or defaults to) Meshtastic.
  */

@@ -98,13 +98,13 @@ test('renderNodeLongNameLink returns empty string for null/empty longName', () =
 });
 
 test('renderNodeLongNameLink prepends Meshtastic icon for null protocol', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', 'node-long-link', null);
+  const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: null });
   assert.ok(html.includes('meshtastic.svg'), 'should include meshtastic icon');
   assert.ok(html.includes('Alice'), 'should include the name');
 });
 
 test('renderNodeLongNameLink prepends Meshtastic icon for "meshtastic" protocol', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', 'node-long-link', 'meshtastic');
+  const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: 'meshtastic' });
   assert.ok(html.includes('meshtastic.svg'), 'should include meshtastic icon');
 });
 
@@ -114,18 +114,18 @@ test('renderNodeLongNameLink prepends Meshtastic icon for undefined protocol (de
 });
 
 test('renderNodeLongNameLink does not prepend icon for "meshcore" protocol', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', 'node-long-link', 'meshcore');
+  const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: 'meshcore' });
   assert.ok(!html.includes('meshtastic.svg'), 'should not include meshtastic icon for meshcore');
   assert.ok(html.includes('Alice'), 'should still include the name');
 });
 
 test('renderNodeLongNameLink does not prepend icon for unknown protocol', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', 'node-long-link', 'reticulum');
+  const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: 'reticulum' });
   assert.ok(!html.includes('meshtastic.svg'), 'should not include meshtastic icon for unknown protocol');
 });
 
 test('renderNodeLongNameLink renders anchor with href when identifier is present', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', 'node-long-link', null);
+  const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: null });
   assert.ok(html.startsWith('<a '), 'should be an anchor element');
   assert.ok(html.includes('href="/nodes/!abc123"'), 'should include correct href');
   assert.ok(html.includes('class="node-long-link"'), 'should include CSS class');
@@ -134,25 +134,25 @@ test('renderNodeLongNameLink renders anchor with href when identifier is present
 });
 
 test('renderNodeLongNameLink renders plain text (with icon) when no identifier', () => {
-  const html = renderNodeLongNameLink('Alice', null, 'node-long-link', null);
+  const html = renderNodeLongNameLink('Alice', null, { protocol: null });
   assert.ok(!html.startsWith('<a '), 'should not be an anchor');
   assert.ok(html.includes('Alice'), 'should include the name');
   assert.ok(html.includes('meshtastic.svg'), 'should still show meshtastic icon');
 });
 
 test('renderNodeLongNameLink escapes HTML in long name', () => {
-  const html = renderNodeLongNameLink('<evil>', '!abc123', 'node-long-link', 'meshcore');
+  const html = renderNodeLongNameLink('<evil>', '!abc123', { protocol: 'meshcore' });
   assert.ok(html.includes('&lt;evil&gt;'), 'should escape < and >');
   assert.ok(!html.includes('<evil>'), 'should not include raw HTML');
 });
 
 test('renderNodeLongNameLink uses custom className', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', 'custom-class', null);
+  const html = renderNodeLongNameLink('Alice', '!abc123', { className: 'custom-class', protocol: null });
   assert.ok(html.includes('class="custom-class"'), 'should use the provided class');
 });
 
 test('renderNodeLongNameLink omits class attribute on anchor when className is empty', () => {
-  const html = renderNodeLongNameLink('Alice', '!abc123', '', null);
+  const html = renderNodeLongNameLink('Alice', '!abc123', { className: '', protocol: null });
   // Extract just the opening <a> tag to avoid matching the icon's own class attribute.
   const aTag = html.match(/^<a([^>]*)>/)?.[1] ?? '';
   assert.ok(!aTag.includes('class='), 'anchor should have no class attribute when className is empty');

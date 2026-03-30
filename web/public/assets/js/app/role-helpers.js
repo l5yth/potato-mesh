@@ -40,8 +40,12 @@ export const roleIdToName = Object.freeze({
 });
 
 /**
- * Meshtastic role colour palette — warm gradient from mint-green (hidden/quiet
- * nodes) through amber and orange to burnt-sienna (high-priority routers).
+ * Meshtastic role colour palette — warm yellow-green to burnt-orange gradient
+ * that provides higher contrast than the previous blue-tinted palette, making
+ * role distinctions more legible on both light and dark map tiles.
+ *
+ * Updated from the original blue-cool palette (see PR #657) to improve
+ * readability alongside the MeshCore grey-blue palette.
  *
  * Firmware 2.7.10 / Android 2.7.0 roles (see issue #177).
  *
