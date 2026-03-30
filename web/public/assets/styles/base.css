@@ -326,7 +326,7 @@ h1 {
   outline-offset: 2px;
 }
 
-.menu-toggle {
+.icon-button.menu-toggle {
   display: none;
 }
 
@@ -515,7 +515,7 @@ h1 {
     display: none;
   }
 
-  .menu-toggle {
+  .icon-button.menu-toggle {
     display: inline-flex;
   }
 
@@ -805,6 +805,17 @@ body.view-map .map-panel--full #map {
 
 .full-screen-section--chat .chat-panel {
   height: 100%;
+}
+
+body.view-chat {
+  height: 100vh;
+  overflow: hidden;
+}
+
+body.view-chat .page-shell {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .view-chat .page-main--full-screen {
