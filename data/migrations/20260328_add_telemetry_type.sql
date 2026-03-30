@@ -26,15 +26,16 @@ UPDATE telemetry SET telemetry_type = 'device'
     AND (battery_level IS NOT NULL OR channel_utilization IS NOT NULL
          OR air_util_tx IS NOT NULL OR uptime_seconds IS NOT NULL);
 
--- Power sensor: voltage/current without any device field.
--- Note: device_metrics also stores a `voltage` reading (~4.2 V for battery).
--- A device row that has voltage but lacks all four device-discriminator fields
--- (battery_level, channel_utilization, air_util_tx, uptime_seconds) would be
--- classified as 'power' here.  In practice firmware always sends at least one
--- of those alongside voltage, so the ambiguity is negligible for historical data.
+-- Power sensor: current is the unambiguous power-sensor discriminator.
+-- voltage is intentionally excluded here: device_metrics also stores a voltage
+-- reading (~4.2 V for battery), so using voltage alone would misclassify device
+-- rows whose four device-discriminator fields (battery_level, channel_utilization,
+-- air_util_tx, uptime_seconds) happen to be NULL.  Rows that have only voltage
+-- and no other classifiable fields are left as NULL (unclassified), which is
+-- more accurate than a wrong classification.
 UPDATE telemetry SET telemetry_type = 'power'
   WHERE telemetry_type IS NULL
-    AND (current IS NOT NULL OR voltage IS NOT NULL);
+    AND current IS NOT NULL;
 
 -- Environment: temperature/humidity/pressure
 UPDATE telemetry SET telemetry_type = 'environment'

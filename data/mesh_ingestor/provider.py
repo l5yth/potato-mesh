@@ -21,17 +21,8 @@ web app ingest contract.
 
 from __future__ import annotations
 
-import enum
 from collections.abc import Iterable
 from typing import Protocol, runtime_checkable
-
-
-class ProviderCapability(enum.Flag):
-    """Feature flags describing what a provider can supply."""
-
-    NONE = 0
-    NODE_SNAPSHOT = enum.auto()
-    HEARTBEATS = enum.auto()
 
 
 @runtime_checkable
@@ -61,5 +52,4 @@ class Provider(Protocol):
 
 __all__ = [
     "Provider",
-    "ProviderCapability",
 ]

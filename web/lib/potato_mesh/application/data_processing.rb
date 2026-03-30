@@ -17,6 +17,9 @@
 module PotatoMesh
   module App
     module DataProcessing
+      # Allowed values for the +telemetry_type+ discriminator column.
+      VALID_TELEMETRY_TYPES = %w[device environment power air_quality].freeze
+
       # Coerce a Ruby boolean into a SQLite integer (1/0) while passing through
       # any other value unchanged. Used when writing boolean node fields.
       #
@@ -1071,6 +1074,7 @@ module PotatoMesh
         air_quality_metrics ||= normalize_json_object(telemetry_section["airQualityMetrics"]) if telemetry_section&.key?("airQualityMetrics")
 
         telemetry_type = string_or_nil(payload["telemetry_type"])
+        telemetry_type = nil unless VALID_TELEMETRY_TYPES.include?(telemetry_type)
         telemetry_type ||= if device_metrics&.any?
             "device"
           elsif environment_metrics&.any?

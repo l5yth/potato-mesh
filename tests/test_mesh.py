@@ -2527,6 +2527,41 @@ def test_store_packet_dict_telemetry_type_absent_for_unknown_subtype(
     assert "telemetry_type" not in payload
 
 
+def test_store_packet_dict_invalid_telemetry_type_is_dropped(mesh_module, monkeypatch):
+    """A telemetry_type value that isn't in _VALID_TELEMETRY_TYPES is omitted from the payload."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    # Inject a bad type by monkey-patching the validator constant so we can
+    # verify the drop path without needing a real packet with an impossible type.
+    monkeypatch.setattr(mesh.handlers, "_VALID_TELEMETRY_TYPES", frozenset())
+
+    packet = {
+        "id": 3_000_000_010,
+        "rxTime": 1_758_040_000,
+        "fromId": "!aabbccdd",
+        "toId": "^all",
+        "decoded": {
+            "portnum": "TELEMETRY_APP",
+            "telemetry": {
+                "time": 1_758_040_000,
+                "deviceMetrics": {"batteryLevel": 80},
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert "telemetry_type" not in payload
+
+
 def test_store_packet_dict_throttles_host_telemetry(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []
