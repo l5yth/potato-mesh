@@ -131,7 +131,10 @@ impl PotatoClient {
     }
 
     pub async fn fetch_messages(&self, params: FetchParams) -> anyhow::Result<Vec<PotatoMessage>> {
-        let mut req = self.http.get(self.messages_url());
+        let mut req = self
+            .http
+            .get(self.messages_url())
+            .query(&[("protocol", "meshtastic")]);
         if let Some(limit) = params.limit {
             req = req.query(&[("limit", limit)]);
         }
@@ -336,7 +339,10 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query(mockito::Matcher::Any) // allow optional query params
+            .match_query(mockito::Matcher::UrlEncoded(
+                "protocol".into(),
+                "meshtastic".into(),
+            ))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -448,7 +454,11 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query("limit=10&since=123")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("protocol".into(), "meshtastic".into()),
+                mockito::Matcher::UrlEncoded("limit".into(), "10".into()),
+                mockito::Matcher::UrlEncoded("since".into(), "123".into()),
+            ]))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body("[]")

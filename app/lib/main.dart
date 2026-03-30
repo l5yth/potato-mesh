@@ -2951,6 +2951,7 @@ Uri _buildMessagesUri(String domain, {int since = 0, int limit = 1000}) {
     'limit': limit.toString(),
     'encrypted': 'false',
     'since': since.toString(),
+    'protocol': 'meshtastic',
   };
   if (trimmed.isEmpty) {
     return Uri.https('potatomesh.net', '/api/messages', params);
@@ -2988,7 +2989,7 @@ Uri _buildNodeUri(String domain, String nodeId) {
 /// Build the bulk nodes API URI for fetching recent nodes.
 Uri _buildNodesUri(String domain, {int limit = 1000}) {
   final trimmedDomain = domain.trim();
-  final params = {'limit': limit.toString()};
+  final params = {'limit': limit.toString(), 'protocol': 'meshtastic'};
 
   if (trimmedDomain.isEmpty) {
     return Uri.https('potatomesh.net', '/api/nodes', params);
