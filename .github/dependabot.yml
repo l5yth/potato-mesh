@@ -19,6 +19,22 @@ updates:
     schedule:
       interval: "weekly"
   - package-ecosystem: "python"
+    directory: "/data"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "cargo"
+    directory: "/matrix"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pub"
+    directory: "/app"
     schedule:
       interval: "weekly"
