@@ -91,12 +91,12 @@ def _derive_message_id(sender_ts: int, discriminator: str, text: str) -> int:
         discriminator: Channel index (``"c<N>"`` for channel messages) or
             pubkey prefix (for direct messages) to separate messages with
             the same timestamp.
-        text: Message text; only the first 128 characters are hashed.
+        text: Message text.
 
     Returns:
         A non-negative 32-bit integer suitable for the ``id`` column.
     """
-    data = f"{sender_ts}:{discriminator}:{text[:128]}".encode("utf-8", errors="replace")
+    data = f"{sender_ts}:{discriminator}:{text}".encode("utf-8", errors="replace")
     return int.from_bytes(hashlib.sha256(data).digest()[:4], "big")
 
 
