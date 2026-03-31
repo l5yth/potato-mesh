@@ -247,6 +247,7 @@ def upsert_node(node_id, node) -> None:
     """
 
     payload = _apply_radio_metadata_to_nodes(upsert_payload(node_id, node))
+    payload["ingestor"] = host_node_id()
     _queue_post_json("/api/nodes", payload, priority=queue._NODE_POST_PRIORITY)
 
     if config.DEBUG:
@@ -1055,6 +1056,43 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         )
 
 
+def store_router_heartbeat_packet(packet: Mapping) -> None:
+    """Persist a STORE_FORWARD_APP ``ROUTER_HEARTBEAT`` as a node presence update.
+
+    The heartbeat carries no message payload — the only actionable signal is
+    that the store-and-forward router is alive at the observed ``rx_time``.
+    All other fields are left untouched so the router's existing profile is
+    not overwritten.
+
+    Parameters:
+        packet: Raw packet metadata.
+
+    Returns:
+        ``None``. A minimal node upsert is enqueued at low priority.
+    """
+
+    node_id = _canonical_node_id(
+        _first(packet, "fromId", "from_id", "from", default=None)
+    )
+    if node_id is None:
+        return
+
+    rx_time = int(_first(packet, "rxTime", "rx_time", default=time.time()))
+
+    node_payload: dict = {"lastHeard": rx_time}
+    nodes_payload = _apply_radio_metadata_to_nodes({node_id: node_payload})
+    nodes_payload["ingestor"] = host_node_id()
+    _queue_post_json("/api/nodes", nodes_payload, priority=queue._DEFAULT_POST_PRIORITY)
+
+    if config.DEBUG:
+        config._debug_log(
+            "Queued router heartbeat node upsert",
+            context="handlers.store_router_heartbeat",
+            node_id=node_id,
+            rx_time=rx_time,
+        )
+
+
 def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     """Persist node information updates.
 
@@ -1203,9 +1241,11 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
         except (TypeError, ValueError):
             pass
 
+    nodes_payload = _apply_radio_metadata_to_nodes({node_id: node_payload})
+    nodes_payload["ingestor"] = host_node_id()
     _queue_post_json(
         "/api/nodes",
-        _apply_radio_metadata_to_nodes({node_id: node_payload}),
+        nodes_payload,
         priority=queue._NODE_POST_PRIORITY,
     )
 
@@ -1388,6 +1428,23 @@ def store_packet_dict(packet: Mapping) -> None:
     )
     if portnum == "NEIGHBORINFO_APP" or isinstance(neighborinfo_section, Mapping):
         store_neighborinfo_packet(packet, decoded)
+        return
+
+    store_forward_port_candidates = _portnum_candidates("STORE_FORWARD_APP")
+    store_forward_section = (
+        decoded.get("storeforward") if isinstance(decoded, Mapping) else None
+    )
+    if portnum == "STORE_FORWARD_APP" or (
+        portnum_int is not None and portnum_int in store_forward_port_candidates
+    ):
+        if not isinstance(store_forward_section, Mapping):
+            _record_ignored_packet(packet, reason="unsupported-store-forward")
+            return
+        rr = str(store_forward_section.get("rr") or "").upper()
+        if rr == "ROUTER_HEARTBEAT":
+            store_router_heartbeat_packet(packet)
+            return
+        _record_ignored_packet(packet, reason="unsupported-store-forward-rr")
         return
 
     text = _first(decoded, "payload.text", "text", "data.text", default=None)
@@ -1661,6 +1718,7 @@ __all__ = [
     "store_nodeinfo_packet",
     "store_packet_dict",
     "store_position_packet",
+    "store_router_heartbeat_packet",
     "store_telemetry_packet",
     "upsert_node",
 ]

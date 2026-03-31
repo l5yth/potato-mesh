@@ -641,6 +641,14 @@ def test_derive_message_id_is_32bit():
     assert 0 <= result <= 0xFFFFFFFF
 
 
+def test_derive_message_id_distinguishes_long_messages_differing_after_128_chars():
+    """Messages that share the first 128 characters must still get different IDs."""
+    prefix = "A" * 128
+    id_a = _derive_message_id(1_000_000, "c0", prefix + "AAAAAA")
+    id_b = _derive_message_id(1_000_000, "c0", prefix + "BBBBBB")
+    assert id_a != id_b
+
+
 # ---------------------------------------------------------------------------
 # _make_event_handlers — async callbacks
 # ---------------------------------------------------------------------------

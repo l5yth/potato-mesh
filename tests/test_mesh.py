@@ -3631,3 +3631,118 @@ def test_on_receive_skips_seen_packets(mesh_module):
     mesh.on_receive(packet, interface=None)
 
     assert packet["_potatomesh_seen"] is True
+
+
+def test_upsert_node_includes_ingestor_key(mesh_module, monkeypatch):
+    """upsert_node must attach the host node ID so /api/nodes can resolve protocol."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+    mesh.register_host_node_id("!aabbccdd")
+
+    mesh.upsert_node("!deadbeef", {"user": {"shortName": "X"}})
+
+    assert captured
+    _, payload, _ = captured[0]
+    assert payload.get("ingestor") == "!aabbccdd"
+
+
+def test_store_packet_dict_nodeinfo_includes_ingestor_key(mesh_module, monkeypatch):
+    """store_nodeinfo_packet must include the ingestor key in the /api/nodes payload."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+    mesh.register_host_node_id("!11223344")
+
+    packet = {
+        "id": 1,
+        "rxTime": 1_700_000_000,
+        "fromId": "!aabbccdd",
+        "decoded": {
+            "portnum": "NODEINFO_APP",
+            "user": {"id": "!aabbccdd", "shortName": "N"},
+        },
+    }
+    mesh.store_packet_dict(packet)
+
+    node_calls = [(p, pl) for p, pl, _ in captured if p == "/api/nodes"]
+    assert node_calls, "Expected a /api/nodes POST"
+    _, payload = node_calls[0]
+    assert payload.get("ingestor") == "!11223344"
+
+
+def test_store_packet_dict_router_heartbeat(mesh_module, monkeypatch):
+    """STORE_FORWARD_APP ROUTER_HEARTBEAT upserts the node at low priority."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+    mesh.register_host_node_id("!f00dbabe")
+
+    packet = {
+        "id": 2377284085,
+        "rxTime": 1_774_868_197,
+        "fromId": "!435a7fbc",
+        "toId": "^all",
+        "hopLimit": "2",
+        "rxSnr": "-12.25",
+        "rxRssi": "-110",
+        "decoded": {
+            "portnum": "STORE_FORWARD_APP",
+            "storeforward": {
+                "heartbeat": {"period": "900"},
+                "rr": "ROUTER_HEARTBEAT",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected a POST for router heartbeat"
+    path, payload, priority = captured[0]
+    assert path == "/api/nodes"
+    assert priority == mesh._DEFAULT_POST_PRIORITY
+    assert "!435a7fbc" in payload
+    node_entry = payload["!435a7fbc"]
+    assert node_entry["lastHeard"] == 1_774_868_197
+    assert payload.get("ingestor") == "!f00dbabe"
+    assert set(node_entry.keys()) == {
+        "lastHeard"
+    }, "Heartbeat must only set lastHeard, nothing else"
+
+
+def test_store_packet_dict_store_forward_non_heartbeat_ignored(
+    mesh_module, monkeypatch
+):
+    """STORE_FORWARD_APP packets that are not ROUTER_HEARTBEAT are dropped."""
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda *a, **kw: captured.append(a),
+    )
+
+    packet = {
+        "id": 1,
+        "rxTime": 1_700_000_000,
+        "fromId": "!aabbccdd",
+        "decoded": {
+            "portnum": "STORE_FORWARD_APP",
+            "storeforward": {"rr": "ROUTER_CLIENT_RESPONSE"},
+        },
+    }
+    mesh.store_packet_dict(packet)
+
+    assert not captured, "Non-heartbeat STORE_FORWARD_APP must not be queued"
