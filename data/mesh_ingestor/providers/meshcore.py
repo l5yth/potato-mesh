@@ -170,7 +170,7 @@ def _contact_to_node_dict(contact: dict) -> dict:
     }
     lat = contact.get("adv_lat")
     lon = contact.get("adv_lon")
-    if lat is not None and lon is not None and (lat != 0.0 or lon != 0.0):
+    if lat is not None and lon is not None and (lat or lon):
         node["position"] = {"latitude": lat, "longitude": lon}
     return node
 
@@ -197,7 +197,7 @@ def _self_info_to_node_dict(self_info: dict) -> dict:
     }
     lat = self_info.get("adv_lat")
     lon = self_info.get("adv_lon")
-    if lat is not None and lon is not None and (lat != 0.0 or lon != 0.0):
+    if lat is not None and lon is not None and (lat or lon):
         node["position"] = {"latitude": lat, "longitude": lon}
     return node
 

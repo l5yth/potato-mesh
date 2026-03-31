@@ -512,8 +512,8 @@ def test_contact_to_node_dict_includes_position_when_nonzero():
     }
     node = _contact_to_node_dict(contact)
     assert "position" in node
-    assert node["position"]["latitude"] == 51.5
-    assert node["position"]["longitude"] == -0.1
+    assert node["position"]["latitude"] == pytest.approx(51.5)
+    assert node["position"]["longitude"] == pytest.approx(-0.1)
 
 
 def test_contact_to_node_dict_omits_position_at_origin():
@@ -552,8 +552,8 @@ def test_self_info_to_node_dict_includes_position():
         "adv_lon": 2.35,
     }
     node = _self_info_to_node_dict(self_info)
-    assert node["position"]["latitude"] == 48.8
-    assert node["position"]["longitude"] == 2.35
+    assert node["position"]["latitude"] == pytest.approx(48.8)
+    assert node["position"]["longitude"] == pytest.approx(2.35)
 
 
 # ---------------------------------------------------------------------------
@@ -809,7 +809,7 @@ def test_to_json_safe_primitives():
     """Primitive JSON types pass through unchanged."""
     assert _to_json_safe("hello") == "hello"
     assert _to_json_safe(42) == 42
-    assert _to_json_safe(3.14) == 3.14
+    assert _to_json_safe(3.14) == pytest.approx(3.14)
     assert _to_json_safe(True) is True
     assert _to_json_safe(None) is None
 
@@ -1134,3 +1134,244 @@ def test_on_contact_msg_includes_protocol_meshcore(monkeypatch):
 
     assert len(captured) == 1, "expected exactly one packet to be captured"
     assert captured[0]["protocol"] == "meshcore"
+
+
+# ---------------------------------------------------------------------------
+# _run_meshcore — full coroutine paths (fake meshcore module in sys.modules)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_meshcore_mod(
+    *,
+    connect_result: object = "ok",
+    fail_ensure_contacts: bool = False,
+    disconnect_raises: bool = False,
+):
+    """Build a minimal fake ``meshcore`` module for testing :func:`_run_meshcore`.
+
+    Parameters:
+        connect_result: Value returned by ``mc.connect()``.  Pass ``None`` to
+            simulate a device that ignores the appstart handshake.
+        fail_ensure_contacts: When ``True``, ``mc.ensure_contacts()`` raises a
+            ``RuntimeError``.
+        disconnect_raises: When ``True``, ``mc.disconnect()`` raises, exercising
+            the ``finally`` exception-suppression path.
+    """
+    import enum
+
+    EventType = enum.Enum(
+        "EventType",
+        [
+            "SELF_INFO",
+            "CONTACTS",
+            "NEW_CONTACT",
+            "NEXT_CONTACT",
+            "CHANNEL_MSG_RECV",
+            "CONTACT_MSG_RECV",
+            "DISCONNECTED",
+            "CONNECTED",
+            "ACK",
+            "OK",
+            "ERROR",
+            "NO_MORE_MSGS",
+            "MESSAGES_WAITING",
+            "MSG_SENT",
+            "CURRENT_TIME",
+            "UNKNOWN_EVT",
+        ],
+    )
+
+    class _FakeMeshCore:
+        def __init__(self, cx):
+            self._catch_all = None
+
+        def subscribe(self, event_type, callback):
+            if event_type is None:
+                self._catch_all = callback
+
+        async def connect(self):
+            return connect_result
+
+        async def ensure_contacts(self):
+            if fail_ensure_contacts:
+                raise RuntimeError("contacts unavailable")
+
+        async def start_auto_message_fetching(self):
+            pass
+
+        async def disconnect(self):
+            if disconnect_raises:
+                raise RuntimeError("disconnect failed")
+
+    class _FakeSerialConnection:
+        def __init__(self, target, baudrate):
+            pass
+
+    return types.SimpleNamespace(
+        EventType=EventType,
+        MeshCore=_FakeMeshCore,
+        SerialConnection=_FakeSerialConnection,
+    )
+
+
+async def _run_until_connected(iface, target, fake_mod, mod):
+    """Drive :func:`_run_meshcore` in a task and return once connected (or failed)."""
+    import asyncio as _aio
+    import threading
+
+    connected_event = threading.Event()
+    error_holder: list = [None]
+    task = _aio.create_task(
+        mod._run_meshcore(iface, target, connected_event, error_holder)
+    )
+    for _ in range(100):
+        await _aio.sleep(0)
+        if connected_event.is_set():
+            break
+    if iface._stop_event is not None:
+        iface._stop_event.set()
+    await task
+    return connected_event, error_holder
+
+
+def test_run_meshcore_happy_path(monkeypatch):
+    """_run_meshcore must signal connected and leave isConnected=True on success."""
+    import asyncio
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    fake_mod = _make_fake_meshcore_mod()
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+
+    connected_event, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+
+    assert connected_event.is_set()
+    assert error_holder[0] is None
+    assert iface.isConnected is True
+
+
+def test_run_meshcore_connect_returns_none_raises(monkeypatch):
+    """_run_meshcore must propagate ConnectionError when connect() returns None."""
+    import asyncio
+    import threading
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    fake_mod = _make_fake_meshcore_mod(connect_result=None)
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+    connected_event = threading.Event()
+    error_holder: list = [None]
+
+    asyncio.run(
+        _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+    )
+
+    assert connected_event.is_set()
+    assert isinstance(error_holder[0], ConnectionError)
+    assert "appstart" in str(error_holder[0])
+
+
+def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
+    """ensure_contacts() raising must log a warning but not abort the connection."""
+    import asyncio
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    logged: list = []
+    monkeypatch.setattr(
+        _mod.config,
+        "_debug_log",
+        lambda *_a, severity=None, **_k: logged.append(severity),
+    )
+    fake_mod = _make_fake_meshcore_mod(fail_ensure_contacts=True)
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+
+    connected_event, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+
+    assert connected_event.is_set()
+    assert error_holder[0] is None
+    assert "warning" in logged
+
+
+def test_run_meshcore_disconnect_exception_suppressed(monkeypatch):
+    """disconnect() raising in the finally block must be silently swallowed."""
+    import asyncio
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    fake_mod = _make_fake_meshcore_mod(disconnect_raises=True)
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+
+    connected_event, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+
+    assert connected_event.is_set()
+    assert error_holder[0] is None
+
+
+def test_run_meshcore_on_unhandled_skips_known_records_unknown(monkeypatch):
+    """_on_unhandled must only call _record_meshcore_message for truly unknown events."""
+    import asyncio
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    recorded: list = []
+    monkeypatch.setattr(
+        _mod,
+        "_record_meshcore_message",
+        lambda msg, *, source: recorded.append(source),
+    )
+    fake_mod = _make_fake_meshcore_mod()
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+
+    async def _exercise():
+        import asyncio as _aio
+        import threading
+
+        connected_event = threading.Event()
+        error_holder: list = [None]
+        task = _aio.create_task(
+            _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+        )
+        for _ in range(100):
+            await _aio.sleep(0)
+            if connected_event.is_set():
+                break
+
+        mc = iface._mc
+        EventType = fake_mod.EventType
+
+        class _Evt:
+            def __init__(self, etype, payload=None):
+                self.type = etype
+                self.payload = payload
+
+        # Handled type → no record
+        await mc._catch_all(_Evt(EventType.SELF_INFO))
+        # Silent type → no record
+        await mc._catch_all(_Evt(EventType.ACK))
+        # Truly unknown type → must be recorded
+        await mc._catch_all(_Evt(EventType.UNKNOWN_EVT, payload={"x": 1}))
+
+        if iface._stop_event:
+            iface._stop_event.set()
+        await task
+
+    asyncio.run(_exercise())
+
+    assert len(recorded) == 1, "only the unknown event should be recorded"
+    assert "UNKNOWN_EVT" in recorded[0]

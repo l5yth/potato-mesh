@@ -3220,6 +3220,7 @@ def test_queue_ingestor_heartbeat_protocol_meshcore(mesh_module, monkeypatch):
     mesh.ingestors.set_ingestor_node_id("!aabbccdd")
     mesh.ingestors.queue_ingestor_heartbeat(force=True)
 
+    assert len(captured) == 1, "expected exactly one heartbeat payload"
     assert captured[0]["protocol"] == "meshcore"
 
 
