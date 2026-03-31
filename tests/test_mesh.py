@@ -3717,10 +3717,14 @@ def test_store_packet_dict_router_heartbeat(mesh_module, monkeypatch):
     node_entry = payload["!435a7fbc"]
     assert node_entry["lastHeard"] == 1_774_868_197
     assert payload.get("ingestor") == "!f00dbabe"
-    assert len(node_entry) == 1, "Heartbeat must only set lastHeard, nothing else"
+    assert set(node_entry.keys()) == {
+        "lastHeard"
+    }, "Heartbeat must only set lastHeard, nothing else"
 
 
-def test_store_packet_dict_store_forward_non_heartbeat_ignored(mesh_module, monkeypatch):
+def test_store_packet_dict_store_forward_non_heartbeat_ignored(
+    mesh_module, monkeypatch
+):
     """STORE_FORWARD_APP packets that are not ROUTER_HEARTBEAT are dropped."""
     mesh = mesh_module
     captured = []

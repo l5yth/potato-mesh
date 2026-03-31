@@ -1437,11 +1437,13 @@ def store_packet_dict(packet: Mapping) -> None:
     if portnum == "STORE_FORWARD_APP" or (
         portnum_int is not None and portnum_int in store_forward_port_candidates
     ):
-        if isinstance(store_forward_section, Mapping):
-            rr = str(store_forward_section.get("rr") or "").upper()
-            if rr == "ROUTER_HEARTBEAT":
-                store_router_heartbeat_packet(packet)
-                return
+        if not isinstance(store_forward_section, Mapping):
+            _record_ignored_packet(packet, reason="unsupported-store-forward")
+            return
+        rr = str(store_forward_section.get("rr") or "").upper()
+        if rr == "ROUTER_HEARTBEAT":
+            store_router_heartbeat_packet(packet)
+            return
         _record_ignored_packet(packet, reason="unsupported-store-forward-rr")
         return
 
