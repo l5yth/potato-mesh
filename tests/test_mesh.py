@@ -3198,7 +3198,30 @@ def test_queue_ingestor_heartbeat_enqueues_and_throttles(mesh_module, monkeypatc
     assert payload["version"] == mesh.VERSION
     assert payload["lora_freq"] == 915
     assert payload["modem_preset"] == "LongFast"
+    assert payload["protocol"] == "meshtastic"
     assert priority == mesh.queue._INGESTOR_POST_PRIORITY
+
+
+def test_queue_ingestor_heartbeat_protocol_meshcore(mesh_module, monkeypatch):
+    """Heartbeat payload must carry the configured PROVIDER as its protocol."""
+    mesh = mesh_module
+    captured = []
+
+    monkeypatch.setattr(
+        mesh.queue,
+        "_queue_post_json",
+        lambda path, payload, *, priority, send=None: captured.append(payload),
+    )
+
+    mesh.ingestors.STATE.last_heartbeat = None
+    mesh.ingestors.STATE.node_id = None
+    mesh.config.PROVIDER = "meshcore"
+
+    mesh.ingestors.set_ingestor_node_id("!aabbccdd")
+    mesh.ingestors.queue_ingestor_heartbeat(force=True)
+
+    assert len(captured) == 1, "expected exactly one heartbeat payload"
+    assert captured[0]["protocol"] == "meshcore"
 
 
 def test_mesh_version_export_matches_package(mesh_module):

@@ -1,5 +1,6 @@
 # Production dependencies
 meshtastic>=2.5.0
+meshcore>=2.3.5
 protobuf>=5.27.2
 
 # Development dependencies (optional)

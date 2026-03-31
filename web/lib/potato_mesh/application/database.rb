@@ -111,64 +111,77 @@ module PotatoMesh
       #
       # @return [void]
       def ensure_schema_upgrades
+        FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
-        node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }
-        unless node_columns.include?("precision_bits")
-          db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
-          node_columns << "precision_bits"
+
+        node_table_exists = db.get_first_value(
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='nodes'",
+        ).to_i > 0
+        if node_table_exists
+          node_columns = db.execute("PRAGMA table_info(nodes)").map { |row| row[1] }
+          unless node_columns.include?("precision_bits")
+            db.execute("ALTER TABLE nodes ADD COLUMN precision_bits INTEGER")
+            node_columns << "precision_bits"
+          end
+
+          unless node_columns.include?("lora_freq")
+            db.execute("ALTER TABLE nodes ADD COLUMN lora_freq INTEGER")
+          end
+
+          unless node_columns.include?("modem_preset")
+            db.execute("ALTER TABLE nodes ADD COLUMN modem_preset TEXT")
+          end
+
+          unless node_columns.include?("protocol")
+            db.execute("ALTER TABLE nodes ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+            db.execute("UPDATE nodes SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+          end
         end
 
-        unless node_columns.include?("lora_freq")
-          db.execute("ALTER TABLE nodes ADD COLUMN lora_freq INTEGER")
-        end
+        message_table_exists = db.get_first_value(
+          "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages'",
+        ).to_i > 0
+        message_columns = message_table_exists ? db.execute("PRAGMA table_info(messages)").map { |row| row[1] } : []
 
-        unless node_columns.include?("modem_preset")
-          db.execute("ALTER TABLE nodes ADD COLUMN modem_preset TEXT")
-        end
+        if message_table_exists
+          unless message_columns.include?("lora_freq")
+            db.execute("ALTER TABLE messages ADD COLUMN lora_freq INTEGER")
+          end
 
-        unless node_columns.include?("protocol")
-          db.execute("ALTER TABLE nodes ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
-          db.execute("UPDATE nodes SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
-        end
+          unless message_columns.include?("modem_preset")
+            db.execute("ALTER TABLE messages ADD COLUMN modem_preset TEXT")
+          end
 
-        message_columns = db.execute("PRAGMA table_info(messages)").map { |row| row[1] }
+          unless message_columns.include?("channel_name")
+            db.execute("ALTER TABLE messages ADD COLUMN channel_name TEXT")
+          end
 
-        unless message_columns.include?("lora_freq")
-          db.execute("ALTER TABLE messages ADD COLUMN lora_freq INTEGER")
-        end
+          unless message_columns.include?("reply_id")
+            db.execute("ALTER TABLE messages ADD COLUMN reply_id INTEGER")
+            message_columns << "reply_id"
+          end
 
-        unless message_columns.include?("modem_preset")
-          db.execute("ALTER TABLE messages ADD COLUMN modem_preset TEXT")
-        end
+          unless message_columns.include?("emoji")
+            db.execute("ALTER TABLE messages ADD COLUMN emoji TEXT")
+            message_columns << "emoji"
+          end
 
-        unless message_columns.include?("channel_name")
-          db.execute("ALTER TABLE messages ADD COLUMN channel_name TEXT")
-        end
+          unless message_columns.include?("ingestor")
+            db.execute("ALTER TABLE messages ADD COLUMN ingestor TEXT")
+          end
 
-        unless message_columns.include?("reply_id")
-          db.execute("ALTER TABLE messages ADD COLUMN reply_id INTEGER")
-          message_columns << "reply_id"
-        end
+          unless message_columns.include?("protocol")
+            db.execute("ALTER TABLE messages ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
+            db.execute("UPDATE messages SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+          end
 
-        unless message_columns.include?("emoji")
-          db.execute("ALTER TABLE messages ADD COLUMN emoji TEXT")
-          message_columns << "emoji"
-        end
-        unless message_columns.include?("ingestor")
-          db.execute("ALTER TABLE messages ADD COLUMN ingestor TEXT")
-        end
-
-        unless message_columns.include?("protocol")
-          db.execute("ALTER TABLE messages ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
-          db.execute("UPDATE messages SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
-        end
-
-        reply_index_exists =
-          db.get_first_value(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_reply_id'",
-          ).to_i > 0
-        unless reply_index_exists
-          db.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_id ON messages(reply_id)")
+          reply_index_exists =
+            db.get_first_value(
+              "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_reply_id'",
+            ).to_i > 0
+          unless reply_index_exists
+            db.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_id ON messages(reply_id)")
+          end
         end
 
         tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='instances'").flatten
