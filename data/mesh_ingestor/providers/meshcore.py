@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import re
 import threading
@@ -74,6 +75,29 @@ Using ``fullmatch`` ensures BLE MAC addresses (``AA:BB:CC:DD:EE:12``) are not
 mistaken for TCP targets — the multiple colons in a MAC prevent a full match
 against the ``[^:]+:\\d{1,5}`` pattern.
 """
+
+
+def _derive_message_id(sender_ts: int, discriminator: str, text: str) -> int:
+    """Derive a stable 32-bit message ID from available MeshCore fields.
+
+    MeshCore does not assign firmware-side packet IDs.  This function
+    produces a deterministic 32-bit integer so that re-delivered messages
+    resolve to the same database row via the UPSERT ON CONFLICT path, while
+    messages that differ in timestamp, channel/peer, or text content produce
+    distinct IDs.
+
+    Parameters:
+        sender_ts: Unix timestamp from the sender's clock.
+        discriminator: Channel index (``"c<N>"`` for channel messages) or
+            pubkey prefix (for direct messages) to separate messages with
+            the same timestamp.
+        text: Message text; only the first 128 characters are hashed.
+
+    Returns:
+        A non-negative 32-bit integer suitable for the ``id`` column.
+    """
+    data = f"{sender_ts}:{discriminator}:{text[:128]}".encode("utf-8", errors="replace")
+    return int.from_bytes(hashlib.sha256(data).digest()[:4], "big")
 
 
 def _is_tcp_target(target: str) -> bool:
@@ -337,6 +361,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
     Returns:
         Mapping of ``EventType`` member name → async callback coroutine.
     """
+    # Deferred import to avoid a circular dependency: meshcore.py is imported by
+    # providers/__init__.py which is imported by the top-level mesh_ingestor
+    # package, while handlers.py imports from that same package.
     from .. import handlers as _handlers
 
     async def on_self_info(evt) -> None:
@@ -392,7 +419,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         channel_idx = payload.get("channel_idx", 0)
 
         packet = {
-            "id": sender_ts,
+            "id": _derive_message_id(sender_ts, f"c{channel_idx}", text),
             "rxTime": rx_time,
             "rx_time": rx_time,
             "from_id": None,
@@ -426,7 +453,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         from_id = iface.lookup_node_id(pubkey_prefix)
 
         packet = {
-            "id": sender_ts,
+            "id": _derive_message_id(sender_ts, pubkey_prefix or "", text),
             "rxTime": rx_time,
             "rx_time": rx_time,
             "from_id": from_id,
@@ -448,7 +475,8 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
             "MeshCore node disconnected",
             context="meshcore.disconnect",
             target=target or "unknown",
-            severity="warn",
+            severity="warning",
+            always=True,
         )
 
     return {
@@ -542,7 +570,8 @@ async def _run_meshcore(
             config._debug_log(
                 "Failed to fetch initial contacts",
                 context="meshcore.contacts",
-                severity="warn",
+                severity="warning",
+            always=True,
                 error=str(exc),
             )
 

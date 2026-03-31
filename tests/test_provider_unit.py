@@ -34,7 +34,9 @@ from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
     MeshcoreProvider,
     _MeshcoreInterface,
     _contact_to_node_dict,
+    _derive_message_id,
     _is_tcp_target,
+    _make_event_handlers,
     _meshcore_node_id,
     _pubkey_prefix_to_node_id,
     _record_meshcore_message,
@@ -594,3 +596,186 @@ def test_interface_close_is_idempotent():
     iface = _MeshcoreInterface(target=None)
     iface.close()
     iface.close()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _derive_message_id
+# ---------------------------------------------------------------------------
+
+
+def test_derive_message_id_is_deterministic():
+    """Same inputs must always produce the same ID."""
+    assert _derive_message_id(1_000_000, "c0", "hello") == _derive_message_id(
+        1_000_000, "c0", "hello"
+    )
+
+
+def test_derive_message_id_differs_by_channel():
+    """Messages on different channels with the same timestamp must not collide."""
+    assert _derive_message_id(1_000_000, "c0", "hello") != _derive_message_id(
+        1_000_000, "c1", "hello"
+    )
+
+
+def test_derive_message_id_differs_by_text():
+    """Messages with different text must produce different IDs."""
+    assert _derive_message_id(1_000_000, "c0", "hello") != _derive_message_id(
+        1_000_000, "c0", "world"
+    )
+
+
+def test_derive_message_id_differs_by_timestamp():
+    """Messages at different timestamps must produce different IDs."""
+    assert _derive_message_id(1_000_000, "c0", "hi") != _derive_message_id(
+        1_000_001, "c0", "hi"
+    )
+
+
+def test_derive_message_id_is_32bit():
+    """Result must fit in a 32-bit unsigned integer."""
+    result = _derive_message_id(1_758_000_000, "aabbccddee11", "some text")
+    assert 0 <= result <= 0xFFFFFFFF
+
+
+# ---------------------------------------------------------------------------
+# _make_event_handlers — async callbacks
+# ---------------------------------------------------------------------------
+
+
+def _make_stub_handlers_module():
+    """Return a minimal stub for data.mesh_ingestor.handlers."""
+    import types
+
+    mod = types.SimpleNamespace(
+        upsert_node=lambda *_a, **_k: None,
+        register_host_node_id=lambda *_a, **_k: None,
+        _mark_packet_seen=lambda: None,
+        store_packet_dict=lambda *_a, **_k: None,
+    )
+    return mod
+
+
+def test_on_channel_msg_queues_packet(monkeypatch):
+    """on_channel_msg must call store_packet_dict with the correct packet fields."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    # _make_event_handlers does `from .. import handlers`; patch the package attr
+    # so the deferred import resolves to our stub without touching sys.modules.
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    class _FakeEvt:
+        def __init__(self, payload):
+            self.payload = payload
+
+    iface = _MeshcoreInterface(target=None)
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt({
+        "sender_timestamp": 1_758_000_000,
+        "text": "hello mesh",
+        "channel_idx": 2,
+        "SNR": 5,
+        "RSSI": -80,
+    })))
+
+    assert len(captured) == 1
+    pkt = captured[0]
+    assert pkt["decoded"]["text"] == "hello mesh"
+    assert pkt["channel"] == 2
+    assert pkt["to_id"] == "^all"
+    assert pkt["from_id"] is None
+    assert pkt["snr"] == 5
+    assert pkt["rssi"] == -80
+    # ID must be the hash-derived value, not the raw timestamp
+    assert pkt["id"] == _derive_message_id(1_758_000_000, "c2", "hello mesh")
+
+
+def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
+    """on_contact_msg must resolve from_id via pubkey_prefix and set to_id to host."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    pub_key = "aabbccddee11" + "00" * 26
+    iface = _MeshcoreInterface(target=None)
+    iface.host_node_id = "!deadbeef"
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+
+    class _FakeEvt:
+        def __init__(self, payload):
+            self.payload = payload
+
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["CONTACT_MSG_RECV"](_FakeEvt({
+        "sender_timestamp": 1_758_000_001,
+        "text": "direct message",
+        "pubkey_prefix": "aabbccddee11",
+        "SNR": 3,
+    })))
+
+    assert len(captured) == 1
+    pkt = captured[0]
+    assert pkt["decoded"]["text"] == "direct message"
+    assert pkt["from_id"] == "!aabbccdd"
+    assert pkt["to_id"] == "!deadbeef"
+    assert pkt["id"] == _derive_message_id(1_758_000_001, "aabbccddee11", "direct message")
+
+
+def test_on_channel_msg_skips_empty_text(monkeypatch):
+    """on_channel_msg must not queue a packet when text is absent."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    iface = _MeshcoreInterface(target=None)
+
+    class _FakeEvt:
+        def __init__(self, payload):
+            self.payload = payload
+
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt({"sender_timestamp": 1, "text": ""})))
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt({"text": "hi"})))  # missing ts
+
+    assert captured == []
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_connect_raises_on_timeout(monkeypatch):
+    """connect() raises ConnectionError when connected_event is never signalled.
+
+    The background thread's event loop is stopped by iface.close() while the
+    mock coroutine is still suspended; the resulting RuntimeError in that thread
+    is expected and suppressed via the filterwarnings mark above.
+    """
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    async def _hanging(iface, target, connected_event, error_holder):
+        # Never signals connected_event — simulates a device that does not respond.
+        import asyncio as _aio
+        await _aio.sleep(60)
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _hanging)
+    monkeypatch.setattr(_mod, "_CONNECT_TIMEOUT_SECS", 0.05)
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    with pytest.raises(ConnectionError, match="Timed out"):
+        MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
