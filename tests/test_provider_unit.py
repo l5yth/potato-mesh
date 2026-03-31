@@ -38,9 +38,13 @@ from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
     _is_tcp_target,
     _make_event_handlers,
     _meshcore_node_id,
+    _process_contact_update,
+    _process_contacts,
+    _process_self_info,
     _pubkey_prefix_to_node_id,
     _record_meshcore_message,
     _self_info_to_node_dict,
+    _to_json_safe,
 )
 
 
@@ -675,13 +679,19 @@ def test_on_channel_msg_queues_packet(monkeypatch):
 
     iface = _MeshcoreInterface(target=None)
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
-    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt({
-        "sender_timestamp": 1_758_000_000,
-        "text": "hello mesh",
-        "channel_idx": 2,
-        "SNR": 5,
-        "RSSI": -80,
-    })))
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_000,
+                    "text": "hello mesh",
+                    "channel_idx": 2,
+                    "SNR": 5,
+                    "RSSI": -80,
+                }
+            )
+        )
+    )
 
     assert len(captured) == 1
     pkt = captured[0]
@@ -717,19 +727,27 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
             self.payload = payload
 
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
-    asyncio.run(hmap["CONTACT_MSG_RECV"](_FakeEvt({
-        "sender_timestamp": 1_758_000_001,
-        "text": "direct message",
-        "pubkey_prefix": "aabbccddee11",
-        "SNR": 3,
-    })))
+    asyncio.run(
+        hmap["CONTACT_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_001,
+                    "text": "direct message",
+                    "pubkey_prefix": "aabbccddee11",
+                    "SNR": 3,
+                }
+            )
+        )
+    )
 
     assert len(captured) == 1
     pkt = captured[0]
     assert pkt["decoded"]["text"] == "direct message"
     assert pkt["from_id"] == "!aabbccdd"
     assert pkt["to_id"] == "!deadbeef"
-    assert pkt["id"] == _derive_message_id(1_758_000_001, "aabbccddee11", "direct message")
+    assert pkt["id"] == _derive_message_id(
+        1_758_000_001, "aabbccddee11", "direct message"
+    )
 
 
 def test_on_channel_msg_skips_empty_text(monkeypatch):
@@ -770,6 +788,7 @@ def test_connect_raises_on_timeout(monkeypatch):
     async def _hanging(iface, target, connected_event, error_holder):
         # Never signals connected_event — simulates a device that does not respond.
         import asyncio as _aio
+
         await _aio.sleep(60)
 
     monkeypatch.setattr(_mod, "_run_meshcore", _hanging)
@@ -779,3 +798,339 @@ def test_connect_raises_on_timeout(monkeypatch):
 
     with pytest.raises(ConnectionError, match="Timed out"):
         MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+
+# ---------------------------------------------------------------------------
+# _to_json_safe
+# ---------------------------------------------------------------------------
+
+
+def test_to_json_safe_primitives():
+    """Primitive JSON types pass through unchanged."""
+    assert _to_json_safe("hello") == "hello"
+    assert _to_json_safe(42) == 42
+    assert _to_json_safe(3.14) == 3.14
+    assert _to_json_safe(True) is True
+    assert _to_json_safe(None) is None
+
+
+def test_to_json_safe_bytes_base64():
+    """bytes values are base64-encoded to an ASCII string."""
+    import base64
+
+    raw = b"\xde\xad\xbe\xef"
+    result = _to_json_safe(raw)
+    assert result == base64.b64encode(raw).decode("ascii")
+
+
+def test_to_json_safe_nested_dict():
+    """Dicts are recursively converted; bytes leaves are base64-encoded."""
+    result = _to_json_safe({"a": 1, "payload": b"\x00\x01"})
+    assert result["a"] == 1
+    assert isinstance(result["payload"], str)
+
+
+def test_to_json_safe_list_and_tuple_and_set():
+    """Lists, tuples, and sets are converted to JSON arrays."""
+    assert _to_json_safe([1, 2]) == [1, 2]
+    assert _to_json_safe((3, 4)) == [3, 4]
+    result = _to_json_safe({5})
+    assert isinstance(result, list)
+    assert 5 in result
+
+
+def test_to_json_safe_unknown_type_stringified():
+    """Unknown types are coerced to str."""
+
+    class _Custom:
+        def __str__(self) -> str:
+            return "custom-repr"
+
+    assert _to_json_safe(_Custom()) == "custom-repr"
+
+
+# ---------------------------------------------------------------------------
+# _process_self_info
+# ---------------------------------------------------------------------------
+
+
+def test_process_self_info_sets_host_node_id():
+    """_process_self_info must set iface.host_node_id and call register_host_node_id."""
+    stub = _make_stub_handlers_module()
+    registered: list = []
+    stub.register_host_node_id = lambda nid: registered.append(nid)
+
+    iface = _MeshcoreInterface(target=None)
+    _process_self_info(
+        {"public_key": "aabbccdd" + "00" * 28, "name": "Host"}, iface, stub
+    )
+
+    assert iface.host_node_id == "!aabbccdd"
+    assert registered == ["!aabbccdd"]
+
+
+def test_process_self_info_skips_empty_key():
+    """_process_self_info must not set host_node_id when public_key is absent."""
+    stub = _make_stub_handlers_module()
+    registered: list = []
+    stub.register_host_node_id = lambda nid: registered.append(nid)
+
+    iface = _MeshcoreInterface(target=None)
+    _process_self_info({"public_key": "", "name": "Unknown"}, iface, stub)
+
+    assert iface.host_node_id is None
+    assert registered == []
+
+
+# ---------------------------------------------------------------------------
+# _process_contacts
+# ---------------------------------------------------------------------------
+
+
+def test_process_contacts_updates_snapshot_and_upserts():
+    """_process_contacts must update the iface snapshot and call upsert_node."""
+    stub = _make_stub_handlers_module()
+    upserted: list = []
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    _process_contacts(
+        {pub_key: {"public_key": pub_key, "adv_name": "Alice"}}, iface, stub
+    )
+
+    assert upserted == ["!aabbccdd"]
+    assert len(iface.contacts_snapshot()) == 1
+
+
+def test_process_contacts_skips_short_keys():
+    """_process_contacts must ignore contacts whose public_key is too short."""
+    stub = _make_stub_handlers_module()
+    upserted: list = []
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+
+    iface = _MeshcoreInterface(target=None)
+    _process_contacts({"abc": {"adv_name": "Short"}}, iface, stub)
+
+    assert upserted == []
+
+
+def test_process_contacts_marks_packet_seen():
+    """_process_contacts must always call _mark_packet_seen."""
+    seen: list = []
+    stub = _make_stub_handlers_module()
+    stub._mark_packet_seen = lambda: seen.append(True)
+
+    _process_contacts({}, _MeshcoreInterface(target=None), stub)
+
+    assert seen == [True]
+
+
+# ---------------------------------------------------------------------------
+# _process_contact_update
+# ---------------------------------------------------------------------------
+
+
+def test_process_contact_update_upserts_node(monkeypatch):
+    """_process_contact_update must upsert and update the snapshot."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    upserted: list = []
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    _process_contact_update({"public_key": pub_key, "adv_name": "Bob"}, iface, stub)
+
+    assert upserted == ["!aabbccdd"]
+    assert len(iface.contacts_snapshot()) == 1
+
+
+def test_process_contact_update_skips_empty_key(monkeypatch):
+    """_process_contact_update must silently skip contacts without a valid key."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    upserted: list = []
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+
+    _process_contact_update(
+        {"public_key": "", "adv_name": "Bad"}, _MeshcoreInterface(target=None), stub
+    )
+
+    assert upserted == []
+
+
+# ---------------------------------------------------------------------------
+# on_self_info via _make_event_handlers
+# ---------------------------------------------------------------------------
+
+
+def test_on_self_info_registers_and_upserts(monkeypatch):
+    """SELF_INFO handler must register the host node and upsert it."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    registered: list = []
+    upserted: list = []
+    stub = _make_stub_handlers_module()
+    stub.register_host_node_id = lambda nid: registered.append(nid)
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    class _Evt:
+        payload = {"public_key": "aabbccdd" + "00" * 28, "name": "MyNode"}
+
+    iface = _MeshcoreInterface(target=None)
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["SELF_INFO"](_Evt()))
+
+    assert iface.host_node_id == "!aabbccdd"
+    assert registered == ["!aabbccdd"]
+    assert upserted == ["!aabbccdd"]
+
+
+# ---------------------------------------------------------------------------
+# on_contacts via _make_event_handlers
+# ---------------------------------------------------------------------------
+
+
+def test_on_contacts_updates_contacts(monkeypatch):
+    """CONTACTS handler must populate the iface contact snapshot."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    upserted: list = []
+    stub = _make_stub_handlers_module()
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    pub_key = "aabbccdd" + "00" * 28
+
+    class _Evt:
+        payload = {pub_key: {"public_key": pub_key, "adv_name": "C"}}
+
+    iface = _MeshcoreInterface(target=None)
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["CONTACTS"](_Evt()))
+
+    assert "!aabbccdd" in upserted
+    assert len(iface.contacts_snapshot()) == 1
+
+
+# ---------------------------------------------------------------------------
+# on_contact_update (NEW_CONTACT / NEXT_CONTACT) via _make_event_handlers
+# ---------------------------------------------------------------------------
+
+
+def test_on_new_contact_and_next_contact_update_iface(monkeypatch):
+    """NEW_CONTACT and NEXT_CONTACT must both update the contact snapshot."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    upserted: list = []
+    stub = _make_stub_handlers_module()
+    stub.upsert_node = lambda nid, nd: upserted.append(nid)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    pub_key = "aabbccdd" + "00" * 28
+
+    class _Evt:
+        payload = {"public_key": pub_key, "adv_name": "D"}
+
+    iface = _MeshcoreInterface(target=None)
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["NEW_CONTACT"](_Evt()))
+    asyncio.run(hmap["NEXT_CONTACT"](_Evt()))
+
+    assert upserted.count("!aabbccdd") == 2
+
+
+# ---------------------------------------------------------------------------
+# on_disconnected via _make_event_handlers
+# ---------------------------------------------------------------------------
+
+
+def test_on_disconnected_clears_connected_flag(monkeypatch):
+    """DISCONNECTED handler must set iface.isConnected to False."""
+    import asyncio
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    class _Evt:
+        payload = {}
+
+    iface = _MeshcoreInterface(target=None)
+    iface.isConnected = True
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["DISCONNECTED"](_Evt()))
+
+    assert iface.isConnected is False
+
+
+# ---------------------------------------------------------------------------
+# protocol field in emitted packets
+# ---------------------------------------------------------------------------
+
+
+def test_on_channel_msg_includes_protocol_meshcore(monkeypatch):
+    """Channel message packets must carry protocol='meshcore'."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    class _Evt:
+        payload = {"sender_timestamp": 1_000_000, "text": "ping", "channel_idx": 0}
+
+    iface = _MeshcoreInterface(target=None)
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_Evt()))
+
+    assert len(captured) == 1, "expected exactly one packet to be captured"
+    assert captured[0]["protocol"] == "meshcore"
+
+
+def test_on_contact_msg_includes_protocol_meshcore(monkeypatch):
+    """Direct message packets must carry protocol='meshcore'."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    iface = _MeshcoreInterface(target=None)
+    iface.host_node_id = "!deadbeef"
+
+    class _Evt:
+        payload = {
+            "sender_timestamp": 1_000_001,
+            "text": "direct",
+            "pubkey_prefix": "",
+        }
+
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(hmap["CONTACT_MSG_RECV"](_Evt()))
+
+    assert len(captured) == 1, "expected exactly one packet to be captured"
+    assert captured[0]["protocol"] == "meshcore"

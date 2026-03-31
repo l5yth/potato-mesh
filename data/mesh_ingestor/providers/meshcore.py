@@ -110,7 +110,7 @@ def _is_tcp_target(target: str) -> bool:
     return bool(_TCP_TARGET_RE.fullmatch(target))
 
 
-def _meshcore_node_id(public_key_hex: str) -> str | None:
+def _meshcore_node_id(public_key_hex: str | None) -> str | None:
     """Derive a canonical ``!xxxxxxxx`` node ID from a MeshCore public key.
 
     Uses the first four bytes (eight hex characters) of the 32-byte public
@@ -344,6 +344,82 @@ class _MeshcoreInterface:
 
 
 # ---------------------------------------------------------------------------
+# Handler logic helpers (module-level to keep _make_event_handlers lean)
+# ---------------------------------------------------------------------------
+
+
+def _process_self_info(
+    payload: dict, iface: _MeshcoreInterface, handlers: object
+) -> None:
+    """Apply a ``SELF_INFO`` payload: set host_node_id and upsert the host node.
+
+    Parameters:
+        payload: Event payload dict containing at minimum ``public_key`` and
+            optionally ``name``, ``adv_lat``, ``adv_lon``.
+        iface: Active interface whose :attr:`host_node_id` will be updated.
+        handlers: Module reference for :func:`~data.mesh_ingestor.handlers`
+            functions (passed to avoid circular-import issues).
+    """
+    pub_key = payload.get("public_key", "")
+    node_id = _meshcore_node_id(pub_key)
+    if node_id:
+        iface.host_node_id = node_id
+        handlers.register_host_node_id(node_id)
+        handlers.upsert_node(node_id, _self_info_to_node_dict(payload))
+    handlers._mark_packet_seen()
+    config._debug_log(
+        "MeshCore self-info received",
+        context="meshcore.self_info",
+        node_id=node_id,
+        name=payload.get("name"),
+    )
+
+
+def _process_contacts(
+    contacts: dict, iface: _MeshcoreInterface, handlers: object
+) -> None:
+    """Apply a bulk ``CONTACTS`` payload: update the local snapshot and upsert nodes.
+
+    Parameters:
+        contacts: Mapping of full ``public_key`` hex strings to contact dicts.
+        iface: Active interface whose contact snapshot will be updated.
+        handlers: Module reference for :func:`~data.mesh_ingestor.handlers`.
+    """
+    for pub_key, contact in contacts.items():
+        node_id = _meshcore_node_id(pub_key)
+        if node_id is None:
+            continue
+        iface._update_contact(contact)
+        handlers.upsert_node(node_id, _contact_to_node_dict(contact))
+    handlers._mark_packet_seen()
+
+
+def _process_contact_update(
+    contact: dict, iface: _MeshcoreInterface, handlers: object
+) -> None:
+    """Apply a single ``NEW_CONTACT`` or ``NEXT_CONTACT`` event.
+
+    Parameters:
+        contact: Contact dict containing at minimum ``public_key``.
+        iface: Active interface whose contact snapshot will be updated.
+        handlers: Module reference for :func:`~data.mesh_ingestor.handlers`.
+    """
+    pub_key = contact.get("public_key", "")
+    node_id = _meshcore_node_id(pub_key)
+    if node_id is None:
+        return
+    iface._update_contact(contact)
+    handlers.upsert_node(node_id, _contact_to_node_dict(contact))
+    handlers._mark_packet_seen()
+    config._debug_log(
+        "MeshCore contact updated",
+        context="meshcore.contact",
+        node_id=node_id,
+        name=contact.get("adv_name"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Async event handlers
 # ---------------------------------------------------------------------------
 
@@ -367,46 +443,13 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
     from .. import handlers as _handlers
 
     async def on_self_info(evt) -> None:
-        payload = evt.payload or {}
-        pub_key = payload.get("public_key", "")
-        node_id = _meshcore_node_id(pub_key)
-        if node_id:
-            iface.host_node_id = node_id
-            _handlers.register_host_node_id(node_id)
-            _handlers.upsert_node(node_id, _self_info_to_node_dict(payload))
-        _handlers._mark_packet_seen()
-        config._debug_log(
-            "MeshCore self-info received",
-            context="meshcore.self_info",
-            node_id=node_id,
-            name=payload.get("name"),
-        )
+        _process_self_info(evt.payload or {}, iface, _handlers)
 
     async def on_contacts(evt) -> None:
-        contacts = evt.payload or {}
-        for pub_key, contact in contacts.items():
-            node_id = _meshcore_node_id(pub_key)
-            if node_id is None:
-                continue
-            iface._update_contact(contact)
-            _handlers.upsert_node(node_id, _contact_to_node_dict(contact))
-        _handlers._mark_packet_seen()
+        _process_contacts(evt.payload or {}, iface, _handlers)
 
     async def on_contact_update(evt) -> None:
-        contact = evt.payload or {}
-        pub_key = contact.get("public_key", "")
-        node_id = _meshcore_node_id(pub_key)
-        if node_id is None:
-            return
-        iface._update_contact(contact)
-        _handlers.upsert_node(node_id, _contact_to_node_dict(contact))
-        _handlers._mark_packet_seen()
-        config._debug_log(
-            "MeshCore contact updated",
-            context="meshcore.contact",
-            node_id=node_id,
-            name=contact.get("adv_name"),
-        )
+        _process_contact_update(evt.payload or {}, iface, _handlers)
 
     async def on_channel_msg(evt) -> None:
         payload = evt.payload or {}
@@ -427,6 +470,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
             "channel": channel_idx,
             "snr": payload.get("SNR"),
             "rssi": payload.get("RSSI"),
+            "protocol": "meshcore",
             "decoded": {
                 "portnum": "TEXT_MESSAGE_APP",
                 "text": text,
@@ -460,6 +504,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
             "to_id": iface.host_node_id,
             "channel": 0,
             "snr": payload.get("SNR"),
+            "protocol": "meshcore",
             "decoded": {
                 "portnum": "TEXT_MESSAGE_APP",
                 "text": text,
@@ -571,7 +616,7 @@ async def _run_meshcore(
                 "Failed to fetch initial contacts",
                 context="meshcore.contacts",
                 severity="warning",
-            always=True,
+                always=True,
                 error=str(exc),
             )
 
@@ -674,9 +719,7 @@ class MeshcoreProvider:
             finally:
                 loop.close()
 
-        thread = threading.Thread(
-            target=_run_loop, name="meshcore-loop", daemon=True
-        )
+        thread = threading.Thread(target=_run_loop, name="meshcore-loop", daemon=True)
         iface._thread = thread
         thread.start()
 
