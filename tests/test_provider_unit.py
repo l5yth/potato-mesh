@@ -321,7 +321,9 @@ def test_meshcore_connect_auto_discovers_serial(monkeypatch):
         ("meshcore-node.local:4403", "TCPConnection"),
     ],
 )
-def test_make_connection_routes_to_correct_class(target, expected_class_name, monkeypatch):
+def test_make_connection_routes_to_correct_class(
+    target, expected_class_name, monkeypatch
+):
     """_make_connection must instantiate the correct meshcore connection class."""
     import types
     import data.mesh_ingestor.providers.meshcore as _mod
@@ -343,6 +345,7 @@ def test_make_connection_routes_to_correct_class(target, expected_class_name, mo
     fake_meshcore.TCPConnection = _make_mock("TCPConnection")
 
     import sys as _sys
+
     original = _sys.modules.get("meshcore")
     try:
         _sys.modules["meshcore"] = fake_meshcore

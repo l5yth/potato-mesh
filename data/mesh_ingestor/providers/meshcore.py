@@ -75,6 +75,7 @@ _DEFAULT_BAUDRATE: int = 115200
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _derive_message_id(sender_ts: int, discriminator: str, text: str) -> int:
     """Derive a stable 32-bit message ID from available MeshCore fields.
 

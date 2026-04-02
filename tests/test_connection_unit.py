@@ -161,11 +161,11 @@ def test_parse_tcp_target_default_port_for_bracketed_ipv6_no_port():
 @pytest.mark.parametrize(
     "value",
     [
-        "[::1",          # no closing bracket
-        "[]:4403",       # empty host in brackets
-        "[::1]:abc",     # non-numeric port after bracket
-        "[::1]:0",       # port out of range (low)
-        "[::1]:65536",   # port out of range (high)
+        "[::1",  # no closing bracket
+        "[]:4403",  # empty host in brackets
+        "[::1]:abc",  # non-numeric port after bracket
+        "[::1]:0",  # port out of range (low)
+        "[::1]:65536",  # port out of range (high)
     ],
 )
 def test_parse_tcp_target_rejects_malformed_ipv6(value):
@@ -199,6 +199,7 @@ def test_default_serial_targets_no_duplicates():
 
 def test_default_serial_targets_deduplicates_glob_results():
     """default_serial_targets must deduplicate paths returned by multiple globs."""
+
     def _fake_glob(pattern):
         if "ttyACM" in pattern:
             return ["/dev/ttyACM0", "/dev/ttyACM1"]
@@ -217,6 +218,7 @@ def test_default_serial_targets_deduplicates_glob_results():
 
 def test_default_serial_targets_omits_fallback_when_ttyacm0_found():
     """default_serial_targets must not append /dev/ttyACM0 when glob already found it."""
+
     def _fake_glob(pattern):
         if "ttyACM" in pattern:
             return ["/dev/ttyACM0"]
@@ -241,9 +243,7 @@ def test_ble_address_re_mac():
 
 def test_ble_address_re_uuid():
     """BLE_ADDRESS_RE matches a standard 128-bit UUID."""
-    assert (
-        BLE_ADDRESS_RE.fullmatch("12345678-1234-1234-1234-123456789abc") is not None
-    )
+    assert BLE_ADDRESS_RE.fullmatch("12345678-1234-1234-1234-123456789abc") is not None
 
 
 def test_ble_address_re_rejects_tcp():
