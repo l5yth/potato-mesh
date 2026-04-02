@@ -622,13 +622,13 @@ def _ensure_channel_metadata(iface: Any) -> None:
         )
 
 
-_DEFAULT_TCP_PORT = 4403
 _DEFAULT_TCP_TARGET = "http://127.0.0.1"
 
 # Private aliases so that existing internal callers and monkeypatching in
 # tests keep working without modification.
-_DEFAULT_SERIAL_PATTERNS = DEFAULT_SERIAL_PATTERNS
-_BLE_ADDRESS_RE = BLE_ADDRESS_RE
+_DEFAULT_TCP_PORT = DEFAULT_TCP_PORT  # backward-compat alias
+_DEFAULT_SERIAL_PATTERNS = DEFAULT_SERIAL_PATTERNS  # backward-compat alias
+_BLE_ADDRESS_RE = BLE_ADDRESS_RE  # backward-compat alias
 
 
 class _DummySerialInterface:
@@ -641,8 +641,7 @@ class _DummySerialInterface:
         pass
 
 
-_parse_ble_target = parse_ble_target
-"""Private alias kept for backward-compatibility with existing callers and tests."""
+_parse_ble_target = parse_ble_target  # backward-compat alias
 
 
 def _parse_network_target(value: str) -> tuple[str, int] | None:
@@ -790,8 +789,7 @@ class NoAvailableMeshInterface(RuntimeError):
     """Raised when no default mesh interface can be created."""
 
 
-_default_serial_targets = default_serial_targets
-"""Private alias kept for backward-compatibility with existing callers and tests."""
+_default_serial_targets = default_serial_targets  # backward-compat alias
 
 
 def _create_default_interface() -> tuple[object, str]:

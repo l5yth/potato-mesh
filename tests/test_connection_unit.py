@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -157,6 +158,21 @@ def test_parse_tcp_target_default_port_for_bracketed_ipv6_no_port():
     assert result == ("::1", DEFAULT_TCP_PORT)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "[::1",          # no closing bracket
+        "[]:4403",       # empty host in brackets
+        "[::1]:abc",     # non-numeric port after bracket
+        "[::1]:0",       # port out of range (low)
+        "[::1]:65536",   # port out of range (high)
+    ],
+)
+def test_parse_tcp_target_rejects_malformed_ipv6(value):
+    """parse_tcp_target must return None for malformed bracketed IPv6 targets."""
+    assert parse_tcp_target(value) is None
+
+
 # ---------------------------------------------------------------------------
 # default_serial_targets
 # ---------------------------------------------------------------------------
@@ -179,6 +195,38 @@ def test_default_serial_targets_no_duplicates():
     """default_serial_targets must not return duplicate paths."""
     targets = default_serial_targets()
     assert len(targets) == len(set(targets))
+
+
+def test_default_serial_targets_deduplicates_glob_results():
+    """default_serial_targets must deduplicate paths returned by multiple globs."""
+    def _fake_glob(pattern):
+        if "ttyACM" in pattern:
+            return ["/dev/ttyACM0", "/dev/ttyACM1"]
+        if "ttyUSB" in pattern:
+            return ["/dev/ttyACM0"]  # intentional duplicate across patterns
+        return []
+
+    with patch("data.mesh_ingestor.connection.glob.glob", side_effect=_fake_glob):
+        targets = default_serial_targets()
+
+    assert targets.count("/dev/ttyACM0") == 1
+    assert "/dev/ttyACM1" in targets
+    # ttyACM0 already found by glob so fallback append must not re-add it
+    assert targets.count("/dev/ttyACM0") == 1
+
+
+def test_default_serial_targets_omits_fallback_when_ttyacm0_found():
+    """default_serial_targets must not append /dev/ttyACM0 when glob already found it."""
+    def _fake_glob(pattern):
+        if "ttyACM" in pattern:
+            return ["/dev/ttyACM0"]
+        return []
+
+    with patch("data.mesh_ingestor.connection.glob.glob", side_effect=_fake_glob):
+        targets = default_serial_targets()
+
+    # present exactly once — from glob, not appended again
+    assert targets.count("/dev/ttyACM0") == 1
 
 
 # ---------------------------------------------------------------------------
