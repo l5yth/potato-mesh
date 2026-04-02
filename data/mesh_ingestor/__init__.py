@@ -25,6 +25,7 @@ from .. import VERSION as _PACKAGE_VERSION
 from . import (
     channels,
     config,
+    connection,
     daemon,
     handlers,
     ingestors,
@@ -46,7 +47,7 @@ def _reexport(module) -> None:
 def _export_constants() -> None:
     globals()["json"] = queue.json
     globals()["urllib"] = queue.urllib
-    globals()["glob"] = interfaces.glob
+    globals()["glob"] = connection.glob
     __all__.extend(["json", "urllib", "glob", "threading", "signal"])
 
 

@@ -30,12 +30,13 @@ from data.mesh_ingestor.provider import Provider  # noqa: E402 - path setup
 from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
+from data.mesh_ingestor.connection import parse_tcp_target  # noqa: E402 - path setup
 from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
     MeshcoreProvider,
     _MeshcoreInterface,
     _contact_to_node_dict,
     _derive_message_id,
-    _is_tcp_target,
+    _make_connection,
     _make_event_handlers,
     _meshcore_node_id,
     _process_contact_update,
@@ -221,14 +222,20 @@ def test_meshcore_subscribe_returns_empty_list():
         "otherhost:80",
     ],
 )
-def test_meshcore_connect_rejects_tcp_targets(target, monkeypatch):
-    """connect() must raise ValueError for TCP host:port targets."""
+def test_meshcore_connect_accepts_tcp_targets(target, monkeypatch):
+    """connect() must succeed for TCP host:port targets."""
     import data.mesh_ingestor.providers.meshcore as _mod
 
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    with pytest.raises(ValueError, match="TCP/IP"):
-        MeshcoreProvider().connect(active_candidate=target)
+    iface, resolved, next_candidate = MeshcoreProvider().connect(
+        active_candidate=target
+    )
+    assert iface is not None
+    assert resolved == target
+    assert next_candidate == target
+    iface.close()
 
 
 def _fake_run_meshcore(*, error=None, host_node_id=None):
@@ -263,11 +270,10 @@ def _fake_run_meshcore(*, error=None, host_node_id=None):
         "COM3",
         "AA:BB:CC:DD:EE:FF",
         "12345678-1234-1234-1234-123456789abc",
-        None,
     ],
 )
 def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
-    """connect() must succeed for serial ports, BLE addresses, and None (auto)."""
+    """connect() must succeed for explicit serial ports and BLE addresses."""
     import data.mesh_ingestor.providers.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
@@ -280,6 +286,75 @@ def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
     assert resolved == target
     assert next_candidate == target
     iface.close()
+
+
+def test_meshcore_connect_auto_discovers_serial(monkeypatch):
+    """connect() with no target must resolve to the first serial candidate."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        _mod, "default_serial_targets", lambda: ["/dev/ttyACM0", "/dev/ttyUSB0"]
+    )
+    iface, resolved, next_candidate = MeshcoreProvider().connect(active_candidate=None)
+    assert iface is not None
+    assert resolved == "/dev/ttyACM0"
+    assert next_candidate == "/dev/ttyACM0"
+    iface.close()
+
+
+@pytest.mark.parametrize(
+    "target,expected_class_name",
+    [
+        # Serial paths
+        ("/dev/ttyUSB0", "SerialConnection"),
+        ("/dev/ttyACM0", "SerialConnection"),
+        ("COM3", "SerialConnection"),
+        # BLE targets
+        ("AA:BB:CC:DD:EE:FF", "BLEConnection"),
+        ("12345678-1234-1234-1234-123456789abc", "BLEConnection"),
+        # TCP targets
+        ("hostname:4403", "TCPConnection"),
+        ("192.168.1.1:4403", "TCPConnection"),
+        ("meshcore-node.local:4403", "TCPConnection"),
+    ],
+)
+def test_make_connection_routes_to_correct_class(target, expected_class_name, monkeypatch):
+    """_make_connection must instantiate the correct meshcore connection class."""
+    import types
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    instances: list = []
+
+    def _make_mock(name):
+        def _cls(*args, **kwargs):
+            obj = types.SimpleNamespace(name=name, args=args, kwargs=kwargs)
+            instances.append(obj)
+            return obj
+
+        _cls.__name__ = name
+        return _cls
+
+    fake_meshcore = types.ModuleType("meshcore")
+    fake_meshcore.BLEConnection = _make_mock("BLEConnection")
+    fake_meshcore.SerialConnection = _make_mock("SerialConnection")
+    fake_meshcore.TCPConnection = _make_mock("TCPConnection")
+
+    import sys as _sys
+    original = _sys.modules.get("meshcore")
+    try:
+        _sys.modules["meshcore"] = fake_meshcore
+        result = _make_connection(target, 115200)
+    finally:
+        if original is None:
+            _sys.modules.pop("meshcore", None)
+        else:
+            _sys.modules["meshcore"] = original
+
+    assert len(instances) == 1
+    assert instances[0].name == expected_class_name
 
 
 def test_meshcore_connect_returns_closeable_interface(monkeypatch):
@@ -359,19 +434,19 @@ def test_meshcore_node_snapshot_items_with_contacts(monkeypatch):
     iface.close()
 
 
-def test_is_tcp_target_detects_host_port():
-    """_is_tcp_target must return True for host:port strings."""
-    assert _is_tcp_target("meshnode.local:4403") is True
-    assert _is_tcp_target("meshtastic.local:4403") is True
+def test_parse_tcp_target_detects_host_port():
+    """parse_tcp_target must return (host, port) for host:port strings."""
+    assert parse_tcp_target("meshnode.local:4403") == ("meshnode.local", 4403)
+    assert parse_tcp_target("meshtastic.local:4403") == ("meshtastic.local", 4403)
 
 
-def test_is_tcp_target_rejects_serial_ble():
-    """_is_tcp_target must return False for serial paths and BLE addresses."""
-    assert _is_tcp_target("/dev/ttyUSB0") is False
-    assert _is_tcp_target("AA:BB:CC:DD:EE:FF") is False
-    assert _is_tcp_target("COM3") is False
+def test_parse_tcp_target_rejects_serial_ble():
+    """parse_tcp_target must return None for serial paths and BLE addresses."""
+    assert parse_tcp_target("/dev/ttyUSB0") is None
+    assert parse_tcp_target("AA:BB:CC:DD:EE:FF") is None
+    assert parse_tcp_target("COM3") is None
     # BLE MAC address whose final octet is all-decimal must not be a false positive.
-    assert _is_tcp_target("AA:BB:CC:DD:EE:12") is False
+    assert parse_tcp_target("AA:BB:CC:DD:EE:12") is None
 
 
 def test_record_meshcore_message_skipped_without_debug(monkeypatch, tmp_path):
@@ -1215,10 +1290,20 @@ def _make_fake_meshcore_mod(
         def __init__(self, target, baudrate):
             pass
 
+    class _FakeBLEConnection:
+        def __init__(self, address=None):
+            pass
+
+    class _FakeTCPConnection:
+        def __init__(self, host, port):
+            pass
+
     return types.SimpleNamespace(
         EventType=EventType,
         MeshCore=_FakeMeshCore,
         SerialConnection=_FakeSerialConnection,
+        BLEConnection=_FakeBLEConnection,
+        TCPConnection=_FakeTCPConnection,
     )
 
 
