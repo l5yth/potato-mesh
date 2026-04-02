@@ -3023,7 +3023,7 @@ def test_default_serial_targets_deduplicates(mesh_module, monkeypatch):
             return ["/dev/ttyACM1"]
         return []
 
-    monkeypatch.setattr(mesh.interfaces.glob, "glob", fake_glob)
+    monkeypatch.setattr(mesh.connection.glob, "glob", fake_glob)
 
     targets = mesh._default_serial_targets()
 

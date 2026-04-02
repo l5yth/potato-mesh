@@ -16,14 +16,21 @@
 
 This module defines :class:`MeshcoreProvider`, which satisfies the
 :class:`~data.mesh_ingestor.provider.Provider` protocol for MeshCore nodes
-connected via serial port or BLE.  TCP/IP targets are not supported by
-MeshCore and will be rejected at connect time.
+connected via serial port, BLE, or TCP/IP.
 
 The provider runs MeshCore's ``asyncio`` event loop in a background daemon
 thread so that incoming events are dispatched without blocking the
 synchronous daemon loop.  Received contacts, channel messages, and direct
 messages are forwarded to the shared HTTP ingest queue via the same
 :mod:`~data.mesh_ingestor.handlers` helpers used by the Meshtastic provider.
+
+Connection type is detected automatically from the target string:
+
+* **BLE** — MAC address (``AA:BB:CC:DD:EE:FF``) or UUID (macOS format).
+* **TCP** — ``host:port`` or ``[ipv6]:port`` (accepts hostnames).
+* **Serial** — any other non-empty string (e.g. ``/dev/ttyUSB0``).
+* **Auto** — ``None`` or empty: tries serial candidates from
+  :func:`~data.mesh_ingestor.connection.default_serial_targets`.
 
 Node identities are derived from the first four bytes (eight hex characters)
 of each contact's 32-byte public key, formatted as ``!xxxxxxxx`` to match
@@ -36,13 +43,13 @@ import asyncio
 import base64
 import hashlib
 import json
-import re
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
+from ..connection import default_serial_targets, parse_ble_target, parse_tcp_target
 
 # ---------------------------------------------------------------------------
 # Debug log file
@@ -68,14 +75,6 @@ _DEFAULT_BAUDRATE: int = 115200
 # Helpers
 # ---------------------------------------------------------------------------
 
-_TCP_TARGET_RE = re.compile(r"[^:]+:\d{1,5}")
-"""Pattern matching a ``host:port`` TCP target (exactly one colon, port 1–5 digits).
-
-Using ``fullmatch`` ensures BLE MAC addresses (``AA:BB:CC:DD:EE:12``) are not
-mistaken for TCP targets — the multiple colons in a MAC prevent a full match
-against the ``[^:]+:\\d{1,5}`` pattern.
-"""
-
 
 def _derive_message_id(sender_ts: int, discriminator: str, text: str) -> int:
     """Derive a stable 32-bit message ID from available MeshCore fields.
@@ -98,16 +97,6 @@ def _derive_message_id(sender_ts: int, discriminator: str, text: str) -> int:
     """
     data = f"{sender_ts}:{discriminator}:{text}".encode("utf-8", errors="replace")
     return int.from_bytes(hashlib.sha256(data).digest()[:4], "big")
-
-
-def _is_tcp_target(target: str) -> bool:
-    """Return ``True`` when *target* looks like a TCP ``host:port`` address.
-
-    BLE MAC addresses such as ``AA:BB:CC:DD:EE:12`` are correctly rejected
-    because they contain more than one colon, which prevents a full match
-    against the ``[^:]+:\\d{1,5}`` pattern.
-    """
-    return bool(_TCP_TARGET_RE.fullmatch(target))
 
 
 def _meshcore_node_id(public_key_hex: str | None) -> str | None:
@@ -540,9 +529,40 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _make_connection(target: str, baudrate: int) -> object:
+    """Create the appropriate MeshCore connection object for *target*.
+
+    Routes to the correct ``meshcore`` connection class based on the target
+    string format:
+
+    * BLE MAC / UUID → :class:`meshcore.BLEConnection`
+    * ``host:port`` / ``[ipv6]:port`` → :class:`meshcore.TCPConnection`
+    * anything else → :class:`meshcore.SerialConnection`
+
+    Parameters:
+        target: Resolved, non-empty connection target.
+        baudrate: Baud rate for serial connections (ignored for BLE/TCP).
+
+    Returns:
+        An unconnected ``meshcore`` connection object.
+    """
+    from meshcore import BLEConnection, SerialConnection, TCPConnection
+
+    ble_addr = parse_ble_target(target)
+    if ble_addr:
+        return BLEConnection(address=ble_addr)
+
+    tcp_target = parse_tcp_target(target)
+    if tcp_target:
+        host, port = tcp_target
+        return TCPConnection(host, port)
+
+    return SerialConnection(target, baudrate)
+
+
 async def _run_meshcore(
     iface: _MeshcoreInterface,
-    target: str | None,
+    target: str,
     connected_event: threading.Event,
     error_holder: list,
 ) -> None:
@@ -555,17 +575,17 @@ async def _run_meshcore(
 
     Parameters:
         iface: Shared interface object for state and contact tracking.
-        target: Serial port path or BLE address to connect to.
+        target: Resolved, non-empty connection target (serial, BLE, or TCP).
         connected_event: Threading event signalled when the connection
             succeeds or fails, to unblock the calling ``connect()`` method.
         error_holder: Single-element list; set to the raised exception when
             the connection attempt fails so the caller can re-raise it.
     """
-    from meshcore import EventType, MeshCore, SerialConnection
+    from meshcore import EventType, MeshCore
 
     mc: MeshCore | None = None
     try:
-        cx = SerialConnection(target, _DEFAULT_BAUDRATE)
+        cx = _make_connection(target, _DEFAULT_BAUDRATE)
         mc = MeshCore(cx)
         iface._mc = mc
 
@@ -646,9 +666,9 @@ async def _run_meshcore(
 class MeshcoreProvider:
     """MeshCore ingestion provider.
 
-    Connects to a MeshCore node via serial port or BLE.  TCP/IP connections
-    are not supported by the MeshCore protocol and will raise
-    :exc:`ValueError`.
+    Connects to a MeshCore node via serial port, BLE, or TCP/IP.  The
+    connection type is inferred from the target string; see :meth:`connect`
+    for routing rules.
 
     The provider runs MeshCore's ``asyncio`` event loop in a background daemon
     thread.  Incoming ``SELF_INFO``, ``CONTACTS``, ``NEW_CONTACT``,
@@ -669,11 +689,20 @@ class MeshcoreProvider:
     def connect(
         self, *, active_candidate: str | None
     ) -> tuple[object, str | None, str | None]:
-        """Connect to a MeshCore node via serial or BLE.
+        """Connect to a MeshCore node via serial, BLE, or TCP.
 
         Starts an asyncio event loop in a background daemon thread, performs
         the MeshCore companion-protocol handshake, and blocks until the node's
         self-info is received or the timeout expires.
+
+        Connection type is inferred from *active_candidate* (or
+        :data:`~data.mesh_ingestor.config.CONNECTION`):
+
+        * BLE MAC / UUID → :class:`meshcore.BLEConnection`
+        * ``host:port`` → :class:`meshcore.TCPConnection`
+        * serial path → :class:`meshcore.SerialConnection`
+        * ``None`` / empty → first candidate from
+          :func:`~data.mesh_ingestor.connection.default_serial_targets`
 
         Parameters:
             active_candidate: Previously resolved connection target, or
@@ -685,23 +714,19 @@ class MeshcoreProvider:
             :class:`~data.mesh_ingestor.provider.Provider` contract.
 
         Raises:
-            ValueError: When *target* looks like a TCP ``host:port`` address,
-                since MeshCore does not support IP connections.
             ConnectionError: When the node does not complete the handshake
                 within :data:`_CONNECT_TIMEOUT_SECS` seconds.
         """
-        target = active_candidate or config.CONNECTION
+        target: str | None = active_candidate or config.CONNECTION
 
-        if target and _is_tcp_target(target):
-            raise ValueError(
-                f"MeshCore does not support TCP/IP targets: {target!r}. "
-                "Provide a serial port (e.g. /dev/ttyUSB0) or BLE address."
-            )
+        if not target:
+            candidates = default_serial_targets()
+            target = candidates[0] if candidates else "/dev/ttyACM0"
 
         config._debug_log(
             "Connecting to MeshCore node",
             context="meshcore.connect",
-            target=target or "auto",
+            target=target,
         )
 
         iface = _MeshcoreInterface(target=target)

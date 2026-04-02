@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import contextlib
-import glob
 import importlib
 import ipaddress
 import math
@@ -33,6 +32,13 @@ except Exception:  # pragma: no cover - dependency optional in tests
     meshtastic = None  # type: ignore[assignment]
 
 from . import channels, config, serialization
+from .connection import (
+    BLE_ADDRESS_RE,
+    DEFAULT_TCP_PORT,
+    DEFAULT_SERIAL_PATTERNS,
+    default_serial_targets,
+    parse_ble_target,
+)
 
 
 def _ensure_mapping(value) -> Mapping | None:
@@ -616,25 +622,13 @@ def _ensure_channel_metadata(iface: Any) -> None:
         )
 
 
-_DEFAULT_TCP_PORT = 4403
 _DEFAULT_TCP_TARGET = "http://127.0.0.1"
 
-_DEFAULT_SERIAL_PATTERNS = (
-    "/dev/ttyACM*",
-    "/dev/ttyUSB*",
-    "/dev/tty.usbmodem*",
-    "/dev/tty.usbserial*",
-    "/dev/cu.usbmodem*",
-    "/dev/cu.usbserial*",
-)
-
-# Support both MAC addresses (Linux/Windows) and UUIDs (macOS)
-_BLE_ADDRESS_RE = re.compile(
-    r"^(?:"
-    r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}|"  # MAC address format
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"  # UUID format
-    r")$"
-)
+# Private aliases so that existing internal callers and monkeypatching in
+# tests keep working without modification.
+_DEFAULT_TCP_PORT = DEFAULT_TCP_PORT  # backward-compat alias
+_DEFAULT_SERIAL_PATTERNS = DEFAULT_SERIAL_PATTERNS  # backward-compat alias
+_BLE_ADDRESS_RE = BLE_ADDRESS_RE  # backward-compat alias
 
 
 class _DummySerialInterface:
@@ -647,24 +641,7 @@ class _DummySerialInterface:
         pass
 
 
-def _parse_ble_target(value: str) -> str | None:
-    """Return a normalized BLE address (MAC or UUID) when ``value`` matches the format.
-
-    Parameters:
-        value: User-provided target string.
-
-    Returns:
-        The normalised MAC address or UUID, or ``None`` when validation fails.
-    """
-
-    if not value:
-        return None
-    value = value.strip()
-    if not value:
-        return None
-    if _BLE_ADDRESS_RE.fullmatch(value):
-        return value.upper()
-    return None
+_parse_ble_target = parse_ble_target  # backward-compat alias
 
 
 def _parse_network_target(value: str) -> tuple[str, int] | None:
@@ -812,19 +789,7 @@ class NoAvailableMeshInterface(RuntimeError):
     """Raised when no default mesh interface can be created."""
 
 
-def _default_serial_targets() -> list[str]:
-    """Return candidate serial device paths for auto-discovery."""
-
-    candidates: list[str] = []
-    seen: set[str] = set()
-    for pattern in _DEFAULT_SERIAL_PATTERNS:
-        for path in sorted(glob.glob(pattern)):
-            if path not in seen:
-                candidates.append(path)
-                seen.add(path)
-    if "/dev/ttyACM0" not in seen:
-        candidates.append("/dev/ttyACM0")
-    return candidates
+_default_serial_targets = default_serial_targets  # backward-compat alias
 
 
 def _create_default_interface() -> tuple[object, str]:
