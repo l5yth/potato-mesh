@@ -583,6 +583,13 @@ async def _run_meshcore(
     """
     from meshcore import EventType, MeshCore
 
+    # Install early so :meth:`_MeshcoreInterface.close` can signal shutdown with
+    # ``stop_event.set()`` instead of ``loop.stop()`` while ``connect()`` or the
+    # ``finally`` disconnect is still running (avoids RuntimeError from
+    # :meth:`asyncio.loop.run_until_complete`).
+    stop_event = asyncio.Event()
+    iface._stop_event = stop_event
+
     mc: MeshCore | None = None
     try:
         cx = _make_connection(target, _DEFAULT_BAUDRATE)
@@ -626,6 +633,11 @@ async def _run_meshcore(
                 "firmware."
             )
 
+        if stop_event.is_set():
+            raise ConnectionError(
+                "Mesh interface close was requested before the connection could be completed."
+            )
+
         iface.isConnected = True
         connected_event.set()
 
@@ -642,8 +654,6 @@ async def _run_meshcore(
 
         await mc.start_auto_message_fetching()
 
-        stop_event = asyncio.Event()
-        iface._stop_event = stop_event
         await stop_event.wait()
 
     except Exception as exc:
