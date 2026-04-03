@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -303,6 +305,249 @@ def test_meshcore_connect_auto_discovers_serial(monkeypatch):
     assert resolved == "/dev/ttyACM0"
     assert next_candidate == "/dev/ttyACM0"
     iface.close()
+
+
+def test_meshcore_ble_advertisement_match():
+    """_meshcore_ble_advertisement_match mirrors meshcore.ble_cx naming rules."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    adv = types.SimpleNamespace(local_name="MeshCore-foo")
+    dev = types.SimpleNamespace(name=None)
+    assert _mod._meshcore_ble_advertisement_match(dev, adv)
+
+    adv2 = types.SimpleNamespace(local_name=None)
+    dev2 = types.SimpleNamespace(name="MeshCore-bar")
+    assert _mod._meshcore_ble_advertisement_match(dev2, adv2)
+
+    adv3 = types.SimpleNamespace(local_name="Other")
+    dev3 = types.SimpleNamespace(name="TV")
+    assert not _mod._meshcore_ble_advertisement_match(dev3, adv3)
+
+
+def test_meshcore_gather_includes_ble_when_enabled(monkeypatch):
+    """_gather_meshcore_connection_choices must append BLE rows after USB."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/one"])
+    monkeypatch.setattr(
+        _mod,
+        "_sync_ble_meshcore_candidates",
+        lambda _timeout: [("AA:BB:CC:DD:EE:FF", "BLE  MeshCore-x  (AA:BB:CC:DD:EE:FF)")],
+    )
+    rows = _mod._gather_meshcore_connection_choices(
+        include_ble=True,
+        ble_scan_timeout=1.0,
+    )
+    assert [r[0] for r in rows] == ["/dev/one", "AA:BB:CC:DD:EE:FF"]
+
+
+def test_meshcore_gather_skips_ble_when_disabled(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/z"])
+    monkeypatch.setattr(
+        _mod,
+        "_sync_ble_meshcore_candidates",
+        lambda _timeout: pytest.fail("BLE scan should not run"),
+    )
+    rows = _mod._gather_meshcore_connection_choices(
+        include_ble=False,
+        ble_scan_timeout=1.0,
+    )
+    assert rows == [("/dev/z", "USB serial  /dev/z")]
+
+
+def test_meshcore_connect_interactive_menu_second_choice(monkeypatch):
+    """TTY + multiple USB candidates must prompt and honour the chosen index."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
+    monkeypatch.setattr(_mod, "_sync_ble_meshcore_candidates", lambda *_a, **_k: [])
+    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p="": "2")
+    iface, resolved, nxt = MeshcoreProvider().connect(active_candidate=None)
+    assert resolved == "/dev/s2"
+    assert nxt == "/dev/s2"
+    iface.close()
+
+
+def test_meshcore_connect_interactive_retries_bad_input(monkeypatch):
+    """Invalid menu input must re-prompt until a valid index is entered."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
+    monkeypatch.setattr(_mod, "_sync_ble_meshcore_candidates", lambda *_a, **_k: [])
+    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    calls: list[str] = []
+
+    def _inp(_p=""):
+        calls.append(_p)
+        if len(calls) == 1:
+            return "abc"
+        if len(calls) == 2:
+            return "99"
+        return "1"
+
+    monkeypatch.setattr("builtins.input", _inp)
+    iface, resolved, _ = MeshcoreProvider().connect(active_candidate=None)
+    assert resolved == "/dev/s1"
+    iface.close()
+
+
+def test_meshcore_connect_interactive_single_skips_input(monkeypatch):
+    """A single candidate must auto-select without calling input()."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/only"])
+    monkeypatch.setattr(_mod, "_sync_ble_meshcore_candidates", lambda *_a, **_k: [])
+
+    def _bad_input(*_a, **_k):
+        raise AssertionError("input() must not be used for a single candidate")
+
+    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", _bad_input)
+    iface, resolved, _ = MeshcoreProvider().connect(active_candidate=None)
+    assert resolved == "/dev/only"
+    iface.close()
+
+
+def test_meshcore_resolve_empty_targets_raises(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_gather_meshcore_connection_choices", lambda **k: [])
+    with pytest.raises(ConnectionError):
+        _mod._resolve_meshcore_target_when_unset()
+
+
+def test_meshcore_sync_ble_meshcore_candidates_async_error(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    async def _boom(_timeout):
+        raise RuntimeError("scan boom")
+
+    monkeypatch.setattr(_mod, "_async_ble_meshcore_candidates", _boom)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    assert _mod._sync_ble_meshcore_candidates(0.05) == []
+
+
+def test_meshcore_async_ble_skipped_without_bleak(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "bleak":
+            raise ImportError("no bleak")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    assert asyncio.run(_mod._async_ble_meshcore_candidates(0.01)) == []
+
+
+def test_meshcore_async_ble_discover_raises(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+    from bleak import BleakScanner
+
+    async def boom(*_a, **_k):
+        raise OSError("scan denied")
+
+    monkeypatch.setattr(BleakScanner, "discover", boom)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    assert asyncio.run(_mod._async_ble_meshcore_candidates(0.01)) == []
+
+
+def test_meshcore_async_ble_finds_meshcore_named_devices(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+    from bleak import BleakScanner
+
+    dev = types.SimpleNamespace(address="11:22:33:44:55:66", name=None)
+    adv = types.SimpleNamespace(local_name="MeshCore-test")
+
+    async def fake_discover(*_a, **_k):
+        return {"11:22:33:44:55:66": (dev, adv)}
+
+    monkeypatch.setattr(BleakScanner, "discover", fake_discover)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    out = asyncio.run(_mod._async_ble_meshcore_candidates(0.01))
+    assert len(out) == 1
+    assert out[0][0] == "11:22:33:44:55:66"
+
+
+def test_meshcore_invalid_env_scan_timeout_falls_back(monkeypatch):
+    """Invalid MESHCORE_BLE_SCAN_SECS must fall back to the default timeout."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setenv("MESHCORE_BLE_SCAN_SECS", "not-a-number")
+    captured: list[float] = []
+
+    def _gather(**kwargs):
+        captured.append(kwargs["ble_scan_timeout"])
+        return [("/dev/x", "USB serial  /dev/x")]
+
+    monkeypatch.setattr(_mod, "_gather_meshcore_connection_choices", _gather)
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p="": "1")
+    iface, _, _ = MeshcoreProvider().connect(active_candidate=None)
+    iface.close()
+    assert captured[0] == _mod._DEFAULT_BLE_SCAN_SECS
+
+
+def test_meshcore_negative_ble_scan_timeout_clamped(monkeypatch):
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setenv("MESHCORE_BLE_SCAN_SECS", "-2")
+    captured: list[float] = []
+
+    def _gather(**kwargs):
+        captured.append(kwargs["ble_scan_timeout"])
+        return [("/dev/x", "USB serial  /dev/x")]
+
+    monkeypatch.setattr(_mod, "_gather_meshcore_connection_choices", _gather)
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p="": "1")
+    iface, _, _ = MeshcoreProvider().connect(active_candidate=None)
+    iface.close()
+    assert captured[0] == 0.0
+
+
+def test_meshcore_sync_ble_thread_join_timeout(monkeypatch):
+    """When the scan thread never finishes, _sync must return an empty list."""
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    class _HungThread:
+        def start(self) -> None:
+            return None
+
+        def join(self, timeout=None) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return True
+
+    monkeypatch.setattr(threading, "Thread", lambda *a, **k: _HungThread())
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    assert _mod._sync_ble_meshcore_candidates(0.01) == []
 
 
 @pytest.mark.parametrize(
