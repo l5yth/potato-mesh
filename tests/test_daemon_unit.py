@@ -852,6 +852,9 @@ def _make_minimal_fake_provider(name: str):
         def node_snapshot_items(self, iface):
             return []
 
+        def list_connection_candidates(self, *, ble_scan_timeout_secs: float):
+            return []
+
     fp = FakeProvider()
     fp.name = name
     return fp

@@ -26,13 +26,21 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
-from data.mesh_ingestor.provider import Provider  # noqa: E402 - path setup
+from data.mesh_ingestor.provider import (  # noqa: E402 - path setup
+    ConnectionCandidate,
+    Provider,
+)
+from data.mesh_ingestor.providers import (
+    meshtastic as meshtastic_provider_mod,
+)  # noqa: E402
 from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
 from data.mesh_ingestor.connection import parse_tcp_target  # noqa: E402 - path setup
+from data.mesh_ingestor.providers import meshcore as meshcore_provider_mod  # noqa: E402
 from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
     MeshcoreProvider,
+    _meshcore_ble_keep,
     _MeshcoreInterface,
     _contact_to_node_dict,
     _derive_message_id,
@@ -52,6 +60,57 @@ from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
 def test_meshtastic_provider_satisfies_protocol():
     """MeshtasticProvider must structurally satisfy the Provider Protocol."""
     assert isinstance(MeshtasticProvider(), Provider)
+
+
+def test_meshtastic_list_connection_candidates_merges_serial_and_ble(monkeypatch):
+    """Serial paths precede BLE rows from the Meshtastic-specific scan."""
+
+    monkeypatch.setattr(
+        meshtastic_provider_mod,
+        "list_serial_candidates",
+        lambda: ["/dev/serial"],
+    )
+    monkeypatch.setattr(
+        meshtastic_provider_mod,
+        "_meshtastic_ble_candidates",
+        lambda _t: [
+            ConnectionCandidate(
+                target="AA:BB:CC:DD:EE:FF", label="Meshtastic radio", kind="ble"
+            )
+        ],
+    )
+    rows = MeshtasticProvider().list_connection_candidates(ble_scan_timeout_secs=1.0)
+    assert [r.target for r in rows] == ["/dev/serial", "AA:BB:CC:DD:EE:FF"]
+
+
+def test_meshcore_list_connection_candidates_merges_serial_and_ble(monkeypatch):
+    """MeshCore provider lists the same serial helper plus MeshCore BLE rows."""
+
+    monkeypatch.setattr(
+        meshcore_provider_mod,
+        "list_serial_candidates",
+        lambda: ["/dev/mc"],
+    )
+    monkeypatch.setattr(
+        meshcore_provider_mod,
+        "_meshcore_ble_candidates",
+        lambda _t: [
+            ConnectionCandidate(
+                target="11:22:33:44:55:66", label="MeshCore", kind="ble"
+            )
+        ],
+    )
+    rows = MeshcoreProvider().list_connection_candidates(ble_scan_timeout_secs=1.0)
+    assert [r.target for r in rows] == ["/dev/mc", "11:22:33:44:55:66"]
+
+
+def test_meshcore_ble_keep_requires_meshcore_in_name_when_present():
+    """Named BLE devices must advertise MeshCore in the name; unnamed pass."""
+
+    assert _meshcore_ble_keep(types.SimpleNamespace(name="MeshCore Node")) is True
+    assert _meshcore_ble_keep(types.SimpleNamespace(name="Other UART")) is False
+    assert _meshcore_ble_keep(types.SimpleNamespace(name="")) is True
+    assert _meshcore_ble_keep(types.SimpleNamespace(name=None)) is True
 
 
 def test_daemon_main_uses_provider_connect(monkeypatch):
@@ -128,6 +187,87 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
 
     daemon.main(provider=FakeProvider())
     assert calls["connect"] >= 1
+
+
+def test_daemon_main_connection_ask_resolves_via_scan_connection(monkeypatch):
+    """CONNECTION=ask must replace config with scan_connection() result."""
+
+    class FakeProvider(MeshtasticProvider):
+        def subscribe(self):
+            return []
+
+        def connect(self, *, active_candidate):  # type: ignore[override]
+            class Iface:
+                nodes = {}
+
+                def close(self):
+                    return None
+
+            return Iface(), "serial0", active_candidate
+
+        def extract_host_node_id(self, iface):  # type: ignore[override]
+            return "!host"
+
+        def node_snapshot_items(self, iface):  # type: ignore[override]
+            return []
+
+    class AutoStopEvent:
+        def __init__(self):
+            self._set = False
+
+        def set(self):
+            self._set = True
+
+        def is_set(self):
+            return self._set
+
+        def wait(self, _timeout=None):
+            self._set = True
+            return True
+
+    monkeypatch.setattr(daemon.config, "SNAPSHOT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_CLOSE_TIMEOUT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "_INGESTOR_HEARTBEAT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "ENERGY_SAVING", False)
+    monkeypatch.setattr(daemon.config, "_INACTIVITY_RECONNECT_SECS", 0)
+    monkeypatch.setattr(daemon.config, "CONNECTION", "ask")
+
+    captured: dict[str, object] = {}
+
+    def _fake_scan(prov):
+        captured["provider"] = prov
+        return "user-picked"
+
+    monkeypatch.setattr(daemon.connection_scan, "scan_connection", _fake_scan)
+
+    monkeypatch.setattr(
+        daemon,
+        "threading",
+        types.SimpleNamespace(
+            Event=AutoStopEvent,
+            current_thread=daemon.threading.current_thread,
+            main_thread=daemon.threading.main_thread,
+        ),
+    )
+
+    monkeypatch.setattr(
+        daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(daemon.handlers, "host_node_id", lambda: "!host")
+    monkeypatch.setattr(daemon.handlers, "upsert_node", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    monkeypatch.setattr(
+        daemon.ingestors, "set_ingestor_node_id", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        daemon.ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
+
+    daemon.main(provider=FakeProvider())
+    assert daemon.config.CONNECTION == "user-picked"
+    assert isinstance(captured.get("provider"), FakeProvider)
 
 
 def test_node_snapshot_items_retries_on_concurrent_mutation(monkeypatch):

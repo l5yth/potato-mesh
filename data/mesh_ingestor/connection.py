@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import glob
 import re
+import types
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -161,3 +162,43 @@ def default_serial_targets() -> list[str]:
     if "/dev/ttyACM0" not in seen:
         candidates.append("/dev/ttyACM0")
     return candidates
+
+
+def list_serial_candidates(
+    *, _list_ports_module: types.ModuleType | None = None
+) -> list[str]:
+    """Return serial device paths for interactive connection selection.
+
+    Combines :func:`default_serial_targets` with ``pyserial`` port enumeration
+    when ``serial.tools.list_ports`` is available (bundled with Meshtastic).
+
+    Parameters:
+        _list_ports_module: For unit tests only; when set, used instead of
+            importing ``serial.tools.list_ports``.
+
+    Returns:
+        Sorted unique device paths suitable for ``CONNECTION``.
+    """
+
+    seen: dict[str, None] = {}
+    for path in default_serial_targets():
+        seen[path] = None
+    list_ports = _list_ports_module
+    if list_ports is None:
+        try:
+            from serial.tools import list_ports as _lp  # type: ignore[import-untyped]
+
+            list_ports = _lp
+        except Exception:
+            return sorted(seen.keys())
+    try:
+        comports = getattr(list_ports, "comports", None)
+        if not callable(comports):
+            return sorted(seen.keys())
+        for port in comports():
+            dev = (port.device or "").strip()
+            if dev:
+                seen.setdefault(dev, None)
+    except Exception:
+        pass
+    return sorted(seen.keys())

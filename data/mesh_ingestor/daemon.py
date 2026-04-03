@@ -24,7 +24,7 @@ import time
 
 from pubsub import pub
 
-from . import config, handlers, ingestors, interfaces
+from . import config, connection_scan, handlers, ingestors, interfaces
 from .provider import Provider
 
 _RECEIVE_TOPICS = (
@@ -571,6 +571,9 @@ def main(*, provider: Provider | None = None) -> None:
             severity="info",
             topics=subscribed,
         )
+
+    if connection_scan.connection_is_ask(config.CONNECTION):
+        config.CONNECTION = connection_scan.scan_connection(provider)
 
     state = _DaemonState(
         provider=provider,

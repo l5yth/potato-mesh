@@ -16,11 +16,74 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from pubsub import pub
 
 from .. import config, daemon as _daemon, handlers, interfaces
+from ..connection import list_serial_candidates
+from ..provider import ConnectionCandidate
+
+_MESHTASTIC_BLE_SERVICE_UUID = "6ba1b218-15a8-461f-9fa8-5dcae273eafd"
+"""Meshtastic GATT service UUID used to filter BLE scan results."""
+
+
+def _meshtastic_ble_candidates(
+    ble_scan_timeout_secs: float,
+) -> list[ConnectionCandidate]:
+    """Return BLE devices advertising the Meshtastic service."""
+
+    try:
+        from bleak import BleakScanner  # type: ignore[import-untyped]
+    except Exception as exc:  # pragma: no cover - optional dependency paths
+        config._debug_log(
+            "BLE scan skipped (bleak unavailable)",
+            context="meshtastic.scan",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+        )
+        return []
+
+    async def _discover():
+        return await BleakScanner.discover(
+            timeout=ble_scan_timeout_secs,
+            service_uuids=[_MESHTASTIC_BLE_SERVICE_UUID],
+        )
+
+    try:
+        devices = asyncio.run(_discover())
+    except RuntimeError as exc:
+        # Nested event loop (e.g. some test environments): skip BLE gracefully.
+        config._debug_log(
+            "BLE scan skipped (async runtime)",
+            context="meshtastic.scan",
+            severity="warn",
+            error_message=str(exc),
+        )
+        return []
+    except Exception as exc:  # pragma: no cover - hardware / OS dependent
+        config._debug_log(
+            "BLE scan failed",
+            context="meshtastic.scan",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+        return []
+
+    by_target: dict[str, ConnectionCandidate] = {}
+    for device in devices:
+        addr = (getattr(device, "address", None) or "").strip()
+        if not addr:
+            continue
+        target = addr.upper() if ":" in addr else addr
+        name = (getattr(device, "name", None) or "").strip() or "(no name)"
+        rssi = getattr(device, "rssi", None)
+        rssi_part = f" RSSI={rssi} dBm" if rssi is not None else ""
+        label = f"{name} — {target}{rssi_part}"
+        by_target[target] = ConnectionCandidate(target=target, label=label, kind="ble")
+    return sorted(by_target.values(), key=lambda c: c.label.casefold())
 
 
 class MeshtasticProvider:
@@ -86,6 +149,18 @@ class MeshtasticProvider:
             context="meshtastic.snapshot",
         )
         return []
+
+    def list_connection_candidates(
+        self, *, ble_scan_timeout_secs: float
+    ) -> list[ConnectionCandidate]:
+        """List serial ports and Meshtastic BLE peripherals."""
+
+        serial_rows = [
+            ConnectionCandidate(target=path, label=path, kind="serial")
+            for path in list_serial_candidates()
+        ]
+        ble_rows = _meshtastic_ble_candidates(ble_scan_timeout_secs)
+        return [*serial_rows, *ble_rows]
 
 
 __all__ = ["MeshtasticProvider"]
