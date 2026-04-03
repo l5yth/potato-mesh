@@ -305,6 +305,9 @@ def _try_connect(state: _DaemonState) -> bool:
         the connection failed and the caller should ``continue``.
     """
 
+    if state.stop.is_set():
+        return False
+
     try:
         state.iface, state.resolved_target, state.active_candidate = (
             state.provider.connect(active_candidate=state.active_candidate)
@@ -353,6 +356,8 @@ def _try_connect(state: _DaemonState) -> bool:
         if state.configured_port is None:
             state.active_candidate = None
             state.announced_target = False
+        if state.stop.is_set():
+            return False
         state.stop.wait(state.retry_delay)
         state.retry_delay = _advance_retry_delay(state.retry_delay)
         return False
@@ -436,6 +441,8 @@ def _try_send_snapshot(state: _DaemonState) -> bool:
         )
         _close_interface(state.iface)
         state.iface = None
+        if state.stop.is_set():
+            return False
         state.stop.wait(state.retry_delay)
         state.retry_delay = _advance_retry_delay(state.retry_delay)
         return False
@@ -591,10 +598,12 @@ def main(*, provider: Provider | None = None) -> None:
         state.stop.set()
 
     def handle_sigint(signum, frame) -> None:
-        if state.stop.is_set():
-            signal.default_int_handler(signum, frame)
-            return
+        # Set the cooperative stop flag for finally/cleanup, then re-raise the
+        # interpreter's default SIGINT handling (KeyboardInterrupt). A first ^C
+        # that only set the event left blocking work (BLE, ``input()``) running
+        # and the main loop could call ``connect()`` again and redraw the menu.
         state.stop.set()
+        signal.default_int_handler(signum, frame)
 
     if threading.current_thread() == threading.main_thread():
         signal.signal(signal.SIGINT, handle_sigint)

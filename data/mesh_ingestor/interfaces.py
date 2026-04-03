@@ -424,6 +424,66 @@ def _patch_meshtastic_ble_receive_loop() -> None:
 _patch_meshtastic_ble_receive_loop()
 
 
+def _patch_meshtastic_ble_connect_fast_path() -> None:
+    """Try a direct Bleak connection before Meshtastic's fixed 10s discovery scan.
+
+    :meth:`meshtastic.ble_interface.BLEInterface.connect` always calls
+    :meth:`~meshtastic.ble_interface.BLEInterface.find_device`, which runs
+    ``BleakScanner.discover(timeout=10, ...)`` even when the address is already
+    known (for example from our interactive BLE menu). That adds about ten
+    seconds before macOS can show pairing / PIN. We attempt
+    ``BleakClient(address).connect()`` first and fall back to the upstream
+    scan-and-match path if direct connection fails.
+    """
+
+    try:
+        from meshtastic import ble_interface as _ble_mod  # type: ignore
+    except Exception:  # pragma: no cover - optional dependency
+        return
+
+    ble_class = getattr(_ble_mod, "BLEInterface", None)
+    ble_client_cls = getattr(_ble_mod, "BLEClient", None)
+    if ble_class is None or ble_client_cls is None:
+        return
+
+    original = getattr(ble_class, "connect", None)
+    if not callable(original):
+        return
+    if getattr(original, "_potato_mesh_fast_connect", False):
+        return
+
+    def _connect_with_optional_scan(self, address: str | None = None):  # type: ignore[no-untyped-def]
+        trimmed = (address or "").strip()
+        if trimmed:
+            config._debug_log(
+                "Meshtastic BLE: direct connect first (skip 10s pre-scan when possible)",
+                context="interfaces.ble",
+                address=trimmed,
+            )
+            try:
+                client = ble_client_cls(
+                    trimmed,
+                    disconnected_callback=lambda _: self.close(),
+                )
+                client.connect()
+                client.discover()
+                return client
+            except Exception as exc:
+                config._debug_log(
+                    "Meshtastic BLE: direct connect failed; using scan + connect",
+                    context="interfaces.ble",
+                    error_class=exc.__class__.__name__,
+                    error_message=str(exc)[:500],
+                )
+        return original(self, address)
+
+    _connect_with_optional_scan._potato_mesh_fast_connect = True  # type: ignore[attr-defined]
+    ble_class.connect = _connect_with_optional_scan  # type: ignore[method-assign]
+
+
+_patch_meshtastic_ble_connect_fast_path()
+
+
 def _has_field(message: Any, field_name: str) -> bool:
     """Return ``True`` when ``message`` advertises ``field_name`` via ``HasField``."""
 

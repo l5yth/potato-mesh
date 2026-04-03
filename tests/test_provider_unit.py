@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import threading
 import types
@@ -195,6 +196,110 @@ def test_meshtastic_subscribe_is_idempotent(monkeypatch):
     assert len(subscribe_calls) == len(first)
 
 
+def test_meshtastic_ble_advertisement_match():
+    """meshtastic_ble_advertisement_match keys off case-insensitive name hints."""
+    from data.mesh_ingestor.target_selection import meshtastic_ble_advertisement_match
+
+    adv = types.SimpleNamespace(local_name="Meshtastic abcd")
+    dev = types.SimpleNamespace(name=None)
+    assert meshtastic_ble_advertisement_match(dev, adv)
+
+    adv2 = types.SimpleNamespace(local_name=None)
+    dev2 = types.SimpleNamespace(name="MESHTASTIC node")
+    assert meshtastic_ble_advertisement_match(dev2, adv2)
+
+    adv3 = types.SimpleNamespace(local_name="MeshCore")
+    dev3 = types.SimpleNamespace(name="x")
+    assert not meshtastic_ble_advertisement_match(dev3, adv3)
+
+
+def test_meshtastic_ble_advertisement_match_service_uuid():
+    """Meshtastic radios are detected via GATT service UUID when names are short."""
+    from data.mesh_ingestor.target_selection import meshtastic_ble_advertisement_match
+
+    adv = types.SimpleNamespace(
+        local_name="abcd",
+        service_uuids=["6BA1B218-15A8-461F-9FA8-5DCAE273EAFD"],
+    )
+    dev = types.SimpleNamespace(name="abcd")
+    assert meshtastic_ble_advertisement_match(dev, adv)
+
+
+def test_meshtastic_connect_auto_noninteractive_first_usb(monkeypatch):
+    """Without CONNECTION and no TTY, Meshtastic uses the first USB candidate."""
+    import data.mesh_ingestor.providers.meshtastic as _m
+    import data.mesh_ingestor.target_selection as ts
+
+    monkeypatch.setattr(
+        ts, "default_serial_targets", lambda: ["/dev/cu.z", "/dev/other"]
+    )
+    monkeypatch.setattr(_m.config, "CONNECTION", None)
+    monkeypatch.setattr(_m.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    fake_iface = types.SimpleNamespace(nodes={})
+
+    def _fake_create(path: str):
+        assert path == "/dev/cu.z"
+        return fake_iface, path
+
+    monkeypatch.setattr(_m.interfaces, "_create_serial_interface", _fake_create)
+    monkeypatch.setattr(_m.interfaces, "_ensure_radio_metadata", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        _m.interfaces, "_ensure_channel_metadata", lambda *_a, **_k: None
+    )
+
+    iface, resolved, nxt = MeshtasticProvider().connect(active_candidate=None)
+    assert iface is fake_iface
+    assert resolved == "/dev/cu.z"
+    assert nxt == "/dev/cu.z"
+
+
+def test_meshtastic_connect_interactive_usb_menu(monkeypatch):
+    """TTY + multiple USB candidates must prompt for Meshtastic like MeshCore."""
+    import data.mesh_ingestor.providers.meshtastic as _m
+    import data.mesh_ingestor.target_selection as ts
+
+    monkeypatch.setattr(os.path, "exists", lambda p: str(p) in {"/dev/s1", "/dev/s2"})
+    monkeypatch.setattr(ts, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
+    monkeypatch.setattr(ts, "sync_ble_candidates", lambda *a, **k: [])
+    monkeypatch.setattr(_m.config, "CONNECTION", None)
+    monkeypatch.setattr(_m.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p="": "2")
+
+    fake_iface = types.SimpleNamespace(nodes={})
+
+    def _fake_create(path: str):
+        return fake_iface, path
+
+    monkeypatch.setattr(_m.interfaces, "_create_serial_interface", _fake_create)
+    monkeypatch.setattr(_m.interfaces, "_ensure_radio_metadata", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        _m.interfaces, "_ensure_channel_metadata", lambda *_a, **_k: None
+    )
+
+    iface, resolved, nxt = MeshtasticProvider().connect(active_candidate=None)
+    assert resolved == "/dev/s2"
+    assert nxt == "/dev/s2"
+    assert iface is fake_iface
+
+
+def test_meshtastic_connect_no_candidates_raises(monkeypatch):
+    """Unset CONNECTION and no USB glob hits must raise before opening Meshtastic."""
+    import data.mesh_ingestor.providers.meshtastic as _m
+    import data.mesh_ingestor.target_selection as ts
+
+    monkeypatch.setattr(ts, "gather_connection_choices", lambda **k: [])
+    monkeypatch.setattr(_m.config, "CONNECTION", None)
+    monkeypatch.setattr(_m.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+    with pytest.raises(ConnectionError):
+        MeshtasticProvider().connect(active_candidate=None)
+
+
 # ---------------------------------------------------------------------------
 # MeshcoreProvider tests
 # ---------------------------------------------------------------------------
@@ -293,12 +398,15 @@ def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
 def test_meshcore_connect_auto_discovers_serial(monkeypatch):
     """connect() with no target must resolve to the first serial candidate."""
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(ts, "sync_ble_candidates", lambda *_a, **_k: [])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr(
-        _mod, "default_serial_targets", lambda: ["/dev/ttyACM0", "/dev/ttyUSB0"]
+        ts, "default_serial_targets", lambda: ["/dev/ttyACM0", "/dev/ttyUSB0"]
     )
     iface, resolved, next_candidate = MeshcoreProvider().connect(active_candidate=None)
     assert iface is not None
@@ -327,12 +435,15 @@ def test_meshcore_ble_advertisement_match():
 def test_meshcore_gather_includes_ble_when_enabled(monkeypatch):
     """_gather_meshcore_connection_choices must append BLE rows after USB."""
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
-    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/one"])
+    monkeypatch.setattr(ts, "default_serial_targets", lambda: ["/dev/one"])
     monkeypatch.setattr(
-        _mod,
-        "_sync_ble_meshcore_candidates",
-        lambda _timeout: [("AA:BB:CC:DD:EE:FF", "BLE  MeshCore-x  (AA:BB:CC:DD:EE:FF)")],
+        ts,
+        "sync_ble_candidates",
+        lambda *_a, **_k: [
+            ("AA:BB:CC:DD:EE:FF", "BLE  MeshCore-x  (AA:BB:CC:DD:EE:FF)")
+        ],
     )
     rows = _mod._gather_meshcore_connection_choices(
         include_ble=True,
@@ -343,12 +454,13 @@ def test_meshcore_gather_includes_ble_when_enabled(monkeypatch):
 
 def test_meshcore_gather_skips_ble_when_disabled(monkeypatch):
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
-    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/z"])
+    monkeypatch.setattr(ts, "default_serial_targets", lambda: ["/dev/z"])
     monkeypatch.setattr(
-        _mod,
-        "_sync_ble_meshcore_candidates",
-        lambda _timeout: pytest.fail("BLE scan should not run"),
+        ts,
+        "sync_ble_candidates",
+        lambda *_a, **_k: pytest.fail("BLE scan should not run"),
     )
     rows = _mod._gather_meshcore_connection_choices(
         include_ble=False,
@@ -360,14 +472,18 @@ def test_meshcore_gather_skips_ble_when_disabled(monkeypatch):
 def test_meshcore_connect_interactive_menu_second_choice(monkeypatch):
     """TTY + multiple USB candidates must prompt and honour the chosen index."""
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
+    monkeypatch.setattr(
+        os.path, "exists", lambda p: str(p) in {"/dev/s1", "/dev/s2"}
+    )
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
-    monkeypatch.setattr(_mod, "_sync_ble_meshcore_candidates", lambda *_a, **_k: [])
-    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(ts, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
+    monkeypatch.setattr(ts, "sync_ble_candidates", lambda *_a, **_k: [])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _p="": "2")
     iface, resolved, nxt = MeshcoreProvider().connect(active_candidate=None)
     assert resolved == "/dev/s2"
@@ -378,14 +494,18 @@ def test_meshcore_connect_interactive_menu_second_choice(monkeypatch):
 def test_meshcore_connect_interactive_retries_bad_input(monkeypatch):
     """Invalid menu input must re-prompt until a valid index is entered."""
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
+    monkeypatch.setattr(
+        os.path, "exists", lambda p: str(p) in {"/dev/s1", "/dev/s2"}
+    )
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
-    monkeypatch.setattr(_mod, "_sync_ble_meshcore_candidates", lambda *_a, **_k: [])
-    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(ts, "default_serial_targets", lambda: ["/dev/s1", "/dev/s2"])
+    monkeypatch.setattr(ts, "sync_ble_candidates", lambda *_a, **_k: [])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     calls: list[str] = []
 
     def _inp(_p=""):
@@ -405,18 +525,20 @@ def test_meshcore_connect_interactive_retries_bad_input(monkeypatch):
 def test_meshcore_connect_interactive_single_skips_input(monkeypatch):
     """A single candidate must auto-select without calling input()."""
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
+    monkeypatch.setattr(os.path, "exists", lambda p: str(p) == "/dev/only")
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mod, "default_serial_targets", lambda: ["/dev/only"])
-    monkeypatch.setattr(_mod, "_sync_ble_meshcore_candidates", lambda *_a, **_k: [])
+    monkeypatch.setattr(ts, "default_serial_targets", lambda: ["/dev/only"])
+    monkeypatch.setattr(ts, "sync_ble_candidates", lambda *_a, **_k: [])
 
     def _bad_input(*_a, **_k):
         raise AssertionError("input() must not be used for a single candidate")
 
-    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", _bad_input)
     iface, resolved, _ = MeshcoreProvider().connect(active_candidate=None)
     assert resolved == "/dev/only"
@@ -425,8 +547,9 @@ def test_meshcore_connect_interactive_single_skips_input(monkeypatch):
 
 def test_meshcore_resolve_empty_targets_raises(monkeypatch):
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
-    monkeypatch.setattr(_mod, "_gather_meshcore_connection_choices", lambda **k: [])
+    monkeypatch.setattr(ts, "gather_connection_choices", lambda **k: [])
     with pytest.raises(ConnectionError):
         _mod._resolve_meshcore_target_when_unset()
 
@@ -487,22 +610,23 @@ def test_meshcore_async_ble_finds_meshcore_named_devices(monkeypatch):
 
 
 def test_meshcore_invalid_env_scan_timeout_falls_back(monkeypatch):
-    """Invalid MESHCORE_BLE_SCAN_SECS must fall back to the default timeout."""
+    """Invalid BLE_SCAN_SECS must fall back to the default timeout."""
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
-    monkeypatch.setenv("MESHCORE_BLE_SCAN_SECS", "not-a-number")
+    monkeypatch.setenv("BLE_SCAN_SECS", "not-a-number")
     captured: list[float] = []
 
     def _gather(**kwargs):
         captured.append(kwargs["ble_scan_timeout"])
         return [("/dev/x", "USB serial  /dev/x")]
 
-    monkeypatch.setattr(_mod, "_gather_meshcore_connection_choices", _gather)
+    monkeypatch.setattr(ts, "gather_connection_choices", _gather)
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _p="": "1")
     iface, _, _ = MeshcoreProvider().connect(active_candidate=None)
     iface.close()
@@ -511,20 +635,21 @@ def test_meshcore_invalid_env_scan_timeout_falls_back(monkeypatch):
 
 def test_meshcore_negative_ble_scan_timeout_clamped(monkeypatch):
     import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.target_selection as ts
 
-    monkeypatch.setenv("MESHCORE_BLE_SCAN_SECS", "-2")
+    monkeypatch.setenv("BLE_SCAN_SECS", "-2")
     captured: list[float] = []
 
     def _gather(**kwargs):
         captured.append(kwargs["ble_scan_timeout"])
         return [("/dev/x", "USB serial  /dev/x")]
 
-    monkeypatch.setattr(_mod, "_gather_meshcore_connection_choices", _gather)
+    monkeypatch.setattr(ts, "gather_connection_choices", _gather)
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mod.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(_mod.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _p="": "1")
     iface, _, _ = MeshcoreProvider().connect(active_candidate=None)
     iface.close()

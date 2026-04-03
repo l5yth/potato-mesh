@@ -34,7 +34,7 @@ Connection type is detected automatically from the target string:
   and (via Bleak) BLE advertisements matching MeshCore companion naming, then
   prompts for a choice.  Without a TTY (e.g. Docker), only USB candidates are
   considered and the first entry is used.  BLE scan duration is controlled by
-  :envvar:`MESHCORE_BLE_SCAN_SECS` (default ``5``).
+  :envvar:`BLE_SCAN_SECS` (default ``5``).
 
 Node identities are derived from the first four bytes (eight hex characters)
 of each contact's 32-byte public key, formatted as ``!xxxxxxxx`` to match
@@ -47,15 +47,21 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
-import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import config
-from ..connection import default_serial_targets, parse_ble_target, parse_tcp_target
+from ..connection import parse_ble_target, parse_tcp_target
+from ..target_selection import (
+    DEFAULT_BLE_SCAN_SECS,
+    async_ble_candidates as _async_ble_candidates_base,
+    gather_connection_choices,
+    meshcore_ble_advertisement_match as _meshcore_ble_advertisement_match_base,
+    resolve_connection_target_when_unset as _resolve_connection_target_when_unset_base,
+    sync_ble_candidates as _sync_ble_candidates_base,
+)
 
 # ---------------------------------------------------------------------------
 # Debug log file
@@ -77,209 +83,63 @@ _CONNECT_TIMEOUT_SECS: float = 30.0
 _DEFAULT_BAUDRATE: int = 115200
 """Default baud rate for MeshCore serial connections."""
 
-_DEFAULT_BLE_SCAN_SECS: float = 5.0
-"""Default seconds to scan for BLE MeshCore companions when prompting interactively."""
-
-# ---------------------------------------------------------------------------
-# Auto target discovery (no CONNECTION)
-# ---------------------------------------------------------------------------
+# Backwards-compatible alias for tests and callers.
+_DEFAULT_BLE_SCAN_SECS: float = DEFAULT_BLE_SCAN_SECS
 
 
 def _meshcore_ble_advertisement_match(device: object, adv: object) -> bool:
-    """Return True when *adv* / *device* look like a MeshCore BLE companion.
+    """Delegate to :func:`~data.mesh_ingestor.target_selection.meshcore_ble_advertisement_match`."""
 
-    Uses the same naming rule as :mod:`meshcore.ble_cx` (advertised local name
-    prefixed with ``MeshCore``), with a fallback to :attr:`BLEDevice.name`.
-
-    Parameters:
-        device: ``bleak`` :class:`~bleak.backends.device.BLEDevice`.
-        adv: ``bleak`` :class:`~bleak.backends.scanner.AdvertisementData`.
-
-    Returns:
-        ``True`` when the device should be offered as a connection choice.
-    """
-    adv_name = getattr(adv, "local_name", None) or ""
-    if adv_name.startswith("MeshCore"):
-        return True
-    dev_name = getattr(device, "name", None) or ""
-    return bool(dev_name.startswith("MeshCore"))
+    return _meshcore_ble_advertisement_match_base(device, adv)
 
 
 async def _async_ble_meshcore_candidates(timeout: float) -> list[tuple[str, str]]:
-    """Scan for BLE devices advertising as MeshCore companions.
+    """Scan for BLE MeshCore companions; thin wrapper for tests."""
 
-    Parameters:
-        timeout: Seconds to run the BLE scan.
-
-    Returns:
-        Sorted ``(address, menu_label)`` pairs suitable for interactive picking.
-    """
-    try:
-        from bleak import BleakScanner
-    except ImportError:
-        config._debug_log(
-            "BLE scan skipped (bleak not installed)",
-            context="meshcore.ble_scan",
-            severity="warning",
-            always=True,
-        )
-        return []
-
-    try:
-        discovered = await BleakScanner.discover(
-            timeout=timeout,
-            return_adv=True,
-        )
-    except Exception as exc:
-        config._debug_log(
-            "BLE scan failed",
-            context="meshcore.ble_scan",
-            severity="warning",
-            always=True,
-            error=str(exc),
-        )
-        return []
-
-    out: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for _key, (device, adv) in discovered.items():
-        if not _meshcore_ble_advertisement_match(device, adv):
-            continue
-        address = device.address
-        if address in seen:
-            continue
-        seen.add(address)
-        local_name = getattr(adv, "local_name", None) or ""
-        device_name = getattr(device, "name", None) or ""
-        disp = (local_name or device_name or address).strip()
-        label = f"BLE  {disp}  ({address})"
-        out.append((address, label))
-    out.sort(key=lambda item: item[1].casefold())
-    return out
+    return await _async_ble_candidates_base(
+        timeout, _meshcore_ble_advertisement_match_base, context="meshcore.ble_scan"
+    )
 
 
 def _sync_ble_meshcore_candidates(timeout: float) -> list[tuple[str, str]]:
-    """Run :func:`_async_ble_meshcore_candidates` on a fresh event loop in a thread."""
-    holder: list[list[tuple[str, str]]] = [[]]
-    err: list[BaseException | None] = [None]
+    """Run the MeshCore BLE scan in a helper thread; thin wrapper for tests."""
 
-    def _runner() -> None:
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                holder[0] = loop.run_until_complete(_async_ble_meshcore_candidates(timeout))
-            finally:
-                loop.close()
-        except BaseException as exc:
-            err[0] = exc
-
-    thread = threading.Thread(target=_runner, name="meshcore-ble-scan", daemon=True)
-    thread.start()
-    thread.join(timeout=max(timeout, 0.0) + 15.0)
-    if thread.is_alive():
-        config._debug_log(
-            "BLE scan thread did not finish in time",
-            context="meshcore.ble_scan",
-            severity="warning",
-            always=True,
-        )
-        return []
-    if err[0] is not None:
-        config._debug_log(
-            "BLE scan thread raised",
-            context="meshcore.ble_scan",
-            severity="warning",
-            always=True,
-            error=str(err[0]),
-        )
-        return []
-    return holder[0]
+    return _sync_ble_candidates_base(
+        timeout,
+        _meshcore_ble_advertisement_match_base,
+        context="meshcore.ble_scan",
+        thread_name="meshcore-ble-scan",
+    )
 
 
 def _gather_meshcore_connection_choices(
-    *, include_ble: bool, ble_scan_timeout: float
+    *,
+    include_ble: bool,
+    ble_scan_timeout: float,
+    require_existing_serial_paths: bool = False,
 ) -> list[tuple[str, str]]:
-    """Build ordered ``(target, label)`` rows for USB serial and optional BLE."""
-    choices: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for path in default_serial_targets():
-        if path not in seen:
-            seen.add(path)
-            choices.append((path, f"USB serial  {path}"))
-    if include_ble:
-        for address, label in _sync_ble_meshcore_candidates(ble_scan_timeout):
-            if address not in seen:
-                seen.add(address)
-                choices.append((address, label))
-    return choices
+    """Build MeshCore USB + BLE menu rows."""
 
-
-def _interactive_pick_meshcore_target(choices: list[tuple[str, str]]) -> str:
-    """Print a menu and return the chosen connection string."""
-    if len(choices) == 1:
-        only = choices[0][0]
-        config._debug_log(
-            "Auto-selected MeshCore connection (only candidate)",
-            context="meshcore.pick",
-            target=only,
-        )
-        return only
-
-    print("\nNo CONNECTION set; select a MeshCore interface:\n", flush=True)
-    for i, (_target, label) in enumerate(choices, start=1):
-        print(f"  {i}) {label}", flush=True)
-    upper = len(choices)
-    prompt = f"\nEnter choice [1-{upper}]: "
-    while True:
-        raw = input(prompt).strip()
-        if not raw.isdigit():
-            print("Please enter a number.", flush=True)
-            continue
-        idx = int(raw, 10)
-        if 1 <= idx <= upper:
-            picked = choices[idx - 1][0]
-            config._debug_log(
-                "Interactive MeshCore connection selected",
-                context="meshcore.pick",
-                target=picked,
-            )
-            return picked
-        print(f"Choose between 1 and {upper}.", flush=True)
+    return gather_connection_choices(
+        include_ble=include_ble,
+        ble_scan_timeout=ble_scan_timeout,
+        ble_match_fn=_meshcore_ble_advertisement_match_base,
+        ble_context="meshcore.ble_scan",
+        ble_thread_name="meshcore-ble-scan",
+        require_existing_serial_paths=require_existing_serial_paths,
+    )
 
 
 def _resolve_meshcore_target_when_unset() -> str:
     """Pick a MeshCore target when *CONNECTION* / *active_candidate* is unset."""
-    interactive = sys.stdin.isatty() and sys.stdout.isatty()
-    raw_timeout = os.environ.get("MESHCORE_BLE_SCAN_SECS")
-    if raw_timeout is None:
-        ble_timeout = _DEFAULT_BLE_SCAN_SECS
-    else:
-        try:
-            ble_timeout = float(raw_timeout)
-        except ValueError:
-            ble_timeout = _DEFAULT_BLE_SCAN_SECS
-    if ble_timeout < 0:
-        ble_timeout = 0.0
 
-    choices = _gather_meshcore_connection_choices(
-        include_ble=interactive,
-        ble_scan_timeout=ble_timeout,
+    return _resolve_connection_target_when_unset_base(
+        provider_label="MeshCore",
+        log_context="meshcore.pick",
+        ble_match_fn=_meshcore_ble_advertisement_match_base,
+        ble_context="meshcore.ble_scan",
+        ble_thread_name="meshcore-ble-scan",
     )
-    if not choices:
-        raise ConnectionError(
-            "No MeshCore connection targets found (no USB serial candidates). "
-            "Set CONNECTION to a serial device, BLE address, or host:port."
-        )
-    if not interactive:
-        picked = choices[0][0]
-        config._debug_log(
-            "MeshCore auto-connection (non-interactive): using first USB candidate",
-            context="meshcore.pick",
-            target=picked,
-        )
-        return picked
-    return _interactive_pick_meshcore_target(choices)
 
 
 # ---------------------------------------------------------------------------
