@@ -17,5 +17,6 @@ set -euo pipefail
 
 python -m venv .venv
 source .venv/bin/activate
-pip install -U meshtastic black pytest
+pip install -U pip
+pip install -r "$(dirname "$0")/requirements.txt"
 exec python mesh.py
