@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import types
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -1438,10 +1439,8 @@ def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
         ), "_stop_event must be set before connect() completes"
         assert not connected_event.is_set()
         task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
     asyncio.run(_runner())
 
