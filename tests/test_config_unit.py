@@ -196,30 +196,57 @@ class TestDebugLog:
 
 
 # ---------------------------------------------------------------------------
-# PROVIDER validation
+# PROTOCOL validation
 # ---------------------------------------------------------------------------
 
 
-class TestProviderValidation:
-    """Tests for PROVIDER environment validation at import time."""
+class TestProtocolValidation:
+    """Tests for PROTOCOL environment validation at import time."""
 
-    def test_valid_provider_does_not_raise(self, monkeypatch):
-        """Importing config with a valid PROVIDER succeeds."""
+    def test_valid_protocol_does_not_raise(self, monkeypatch):
+        """Importing config with a valid PROTOCOL succeeds."""
         import importlib
 
-        monkeypatch.setenv("PROVIDER", "meshtastic")
+        monkeypatch.setenv("PROTOCOL", "meshtastic")
         # Re-importing should not raise
         importlib.reload(config)
 
-    def test_invalid_provider_raises_value_error(self, monkeypatch):
-        """An invalid PROVIDER value raises ValueError at module load."""
+    def test_invalid_protocol_raises_value_error(self, monkeypatch):
+        """An invalid PROTOCOL value raises ValueError at module load."""
         import importlib
 
-        monkeypatch.setenv("PROVIDER", "bogus_provider_xyz")
-        with pytest.raises(ValueError, match="Unknown PROVIDER"):
+        monkeypatch.setenv("PROTOCOL", "bogus_protocol_xyz")
+        with pytest.raises(ValueError, match="Unknown PROTOCOL"):
             importlib.reload(config)
         # Restore to valid value so subsequent tests work
+        monkeypatch.setenv("PROTOCOL", "meshtastic")
+        importlib.reload(config)
+
+    def test_protocol_env_var_takes_priority_over_provider(self, monkeypatch):
+        """PROTOCOL env var must take precedence over legacy PROVIDER."""
+        import importlib
+
+        monkeypatch.setenv("PROTOCOL", "meshcore")
         monkeypatch.setenv("PROVIDER", "meshtastic")
+        cfg = importlib.reload(config)
+        assert cfg.PROTOCOL == "meshcore"
+        assert cfg.PROVIDER == "meshcore"  # alias stays in sync
+        # Restore
+        monkeypatch.delenv("PROTOCOL")
+        monkeypatch.delenv("PROVIDER")
+        importlib.reload(config)
+
+    def test_provider_env_var_fallback(self, monkeypatch):
+        """Legacy PROVIDER env var must still be accepted when PROTOCOL is absent."""
+        import importlib
+
+        monkeypatch.delenv("PROTOCOL", raising=False)
+        monkeypatch.setenv("PROVIDER", "meshcore")
+        cfg = importlib.reload(config)
+        assert cfg.PROTOCOL == "meshcore"
+        assert cfg.PROVIDER == "meshcore"
+        # Restore
+        monkeypatch.delenv("PROVIDER")
         importlib.reload(config)
 
 

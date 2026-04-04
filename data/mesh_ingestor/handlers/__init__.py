@@ -26,7 +26,7 @@ This package is organised into focused submodules:
 - :mod:`.generic` — packet dispatcher, node upsert, and the main receive callback
 
 All public names from the original flat ``handlers`` module are re-exported
-here so existing callers (e.g. ``daemon.py``, ``providers/``) require no
+here so existing callers (e.g. ``daemon.py``, ``protocols/``) require no
 changes.
 """
 

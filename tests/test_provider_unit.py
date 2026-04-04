@@ -27,16 +27,17 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from data.mesh_ingestor import daemon  # noqa: E402 - path setup
-from data.mesh_ingestor.provider import Provider  # noqa: E402 - path setup
-from data.mesh_ingestor.providers.meshtastic import (  # noqa: E402 - path setup
+from data.mesh_ingestor.mesh_protocol import MeshProtocol  # noqa: E402 - path setup
+from data.mesh_ingestor.protocols.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
 from data.mesh_ingestor.connection import parse_tcp_target  # noqa: E402 - path setup
-from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
+from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     MeshcoreProvider,
     _MeshcoreInterface,
     _contact_to_node_dict,
     _derive_message_id,
+    _derive_modem_preset,
     _make_connection,
     _make_event_handlers,
     _meshcore_adv_type_to_role,
@@ -54,7 +55,7 @@ from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
 
 def test_meshtastic_provider_satisfies_protocol():
     """MeshtasticProvider must structurally satisfy the Provider Protocol."""
-    assert isinstance(MeshtasticProvider(), Provider)
+    assert isinstance(MeshtasticProvider(), MeshProtocol)
 
 
 def test_daemon_main_uses_provider_connect(monkeypatch):
@@ -135,7 +136,7 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
 
 def test_node_snapshot_items_retries_on_concurrent_mutation(monkeypatch):
     """node_snapshot_items must retry on dict-mutation RuntimeError, not raise."""
-    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
+    from data.mesh_ingestor.protocols.meshtastic import MeshtasticProvider
 
     attempt = {"n": 0}
 
@@ -157,8 +158,8 @@ def test_node_snapshot_items_retries_on_concurrent_mutation(monkeypatch):
 
 def test_node_snapshot_items_returns_empty_after_retry_exhaustion(monkeypatch):
     """node_snapshot_items returns [] (non-fatal) when all retries fail."""
-    from data.mesh_ingestor.providers.meshtastic import MeshtasticProvider
-    import data.mesh_ingestor.providers.meshtastic as _mod
+    from data.mesh_ingestor.protocols.meshtastic import MeshtasticProvider
+    import data.mesh_ingestor.protocols.meshtastic as _mod
 
     class AlwaysMutating:
         def items(self):
@@ -175,7 +176,7 @@ def test_node_snapshot_items_returns_empty_after_retry_exhaustion(monkeypatch):
 
 def test_meshtastic_subscribe_is_idempotent(monkeypatch):
     """Calling subscribe() twice returns the cached list without re-subscribing."""
-    import data.mesh_ingestor.providers.meshtastic as _m
+    import data.mesh_ingestor.protocols.meshtastic as _m
 
     subscribe_calls: list[str] = []
 
@@ -203,7 +204,7 @@ def test_meshtastic_subscribe_is_idempotent(monkeypatch):
 
 def test_meshcore_provider_satisfies_protocol():
     """MeshcoreProvider must structurally satisfy the Provider Protocol."""
-    assert isinstance(MeshcoreProvider(), Provider)
+    assert isinstance(MeshcoreProvider(), MeshProtocol)
 
 
 def test_meshcore_provider_name():
@@ -227,7 +228,7 @@ def test_meshcore_subscribe_returns_empty_list():
 )
 def test_meshcore_connect_accepts_tcp_targets(target, monkeypatch):
     """connect() must succeed for TCP host:port targets."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
@@ -277,7 +278,7 @@ def _fake_run_meshcore(*, error=None, host_node_id=None):
 )
 def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
     """connect() must succeed for explicit serial ports and BLE addresses."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
@@ -293,7 +294,7 @@ def test_meshcore_connect_accepts_serial_ble_targets(target, monkeypatch):
 
 def test_meshcore_connect_auto_discovers_serial(monkeypatch):
     """connect() with no target must resolve to the first serial candidate."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
@@ -329,7 +330,7 @@ def test_make_connection_routes_to_correct_class(
 ):
     """_make_connection must instantiate the correct meshcore connection class."""
     import types
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     instances: list = []
 
@@ -365,7 +366,7 @@ def test_make_connection_routes_to_correct_class(
 
 def test_meshcore_connect_returns_closeable_interface(monkeypatch):
     """The interface returned by connect() must expose a close() method."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
@@ -377,7 +378,7 @@ def test_meshcore_connect_returns_closeable_interface(monkeypatch):
 
 def test_meshcore_extract_host_node_id_none_by_default(monkeypatch):
     """extract_host_node_id returns None when the interface has no host_node_id."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
@@ -389,7 +390,7 @@ def test_meshcore_extract_host_node_id_none_by_default(monkeypatch):
 
 def test_meshcore_extract_host_node_id_set_on_connect(monkeypatch):
     """extract_host_node_id returns the node ID set by the connection handler."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(
         _mod, "_run_meshcore", _fake_run_meshcore(host_node_id="!aabbccdd")
@@ -403,7 +404,7 @@ def test_meshcore_extract_host_node_id_set_on_connect(monkeypatch):
 
 def test_meshcore_connect_propagates_connection_error(monkeypatch):
     """connect() must re-raise a ConnectionError when the handshake fails."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     exc = ConnectionError("no response")
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore(error=exc))
@@ -420,7 +421,7 @@ def test_meshcore_node_snapshot_items_non_interface():
 
 def test_meshcore_node_snapshot_items_with_contacts(monkeypatch):
     """node_snapshot_items returns contacts converted to node dicts."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
     monkeypatch.setattr(_mod.config, "CONNECTION", None)
@@ -458,7 +459,7 @@ def test_parse_tcp_target_rejects_serial_ble():
 
 def test_record_meshcore_message_skipped_without_debug(monkeypatch, tmp_path):
     """_record_meshcore_message must not write anything when DEBUG is False."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "DEBUG", False)
     log_path = tmp_path / "ignored-meshcore.txt"
@@ -472,7 +473,7 @@ def test_record_meshcore_message_skipped_without_debug(monkeypatch, tmp_path):
 def test_record_meshcore_message_writes_with_debug(monkeypatch, tmp_path):
     """_record_meshcore_message must append a JSON line when DEBUG=1."""
     import json as _json
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "DEBUG", True)
     log_path = tmp_path / "ignored-meshcore.txt"
@@ -491,7 +492,7 @@ def test_record_meshcore_message_writes_with_debug(monkeypatch, tmp_path):
 def test_record_meshcore_message_serialises_bytes(monkeypatch, tmp_path):
     """bytes values in the message must be base64-encoded, not repr'd."""
     import json as _json
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "DEBUG", True)
     log_path = tmp_path / "ignored-meshcore.txt"
@@ -506,7 +507,7 @@ def test_record_meshcore_message_serialises_bytes(monkeypatch, tmp_path):
 
 def test_record_meshcore_message_appends_multiple(monkeypatch, tmp_path):
     """_record_meshcore_message must append successive entries on separate lines."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "DEBUG", True)
     log_path = tmp_path / "ignored-meshcore.txt"
@@ -837,7 +838,7 @@ def test_on_channel_msg_queues_packet(monkeypatch):
     """on_channel_msg must call store_packet_dict with the correct packet fields."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
     stub = _make_stub_handlers_module()
@@ -883,7 +884,7 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
     """on_contact_msg must resolve from_id via pubkey_prefix and set to_id to host."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
     stub = _make_stub_handlers_module()
@@ -928,7 +929,7 @@ def test_on_channel_msg_skips_empty_text(monkeypatch):
     """on_channel_msg must not queue a packet when text is absent."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
     stub = _make_stub_handlers_module()
@@ -957,7 +958,7 @@ def test_connect_raises_on_timeout(monkeypatch):
     mock coroutine is still suspended; the resulting RuntimeError in that thread
     is expected and suppressed via the filterwarnings mark above.
     """
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     async def _hanging(iface, target, connected_event, error_holder):
         # Never signals connected_event — simulates a device that does not respond.
@@ -1057,6 +1058,136 @@ def test_process_self_info_skips_empty_key():
 
 
 # ---------------------------------------------------------------------------
+# _process_self_info — radio metadata capture
+# ---------------------------------------------------------------------------
+
+
+def test_process_self_info_captures_radio_freq(monkeypatch):
+    """SELF_INFO with radio_freq must populate config.LORA_FREQ."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    payload = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "radio_freq": 868.125,
+        "radio_sf": 12,
+        "radio_bw": 125.0,
+        "radio_cr": 5,
+    }
+    _process_self_info(payload, _MeshcoreInterface(target=None), stub)
+
+    assert _mod.config.LORA_FREQ == 868.125
+
+
+def test_process_self_info_captures_modem_preset(monkeypatch):
+    """SELF_INFO with radio_sf, radio_bw, radio_cr must populate config.MODEM_PRESET."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    payload = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "radio_freq": 868.125,
+        "radio_sf": 12,
+        "radio_bw": 125.0,
+        "radio_cr": 5,
+    }
+    _process_self_info(payload, _MeshcoreInterface(target=None), stub)
+
+    assert _mod.config.MODEM_PRESET == "SF12/BW125/CR5"
+
+
+def test_process_self_info_no_overwrite_lora_freq(monkeypatch):
+    """SELF_INFO must not overwrite an already-cached LORA_FREQ."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", 915)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    payload = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "radio_freq": 868.125,
+        "radio_sf": 12,
+        "radio_bw": 125.0,
+        "radio_cr": 5,
+    }
+    _process_self_info(payload, _MeshcoreInterface(target=None), stub)
+
+    assert _mod.config.LORA_FREQ == 915
+
+
+def test_process_self_info_no_overwrite_modem_preset(monkeypatch):
+    """SELF_INFO must not overwrite an already-cached MODEM_PRESET."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", "LongFast")
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    payload = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "radio_freq": 868.125,
+        "radio_sf": 12,
+        "radio_bw": 125.0,
+        "radio_cr": 5,
+    }
+    _process_self_info(payload, _MeshcoreInterface(target=None), stub)
+
+    assert _mod.config.MODEM_PRESET == "LongFast"
+
+
+def test_process_self_info_missing_radio_fields_leaves_config_none(monkeypatch):
+    """SELF_INFO with no radio_* keys must leave LORA_FREQ and MODEM_PRESET as None."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    stub = _make_stub_handlers_module()
+    _process_self_info(
+        {"public_key": "aabbccdd" + "00" * 28, "name": "Node"},
+        _MeshcoreInterface(target=None),
+        stub,
+    )
+
+    assert _mod.config.LORA_FREQ is None
+    assert _mod.config.MODEM_PRESET is None
+
+
+# ---------------------------------------------------------------------------
+# _derive_modem_preset
+# ---------------------------------------------------------------------------
+
+
+def test_derive_modem_preset_valid():
+    """_derive_modem_preset must format SF, BW, and CR into a compact string."""
+    assert _derive_modem_preset(12, 125.0, 5) == "SF12/BW125/CR5"
+    assert _derive_modem_preset(7, 250.0, 5) == "SF7/BW250/CR5"
+    assert _derive_modem_preset(11, 62.5, 8) == "SF11/BW62/CR8"
+
+
+def test_derive_modem_preset_none_on_missing():
+    """_derive_modem_preset must return None when any parameter is absent or zero."""
+    assert _derive_modem_preset(None, 125.0, 5) is None
+    assert _derive_modem_preset(12, None, 5) is None
+    assert _derive_modem_preset(12, 125.0, None) is None
+    assert _derive_modem_preset(0, 125.0, 5) is None
+    assert _derive_modem_preset(12, 0, 5) is None
+    assert _derive_modem_preset(12, 125.0, 0) is None
+
+
+# ---------------------------------------------------------------------------
 # _process_contacts
 # ---------------------------------------------------------------------------
 
@@ -1107,7 +1238,7 @@ def test_process_contacts_marks_packet_seen():
 
 def test_process_contact_update_upserts_node(monkeypatch):
     """_process_contact_update must upsert and update the snapshot."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
@@ -1125,7 +1256,7 @@ def test_process_contact_update_upserts_node(monkeypatch):
 
 def test_process_contact_update_skips_empty_key(monkeypatch):
     """_process_contact_update must silently skip contacts without a valid key."""
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
@@ -1149,7 +1280,7 @@ def test_on_self_info_registers_and_upserts(monkeypatch):
     """SELF_INFO handler must register the host node and upsert it."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     registered: list = []
     upserted: list = []
@@ -1180,7 +1311,7 @@ def test_on_contacts_updates_contacts(monkeypatch):
     """CONTACTS handler must populate the iface contact snapshot."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     upserted: list = []
     stub = _make_stub_handlers_module()
@@ -1209,7 +1340,7 @@ def test_on_new_contact_and_next_contact_update_iface(monkeypatch):
     """NEW_CONTACT and NEXT_CONTACT must both update the contact snapshot."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     upserted: list = []
     stub = _make_stub_handlers_module()
@@ -1238,7 +1369,7 @@ def test_on_new_contact_and_next_contact_update_iface(monkeypatch):
 def test_on_disconnected_clears_connected_flag(monkeypatch):
     """DISCONNECTED handler must set iface.isConnected to False."""
     import asyncio
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
@@ -1262,7 +1393,7 @@ def test_on_channel_msg_includes_protocol_meshcore(monkeypatch):
     """Channel message packets must carry protocol='meshcore'."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
     stub = _make_stub_handlers_module()
@@ -1285,7 +1416,7 @@ def test_on_contact_msg_includes_protocol_meshcore(monkeypatch):
     """Direct message packets must carry protocol='meshcore'."""
     import asyncio
     import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
     stub = _make_stub_handlers_module()
@@ -1436,7 +1567,7 @@ def _setup_stalled_run(monkeypatch):
     """
     import asyncio
 
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     stall = asyncio.Event()
@@ -1527,7 +1658,7 @@ def test_run_meshcore_close_before_connect_completes(monkeypatch):
 def test_run_meshcore_happy_path(monkeypatch):
     """_run_meshcore must signal connected and leave isConnected=True on success."""
     import asyncio
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     fake_mod = _make_fake_meshcore_mod()
@@ -1548,7 +1679,7 @@ def test_run_meshcore_connect_returns_none_raises(monkeypatch):
     """_run_meshcore must propagate ConnectionError when connect() returns None."""
     import asyncio
     import threading
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     fake_mod = _make_fake_meshcore_mod(connect_result=None)
@@ -1570,7 +1701,7 @@ def test_run_meshcore_connect_returns_none_raises(monkeypatch):
 def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
     """ensure_contacts() raising must log a warning but not abort the connection."""
     import asyncio
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     logged: list = []
     monkeypatch.setattr(
@@ -1595,7 +1726,7 @@ def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
 def test_run_meshcore_disconnect_exception_suppressed(monkeypatch):
     """disconnect() raising in the finally block must be silently swallowed."""
     import asyncio
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     fake_mod = _make_fake_meshcore_mod(disconnect_raises=True)
@@ -1614,7 +1745,7 @@ def test_run_meshcore_disconnect_exception_suppressed(monkeypatch):
 def test_run_meshcore_on_unhandled_skips_known_records_unknown(monkeypatch):
     """_on_unhandled must only call _record_meshcore_message for truly unknown events."""
     import asyncio
-    import data.mesh_ingestor.providers.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     recorded: list = []

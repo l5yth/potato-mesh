@@ -15,7 +15,7 @@ Run linters for Python (`black`) and Ruby (`rufo`) to ensure consistent code for
 ## Project Structure & Module Organization
 The repository splits runtime and ingestion logic. `web/` holds the Sinatra dashboard (Ruby code in `lib/potato_mesh`, views in `views/`, static bundles in `public/`).
 
-`data/` hosts the Python Meshtastic ingestor plus migrations and CLI scripts. The ingestor is structured as the `data/mesh_ingestor/` package with the following key modules: `daemon.py` (main loop), `handlers.py` (packet processing), `interfaces.py` (interface helpers), `config.py` (env-driven config), `events.py` (TypedDict event schemas), `provider.py` (Provider protocol), `node_identity.py` (canonical node ID utilities), `decode_payload.py` (CLI protobuf decoder), and the `providers/` subpackage (currently `meshtastic.py`). API contracts for all POST ingest routes are documented in `data/mesh_ingestor/CONTRACTS.md`. API fixtures and end-to-end harnesses live in `tests/`. Dockerfiles and compose files support containerized workflows.
+`data/` hosts the Python Meshtastic ingestor plus migrations and CLI scripts. The ingestor is structured as the `data/mesh_ingestor/` package with the following key modules: `daemon.py` (main loop), `handlers.py` (packet processing), `interfaces.py` (interface helpers), `config.py` (env-driven config), `events.py` (TypedDict event schemas), `mesh_protocol.py` (MeshProtocol base), `node_identity.py` (canonical node ID utilities), `decode_payload.py` (CLI protobuf decoder), and the `protocols/` subpackage (currently `meshtastic.py`). API contracts for all POST ingest routes are documented in `data/mesh_ingestor/CONTRACTS.md`. API fixtures and end-to-end harnesses live in `tests/`. Dockerfiles and compose files support containerized workflows.
 
 `matrix/` contains the Rust Matrix bridge; build with `cargo build --release` or `docker build -f matrix/Dockerfile .`, and keep bridge config under `matrix/Config.toml` when running locally.
 
@@ -41,15 +41,15 @@ Ruby specs run with `cd web && bundle exec rspec`, producing SimpleCov output in
 
 The ingestion layer is tested with `pytest -q tests/`; leave fixtures in `tests/` untouched so CI can replay them. The suite includes both integration tests (`test_mesh.py`) and focused unit tests — `test_events_unit.py` (TypedDict schemas), `test_provider_unit.py` (Provider protocol conformance and `MeshtasticProvider`), `test_node_identity_unit.py` (canonical ID helpers), `test_daemon_unit.py`, `test_serialization_unit.py`, and `test_decode_payload.py`. New features should ship with matching specs and updated integration checks.
 
-## Adding a New Ingestor Provider
-The `data/mesh_ingestor/provider.py` module defines a `@runtime_checkable` `Provider` Protocol with five members: `name` (str), `subscribe()`, `connect(*, active_candidate)`, `extract_host_node_id(iface)`, and `node_snapshot_items(iface)`. To add a new backend (e.g. Reticulum, MeshCore):
+## Adding a New Ingestor Protocol
+The `data/mesh_ingestor/mesh_protocol.py` module defines a `@runtime_checkable` `MeshProtocol` class with five members: `name` (str), `subscribe()`, `connect(*, active_candidate)`, `extract_host_node_id(iface)`, and `node_snapshot_items(iface)`. To add a new backend (e.g. Reticulum):
 
-1. Create `data/mesh_ingestor/providers/<name>.py` with a class satisfying the Protocol.
-2. Register it in `data/mesh_ingestor/providers/__init__.py`.
+1. Create `data/mesh_ingestor/protocols/<name>.py` with a class satisfying the `MeshProtocol` interface.
+2. Register it in `data/mesh_ingestor/protocols/__init__.py`.
 3. Pass an instance via `daemon.main(provider=...)` or make it the default in `main()`.
-4. Cover the provider with unit tests in `tests/test_provider_unit.py` — at minimum an `isinstance(..., Provider)` conformance check and any retry/error-handling paths.
+4. Cover the protocol with unit tests in `tests/test_provider_unit.py` — at minimum an `isinstance(..., MeshProtocol)` conformance check and any retry/error-handling paths.
 
-Consult `data/mesh_ingestor/CONTRACTS.md` for the canonical event shapes all providers must emit.
+Consult `data/mesh_ingestor/CONTRACTS.md` for the canonical event shapes all protocols must emit.
 
 ## GitHub Configuration Standards
 Every language used in the repository must have a Dependabot entry checking for dependency updates on a **weekly** schedule. Keep the Dependabot config up to date as new languages or package ecosystems are added.

@@ -3215,7 +3215,7 @@ def test_queue_ingestor_heartbeat_protocol_meshcore(mesh_module, monkeypatch):
 
     mesh.ingestors.STATE.last_heartbeat = None
     mesh.ingestors.STATE.node_id = None
-    mesh.config.PROVIDER = "meshcore"
+    mesh.config.PROTOCOL = "meshcore"
 
     mesh.ingestors.set_ingestor_node_id("!aabbccdd")
     mesh.ingestors.queue_ingestor_heartbeat(force=True)

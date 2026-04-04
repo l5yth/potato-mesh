@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MeshCore provider implementation.
+"""MeshCore protocol implementation.
 
 This module defines :class:`MeshcoreProvider`, which satisfies the
-:class:`~data.mesh_ingestor.provider.Provider` protocol for MeshCore nodes
-connected via serial port, BLE, or TCP/IP.
+:class:`~data.mesh_ingestor.mesh_protocol.MeshProtocol` interface for MeshCore
+nodes connected via serial port, BLE, or TCP/IP.
 
-The provider runs MeshCore's ``asyncio`` event loop in a background daemon
-thread so that incoming events are dispatched without blocking the
+The protocol backend runs MeshCore's ``asyncio`` event loop in a background
+daemon thread so that incoming events are dispatched without blocking the
 synchronous daemon loop.  Received contacts, channel messages, and direct
 messages are forwarded to the shared HTTP ingest queue via the same
-:mod:`~data.mesh_ingestor.handlers` helpers used by the Meshtastic provider.
+:mod:`~data.mesh_ingestor.handlers` helpers used by the Meshtastic protocol.
 
 Connection type is detected automatically from the target string:
 
@@ -234,6 +234,23 @@ def _contact_to_node_dict(contact: dict) -> dict:
     return node
 
 
+def _derive_modem_preset(sf: object, bw: object, cr: object) -> str | None:
+    """Return a compact radio-parameter string from spreading factor, bandwidth, and coding rate.
+
+    Parameters:
+        sf: Spreading factor (int, e.g. ``12``).
+        bw: Bandwidth in kHz (int or float, e.g. ``125.0``).
+        cr: Coding rate denominator (int, e.g. ``5`` meaning 4/5).
+
+    Returns:
+        A string such as ``"SF12/BW125/CR5"``, or ``None`` when any parameter
+        is absent or zero (meaning the radio config was not reported).
+    """
+    if not sf or not bw or not cr:
+        return None
+    return f"SF{int(sf)}/BW{int(bw)}/CR{int(cr)}"
+
+
 def _self_info_to_node_dict(self_info: dict) -> dict:
     """Convert a MeshCore ``SELF_INFO`` payload to a Meshtastic-ish node dict.
 
@@ -414,11 +431,13 @@ class _MeshcoreInterface:
 def _process_self_info(
     payload: dict, iface: _MeshcoreInterface, handlers: object
 ) -> None:
-    """Apply a ``SELF_INFO`` payload: set host_node_id and upsert the host node.
+    """Apply a ``SELF_INFO`` payload: set host_node_id, upsert the host node,
+    and capture LoRa radio metadata into the shared config cache.
 
     Parameters:
         payload: Event payload dict containing at minimum ``public_key`` and
-            optionally ``name``, ``adv_lat``, ``adv_lon``.
+            optionally ``name``, ``adv_lat``, ``adv_lon``, ``radio_freq``,
+            ``radio_bw``, ``radio_sf``, ``radio_cr``.
         iface: Active interface whose :attr:`host_node_id` will be updated.
         handlers: Module reference for :func:`~data.mesh_ingestor.handlers`
             functions (passed to avoid circular-import issues).
@@ -429,6 +448,25 @@ def _process_self_info(
         iface.host_node_id = node_id
         handlers.register_host_node_id(node_id)
         handlers.upsert_node(node_id, _self_info_to_node_dict(payload))
+
+    # Capture radio metadata once — never overwrite a previously cached value.
+    # Mirrors the guard used by interfaces._ensure_radio_metadata for Meshtastic.
+    radio_freq = payload.get("radio_freq")
+    if radio_freq is not None and getattr(config, "LORA_FREQ", None) is None:
+        config.LORA_FREQ = radio_freq
+    modem_preset = _derive_modem_preset(
+        payload.get("radio_sf"), payload.get("radio_bw"), payload.get("radio_cr")
+    )
+    if modem_preset is not None and getattr(config, "MODEM_PRESET", None) is None:
+        config.MODEM_PRESET = modem_preset
+    config._debug_log(
+        "MeshCore radio metadata captured",
+        context="meshcore.self_info.radio",
+        always=True,
+        lora_freq=radio_freq,
+        modem_preset=modem_preset,
+    )
+
     handlers._mark_packet_seen()
     config._debug_log(
         "MeshCore self-info received",

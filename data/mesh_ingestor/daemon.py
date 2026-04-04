@@ -25,7 +25,7 @@ import time
 from pubsub import pub
 
 from . import config, handlers, ingestors, interfaces
-from .provider import Provider
+from .mesh_protocol import MeshProtocol
 from .utils import _retry_dict_snapshot
 
 _RECEIVE_TOPICS = (
@@ -245,7 +245,7 @@ def _connected_state(candidate) -> bool | None:
 class _DaemonState:
     """All mutable state for the :func:`main` daemon loop."""
 
-    provider: Provider
+    provider: MeshProtocol
     stop: threading.Event
     configured_port: str | None
     inactivity_reconnect_secs: float
@@ -549,16 +549,16 @@ def _loop_iteration(state: _DaemonState) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def main(*, provider: Provider | None = None) -> None:
+def main(*, provider: MeshProtocol | None = None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
 
     if provider is None:
-        if config.PROVIDER == "meshcore":
-            from .providers.meshcore import MeshcoreProvider
+        if config.PROTOCOL == "meshcore":
+            from .protocols.meshcore import MeshcoreProvider
 
             provider = MeshcoreProvider()
         else:
-            from .providers.meshtastic import MeshtasticProvider
+            from .protocols.meshtastic import MeshtasticProvider
 
             provider = MeshtasticProvider()
 
