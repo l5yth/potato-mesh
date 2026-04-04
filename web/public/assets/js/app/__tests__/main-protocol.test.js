@@ -243,21 +243,6 @@ test('createAnnouncementEntry shows meshcore icon for meshcore protocol', () => 
   }
 });
 
-test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createMessageChatEntry({
-      text: 'test',
-      rx_time: 3000,
-      node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
-    });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(html.includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
-  } finally {
-    cleanup();
-  }
-});
-
 // --- createMessageChatEntry ---
 
 test('createMessageChatEntry prefixes meshtastic icon when node protocol is meshtastic', () => {
@@ -300,6 +285,21 @@ test('createMessageChatEntry omits meshtastic icon for meshcore node', () => {
     });
     const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
     assert.ok(!html.includes('meshtastic.svg'), 'chat entry for meshcore node should not show meshtastic icon');
+  } finally {
+    cleanup();
+  }
+});
+
+test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const div = testUtils.createMessageChatEntry({
+      text: 'test',
+      rx_time: 3000,
+      node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
+    });
+    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
+    assert.ok(html.includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
   } finally {
     cleanup();
   }

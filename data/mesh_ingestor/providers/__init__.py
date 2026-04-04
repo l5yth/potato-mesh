@@ -24,16 +24,21 @@ from .meshtastic import MeshtasticProvider
 
 
 def __getattr__(name: str) -> object:
-    """Lazy-load provider classes that carry optional heavy dependencies.
+    """Lazy-load provider classes and exceptions that carry optional heavy dependencies.
 
-    ``MeshcoreProvider`` is imported on demand so that the MeshCore library
-    (once wired in) is not loaded at startup when ``PROVIDER=meshtastic``.
+    ``MeshcoreProvider`` and ``ClosedBeforeConnectedError`` are imported on
+    demand so that the MeshCore library (once wired in) is not loaded at
+    startup when ``PROVIDER=meshtastic``.
     """
     if name == "MeshcoreProvider":
         from .meshcore import MeshcoreProvider
 
         return MeshcoreProvider
+    if name == "ClosedBeforeConnectedError":
+        from .meshcore import ClosedBeforeConnectedError
+
+        return ClosedBeforeConnectedError
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["MeshtasticProvider", "MeshcoreProvider"]
+__all__ = ["MeshtasticProvider", "MeshcoreProvider", "ClosedBeforeConnectedError"]
