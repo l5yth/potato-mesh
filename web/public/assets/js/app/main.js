@@ -4466,7 +4466,7 @@ export function initializeApp(config) {
    * Inner closures exposed for unit tests. Production callers should ignore
    * this return value.
    *
-   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function } }}
+   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function, buildDisplayContext: Function } }}
    */
   return {
     _testUtils: {
@@ -4474,6 +4474,7 @@ export function initializeApp(config) {
       normalizeOverlaySource,
       createAnnouncementEntry,
       createMessageChatEntry,
+      buildDisplayContext,
     },
   };
 }

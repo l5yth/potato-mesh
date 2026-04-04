@@ -49,6 +49,47 @@ function setupApp() {
   return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
 }
 
+// --- buildDisplayContext ---
+
+test('buildDisplayContext extracts protocol from trace candidate source', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const entry = {
+      nodeId: '!aabbccdd',
+      trace: { protocol: 'meshcore', node_id: '!aabbccdd' },
+    };
+    const ctx = testUtils.buildDisplayContext(entry);
+    assert.equal(ctx.protocol, 'meshcore', 'protocol must be picked from entry.trace');
+  } finally {
+    cleanup();
+  }
+});
+
+test('buildDisplayContext extracts protocol from node candidate source', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const entry = {
+      nodeId: '!aabbccdd',
+      node: { protocol: 'meshcore' },
+    };
+    const ctx = testUtils.buildDisplayContext(entry);
+    assert.equal(ctx.protocol, 'meshcore', 'protocol must be picked from entry.node');
+  } finally {
+    cleanup();
+  }
+});
+
+test('buildDisplayContext protocol is null when no candidate carries it', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const entry = { nodeId: '!aabbccdd', node: { short_name: 'X' } };
+    const ctx = testUtils.buildDisplayContext(entry);
+    assert.equal(ctx.protocol, null, 'protocol should be null when absent from all sources');
+  } finally {
+    cleanup();
+  }
+});
+
 // --- normalizeOverlaySource ---
 
 test('normalizeOverlaySource propagates string protocol field', () => {
@@ -177,6 +218,41 @@ test('createAnnouncementEntry omits meshtastic icon for meshcore protocol', () =
     });
     const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
     assert.ok(!html.includes('meshtastic.svg'), 'announcement for meshcore should not include meshtastic icon');
+  } finally {
+    cleanup();
+  }
+});
+
+test('createAnnouncementEntry shows meshcore icon for meshcore protocol', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const div = testUtils.createAnnouncementEntry({
+      timestampSeconds: 1000,
+      shortName: 'MC1',
+      longName: 'MeshCore Node',
+      role: 'REPEATER',
+      protocol: 'meshcore',
+      metadataSource: null,
+      nodeData: null,
+      messageHtml: 'seen',
+    });
+    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
+    assert.ok(html.includes('meshcore.svg'), 'announcement for meshcore should include meshcore icon');
+  } finally {
+    cleanup();
+  }
+});
+
+test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const div = testUtils.createMessageChatEntry({
+      text: 'test',
+      rx_time: 3000,
+      node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
+    });
+    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
+    assert.ok(html.includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
   } finally {
     cleanup();
   }

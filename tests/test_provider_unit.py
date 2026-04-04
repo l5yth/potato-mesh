@@ -1445,6 +1445,57 @@ def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
     asyncio.run(_runner())
 
 
+def test_run_meshcore_close_before_connect_completes(monkeypatch):
+    """close() while connect() is stalled must surface ClosedBeforeConnectedError.
+
+    The coroutine should:
+    - Set ``connected_event`` so the caller is unblocked.
+    - Store a :class:`ClosedBeforeConnectedError` in ``error_holder[0]``.
+    - Leave ``iface.isConnected`` as ``False``.
+    """
+    import asyncio
+    import threading
+
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    stall = asyncio.Event()
+    fake_mod = _make_fake_meshcore_mod(connect_stall_event=stall)
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    async def _runner() -> None:
+        iface = _MeshcoreInterface(target=None)
+        connected_event = threading.Event()
+        error_holder: list = [None]
+        task = asyncio.create_task(
+            _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+        )
+        # Spin until _stop_event is installed (guaranteed before connect() awaits).
+        for _ in range(500):
+            await asyncio.sleep(0)
+            if iface._stop_event is not None:
+                break
+        assert iface._stop_event is not None
+
+        # Signal shutdown, then let connect() return — simulating iface.close()
+        # being called while the device handshake is still in flight.
+        iface._stop_event.set()
+        stall.set()
+
+        await task
+
+        assert connected_event.is_set(), "connected_event must be set to unblock caller"
+        assert isinstance(
+            error_holder[0], _mod.ClosedBeforeConnectedError
+        ), "error_holder must contain ClosedBeforeConnectedError"
+        assert isinstance(
+            error_holder[0], ConnectionError
+        ), "ClosedBeforeConnectedError must be a ConnectionError subclass"
+        assert iface.isConnected is False, "isConnected must remain False"
+
+    asyncio.run(_runner())
+
+
 def test_run_meshcore_happy_path(monkeypatch):
     """_run_meshcore must signal connected and leave isConnected=True on success."""
     import asyncio
