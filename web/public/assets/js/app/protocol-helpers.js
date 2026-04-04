@@ -80,3 +80,24 @@ export function meshcoreIconHtml() {
     ' aria-hidden="true">';
 }
 
+/**
+ * Build an HTML prefix (protocol icon plus a trailing space) for inline UI.
+ *
+ * Meshtastic — including null, undefined, empty, or whitespace-only values per
+ * {@link isMeshtasticProtocol} — uses the Meshtastic icon. The literal
+ * ``"meshcore"`` uses the MeshCore icon. Any other protocol string yields an
+ * empty prefix (same as the pre-MeshCore behaviour for unknown stacks).
+ *
+ * @param {string|null|undefined} protocol Protocol string from the API.
+ * @returns {string} HTML fragment safe to concatenate before visible text.
+ */
+export function protocolIconPrefixHtml(protocol) {
+  if (isMeshcoreProtocol(protocol)) {
+    return `${meshcoreIconHtml()} `;
+  }
+  if (isMeshtasticProtocol(protocol)) {
+    return `${meshtasticIconHtml()} `;
+  }
+  return '';
+}
+

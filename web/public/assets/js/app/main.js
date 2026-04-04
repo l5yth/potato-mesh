@@ -99,7 +99,14 @@ import {
   roleColors,
   roleRenderOrder,
 } from './role-helpers.js';
-import { isMeshtasticProtocol, meshtasticIconHtml, MESHTASTIC_ICON_SRC } from './protocol-helpers.js';
+import {
+  isMeshtasticProtocol,
+  isMeshcoreProtocol,
+  meshtasticIconHtml,
+  MESHTASTIC_ICON_SRC,
+  MESHCORE_ICON_SRC,
+  protocolIconPrefixHtml,
+} from './protocol-helpers.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -2247,7 +2254,9 @@ export function initializeApp(config) {
       overlayInfo.role = 'CLIENT';
     }
     const lines = [];
-    const longNameLink = renderNodeLongNameLink(overlayInfo.longName, overlayInfo.nodeId);
+    const longNameLink = renderNodeLongNameLink(overlayInfo.longName, overlayInfo.nodeId, {
+      protocol: overlayInfo.protocol,
+    });
     if (longNameLink) {
       lines.push(`<strong>${longNameLink}</strong>`);
     } else {
@@ -2382,7 +2391,8 @@ export function initializeApp(config) {
     const fallbackId = nodeIdRaw || 'Unknown node';
     const longNameRaw = pickFirstProperty([node], ['long_name', 'longName']);
     const longNameDisplay = longNameRaw ? String(longNameRaw) : fallbackId;
-    const longNameLink = renderNodeLongNameLink(longNameRaw, nodeIdRaw);
+    const nodeProtocol = pickFirstProperty([node], ['protocol']);
+    const longNameLink = renderNodeLongNameLink(longNameRaw, nodeIdRaw, { protocol: nodeProtocol });
     const announcementName = longNameLink || escapeHtml(longNameDisplay);
     const shortNameRaw = pickFirstProperty([node], ['short_name', 'shortName']);
     const shortNameDisplay = shortNameRaw ? String(shortNameRaw) : (nodeIdRaw ? nodeIdRaw.slice(-4) : null);
@@ -2397,6 +2407,7 @@ export function initializeApp(config) {
       role: roleDisplay,
       metadataSource: node,
       nodeData: node,
+      protocol: nodeProtocol,
       messageHtml: `${renderEmojiHtml('☀️')} ${renderAnnouncementCopy('New node:', ` ${announcementName}`)}`
     });
   }
@@ -2472,6 +2483,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
+      protocol: context.protocol,
       messageHtml: `${renderEmojiHtml('💾')} ${renderAnnouncementCopy('Updated node info')}`
     });
   }
@@ -2486,6 +2498,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
+      protocol: context.protocol,
       messageHtml: `${renderEmojiHtml('🔋')} ${renderAnnouncementCopy('Broadcasted telemetry', highlightSuffix)}`
     });
   }
@@ -2500,6 +2513,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
+      protocol: context.protocol,
       messageHtml: `${renderEmojiHtml('📍')} ${renderAnnouncementCopy('Broadcasted position info', highlightSuffix)}`
     });
   }
@@ -2525,6 +2539,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
+      protocol: context.protocol,
       messageHtml: `${renderEmojiHtml('🏘️')} ${renderAnnouncementCopy('Broadcasted neighbor info', detail)}`
     });
   }
@@ -2563,7 +2578,8 @@ export function initializeApp(config) {
    *   role: ?string,
    *   metadataSource: Object|null,
    *   nodeData: Object|null,
-   *   messageHtml: string
+   *   messageHtml: string,
+   *   protocol: ?string
    * }} params Rendering parameters.
    * @returns {HTMLElement} Chat log element.
    */
@@ -2574,7 +2590,8 @@ export function initializeApp(config) {
     role,
     metadataSource,
     nodeData,
-    messageHtml
+    messageHtml,
+    protocol: protocolHint = null
   }) {
     const div = document.createElement('div');
     const tsDate = timestampSeconds != null ? new Date(timestampSeconds * 1000) : null;
@@ -2587,8 +2604,9 @@ export function initializeApp(config) {
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
     const longNameDisplay = longName != null ? String(longName) : '';
     const shortHtml = renderShortHtml(shortName, role, longNameDisplay, nodeData || metadataSource || {});
-    const announcementProtocol = (nodeData || metadataSource || {}).protocol;
-    const announcementIconPrefix = isMeshtasticProtocol(announcementProtocol) ? `${meshtasticIconHtml()} ` : '';
+    const announcementProtocol =
+      protocolHint ?? pickFirstProperty([nodeData, metadataSource], ['protocol']);
+    const announcementIconPrefix = protocolIconPrefixHtml(announcementProtocol);
     div.className = 'chat-entry-node';
     div.innerHTML = `${prefix}${presetTag} ${announcementIconPrefix}${shortHtml} ${messageHtml}`;
     return div;
@@ -2632,6 +2650,7 @@ export function initializeApp(config) {
       role: context.role,
       metadataSource: sourceNode || context.metadataSource,
       nodeData: sourceNode || context.nodeData,
+      protocol: context.protocol,
       messageHtml: `${renderEmojiHtml('👣')} ${renderAnnouncementCopy('Caught trace', labelSuffix)}`
     });
   }
@@ -2737,13 +2756,20 @@ export function initializeApp(config) {
    *   longName: ?string,
    *   role: ?string,
    *   metadataSource: Object|null,
-   *   nodeData: Object|null
+   *   nodeData: Object|null,
+   *   protocol: ?string
    * }} Normalised display metadata.
    */
   function buildDisplayContext(entry) {
     const resolvedNode = resolveNodeForLogEntry(entry);
-    const candidateSources = [resolvedNode, entry?.node, entry?.telemetry, entry?.position, entry?.neighbor]
-      .filter(source => source && typeof source === 'object');
+    const candidateSources = [
+      resolvedNode,
+      entry?.node,
+      entry?.telemetry,
+      entry?.position,
+      entry?.neighbor,
+      entry?.trace,
+    ].filter(source => source && typeof source === 'object');
     const nodeId = typeof entry?.nodeId === 'string' && entry.nodeId.trim().length
       ? entry.nodeId.trim()
       : pickFirstProperty(candidateSources, ['node_id', 'nodeId']);
@@ -2761,7 +2787,8 @@ export function initializeApp(config) {
     const role = pickFirstProperty(candidateSources, ['role']);
     const metadataSource = resolvedNode || candidateSources[0] || {};
     const nodeData = resolvedNode || candidateSources[0] || {};
-    return { nodeId, nodeNum, shortName, longName, role, metadataSource, nodeData };
+    const protocol = pickFirstProperty(candidateSources, ['protocol']);
+    return { nodeId, nodeNum, shortName, longName, role, metadataSource, nodeData, protocol };
   }
 
   /**
@@ -2979,7 +3006,8 @@ export function initializeApp(config) {
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
-    const nodeProtocolPrefix = isMeshtasticProtocol(m.node?.protocol) ? `${meshtasticIconHtml()} ` : '';
+    const messageProtocol = pickFirstProperty([m, m?.node], ['protocol']);
+    const nodeProtocolPrefix = protocolIconPrefixHtml(messageProtocol);
     const replyPrefix = resolveReplyPrefix({
       message: m,
       messagesById,
@@ -3149,7 +3177,11 @@ export function initializeApp(config) {
     const channelTabs = filteredChannels.map(channel => ({
       id: channel.id || `channel-${channel.index}`,
       label: channel.label,
-      iconSrc: isMeshtasticProtocol(channel.protocol) ? MESHTASTIC_ICON_SRC : null,
+      iconSrc: isMeshtasticProtocol(channel.protocol)
+        ? MESHTASTIC_ICON_SRC
+        : isMeshcoreProtocol(channel.protocol)
+          ? MESHCORE_ICON_SRC
+          : null,
       content: buildChatFragment({
         entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
         renderEntry: entry => createMessageChatEntry(entry.item),

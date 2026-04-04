@@ -15,7 +15,7 @@
  */
 
 import { refreshNodeInformation } from './node-details.js';
-import { isMeshtasticProtocol, meshtasticIconHtml } from './protocol-helpers.js';
+import { protocolIconPrefixHtml } from './protocol-helpers.js';
 import {
   extractChatMessageMetadata,
   formatChatChannelTag,
@@ -114,48 +114,6 @@ function numberOrNull(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-/**
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /**
  * Render the telemetry charts for the supplied node when telemetry snapshots
@@ -1014,7 +972,7 @@ function renderMessages(messages, renderShortHtml, node) {
 
       const messageNode = message.node && typeof message.node === 'object' ? message.node : null;
       const messageProtocol = stringOrNull(messageNode?.protocol ?? fallbackNode?.protocol) ?? null;
-      const protocolIconHtml = isMeshtasticProtocol(messageProtocol) ? `${meshtasticIconHtml()} ` : '';
+      const protocolIconHtml = protocolIconPrefixHtml(messageProtocol);
       const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
         shortName: messageNode?.short_name ?? messageNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
         longName: messageNode?.long_name ?? messageNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
@@ -1267,7 +1225,7 @@ function renderNodeDetailHtml(node, {
   }
 
   const identifierHtml = identifier ? `<span class="node-detail__identifier">[${escapeHtml(identifier)}]</span>` : '';
-  const iconPrefix = isMeshtasticProtocol(nodeProtocol) ? `${meshtasticIconHtml()} ` : '';
+  const iconPrefix = protocolIconPrefixHtml(nodeProtocol);
   const nameHtml = longName ? `<span class="node-detail__name">${iconPrefix}${escapeHtml(longName)}</span>` : '';
   const badgeHtml = `<span class="node-detail__badge">${roleAwareBadge}</span>`;
   const tableSection = tableHtml ? `<div class="node-detail__table">${tableHtml}</div>` : '';

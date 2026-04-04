@@ -144,8 +144,8 @@ test('padTwo handles zero', () => {
 // ---------------------------------------------------------------------------
 
 test('formatCompactDate returns two-digit day of month', () => {
-  // 2025-01-05 UTC
-  const ts = Date.UTC(2025, 0, 5);
+  // Local calendar date (formatCompactDate uses getDate(), not UTC).
+  const ts = new Date(2025, 0, 5).getTime();
   assert.equal(formatCompactDate(ts), '05');
 });
 

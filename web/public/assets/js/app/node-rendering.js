@@ -27,7 +27,7 @@
  */
 
 import { escapeHtml } from './utils.js';
-import { isMeshtasticProtocol, meshtasticIconHtml } from './protocol-helpers.js';
+import { protocolIconPrefixHtml } from './protocol-helpers.js';
 
 /**
  * Normalise node name fields by trimming whitespace.
@@ -79,8 +79,9 @@ export function canonicalNodeIdentifier(identifier) {
 /**
  * Render a linked long name pointing to the node detail view.
  *
- * When ``protocol`` is ``"meshtastic"`` (or absent) the Meshtastic logo is
- * prepended to the displayed name.  An anchor element is only emitted when
+ * When ``protocol`` is Meshtastic (including null/empty per
+ * {@link module:protocol-helpers~isMeshtasticProtocol}) or ``"meshcore"``, the
+ * matching protocol icon is prepended.  An anchor element is only emitted when
  * ``identifier`` resolves to a non-null detail path.
  *
  * @param {string|null} longName Display name.
@@ -91,7 +92,7 @@ export function canonicalNodeIdentifier(identifier) {
 export function renderNodeLongNameLink(longName, identifier, { className = 'node-long-link', protocol = null } = {}) {
   const text = normalizeNodeNameValue(longName);
   if (!text) return '';
-  const iconPrefix = isMeshtasticProtocol(protocol) ? `${meshtasticIconHtml()} ` : '';
+  const iconPrefix = protocolIconPrefixHtml(protocol);
   const href = buildNodeDetailHref(identifier);
   if (!href) {
     return `${iconPrefix}${escapeHtml(text)}`;
