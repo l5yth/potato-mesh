@@ -38,6 +38,7 @@ from data.mesh_ingestor.providers.meshcore import (  # noqa: E402 - path setup
     _derive_message_id,
     _make_connection,
     _make_event_handlers,
+    _meshcore_adv_type_to_role,
     _meshcore_node_id,
     _meshcore_short_name,
     _process_contact_update,
@@ -551,6 +552,11 @@ def test_meshcore_short_name_empty_when_too_short():
     assert _meshcore_short_name(None) == ""  # type: ignore[arg-type]
 
 
+def test_meshcore_short_name_exactly_four_chars():
+    """_meshcore_short_name with exactly four hex chars returns those four chars."""
+    assert _meshcore_short_name("abcd") == "abcd"
+
+
 # ---------------------------------------------------------------------------
 # _pubkey_prefix_to_node_id
 # ---------------------------------------------------------------------------
@@ -576,6 +582,30 @@ def test_pubkey_prefix_returns_none_for_empty_contacts():
 
 
 # ---------------------------------------------------------------------------
+# _meshcore_adv_type_to_role
+# ---------------------------------------------------------------------------
+
+
+def test_meshcore_adv_type_to_role_maps_adv_types():
+    """Known ADV_TYPE_* integers map to dashboard role strings."""
+    assert _meshcore_adv_type_to_role(1) == "COMPANION"
+    assert _meshcore_adv_type_to_role(2) == "REPEATER"
+    assert _meshcore_adv_type_to_role(3) == "ROOM_SERVER"
+    assert _meshcore_adv_type_to_role(4) == "SENSOR"
+
+
+def test_meshcore_adv_type_to_role_none_for_unmapped():
+    """ADV_TYPE_NONE, unknown codes, and non-integers yield None."""
+    assert _meshcore_adv_type_to_role(0) is None
+    assert _meshcore_adv_type_to_role(99) is None
+    assert _meshcore_adv_type_to_role(None) is None
+    assert _meshcore_adv_type_to_role("1") is None
+    assert (
+        _meshcore_adv_type_to_role(2.0) is None
+    )  # float rejected; JSON numeric coercion guard
+
+
+# ---------------------------------------------------------------------------
 # _contact_to_node_dict
 # ---------------------------------------------------------------------------
 
@@ -592,6 +622,23 @@ def test_contact_to_node_dict_basic_fields():
     assert node["user"]["longName"] == "Alice"
     assert node["user"]["shortName"] == "aabb"
     assert node["user"]["publicKey"] == contact["public_key"]
+    assert "role" not in node["user"]
+
+
+def test_contact_to_node_dict_sets_role_from_type():
+    """Contact ``type`` must populate ``user.role`` when ADV_TYPE is mapped."""
+    base = {"public_key": "aabbccdd" + "00" * 28, "adv_name": "Rpt"}
+    assert _contact_to_node_dict({**base, "type": 2})["user"]["role"] == "REPEATER"
+
+
+def test_contact_to_node_dict_omits_role_for_adv_type_none():
+    """ADV_TYPE_NONE (0) must not set ``user.role``."""
+    contact = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "adv_name": "X",
+        "type": 0,
+    }
+    assert "role" not in _contact_to_node_dict(contact)["user"]
 
 
 def test_contact_to_node_dict_includes_position_when_nonzero():
@@ -633,6 +680,19 @@ def test_self_info_to_node_dict_basic_fields():
     assert node["user"]["shortName"] == "bbbb"
     assert node["user"]["publicKey"] == "bb" * 32
     assert isinstance(node["lastHeard"], int)
+    assert "role" not in node["user"]
+
+
+def test_self_info_to_node_dict_sets_role_from_adv_type():
+    """SELF_INFO ``adv_type`` must populate ``user.role`` when mapped."""
+    self_info = {"name": "Srv", "public_key": "cc" * 32, "adv_type": 3}
+    assert _self_info_to_node_dict(self_info)["user"]["role"] == "ROOM_SERVER"
+
+
+def test_self_info_to_node_dict_omits_role_for_adv_type_none():
+    """adv_type 0 must not set ``user.role``."""
+    self_info = {"name": "N", "public_key": "dd" * 32, "adv_type": 0}
+    assert "role" not in _self_info_to_node_dict(self_info)["user"]
 
 
 def test_self_info_to_node_dict_includes_position():
