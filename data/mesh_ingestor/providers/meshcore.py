@@ -75,10 +75,10 @@ _DEFAULT_BAUDRATE: int = 115200
 
 # MeshCore ``ADV_TYPE_*`` (``AdvertDataHelpers.h``) → ``user.role`` for POST /api/nodes.
 _MESHCORE_ADV_TYPE_ROLE: dict[int, str] = {
-    1: "COMPANION",   # ADV_TYPE_CHAT
-    2: "REPEATER",    # ADV_TYPE_REPEATER
-    3: "ROOM_SERVER", # ADV_TYPE_ROOM_SERVER
-    4: "SENSOR",      # ADV_TYPE_SENSOR
+    1: "COMPANION",  # ADV_TYPE_CHAT
+    2: "REPEATER",  # ADV_TYPE_REPEATER
+    3: "ROOM_SERVER",  # ADV_TYPE_ROOM_SERVER
+    4: "SENSOR",  # ADV_TYPE_SENSOR
 }
 
 # ---------------------------------------------------------------------------

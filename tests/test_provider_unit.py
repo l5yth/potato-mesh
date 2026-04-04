@@ -600,7 +600,9 @@ def test_meshcore_adv_type_to_role_none_for_unmapped():
     assert _meshcore_adv_type_to_role(99) is None
     assert _meshcore_adv_type_to_role(None) is None
     assert _meshcore_adv_type_to_role("1") is None
-    assert _meshcore_adv_type_to_role(2.0) is None  # float rejected; JSON numeric coercion guard
+    assert (
+        _meshcore_adv_type_to_role(2.0) is None
+    )  # float rejected; JSON numeric coercion guard
 
 
 # ---------------------------------------------------------------------------
