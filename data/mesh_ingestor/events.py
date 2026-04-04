@@ -28,12 +28,21 @@ from typing import NotRequired, TypedDict
 
 
 class _MessageEventRequired(TypedDict):
+    """Required fields shared by all :class:`MessageEvent` payloads."""
+
     id: int
     rx_time: int
     rx_iso: str
 
 
 class MessageEvent(_MessageEventRequired, total=False):
+    """Payload for the ``/api/messages`` ingest route.
+
+    Maps to the ``MessageEvent`` contract described in ``CONTRACTS.md``.
+    Required fields are inherited from :class:`_MessageEventRequired`;
+    all other fields are optional.
+    """
+
     from_id: object
     to_id: object
     channel: int
@@ -52,12 +61,21 @@ class MessageEvent(_MessageEventRequired, total=False):
 
 
 class _PositionEventRequired(TypedDict):
+    """Required fields shared by all :class:`PositionEvent` payloads."""
+
     id: int
     rx_time: int
     rx_iso: str
 
 
 class PositionEvent(_PositionEventRequired, total=False):
+    """Payload for the ``/api/positions`` ingest route.
+
+    Maps to the ``PositionEvent`` contract described in ``CONTRACTS.md``.
+    Coordinates may be supplied as floating-point degrees or derived from
+    Meshtastic's integer-scaled ``latitudeI``/``longitudeI`` fields.
+    """
+
     node_id: str
     node_num: int | None
     num: int | None
@@ -85,12 +103,21 @@ class PositionEvent(_PositionEventRequired, total=False):
 
 
 class _TelemetryEventRequired(TypedDict):
+    """Required fields shared by all :class:`TelemetryEvent` payloads."""
+
     id: int
     rx_time: int
     rx_iso: str
 
 
 class TelemetryEvent(_TelemetryEventRequired, total=False):
+    """Payload for the ``/api/telemetry`` ingest route.
+
+    Maps to the ``TelemetryEvent`` contract described in ``CONTRACTS.md``.
+    Metric keys beyond the required ones are open-ended; the web layer accepts
+    any additional device, environment, power, or air-quality fields.
+    """
+
     node_id: str | None
     node_num: int | None
     from_id: object
@@ -112,23 +139,39 @@ class TelemetryEvent(_TelemetryEventRequired, total=False):
 
 
 class _NeighborEntryRequired(TypedDict):
+    """Required fields for a single entry within a :class:`NeighborsSnapshot`."""
+
     rx_time: int
     rx_iso: str
 
 
 class NeighborEntry(_NeighborEntryRequired, total=False):
+    """A single observed neighbour node within a :class:`NeighborsSnapshot`.
+
+    Each entry describes one node heard by the reporting device, including
+    optional signal-quality metrics.
+    """
+
     neighbor_id: str
     neighbor_num: int | None
     snr: float | None
 
 
 class _NeighborsSnapshotRequired(TypedDict):
+    """Required fields shared by all :class:`NeighborsSnapshot` payloads."""
+
     node_id: str
     rx_time: int
     rx_iso: str
 
 
 class NeighborsSnapshot(_NeighborsSnapshotRequired, total=False):
+    """Payload for the ``/api/neighbors`` ingest route.
+
+    Maps to the ``NeighborsSnapshot`` contract described in ``CONTRACTS.md``.
+    Encapsulates the full list of neighbours heard by a single reporting node.
+    """
+
     node_num: int | None
     neighbors: list[NeighborEntry]
     node_broadcast_interval_secs: int | None
@@ -139,12 +182,21 @@ class NeighborsSnapshot(_NeighborsSnapshotRequired, total=False):
 
 
 class _TraceEventRequired(TypedDict):
+    """Required fields shared by all :class:`TraceEvent` payloads."""
+
     hops: list[int]
     rx_time: int
     rx_iso: str
 
 
 class TraceEvent(_TraceEventRequired, total=False):
+    """Payload for the ``/api/traceroutes`` ingest route.
+
+    Maps to the ``TraceEvent`` contract described in ``CONTRACTS.md``.
+    The ``hops`` list contains node numbers in transmission order from
+    source to destination.
+    """
+
     id: int | None
     request_id: int | None
     src: int | None
@@ -158,6 +210,13 @@ class TraceEvent(_TraceEventRequired, total=False):
 
 
 class IngestorHeartbeat(TypedDict):
+    """Payload for the ``/api/ingestors`` heartbeat route.
+
+    Maps to the ``IngestorHeartbeat`` contract described in ``CONTRACTS.md``.
+    Sent periodically to signal that the ingestor process is alive and
+    associated with a particular radio node.
+    """
+
     node_id: str
     start_time: int
     last_seen_time: int

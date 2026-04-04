@@ -390,3 +390,186 @@ def test_nodeinfo_user_dict_proto_fallback(monkeypatch):
 
     decoded_user = DecodedProto()
     assert serialization._nodeinfo_user_dict(None, decoded_user) is None
+
+
+# ---------------------------------------------------------------------------
+# _coerce_int edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceInt:
+    """Tests for :func:`serialization._coerce_int` edge cases."""
+
+    def test_bool_true(self):
+        """True coerces to 1."""
+        assert serialization._coerce_int(True) == 1
+
+    def test_bool_false(self):
+        """False coerces to 0."""
+        assert serialization._coerce_int(False) == 0
+
+    def test_nan_float_returns_none(self):
+        """NaN float returns None."""
+        import math
+
+        assert serialization._coerce_int(math.nan) is None
+
+    def test_inf_float_returns_none(self):
+        """Inf float returns None."""
+        import math
+
+        assert serialization._coerce_int(math.inf) is None
+
+    def test_bytes_decimal(self):
+        """Bytes containing a decimal string are parsed."""
+        assert serialization._coerce_int(b"42") == 42
+
+    def test_bytes_hex(self):
+        """Bytes containing a 0x hex string are parsed."""
+        assert serialization._coerce_int(b"0xff") == 255
+
+    def test_empty_bytes_returns_none(self):
+        """Empty bytes returns None."""
+        assert serialization._coerce_int(b"") is None
+
+    def test_invalid_string_returns_none(self):
+        """Non-numeric string returns None."""
+        assert serialization._coerce_int("not-an-int") is None
+
+    def test_float_string_coerced(self):
+        """Decimal string like '3.7' is truncated to int."""
+        assert serialization._coerce_int("3.7") == 3
+
+    def test_none_returns_none(self):
+        """None returns None."""
+        assert serialization._coerce_int(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _coerce_float edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceFloat:
+    """Tests for :func:`serialization._coerce_float` edge cases."""
+
+    def test_bool_true(self):
+        """True coerces to 1.0."""
+        assert serialization._coerce_float(True) == pytest.approx(1.0)
+
+    def test_nan_returns_none(self):
+        """NaN returns None."""
+        import math
+
+        assert serialization._coerce_float(math.nan) is None
+
+    def test_inf_returns_none(self):
+        """Inf returns None."""
+        import math
+
+        assert serialization._coerce_float(math.inf) is None
+
+    def test_bytes_string(self):
+        """Bytes containing a float string are parsed."""
+        assert serialization._coerce_float(b"3.14") == pytest.approx(3.14)
+
+    def test_empty_bytes_returns_none(self):
+        """Empty bytes returns None."""
+        assert serialization._coerce_float(b"") is None
+
+    def test_invalid_string_returns_none(self):
+        """Non-numeric string returns None."""
+        assert serialization._coerce_float("not-a-float") is None
+
+    def test_none_returns_none(self):
+        """None returns None."""
+        assert serialization._coerce_float(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _first dot-notation
+# ---------------------------------------------------------------------------
+
+
+class TestFirstDotNotation:
+    """Tests for :func:`serialization._first` with dot-separated names."""
+
+    def test_dot_notation_nested_dict(self):
+        """Dot notation resolves nested dict keys."""
+        d = {"a": {"b": 42}}
+        assert serialization._first(d, "a.b") == 42
+
+    def test_dot_notation_falls_back_to_next_name(self):
+        """Falls back to the next candidate when dot-path misses."""
+        d = {"x": 99}
+        assert serialization._first(d, "a.b", "x") == 99
+
+    def test_dot_notation_none_value_skipped(self):
+        """None value at dot-path is skipped."""
+        d = {"a": {"b": None}}
+        assert serialization._first(d, "a.b", default="fallback") == "fallback"
+
+    def test_dot_notation_empty_string_skipped(self):
+        """Empty string at dot-path is skipped."""
+        d = {"a": {"b": ""}}
+        assert serialization._first(d, "a.b", default="fallback") == "fallback"
+
+    def test_attr_dot_notation(self):
+        """Dot notation works for objects with attributes."""
+        from types import SimpleNamespace
+
+        d = SimpleNamespace(a=SimpleNamespace(b=7))
+        assert serialization._first(d, "a.b") == 7
+
+
+# ---------------------------------------------------------------------------
+# _merge_mappings non-mapping extra
+# ---------------------------------------------------------------------------
+
+
+class TestMergeMappingsExtra:
+    """Additional tests for :func:`serialization._merge_mappings`."""
+
+    def test_non_mapping_extra_ignored(self):
+        """Non-mapping extra with non-convertible value returns base unchanged."""
+        base = {"x": 1}
+        # Pass a string as extra — _node_to_dict will return the string, which
+        # is not a Mapping, so base is returned as-is.
+        result = serialization._merge_mappings(base, "not-a-mapping")
+        assert result == {"x": 1}
+
+    def test_deep_merge(self):
+        """Nested mappings are merged recursively."""
+        base = {"a": {"b": 1, "c": 2}}
+        extra = {"a": {"b": 99}}
+        result = serialization._merge_mappings(base, extra)
+        assert result == {"a": {"b": 99, "c": 2}}
+
+    def test_extra_key_added(self):
+        """Keys present only in extra are added to the result."""
+        base = {"a": 1}
+        extra = {"b": 2}
+        result = serialization._merge_mappings(base, extra)
+        assert result == {"a": 1, "b": 2}
+
+
+# ---------------------------------------------------------------------------
+# _extract_payload_bytes additional branches
+# ---------------------------------------------------------------------------
+
+
+class TestExtractPayloadBytesExtra:
+    """Additional coverage for :func:`serialization._extract_payload_bytes`."""
+
+    def test_non_mapping_input_returns_none(self):
+        """Non-mapping decoded section returns None."""
+        assert serialization._extract_payload_bytes("not-a-dict") is None
+
+    def test_no_payload_key_returns_none(self):
+        """Missing payload key returns None."""
+        assert serialization._extract_payload_bytes({}) is None
+
+    def test_bytes_payload_returned_directly(self):
+        """Raw bytes payload is returned as-is."""
+        result = serialization._extract_payload_bytes({"payload": b"\x01\x02"})
+        assert result == b"\x01\x02"

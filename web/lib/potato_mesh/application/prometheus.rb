@@ -101,6 +101,22 @@ module PotatoMesh
         # Ignore duplicate registrations when the code is reloaded.
       end
 
+      # Update per-node Prometheus gauges for a single node event.
+      #
+      # The method is a no-op when the configured report-ID list is empty or when
+      # +node_id+ does not match an entry in that list.  When the wildcard +*+ is
+      # present all nodes are reported.
+      #
+      # @param node_id [String, nil] canonical node identifier (+!xxxxxxxx+ form).
+      # @param user [Hash, nil] user payload hash containing +shortName+,
+      #   +longName+, and +hwModel+ keys.
+      # @param role [String] node role label; an empty string skips the NODE_GAUGE.
+      # @param met [Hash, nil] device metrics hash containing keys such as
+      #   +batteryLevel+, +voltage+, +uptimeSeconds+, +channelUtilization+, and
+      #   +airUtilTx+.
+      # @param pos [Hash, nil] position payload hash containing +latitude+,
+      #   +longitude+, and +altitude+.
+      # @return [void]
       def update_prometheus_metrics(node_id, user = nil, role = "", met = nil, pos = nil)
         ids = prom_report_ids
         return if ids.empty? || !node_id
@@ -157,6 +173,13 @@ module PotatoMesh
         end
       end
 
+      # Refresh all Prometheus node metrics from the current database snapshot.
+      #
+      # Queries up to 1 000 nodes and updates the {NODES_GAUGE} with the total
+      # count.  For each node that matches the report-ID filter the per-node
+      # gauges are refreshed via {#update_prometheus_metrics}.
+      #
+      # @return [void]
       def update_all_prometheus_metrics_from_nodes
         nodes = query_nodes(1000)
 

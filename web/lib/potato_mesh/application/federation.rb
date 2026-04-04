@@ -169,6 +169,16 @@ module PotatoMesh
 
       # Ensure the federation worker pool exists when federation remains enabled.
       #
+      # Threading model: the pool is a fixed-size thread pool backed by a bounded
+      # queue.  A single long-lived announcer thread (started by
+      # {#start_federation_announcer!}) drives periodic crawl and announcement
+      # cycles by submitting tasks onto the pool; individual crawl and announce
+      # jobs then run concurrently on pool threads.  The pool is lazily
+      # instantiated on first use and is memoized on the Sinatra settings object so
+      # that all requests share the same instance.  An +at_exit+ hook
+      # ({#ensure_federation_shutdown_hook!}) guarantees the pool drains cleanly on
+      # process termination even when the announcer thread is still alive.
+      #
       # @return [PotatoMesh::App::WorkerPool, nil] active worker pool if created.
       def ensure_federation_worker_pool!
         return nil unless federation_enabled?

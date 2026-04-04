@@ -37,7 +37,8 @@ Node entry fields are “Meshtastic-ish” (camelCase) and may include:
 - `snr` (float)
 - `hopsAway` (int)
 - `isFavorite` (bool)
-- `user` (mapping; e.g. `shortName`, `longName`, `macaddr`, `hwModel`, `role`, `publicKey`, `isUnmessagable`)
+- `user` (mapping; e.g. `shortName`, `longName`, `macaddr`, `hwModel`, `publicKey`, `isUnmessagable`)
+  - `role` (optional string) — omit when unknown; known values include Meshtastic role names (e.g. `CLIENT`, `ROUTER`) and MeshCore role names (`COMPANION`, `REPEATER`, `ROOM_SERVER`, `SENSOR`)
 - `deviceMetrics` (mapping; e.g. `batteryLevel`, `voltage`, `channelUtilization`, `airUtilTx`, `uptimeSeconds`)
 - `position` (mapping; `latitude`, `longitude`, `altitude`, `time`, `locationSource`, `precisionBits`, optional nested `raw`)
 - Optional radio metadata: `lora_freq`, `modem_preset`
