@@ -172,6 +172,10 @@ def _enqueue_post_json(
 
     with state.lock:
         counter = next(state.counter)
+        # Heap tuple: (priority, counter, path, payload).  Lower priority
+        # values are dequeued first (min-heap semantics).  The monotonically
+        # increasing counter breaks ties so equal-priority items are processed
+        # in FIFO order without comparing the non-orderable payload dict.
         heapq.heappush(state.queue, (priority, counter, path, payload))
 
 

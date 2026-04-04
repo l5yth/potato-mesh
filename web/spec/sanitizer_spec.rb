@@ -124,4 +124,59 @@ RSpec.describe PotatoMesh::Sanitizer do
       expect(described_class.sanitized_string(:symbol)).to eq("symbol")
     end
   end
+
+  describe ".valid_hostname?" do
+    it "rejects IPv6 literals because they contain colons" do
+      # IPv6 addresses split on ":" produce labels that contain invalid chars or
+      # empty strings, so valid_hostname? must return false for them.
+      expect(described_class.valid_hostname?("::1")).to be(false)
+      expect(described_class.valid_hostname?("2001:db8::1")).to be(false)
+      expect(described_class.valid_hostname?("fe80::1%eth0")).to be(false)
+    end
+
+    it "tolerates trailing dots because String#split drops the empty trailing element" do
+      # Ruby's String#split(".") discards the trailing empty field produced by
+      # a terminal dot, so "example.com." is treated identically to
+      # "example.com".  sanitize_instance_domain strips trailing dots upstream
+      # before delegating to valid_hostname?, so this edge case is handled at
+      # the sanitizer level rather than inside valid_hostname? itself.
+      expect(described_class.valid_hostname?("example.com.")).to be(true)
+    end
+
+    it "sanitize_instance_domain strips trailing dots from hostnames" do
+      # End-to-end: the public API normalises trailing dots before validation.
+      expect(described_class.sanitize_instance_domain("example.com.")).to eq("example.com")
+      expect(described_class.sanitize_instance_domain("Example.Com.")).to eq("example.com")
+    end
+
+    it "accepts well-formed hostnames" do
+      expect(described_class.valid_hostname?("example.com")).to be(true)
+      expect(described_class.valid_hostname?("mesh.example.org")).to be(true)
+    end
+  end
+
+  describe ".sanitize_instance_domain with unicode input" do
+    it "rejects pure unicode domain names without ASCII labels" do
+      # The hostname validator only accepts ASCII alphanumeric labels (RFC 1035),
+      # so a raw IDN like münchen.de (non-punycode) must be rejected.
+      result = described_class.sanitize_instance_domain("münchen.de")
+      expect(result).to be_nil
+    end
+  end
+
+  describe ".ip_from_domain with invalid bracket notation" do
+    it "returns nil when the port in bracket notation is not numeric" do
+      # "[::1]:notaport" matches the bracket prefix but the port guard in
+      # sanitize_instance_domain would reject it; ip_from_domain still tries
+      # to extract the host and parse it via instance_domain_host.
+      result = described_class.ip_from_domain("[::1]:notaport")
+      # instance_domain_host returns nil for an invalid bracket expression
+      # because the port portion is non-numeric, so ip_from_domain is nil too.
+      expect(result).to be_nil
+    end
+
+    it "returns nil for an unterminated bracket expression" do
+      expect(described_class.ip_from_domain("[::1")).to be_nil
+    end
+  end
 end
