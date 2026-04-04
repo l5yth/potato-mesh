@@ -455,7 +455,7 @@ class TestCoerceFloat:
 
     def test_bool_true(self):
         """True coerces to 1.0."""
-        assert serialization._coerce_float(True) == 1.0
+        assert serialization._coerce_float(True) == pytest.approx(1.0)
 
     def test_nan_returns_none(self):
         """NaN returns None."""

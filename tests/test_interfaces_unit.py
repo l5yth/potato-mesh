@@ -39,7 +39,9 @@ class TestEnsureMapping:
     def test_mapping_returned_as_is(self):
         """A dict is returned directly without conversion."""
         d = {"a": 1}
-        assert ifaces._ensure_mapping(d) is d
+        result = ifaces._ensure_mapping(d)
+        # Use id() to assert identity (same object, not just equal value).
+        assert id(result) == id(d)
 
     def test_object_with_dict_attr(self):
         """Object whose ``__dict__`` is a mapping is wrapped."""

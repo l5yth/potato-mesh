@@ -190,7 +190,7 @@ class TestQueueIngestorHeartbeat:
         monkeypatch.setattr(config, "LORA_FREQ", 915.0)
         sent = []
         queue_ingestor_heartbeat(send=lambda path, payload: sent.append(payload))
-        assert sent[0].get("lora_freq") == 915.0
+        assert sent[0].get("lora_freq") == pytest.approx(915.0)
 
     def test_modem_preset_included_when_set(self, monkeypatch):
         """modem_preset is included in payload when MODEM_PRESET is configured."""
