@@ -346,3 +346,189 @@ test('buildMeshtasticIconImg and buildMeshcoreIconImg return different src value
     assert.notEqual(mt.getAttribute('src'), mc.getAttribute('src'));
   });
 });
+
+// ---------------------------------------------------------------------------
+// legendClickHandler
+// ---------------------------------------------------------------------------
+
+test('legendClickHandler calls preventDefault and stopPropagation before fn', () => {
+  withApp((t) => {
+    let fnCalled = false;
+    let preventDefaultCalled = false;
+    let stopPropagationCalled = false;
+    const handler = t.legendClickHandler(() => { fnCalled = true; });
+    const fakeEvent = {
+      preventDefault: () => { preventDefaultCalled = true; },
+      stopPropagation: () => { stopPropagationCalled = true; },
+    };
+    handler(fakeEvent);
+    assert.equal(preventDefaultCalled, true);
+    assert.equal(stopPropagationCalled, true);
+    assert.equal(fnCalled, true);
+  });
+});
+
+test('legendClickHandler passes the event to fn', () => {
+  withApp((t) => {
+    let received = null;
+    const handler = t.legendClickHandler(ev => { received = ev; });
+    const fakeEvent = {
+      preventDefault: () => {},
+      stopPropagation: () => {},
+      detail: 'test',
+    };
+    handler(fakeEvent);
+    assert.equal(received, fakeEvent);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildRoleButtons
+// ---------------------------------------------------------------------------
+
+test('buildRoleButtons appends one child per palette entry', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { SENSOR: '#4A7EB4', REPEATER: '#C8D0DC' }, 'meshcore');
+    assert.equal(col.childNodes.length, 2);
+  });
+});
+
+test('buildRoleButtons sets dataset.role and dataset.protocol on each button', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    const btn = t.legendRoleButtons.get('meshcore:SENSOR');
+    assert.ok(btn, 'button should be in legendRoleButtons');
+    assert.equal(btn.dataset.role, 'SENSOR');
+    assert.equal(btn.dataset.protocol, 'meshcore');
+  });
+});
+
+test('buildRoleButtons registers compound keys in legendRoleButtons', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { SENSOR: '#4A7EB4', REPEATER: '#C8D0DC' }, 'meshcore');
+    assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
+    assert.ok(t.legendRoleButtons.has('meshcore:REPEATER'));
+  });
+});
+
+test('buildRoleButtons keeps meshtastic and meshcore SENSOR keys distinct', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const colMc = document.createElement('div');
+    const colMt = document.createElement('div');
+    t.buildRoleButtons(colMc, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(colMt, { SENSOR: '#B2D880' }, 'meshtastic');
+    assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
+    assert.ok(t.legendRoleButtons.has('meshtastic:SENSOR'));
+    assert.notEqual(
+      t.legendRoleButtons.get('meshcore:SENSOR'),
+      t.legendRoleButtons.get('meshtastic:SENSOR'),
+    );
+  });
+});
+
+test('buildRoleButtons sets aria-pressed to false initially', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
+    assert.ok(btn, 'button should be in legendRoleButtons');
+    assert.equal(btn.getAttribute('aria-pressed'), 'false');
+  });
+});
+
+test('buildRoleButtons creates swatch child with background color', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
+    // swatch is the first child of the button
+    const swatch = btn.childNodes[0];
+    assert.ok(swatch, 'swatch element should exist');
+    assert.ok(swatch.style.background, 'swatch should have background color');
+  });
+});
+
+test('buildRoleButtons creates label child with role text', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
+    // label is the second child of the button
+    const label = btn.childNodes[1];
+    assert.ok(label, 'label element should exist');
+    assert.equal(label.textContent, 'ROUTER');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// updateLegendRoleFiltersUI
+// ---------------------------------------------------------------------------
+
+test('updateLegendRoleFiltersUI sets aria-pressed true on active role buttons', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    const btn = t.legendRoleButtons.get('meshcore:SENSOR');
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshcore:SENSOR');
+    t.updateLegendRoleFiltersUI();
+    assert.equal(btn.getAttribute('aria-pressed'), 'true');
+  });
+});
+
+test('updateLegendRoleFiltersUI sets aria-pressed false on inactive role buttons', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    const btn = t.legendRoleButtons.get('meshcore:SENSOR');
+    t.activeRoleFilters.clear();
+    t.updateLegendRoleFiltersUI();
+    assert.equal(btn.getAttribute('aria-pressed'), 'false');
+  });
+});
+
+test('updateLegendRoleFiltersUI updates protocol button text to Show when hidden', () => {
+  withApp((t) => {
+    t.legendProtocolButtons.clear();
+    const fakeBtn = document.createElement('button');
+    fakeBtn.setAttribute('aria-pressed', 'false');
+    t.legendProtocolButtons.set('meshtastic', fakeBtn);
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshtastic');
+    t.updateLegendRoleFiltersUI();
+    assert.equal(fakeBtn.getAttribute('aria-pressed'), 'true');
+    assert.ok(fakeBtn.textContent.startsWith('Show'));
+  });
+});
+
+test('updateLegendRoleFiltersUI updates protocol button text to Hide when visible', () => {
+  withApp((t) => {
+    t.legendProtocolButtons.clear();
+    const fakeBtn = document.createElement('button');
+    fakeBtn.setAttribute('aria-pressed', 'true');
+    t.legendProtocolButtons.set('meshcore', fakeBtn);
+    t.hiddenProtocols.clear();
+    t.updateLegendRoleFiltersUI();
+    assert.equal(fakeBtn.getAttribute('aria-pressed'), 'false');
+    assert.ok(fakeBtn.textContent.startsWith('Hide'));
+  });
+});
+
+test('updateLegendRoleFiltersUI is safe when legendContainer is null', () => {
+  withApp((t) => {
+    // legendContainer starts null in tests (no map); should not throw
+    assert.doesNotThrow(() => t.updateLegendRoleFiltersUI());
+  });
+});

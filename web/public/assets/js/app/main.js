@@ -845,6 +845,24 @@ export function initializeApp(config) {
   const legendProtocolButtons = new Map();
 
   /**
+   * Wrap a legend button click handler so it always calls
+   * ``preventDefault`` and ``stopPropagation`` before running the body.
+   *
+   * Centralising this prevents the two-line boilerplate from repeating in
+   * every legend button handler, reducing token-level duplication.
+   *
+   * @param {function(Event): void} fn Handler body.
+   * @returns {function(Event): void} Full click listener.
+   */
+  function legendClickHandler(fn) {
+    return (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      fn(event);
+    };
+  }
+
+  /**
    * Canonical protocol token for use in compound filter keys.
    *
    * Collapses null/absent/unknown protocol values to ``'meshtastic'`` so that
@@ -1560,19 +1578,23 @@ export function initializeApp(config) {
     for (const [role, color] of Object.entries(palette)) {
       if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
       const compoundKey = makeRoleFilterKey(role, protocol);
-      const item = L.DomUtil.create('button', 'legend-item', colEl);
+      const item = document.createElement('button');
+      item.className = 'legend-item';
+      colEl.appendChild(item);
       item.type = 'button';
       item.setAttribute('aria-pressed', 'false');
       item.dataset.role = role;
       item.dataset.protocol = protocol;
-      const swatch = L.DomUtil.create('span', 'legend-swatch', item);
+      const swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      item.appendChild(swatch);
       swatch.style.background = color;
       swatch.setAttribute('aria-hidden', 'true');
-      const label = L.DomUtil.create('span', 'legend-label', item);
+      const label = document.createElement('span');
+      label.className = 'legend-label';
+      item.appendChild(label);
       label.textContent = role;
-      item.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      item.addEventListener('click', legendClickHandler(event => {
         const exclusive = event.metaKey || event.ctrlKey;
         if (exclusive) {
           activeRoleFilters.clear();
@@ -1582,7 +1604,7 @@ export function initializeApp(config) {
         } else {
           toggleRoleFilter(compoundKey);
         }
-      });
+      }));
       legendRoleButtons.set(compoundKey, item);
     }
   }
@@ -1639,9 +1661,7 @@ export function initializeApp(config) {
         btn.type = 'button';
         btn.setAttribute('aria-pressed', 'false');
         btn.textContent = `Hide ${displayName}`;
-        btn.addEventListener('click', event => {
-          event.preventDefault();
-          event.stopPropagation();
+        btn.addEventListener('click', legendClickHandler(() => {
           if (hiddenProtocols.has(protocol)) {
             hiddenProtocols.delete(protocol);
           } else {
@@ -1649,27 +1669,23 @@ export function initializeApp(config) {
           }
           updateLegendRoleFiltersUI();
           applyFilter();
-        });
+        }));
         legendProtocolButtons.set(protocol, btn);
       }
 
       // --- Line toggles in the Meshtastic column ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
       neighborLinesToggleButton.type = 'button';
-      neighborLinesToggleButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      neighborLinesToggleButton.addEventListener('click', legendClickHandler(() => {
         setNeighborLinesVisibility(!neighborLinesVisible);
-      });
+      }));
       updateNeighborLinesToggleState();
 
       traceLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-traces', meshtasticCol);
       traceLinesToggleButton.type = 'button';
-      traceLinesToggleButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      traceLinesToggleButton.addEventListener('click', legendClickHandler(() => {
         setTraceLinesVisibility(!traceLinesVisible);
-      });
+      }));
       updateTraceLinesToggleState();
 
       updateLegendRoleFiltersUI();
@@ -1680,14 +1696,12 @@ export function initializeApp(config) {
       const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
       resetButton.type = 'button';
       resetButton.textContent = 'Clear filters';
-      resetButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      resetButton.addEventListener('click', legendClickHandler(() => {
         activeRoleFilters.clear();
         hiddenProtocols.clear();
         updateLegendRoleFiltersUI();
         applyFilter();
-      });
+      }));
 
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
@@ -1711,11 +1725,9 @@ export function initializeApp(config) {
       button.setAttribute('aria-pressed', 'true');
       button.setAttribute('aria-label', 'Hide map legend');
       button.setAttribute('aria-controls', 'mapLegend');
-      button.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      button.addEventListener('click', legendClickHandler(() => {
         setLegendVisibility(!legendVisible);
-      });
+      }));
       legendToggleButton = button;
       updateLegendToggleState();
       L.DomEvent.disableClickPropagation(container);
@@ -4635,8 +4647,13 @@ export function initializeApp(config) {
       buildProtocolIconImg,
       buildMeshtasticIconImg,
       buildMeshcoreIconImg,
+      buildRoleButtons,
+      updateLegendRoleFiltersUI,
+      legendClickHandler,
       activeRoleFilters,
       hiddenProtocols,
+      legendRoleButtons,
+      legendProtocolButtons,
     },
   };
 }

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { isMeshcoreProtocol } from './protocol-helpers.js';
+
 /**
  * Mapping of numeric Meshtastic role identifiers to their canonical names.
  *
@@ -93,19 +95,6 @@ export const meshcoreRoleTextColors = Object.freeze({
 });
 
 /**
- * Module-private helper that tests whether a protocol value is MeshCore.
- *
- * Centralises the ``"meshcore"`` string comparison so the identical check
- * does not need to be repeated inside every protocol-aware export.
- *
- * @param {string|null|undefined} protocol
- * @returns {boolean}
- */
-function _isMeshcoreProtocol(protocol) {
-  return protocol != null && String(protocol).trim() === 'meshcore';
-}
-
-/**
  * Return the foreground text colour for a role badge, or ``null`` when the
  * page default is acceptable.
  *
@@ -114,7 +103,7 @@ function _isMeshcoreProtocol(protocol) {
  * @returns {string|null} CSS colour string, or ``null`` to inherit.
  */
 export function getRoleTextColor(role, protocol = null) {
-  if (_isMeshcoreProtocol(protocol)) {
+  if (isMeshcoreProtocol(protocol)) {
     const key = getRoleKey(role);
     return meshcoreRoleTextColors[key] ?? null;
   }
@@ -132,7 +121,7 @@ export function getRoleTextColor(role, protocol = null) {
  * @returns {Readonly<Record<string, string>>} Role colour map.
  */
 export function getRoleColors(protocol) {
-  return _isMeshcoreProtocol(protocol) ? meshcoreRoleColors : roleColors;
+  return isMeshcoreProtocol(protocol) ? meshcoreRoleColors : roleColors;
 }
 
 /**
@@ -249,7 +238,7 @@ export function getRoleColor(role, protocol = null) {
  */
 export function getRoleRenderPriority(role, protocol = null) {
   const key = getRoleKey(role);
-  if (_isMeshcoreProtocol(protocol)) {
+  if (isMeshcoreProtocol(protocol)) {
     const mc = meshcoreRoleRenderOrder[key];
     if (typeof mc === 'number') return mc;
   }
