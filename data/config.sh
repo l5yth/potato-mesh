@@ -15,21 +15,23 @@
 
 set -euo pipefail
 
-# Usage: mesh.sh [profile]
-# Loads repo-root .env, or .env-<profile> when profile is given (letters, digits, _, -).
+# Usage: config.sh [profile | PATH] [args for mesh_env...]
+# Default env file: repo-root .env. With profile: .env-<profile> (letters, digits, _, -).
+# Or pass a path to any .env file as the first argument (not a bare profile token).
 
 _script_dir="$(cd "$(dirname "$0")" && pwd)"
+cd "${_script_dir}"
+
 _repo_root="$(cd "${_script_dir}/.." && pwd)"
 # shellcheck source=potato_mesh_env.sh
 source "${_script_dir}/potato_mesh_env.sh"
 
-potato_mesh_resolve_env_file mesh "${_repo_root}" "$@"
+potato_mesh_resolve_env_file config "${_repo_root}" "$@"
 shift "${_potato_mesh_env_shift}"
-if [[ $# -gt 0 ]]; then
-  echo "mesh.sh: unexpected arguments (only optional profile name is supported): $*" >&2
-  exit 2
-fi
 
 potato_mesh_source_env_if_exists "${_env_file}"
+
 potato_mesh_venv_and_requirements "${_script_dir}/requirements.txt"
-exec python mesh.py
+
+export PYTHONPATH="${_script_dir}"
+exec python -m mesh_env "${_env_file}" "$@"
