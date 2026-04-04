@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # Copyright © 2025-26 l5yth & contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,19 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -euo pipefail
-
-_script_dir="$(cd "$(dirname "$0")" && pwd)"
-_env_file="${_script_dir}/../.env"
-if [[ -f "${_env_file}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${_env_file}"
-  set +a
-fi
-
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r "$(dirname "$0")/requirements.txt"
-exec python mesh.py
+"""Interactive configuration helpers for the mesh ingestor (standalone from mesh_ingestor)."""

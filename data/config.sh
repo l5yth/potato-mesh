@@ -16,7 +16,12 @@
 set -euo pipefail
 
 _script_dir="$(cd "$(dirname "$0")" && pwd)"
-_env_file="${_script_dir}/../.env"
+cd "${_script_dir}"
+
+_repo_root="$(cd "${_script_dir}/.." && pwd)"
+_env_file="${_repo_root}/.env"
+export POTATO_MESH_ENV_FILE="${_env_file}"
+
 if [[ -f "${_env_file}" ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -27,5 +32,7 @@ fi
 python -m venv .venv
 source .venv/bin/activate
 pip install -U pip
-pip install -r "$(dirname "$0")/requirements.txt"
-exec python mesh.py
+pip install -r "${_script_dir}/requirements.txt"
+
+export PYTHONPATH="${_script_dir}"
+exec python -m mesh_env "$@"

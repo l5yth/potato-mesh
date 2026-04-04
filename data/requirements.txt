@@ -3,6 +3,9 @@ meshtastic>=2.5.0
 meshcore>=2.3.5
 bleak>=0.21.0
 protobuf>=5.27.2
+questionary>=2.0.0
+rich>=13.0.0
+pyfiglet>=1.0.0
 
 # Development dependencies (optional)
 black>=24.8.0
