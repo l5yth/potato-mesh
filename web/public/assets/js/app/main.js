@@ -99,7 +99,6 @@ import {
   meshcoreRoleColors,
   normalizeRole,
   roleColors,
-  roleRenderOrder,
 } from './role-helpers.js';
 import {
   isMeshtasticProtocol,
@@ -837,11 +836,45 @@ export function initializeApp(config) {
 
   syncInfoOverlayHost();
 
+  /** @type {Set<string>} Active compound role-filter keys, each ``"<protocol>:<roleKey>"``. */
   const activeRoleFilters = new Set();
+  /** @type {Map<string, HTMLElement>} Compound key → legend button element. */
   const legendRoleButtons = new Map();
   /** @type {Set<string>} Protocols hidden by the user via legend toggles. */
   const hiddenProtocols = new Set();
   const legendProtocolButtons = new Map();
+
+  /**
+   * Canonical protocol token for use in compound filter keys.
+   *
+   * Collapses null/absent/unknown protocol values to ``'meshtastic'`` so that
+   * pre-protocol legacy records land in the Meshtastic filter bucket.
+   *
+   * @param {string|null|undefined} protocol Raw protocol value.
+   * @returns {'meshtastic'|'meshcore'} Normalised protocol token.
+   */
+  function normalizeFilterProtocol(protocol) {
+    return (protocol != null && String(protocol).trim() === 'meshcore') ? 'meshcore' : 'meshtastic';
+  }
+
+  /**
+   * Build a compound filter key that encodes both protocol and role.
+   *
+   * Using compound keys avoids collisions between role names that appear in
+   * both Meshtastic and MeshCore (e.g. ``SENSOR``, ``REPEATER``).  The filter
+   * set stores these keys so that clicking the MeshCore SENSOR button only
+   * includes MeshCore SENSOR nodes, not Meshtastic ones.
+   *
+   * @param {*} role Raw role value from the API.
+   * @param {string|null|undefined} protocol Protocol string from the API.
+   * @returns {string} Compound key in the form ``"<protocol>:<roleKey>"``.
+   */
+  function makeRoleFilterKey(role, protocol) {
+    return `${normalizeFilterProtocol(protocol)}:${getRoleKey(role)}`;
+  }
+
+  /** @type {Readonly<Record<string,string>>} Display names for protocol tokens. */
+  const PROTOCOL_DISPLAY_NAMES = Object.freeze({ meshtastic: 'Meshtastic', meshcore: 'MeshCore' });
 
   /**
    * Lazily create the floating map status element used for progress messages.
@@ -1476,16 +1509,16 @@ export function initializeApp(config) {
    */
   function updateLegendRoleFiltersUI() {
     const hasFilters = activeRoleFilters.size > 0;
-    legendRoleButtons.forEach((button, role) => {
+    // legendRoleButtons is keyed by compound key ("protocol:roleKey")
+    legendRoleButtons.forEach((button, compoundKey) => {
       if (!button) return;
-      const isActive = activeRoleFilters.has(role);
+      const isActive = activeRoleFilters.has(compoundKey);
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
-    const protocolDisplayNames = { meshtastic: 'Meshtastic', meshcore: 'MeshCore' };
     legendProtocolButtons.forEach((button, protocol) => {
       if (!button) return;
       const isHidden = hiddenProtocols.has(protocol);
-      const displayName = protocolDisplayNames[protocol] ?? protocol;
+      const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
       button.setAttribute('aria-pressed', isHidden ? 'true' : 'false');
       button.textContent = isHidden ? `Show ${displayName}` : `Hide ${displayName}`;
     });
@@ -1500,20 +1533,63 @@ export function initializeApp(config) {
   }
 
   /**
-   * Toggle the visibility filter for a given role.
+   * Toggle the visibility filter for a role+protocol combination.
    *
-   * @param {string} role Role identifier.
+   * @param {string} compoundKey Compound key in the form ``"<protocol>:<roleKey>"``.
    * @returns {void}
    */
-  function toggleRoleFilter(role) {
-    if (!role) return;
-    if (activeRoleFilters.has(role)) {
-      activeRoleFilters.delete(role);
+  function toggleRoleFilter(compoundKey) {
+    if (!compoundKey) return;
+    if (activeRoleFilters.has(compoundKey)) {
+      activeRoleFilters.delete(compoundKey);
     } else {
-      activeRoleFilters.add(role);
+      activeRoleFilters.add(compoundKey);
     }
     updateLegendRoleFiltersUI();
     applyFilter();
+  }
+
+  /**
+   * Build role filter buttons for a given palette and append them to a column.
+   *
+   * Each button is keyed by a compound ``"<protocol>:<roleKey>"`` string so
+   * that roles sharing a name across protocols (e.g. ``SENSOR``, ``REPEATER``)
+   * produce independent buttons without colliding in {@link legendRoleButtons}.
+   *
+   * @param {HTMLElement} colEl Column container element.
+   * @param {Record<string,string>} palette Role→colour map to render.
+   * @param {'meshtastic'|'meshcore'} protocol Protocol token for this column.
+   * @returns {void}
+   */
+  function buildRoleButtons(colEl, palette, protocol) {
+    for (const [role, color] of Object.entries(palette)) {
+      if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
+      const compoundKey = makeRoleFilterKey(role, protocol);
+      const item = L.DomUtil.create('button', 'legend-item', colEl);
+      item.type = 'button';
+      item.setAttribute('aria-pressed', 'false');
+      item.dataset.role = role;
+      item.dataset.protocol = protocol;
+      const swatch = L.DomUtil.create('span', 'legend-swatch', item);
+      swatch.style.background = color;
+      swatch.setAttribute('aria-hidden', 'true');
+      const label = L.DomUtil.create('span', 'legend-label', item);
+      label.textContent = role;
+      item.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const exclusive = event.metaKey || event.ctrlKey;
+        if (exclusive) {
+          activeRoleFilters.clear();
+          activeRoleFilters.add(compoundKey);
+          updateLegendRoleFiltersUI();
+          applyFilter();
+        } else {
+          toggleRoleFilter(compoundKey);
+        }
+      });
+      legendRoleButtons.set(compoundKey, item);
+    }
   }
 
   if (map && hasLeaflet) {
@@ -1536,42 +1612,6 @@ export function initializeApp(config) {
 
       const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
-      /**
-       * Build role filter buttons for a given palette and append them to a column element.
-       *
-       * @param {HTMLElement} colEl Column container element.
-       * @param {Record<string,string>} palette Role→colour map to render.
-       * @returns {void}
-       */
-      function buildRoleButtons(colEl, palette) {
-        for (const [role, color] of Object.entries(palette)) {
-          if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
-          const item = L.DomUtil.create('button', 'legend-item', colEl);
-          item.type = 'button';
-          item.setAttribute('aria-pressed', 'false');
-          item.dataset.role = role;
-          const swatch = L.DomUtil.create('span', 'legend-swatch', item);
-          swatch.style.background = color;
-          swatch.setAttribute('aria-hidden', 'true');
-          const label = L.DomUtil.create('span', 'legend-label', item);
-          label.textContent = role;
-          item.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            const exclusive = event.metaKey || event.ctrlKey;
-            if (exclusive) {
-              activeRoleFilters.clear();
-              activeRoleFilters.add(role);
-              updateLegendRoleFiltersUI();
-              applyFilter();
-            } else {
-              toggleRoleFilter(role);
-            }
-          });
-          legendRoleButtons.set(role, item);
-        }
-      }
-
       // --- MeshCore column (left) ---
       const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
@@ -1589,8 +1629,8 @@ export function initializeApp(config) {
       meshtasticColHeader.appendChild(meshtasticColTitle);
 
       legendRoleButtons.clear();
-      buildRoleButtons(meshcoreCol, meshcoreRoleColors);
-      buildRoleButtons(meshtasticCol, roleColors);
+      buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
+      buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
 
       // --- Protocol hide toggles — one per column footer ---
       legendProtocolButtons.clear();
@@ -4327,17 +4367,27 @@ export function initializeApp(config) {
   /**
    * Test whether a node matches the active role filters.
    *
+   * Filters use compound ``"<protocol>:<roleKey>"`` keys so that shared role
+   * names (e.g. ``SENSOR``, ``REPEATER``) can be toggled independently per
+   * protocol.  Nodes whose protocol is null/absent are treated as Meshtastic
+   * (via {@link normalizeFilterProtocol}) to keep legacy records visible when
+   * the Meshtastic SENSOR filter is active.
+   *
    * @param {Object} node Node payload.
    * @returns {boolean} True when the node should be visible.
    */
   function matchesRoleFilter(node) {
     if (!activeRoleFilters.size) return true;
-    const roleKey = getRoleKey(node && node.role);
-    return activeRoleFilters.has(roleKey);
+    const compoundKey = makeRoleFilterKey(node && node.role, node && node.protocol);
+    return activeRoleFilters.has(compoundKey);
   }
 
   /**
    * Check whether a node passes the active protocol visibility filters.
+   *
+   * Nodes with a null/absent protocol are always shown — hiding
+   * ``'meshtastic'`` hides only nodes that explicitly carry that protocol
+   * value.  Pre-protocol legacy records remain visible regardless.
    *
    * @param {Object} node Node payload.
    * @returns {boolean} True when the node should be visible.
@@ -4593,6 +4643,11 @@ export function initializeApp(config) {
       createAnnouncementEntry,
       createMessageChatEntry,
       buildDisplayContext,
+      makeRoleFilterKey,
+      matchesRoleFilter,
+      matchesProtocolFilter,
+      activeRoleFilters,
+      hiddenProtocols,
     },
   };
 }
