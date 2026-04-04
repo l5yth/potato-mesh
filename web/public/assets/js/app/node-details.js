@@ -178,6 +178,7 @@ function mergeNodeFields(target, record) {
   assignString(target, 'shortName', extractString(record, ['shortName', 'short_name']));
   assignString(target, 'longName', extractString(record, ['longName', 'long_name']));
   assignString(target, 'role', extractString(record, ['role']));
+  assignString(target, 'protocol', extractString(record, ['protocol']));
   assignString(target, 'hwModel', extractString(record, ['hwModel', 'hw_model']));
   mergeModemMetadata(target, record);
   assignNumber(target, 'snr', extractNumber(record, ['snr']));

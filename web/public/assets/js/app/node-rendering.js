@@ -79,9 +79,9 @@ export function canonicalNodeIdentifier(identifier) {
 /**
  * Render a linked long name pointing to the node detail view.
  *
- * When ``protocol`` is Meshtastic (including null/empty per
- * {@link module:protocol-helpers~isMeshtasticProtocol}) or ``"meshcore"``, the
- * matching protocol icon is prepended.  An anchor element is only emitted when
+ * When ``protocol`` is a known value (``"meshtastic"`` or ``"meshcore"``),
+ * the matching protocol icon is prepended.  Absent or unknown protocol strings
+ * produce no icon prefix.  An anchor element is only emitted when
  * ``identifier`` resolves to a non-null detail path.
  *
  * @param {string|null} longName Display name.

@@ -97,9 +97,10 @@ test('renderNodeLongNameLink returns empty string for null/empty longName', () =
   assert.equal(renderNodeLongNameLink('   ', '!abc123'), '');
 });
 
-test('renderNodeLongNameLink prepends Meshtastic icon for null protocol', () => {
+test('renderNodeLongNameLink shows no icon for null protocol', () => {
   const html = renderNodeLongNameLink('Alice', '!abc123', { protocol: null });
-  assert.ok(html.includes('meshtastic.svg'), 'should include meshtastic icon');
+  assert.ok(!html.includes('meshtastic.svg'), 'no meshtastic icon for null protocol');
+  assert.ok(!html.includes('meshcore.svg'), 'no meshcore icon for null protocol');
   assert.ok(html.includes('Alice'), 'should include the name');
 });
 
@@ -108,9 +109,10 @@ test('renderNodeLongNameLink prepends Meshtastic icon for "meshtastic" protocol'
   assert.ok(html.includes('meshtastic.svg'), 'should include meshtastic icon');
 });
 
-test('renderNodeLongNameLink prepends Meshtastic icon for undefined protocol (default)', () => {
+test('renderNodeLongNameLink shows no icon for absent protocol (default)', () => {
   const html = renderNodeLongNameLink('Alice', '!abc123');
-  assert.ok(html.includes('meshtastic.svg'), 'default protocol should show meshtastic icon');
+  assert.ok(!html.includes('meshtastic.svg'), 'no meshtastic icon when protocol is absent');
+  assert.ok(!html.includes('meshcore.svg'), 'no meshcore icon when protocol is absent');
 });
 
 test('renderNodeLongNameLink does not prepend icon for "meshcore" protocol', () => {
@@ -133,11 +135,12 @@ test('renderNodeLongNameLink renders anchor with href when identifier is present
   assert.ok(html.includes('data-node-id="!abc123"'), 'should include node id attribute');
 });
 
-test('renderNodeLongNameLink renders plain text (with icon) when no identifier', () => {
+test('renderNodeLongNameLink renders plain text (no icon) when no identifier and null protocol', () => {
   const html = renderNodeLongNameLink('Alice', null, { protocol: null });
   assert.ok(!html.startsWith('<a '), 'should not be an anchor');
   assert.ok(html.includes('Alice'), 'should include the name');
-  assert.ok(html.includes('meshtastic.svg'), 'should still show meshtastic icon');
+  assert.ok(!html.includes('meshtastic.svg'), 'no meshtastic icon for null protocol');
+  assert.ok(!html.includes('meshcore.svg'), 'no meshcore icon for null protocol');
 });
 
 test('renderNodeLongNameLink escapes HTML in long name', () => {

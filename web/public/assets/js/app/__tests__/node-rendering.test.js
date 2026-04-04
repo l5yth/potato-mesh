@@ -122,14 +122,21 @@ test('renderNodeLongNameLink renders anchor when identifier is present', () => {
   assert.ok(html.includes('Alice'), 'long name should appear');
 });
 
-test('renderNodeLongNameLink renders meshtastic icon for null protocol', () => {
+test('renderNodeLongNameLink shows no icon for null protocol', () => {
   const html = renderNodeLongNameLink('Alice', '!aabbccdd', { protocol: null });
-  assert.ok(html.includes('meshtastic.svg'), 'meshtastic icon should be shown for null protocol');
+  assert.ok(!html.includes('meshtastic.svg'), 'no icon when protocol is null');
+  assert.ok(!html.includes('meshcore.svg'), 'no icon when protocol is null');
 });
 
-test('renderNodeLongNameLink renders meshtastic icon when protocol is absent', () => {
+test('renderNodeLongNameLink shows no icon when protocol is absent', () => {
   const html = renderNodeLongNameLink('Alice', '!aabbccdd');
-  assert.ok(html.includes('meshtastic.svg'));
+  assert.ok(!html.includes('meshtastic.svg'), 'no icon when protocol is absent');
+  assert.ok(!html.includes('meshcore.svg'), 'no icon when protocol is absent');
+});
+
+test('renderNodeLongNameLink renders meshtastic icon for explicit meshtastic protocol', () => {
+  const html = renderNodeLongNameLink('Alice', '!aabbccdd', { protocol: 'meshtastic' });
+  assert.ok(html.includes('meshtastic.svg'), 'meshtastic icon shown for explicit meshtastic protocol');
 });
 
 test('renderNodeLongNameLink uses meshcore icon for meshcore protocol', () => {

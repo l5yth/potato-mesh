@@ -27,24 +27,28 @@ import {
   protocolIconPrefixHtml,
 } from '../protocol-helpers.js';
 
-test('isMeshtasticProtocol — null is Meshtastic (default)', () => {
-  assert.equal(isMeshtasticProtocol(null), true);
-});
-
-test('isMeshtasticProtocol — undefined is Meshtastic (default)', () => {
-  assert.equal(isMeshtasticProtocol(undefined), true);
-});
-
-test('isMeshtasticProtocol — empty string is Meshtastic', () => {
-  assert.equal(isMeshtasticProtocol(''), true);
-});
-
-test('isMeshtasticProtocol — whitespace-only string is Meshtastic', () => {
-  assert.equal(isMeshtasticProtocol('   '), true);
-});
+// ---------------------------------------------------------------------------
+// isMeshtasticProtocol — only matches the explicit string "meshtastic"
+// ---------------------------------------------------------------------------
 
 test('isMeshtasticProtocol — "meshtastic" is Meshtastic', () => {
   assert.equal(isMeshtasticProtocol('meshtastic'), true);
+});
+
+test('isMeshtasticProtocol — null is not Meshtastic (no default)', () => {
+  assert.equal(isMeshtasticProtocol(null), false);
+});
+
+test('isMeshtasticProtocol — undefined is not Meshtastic (no default)', () => {
+  assert.equal(isMeshtasticProtocol(undefined), false);
+});
+
+test('isMeshtasticProtocol — empty string is not Meshtastic', () => {
+  assert.equal(isMeshtasticProtocol(''), false);
+});
+
+test('isMeshtasticProtocol — whitespace-only string is not Meshtastic', () => {
+  assert.equal(isMeshtasticProtocol('   '), false);
 });
 
 test('isMeshtasticProtocol — "meshcore" is not Meshtastic', () => {
@@ -107,26 +111,23 @@ test('MESHCORE_ICON_SRC is referenced by meshcoreIconHtml', () => {
 // protocolIconPrefixHtml
 // ---------------------------------------------------------------------------
 
-test('protocolIconPrefixHtml — null yields meshtastic icon prefix', () => {
-  const result = protocolIconPrefixHtml(null);
-  assert.ok(result.includes('meshtastic.svg'), 'null should produce the meshtastic icon');
-  assert.ok(result.endsWith(' '), 'prefix must end with a trailing space');
+test('protocolIconPrefixHtml — null yields empty string (no default)', () => {
+  assert.equal(protocolIconPrefixHtml(null), '');
 });
 
-test('protocolIconPrefixHtml — undefined yields meshtastic icon prefix', () => {
-  const result = protocolIconPrefixHtml(undefined);
-  assert.ok(result.includes('meshtastic.svg'), 'undefined should produce the meshtastic icon');
+test('protocolIconPrefixHtml — undefined yields empty string (no default)', () => {
+  assert.equal(protocolIconPrefixHtml(undefined), '');
 });
 
-test('protocolIconPrefixHtml — empty string yields meshtastic icon prefix', () => {
-  const result = protocolIconPrefixHtml('');
-  assert.ok(result.includes('meshtastic.svg'), 'empty string should produce the meshtastic icon');
+test('protocolIconPrefixHtml — empty string yields empty string', () => {
+  assert.equal(protocolIconPrefixHtml(''), '');
 });
 
 test('protocolIconPrefixHtml — "meshtastic" yields meshtastic icon prefix', () => {
   const result = protocolIconPrefixHtml('meshtastic');
   assert.ok(result.includes('meshtastic.svg'), '"meshtastic" should produce the meshtastic icon');
   assert.ok(!result.includes('meshcore.svg'), '"meshtastic" must not produce the meshcore icon');
+  assert.ok(result.endsWith(' '), 'prefix must end with a trailing space');
 });
 
 test('protocolIconPrefixHtml — "meshcore" yields meshcore icon prefix', () => {

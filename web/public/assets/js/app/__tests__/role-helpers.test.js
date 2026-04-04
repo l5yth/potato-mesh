@@ -22,7 +22,11 @@ import {
   getRoleKey,
   getRoleRenderPriority,
   getRoleColors,
+  getRoleTextColor,
   meshcoreRoleColors,
+  meshcoreRoleTextColors,
+  meshcoreRoleRenderOrder,
+  meshtasticRoleRenderOrder,
   roleColors,
   normalizeRole,
   translateRoleId,
@@ -52,8 +56,51 @@ test('role key and color lookups prefer known values with uppercase fallback', (
 });
 
 test('render priority uses canonical role keys and defaults to zero for unknowns', () => {
+  // translateRoleId(2) → 'ROUTER', so both should resolve to the same priority
   assert.equal(getRoleRenderPriority('ROUTER'), getRoleRenderPriority(2));
   assert.equal(getRoleRenderPriority('custom-role'), 0);
+});
+
+test('render priority is protocol-aware for shared roles', () => {
+  // SENSOR: meshtastic=2, meshcore=3
+  assert.equal(getRoleRenderPriority('SENSOR', 'meshtastic'), 2);
+  assert.equal(getRoleRenderPriority('SENSOR', 'meshcore'), 3);
+  assert.ok(getRoleRenderPriority('SENSOR', 'meshcore') > getRoleRenderPriority('SENSOR', 'meshtastic'));
+  // REPEATER: meshtastic=11, meshcore=12
+  assert.equal(getRoleRenderPriority('REPEATER', 'meshtastic'), 11);
+  assert.equal(getRoleRenderPriority('REPEATER', 'meshcore'), 12);
+  assert.ok(getRoleRenderPriority('REPEATER', 'meshcore') > getRoleRenderPriority('REPEATER', 'meshtastic'));
+});
+
+test('render priority meshcore-exclusive roles have defined priorities', () => {
+  assert.equal(getRoleRenderPriority('COMPANION', 'meshcore'), 7);
+  assert.equal(getRoleRenderPriority('ROOM_SERVER', 'meshcore'), 9);
+});
+
+test('render priority respects the full bottom-to-top order', () => {
+  const order = [
+    ['CLIENT_HIDDEN', null],
+    ['SENSOR', 'meshtastic'],
+    ['SENSOR', 'meshcore'],
+    ['TRACKER', null],
+    ['CLIENT_MUTE', null],
+    ['CLIENT', null],
+    ['COMPANION', 'meshcore'],
+    ['CLIENT_BASE', null],
+    ['ROOM_SERVER', 'meshcore'],
+    ['ROUTER_LATE', null],
+    ['REPEATER', 'meshtastic'],
+    ['REPEATER', 'meshcore'],
+    ['ROUTER', null],
+    ['LOST_AND_FOUND', null],
+  ];
+  for (let i = 1; i < order.length; i++) {
+    const [roleA, protoA] = order[i - 1];
+    const [roleB, protoB] = order[i];
+    const pA = getRoleRenderPriority(roleA, protoA);
+    const pB = getRoleRenderPriority(roleB, protoB);
+    assert.ok(pA < pB, `Expected ${roleA}/${protoA} (${pA}) < ${roleB}/${protoB} (${pB})`);
+  }
 });
 
 test('getRoleColors returns Meshtastic palette for null/undefined/meshtastic', () => {
@@ -85,4 +132,19 @@ test('getRoleColor uses meshtastic palette when protocol is null', () => {
 
 test('getRoleColor falls back to CLIENT color for unknown meshcore role', () => {
   assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshcore'), roleColors.CLIENT);
+});
+
+test('getRoleTextColor returns light grey for meshcore COMPANION', () => {
+  assert.equal(getRoleTextColor('COMPANION', 'meshcore'), meshcoreRoleTextColors.COMPANION);
+});
+
+test('getRoleTextColor returns null for meshcore roles without override', () => {
+  assert.equal(getRoleTextColor('REPEATER', 'meshcore'), null);
+  assert.equal(getRoleTextColor('ROOM_SERVER', 'meshcore'), null);
+  assert.equal(getRoleTextColor('SENSOR', 'meshcore'), null);
+});
+
+test('getRoleTextColor returns null for meshtastic roles', () => {
+  assert.equal(getRoleTextColor('CLIENT', 'meshtastic'), null);
+  assert.equal(getRoleTextColor('ROUTER', null), null);
 });
