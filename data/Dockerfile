@@ -48,7 +48,6 @@ RUN addgroup -S potatomesh && \
 USER potatomesh
 
 ENV CONNECTION=/dev/ttyACM0 \
-    CHANNEL_INDEX=0 \
     DEBUG=0 \
     ALLOWED_CHANNELS="" \
     HIDDEN_CHANNELS="" \
@@ -75,7 +74,6 @@ COPY data /app/data
 USER ContainerUser
 
 ENV CONNECTION=/dev/ttyACM0 \
-    CHANNEL_INDEX=0 \
     DEBUG=0 \
     ALLOWED_CHANNELS="" \
     HIDDEN_CHANNELS="" \

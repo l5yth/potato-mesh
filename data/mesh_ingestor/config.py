@@ -25,9 +25,6 @@ from typing import Any
 DEFAULT_SNAPSHOT_SECS = 60
 """Default interval, in seconds, between state snapshot uploads."""
 
-DEFAULT_CHANNEL_INDEX = 0
-"""Default LoRa channel index used when none is specified."""
-
 DEFAULT_RECONNECT_INITIAL_DELAY_SECS = 5.0
 """Initial reconnection delay applied after connection loss."""
 
@@ -59,9 +56,6 @@ accepted for backwards compatibility.
 
 SNAPSHOT_SECS = DEFAULT_SNAPSHOT_SECS
 """Interval, in seconds, between state snapshot uploads."""
-
-CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
-"""Index of the LoRa channel to select when connecting."""
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
@@ -204,7 +198,6 @@ def _debug_log(
 __all__ = [
     "CONNECTION",
     "SNAPSHOT_SECS",
-    "CHANNEL_INDEX",
     "DEBUG",
     "HIDDEN_CHANNELS",
     "ALLOWED_CHANNELS",

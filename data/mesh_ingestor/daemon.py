@@ -612,7 +612,6 @@ def main(*, provider: Provider | None = None) -> None:
         severity="info",
         target=config.INSTANCE or "(no INSTANCE_DOMAIN configured)",
         port=config.CONNECTION or "auto",
-        channel=config.CHANNEL_INDEX,
     )
 
     try:

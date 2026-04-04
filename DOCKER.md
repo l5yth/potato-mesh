@@ -61,8 +61,7 @@ Additional environment variables are optional:
 
 The ingestor posts to the URL configured via `INSTANCE_DOMAIN` (defaulting to
 `http://web:41447` in the provided compose file) and still accepts
-`POTATOMESH_INSTANCE` as a legacy alias when the primary variable is unset. Use
-`CHANNEL_INDEX` to select a LoRa channel on serial or Bluetooth connections.
+`POTATOMESH_INSTANCE` as a legacy alias when the primary variable is unset.
 
 ## Docker Compose file
 
