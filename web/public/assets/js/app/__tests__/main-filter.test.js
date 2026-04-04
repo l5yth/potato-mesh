@@ -268,3 +268,81 @@ test('REPEATER filter keys for meshtastic and meshcore are distinct strings', ()
     assert.equal(t.activeRoleFilters.has(m), false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// normalizeFilterProtocol
+// ---------------------------------------------------------------------------
+
+test('normalizeFilterProtocol returns meshcore for explicit meshcore', () => {
+  withApp((t) => {
+    assert.equal(t.normalizeFilterProtocol('meshcore'), 'meshcore');
+  });
+});
+
+test('normalizeFilterProtocol returns meshtastic for explicit meshtastic', () => {
+  withApp((t) => {
+    assert.equal(t.normalizeFilterProtocol('meshtastic'), 'meshtastic');
+  });
+});
+
+test('normalizeFilterProtocol returns meshtastic for null', () => {
+  withApp((t) => {
+    assert.equal(t.normalizeFilterProtocol(null), 'meshtastic');
+  });
+});
+
+test('normalizeFilterProtocol returns meshtastic for undefined', () => {
+  withApp((t) => {
+    assert.equal(t.normalizeFilterProtocol(undefined), 'meshtastic');
+  });
+});
+
+test('normalizeFilterProtocol returns meshtastic for unknown protocol', () => {
+  withApp((t) => {
+    assert.equal(t.normalizeFilterProtocol('reticulum'), 'meshtastic');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildProtocolIconImg / buildMeshtasticIconImg / buildMeshcoreIconImg
+// ---------------------------------------------------------------------------
+
+test('buildProtocolIconImg returns an img element with the correct src and class', () => {
+  withApp((t) => {
+    const img = t.buildProtocolIconImg('/assets/img/test.svg', 'protocol-icon--test');
+    assert.equal(img.tagName.toLowerCase(), 'img');
+    assert.equal(img.getAttribute('src'), '/assets/img/test.svg');
+    assert.ok(img.className.includes('protocol-icon'));
+    assert.ok(img.className.includes('protocol-icon--test'));
+    assert.equal(img.getAttribute('aria-hidden'), 'true');
+    assert.equal(img.getAttribute('alt'), '');
+    assert.equal(img.getAttribute('width'), '12');
+    assert.equal(img.getAttribute('height'), '12');
+  });
+});
+
+test('buildMeshtasticIconImg references meshtastic.svg and carries the meshtastic class', () => {
+  withApp((t) => {
+    const img = t.buildMeshtasticIconImg();
+    assert.ok(img.getAttribute('src').includes('meshtastic.svg'));
+    assert.ok(img.className.includes('protocol-icon--meshtastic'));
+    assert.equal(img.getAttribute('aria-hidden'), 'true');
+  });
+});
+
+test('buildMeshcoreIconImg references meshcore.svg and carries the meshcore class', () => {
+  withApp((t) => {
+    const img = t.buildMeshcoreIconImg();
+    assert.ok(img.getAttribute('src').includes('meshcore.svg'));
+    assert.ok(img.className.includes('protocol-icon--meshcore'));
+    assert.equal(img.getAttribute('aria-hidden'), 'true');
+  });
+});
+
+test('buildMeshtasticIconImg and buildMeshcoreIconImg return different src values', () => {
+  withApp((t) => {
+    const mt = t.buildMeshtasticIconImg();
+    const mc = t.buildMeshcoreIconImg();
+    assert.notEqual(mt.getAttribute('src'), mc.getAttribute('src'));
+  });
+});

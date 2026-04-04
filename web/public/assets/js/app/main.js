@@ -854,7 +854,7 @@ export function initializeApp(config) {
    * @returns {'meshtastic'|'meshcore'} Normalised protocol token.
    */
   function normalizeFilterProtocol(protocol) {
-    return (protocol != null && String(protocol).trim() === 'meshcore') ? 'meshcore' : 'meshtastic';
+    return isMeshcoreProtocol(protocol) ? 'meshcore' : 'meshtastic';
   }
 
   /**
@@ -1404,43 +1404,38 @@ export function initializeApp(config) {
    * @returns {void}
    */
   /**
-   * Build a Meshtastic protocol icon ``<img>`` element via DOM APIs.
+   * Build a protocol icon ``<img>`` element via DOM APIs.
    *
-   * Used wherever an icon node must be appended rather than injected via
-   * ``innerHTML``.  Mirrors the attribute set used by {@link meshtasticIconHtml}
-   * so the rendered output is identical.
+   * Shared implementation used by {@link buildMeshtasticIconImg} and
+   * {@link buildMeshcoreIconImg}.  Mirrors the attribute set produced by
+   * the HTML-string helpers in ``protocol-helpers.js`` so the rendered
+   * output is identical regardless of insertion method.
    *
+   * @param {string} src Absolute path to the SVG asset.
+   * @param {string} variantClass BEM modifier class, e.g. ``protocol-icon--meshtastic``.
    * @returns {HTMLImageElement} Icon element ready to append.
    */
-  function buildMeshtasticIconImg() {
+  function buildProtocolIconImg(src, variantClass) {
     const img = document.createElement('img');
-    img.setAttribute('src', MESHTASTIC_ICON_SRC);
+    img.setAttribute('src', src);
     img.setAttribute('alt', '');
     img.setAttribute('width', '12');
     img.setAttribute('height', '12');
     img.setAttribute('aria-hidden', 'true');
     img.setAttribute('loading', 'lazy');
     img.setAttribute('decoding', 'async');
-    img.className = 'protocol-icon protocol-icon--meshtastic';
+    img.className = `protocol-icon ${variantClass}`;
     return img;
   }
 
-  /**
-   * Build a MeshCore protocol icon ``<img>`` element via DOM APIs.
-   *
-   * @returns {HTMLImageElement} Icon element ready to append.
-   */
+  /** @returns {HTMLImageElement} Meshtastic protocol icon element. */
+  function buildMeshtasticIconImg() {
+    return buildProtocolIconImg(MESHTASTIC_ICON_SRC, 'protocol-icon--meshtastic');
+  }
+
+  /** @returns {HTMLImageElement} MeshCore protocol icon element. */
   function buildMeshcoreIconImg() {
-    const img = document.createElement('img');
-    img.setAttribute('src', MESHCORE_ICON_SRC);
-    img.setAttribute('alt', '');
-    img.setAttribute('width', '12');
-    img.setAttribute('height', '12');
-    img.setAttribute('aria-hidden', 'true');
-    img.setAttribute('loading', 'lazy');
-    img.setAttribute('decoding', 'async');
-    img.className = 'protocol-icon protocol-icon--meshcore';
-    return img;
+    return buildProtocolIconImg(MESHCORE_ICON_SRC, 'protocol-icon--meshcore');
   }
 
   function updateNeighborLinesToggleState() {
@@ -1634,39 +1629,29 @@ export function initializeApp(config) {
 
       // --- Protocol hide toggles — one per column footer ---
       legendProtocolButtons.clear();
-      const meshcoreHideBtn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', meshcoreCol);
-      meshcoreHideBtn.type = 'button';
-      meshcoreHideBtn.setAttribute('aria-pressed', 'false');
-      meshcoreHideBtn.textContent = 'Hide MeshCore';
-      meshcoreHideBtn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (hiddenProtocols.has('meshcore')) {
-          hiddenProtocols.delete('meshcore');
-        } else {
-          hiddenProtocols.add('meshcore');
-        }
-        updateLegendRoleFiltersUI();
-        applyFilter();
-      });
-      legendProtocolButtons.set('meshcore', meshcoreHideBtn);
-
-      const meshtasticHideBtn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', meshtasticCol);
-      meshtasticHideBtn.type = 'button';
-      meshtasticHideBtn.setAttribute('aria-pressed', 'false');
-      meshtasticHideBtn.textContent = 'Hide Meshtastic';
-      meshtasticHideBtn.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (hiddenProtocols.has('meshtastic')) {
-          hiddenProtocols.delete('meshtastic');
-        } else {
-          hiddenProtocols.add('meshtastic');
-        }
-        updateLegendRoleFiltersUI();
-        applyFilter();
-      });
-      legendProtocolButtons.set('meshtastic', meshtasticHideBtn);
+      const protocolColDefs = [
+        { protocol: 'meshcore', col: meshcoreCol },
+        { protocol: 'meshtastic', col: meshtasticCol },
+      ];
+      for (const { protocol, col } of protocolColDefs) {
+        const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
+        const btn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', col);
+        btn.type = 'button';
+        btn.setAttribute('aria-pressed', 'false');
+        btn.textContent = `Hide ${displayName}`;
+        btn.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (hiddenProtocols.has(protocol)) {
+            hiddenProtocols.delete(protocol);
+          } else {
+            hiddenProtocols.add(protocol);
+          }
+          updateLegendRoleFiltersUI();
+          applyFilter();
+        });
+        legendProtocolButtons.set(protocol, btn);
+      }
 
       // --- Line toggles in the Meshtastic column ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
@@ -4644,8 +4629,12 @@ export function initializeApp(config) {
       createMessageChatEntry,
       buildDisplayContext,
       makeRoleFilterKey,
+      normalizeFilterProtocol,
       matchesRoleFilter,
       matchesProtocolFilter,
+      buildProtocolIconImg,
+      buildMeshtasticIconImg,
+      buildMeshcoreIconImg,
       activeRoleFilters,
       hiddenProtocols,
     },
