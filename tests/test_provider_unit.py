@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import types
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -1307,6 +1308,7 @@ def _make_fake_meshcore_mod(
     connect_result: object = "ok",
     fail_ensure_contacts: bool = False,
     disconnect_raises: bool = False,
+    connect_stall_event=None,
 ):
     """Build a minimal fake ``meshcore`` module for testing :func:`_run_meshcore`.
 
@@ -1317,6 +1319,8 @@ def _make_fake_meshcore_mod(
             ``RuntimeError``.
         disconnect_raises: When ``True``, ``mc.disconnect()`` raises, exercising
             the ``finally`` exception-suppression path.
+        connect_stall_event: Optional :class:`asyncio.Event`; when set,
+            ``connect()`` awaits it (never completes unless the event is set).
     """
     import enum
 
@@ -1351,6 +1355,8 @@ def _make_fake_meshcore_mod(
                 self._catch_all = callback
 
         async def connect(self):
+            if connect_stall_event is not None:
+                await connect_stall_event.wait()
             return connect_result
 
         async def ensure_contacts(self):
@@ -1403,6 +1409,40 @@ async def _run_until_connected(iface, target, fake_mod, mod):
         iface._stop_event.set()
     await task
     return connected_event, error_holder
+
+
+def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
+    """_stop_event must exist before connect() returns so iface.close() avoids loop.stop()."""
+    import asyncio
+    import threading
+
+    import data.mesh_ingestor.providers.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    stall = asyncio.Event()
+    fake_mod = _make_fake_meshcore_mod(connect_stall_event=stall)
+    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+
+    async def _runner() -> None:
+        iface = _MeshcoreInterface(target=None)
+        connected_event = threading.Event()
+        error_holder: list = [None]
+        task = asyncio.create_task(
+            _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+        )
+        for _ in range(500):
+            await asyncio.sleep(0)
+            if iface._stop_event is not None:
+                break
+        assert (
+            iface._stop_event is not None
+        ), "_stop_event must be set before connect() completes"
+        assert not connected_event.is_set()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_runner())
 
 
 def test_run_meshcore_happy_path(monkeypatch):
