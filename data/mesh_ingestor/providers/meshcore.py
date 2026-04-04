@@ -73,6 +73,14 @@ _CONNECT_TIMEOUT_SECS: float = 30.0
 _DEFAULT_BAUDRATE: int = 115200
 """Default baud rate for MeshCore serial connections."""
 
+# MeshCore ``ADV_TYPE_*`` (``AdvertDataHelpers.h``) → ``user.role`` for POST /api/nodes.
+_MESHCORE_ADV_TYPE_ROLE: dict[int, str] = {
+    1: "COMPANION",   # ADV_TYPE_CHAT
+    2: "REPEATER",    # ADV_TYPE_REPEATER
+    3: "ROOM_SERVER", # ADV_TYPE_ROOM_SERVER
+    4: "SENSOR",      # ADV_TYPE_SENSOR
+}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -131,12 +139,34 @@ def _meshcore_short_name(public_key_hex: str | None) -> str:
         public_key_hex: Full public key as a hex string from the MeshCore API.
 
     Returns:
-        Four lowercase hex characters, or an empty string when the key is
-        missing or shorter than four hex digits.
+        Four lowercase hex characters (e.g. ``"aabb"``), or an empty string
+        when the key is missing or shorter than four hex characters.
     """
     if not public_key_hex or len(public_key_hex) < 4:
         return ""
     return public_key_hex[:4].lower()
+
+
+def _meshcore_adv_type_to_role(adv_type: object) -> str | None:
+    """Map MeshCore ``ADV_TYPE_*`` (contact ``type`` / self ``adv_type``) to ingest role.
+
+    Values match MeshCore firmware ``AdvertDataHelpers.h`` (``ADV_TYPE_CHAT``,
+    ``ADV_TYPE_REPEATER``, …).  Role strings match the MeshCore palette keys
+    used by the web dashboard (``COMPANION``, ``REPEATER``, …).
+
+    Parameters:
+        adv_type: Raw type byte from meshcore_py (typically ``int`` 0–4).
+            Non-integer values (e.g. ``float``, ``None``) are rejected and
+            return ``None``.  Future firmware type codes not yet in the mapping
+            also return ``None`` until the table is updated.
+
+    Returns:
+        Uppercase role string, or ``None`` when the value is unknown or should
+        not override the web default (``ADV_TYPE_NONE`` / unrecognised).
+    """
+    if not isinstance(adv_type, int):
+        return None
+    return _MESHCORE_ADV_TYPE_ROLE.get(adv_type)
 
 
 def _pubkey_prefix_to_node_id(contacts: dict, pubkey_prefix: str) -> str | None:
@@ -162,20 +192,22 @@ def _contact_to_node_dict(contact: dict) -> dict:
 
     Parameters:
         contact: Contact dict from the MeshCore library.  Expected keys
-            include ``public_key``, ``adv_name``, ``last_advert``,
-            ``adv_lat``, and ``adv_lon``.
+            include ``public_key``, ``type`` (``ADV_TYPE_*``), ``adv_name``,
+            ``last_advert``, ``adv_lat``, and ``adv_lon``.
 
     Returns:
         Node dict compatible with the ``POST /api/nodes`` payload format.
     """
     pub_key = contact.get("public_key", "")
     name = (contact.get("adv_name") or "").strip()
+    role = _meshcore_adv_type_to_role(contact.get("type"))
     node: dict = {
         "lastHeard": contact.get("last_advert"),
         "user": {
             "longName": name,
             "shortName": _meshcore_short_name(pub_key),
             "publicKey": pub_key,
+            **({"role": role} if role is not None else {}),
         },
     }
     lat = contact.get("adv_lat")
@@ -190,19 +222,22 @@ def _self_info_to_node_dict(self_info: dict) -> dict:
 
     Parameters:
         self_info: Payload dict from the ``SELF_INFO`` event.  Expected keys
-            include ``name``, ``public_key``, ``adv_lat``, and ``adv_lon``.
+            include ``name``, ``public_key``, ``adv_type`` (``ADV_TYPE_*``),
+            ``adv_lat``, and ``adv_lon``.
 
     Returns:
         Node dict compatible with the ``POST /api/nodes`` payload format.
     """
     name = (self_info.get("name") or "").strip()
     pub_key = self_info.get("public_key", "")
+    role = _meshcore_adv_type_to_role(self_info.get("adv_type"))
     node: dict = {
         "lastHeard": int(time.time()),
         "user": {
             "longName": name,
             "shortName": _meshcore_short_name(pub_key),
             "publicKey": pub_key,
+            **({"role": role} if role is not None else {}),
         },
     }
     lat = self_info.get("adv_lat")
