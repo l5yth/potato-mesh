@@ -15,12 +15,24 @@
 
 set -euo pipefail
 
+# Usage: config.sh [profile | PATH] [args for mesh_env...]
+# Default env file: repo-root .env. With profile: .env-<profile> (letters, digits, _, -).
+# Or pass a path to any .env file as the first argument (not a bare profile token).
+
 _script_dir="$(cd "$(dirname "$0")" && pwd)"
 cd "${_script_dir}"
 
 _repo_root="$(cd "${_script_dir}/.." && pwd)"
-_env_file="${_repo_root}/.env"
-export POTATO_MESH_ENV_FILE="${_env_file}"
+
+if [[ $# -gt 0 ]] && [[ "${1}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+  _env_file="${_repo_root}/.env-${1}"
+  shift
+elif [[ $# -gt 0 ]] && [[ "${1}" != -* ]]; then
+  _env_file="${1}"
+  shift
+else
+  _env_file="${_repo_root}/.env"
+fi
 
 if [[ -f "${_env_file}" ]]; then
   set -a
@@ -35,4 +47,4 @@ pip install -U pip
 pip install -r "${_script_dir}/requirements.txt"
 
 export PYTHONPATH="${_script_dir}"
-exec python -m mesh_env "$@"
+exec python -m mesh_env "${_env_file}" "$@"

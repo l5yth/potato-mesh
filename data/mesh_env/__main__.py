@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Interactive CLI to write repo-root ``.env`` for the mesh ingestor."""
+"""Interactive CLI to write a mesh ingestor ``.env`` file (path optional on the command line)."""
 
 from __future__ import annotations
 
+import argparse
 import asyncio
-import os
+import sys
 from pathlib import Path
 
 from . import env_file, meshcore_probe, meshtastic_probe, tui
@@ -47,12 +48,41 @@ def _instance_domain_prefers_local_default(existing_domain: str) -> bool:
     return n in _LOCAL_INSTANCE_NORMALIZED
 
 
-def _env_file_path() -> Path:
-    override = os.environ.get("POTATO_MESH_ENV_FILE", "").strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    # mesh_env/__main__.py -> parents[2] == repository root
+def _default_env_path() -> Path:
+    """``<repository-root>/.env`` (``mesh_env/__main__.py`` → parents[2] is repo root)."""
+
     return (Path(__file__).resolve().parents[2] / ".env").resolve()
+
+
+def _parse_env_file_arg(argv: list[str] | None) -> Path:
+    """Parse optional ``PATH`` positional; default :func:`_default_env_path`."""
+
+    parser = argparse.ArgumentParser(
+        description="Interactive wizard to write a potato-mesh ingestor .env file.",
+    )
+    parser.add_argument(
+        "env_file",
+        nargs="?",
+        default=None,
+        metavar="PATH",
+        help="Env file to read/write (default: <repository>/.env)",
+    )
+    ns = parser.parse_args(argv)
+    raw = (ns.env_file or "").strip()
+    if not raw:
+        return _default_env_path()
+    return Path(raw).expanduser().resolve()
+
+
+def _profile_label_from_env_path(path: Path) -> str | None:
+    """Return the profile segment for ``.env-<profile>`` filenames; ``None`` for default ``.env``."""
+
+    name = path.name
+    prefix = ".env-"
+    if not name.startswith(prefix):
+        return None
+    rest = name[len(prefix) :].strip()
+    return rest or None
 
 
 def _csv_casefold_frozen(raw: str) -> frozenset[str]:
@@ -227,9 +257,13 @@ def _channel_filter_value(
     return ",".join(ordered)
 
 
-def main() -> int:
-    path = _env_file_path()
-    tui.show_welcome(path)
+def main(argv: list[str] | None = None) -> int:
+    path = _parse_env_file_arg(sys.argv[1:] if argv is None else argv)
+    tui.show_welcome(
+        path,
+        profile_name=_profile_label_from_env_path(path),
+        is_new_file=not path.is_file(),
+    )
 
     existing = env_file.load_managed_from_file(path)
     parsed_env = (

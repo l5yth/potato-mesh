@@ -101,9 +101,24 @@ def is_interactive() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def show_welcome(env_path: Path) -> None:
+def show_welcome(
+    env_path: Path,
+    *,
+    profile_name: str | None = None,
+    is_new_file: bool = False,
+) -> None:
+    """Banner for the env wizard; *profile_name* / *is_new_file* clarify which file is being edited."""
+
+    from rich.markup import escape
+
+    path_esc = escape(str(env_path))
     if not _rich_frames():
-        print(f"PotatoMesh env wizard → {env_path}")
+        if profile_name:
+            act = "Creating" if is_new_file else "Editing"
+            print(f"PotatoMesh env wizard — {act} profile {profile_name!r}")
+            print(f"Env file: {env_path}")
+        else:
+            print(f"PotatoMesh env wizard → {env_path}")
         return
 
     from rich.align import Align
@@ -113,10 +128,17 @@ def show_welcome(env_path: Path) -> None:
 
     art = Text(render_wordmark(), style="bold #ffd88a")
     inner = Align.center(art)
+    sub_lines: list[str] = []
+    if profile_name:
+        act = "Creating" if is_new_file else "Editing"
+        sub_lines.append(
+            f"[bold white]{escape(act)} profile[/] [bold #5ee7b8]{escape(profile_name)}[/]"
+        )
+    sub_lines.append(f"[dim]{path_esc}[/]")
     panel = Panel.fit(
         inner,
         title="[bold bright_cyan]potato-mesh[/] [dim]│[/] [white]" + TAGLINE + "[/]",
-        subtitle=f"[dim]{env_path}[/]",
+        subtitle="\n".join(sub_lines),
         subtitle_align="center",
         border_style="bright_cyan",
         box=box.ROUNDED,

@@ -15,8 +15,26 @@
 
 set -euo pipefail
 
+# Usage: mesh.sh [profile]
+# Loads repo-root .env, or .env-<profile> when profile is given (letters, digits, _, -).
+
 _script_dir="$(cd "$(dirname "$0")" && pwd)"
-_env_file="${_script_dir}/../.env"
+_repo_root="$(cd "${_script_dir}/.." && pwd)"
+
+if [[ $# -gt 0 ]]; then
+  if [[ "${1}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+    _profile="${1}"
+    shift
+    _env_file="${_repo_root}/.env-${_profile}"
+  else
+    echo "mesh.sh: invalid profile name (use letters, digits, underscores, hyphens): ${1}" >&2
+    echo "Usage: mesh.sh [profile]" >&2
+    exit 2
+  fi
+else
+  _env_file="${_repo_root}/.env"
+fi
+
 if [[ -f "${_env_file}" ]]; then
   set -a
   # shellcheck disable=SC1090
