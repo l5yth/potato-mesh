@@ -95,9 +95,10 @@ import {
   getRoleColor,
   getRoleKey,
   getRoleRenderPriority,
+  getRoleTextColor,
+  meshcoreRoleColors,
   normalizeRole,
   roleColors,
-  roleRenderOrder,
 } from './role-helpers.js';
 import {
   isMeshtasticProtocol,
@@ -835,8 +836,63 @@ export function initializeApp(config) {
 
   syncInfoOverlayHost();
 
+  /** @type {Set<string>} Active compound role-filter keys, each ``"<protocol>:<roleKey>"``. */
   const activeRoleFilters = new Set();
+  /** @type {Map<string, HTMLElement>} Compound key → legend button element. */
   const legendRoleButtons = new Map();
+  /** @type {Set<string>} Protocols hidden by the user via legend toggles. */
+  const hiddenProtocols = new Set();
+  const legendProtocolButtons = new Map();
+
+  /**
+   * Wrap a legend button click handler so it always calls
+   * ``preventDefault`` and ``stopPropagation`` before running the body.
+   *
+   * Centralising this prevents the two-line boilerplate from repeating in
+   * every legend button handler, reducing token-level duplication.
+   *
+   * @param {function(Event): void} fn Handler body.
+   * @returns {function(Event): void} Full click listener.
+   */
+  function legendClickHandler(fn) {
+    return (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      fn(event);
+    };
+  }
+
+  /**
+   * Canonical protocol token for use in compound filter keys.
+   *
+   * Collapses null/absent/unknown protocol values to ``'meshtastic'`` so that
+   * pre-protocol legacy records land in the Meshtastic filter bucket.
+   *
+   * @param {string|null|undefined} protocol Raw protocol value.
+   * @returns {'meshtastic'|'meshcore'} Normalised protocol token.
+   */
+  function normalizeFilterProtocol(protocol) {
+    return isMeshcoreProtocol(protocol) ? 'meshcore' : 'meshtastic';
+  }
+
+  /**
+   * Build a compound filter key that encodes both protocol and role.
+   *
+   * Using compound keys avoids collisions between role names that appear in
+   * both Meshtastic and MeshCore (e.g. ``SENSOR``, ``REPEATER``).  The filter
+   * set stores these keys so that clicking the MeshCore SENSOR button only
+   * includes MeshCore SENSOR nodes, not Meshtastic ones.
+   *
+   * @param {*} role Raw role value from the API.
+   * @param {string|null|undefined} protocol Protocol string from the API.
+   * @returns {string} Compound key in the form ``"<protocol>:<roleKey>"``.
+   */
+  function makeRoleFilterKey(role, protocol) {
+    return `${normalizeFilterProtocol(protocol)}:${getRoleKey(role)}`;
+  }
+
+  /** @type {Readonly<Record<string,string>>} Display names for protocol tokens. */
+  const PROTOCOL_DISPLAY_NAMES = Object.freeze({ meshtastic: 'Meshtastic', meshcore: 'MeshCore' });
 
   /**
    * Lazily create the floating map status element used for progress messages.
@@ -1366,31 +1422,44 @@ export function initializeApp(config) {
    * @returns {void}
    */
   /**
-   * Build a Meshtastic protocol icon ``<img>`` element via DOM APIs.
+   * Build a protocol icon ``<img>`` element via DOM APIs.
    *
-   * Used wherever an icon node must be appended rather than injected via
-   * ``innerHTML``.  Mirrors the attribute set used by {@link meshtasticIconHtml}
-   * so the rendered output is identical.
+   * Shared implementation used by {@link buildMeshtasticIconImg} and
+   * {@link buildMeshcoreIconImg}.  Mirrors the attribute set produced by
+   * the HTML-string helpers in ``protocol-helpers.js`` so the rendered
+   * output is identical regardless of insertion method.
    *
+   * @param {string} src Absolute path to the SVG asset.
+   * @param {string} variantClass BEM modifier class, e.g. ``protocol-icon--meshtastic``.
    * @returns {HTMLImageElement} Icon element ready to append.
    */
-  function buildMeshtasticIconImg() {
+  function buildProtocolIconImg(src, variantClass) {
     const img = document.createElement('img');
-    img.setAttribute('src', MESHTASTIC_ICON_SRC);
+    img.setAttribute('src', src);
     img.setAttribute('alt', '');
     img.setAttribute('width', '12');
     img.setAttribute('height', '12');
     img.setAttribute('aria-hidden', 'true');
     img.setAttribute('loading', 'lazy');
     img.setAttribute('decoding', 'async');
-    img.className = 'protocol-icon protocol-icon--meshtastic';
+    img.className = `protocol-icon ${variantClass}`;
     return img;
+  }
+
+  /** @returns {HTMLImageElement} Meshtastic protocol icon element. */
+  function buildMeshtasticIconImg() {
+    return buildProtocolIconImg(MESHTASTIC_ICON_SRC, 'protocol-icon--meshtastic');
+  }
+
+  /** @returns {HTMLImageElement} MeshCore protocol icon element. */
+  function buildMeshcoreIconImg() {
+    return buildProtocolIconImg(MESHCORE_ICON_SRC, 'protocol-icon--meshcore');
   }
 
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
-    neighborLinesToggleButton.replaceChildren(buildMeshtasticIconImg(), document.createTextNode(` ${label}`));
+    neighborLinesToggleButton.textContent = label;
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1422,7 +1491,7 @@ export function initializeApp(config) {
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
     const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
-    traceLinesToggleButton.replaceChildren(buildMeshtasticIconImg(), document.createTextNode(` ${label}`));
+    traceLinesToggleButton.textContent = label;
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
@@ -1453,13 +1522,21 @@ export function initializeApp(config) {
    */
   function updateLegendRoleFiltersUI() {
     const hasFilters = activeRoleFilters.size > 0;
-    legendRoleButtons.forEach((button, role) => {
+    // legendRoleButtons is keyed by compound key ("protocol:roleKey")
+    legendRoleButtons.forEach((button, compoundKey) => {
       if (!button) return;
-      const isActive = activeRoleFilters.has(role);
+      const isActive = activeRoleFilters.has(compoundKey);
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
+    legendProtocolButtons.forEach((button, protocol) => {
+      if (!button) return;
+      const isHidden = hiddenProtocols.has(protocol);
+      const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
+      button.setAttribute('aria-pressed', isHidden ? 'true' : 'false');
+      button.textContent = isHidden ? `Show ${displayName}` : `Hide ${displayName}`;
+    });
     if (legendContainer) {
-      if (hasFilters) {
+      if (hasFilters || hiddenProtocols.size > 0) {
         legendContainer.setAttribute('data-has-active-filters', 'true');
       } else {
         legendContainer.removeAttribute('data-has-active-filters');
@@ -1469,20 +1546,67 @@ export function initializeApp(config) {
   }
 
   /**
-   * Toggle the visibility filter for a given role.
+   * Toggle the visibility filter for a role+protocol combination.
    *
-   * @param {string} role Role identifier.
+   * @param {string} compoundKey Compound key in the form ``"<protocol>:<roleKey>"``.
    * @returns {void}
    */
-  function toggleRoleFilter(role) {
-    if (!role) return;
-    if (activeRoleFilters.has(role)) {
-      activeRoleFilters.delete(role);
+  function toggleRoleFilter(compoundKey) {
+    if (!compoundKey) return;
+    if (activeRoleFilters.has(compoundKey)) {
+      activeRoleFilters.delete(compoundKey);
     } else {
-      activeRoleFilters.add(role);
+      activeRoleFilters.add(compoundKey);
     }
     updateLegendRoleFiltersUI();
     applyFilter();
+  }
+
+  /**
+   * Build role filter buttons for a given palette and append them to a column.
+   *
+   * Each button is keyed by a compound ``"<protocol>:<roleKey>"`` string so
+   * that roles sharing a name across protocols (e.g. ``SENSOR``, ``REPEATER``)
+   * produce independent buttons without colliding in {@link legendRoleButtons}.
+   *
+   * @param {HTMLElement} colEl Column container element.
+   * @param {Record<string,string>} palette Role→colour map to render.
+   * @param {'meshtastic'|'meshcore'} protocol Protocol token for this column.
+   * @returns {void}
+   */
+  function buildRoleButtons(colEl, palette, protocol) {
+    for (const [role, color] of Object.entries(palette)) {
+      if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
+      const compoundKey = makeRoleFilterKey(role, protocol);
+      const item = document.createElement('button');
+      item.className = 'legend-item';
+      colEl.appendChild(item);
+      item.type = 'button';
+      item.setAttribute('aria-pressed', 'false');
+      item.dataset.role = role;
+      item.dataset.protocol = protocol;
+      const swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      item.appendChild(swatch);
+      swatch.style.background = color;
+      swatch.setAttribute('aria-hidden', 'true');
+      const label = document.createElement('span');
+      label.className = 'legend-label';
+      item.appendChild(label);
+      label.textContent = role;
+      item.addEventListener('click', legendClickHandler(event => {
+        const exclusive = event.metaKey || event.ctrlKey;
+        if (exclusive) {
+          activeRoleFilters.clear();
+          activeRoleFilters.add(compoundKey);
+          updateLegendRoleFiltersUI();
+          applyFilter();
+        } else {
+          toggleRoleFilter(compoundKey);
+        }
+      }));
+      legendRoleButtons.set(compoundKey, item);
+    }
   }
 
   if (map && hasLeaflet) {
@@ -1503,66 +1627,81 @@ export function initializeApp(config) {
       const title = L.DomUtil.create('span', 'legend-title', header);
       title.textContent = 'Legend';
 
-      const itemsContainer = L.DomUtil.create('div', 'legend-items', div);
-    legendRoleButtons.clear();
-    for (const [role, color] of Object.entries(roleColors)) {
-      if (!CHAT_ENABLED && role === 'CLIENT_HIDDEN') continue;
-      const item = L.DomUtil.create('button', 'legend-item', itemsContainer);
-      item.type = 'button';
-      item.setAttribute('aria-pressed', 'false');
-        item.dataset.role = role;
-        item.appendChild(buildMeshtasticIconImg());
-        const swatch = L.DomUtil.create('span', 'legend-swatch', item);
-        swatch.style.background = color;
-        swatch.setAttribute('aria-hidden', 'true');
-        const label = L.DomUtil.create('span', 'legend-label', item);
-        label.textContent = role;
-        item.addEventListener('click', event => {
-          event.preventDefault();
-          event.stopPropagation();
-          const exclusive = event.metaKey || event.ctrlKey;
-          if (exclusive) {
-            activeRoleFilters.clear();
-            activeRoleFilters.add(role);
-            updateLegendRoleFiltersUI();
-            applyFilter();
-          } else {
-            toggleRoleFilter(role);
-          }
-        });
-        legendRoleButtons.set(role, item);
-      }
-      updateLegendRoleFiltersUI();
+      const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
-      const toggle = L.DomUtil.create('div', 'legend-toggle', div);
-      neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', toggle);
+      // --- MeshCore column (left) ---
+      const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
+      meshcoreColHeader.appendChild(buildMeshcoreIconImg());
+      const meshcoreColTitle = document.createElement('span');
+      meshcoreColTitle.textContent = 'MeshCore';
+      meshcoreColHeader.appendChild(meshcoreColTitle);
+
+      // --- Meshtastic column (right) ---
+      const meshtasticCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      const meshtasticColHeader = L.DomUtil.create('div', 'legend-column-header', meshtasticCol);
+      meshtasticColHeader.appendChild(buildMeshtasticIconImg());
+      const meshtasticColTitle = document.createElement('span');
+      meshtasticColTitle.textContent = 'Meshtastic';
+      meshtasticColHeader.appendChild(meshtasticColTitle);
+
+      legendRoleButtons.clear();
+      buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
+      buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
+
+      // --- Protocol hide toggles — one per column footer ---
+      legendProtocolButtons.clear();
+      const protocolColDefs = [
+        { protocol: 'meshcore', col: meshcoreCol },
+        { protocol: 'meshtastic', col: meshtasticCol },
+      ];
+      for (const { protocol, col } of protocolColDefs) {
+        const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
+        const btn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', col);
+        btn.type = 'button';
+        btn.setAttribute('aria-pressed', 'false');
+        btn.textContent = `Hide ${displayName}`;
+        btn.addEventListener('click', legendClickHandler(() => {
+          if (hiddenProtocols.has(protocol)) {
+            hiddenProtocols.delete(protocol);
+          } else {
+            hiddenProtocols.add(protocol);
+          }
+          updateLegendRoleFiltersUI();
+          applyFilter();
+        }));
+        legendProtocolButtons.set(protocol, btn);
+      }
+
+      // --- Line toggles in the Meshtastic column ---
+      neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
       neighborLinesToggleButton.type = 'button';
-      neighborLinesToggleButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      neighborLinesToggleButton.addEventListener('click', legendClickHandler(() => {
         setNeighborLinesVisibility(!neighborLinesVisible);
-      });
+      }));
       updateNeighborLinesToggleState();
 
-      traceLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-traces', toggle);
+      traceLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-traces', meshtasticCol);
       traceLinesToggleButton.type = 'button';
-      traceLinesToggleButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      traceLinesToggleButton.addEventListener('click', legendClickHandler(() => {
         setTraceLinesVisibility(!traceLinesVisible);
-      });
+      }));
       updateTraceLinesToggleState();
+
+      updateLegendRoleFiltersUI();
+
+      // --- Clear filters — full-width below the two columns ---
+      const toggle = L.DomUtil.create('div', 'legend-toggle', div);
 
       const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
       resetButton.type = 'button';
       resetButton.textContent = 'Clear filters';
-      resetButton.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      resetButton.addEventListener('click', legendClickHandler(() => {
         activeRoleFilters.clear();
+        hiddenProtocols.clear();
         updateLegendRoleFiltersUI();
         applyFilter();
-      });
+      }));
 
       L.DomEvent.disableClickPropagation(div);
       L.DomEvent.disableScrollPropagation(div);
@@ -1586,11 +1725,9 @@ export function initializeApp(config) {
       button.setAttribute('aria-pressed', 'true');
       button.setAttribute('aria-label', 'Hide map legend');
       button.setAttribute('aria-controls', 'mapLegend');
-      button.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
+      button.addEventListener('click', legendClickHandler(() => {
         setLegendVisibility(!legendVisible);
-      });
+      }));
       legendToggleButton = button;
       updateLegendToggleState();
       L.DomEvent.disableClickPropagation(container);
@@ -1848,8 +1985,11 @@ export function initializeApp(config) {
       return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
     }
     const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
-    const color = getRoleColor(roleValue);
-    return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
+    const protocol = nodeData?.protocol ?? null;
+    const color = getRoleColor(roleValue, protocol);
+    const textColor = getRoleTextColor(roleValue, protocol);
+    const styleAttr = textColor ? `background:${color};color:${textColor}` : `background:${color}`;
+    return `<span class="short-name" style="${styleAttr}"${titleAttr}${infoAttr}>${padded}</span>`;
   }
 
   const potatoMeshNamespace = globalThis.PotatoMesh || (globalThis.PotatoMesh = {});
@@ -2266,7 +2406,7 @@ export function initializeApp(config) {
       }
     }
     const shortParts = [];
-    const shortHtml = renderShortHtml(overlayInfo.shortName, overlayInfo.role, overlayInfo.longName);
+    const shortHtml = renderShortHtml(overlayInfo.shortName, overlayInfo.role, overlayInfo.longName, overlayInfo);
     if (shortHtml) {
       shortParts.push(shortHtml);
     }
@@ -3852,8 +3992,10 @@ export function initializeApp(config) {
       const loraFrequencyText = formatLoraFrequencyMHz(modemMetadata.loraFreq);
       const loraFrequencyDisplay = loraFrequencyText ? escapeHtml(loraFrequencyText) : '';
       const modemPresetDisplay = modemMetadata.modemPreset ? escapeHtml(modemMetadata.modemPreset) : '';
-      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id, { protocol: n.protocol });
+      const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
+      const protocolIconCell = protocolIconPrefixHtml(n.protocol);
       tr.innerHTML = `
+        <td class="nodes-col nodes-col--protocol">${protocolIconCell}</td>
         <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
@@ -3933,7 +4075,7 @@ export function initializeApp(config) {
       ? buildTraceSegments(allTraces, nodes, {
           limitDistance: LIMIT_DISTANCE,
           maxDistanceKm: MAX_DISTANCE_KM,
-          colorForNode: node => getRoleColor(node.role)
+          colorForNode: node => getRoleColor(node.role, node.protocol)
         })
       : [];
 
@@ -3973,7 +4115,7 @@ export function initializeApp(config) {
         if (LIMIT_DISTANCE && sourceNode.distance_km != null && sourceNode.distance_km > MAX_DISTANCE_KM) continue;
         if (LIMIT_DISTANCE && targetNode.distance_km != null && targetNode.distance_km > MAX_DISTANCE_KM) continue;
 
-        const priority = getRoleRenderPriority(sourceNode.role);
+        const priority = getRoleRenderPriority(sourceNode.role, sourceNode.protocol);
         const rxTimeRaw = entry.rx_time;
         let rxTime = 0;
         if (typeof rxTimeRaw === 'number' && Number.isFinite(rxTimeRaw)) {
@@ -3991,7 +4133,7 @@ export function initializeApp(config) {
 
         neighborSegments.push({
           latlngs: [[srcLat, srcLon], [tgtLat, tgtLon]],
-          color: getRoleColor(sourceNode.role),
+          color: getRoleColor(sourceNode.role, sourceNode.protocol),
           priority,
           rxTime,
           sourceId,
@@ -4123,8 +4265,8 @@ export function initializeApp(config) {
     const nodesByRenderOrder = nodes
       .map((node, index) => ({ node, index }))
       .sort((a, b) => {
-        const orderA = getRoleRenderPriority(a.node && a.node.role);
-        const orderB = getRoleRenderPriority(b.node && b.node.role);
+        const orderA = getRoleRenderPriority(a.node && a.node.role, a.node && a.node.protocol);
+        const orderB = getRoleRenderPriority(b.node && b.node.role, b.node && b.node.protocol);
         if (orderA !== orderB) return orderA - orderB;
         return a.index - b.index;
       })
@@ -4137,7 +4279,7 @@ export function initializeApp(config) {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
       if (LIMIT_DISTANCE && n.distance_km != null && n.distance_km > MAX_DISTANCE_KM) continue;
 
-      const color = getRoleColor(n.role);
+      const color = getRoleColor(n.role, n.protocol);
       const marker = L.circleMarker([lat, lon], {
         radius: 9,
         color: '#000',
@@ -4222,13 +4364,36 @@ export function initializeApp(config) {
   /**
    * Test whether a node matches the active role filters.
    *
+   * Filters use compound ``"<protocol>:<roleKey>"`` keys so that shared role
+   * names (e.g. ``SENSOR``, ``REPEATER``) can be toggled independently per
+   * protocol.  Nodes whose protocol is null/absent are treated as Meshtastic
+   * (via {@link normalizeFilterProtocol}) to keep legacy records visible when
+   * the Meshtastic SENSOR filter is active.
+   *
    * @param {Object} node Node payload.
    * @returns {boolean} True when the node should be visible.
    */
   function matchesRoleFilter(node) {
     if (!activeRoleFilters.size) return true;
-    const roleKey = getRoleKey(node && node.role);
-    return activeRoleFilters.has(roleKey);
+    const compoundKey = makeRoleFilterKey(node && node.role, node && node.protocol);
+    return activeRoleFilters.has(compoundKey);
+  }
+
+  /**
+   * Check whether a node passes the active protocol visibility filters.
+   *
+   * Nodes with a null/absent protocol are always shown — hiding
+   * ``'meshtastic'`` hides only nodes that explicitly carry that protocol
+   * value.  Pre-protocol legacy records remain visible regardless.
+   *
+   * @param {Object} node Node payload.
+   * @returns {boolean} True when the node should be visible.
+   */
+  function matchesProtocolFilter(node) {
+    if (!hiddenProtocols.size) return true;
+    const protocol = (node && node.protocol) || null;
+    if (protocol && hiddenProtocols.has(protocol)) return false;
+    return true;
   }
 
   /**
@@ -4256,7 +4421,7 @@ export function initializeApp(config) {
     // Text and role filters apply only to the node table and map; the chat log
     // always receives the full node collection so reply-thread lookups succeed
     // even for nodes that are currently hidden by the active filter.
-    const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n));
+    const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n) && matchesProtocolFilter(n));
     const sortedNodes = sortNodes(filteredNodes);
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
@@ -4475,6 +4640,20 @@ export function initializeApp(config) {
       createAnnouncementEntry,
       createMessageChatEntry,
       buildDisplayContext,
+      makeRoleFilterKey,
+      normalizeFilterProtocol,
+      matchesRoleFilter,
+      matchesProtocolFilter,
+      buildProtocolIconImg,
+      buildMeshtasticIconImg,
+      buildMeshcoreIconImg,
+      buildRoleButtons,
+      updateLegendRoleFiltersUI,
+      legendClickHandler,
+      activeRoleFilters,
+      hiddenProtocols,
+      legendRoleButtons,
+      legendProtocolButtons,
     },
   };
 }

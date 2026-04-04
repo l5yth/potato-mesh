@@ -140,17 +140,26 @@ test('normalizeOverlaySource omits protocol when value is not a string', () => {
 
 // --- buildMapPopupHtml ---
 
-test('buildMapPopupHtml includes meshtastic icon for null protocol', () => {
+test('buildMapPopupHtml shows no icon for null protocol', () => {
   withApp((t) => {
     const html = t.buildMapPopupHtml({ long_name: 'Alice', node_id: '!abc123', protocol: null }, 0);
-    assert.ok(html.includes('meshtastic.svg'), 'popup should show meshtastic icon for null protocol');
+    assert.ok(!html.includes('meshtastic.svg'), 'popup should not show meshtastic icon when protocol is null');
+    assert.ok(!html.includes('meshcore.svg'), 'popup should not show meshcore icon when protocol is null');
   });
 });
 
-test('buildMapPopupHtml includes meshtastic icon for absent protocol', () => {
+test('buildMapPopupHtml shows no icon when protocol is absent', () => {
   withApp((t) => {
     const html = t.buildMapPopupHtml({ long_name: 'Bob', node_id: '!abc456' }, 0);
-    assert.ok(html.includes('meshtastic.svg'), 'popup should show meshtastic icon when protocol absent');
+    assert.ok(!html.includes('meshtastic.svg'), 'popup should not show any icon when protocol is absent');
+    assert.ok(!html.includes('meshcore.svg'), 'popup should not show any icon when protocol is absent');
+  });
+});
+
+test('buildMapPopupHtml shows meshtastic icon for explicit meshtastic protocol', () => {
+  withApp((t) => {
+    const html = t.buildMapPopupHtml({ long_name: 'Alice', node_id: '!abc123', protocol: 'meshtastic' }, 0);
+    assert.ok(html.includes('meshtastic.svg'), 'popup should show meshtastic icon for explicit meshtastic protocol');
   });
 });
 
@@ -178,7 +187,7 @@ test('createAnnouncementEntry prefixes meshtastic icon when protocol is meshtast
   });
 });
 
-test('createAnnouncementEntry prefixes meshtastic icon when protocol is absent', () => {
+test('createAnnouncementEntry shows no icon when protocol is absent', () => {
   withApp((t) => {
     const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
@@ -189,7 +198,8 @@ test('createAnnouncementEntry prefixes meshtastic icon when protocol is absent',
       nodeData: null,
       messageHtml: 'detected',
     });
-    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'announcement without protocol should show meshtastic icon');
+    assert.ok(!innerHtml(div).includes('meshtastic.svg'), 'no meshtastic icon when protocol is absent');
+    assert.ok(!innerHtml(div).includes('meshcore.svg'), 'no meshcore icon when protocol is absent');
   });
 });
 
@@ -237,14 +247,15 @@ test('createMessageChatEntry prefixes meshtastic icon when node protocol is mesh
   });
 });
 
-test('createMessageChatEntry prefixes meshtastic icon when node protocol is absent', () => {
+test('createMessageChatEntry shows no icon when node protocol is absent', () => {
   withApp((t) => {
     const div = t.createMessageChatEntry({
       text: 'hi',
       rx_time: 2000,
       node: { short_name: 'BOB', role: 'ROUTER' },
     });
-    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'chat entry without protocol should show meshtastic icon');
+    assert.ok(!innerHtml(div).includes('meshtastic.svg'), 'no meshtastic icon when protocol is absent');
+    assert.ok(!innerHtml(div).includes('meshcore.svg'), 'no meshcore icon when protocol is absent');
   });
 });
 

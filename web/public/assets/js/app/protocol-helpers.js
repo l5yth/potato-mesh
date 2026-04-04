@@ -21,11 +21,10 @@ export const MESHTASTIC_ICON_SRC = '/assets/img/meshtastic.svg';
 export const MESHCORE_ICON_SRC = '/assets/img/meshcore.svg';
 
 /**
- * Return true when the protocol value represents Meshtastic or is absent.
+ * Return true when the protocol value is explicitly ``"meshtastic"``.
  *
- * A null/undefined/empty string is treated as Meshtastic because the backend
- * defaults all records to ``"meshtastic"`` and pre-existing records that
- * predate the protocol column carry an implicit Meshtastic origin.
+ * Absent, null, or empty values return ``false`` — no default is applied.
+ * An icon is only shown when the protocol is positively known.
  *
  * Comparison is case-sensitive: only the lowercase value ``"meshtastic"``
  * matches — mixed-case strings such as ``"Meshtastic"`` return ``false``.
@@ -33,12 +32,11 @@ export const MESHCORE_ICON_SRC = '/assets/img/meshcore.svg';
  * intentional.
  *
  * @param {string|null|undefined} protocol Protocol string from the API.
- * @returns {boolean} Whether the protocol is (or defaults to) Meshtastic.
+ * @returns {boolean} Whether the protocol is explicitly Meshtastic.
  */
 export function isMeshtasticProtocol(protocol) {
-  if (protocol == null) return true;
-  const trimmed = String(protocol).trim();
-  return trimmed.length === 0 || trimmed === 'meshtastic';
+  if (protocol == null) return false;
+  return String(protocol).trim() === 'meshtastic';
 }
 
 /**
@@ -83,10 +81,10 @@ export function meshcoreIconHtml() {
 /**
  * Build an HTML prefix (protocol icon plus a trailing space) for inline UI.
  *
- * Meshtastic — including null, undefined, empty, or whitespace-only values per
- * {@link isMeshtasticProtocol} — uses the Meshtastic icon. The literal
- * ``"meshcore"`` uses the MeshCore icon. Any other protocol string yields an
- * empty prefix (same as the pre-MeshCore behaviour for unknown stacks).
+ * Returns the matching icon only when the protocol is positively known:
+ * ``"meshtastic"`` → Meshtastic icon, ``"meshcore"`` → MeshCore icon.
+ * Absent, null, or unrecognised protocol strings yield an empty string —
+ * no default icon is assumed.
  *
  * @param {string|null|undefined} protocol Protocol string from the API.
  * @returns {string} HTML fragment safe to concatenate before visible text.

@@ -100,6 +100,13 @@ class TestLastPacketMonotonic:
         assert ts is not None
         assert isinstance(ts, float)
 
+    def test_mark_packet_seen_exported_from_handlers(self):
+        """handlers._mark_packet_seen must be accessible via the package."""
+        assert callable(handlers._mark_packet_seen)
+        handlers._mark_packet_seen()
+        ts = handlers.last_packet_monotonic()
+        assert ts is not None
+
 
 # ---------------------------------------------------------------------------
 # _state: _host_telemetry_suppressed

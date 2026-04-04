@@ -360,7 +360,7 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
     10_000,
   );
   assert.equal(html.includes('<table'), true);
-  assert.ok(html.includes('meshtastic.svg'), 'default protocol should show meshtastic icon in long name link');
+  assert.ok(!html.includes('meshtastic.svg'), 'absent protocol should show no meshtastic icon in long name link');
   assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">.*Example Node<\/a>/s);
   assert.equal(html.includes('66.0%'), true);
   assert.equal(html.includes('1.230%'), true);
@@ -604,7 +604,7 @@ test('renderNodeDetailHtml composes the table, neighbors, and messages', () => {
   assert.equal(html.includes('Heard by'), true);
   assert.equal(html.includes('We hear'), true);
   assert.equal(html.includes('Messages'), true);
-  assert.ok(html.includes('meshtastic.svg'), 'default protocol should show meshtastic icon in heading and table');
+  assert.ok(!html.includes('meshtastic.svg'), 'absent protocol should show no meshtastic icon in heading and table');
   assert.match(html, /<a class="node-long-link" href="\/nodes\/!abcd" data-node-detail-link="true" data-node-id="!abcd">.*Example Node<\/a>/s);
   assert.equal(html.includes('PEER'), true);
   assert.equal(html.includes('ALLY'), true);
@@ -665,7 +665,7 @@ test('renderSingleNodeTable shows meshtastic icon for meshtastic protocol in lon
   assert.ok(html.includes('meshtastic.svg'), 'meshtastic protocol should show icon in long name link');
 });
 
-test('renderSingleNodeTable shows meshtastic icon when protocol is absent in long name link', () => {
+test('renderSingleNodeTable shows no protocol icon when protocol is absent in long name link', () => {
   const node = {
     shortName: 'A',
     longName: 'Alice',
@@ -674,7 +674,8 @@ test('renderSingleNodeTable shows meshtastic icon when protocol is absent in lon
     rawSources: { node: { node_id: '!aa', role: 'CLIENT' } },
   };
   const html = renderSingleNodeTable(node, (short, role) => `<span data-role="${role}">${short}</span>`, 0);
-  assert.ok(html.includes('meshtastic.svg'), 'absent protocol should show meshtastic icon in long name link');
+  assert.ok(!html.includes('meshtastic.svg'), 'absent protocol should show no meshtastic icon in long name link');
+  assert.ok(!html.includes('meshcore.svg'), 'absent protocol should show no meshcore icon in long name link');
 });
 
 test('renderSingleNodeTable omits meshtastic icon for meshcore protocol in long name link', () => {
@@ -700,12 +701,13 @@ test('renderNodeDetailHtml shows meshtastic icon in heading for meshtastic proto
   assert.ok(html.includes('meshtastic.svg'), 'meshtastic protocol should show icon in heading');
 });
 
-test('renderNodeDetailHtml shows meshtastic icon in heading when protocol is absent', () => {
+test('renderNodeDetailHtml shows no protocol icon in heading when protocol is absent', () => {
   const html = renderNodeDetailHtml(
     { shortName: 'A', longName: 'Alice', nodeId: '!aa', role: 'CLIENT' },
     { renderShortHtml: short => `<span>${short}</span>` },
   );
-  assert.ok(html.includes('meshtastic.svg'), 'absent protocol should show meshtastic icon in heading');
+  assert.ok(!html.includes('meshtastic.svg'), 'absent protocol should show no meshtastic icon in heading');
+  assert.ok(!html.includes('meshcore.svg'), 'absent protocol should show no meshcore icon in heading');
 });
 
 test('renderNodeDetailHtml omits meshtastic icon in heading for meshcore protocol', () => {
@@ -736,7 +738,7 @@ test('renderMessages prefixes meshtastic icon for meshtastic node protocol', () 
   assert.ok(html.includes('meshtastic.svg'), 'meshtastic node chat entry should show icon');
 });
 
-test('renderMessages prefixes meshtastic icon when node protocol is absent', () => {
+test('renderMessages shows no protocol icon when node protocol is absent', () => {
   const nodeContext = {
     shortName: 'SRC',
     longName: 'Source',
@@ -750,7 +752,8 @@ test('renderMessages prefixes meshtastic icon when node protocol is absent', () 
     (short, role) => `<span data-role="${role}">${short}</span>`,
     nodeContext,
   );
-  assert.ok(html.includes('meshtastic.svg'), 'absent node protocol chat entry should show meshtastic icon');
+  assert.ok(!html.includes('meshtastic.svg'), 'absent node protocol chat entry should show no meshtastic icon');
+  assert.ok(!html.includes('meshcore.svg'), 'absent node protocol chat entry should show no meshcore icon');
 });
 
 test('renderMessages omits meshtastic icon for meshcore node protocol', () => {

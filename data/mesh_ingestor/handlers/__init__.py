@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from .. import queue as _queue
 from ._state import (
+    _mark_packet_seen,
     host_node_id,
     last_packet_monotonic,
     register_host_node_id,
@@ -85,6 +86,7 @@ __all__ = [
     "_radio_metadata_fields",
     "_record_ignored_packet",
     "base64_payload",
+    "_mark_packet_seen",
     "host_node_id",
     "last_packet_monotonic",
     "on_receive",

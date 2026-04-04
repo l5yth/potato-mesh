@@ -336,6 +336,7 @@ test('merge helpers combine node, telemetry, and position data', () => {
   assert.equal(node.nodeId, '!node');
   assert.equal(node.nodeNum, 55);
   assert.equal(node.shortName, 'NODE');
+  assert.equal(node.protocol, undefined); // no protocol in this fixture
   assert.equal(node.battery, 50);
   assert.equal(node.voltage, 3.8);
   assert.equal(node.lastHeard, 1_200);
@@ -348,6 +349,31 @@ test('merge helpers combine node, telemetry, and position data', () => {
   assert.equal(node.altitude, 80);
   assert.ok(node.telemetry);
   assert.ok(node.position);
+});
+
+test('mergeNodeFields propagates the protocol field', () => {
+  const node = {};
+  mergeNodeFields(node, { node_id: '!abc', protocol: 'meshcore' });
+  assert.equal(node.protocol, 'meshcore');
+});
+
+test('mergeNodeFields does not overwrite an existing protocol with absent value', () => {
+  const node = { protocol: 'meshcore' };
+  mergeNodeFields(node, { node_id: '!abc' });
+  assert.equal(node.protocol, 'meshcore');
+});
+
+test('refreshNodeInformation surfaces protocol from the node API record', async () => {
+  const responses = new Map([
+    ['/api/nodes/!proto?limit=7', createResponse(200, [{ node_id: '!proto', short_name: 'PT', protocol: 'meshcore' }])],
+    ['/api/telemetry/!proto?limit=1000', createResponse(404, {})],
+    ['/api/positions/!proto?limit=7', createResponse(404, {})],
+    ['/api/neighbors/!proto?limit=1000', createResponse(404, {})],
+  ]);
+  const fetchImpl = async url => responses.get(url) ?? createResponse(404, {});
+  const node = await refreshNodeInformation('!proto', { fetchImpl });
+  assert.equal(node.protocol, 'meshcore');
+  assert.equal(node.rawSources.node.protocol, 'meshcore');
 });
 
 test('normalizeReference extracts identifiers and tolerates malformed fallback payloads', () => {

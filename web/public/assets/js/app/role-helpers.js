@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { isMeshcoreProtocol } from './protocol-helpers.js';
+
 /**
  * Mapping of numeric Meshtastic role identifiers to their canonical names.
  *
@@ -82,6 +84,33 @@ export const meshcoreRoleColors = Object.freeze({
 });
 
 /**
+ * MeshCore role text colour overrides — only populated for roles whose
+ * background is dark enough that the default (near-black) text becomes
+ * illegible.  Roles absent from this map inherit the page default.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const meshcoreRoleTextColors = Object.freeze({
+  COMPANION: '#e0e0e0',
+});
+
+/**
+ * Return the foreground text colour for a role badge, or ``null`` when the
+ * page default is acceptable.
+ *
+ * @param {*} role Raw role value from the API.
+ * @param {string|null|undefined} [protocol] Protocol string from the API.
+ * @returns {string|null} CSS colour string, or ``null`` to inherit.
+ */
+export function getRoleTextColor(role, protocol = null) {
+  if (isMeshcoreProtocol(protocol)) {
+    const key = getRoleKey(role);
+    return meshcoreRoleTextColors[key] ?? null;
+  }
+  return null;
+}
+
+/**
  * Return the role colour palette appropriate for the given protocol.
  *
  * Defaults to {@link roleColors} (Meshtastic) for absent or unrecognised
@@ -92,24 +121,50 @@ export const meshcoreRoleColors = Object.freeze({
  * @returns {Readonly<Record<string, string>>} Role colour map.
  */
 export function getRoleColors(protocol) {
-  if (protocol != null && String(protocol).trim() === 'meshcore') {
-    return meshcoreRoleColors;
-  }
-  return roleColors;
+  return isMeshcoreProtocol(protocol) ? meshcoreRoleColors : roleColors;
 }
 
-export const roleRenderOrder = Object.freeze({
+/**
+ * Meshtastic-specific render priority order for map marker stacking.
+ * Higher numbers render above lower ones (LOST_AND_FOUND on top).
+ *
+ * @type {Readonly<Record<string, number>>}
+ */
+export const meshtasticRoleRenderOrder = Object.freeze({
   CLIENT_HIDDEN: 1,
   SENSOR: 2,
-  TRACKER: 3,
-  CLIENT_MUTE: 4,
-  CLIENT: 5,
-  CLIENT_BASE: 6,
-  REPEATER: 7,
-  ROUTER_LATE: 8,
-  ROUTER: 9,
-  LOST_AND_FOUND: 10
+  TRACKER: 4,
+  CLIENT_MUTE: 5,
+  CLIENT: 6,
+  CLIENT_BASE: 8,
+  ROUTER_LATE: 10,
+  REPEATER: 11,
+  ROUTER: 13,
+  LOST_AND_FOUND: 14,
 });
+
+/**
+ * MeshCore-specific render priority overrides.  Only roles whose stacking
+ * order differs from the Meshtastic palette need to appear here — any role
+ * absent from this map falls through to {@link meshtasticRoleRenderOrder}.
+ *
+ * @type {Readonly<Record<string, number>>}
+ */
+export const meshcoreRoleRenderOrder = Object.freeze({
+  SENSOR: 3,
+  COMPANION: 7,
+  ROOM_SERVER: 9,
+  REPEATER: 12,
+});
+
+/**
+ * Backward-compatible alias kept for any code that still imports
+ * ``roleRenderOrder`` by name.
+ *
+ * @deprecated Use {@link meshtasticRoleRenderOrder} directly.
+ * @type {Readonly<Record<string, number>>}
+ */
+export const roleRenderOrder = meshtasticRoleRenderOrder;
 
 /**
  * Translate numeric identifiers or numeric strings into canonical role names.
@@ -156,22 +211,37 @@ export function getRoleKey(role) {
 /**
  * Determine the colour assigned to a role for legend badges.
  *
+ * Pass the node's ``protocol`` field to select the correct palette: MeshCore
+ * roles are looked up in {@link meshcoreRoleColors}; everything else falls
+ * back to the Meshtastic {@link roleColors} palette.
+ *
  * @param {*} role Raw role value.
+ * @param {string|null|undefined} [protocol] Protocol string from the API.
  * @returns {string} CSS colour string.
  */
-export function getRoleColor(role) {
+export function getRoleColor(role, protocol = null) {
+  const colors = getRoleColors(protocol);
   const key = getRoleKey(role);
-  return roleColors[key] || roleColors.CLIENT || '#3388ff';
+  return colors[key] || roleColors.CLIENT || '#3388ff';
 }
 
 /**
  * Determine the render priority that decides marker stacking order.
  *
+ * MeshCore nodes use {@link meshcoreRoleRenderOrder} for roles that differ
+ * from Meshtastic; everything else falls back to
+ * {@link meshtasticRoleRenderOrder}.
+ *
  * @param {*} role Raw role value.
+ * @param {string|null|undefined} [protocol] Protocol string from the API.
  * @returns {number} Higher numbers render above lower ones.
  */
-export function getRoleRenderPriority(role) {
+export function getRoleRenderPriority(role, protocol = null) {
   const key = getRoleKey(role);
-  const priority = roleRenderOrder[key];
+  if (isMeshcoreProtocol(protocol)) {
+    const mc = meshcoreRoleRenderOrder[key];
+    if (typeof mc === 'number') return mc;
+  }
+  const priority = meshtasticRoleRenderOrder[key];
   return typeof priority === 'number' ? priority : 0;
 }

@@ -668,6 +668,12 @@ def test_contact_to_node_dict_omits_position_at_origin():
     assert "position" not in node
 
 
+def test_contact_to_node_dict_sets_protocol_meshcore():
+    """_contact_to_node_dict must set protocol='meshcore' on every node dict."""
+    contact = {"public_key": "aa" * 32, "adv_name": "Node"}
+    assert _contact_to_node_dict(contact)["protocol"] == "meshcore"
+
+
 # ---------------------------------------------------------------------------
 # _self_info_to_node_dict
 # ---------------------------------------------------------------------------
@@ -707,6 +713,12 @@ def test_self_info_to_node_dict_includes_position():
     node = _self_info_to_node_dict(self_info)
     assert node["position"]["latitude"] == pytest.approx(48.8)
     assert node["position"]["longitude"] == pytest.approx(2.35)
+
+
+def test_self_info_to_node_dict_sets_protocol_meshcore():
+    """_self_info_to_node_dict must set protocol='meshcore' on the node dict."""
+    self_info = {"name": "MyNode", "public_key": "bb" * 32}
+    assert _self_info_to_node_dict(self_info)["protocol"] == "meshcore"
 
 
 # ---------------------------------------------------------------------------
