@@ -20,30 +20,16 @@ set -euo pipefail
 
 _script_dir="$(cd "$(dirname "$0")" && pwd)"
 _repo_root="$(cd "${_script_dir}/.." && pwd)"
+# shellcheck source=potato_mesh_env.sh
+source "${_script_dir}/potato_mesh_env.sh"
 
+potato_mesh_resolve_env_file mesh "${_repo_root}" "$@"
+shift "${_potato_mesh_env_shift}"
 if [[ $# -gt 0 ]]; then
-  if [[ "${1}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
-    _profile="${1}"
-    shift
-    _env_file="${_repo_root}/.env-${_profile}"
-  else
-    echo "mesh.sh: invalid profile name (use letters, digits, underscores, hyphens): ${1}" >&2
-    echo "Usage: mesh.sh [profile]" >&2
-    exit 2
-  fi
-else
-  _env_file="${_repo_root}/.env"
+  echo "mesh.sh: unexpected arguments (only optional profile name is supported): $*" >&2
+  exit 2
 fi
 
-if [[ -f "${_env_file}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${_env_file}"
-  set +a
-fi
-
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r "$(dirname "$0")/requirements.txt"
+potato_mesh_source_env_if_exists "${_env_file}"
+potato_mesh_venv_and_requirements "${_script_dir}/requirements.txt"
 exec python mesh.py

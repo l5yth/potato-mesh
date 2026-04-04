@@ -23,28 +23,15 @@ _script_dir="$(cd "$(dirname "$0")" && pwd)"
 cd "${_script_dir}"
 
 _repo_root="$(cd "${_script_dir}/.." && pwd)"
+# shellcheck source=potato_mesh_env.sh
+source "${_script_dir}/potato_mesh_env.sh"
 
-if [[ $# -gt 0 ]] && [[ "${1}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
-  _env_file="${_repo_root}/.env-${1}"
-  shift
-elif [[ $# -gt 0 ]] && [[ "${1}" != -* ]]; then
-  _env_file="${1}"
-  shift
-else
-  _env_file="${_repo_root}/.env"
-fi
+potato_mesh_resolve_env_file config "${_repo_root}" "$@"
+shift "${_potato_mesh_env_shift}"
 
-if [[ -f "${_env_file}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${_env_file}"
-  set +a
-fi
+potato_mesh_source_env_if_exists "${_env_file}"
 
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r "${_script_dir}/requirements.txt"
+potato_mesh_venv_and_requirements "${_script_dir}/requirements.txt"
 
 export PYTHONPATH="${_script_dir}"
 exec python -m mesh_env "${_env_file}" "$@"

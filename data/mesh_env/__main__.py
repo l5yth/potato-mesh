@@ -89,6 +89,20 @@ def _csv_casefold_frozen(raw: str) -> frozenset[str]:
     return frozenset(p.casefold() for p in (x.strip() for x in raw.split(",")) if p)
 
 
+_HINT_BLE_ADDR = "Use the address your OS shows for the radio (MAC or UUID)."
+_HINT_SERIAL_PATH = (
+    "Path to the USB serial device (Linux often /dev/ttyACM0 or ttyUSB0)."
+)
+
+
+def _prompt_ble_address(message: str, existing: str) -> str:
+    return tui.text(message, existing, hint=_HINT_BLE_ADDR)
+
+
+def _prompt_serial_path(message: str, default: str) -> str:
+    return tui.text(message, default, hint=_HINT_SERIAL_PATH)
+
+
 def _pick_connection_string(existing: str) -> str:
     kind = tui.select(
         "How should the ingestor connect to the radio?",
@@ -109,18 +123,10 @@ def _pick_connection_string(existing: str) -> str:
             found = asyncio.run(scan_ble_devices(8.0))
         except Exception as exc:
             tui.print_info(f"Bleak scan failed: {exc}")
-            return tui.text(
-                "Enter BLE MAC or UUID",
-                existing,
-                hint="Use the address your OS shows for the radio (MAC or UUID).",
-            )
+            return _prompt_ble_address("Enter BLE MAC or UUID", existing)
         if not found:
             tui.print_info("No devices found.")
-            return tui.text(
-                "Enter BLE MAC or UUID",
-                existing,
-                hint="Use the address your OS shows for the radio (MAC or UUID).",
-            )
+            return _prompt_ble_address("Enter BLE MAC or UUID", existing)
         choices: list[tuple[str, str]] = [
             (f"{name}  ({addr})", addr) for name, addr in found
         ]
@@ -139,11 +145,7 @@ def _pick_connection_string(existing: str) -> str:
             hint="Pick your radio from the scan, or type an address if it is missing.",
         )
         if pick == "__manual__" or pick is None:
-            return tui.text(
-                "BLE MAC or UUID",
-                existing,
-                hint="Use the address your OS shows for the radio (MAC or UUID).",
-            )
+            return _prompt_ble_address("BLE MAC or UUID", existing)
         return pick
     if kind == "tcp":
         return tui.text(
@@ -154,11 +156,7 @@ def _pick_connection_string(existing: str) -> str:
 
     paths = list_serial_paths()
     if not paths:
-        return tui.text(
-            "Serial device path",
-            existing or "/dev/ttyACM0",
-            hint="Path to the USB serial device (Linux often /dev/ttyACM0 or ttyUSB0).",
-        )
+        return _prompt_serial_path("Serial device path", existing or "/dev/ttyACM0")
     choices = [(p, p) for p in paths]
     choices.append(("Other… type a custom path", "__custom__"))
     default_val = existing if existing in paths else paths[0]
@@ -169,11 +167,7 @@ def _pick_connection_string(existing: str) -> str:
         hint="Choose the port your radio appears as, or type another path if needed.",
     )
     if pick == "__custom__" or pick is None:
-        return tui.text(
-            "Serial device path",
-            existing or paths[0],
-            hint="Path to the USB serial device (Linux often /dev/ttyACM0 or ttyUSB0).",
-        )
+        return _prompt_serial_path("Serial device path", existing or paths[0])
     return pick
 
 
