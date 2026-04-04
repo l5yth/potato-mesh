@@ -15,8 +15,7 @@
 
 set -euo pipefail
 
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r "$(dirname "$0")/requirements.txt"
-exec python mesh.py
+python -m venv --clear .venv
+.venv/bin/pip install -U pip
+.venv/bin/pip install -r "$(dirname "$0")/requirements.txt"
+exec .venv/bin/python mesh.py

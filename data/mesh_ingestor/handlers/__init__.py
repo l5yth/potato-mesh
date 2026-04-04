@@ -83,6 +83,7 @@ __all__ = [
     "_normalize_trace_hops",
     "_portnum_candidates",
     "_queue_post_json",
+    "_mark_packet_seen",
     "_radio_metadata_fields",
     "_record_ignored_packet",
     "base64_payload",

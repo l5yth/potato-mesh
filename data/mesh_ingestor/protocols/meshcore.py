@@ -50,6 +50,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from meshcore import (
+    BLEConnection,
+    EventType,
+    MeshCore,
+    SerialConnection,
+    TCPConnection,
+)
+
 from .. import config
 from ..connection import default_serial_targets, parse_ble_target, parse_tcp_target
 
@@ -658,8 +666,6 @@ def _make_connection(target: str, baudrate: int) -> object:
     Returns:
         An unconnected ``meshcore`` connection object.
     """
-    from meshcore import BLEConnection, SerialConnection, TCPConnection
-
     ble_addr = parse_ble_target(target)
     if ble_addr:
         return BLEConnection(address=ble_addr)
@@ -693,8 +699,6 @@ async def _run_meshcore(
         error_holder: Single-element list; set to the raised exception when
             the connection attempt fails so the caller can re-raise it.
     """
-    from meshcore import EventType, MeshCore
-
     # Install early so :meth:`_MeshcoreInterface.close` can signal shutdown with
     # ``stop_event.set()`` instead of ``loop.stop()`` while ``connect()`` or the
     # ``finally`` disconnect is still running (avoids RuntimeError from

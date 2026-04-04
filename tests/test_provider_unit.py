@@ -343,22 +343,14 @@ def test_make_connection_routes_to_correct_class(
         _cls.__name__ = name
         return _cls
 
-    fake_meshcore = types.ModuleType("meshcore")
-    fake_meshcore.BLEConnection = _make_mock("BLEConnection")
-    fake_meshcore.SerialConnection = _make_mock("SerialConnection")
-    fake_meshcore.TCPConnection = _make_mock("TCPConnection")
+    # Patch module-level names directly — sys.modules patching no longer works
+    # because BLEConnection/SerialConnection/TCPConnection are imported at module
+    # load time (not lazily inside the function).
+    monkeypatch.setattr(_mod, "BLEConnection", _make_mock("BLEConnection"))
+    monkeypatch.setattr(_mod, "SerialConnection", _make_mock("SerialConnection"))
+    monkeypatch.setattr(_mod, "TCPConnection", _make_mock("TCPConnection"))
 
-    import sys as _sys
-
-    original = _sys.modules.get("meshcore")
-    try:
-        _sys.modules["meshcore"] = fake_meshcore
-        result = _make_connection(target, 115200)
-    finally:
-        if original is None:
-            _sys.modules.pop("meshcore", None)
-        else:
-            _sys.modules["meshcore"] = original
+    result = _make_connection(target, 115200)
 
     assert len(instances) == 1
     assert instances[0].name == expected_class_name
@@ -1442,8 +1434,21 @@ def test_on_contact_msg_includes_protocol_meshcore(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _run_meshcore — full coroutine paths (fake meshcore module in sys.modules)
+# _run_meshcore — full coroutine paths (fake meshcore module patched on the module)
 # ---------------------------------------------------------------------------
+
+
+def _patch_meshcore_mod(monkeypatch, mod, fake_mod):
+    """Patch module-level meshcore names in *mod* with values from *fake_mod*.
+
+    Since ``protocols/meshcore.py`` now imports ``BLEConnection``, ``EventType``,
+    ``MeshCore``, ``SerialConnection``, and ``TCPConnection`` at module load time
+    (not lazily inside functions), ``sys.modules`` patching no longer reaches
+    these already-bound names.  This helper patches the module attributes
+    directly so tests can substitute fakes at the point of use.
+    """
+    for attr in ("BLEConnection", "EventType", "MeshCore", "SerialConnection", "TCPConnection"):
+        monkeypatch.setattr(mod, attr, getattr(fake_mod, attr))
 
 
 def _make_fake_meshcore_mod(
@@ -1572,7 +1577,7 @@ def _setup_stalled_run(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     stall = asyncio.Event()
     fake_mod = _make_fake_meshcore_mod(connect_stall_event=stall)
-    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
     return stall, _mod
 
 
@@ -1662,7 +1667,7 @@ def test_run_meshcore_happy_path(monkeypatch):
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     fake_mod = _make_fake_meshcore_mod()
-    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
     iface = _MeshcoreInterface(target=None)
 
@@ -1683,7 +1688,7 @@ def test_run_meshcore_connect_returns_none_raises(monkeypatch):
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     fake_mod = _make_fake_meshcore_mod(connect_result=None)
-    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
     iface = _MeshcoreInterface(target=None)
     connected_event = threading.Event()
@@ -1710,7 +1715,7 @@ def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
         lambda *_a, severity=None, **_k: logged.append(severity),
     )
     fake_mod = _make_fake_meshcore_mod(fail_ensure_contacts=True)
-    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
     iface = _MeshcoreInterface(target=None)
 
@@ -1730,7 +1735,7 @@ def test_run_meshcore_disconnect_exception_suppressed(monkeypatch):
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     fake_mod = _make_fake_meshcore_mod(disconnect_raises=True)
-    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
     iface = _MeshcoreInterface(target=None)
 
@@ -1755,7 +1760,7 @@ def test_run_meshcore_on_unhandled_skips_known_records_unknown(monkeypatch):
         lambda msg, *, source: recorded.append(source),
     )
     fake_mod = _make_fake_meshcore_mod()
-    monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
     iface = _MeshcoreInterface(target=None)
 
