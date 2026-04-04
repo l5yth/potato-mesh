@@ -103,6 +103,18 @@ module PotatoMesh
     # Determine whether the supplied hostname conforms to RFC 1035 label
     # requirements and includes a valid top-level domain.
     #
+    # RFC 1035 §2.3.1 label rules applied here:
+    # - Total name length must not exceed 253 characters.
+    # - Each label must be 1–63 characters long.
+    # - Labels must begin and end with an alphanumeric character.
+    # - Only ASCII letters, digits, and hyphens are allowed within a label.
+    # - The top-level domain must contain at least one alphabetic character so
+    #   that purely numeric TLDs (e.g. "192.168.0.1") are rejected.
+    # Note: trailing dots are handled upstream by {.sanitize_instance_domain}
+    # before this method is called; Ruby's String#split discards the empty
+    # trailing field produced by a terminal dot, so a residual trailing dot
+    # passed directly does not cause a false negative.
+    #
     # @param hostname [String] host component without any port information.
     # @return [Boolean] true when the hostname is valid.
     def valid_hostname?(hostname)

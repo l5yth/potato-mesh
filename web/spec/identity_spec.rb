@@ -67,6 +67,53 @@ RSpec.describe PotatoMesh::App::Identity do
     end
   end
 
+  describe ".load_or_generate_instance_private_key error paths" do
+    it "re-raises Errno::EACCES when the keyfile exists but File.binread is denied" do
+      Dir.mktmpdir do |dir|
+        key_path = File.join(dir, "config", "potato-mesh", "keyfile")
+        FileUtils.mkdir_p(File.dirname(key_path))
+        # Write a placeholder so the file exists and File.exist? returns true.
+        File.write(key_path, "placeholder")
+
+        allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(key_path)
+        # Errno::EACCES is not in the rescued set (only OpenSSL::PKey::PKeyError
+        # and ArgumentError are caught), so it propagates to the caller.
+        allow(File).to receive(:binread).with(key_path).and_raise(Errno::EACCES, "Permission denied")
+
+        expect do
+          harness_class.load_or_generate_instance_private_key
+        end.to raise_error(Errno::EACCES)
+      end
+    ensure
+      allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
+      allow(File).to receive(:binread).and_call_original
+    end
+
+    it "generates a fresh key and returns generated=true when the keyfile content is corrupt" do
+      Dir.mktmpdir do |dir|
+        key_path = File.join(dir, "config", "potato-mesh", "keyfile")
+        FileUtils.mkdir_p(File.dirname(key_path))
+        # Write corrupt / non-PEM content so OpenSSL::PKey.read raises.
+        File.write(key_path, "this is not a valid PEM key\n{corrupted}")
+
+        allow(PotatoMesh::Config).to receive(:keyfile_path).and_return(key_path)
+
+        # The method rescues OpenSSL::PKey::PKeyError internally, generates a
+        # new key, writes it out, and returns [new_key, true].
+        loaded_key, generated = harness_class.load_or_generate_instance_private_key
+
+        expect(generated).to be(true)
+        expect(loaded_key).to be_a(OpenSSL::PKey::RSA)
+        # Verify the new key was persisted to disk.
+        expect(File.exist?(key_path)).to be(true)
+        persisted = OpenSSL::PKey.read(File.binread(key_path))
+        expect(persisted.to_pem).to eq(loaded_key.to_pem)
+      end
+    ensure
+      allow(PotatoMesh::Config).to receive(:keyfile_path).and_call_original
+    end
+  end
+
   describe ".refresh_well_known_document_if_stale" do
     let(:storage_dir) { Dir.mktmpdir }
     let(:well_known_path) do

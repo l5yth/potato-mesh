@@ -2134,7 +2134,7 @@ def test_store_packet_dict_skips_hidden_channel(mesh_module, monkeypatch, capsys
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
     monkeypatch.setattr(
-        mesh.handlers,
+        mesh.handlers.ignored,
         "_record_ignored_packet",
         lambda packet, *, reason: ignored.append(reason),
     )
@@ -2204,7 +2204,7 @@ def test_store_packet_dict_skips_disallowed_channel(mesh_module, monkeypatch, ca
         lambda path, payload, *, priority: captured.append((path, payload, priority)),
     )
     monkeypatch.setattr(
-        mesh.handlers,
+        mesh.handlers.ignored,
         "_record_ignored_packet",
         lambda packet, *, reason: ignored.append(reason),
     )
@@ -2539,7 +2539,7 @@ def test_store_packet_dict_invalid_telemetry_type_is_dropped(mesh_module, monkey
 
     # Inject a bad type by monkey-patching the validator constant so we can
     # verify the drop path without needing a real packet with an impossible type.
-    monkeypatch.setattr(mesh.handlers, "_VALID_TELEMETRY_TYPES", frozenset())
+    monkeypatch.setattr(mesh.handlers.telemetry, "_VALID_TELEMETRY_TYPES", frozenset())
 
     packet = {
         "id": 3_000_000_010,
@@ -3278,8 +3278,8 @@ def test_store_packet_dict_records_ignored_packets(mesh_module, monkeypatch, tmp
 
     monkeypatch.setattr(mesh, "DEBUG", True)
     ignored_path = tmp_path / "ignored.txt"
-    monkeypatch.setattr(mesh.handlers, "_IGNORED_PACKET_LOG_PATH", ignored_path)
-    monkeypatch.setattr(mesh.handlers, "_IGNORED_PACKET_LOCK", threading.Lock())
+    monkeypatch.setattr(mesh.handlers.ignored, "_IGNORED_PACKET_LOG_PATH", ignored_path)
+    monkeypatch.setattr(mesh.handlers.ignored, "_IGNORED_PACKET_LOCK", threading.Lock())
 
     packet = {"decoded": {"portnum": "UNKNOWN"}}
     mesh.store_packet_dict(packet)

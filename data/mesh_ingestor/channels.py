@@ -182,6 +182,9 @@ def capture_from_interface(iface: Any) -> None:
     channels_obj = getattr(local_node, "channels", None) if local_node else None
 
     channel_entries: list[tuple[int, str]] = []
+    # Use a set for O(1) duplicate-index checks; Meshtastic occasionally
+    # emits the same channel index twice when the channel list is partially
+    # initialised, so we keep only the first valid entry per index.
     seen_indices: set[int] = set()
     for candidate in _iter_channel_objects(channels_obj):
         result = _channel_tuple(candidate)

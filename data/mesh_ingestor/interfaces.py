@@ -157,7 +157,21 @@ def _candidate_node_id(mapping: Mapping | None) -> str | None:
 
 
 def _extract_host_node_id(iface) -> str | None:
-    """Return the canonical node identifier for the connected host device."""
+    """Return the canonical node identifier for the connected host device.
+
+    Searches a sequence of well-known attribute names (``myInfo``,
+    ``my_node_info``, etc.) on ``iface`` for a mapping that contains a
+    recognisable node identifier, then falls back to the raw ``myNodeNum``
+    integer attribute.
+
+    Parameters:
+        iface: Live Meshtastic interface object, or any object that exposes
+            node-identity attributes in one of the expected forms.
+
+    Returns:
+        A canonical ``!xxxxxxxx`` node identifier, or ``None`` when no
+        identifiable host node information is available.
+    """
 
     if iface is None:
         return None
@@ -245,6 +259,9 @@ def _patch_meshtastic_nodeinfo_handler() -> None:
         with contextlib.suppress(Exception):
             mesh_interface_module = importlib.import_module("meshtastic.mesh_interface")
 
+    # Replace the module-level handler only once; the sentinel attribute prevents
+    # re-wrapping if _patch_meshtastic_nodeinfo_handler() is called again after
+    # the interface module is reloaded or re-imported.
     if not getattr(original, "_potato_mesh_safe_wrapper", False):
         module._onNodeInfoReceive = _build_safe_nodeinfo_callback(original)
 
@@ -303,6 +320,22 @@ def _patch_nodeinfo_handler_class(
         """Subclass that guards against missing node identifiers."""
 
         def onReceive(self, iface, packet):  # type: ignore[override]
+            """Normalise ``packet`` before dispatching to the parent handler.
+
+            Injects a canonical ``id`` field when one can be inferred from the
+            packet's other fields, then delegates to the original
+            ``NodeInfoHandler.onReceive``.  A ``KeyError`` on ``"id"`` is
+            suppressed because some firmware versions omit the field entirely.
+
+            Parameters:
+                iface: The Meshtastic interface that received the packet.
+                packet: Raw nodeinfo packet dict, possibly lacking an ``id``
+                    key.
+
+            Returns:
+                The return value of the parent handler, or ``None`` when a
+                missing ``"id"`` key would otherwise raise.
+            """
             normalised = _normalise_nodeinfo_packet(packet)
             if normalised is not None:
                 packet = normalised
@@ -638,6 +671,7 @@ class _DummySerialInterface:
         self.nodes: dict = {}
 
     def close(self) -> None:  # pragma: no cover - nothing to close
+        """No-op: the dummy interface holds no resources to release."""
         pass
 
 
@@ -688,6 +722,9 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
         if result:
             return result
 
+    # For bare "host:port" strings that urlparse may misparse, try a manual
+    # partition. The `startswith("[")` guard excludes IPv6 bracket notation
+    # (e.g. "[::1]:8080") because those already succeed via urlparse above.
     if value.count(":") == 1 and not value.startswith("["):
         host, _, port_text = value.partition(":")
         try:

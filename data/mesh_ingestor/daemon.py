@@ -26,6 +26,7 @@ from pubsub import pub
 
 from . import config, handlers, ingestors, interfaces
 from .provider import Provider
+from .utils import _retry_dict_snapshot
 
 _RECEIVE_TOPICS = (
     "meshtastic.receive",
@@ -82,9 +83,14 @@ def _subscribe_receive_topics() -> list[str]:
 
 
 def _node_items_snapshot(
-    nodes_obj, retries: int = 3
+    nodes_obj: object, retries: int = 3
 ) -> list[tuple[str, object]] | None:
     """Snapshot ``nodes_obj`` to avoid iteration errors during updates.
+
+    Uses :func:`~data.mesh_ingestor.utils._retry_dict_snapshot` to handle
+    both dict-like objects (``items()`` callable) and sequence-like objects
+    (``__iter__`` + ``__getitem__``) that Meshtastic may return depending on
+    firmware version.
 
     Parameters:
         nodes_obj: Meshtastic nodes mapping or iterable.
@@ -101,25 +107,15 @@ def _node_items_snapshot(
 
     items_callable = getattr(nodes_obj, "items", None)
     if callable(items_callable):
-        for _ in range(max(1, retries)):
-            try:
-                return list(items_callable())
-            except RuntimeError as err:
-                if "dictionary changed size during iteration" not in str(err):
-                    raise
-                time.sleep(0)
-        return None
+        return _retry_dict_snapshot(lambda: list(items_callable()), retries)
 
     if hasattr(nodes_obj, "__iter__") and hasattr(nodes_obj, "__getitem__"):
-        for _ in range(max(1, retries)):
-            try:
-                keys = list(nodes_obj)
-                return [(key, nodes_obj[key]) for key in keys]
-            except RuntimeError as err:
-                if "dictionary changed size during iteration" not in str(err):
-                    raise
-                time.sleep(0)
-        return None
+
+        def _snapshot_via_keys() -> list[tuple[str, object]]:
+            keys = list(nodes_obj)
+            return [(key, nodes_obj[key]) for key in keys]
+
+        return _retry_dict_snapshot(_snapshot_via_keys, retries)
 
     return []
 
@@ -321,6 +317,9 @@ def _try_connect(state: _DaemonState) -> bool:
                 target=state.resolved_target,
             )
             state.announced_target = True
+        # Set an absolute monotonic deadline for this energy-saving session.
+        # When the deadline passes, _check_energy_saving() will close the
+        # interface and sleep until the next wake interval.
         if state.energy_saving_enabled and state.energy_online_secs > 0:
             state.energy_session_deadline = time.monotonic() + state.energy_online_secs
         else:
@@ -588,9 +587,16 @@ def main(*, provider: Provider | None = None) -> None:
     )
 
     def handle_sigterm(*_args) -> None:
+        """Set the stop flag so the daemon loop exits cleanly on SIGTERM."""
         state.stop.set()
 
     def handle_sigint(signum, frame) -> None:
+        """Handle SIGINT (Ctrl-C) with graceful-first, hard-exit-second behaviour.
+
+        The first SIGINT sets the stop flag and lets the loop finish its
+        current iteration.  A second SIGINT delegates to the default handler,
+        which raises :class:`KeyboardInterrupt` and terminates immediately.
+        """
         if state.stop.is_set():
             signal.default_int_handler(signum, frame)
             return
