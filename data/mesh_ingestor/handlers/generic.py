@@ -342,8 +342,6 @@ def store_packet_dict(packet: Mapping) -> None:
     rssi = _first(packet, "rssi", "rx_rssi", "rxRssi", default=None)
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
 
-    encrypted_flag = _is_encrypted_flag(encrypted)
-
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
     if (
