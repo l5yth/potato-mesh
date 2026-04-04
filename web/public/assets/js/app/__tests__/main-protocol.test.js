@@ -49,127 +49,123 @@ function setupApp() {
   return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
 }
 
+/**
+ * Run a test body with a fresh app instance, ensuring cleanup regardless of
+ * outcome.  Eliminates the repetitive try/finally boilerplate across tests.
+ *
+ * @param {function(Object): void} fn Receives the _testUtils object.
+ */
+function withApp(fn) {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    fn(testUtils);
+  } finally {
+    cleanup();
+  }
+}
+
+/**
+ * Extract the serialised HTML string from a DOM element returned by the test
+ * utils.  The stub environment exposes innerHTML as a plain string; this
+ * normalises the fallback path for environments where it may not be.
+ *
+ * @param {HTMLElement} el
+ * @returns {string}
+ */
+function innerHtml(el) {
+  return String(typeof el.innerHTML === 'string' ? el.innerHTML : el.childNodes?.[0] ?? '');
+}
+
 // --- buildDisplayContext ---
 
 test('buildDisplayContext extracts protocol from trace candidate source', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
+  withApp((t) => {
     const entry = {
       nodeId: '!aabbccdd',
       trace: { protocol: 'meshcore', node_id: '!aabbccdd' },
     };
-    const ctx = testUtils.buildDisplayContext(entry);
+    const ctx = t.buildDisplayContext(entry);
     assert.equal(ctx.protocol, 'meshcore', 'protocol must be picked from entry.trace');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('buildDisplayContext extracts protocol from node candidate source', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
+  withApp((t) => {
     const entry = {
       nodeId: '!aabbccdd',
       node: { protocol: 'meshcore' },
     };
-    const ctx = testUtils.buildDisplayContext(entry);
+    const ctx = t.buildDisplayContext(entry);
     assert.equal(ctx.protocol, 'meshcore', 'protocol must be picked from entry.node');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('buildDisplayContext protocol is null when no candidate carries it', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
+  withApp((t) => {
     const entry = { nodeId: '!aabbccdd', node: { short_name: 'X' } };
-    const ctx = testUtils.buildDisplayContext(entry);
+    const ctx = t.buildDisplayContext(entry);
     assert.equal(ctx.protocol, null, 'protocol should be null when absent from all sources');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 // --- normalizeOverlaySource ---
 
 test('normalizeOverlaySource propagates string protocol field', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const result = testUtils.normalizeOverlaySource({ protocol: 'meshcore' });
+  withApp((t) => {
+    const result = t.normalizeOverlaySource({ protocol: 'meshcore' });
     assert.equal(result.protocol, 'meshcore');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('normalizeOverlaySource propagates "meshtastic" protocol', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const result = testUtils.normalizeOverlaySource({ protocol: 'meshtastic' });
+  withApp((t) => {
+    const result = t.normalizeOverlaySource({ protocol: 'meshtastic' });
     assert.equal(result.protocol, 'meshtastic');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('normalizeOverlaySource omits protocol when absent', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const result = testUtils.normalizeOverlaySource({ longName: 'Alice' });
+  withApp((t) => {
+    const result = t.normalizeOverlaySource({ longName: 'Alice' });
     assert.ok(!('protocol' in result), 'protocol should not be set when source has none');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('normalizeOverlaySource omits protocol when value is not a string', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const result = testUtils.normalizeOverlaySource({ protocol: 42 });
+  withApp((t) => {
+    const result = t.normalizeOverlaySource({ protocol: 42 });
     assert.ok(!('protocol' in result), 'protocol should not be set for non-string values');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 // --- buildMapPopupHtml ---
 
 test('buildMapPopupHtml includes meshtastic icon for null protocol', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const html = testUtils.buildMapPopupHtml({ long_name: 'Alice', node_id: '!abc123', protocol: null }, 0);
+  withApp((t) => {
+    const html = t.buildMapPopupHtml({ long_name: 'Alice', node_id: '!abc123', protocol: null }, 0);
     assert.ok(html.includes('meshtastic.svg'), 'popup should show meshtastic icon for null protocol');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('buildMapPopupHtml includes meshtastic icon for absent protocol', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const html = testUtils.buildMapPopupHtml({ long_name: 'Bob', node_id: '!abc456' }, 0);
+  withApp((t) => {
+    const html = t.buildMapPopupHtml({ long_name: 'Bob', node_id: '!abc456' }, 0);
     assert.ok(html.includes('meshtastic.svg'), 'popup should show meshtastic icon when protocol absent');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 test('buildMapPopupHtml omits meshtastic icon for meshcore protocol', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const html = testUtils.buildMapPopupHtml({ long_name: 'Eve', node_id: '!abc789', protocol: 'meshcore' }, 0);
+  withApp((t) => {
+    const html = t.buildMapPopupHtml({ long_name: 'Eve', node_id: '!abc789', protocol: 'meshcore' }, 0);
     assert.ok(!html.includes('meshtastic.svg'), 'popup should not show meshtastic icon for meshcore nodes');
-  } finally {
-    cleanup();
-  }
+  });
 });
 
 // --- createAnnouncementEntry ---
 
 test('createAnnouncementEntry prefixes meshtastic icon when protocol is meshtastic', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createAnnouncementEntry({
+  withApp((t) => {
+    const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
       shortName: 'ALI',
       longName: 'Alice',
@@ -178,17 +174,13 @@ test('createAnnouncementEntry prefixes meshtastic icon when protocol is meshtast
       nodeData: null,
       messageHtml: 'joined the mesh',
     });
-    const html = typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '';
-    assert.ok(String(html).includes('meshtastic.svg'), 'announcement should include meshtastic icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'announcement should include meshtastic icon');
+  });
 });
 
 test('createAnnouncementEntry prefixes meshtastic icon when protocol is absent', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createAnnouncementEntry({
+  withApp((t) => {
+    const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
       shortName: 'BOB',
       longName: 'Bob',
@@ -197,17 +189,13 @@ test('createAnnouncementEntry prefixes meshtastic icon when protocol is absent',
       nodeData: null,
       messageHtml: 'detected',
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(html.includes('meshtastic.svg'), 'announcement without protocol should show meshtastic icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'announcement without protocol should show meshtastic icon');
+  });
 });
 
 test('createAnnouncementEntry omits meshtastic icon for meshcore protocol', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createAnnouncementEntry({
+  withApp((t) => {
+    const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
       shortName: 'MC1',
       longName: 'MeshCore Node',
@@ -216,17 +204,13 @@ test('createAnnouncementEntry omits meshtastic icon for meshcore protocol', () =
       nodeData: null,
       messageHtml: 'seen',
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(!html.includes('meshtastic.svg'), 'announcement for meshcore should not include meshtastic icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(!innerHtml(div).includes('meshtastic.svg'), 'announcement for meshcore should not include meshtastic icon');
+  });
 });
 
 test('createAnnouncementEntry shows meshcore icon for meshcore protocol', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createAnnouncementEntry({
+  withApp((t) => {
+    const div = t.createAnnouncementEntry({
       timestampSeconds: 1000,
       shortName: 'MC1',
       longName: 'MeshCore Node',
@@ -236,71 +220,52 @@ test('createAnnouncementEntry shows meshcore icon for meshcore protocol', () => 
       nodeData: null,
       messageHtml: 'seen',
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(html.includes('meshcore.svg'), 'announcement for meshcore should include meshcore icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(innerHtml(div).includes('meshcore.svg'), 'announcement for meshcore should include meshcore icon');
+  });
 });
 
 // --- createMessageChatEntry ---
 
 test('createMessageChatEntry prefixes meshtastic icon when node protocol is meshtastic', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createMessageChatEntry({
+  withApp((t) => {
+    const div = t.createMessageChatEntry({
       text: 'hello mesh',
       rx_time: 1000,
       node: { short_name: 'ALI', role: 'CLIENT', protocol: 'meshtastic' },
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(html.includes('meshtastic.svg'), 'chat entry should include meshtastic icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'chat entry should include meshtastic icon');
+  });
 });
 
 test('createMessageChatEntry prefixes meshtastic icon when node protocol is absent', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createMessageChatEntry({
+  withApp((t) => {
+    const div = t.createMessageChatEntry({
       text: 'hi',
       rx_time: 2000,
       node: { short_name: 'BOB', role: 'ROUTER' },
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(html.includes('meshtastic.svg'), 'chat entry without protocol should show meshtastic icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(innerHtml(div).includes('meshtastic.svg'), 'chat entry without protocol should show meshtastic icon');
+  });
 });
 
 test('createMessageChatEntry omits meshtastic icon for meshcore node', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createMessageChatEntry({
+  withApp((t) => {
+    const div = t.createMessageChatEntry({
       text: 'test',
       rx_time: 3000,
       node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(!html.includes('meshtastic.svg'), 'chat entry for meshcore node should not show meshtastic icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(!innerHtml(div).includes('meshtastic.svg'), 'chat entry for meshcore node should not show meshtastic icon');
+  });
 });
 
 test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    const div = testUtils.createMessageChatEntry({
+  withApp((t) => {
+    const div = t.createMessageChatEntry({
       text: 'test',
       rx_time: 3000,
       node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
     });
-    const html = String(typeof div.innerHTML === 'string' ? div.innerHTML : div.childNodes?.[0] ?? '');
-    assert.ok(html.includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
-  } finally {
-    cleanup();
-  }
+    assert.ok(innerHtml(div).includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
+  });
 });
