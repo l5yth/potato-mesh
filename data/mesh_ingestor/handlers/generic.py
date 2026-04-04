@@ -209,13 +209,17 @@ def store_packet_dict(packet: Mapping) -> None:
         portnum_int is not None and portnum_int in store_forward_port_candidates
     ):
         if not isinstance(store_forward_section, Mapping):
-            _ignored_mod._record_ignored_packet(packet, reason="unsupported-store-forward")
+            _ignored_mod._record_ignored_packet(
+                packet, reason="unsupported-store-forward"
+            )
             return
         rr = str(store_forward_section.get("rr") or "").upper()
         if rr == "ROUTER_HEARTBEAT":
             store_router_heartbeat_packet(packet)
             return
-        _ignored_mod._record_ignored_packet(packet, reason="unsupported-store-forward-rr")
+        _ignored_mod._record_ignored_packet(
+            packet, reason="unsupported-store-forward-rr"
+        )
         return
 
     text = _first(decoded, "payload.text", "text", "data.text", default=None)
