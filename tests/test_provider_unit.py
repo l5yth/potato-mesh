@@ -1411,10 +1411,18 @@ async def _run_until_connected(iface, target, fake_mod, mod):
     return connected_event, error_holder
 
 
-def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
-    """_stop_event must exist before connect() returns so iface.close() avoids loop.stop()."""
+def _setup_stalled_run(monkeypatch):
+    """Shared setup for tests that need a *_run_meshcore* stalled at ``connect()``.
+
+    Patches ``_debug_log``, builds a fake ``meshcore`` module whose
+    ``connect()`` blocks on a :class:`asyncio.Event`, and injects it into
+    ``sys.modules``.
+
+    Returns:
+        tuple: ``(stall, _mod)`` where *stall* is the event that, when set,
+        lets ``connect()`` proceed, and *_mod* is the imported provider module.
+    """
     import asyncio
-    import threading
 
     import data.mesh_ingestor.providers.meshcore as _mod
 
@@ -1422,18 +1430,43 @@ def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
     stall = asyncio.Event()
     fake_mod = _make_fake_meshcore_mod(connect_stall_event=stall)
     monkeypatch.setitem(sys.modules, "meshcore", fake_mod)
+    return stall, _mod
+
+
+async def _start_stalled_run(mod):
+    """Start *_run_meshcore* in a task and spin until ``_stop_event`` is installed.
+
+    ``_stop_event`` is guaranteed to be set before the first ``await`` inside
+    ``connect()``, so after this coroutine returns the task is parked inside
+    the stall event and ``iface._stop_event`` is ready for use.
+
+    Returns:
+        tuple: ``(iface, connected_event, error_holder, task)``
+    """
+    import asyncio
+    import threading
+
+    iface = _MeshcoreInterface(target=None)
+    connected_event = threading.Event()
+    error_holder: list = [None]
+    task = asyncio.create_task(
+        mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+    )
+    for _ in range(500):
+        await asyncio.sleep(0)
+        if iface._stop_event is not None:
+            break
+    return iface, connected_event, error_holder, task
+
+
+def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
+    """_stop_event must exist before connect() returns so iface.close() avoids loop.stop()."""
+    import asyncio
+
+    stall, _mod = _setup_stalled_run(monkeypatch)
 
     async def _runner() -> None:
-        iface = _MeshcoreInterface(target=None)
-        connected_event = threading.Event()
-        error_holder: list = [None]
-        task = asyncio.create_task(
-            _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
-        )
-        for _ in range(500):
-            await asyncio.sleep(0)
-            if iface._stop_event is not None:
-                break
+        iface, connected_event, _err, task = await _start_stalled_run(_mod)
         assert (
             iface._stop_event is not None
         ), "_stop_event must be set before connect() completes"
@@ -1441,6 +1474,40 @@ def test_run_meshcore_stop_event_before_connect_finishes(monkeypatch):
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+    asyncio.run(_runner())
+
+
+def test_run_meshcore_close_before_connect_completes(monkeypatch):
+    """close() while connect() is stalled must surface ClosedBeforeConnectedError.
+
+    The coroutine should:
+    - Set ``connected_event`` so the caller is unblocked.
+    - Store a :class:`ClosedBeforeConnectedError` in ``error_holder[0]``.
+    - Leave ``iface.isConnected`` as ``False``.
+    """
+    import asyncio
+
+    stall, _mod = _setup_stalled_run(monkeypatch)
+
+    async def _runner() -> None:
+        iface, connected_event, error_holder, task = await _start_stalled_run(_mod)
+        assert iface._stop_event is not None
+
+        # Signal shutdown then let connect() return — simulating iface.close()
+        # being called while the device handshake is still in flight.
+        iface._stop_event.set()
+        stall.set()
+        await task
+
+        assert connected_event.is_set(), "connected_event must be set to unblock caller"
+        assert isinstance(
+            error_holder[0], _mod.ClosedBeforeConnectedError
+        ), "error_holder must contain ClosedBeforeConnectedError"
+        assert isinstance(
+            error_holder[0], ConnectionError
+        ), "ClosedBeforeConnectedError must be a ConnectionError subclass"
+        assert iface.isConnected is False, "isConnected must remain False"
 
     asyncio.run(_runner())
 

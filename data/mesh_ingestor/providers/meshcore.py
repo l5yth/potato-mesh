@@ -54,6 +54,22 @@ from .. import config
 from ..connection import default_serial_targets, parse_ble_target, parse_tcp_target
 
 # ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class ClosedBeforeConnectedError(ConnectionError):
+    """Raised when :meth:`_MeshcoreInterface.close` is called while the
+    connection coroutine is still waiting for the device handshake to complete.
+
+    This is a :exc:`ConnectionError` subclass so callers that only handle the
+    base class continue to work, while callers that need to distinguish a
+    user-initiated shutdown from a hardware failure can catch this type
+    specifically.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Debug log file
 # ---------------------------------------------------------------------------
 
@@ -690,7 +706,7 @@ async def _run_meshcore(
             )
 
         if stop_event.is_set():
-            raise ConnectionError(
+            raise ClosedBeforeConnectedError(
                 "Mesh interface close was requested before the connection could be completed."
             )
 
