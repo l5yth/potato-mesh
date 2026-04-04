@@ -1,12 +1,12 @@
 # Repository Guidelines
 
-Keep code well structured, modular, and not monolithic. If modules get to big, consider submodules structure.
+Keep code as modular as possible to reduce duplication and improve reusability and readability. If a module grows large, split it into a submodule structure. Prefer composing small, single-purpose units over monolithic files.
 
 Make sure all tests pass for Python (`pytest`), Ruby (`rspec`), and JavaScript (`npm test`).
 
-Make sure all code is properly inline documented (PDoc, RDoc, JSDoc, et.c). We do not want any undocumented code.
+All code must be 100% unit tested — every line, branch, and code path must have a unit test. "100%" is the floor, not the ceiling: smoke tests, integration tests, and end-to-end tests come on top of that. No new code ships without matching unit tests.
 
-Make sure all code is 100% unit tested. We want all lines, units, and branches to be thouroughly covered by tests.
+All code must be 100% documented according to the language's API-doc standard (PDoc for Python, RDoc for Ruby, JSDoc for JavaScript, rustdoc for Rust, dartdoc for Dart). Documentation must be sufficient to generate complete API docs from source. In addition to API-level docs, add inline comments wherever the logic is not immediately self-evident.
 
 New source files should have Apache v2 license headers using the exact string `Copyright © 2025-26 l5yth & contributors`.
 
@@ -50,6 +50,13 @@ The `data/mesh_ingestor/provider.py` module defines a `@runtime_checkable` `Prov
 4. Cover the provider with unit tests in `tests/test_provider_unit.py` — at minimum an `isinstance(..., Provider)` conformance check and any retry/error-handling paths.
 
 Consult `data/mesh_ingestor/CONTRACTS.md` for the canonical event shapes all providers must emit.
+
+## GitHub Configuration Standards
+Every language used in the repository must have a Dependabot entry checking for dependency updates on a **weekly** schedule. Keep the Dependabot config up to date as new languages or package ecosystems are added.
+
+Codecov must be configured with a **100% coverage target** and a **10% threshold** (i.e. a drop of more than 10 percentage points fails the check). The `codecov.yml` should enforce this on both patch and project coverage.
+
+Every service/component must have at least one GitHub Actions workflow that **builds and runs tests on pull requests against `main` and on direct pushes to `main`**. Workflows should cover all relevant test suites (Python, Ruby, JS, Rust, Flutter) for the components they touch.
 
 ## Commit & Pull Request Guidelines
 Commits should stay imperative and reference issues the way history does (`Add chat log entries... (#408)`). Squash noisy work-in-progress commits before pushing. Pull requests need a concise summary, screenshots or curl traces for UI/API tweaks, and links to tracked issues. Paste the command output for the test suites you ran and mention configuration toggles (`API_TOKEN`, `PRIVATE`) reviewers must set.

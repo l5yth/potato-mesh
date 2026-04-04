@@ -1372,6 +1372,74 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
+  describe ".fetch_instance_json network timeout and malformed response" do
+    let(:uri_https) { URI.parse("https://remote.example.com/api/nodes") }
+    let(:uri_http) { URI.parse("http://remote.example.com/api/nodes") }
+
+    before do
+      allow(PotatoMesh::Config).to receive(:remote_instance_http_timeout).and_return(5)
+      allow(PotatoMesh::Config).to receive(:remote_instance_read_timeout).and_return(10)
+      allow(PotatoMesh::Config).to receive(:remote_instance_request_timeout).and_return(15)
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip("203.0.113.5")])
+    end
+
+    it "returns nil and an error list when a network timeout occurs" do
+      # perform_instance_http_request wraps all StandardError subclasses
+      # (including Timeout::Error) into InstanceFetchError before returning to
+      # fetch_instance_json, which then records the message as an error entry.
+      allow(federation_helpers).to receive(:perform_instance_http_request).and_raise(
+        PotatoMesh::App::InstanceFetchError, "Timeout::Error: execution expired",
+      )
+
+      result, errors = federation_helpers.send(:fetch_instance_json, "remote.example.com", "/api/nodes")
+
+      expect(result).to be_nil
+      # At least one error entry should mention the timeout.
+      expect(errors).to be_an(Array)
+      expect(errors).not_to be_empty
+      expect(errors.any? { |e| e.include?("Timeout") || e.include?("expired") }).to be(true)
+    end
+
+    it "returns nil and an error list when a Net::OpenTimeout fires" do
+      # Net::OpenTimeout inherits from Timeout::Error; perform_instance_http_request
+      # wraps it into InstanceFetchError with the class name prepended.
+      allow(federation_helpers).to receive(:perform_instance_http_request).and_raise(
+        PotatoMesh::App::InstanceFetchError, "Net::OpenTimeout: Failed to open TCP connection",
+      )
+
+      result, errors = federation_helpers.send(:fetch_instance_json, "remote.example.com", "/api/nodes")
+
+      expect(result).to be_nil
+      expect(errors).not_to be_empty
+      expect(errors.any? { |e| e.include?("Timeout") || e.include?("TCP") }).to be(true)
+    end
+
+    it "returns nil and records the parse error when the remote responds with 200 but invalid JSON" do
+      # perform_instance_http_request returns the raw body string on success;
+      # fetch_instance_json then calls JSON.parse on it and must handle the
+      # JSON::ParserError gracefully.
+      allow(federation_helpers).to receive(:perform_instance_http_request).and_return(
+        "not valid { json [",
+      )
+
+      result, errors = federation_helpers.send(:fetch_instance_json, "remote.example.com", "/api/nodes")
+
+      expect(result).to be_nil
+      expect(errors).not_to be_empty
+      expect(errors.any? { |e| e.include?("invalid JSON") }).to be(true)
+    end
+
+    it "returns nil and records the parse error when the body is an empty string" do
+      # An empty body is not valid JSON; JSON.parse raises a ParserError.
+      allow(federation_helpers).to receive(:perform_instance_http_request).and_return("")
+
+      result, errors = federation_helpers.send(:fetch_instance_json, "remote.example.com", "/api/nodes")
+
+      expect(result).to be_nil
+      expect(errors).not_to be_empty
+    end
+  end
+
   describe ".start_federation_announcer!" do
     it "clears shutdown, installs hook, and exits loop when sleep aborts" do
       thread_double = instance_double(Thread)

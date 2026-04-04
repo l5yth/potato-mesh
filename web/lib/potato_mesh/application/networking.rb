@@ -288,6 +288,13 @@ module PotatoMesh
 
       # Normalize IPv6 instance domains so that they remain bracketed and URI-compatible.
       #
+      # RFC 3986 §3.2.2 requires IPv6 literals inside a URI authority component to
+      # be enclosed in square brackets (e.g. [::1]).  Bare IPv6 addresses stored in
+      # the database or supplied via the INSTANCE_DOMAIN environment variable must
+      # therefore be wrapped before they can appear in outbound federation URLs.
+      # This method handles three forms: already-bracketed (may include port),
+      # bare IPv6 with an appended decimal port, and bare IPv6 with no port.
+      #
       # @param domain [String] sanitized hostname optionally including a port suffix.
       # @return [String] domain with IPv6 literals wrapped in brackets when necessary.
       def ensure_ipv6_instance_domain(domain)

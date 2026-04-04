@@ -185,6 +185,58 @@ RSpec.describe "Ingestor endpoints" do
     end
   end
 
+  describe "POST /api/ingestors additional error branches" do
+    it "accepts a payload where start_time is missing (server falls back to now)" do
+      # upsert_ingestor falls back to Time.now.to_i when start_time is nil,
+      # so the request succeeds rather than returning 400.
+      post "/api/ingestors", ingestor_payload(start_time: nil).to_json, auth_headers
+
+      expect(last_response.status).to eq(200)
+    end
+
+    it "accepts a payload where last_seen_time is missing (falls back to start_time)" do
+      post "/api/ingestors", ingestor_payload(last_seen_time: nil).to_json, auth_headers
+
+      expect(last_response.status).to eq(200)
+    end
+
+    it "rejects a payload where node_id is missing" do
+      post "/api/ingestors", ingestor_payload(node_id: nil).to_json, auth_headers
+
+      expect(last_response.status).to eq(400)
+    end
+
+    it "accepts a payload where lora_freq is a non-numeric string (coerced to nil)" do
+      # coerce_integer returns nil for non-numeric strings; the route still
+      # succeeds and stores lora_freq as NULL.
+      post "/api/ingestors", ingestor_payload(lora_freq: "not-a-number").to_json, auth_headers
+
+      expect(last_response.status).to eq(200)
+    end
+
+    it "returns 200 when optional lora_freq is absent entirely" do
+      payload = ingestor_payload
+      payload.delete(:lora_freq)
+      post "/api/ingestors", payload.to_json, auth_headers
+
+      expect(last_response.status).to eq(200)
+    end
+
+    it "returns 403 with the wrong bearer token" do
+      post "/api/ingestors", ingestor_payload.to_json,
+           "CONTENT_TYPE" => "application/json",
+           "HTTP_AUTHORIZATION" => "Bearer wrong-token"
+
+      expect(last_response.status).to eq(403)
+    end
+
+    it "returns 403 without any Authorization header" do
+      post "/api/ingestors", ingestor_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(403)
+    end
+  end
+
   describe "schema migrations" do
     it "creates the ingestors table with frequency and modem columns" do
       tmp_db = File.join(SPEC_TMPDIR, "ingestor-migrate.db")

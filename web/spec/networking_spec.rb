@@ -60,4 +60,70 @@ RSpec.describe PotatoMesh::Application do
       end
     end
   end
+
+  describe ".ip_address_candidates and .discover_local_ip_address with no interfaces" do
+    it "returns an empty list when Socket.ip_address_list returns nothing" do
+      allow(Socket).to receive(:ip_address_list).and_return([])
+
+      candidates = described_class.ip_address_candidates
+
+      expect(candidates).to eq([])
+    end
+
+    it "falls back to 127.0.0.1 when there are no candidate addresses at all" do
+      allow(Socket).to receive(:ip_address_list).and_return([])
+
+      result = described_class.discover_local_ip_address
+
+      expect(result).to eq("127.0.0.1")
+    end
+  end
+
+  describe ".discover_local_ip_address with IPv6-only addresses" do
+    it "returns the non-loopback IPv6 address when only IPv6 is available" do
+      # Simulate a host that has only a loopback (::1) and a link-local fe80::
+      # address – both are non-IPv4, but the link-local candidate is picked
+      # as the non-loopback fallback.
+      loopback_addr = instance_double(
+        Addrinfo,
+        ip?: true,
+        ipv4?: false,
+        ipv4_loopback?: false,
+        ipv6_loopback?: true,
+        ip_address: "::1",
+      )
+      link_local_addr = instance_double(
+        Addrinfo,
+        ip?: true,
+        ipv4?: false,
+        ipv4_loopback?: false,
+        ipv6_loopback?: false,
+        ip_address: "fe80::1",
+      )
+
+      allow(Socket).to receive(:ip_address_list).and_return([loopback_addr, link_local_addr])
+
+      result = described_class.discover_local_ip_address
+
+      # The first non-loopback address (fe80::1) should be returned.
+      expect(result).to eq("fe80::1")
+    end
+
+    it "returns the loopback address when every candidate is loopback" do
+      loopback_addr = instance_double(
+        Addrinfo,
+        ip?: true,
+        ipv4?: false,
+        ipv4_loopback?: false,
+        ipv6_loopback?: true,
+        ip_address: "::1",
+      )
+
+      allow(Socket).to receive(:ip_address_list).and_return([loopback_addr])
+
+      result = described_class.discover_local_ip_address
+
+      expect(result).to eq("::1")
+    end
+  end
 end

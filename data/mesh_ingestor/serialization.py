@@ -128,6 +128,10 @@ def _load_cli_role_lookup() -> dict[int, str]:
                 mapping[key_int] = str(value)
         return mapping
 
+    # Iterate through candidate module paths in preference order.  The CLI
+    # package ships several role-enum locations across versions; we stop at
+    # the first module that yields a non-empty mapping so we do not silently
+    # merge partial enums from two different meshtastic-cli releases.
     for module_name in _CLI_ROLE_MODULE_NAMES:
         try:
             module = importlib.import_module(module_name)

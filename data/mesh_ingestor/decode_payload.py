@@ -59,6 +59,17 @@ def _decode_payload(portnum: int, payload_b64: str) -> dict[str, Any]:
 
 
 def main() -> int:
+    """Read a JSON request from stdin and write a decoded protobuf response to stdout.
+
+    Reads a single JSON object containing ``portnum`` (int) and
+    ``payload_b64`` (base-64 encoded bytes) from standard input, decodes the
+    protobuf payload via :func:`_decode_payload`, and writes the result as
+    JSON to standard output.
+
+    Returns:
+        ``0`` on success, ``1`` when the input is malformed or required fields
+        are absent.
+    """
     raw = sys.stdin.read()
     try:
         request = json.loads(raw)
