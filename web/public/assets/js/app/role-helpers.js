@@ -156,12 +156,18 @@ export function getRoleKey(role) {
 /**
  * Determine the colour assigned to a role for legend badges.
  *
+ * Pass the node's ``protocol`` field to select the correct palette: MeshCore
+ * roles are looked up in {@link meshcoreRoleColors}; everything else falls
+ * back to the Meshtastic {@link roleColors} palette.
+ *
  * @param {*} role Raw role value.
+ * @param {string|null|undefined} [protocol] Protocol string from the API.
  * @returns {string} CSS colour string.
  */
-export function getRoleColor(role) {
+export function getRoleColor(role, protocol = null) {
+  const colors = getRoleColors(protocol);
   const key = getRoleKey(role);
-  return roleColors[key] || roleColors.CLIENT || '#3388ff';
+  return colors[key] || roleColors.CLIENT || '#3388ff';
 }
 
 /**

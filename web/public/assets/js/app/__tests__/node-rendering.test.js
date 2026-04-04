@@ -138,6 +138,21 @@ test('renderNodeLongNameLink uses meshcore icon for meshcore protocol', () => {
   assert.ok(html.includes('meshcore.svg'), 'meshcore icon should be shown');
 });
 
+test('renderNodeLongNameLink renders meshcore icon for meshcore protocol', () => {
+  const html = renderNodeLongNameLink('Eve', '!aabbccdd', { protocol: 'meshcore' });
+  assert.ok(html.includes('meshcore.svg'), 'meshcore icon should be shown for meshcore protocol');
+});
+
+test('renderNodeLongNameLink omits meshcore icon for meshtastic protocol', () => {
+  const html = renderNodeLongNameLink('Alice', '!aabbccdd', { protocol: 'meshtastic' });
+  assert.ok(!html.includes('meshcore.svg'), 'no meshcore icon for meshtastic protocol');
+});
+
+test('renderNodeLongNameLink omits meshcore icon for null protocol', () => {
+  const html = renderNodeLongNameLink('Alice', '!aabbccdd', { protocol: null });
+  assert.ok(!html.includes('meshcore.svg'), 'no meshcore icon for null protocol');
+});
+
 test('renderNodeLongNameLink renders plain text when identifier is null', () => {
   const html = renderNodeLongNameLink('Alice', null);
   assert.ok(!html.includes('<a'), 'should not produce anchor without identifier');

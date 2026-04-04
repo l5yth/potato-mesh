@@ -219,6 +219,7 @@ def _contact_to_node_dict(contact: dict) -> dict:
     role = _meshcore_adv_type_to_role(contact.get("type"))
     node: dict = {
         "lastHeard": contact.get("last_advert"),
+        "protocol": "meshcore",
         "user": {
             "longName": name,
             "shortName": _meshcore_short_name(pub_key),
@@ -249,6 +250,7 @@ def _self_info_to_node_dict(self_info: dict) -> dict:
     role = _meshcore_adv_type_to_role(self_info.get("adv_type"))
     node: dict = {
         "lastHeard": int(time.time()),
+        "protocol": "meshcore",
         "user": {
             "longName": name,
             "shortName": _meshcore_short_name(pub_key),

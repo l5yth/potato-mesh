@@ -70,3 +70,19 @@ test('getRoleColors returns MeshCore palette for meshcore protocol', () => {
 test('getRoleColors returns Meshtastic palette for unknown protocols', () => {
   assert.equal(getRoleColors('reticulum'), roleColors);
 });
+
+test('getRoleColor uses meshcore palette when protocol is meshcore', () => {
+  assert.equal(getRoleColor('COMPANION', 'meshcore'), meshcoreRoleColors.COMPANION);
+  assert.equal(getRoleColor('REPEATER', 'meshcore'), meshcoreRoleColors.REPEATER);
+  assert.equal(getRoleColor('ROOM_SERVER', 'meshcore'), meshcoreRoleColors.ROOM_SERVER);
+  assert.equal(getRoleColor('SENSOR', 'meshcore'), meshcoreRoleColors.SENSOR);
+});
+
+test('getRoleColor uses meshtastic palette when protocol is null', () => {
+  assert.equal(getRoleColor('ROUTER', null), roleColors.ROUTER);
+  assert.equal(getRoleColor('CLIENT', null), roleColors.CLIENT);
+});
+
+test('getRoleColor falls back to CLIENT color for unknown meshcore role', () => {
+  assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshcore'), roleColors.CLIENT);
+});

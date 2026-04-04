@@ -1848,7 +1848,7 @@ export function initializeApp(config) {
       return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
     }
     const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
-    const color = getRoleColor(roleValue);
+    const color = getRoleColor(roleValue, nodeData?.protocol ?? null);
     return `<span class="short-name" style="background:${color}"${titleAttr}${infoAttr}>${padded}</span>`;
   }
 
@@ -3933,7 +3933,7 @@ export function initializeApp(config) {
       ? buildTraceSegments(allTraces, nodes, {
           limitDistance: LIMIT_DISTANCE,
           maxDistanceKm: MAX_DISTANCE_KM,
-          colorForNode: node => getRoleColor(node.role)
+          colorForNode: node => getRoleColor(node.role, node.protocol)
         })
       : [];
 
@@ -3991,7 +3991,7 @@ export function initializeApp(config) {
 
         neighborSegments.push({
           latlngs: [[srcLat, srcLon], [tgtLat, tgtLon]],
-          color: getRoleColor(sourceNode.role),
+          color: getRoleColor(sourceNode.role, sourceNode.protocol),
           priority,
           rxTime,
           sourceId,
@@ -4137,7 +4137,7 @@ export function initializeApp(config) {
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
       if (LIMIT_DISTANCE && n.distance_km != null && n.distance_km > MAX_DISTANCE_KM) continue;
 
-      const color = getRoleColor(n.role);
+      const color = getRoleColor(n.role, n.protocol);
       const marker = L.circleMarker([lat, lon], {
         radius: 9,
         color: '#000',
