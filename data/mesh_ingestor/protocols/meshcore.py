@@ -451,7 +451,7 @@ async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
     """Probe channel names from the device and populate the channel cache.
 
     Iterates indices 0 through *max_idx* - 1, requesting each via
-    :meth:`~meshcore.MeshCore.get_channel`.  The responses arrive as
+    :meth:`~meshcore.MeshCore.commands.get_channel`.  The responses arrive as
     :attr:`~meshcore.EventType.CHANNEL_INFO` events and are registered into
     the shared channel cache via :func:`~data.mesh_ingestor.channels.register_channel`.
 
@@ -471,7 +471,7 @@ async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
     consecutive_errors = 0
     for idx in range(max_idx):
         try:
-            evt = await mc.get_channel(idx)
+            evt = await mc.commands.get_channel(idx)
             if evt.type == EventType.CHANNEL_INFO:
                 name = (evt.payload or {}).get("channel_name", "")
                 if name:

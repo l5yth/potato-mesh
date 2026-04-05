@@ -1195,7 +1195,7 @@ def _make_fake_mc_for_channels(channel_map: dict):
     """
     import asyncio
 
-    class _FakeMC:
+    class _FakeCommands:
         async def get_channel(self, idx):
             name = channel_map.get(idx)
             if name is None:
@@ -1207,7 +1207,8 @@ def _make_fake_mc_for_channels(channel_map: dict):
                 payload={"channel_idx": idx, "channel_name": name},
             )
 
-    return _FakeMC()
+    mc = types.SimpleNamespace(commands=_FakeCommands())
+    return mc
 
 
 def test_ensure_channel_names_populates_cache(monkeypatch):
@@ -1256,14 +1257,14 @@ def test_ensure_channel_names_stops_on_three_consecutive_errors(monkeypatch):
 
     probed: list[int] = []
 
-    class _FakeMC:
+    class _FakeCommands:
         async def get_channel(self, idx):
             probed.append(idx)
             return types.SimpleNamespace(
                 type=EventType.ERROR, payload={"reason": "not_found"}
             )
 
-    asyncio.run(_ensure_channel_names(_FakeMC(), max_idx=8))
+    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands()), max_idx=8))
 
     # Should stop after 3 consecutive errors (indices 0, 1, 2).
     assert probed == [0, 1, 2]
@@ -1282,12 +1283,12 @@ def test_ensure_channel_names_stops_on_exception(monkeypatch):
         _mod.config, "_debug_log", lambda *_a, severity=None, **_k: logged.append(severity)
     )
 
-    class _FakeMC:
+    class _FakeCommands:
         async def get_channel(self, idx):
             raise OSError("serial port disconnected")
 
     # Must complete without raising.
-    asyncio.run(_ensure_channel_names(_FakeMC(), max_idx=4))
+    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands()), max_idx=4))
 
     assert "warning" in logged
     _channels._reset_channel_cache()
@@ -1635,9 +1636,15 @@ def _make_fake_meshcore_mod(
         ],
     )
 
+    class _FakeCommands:
+        async def get_channel(self, idx):
+            # Return ERROR for all channels — channel probing is not under test here.
+            return types.SimpleNamespace(type=EventType.ERROR, payload={})
+
     class _FakeMeshCore:
         def __init__(self, cx):
             self._catch_all = None
+            self.commands = _FakeCommands()
 
         def subscribe(self, event_type, callback):
             if event_type is None:
@@ -1651,10 +1658,6 @@ def _make_fake_meshcore_mod(
         async def ensure_contacts(self):
             if fail_ensure_contacts:
                 raise RuntimeError("contacts unavailable")
-
-        async def get_channel(self, idx):
-            # Return ERROR for all channels — channel probing is not under test here.
-            return types.SimpleNamespace(type=EventType.ERROR, payload={})
 
         async def start_auto_message_fetching(self):
             pass
