@@ -209,4 +209,292 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(result).to be_nil
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # upsert_node — Bug 1: lastHeard = 0 must not be stored as 0
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — last_heard zero handling" do
+    around do |example|
+      Dir.mktmpdir("dp-spec-upsert-") do |dir|
+        db_path = File.join(dir, "mesh.db")
+        RSpec::Mocks.with_temporary_scope do
+          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
+          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
+          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
+          allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
+          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
+          db_helper = Object.new.extend(PotatoMesh::App::Database)
+          db_helper.init_db
+          db_helper.ensure_schema_upgrades
+          example.run
+        end
+      end
+    end
+
+    def open_db
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.results_as_hash = true
+      db
+    end
+
+    let(:now) { Time.now.to_i }
+
+    it "stores last_heard as approximately now when lastHeard is 0 and no position" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
+      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["last_heard"]).to be_within(5).of(now)
+    end
+
+    it "stores last_heard from position time when lastHeard is 0 and position is present" do
+      pt = now - 300
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => 0,
+        "num" => 0xaabbccdd,
+        "position" => { "time" => pt, "latitude" => 1.0, "longitude" => 2.0 },
+      })
+      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["last_heard"]).to eq(pt)
+    end
+
+    it "does not store 0 as last_heard regardless of the incoming value" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
+      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["last_heard"]).not_to eq(0)
+    end
+
+    it "stores a positive lastHeard value as-is" do
+      lh = now - 120
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => lh, "num" => 0xaabbccdd })
+      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["last_heard"]).to eq(lh)
+    end
+
+    it "includes the node in query_nodes results after lastHeard=0 fix" do
+      include PotatoMesh::App::Queries
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
+      db.close
+      # query_nodes uses a 7-day floor; the node must appear
+      allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
+      db2 = open_db
+      nodes = dp.query_nodes(100)
+      db2.close
+      node_ids = nodes.map { |n| n["node_id"] }
+      expect(node_ids).to include("!aabbccdd")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # upsert_node — Bug 2: role must not be reset by no-user packets
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — role preservation" do
+    around do |example|
+      Dir.mktmpdir("dp-spec-role-") do |dir|
+        db_path = File.join(dir, "mesh.db")
+        RSpec::Mocks.with_temporary_scope do
+          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
+          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
+          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
+          allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
+          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
+          db_helper = Object.new.extend(PotatoMesh::App::Database)
+          db_helper.init_db
+          db_helper.ensure_schema_upgrades
+          example.run
+        end
+      end
+    end
+
+    def open_db
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.results_as_hash = true
+      db
+    end
+
+    let(:now) { Time.now.to_i }
+
+    it "preserves an existing CLIENT_BASE role when a no-user packet arrives" do
+      db = open_db
+      # First insert: full user info with CLIENT_BASE role
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "num" => 0xaabbccdd,
+        "user" => { "role" => "CLIENT_BASE", "longName" => "Test Node", "shortName" => "TN" },
+      })
+      # Second update: higher lastHeard but no user section (topology packet)
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT role FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["role"]).to eq("CLIENT_BASE")
+    end
+
+    it "updates the role when an explicit role is supplied" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "num" => 0xaabbccdd,
+        "user" => { "role" => "CLIENT_BASE", "longName" => "Test Node", "shortName" => "TN" },
+      })
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "user" => { "role" => "CLIENT", "longName" => "Test Node", "shortName" => "TN" },
+      })
+      row = db.execute("SELECT role FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["role"]).to eq("CLIENT")
+    end
+
+    it "stores NULL role for new nodes without user info (display layer supplies CLIENT)" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT role FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      # NULL is stored; query_nodes applies r["role"] ||= "CLIENT" for display
+      expect(row["role"]).to be_nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # upsert_node — Bug 3: identity fields must not be overwritten with NULL
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — identity field preservation" do
+    around do |example|
+      Dir.mktmpdir("dp-spec-identity-") do |dir|
+        db_path = File.join(dir, "mesh.db")
+        RSpec::Mocks.with_temporary_scope do
+          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
+          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
+          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
+          allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
+          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
+          db_helper = Object.new.extend(PotatoMesh::App::Database)
+          db_helper.init_db
+          db_helper.ensure_schema_upgrades
+          example.run
+        end
+      end
+    end
+
+    def open_db
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.results_as_hash = true
+      db
+    end
+
+    let(:now) { Time.now.to_i }
+
+    def seed_node(db, overrides = {})
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "num" => 0xaabbccdd,
+        "user" => {
+          "role" => "CLIENT_BASE",
+          "longName" => "Real Long Name",
+          "shortName" => "RLN",
+          "macaddr" => "aa:bb:cc:dd:ee:ff",
+          "hwModel" => "TBEAM",
+          "publicKey" => "abc123",
+        },
+      }.merge(overrides))
+    end
+
+    it "preserves short_name when a no-user packet arrives" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT short_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["short_name"]).to eq("RLN")
+    end
+
+    it "updates short_name when a real value is supplied" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "user" => { "shortName" => "NEW", "longName" => "New Long Name" },
+      })
+      row = db.execute("SELECT short_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["short_name"]).to eq("NEW")
+    end
+
+    it "preserves long_name when a no-user packet arrives" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT long_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["long_name"]).to eq("Real Long Name")
+    end
+
+    it "does not overwrite a real long_name with a generic placeholder" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "user" => { "longName" => "Meshtastic CCDD", "shortName" => "RLN" },
+      })
+      row = db.execute("SELECT long_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["long_name"]).to eq("Real Long Name")
+    end
+
+    it "overwrites a generic placeholder long_name with a real long_name" do
+      db = open_db
+      # Insert node with generic placeholder name first
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "num" => 0xaabbccdd,
+        "user" => { "longName" => "Meshtastic CCDD", "shortName" => "CCDD" },
+      })
+      # Then update with a real name
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "user" => { "longName" => "Real Long Name", "shortName" => "RLN" },
+      })
+      row = db.execute("SELECT long_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["long_name"]).to eq("Real Long Name")
+    end
+
+    it "preserves macaddr when a no-user packet arrives" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT macaddr FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["macaddr"]).to eq("aa:bb:cc:dd:ee:ff")
+    end
+
+    it "preserves hw_model when a no-user packet arrives" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT hw_model FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["hw_model"]).to eq("TBEAM")
+    end
+
+    it "preserves public_key when a no-user packet arrives" do
+      db = open_db
+      seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
+      row = db.execute("SELECT public_key FROM nodes WHERE node_id = '!aabbccdd'").first
+      db.close
+      expect(row["public_key"]).to eq("abc123")
+    end
+  end
 end
