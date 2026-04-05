@@ -443,6 +443,51 @@ class _MeshcoreInterface:
 
 
 # ---------------------------------------------------------------------------
+# Channel name resolution
+# ---------------------------------------------------------------------------
+
+
+async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
+    """Probe channel names from the device and populate the channel cache.
+
+    Iterates indices 0 through *max_idx* - 1, requesting each via
+    :meth:`~meshcore.MeshCore.commands.get_channel`.  The responses arrive as
+    :attr:`~meshcore.EventType.CHANNEL_INFO` events and are registered into
+    the shared channel cache via :func:`~data.mesh_ingestor.channels.register_channel`.
+
+    Probes every index in ``range(max_idx)`` without early-stopping on
+    consecutive ``ERROR`` responses, so sparse configurations (e.g. slots 0
+    and 5 configured, slots 1-4 empty) are handled correctly.  Only a hard
+    exception (connection loss, timeout) aborts the loop early.
+
+    Parameters:
+        mc: Connected :class:`~meshcore.MeshCore` instance.
+        max_idx: Upper bound (exclusive) for channel indices to probe.
+            MeshCore companion firmware typically configures at most 8
+            channels (indices 0–7).
+    """
+    from .. import channels as _channels
+
+    for idx in range(max_idx):
+        try:
+            evt = await mc.commands.get_channel(idx)
+            if evt.type == EventType.CHANNEL_INFO:
+                name = (evt.payload or {}).get("channel_name", "")
+                if name:
+                    _channels.register_channel(idx, name)
+            # ERROR response — unconfigured slot; continue to next index
+        except Exception as exc:
+            config._debug_log(
+                "Channel probe failed",
+                context="meshcore.channels",
+                severity="warning",
+                channel_idx=idx,
+                error=str(exc),
+            )
+            break
+
+
+# ---------------------------------------------------------------------------
 # Handler logic helpers (module-level to keep _make_event_handlers lean)
 # ---------------------------------------------------------------------------
 
@@ -557,10 +602,18 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
     Returns:
         Mapping of ``EventType`` member name → async callback coroutine.
     """
-    # Deferred import to avoid a circular dependency: meshcore.py is imported by
-    # providers/__init__.py which is imported by the top-level mesh_ingestor
-    # package, while handlers.py imports from that same package.
+    # Deferred imports to avoid a circular dependency: meshcore.py is imported by
+    # protocols/__init__.py which is imported by the top-level mesh_ingestor
+    # package, while handlers.py and channels.py import from that same package.
+    from .. import channels as _channels
     from .. import handlers as _handlers
+
+    async def on_channel_info(evt) -> None:
+        payload = evt.payload or {}
+        idx = payload.get("channel_idx")
+        name = payload.get("channel_name", "")
+        if idx is not None and name:
+            _channels.register_channel(idx, name)
 
     async def on_self_info(evt) -> None:
         _process_self_info(evt.payload or {}, iface, _handlers)
@@ -645,6 +698,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         )
 
     return {
+        "CHANNEL_INFO": on_channel_info,
         "SELF_INFO": on_self_info,
         "CONTACTS": on_contacts,
         "NEW_CONTACT": on_contact_update,
@@ -774,6 +828,17 @@ async def _run_meshcore(
             config._debug_log(
                 "Failed to fetch initial contacts",
                 context="meshcore.contacts",
+                severity="warning",
+                always=True,
+                error=str(exc),
+            )
+
+        try:
+            await _ensure_channel_names(mc)
+        except Exception as exc:
+            config._debug_log(
+                "Failed to fetch channel names",
+                context="meshcore.channels",
                 severity="warning",
                 always=True,
                 error=str(exc),
