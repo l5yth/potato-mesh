@@ -56,7 +56,7 @@ import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { createNodeDetailOverlayManager } from './node-detail-overlay.js';
 import { refreshNodeInformation } from './node-details.js';
-import { extractModemMetadata, formatLoraFrequencyMHz, formatModemDisplay } from './node-modem-metadata.js';
+import { extractModemMetadata, formatLoraFrequencyMHz, formatModemDisplay, formatPresetDisplay } from './node-modem-metadata.js';
 import {
   TELEMETRY_FIELDS,
   buildTelemetryDisplayEntries,
@@ -4009,7 +4009,8 @@ export function initializeApp(config) {
       const modemMetadata = extractModemMetadata(n);
       const loraFrequencyText = formatLoraFrequencyMHz(modemMetadata.loraFreq);
       const loraFrequencyDisplay = loraFrequencyText ? escapeHtml(loraFrequencyText) : '';
-      const modemPresetDisplay = modemMetadata.modemPreset ? escapeHtml(modemMetadata.modemPreset) : '';
+      const resolvedPreset = formatPresetDisplay(modemMetadata.modemPreset, modemMetadata.loraFreq);
+      const modemPresetDisplay = resolvedPreset ? escapeHtml(resolvedPreset) : '';
       const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
       const protocolIconCell = protocolIconPrefixHtml(n.protocol);
       tr.innerHTML = `
