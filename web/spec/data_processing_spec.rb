@@ -136,14 +136,10 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     end
   end
 
-  # ---------------------------------------------------------------------------
-  # insert_telemetry (telemetry_type validation path)
-  # ---------------------------------------------------------------------------
-  describe "#insert_telemetry" do
+  shared_context "with isolated db" do
     around do |example|
       Dir.mktmpdir("dp-spec-") do |dir|
         db_path = File.join(dir, "mesh.db")
-
         RSpec::Mocks.with_temporary_scope do
           allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
           allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
@@ -165,6 +161,13 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     end
 
     let(:now) { Time.now.to_i }
+  end
+
+  # ---------------------------------------------------------------------------
+  # insert_telemetry (telemetry_type validation path)
+  # ---------------------------------------------------------------------------
+  describe "#insert_telemetry" do
+    include_context "with isolated db"
 
     let(:valid_payload) do
       {
@@ -214,30 +217,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # upsert_node — Bug 1: lastHeard = 0 must not be stored as 0
   # ---------------------------------------------------------------------------
   describe "#upsert_node — last_heard zero handling" do
-    around do |example|
-      Dir.mktmpdir("dp-spec-upsert-") do |dir|
-        db_path = File.join(dir, "mesh.db")
-        RSpec::Mocks.with_temporary_scope do
-          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
-          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
-          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
-          db_helper = Object.new.extend(PotatoMesh::App::Database)
-          db_helper.init_db
-          db_helper.ensure_schema_upgrades
-          example.run
-        end
-      end
-    end
-
-    def open_db
-      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-      db.results_as_hash = true
-      db
-    end
-
-    let(:now) { Time.now.to_i }
+    include_context "with isolated db"
 
     it "stores last_heard as approximately now when lastHeard is 0 and no position" do
       db = open_db
@@ -291,30 +271,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # upsert_node — Bug 2: role must not be reset by no-user packets
   # ---------------------------------------------------------------------------
   describe "#upsert_node — role preservation" do
-    around do |example|
-      Dir.mktmpdir("dp-spec-role-") do |dir|
-        db_path = File.join(dir, "mesh.db")
-        RSpec::Mocks.with_temporary_scope do
-          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
-          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
-          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
-          db_helper = Object.new.extend(PotatoMesh::App::Database)
-          db_helper.init_db
-          db_helper.ensure_schema_upgrades
-          example.run
-        end
-      end
-    end
-
-    def open_db
-      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-      db.results_as_hash = true
-      db
-    end
-
-    let(:now) { Time.now.to_i }
+    include_context "with isolated db"
 
     it "preserves an existing CLIENT_BASE role when a no-user packet arrives" do
       db = open_db
@@ -362,32 +319,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # upsert_node — Bug 3: identity fields must not be overwritten with NULL
   # ---------------------------------------------------------------------------
   describe "#upsert_node — identity field preservation" do
-    around do |example|
-      Dir.mktmpdir("dp-spec-identity-") do |dir|
-        db_path = File.join(dir, "mesh.db")
-        RSpec::Mocks.with_temporary_scope do
-          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
-          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
-          allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
-          allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
-          db_helper = Object.new.extend(PotatoMesh::App::Database)
-          db_helper.init_db
-          db_helper.ensure_schema_upgrades
-          example.run
-        end
-      end
-    end
+    include_context "with isolated db"
 
-    def open_db
-      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
-      db.results_as_hash = true
-      db
-    end
-
-    let(:now) { Time.now.to_i }
-
-    def seed_node(db, overrides = {})
+    def seed_node(db)
       dp.upsert_node(db, "!aabbccdd", {
         "lastHeard" => now - 100,
         "num" => 0xaabbccdd,
@@ -399,7 +333,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
           "hwModel" => "TBEAM",
           "publicKey" => "abc123",
         },
-      }.merge(overrides))
+      })
     end
 
     it "preserves short_name when a no-user packet arrives" do

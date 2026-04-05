@@ -352,26 +352,20 @@ module PotatoMesh
         user = n["user"] || {}
         met = n["deviceMetrics"] || {}
         pos = n["position"] || {}
-        # Keep role nil when user info is absent so the ON CONFLICT UPDATE can
-        # COALESCE against the stored value rather than blindly overwriting it
-        # with the "CLIENT" default.  The INSERT VALUES clause supplies the
-        # 'CLIENT' default for brand-new nodes.
+        # nil when user info absent; COALESCE in the conflict clause preserves
+        # the stored role rather than overwriting with a default.
         role = user["role"]
         lh = coerce_integer(n["lastHeard"])
         pt = coerce_integer(pos["time"])
         now = Time.now.to_i
         pt = nil if pt && pt > now
         lh = now if lh && lh > now
-        # Treat lastHeard = 0 as "not heard" — 0 is truthy in Ruby so
-        # `lh ||= now` would be a no-op, leaving the stored timestamp at 0 and
-        # causing the 7-day list filter to exclude this node permanently.
+        # 0 is truthy in Ruby — `lh ||= now` won't replace it, leaving the
+        # 7-day list filter to evaluate `0 >= now-7days` → false (node hidden).
         lh = nil if lh && lh <= 0
-        # Only use position time as a last_heard fallback when it is a real
-        # timestamp (> 0).  A position.time of 0 means no GPS fix and must not
-        # anchor last_heard (it would then also be 0, triggering the same
-        # exclusion bug).  pt itself is still stored as position_time as-is.
-        effective_pt = pt && pt > 0 ? pt : nil
-        lh = effective_pt if effective_pt && (!lh || lh < effective_pt)
+        # position.time = 0 means no GPS fix; skip it as a last_heard anchor
+        # (would re-introduce the same zero-timestamp exclusion bug for lh).
+        lh = pt if pt && pt > 0 && (!lh || lh < pt)
         lh ||= now
         node_num = resolve_node_num(node_id, n)
 
