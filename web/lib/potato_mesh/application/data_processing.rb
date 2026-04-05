@@ -371,8 +371,7 @@ module PotatoMesh
         # name already on record so we never stomp known data with fallback
         # text.  For new nodes there is nothing to preserve, so the generic
         # name is still written via the INSERT VALUES path.
-        long_name_conflict_sql =
-          if generic_fallback_name?(user["longName"], node_id, protocol)
+        long_name_conflict_sql = if generic_fallback_name?(user["longName"], node_id, protocol)
             # Generic placeholder: keep any real name already on record.
             # COALESCE returns nodes.long_name when non-null, otherwise falls
             # back to the incoming generic — so brand-new nodes still get it.
@@ -421,27 +420,27 @@ module PotatoMesh
         ]
         with_busy_retry do
           db.execute(<<~SQL, row)
-                       INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
-                                         hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                                         position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                       ON CONFLICT(node_id) DO UPDATE SET
-                         num=excluded.num, short_name=excluded.short_name, long_name=#{long_name_conflict_sql}, macaddr=excluded.macaddr,
-                         hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
-                         is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
-                         first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
-                         battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
-                         air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
-                         position_time=COALESCE(excluded.position_time, nodes.position_time),
-                         location_source=COALESCE(excluded.location_source, nodes.location_source),
-                         precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
-                         latitude=COALESCE(excluded.latitude, nodes.latitude),
-                         longitude=COALESCE(excluded.longitude, nodes.longitude),
-                         altitude=COALESCE(excluded.altitude, nodes.altitude),
-                         lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset,
-                         protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol)
-                       WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
-                     SQL
+            INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
+                              hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
+                              position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(node_id) DO UPDATE SET
+              num=excluded.num, short_name=excluded.short_name, long_name=#{long_name_conflict_sql}, macaddr=excluded.macaddr,
+              hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
+              is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+              first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
+              battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
+              air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
+              position_time=COALESCE(excluded.position_time, nodes.position_time),
+              location_source=COALESCE(excluded.location_source, nodes.location_source),
+              precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
+              latitude=COALESCE(excluded.latitude, nodes.latitude),
+              longitude=COALESCE(excluded.longitude, nodes.longitude),
+              altitude=COALESCE(excluded.altitude, nodes.altitude),
+              lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset,
+              protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol)
+            WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
+          SQL
         end
       end
 
