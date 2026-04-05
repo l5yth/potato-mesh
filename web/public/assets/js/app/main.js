@@ -3166,23 +3166,28 @@ export function initializeApp(config) {
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const messageProtocol = pickFirstProperty([m, m?.node], ['protocol']);
 
-    // For MeshCore channel messages the ingestor sets from_id = null, so
-    // m.node is null after hydration.  The sender long name is embedded as
-    // "SenderName: body" in the message text; parse it out and look up the
-    // node in the already-loaded nodesById map so we can render the badge
-    // and link properly.
+    // MeshCore channel messages use "SenderName: body" text format.  The
+    // ingestor tries to resolve from_id via the contacts roster; when it
+    // succeeds m.node is hydrated normally.  When it fails (contact not yet
+    // known), m.node is null and we fall back to a name-based lookup here.
+    // Detection: channel messages always have to_id "^all".
+    const toId = m.to_id ?? m.toId;
+    const isMeshcoreChannelMsg = isMeshcoreProtocol(messageProtocol) && toId === '^all';
+
     let meshcoreSenderNode = null;
     let parsedMeshcorePrefix = null;
-    const isMeshcoreChannelMsg = isMeshcoreProtocol(messageProtocol) && m.node == null;
     if (isMeshcoreChannelMsg && m?.text) {
       parsedMeshcorePrefix = parseMeshcoreSenderPrefix(String(m.text));
-      if (parsedMeshcorePrefix) {
+      // Only attempt the name lookup when the ingestor couldn't resolve the
+      // sender (m.node is null).  If it's already hydrated, m.node is used.
+      if (parsedMeshcorePrefix && !m.node) {
         meshcoreSenderNode = findNodeByLongName(parsedMeshcorePrefix.senderName, nodesById);
       }
     }
 
     let short;
-    if (isMeshcoreChannelMsg && meshcoreSenderNode) {
+    if (isMeshcoreChannelMsg && !m.node && meshcoreSenderNode) {
+      // Fallback: ingestor couldn't resolve sender, but JS found the node by name.
       short = renderShortHtml(
         meshcoreSenderNode.short_name ?? meshcoreSenderNode.shortName,
         meshcoreSenderNode.role,
@@ -3246,8 +3251,11 @@ export function initializeApp(config) {
       });
 
       // Prepend the linked sender name for channel messages.
+      // Prefer the hydrated m.node (ingestor resolved from_id) over the
+      // JS-side name-resolved fallback node.
       if (isMeshcoreChannelMsg && parsedMeshcorePrefix) {
-        const senderNodeId = meshcoreSenderNode?.node_id ?? meshcoreSenderNode?.nodeId ?? null;
+        const bodySenderNode = m.node || meshcoreSenderNode;
+        const senderNodeId = bodySenderNode?.node_id ?? bodySenderNode?.nodeId ?? null;
         const senderLink = renderNodeLongNameLink(
           parsedMeshcorePrefix.senderName,
           senderNodeId,

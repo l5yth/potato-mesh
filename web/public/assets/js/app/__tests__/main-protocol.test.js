@@ -293,6 +293,7 @@ test('createMessageChatEntry: meshcore channel message uses sender node short na
       text: 'T114-Zeh: Hello world',
       rx_time: 1000,
       protocol: 'meshcore',
+      to_id: '^all',
       node: null,
     });
     const html = innerHtml(div);
@@ -311,6 +312,7 @@ test('createMessageChatEntry: meshcore channel message links sender name to node
       text: 'T114-Zeh: Hello world',
       rx_time: 1000,
       protocol: 'meshcore',
+      to_id: '^all',
       node: null,
     });
     const html = innerHtml(div);
@@ -326,6 +328,7 @@ test('createMessageChatEntry: meshcore channel message, sender node not found â€
       text: 'UnknownSender: Hello',
       rx_time: 1000,
       protocol: 'meshcore',
+      to_id: '^all',
       node: null,
     });
     const html = innerHtml(div);
@@ -344,6 +347,7 @@ test('createMessageChatEntry: meshcore channel message, no colon in text â€” bod
       text: 'no colon here',
       rx_time: 1000,
       protocol: 'meshcore',
+      to_id: '^all',
       node: null,
     });
     const html = innerHtml(div);
@@ -362,6 +366,7 @@ test('createMessageChatEntry: meshcore message with @[Name] mention resolved to 
       text: 'BGruenauBot: ack @[T114-Zeh]',
       rx_time: 2000,
       protocol: 'meshcore',
+      to_id: '^all',
       node: null,
     });
     const html = innerHtml(div);
@@ -379,11 +384,36 @@ test('createMessageChatEntry: meshcore message with @[Name] mention, node not fo
       text: 'EchoBot: Pong! @[Ghost]',
       rx_time: 3000,
       protocol: 'meshcore',
+      to_id: '^all',
       node: null,
     });
     const html = innerHtml(div);
     // @[Ghost] mention with no matching node renders as escaped plain text
     assert.ok(html.includes('@[Ghost]'), 'unresolved mention should render as escaped @[Name] text');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message with hydrated node links sender name', () => {
+  // Simulates the case where the ingestor resolved from_id successfully.
+  // The node is hydrated (m.node is not null), and the body still has "SenderName: body".
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'T114-Zeh: Test message',
+      rx_time: 5000,
+      protocol: 'meshcore',
+      to_id: '^all',
+      // node is already hydrated by the ingestor-resolved from_id
+      node: { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+    });
+    const html = innerHtml(div);
+    // Sender name should be linked using m.node.node_id
+    assert.ok(html.includes('/nodes/!aabbccdd'), 'hydrated node should produce a link in the body');
+    assert.ok(html.includes('T114-Zeh'), 'sender name should appear as link text');
+    // Test message body should still be present
+    assert.ok(html.includes('Test message'), 'body text after colon should be rendered');
   });
 });
 

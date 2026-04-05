@@ -46,6 +46,7 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _meshcore_adv_type_to_role,
     _meshcore_node_id,
     _meshcore_short_name,
+    _parse_sender_name,
     _process_contact_update,
     _process_contacts,
     _process_self_info,
@@ -579,6 +580,104 @@ def test_pubkey_prefix_returns_none_for_empty_contacts():
 
 
 # ---------------------------------------------------------------------------
+# _parse_sender_name
+# ---------------------------------------------------------------------------
+
+
+def test_parse_sender_name_typical():
+    """Returns the name portion of 'SenderName: body' text."""
+    assert _parse_sender_name("T114-Zeh: Hello world") == "T114-Zeh"
+
+
+def test_parse_sender_name_trims_whitespace():
+    """Leading and trailing whitespace is stripped from the sender name."""
+    assert _parse_sender_name("  Alice : body  ") == "Alice"
+
+
+def test_parse_sender_name_body_may_contain_colons():
+    """Only the first colon separates sender from body; body colons are kept."""
+    assert _parse_sender_name("BGruenauBot: ack | 80,42,68 (3 hops)") == "BGruenauBot"
+
+
+def test_parse_sender_name_no_colon_returns_none():
+    """Returns None when the text contains no colon."""
+    assert _parse_sender_name("no colon here") is None
+
+
+def test_parse_sender_name_empty_string_returns_none():
+    """Returns None for an empty string."""
+    assert _parse_sender_name("") is None
+
+
+def test_parse_sender_name_colon_first_returns_none():
+    """Returns None when the colon is the first character (empty sender)."""
+    assert _parse_sender_name(":body") is None
+
+
+def test_parse_sender_name_whitespace_only_before_colon_returns_none():
+    """Returns None when only whitespace appears before the colon."""
+    assert _parse_sender_name("   : body") is None
+
+
+# ---------------------------------------------------------------------------
+# _MeshcoreInterface.lookup_node_id_by_name
+# ---------------------------------------------------------------------------
+
+
+def test_lookup_node_id_by_name_finds_exact_match():
+    """Returns the node ID when a contact with the given adv_name exists."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("Alice") == "!aabbccdd"
+
+
+def test_lookup_node_id_by_name_trims_query():
+    """Strips whitespace from the query before comparing."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("  Alice  ") == "!aabbccdd"
+
+
+def test_lookup_node_id_by_name_case_sensitive_mismatch():
+    """Returns None for a case-insensitive match — comparison is case-sensitive."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("alice") is None
+
+
+def test_lookup_node_id_by_name_no_contacts():
+    """Returns None when no contacts are registered."""
+    iface = _MeshcoreInterface(target=None)
+    assert iface.lookup_node_id_by_name("Alice") is None
+
+
+def test_lookup_node_id_by_name_empty_string():
+    """Returns None for an empty name query."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("") is None
+
+
+def test_lookup_node_id_by_name_none_query():
+    """Returns None when adv_name argument is None."""
+    iface = _MeshcoreInterface(target=None)
+    assert iface.lookup_node_id_by_name(None) is None
+
+
+def test_lookup_node_id_by_name_multiple_contacts():
+    """Returns the correct node ID when multiple contacts are registered."""
+    iface = _MeshcoreInterface(target=None)
+    iface._update_contact({"public_key": "11111111" + "00" * 28, "adv_name": "Alpha"})
+    iface._update_contact({"public_key": "22222222" + "00" * 28, "adv_name": "Beta"})
+    assert iface.lookup_node_id_by_name("Alpha") == "!11111111"
+    assert iface.lookup_node_id_by_name("Beta") == "!22222222"
+
+
+# ---------------------------------------------------------------------------
 # _meshcore_adv_type_to_role
 # ---------------------------------------------------------------------------
 
@@ -868,11 +967,91 @@ def test_on_channel_msg_queues_packet(monkeypatch):
     assert pkt["decoded"]["text"] == "hello mesh"
     assert pkt["channel"] == 2
     assert pkt["to_id"] == "^all"
+    # Text has no "SenderName:" prefix so from_id cannot be resolved.
     assert pkt["from_id"] is None
     assert pkt["snr"] == 5
     assert pkt["rssi"] == -80
     # ID must be the hash-derived value, not the raw timestamp
     assert pkt["id"] == _derive_message_id(1_758_000_000, "c2", "hello mesh")
+
+
+def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
+    """on_channel_msg sets from_id when sender name matches a known contact."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    class _FakeEvt:
+        def __init__(self, payload):
+            self.payload = payload
+
+    # Register the contact whose adv_name matches the message prefix.
+    pub_key = "aabbccdd" + "00" * 28
+    iface = _MeshcoreInterface(target=None)
+    iface._update_contact({"public_key": pub_key, "adv_name": "T114-Zeh"})
+
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_002,
+                    "text": "T114-Zeh: Test message",
+                    "channel_idx": 0,
+                    "SNR": 7,
+                    "RSSI": -70,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    pkt = captured[0]
+    assert pkt["decoded"]["text"] == "T114-Zeh: Test message"
+    assert pkt["to_id"] == "^all"
+    # Sender resolved from contacts via name prefix.
+    assert pkt["from_id"] == "!aabbccdd"
+
+
+def test_on_channel_msg_from_id_none_when_sender_not_in_contacts(monkeypatch):
+    """on_channel_msg leaves from_id as None when sender name has no matching contact."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    class _FakeEvt:
+        def __init__(self, payload):
+            self.payload = payload
+
+    # No contacts registered — name lookup cannot match.
+    iface = _MeshcoreInterface(target=None)
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_003,
+                    "text": "UnknownSender: Hello",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["from_id"] is None
 
 
 def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
