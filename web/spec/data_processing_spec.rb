@@ -278,16 +278,11 @@ RSpec.describe PotatoMesh::App::DataProcessing do
     end
 
     it "includes the node in query_nodes results after lastHeard=0 fix" do
-      include PotatoMesh::App::Queries
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
       db.close
       # query_nodes uses a 7-day floor; the node must appear
-      allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-      db2 = open_db
-      nodes = dp.query_nodes(100)
-      db2.close
-      node_ids = nodes.map { |n| n["node_id"] }
+      node_ids = dp.query_nodes(100).map { |n| n["node_id"] }
       expect(node_ids).to include("!aabbccdd")
     end
   end
