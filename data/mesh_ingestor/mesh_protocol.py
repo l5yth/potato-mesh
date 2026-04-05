@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider interface for ingestion sources.
+"""MeshProtocol interface for ingestion sources.
 
-Today the repo ships a Meshtastic provider only. This module defines the seam so
-future providers (MeshCore, Reticulum, ...) can be added without changing the
-web app ingest contract.
+This module defines the seam so future protocols (MeshCore, Reticulum, ...) can
+be added without changing the web app ingest contract.
 """
 
 from __future__ import annotations
@@ -26,8 +25,8 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class Provider(Protocol):
-    """Abstract source of mesh observations."""
+class MeshProtocol(Protocol):
+    """Abstract mesh protocol source."""
 
     name: str
 
@@ -51,5 +50,8 @@ class Provider(Protocol):
 
 
 __all__ = [
-    "Provider",
+    "MeshProtocol",
 ]
+
+# Backwards-compatibility alias — import Provider from here during transition.
+Provider = MeshProtocol

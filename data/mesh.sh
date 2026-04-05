@@ -15,8 +15,14 @@
 
 set -euo pipefail
 
-python -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -r "$(dirname "$0")/requirements.txt"
-exec python mesh.py
+# Recreate the venv only when its embedded Python is missing or points to the
+# wrong prefix (e.g. a stale shebang from a sibling project's venv).  Avoid
+# --clear on every run: it wipes installed packages before each start, so any
+# restart during a PyPI outage turns a transient network failure into hard
+# ingestor downtime.
+if ! .venv/bin/python -c "import sys; exit(0 if '.venv' in sys.prefix else 1)" 2>/dev/null; then
+    python -m venv --clear .venv
+fi
+.venv/bin/pip install -U pip
+.venv/bin/pip install -r "$(dirname "$0")/requirements.txt"
+exec .venv/bin/python mesh.py

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider implementations.
+"""Protocol implementations.
 
-This package contains protocol-specific provider implementations (Meshtastic,
+This package contains protocol-specific implementations (Meshtastic,
 MeshCore, and others in the future).
 """
 
@@ -24,11 +24,11 @@ from .meshtastic import MeshtasticProvider
 
 
 def __getattr__(name: str) -> object:
-    """Lazy-load provider classes and exceptions that carry optional heavy dependencies.
+    """Lazy-load protocol classes and exceptions that carry optional heavy dependencies.
 
     ``MeshcoreProvider`` and ``ClosedBeforeConnectedError`` are imported on
     demand so that the MeshCore library (once wired in) is not loaded at
-    startup when ``PROVIDER=meshtastic``.
+    startup when ``PROTOCOL=meshtastic``.
     """
     if name == "MeshcoreProvider":
         from .meshcore import MeshcoreProvider

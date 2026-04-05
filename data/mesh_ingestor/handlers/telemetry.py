@@ -123,7 +123,7 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     # Priority order matters: deviceMetrics is checked first because the device
     # sub-object also carries a voltage field that overlaps with powerMetrics.
     # Meshtastic uses a protobuf oneof so only one sub-object can be populated per
-    # packet; the elif chain handles any hypothetical overlap from future providers.
+    # packet; the elif chain handles any hypothetical overlap from future protocols.
     if isinstance(_dm, Mapping):
         telemetry_type: str | None = "device"
     elif isinstance(_em, Mapping):

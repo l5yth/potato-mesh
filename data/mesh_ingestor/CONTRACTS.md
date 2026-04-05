@@ -5,7 +5,7 @@ This repo’s ingestion pipeline is split into:
 - **Python collector** (`data/mesh_ingestor/*`) which normalizes packets/events and POSTs JSON to the web app.
 - **Sinatra web app** (`web/`) which accepts those payloads on `POST /api/*` ingest routes and persists them into SQLite tables defined under `data/*.sql`.
 
-This document records the **contracts that future providers must preserve**. The intent is to enable adding new providers (MeshCore, Reticulum, …) without changing the Ruby/DB/UI read-side.
+This document records the **contracts that future protocols must preserve**. The intent is to enable adding new protocols (MeshCore, Reticulum, …) without changing the Ruby/DB/UI read-side.
 
 ### Canonical node identity
 
@@ -16,7 +16,7 @@ This document records the **contracts that future providers must preserve**. The
   - Ruby normalizes via `web/lib/potato_mesh/application/data_processing.rb:canonical_node_parts`.
 - **Dual addressing**: Ruby routes and queries accept either a canonical `!xxxxxxxx` string or a numeric node id; they normalize to `node_id`.
 
-Note: non-Meshtastic providers will need a strategy to map their native node identifiers into this `!%08x` space. That mapping is intentionally not standardized in code yet.
+Note: non-Meshtastic protocols will need a strategy to map their native node identifiers into this `!%08x` space. That mapping is intentionally not standardized in code yet.
 
 ### Ingest HTTP routes and payload shapes
 

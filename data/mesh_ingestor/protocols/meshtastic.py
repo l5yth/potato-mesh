@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Meshtastic provider implementation."""
+"""Meshtastic protocol implementation."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from ..utils import _retry_dict_snapshot
 
 
 class MeshtasticProvider:
-    """Meshtastic ingestion provider (current default)."""
+    """Meshtastic ingestion protocol (current default)."""
 
     name = "meshtastic"
 

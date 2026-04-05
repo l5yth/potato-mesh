@@ -26,7 +26,7 @@ This package is organised into focused submodules:
 - :mod:`.generic` — packet dispatcher, node upsert, and the main receive callback
 
 All public names from the original flat ``handlers`` module are re-exported
-here so existing callers (e.g. ``daemon.py``, ``providers/``) require no
+here so existing callers (e.g. ``daemon.py``, ``protocols/``) require no
 changes.
 """
 
@@ -80,13 +80,13 @@ __all__ = [
     "_apply_radio_metadata",
     "_apply_radio_metadata_to_nodes",
     "_is_encrypted_flag",
+    "_mark_packet_seen",
     "_normalize_trace_hops",
     "_portnum_candidates",
     "_queue_post_json",
     "_radio_metadata_fields",
     "_record_ignored_packet",
     "base64_payload",
-    "_mark_packet_seen",
     "host_node_id",
     "last_packet_monotonic",
     "on_receive",

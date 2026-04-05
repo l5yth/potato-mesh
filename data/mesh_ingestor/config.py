@@ -65,20 +65,30 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
-_KNOWN_PROVIDERS = ("meshtastic", "meshcore")
+_KNOWN_PROTOCOLS = ("meshtastic", "meshcore")
 
-_raw_provider = os.environ.get("PROVIDER", "meshtastic").strip().lower()
-if _raw_provider not in _KNOWN_PROVIDERS:
+# Prefer the canonical PROTOCOL env var; fall back to legacy PROVIDER for
+# backwards compatibility with existing deployments.
+_raw_protocol = (
+    (os.environ.get("PROTOCOL") or os.environ.get("PROVIDER", "meshtastic"))
+    .strip()
+    .lower()
+)
+if _raw_protocol not in _KNOWN_PROTOCOLS:
     raise ValueError(
-        f"Unknown PROVIDER={_raw_provider!r}. "
-        f"Valid options: {', '.join(_KNOWN_PROVIDERS)}"
+        f"Unknown PROTOCOL={_raw_protocol!r}. "
+        f"Valid options: {', '.join(_KNOWN_PROTOCOLS)}"
     )
 
-PROVIDER = _raw_provider
-"""Active ingestion provider, selected via the :envvar:`PROVIDER` environment variable.
+PROTOCOL = _raw_protocol
+"""Active ingestion protocol, selected via the :envvar:`PROTOCOL` environment variable.
 
 Accepted values are ``meshtastic`` (default) and ``meshcore``.
+The legacy :envvar:`PROVIDER` environment variable is still accepted as a fallback.
 """
+
+PROVIDER = PROTOCOL
+"""Deprecated alias for :data:`PROTOCOL`; kept for backwards compatibility."""
 
 
 def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
@@ -228,11 +238,15 @@ class _ConfigModule(ModuleType):
     """Module proxy that keeps connection aliases synchronised."""
 
     def __setattr__(self, name: str, value: Any) -> None:  # type: ignore[override]
-        """Propagate CONNECTION/PORT assignments to both attributes."""
+        """Propagate CONNECTION/PORT and PROTOCOL/PROVIDER assignments to both attributes."""
 
         if name in {"CONNECTION", "PORT"}:
             super().__setattr__("CONNECTION", value)
             super().__setattr__("PORT", value)
+            return
+        if name in {"PROTOCOL", "PROVIDER"}:
+            super().__setattr__("PROTOCOL", value)
+            super().__setattr__("PROVIDER", value)
             return
         super().__setattr__(name, value)
 

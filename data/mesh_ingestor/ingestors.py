@@ -113,7 +113,7 @@ def queue_ingestor_heartbeat(
         "start_time": STATE.start_time,
         "last_seen_time": now,
         "version": INGESTOR_VERSION,
-        "protocol": getattr(config, "PROVIDER", "meshtastic") or "meshtastic",
+        "protocol": getattr(config, "PROTOCOL", "meshtastic") or "meshtastic",
     }
     if getattr(config, "LORA_FREQ", None) is not None:
         payload["lora_freq"] = config.LORA_FREQ

@@ -828,7 +828,7 @@ def test_loop_iteration_full_pass_returns_false(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PROVIDER env-var selection
+# PROTOCOL env-var selection
 # ---------------------------------------------------------------------------
 
 
@@ -892,10 +892,11 @@ def _reload_config() -> types.ModuleType:
 
 @pytest.fixture()
 def reset_provider_config():
-    """Reload config after the test so PROVIDER changes don't leak across tests."""
+    """Reload config after the test so PROTOCOL/PROVIDER changes don't leak across tests."""
     yield
     import os
 
+    os.environ.pop("PROTOCOL", None)
     os.environ.pop("PROVIDER", None)
     _reload_config()
 
@@ -907,33 +908,45 @@ def reset_provider_config():
         ("meshcore", "meshcore"),
     ],
 )
-def test_config_provider_env(monkeypatch, reset_provider_config, env_value, expected):
-    """PROVIDER env var selects the provider; absent defaults to 'meshtastic'."""
+def test_config_protocol_env(monkeypatch, reset_provider_config, env_value, expected):
+    """PROTOCOL env var selects the protocol; absent defaults to 'meshtastic'."""
     if env_value is None:
+        monkeypatch.delenv("PROTOCOL", raising=False)
         monkeypatch.delenv("PROVIDER", raising=False)
     else:
-        monkeypatch.setenv("PROVIDER", env_value)
-    assert _reload_config().PROVIDER == expected
+        monkeypatch.setenv("PROTOCOL", env_value)
+    cfg = _reload_config()
+    assert cfg.PROTOCOL == expected
+    assert cfg.PROVIDER == expected  # deprecated alias stays in sync
 
 
-def test_config_provider_unknown_raises(monkeypatch, reset_provider_config):
-    """An unrecognised PROVIDER value must raise ValueError at import time."""
-    monkeypatch.setenv("PROVIDER", "reticulum")
-    with pytest.raises(ValueError, match="PROVIDER"):
+def test_config_provider_env_fallback(monkeypatch, reset_provider_config):
+    """Legacy PROVIDER env var must still work when PROTOCOL is absent."""
+    monkeypatch.delenv("PROTOCOL", raising=False)
+    monkeypatch.setenv("PROVIDER", "meshcore")
+    cfg = _reload_config()
+    assert cfg.PROTOCOL == "meshcore"
+    assert cfg.PROVIDER == "meshcore"
+
+
+def test_config_protocol_unknown_raises(monkeypatch, reset_provider_config):
+    """An unrecognised PROTOCOL value must raise ValueError at import time."""
+    monkeypatch.setenv("PROTOCOL", "reticulum")
+    with pytest.raises(ValueError, match="PROTOCOL"):
         _reload_config()
 
 
 @pytest.mark.parametrize(
     "provider_name, module_path, class_name",
     [
-        ("meshtastic", "data.mesh_ingestor.providers.meshtastic", "MeshtasticProvider"),
-        ("meshcore", "data.mesh_ingestor.providers.meshcore", "MeshcoreProvider"),
+        ("meshtastic", "data.mesh_ingestor.protocols.meshtastic", "MeshtasticProvider"),
+        ("meshcore", "data.mesh_ingestor.protocols.meshcore", "MeshcoreProvider"),
     ],
 )
 def test_daemon_main_selects_provider(
     monkeypatch, provider_name, module_path, class_name
 ):
-    """main() must instantiate the correct provider class based on PROVIDER."""
+    """main() must instantiate the correct protocol class based on PROTOCOL."""
     mod = importlib.import_module(module_path)
     instantiated = []
 
@@ -943,7 +956,7 @@ def test_daemon_main_selects_provider(
         return p
 
     _patch_daemon_for_fast_exit(monkeypatch)
-    monkeypatch.setattr(daemon.config, "PROVIDER", provider_name)
+    monkeypatch.setattr(daemon.config, "PROTOCOL", provider_name)
     monkeypatch.setattr(mod, class_name, make_provider)
 
     daemon.main()
