@@ -51,6 +51,7 @@ import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
 import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
+import { createMapCenterResetHandler } from './map-center-reset.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
 import { createNodeDetailOverlayManager } from './node-detail-overlay.js';
@@ -484,6 +485,7 @@ export function initializeApp(config) {
   const mapContainer = document.getElementById('map');
   const mapPanel = document.getElementById('mapPanel');
   const mapFullscreenToggle = document.getElementById('mapFullscreenToggle');
+  const mapCenterResetEl = document.getElementById('mapCenterReset');
   const fullscreenContainer = mapPanel || mapContainer;
   const isFederationView = bodyClassList ? bodyClassList.contains('view-federation') : false;
   const legendDefaultCollapsed = mapPanel ? mapPanel.dataset.legendCollapsed === 'true' : false;
@@ -534,6 +536,15 @@ export function initializeApp(config) {
     setMapCenter: value => {
       mapCenterLatLng = value;
     }
+  });
+
+  const centerResetHandler = createMapCenterResetHandler({
+    getMap: () => map,
+    autoFitController,
+    fitBoundsEl,
+    fitMapToBounds,
+    mapCenterCoords: MAP_CENTER_COORDS,
+    mapZoomOverride,
   });
 
   /**
@@ -832,6 +843,13 @@ export function initializeApp(config) {
       });
       updateFullscreenToggleState();
     }
+  }
+
+  if (mapCenterResetEl) {
+    mapCenterResetEl.addEventListener('click', event => {
+      event.preventDefault();
+      centerResetHandler();
+    });
   }
 
   syncInfoOverlayHost();

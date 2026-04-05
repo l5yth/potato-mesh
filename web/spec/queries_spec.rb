@@ -418,6 +418,101 @@ RSpec.describe PotatoMesh::App::Queries do
       rows = queries.query_nodes(10, since: now + 9999)
       expect(rows).to be_empty
     end
+
+    context "COMPANION short name enrichment" do
+      it "derives a two-initial short name for a COMPANION node with a two-word long name" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000001", 0xcc000001, "CX", "Alice Bob", now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000001")
+        row = rows.find { |r| r["node_id"] == "!cc000001" }
+        expect(row).not_to be_nil
+        expect(row["short_name"]).to eq(" AB ")
+      end
+
+      it "derives a single-initial short name for a COMPANION node with a one-word long name" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000002", 0xcc000002, "CX", "Zigzag", now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000002")
+        row = rows.find { |r| r["node_id"] == "!cc000002" }
+        expect(row["short_name"]).to eq("  Z ")
+      end
+
+      it "derives an emoji short name for a COMPANION node whose long name contains an emoji" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000003", 0xcc000003, "CX", "Node \u{1F600}", now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000003")
+        row = rows.find { |r| r["node_id"] == "!cc000003" }
+        expect(row["short_name"]).to eq("  \u{1F600} ")
+      end
+
+      it "does not overwrite short_name when long_name is blank for a COMPANION node" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000004", 0xcc000004, "CX", "", now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000004")
+        row = rows.find { |r| r["node_id"] == "!cc000004" }
+        # blank long_name → nil derived → original short_name preserved by compact_api_row
+        expect(row["short_name"]).to eq("CX")
+      end
+
+      it "leaves the short_name unchanged for a CLIENT node with a multi-word long name" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000005", 0xcc000005, "XY", "Alice Bob", now, now, "CLIENT"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000005")
+        row = rows.find { |r| r["node_id"] == "!cc000005" }
+        expect(row["short_name"]).to eq("XY")
+      end
+
+      it "does not overwrite short_name when long_name is NULL in the DB for a COMPANION node" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000007", 0xcc000007, "CX", nil, now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000007")
+        row = rows.find { |r| r["node_id"] == "!cc000007" }
+        expect(row["short_name"]).to eq("CX")
+      end
+
+      it "leaves the short_name unchanged for a node whose role defaults to CLIENT (nil in DB)" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000006", 0xcc000006, "ZZ", "Alice Bob", now, now, nil],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000006")
+        row = rows.find { |r| r["node_id"] == "!cc000006" }
+        expect(row["short_name"]).to eq("ZZ")
+      end
+    end
   end
 
   describe "#query_messages" do

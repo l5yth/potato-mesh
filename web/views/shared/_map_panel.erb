@@ -22,6 +22,18 @@
 <div class="<%= map_classes.join(" ") %>" id="mapPanel" <%= data_attrs.join(" ") %>>
   <div id="map" role="region" aria-label="Nodes map"></div>
   <div class="map-toolbar" role="group" aria-label="Map view controls">
+    <button id="mapCenterReset" type="button" aria-label="Re-center map to all nodes">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M12 2v3m0 14v3M2 12h3m14 0h3m-5 0a5 5 0 1 1-10 0 5 5 0 0 1 10 0Zm-5-2v4m-2-2h4"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+    </button>
     <button id="mapFullscreenToggle" type="button" aria-pressed="false" aria-label="Enter full screen map view">
       <svg class="icon-fullscreen-enter" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path

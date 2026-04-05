@@ -157,6 +157,10 @@ module PotatoMesh
         end
         rows.each do |r|
           r["role"] ||= "CLIENT"
+          if r["role"] == "COMPANION"
+            derived = meshcore_companion_display_short_name(r["long_name"])
+            r["short_name"] = derived if derived
+          end
           lh = r["last_heard"]&.to_i
           pt = r["position_time"]&.to_i
           lh = now if lh && lh > now
