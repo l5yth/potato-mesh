@@ -41,7 +41,6 @@ def reset_state(monkeypatch):
     importlib.reload(config)
 
 
-
 def test_queue_stringification_and_ordering():
     """Exercise queue payload formatting and priority ordering."""
 

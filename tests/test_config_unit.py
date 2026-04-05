@@ -209,4 +209,3 @@ class TestProtocolValidation:
         # Restore to valid value so subsequent tests work
         monkeypatch.setenv("PROTOCOL", "meshtastic")
         importlib.reload(config)
-
