@@ -1447,7 +1447,13 @@ def _patch_meshcore_mod(monkeypatch, mod, fake_mod):
     these already-bound names.  This helper patches the module attributes
     directly so tests can substitute fakes at the point of use.
     """
-    for attr in ("BLEConnection", "EventType", "MeshCore", "SerialConnection", "TCPConnection"):
+    for attr in (
+        "BLEConnection",
+        "EventType",
+        "MeshCore",
+        "SerialConnection",
+        "TCPConnection",
+    ):
         monkeypatch.setattr(mod, attr, getattr(fake_mod, attr))
 
 

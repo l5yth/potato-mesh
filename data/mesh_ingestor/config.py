@@ -70,8 +70,10 @@ _KNOWN_PROTOCOLS = ("meshtastic", "meshcore")
 # Prefer the canonical PROTOCOL env var; fall back to legacy PROVIDER for
 # backwards compatibility with existing deployments.
 _raw_protocol = (
-    os.environ.get("PROTOCOL") or os.environ.get("PROVIDER", "meshtastic")
-).strip().lower()
+    (os.environ.get("PROTOCOL") or os.environ.get("PROVIDER", "meshtastic"))
+    .strip()
+    .lower()
+)
 if _raw_protocol not in _KNOWN_PROTOCOLS:
     raise ValueError(
         f"Unknown PROTOCOL={_raw_protocol!r}. "
