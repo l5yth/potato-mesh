@@ -67,7 +67,6 @@ _export_constants()
 _CONFIG_ATTRS = {
     "CONNECTION",
     "SNAPSHOT_SECS",
-    "CHANNEL_INDEX",
     "DEBUG",
     "INSTANCE",
     "API_TOKEN",

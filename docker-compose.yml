@@ -48,7 +48,6 @@ x-ingestor-base: &ingestor-base
   image: ghcr.io/l5yth/potato-mesh-ingestor-${POTATOMESH_IMAGE_ARCH:-linux-amd64}:${POTATOMESH_IMAGE_TAG:-latest}
   environment:
     CONNECTION: ${CONNECTION:-/dev/ttyACM0}
-    CHANNEL_INDEX: ${CHANNEL_INDEX:-0}
     ALLOWED_CHANNELS: ${ALLOWED_CHANNELS:-""}
     HIDDEN_CHANNELS: ${HIDDEN_CHANNELS:-""}
     API_TOKEN: ${API_TOKEN}
