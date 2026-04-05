@@ -50,6 +50,17 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Import meshcore symbols at module level rather than lazily inside functions.
+# The original deferred-import pattern was introduced so that loading
+# ``protocols/__init__.py`` under ``PROTOCOL=meshtastic`` would not pull in the
+# meshcore library.  That protection is preserved: ``protocols/__init__.py``
+# only imports THIS module on demand (via its ``__getattr__`` lazy loader), so
+# this top-level import still never executes for meshtastic-only deployments.
+# The import was hoisted because, after the rename from ``providers/meshcore``
+# to ``protocols/meshcore``, Python's absolute import resolver matched the
+# module's own short name (``meshcore``) against the installed package, causing
+# a ``ModuleNotFoundError`` when the deferred ``from meshcore import …`` ran
+# inside a background thread at connect time.
 from meshcore import (
     BLEConnection,
     EventType,
@@ -470,7 +481,7 @@ def _process_self_info(
     config._debug_log(
         "MeshCore radio metadata captured",
         context="meshcore.self_info.radio",
-        always=True,
+        severity="info",
         lora_freq=radio_freq,
         modem_preset=modem_preset,
     )

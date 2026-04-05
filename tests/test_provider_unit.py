@@ -1072,7 +1072,7 @@ def test_process_self_info_captures_radio_freq(monkeypatch):
     }
     _process_self_info(payload, _MeshcoreInterface(target=None), stub)
 
-    assert _mod.config.LORA_FREQ == 868.125
+    assert _mod.config.LORA_FREQ == pytest.approx(868.125)
 
 
 def test_process_self_info_captures_modem_preset(monkeypatch):
