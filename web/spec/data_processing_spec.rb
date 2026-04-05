@@ -160,6 +160,27 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db
     end
 
+    # Return the full node row for the canonical test node ID.
+    def read_node(db)
+      db.execute("SELECT * FROM nodes WHERE node_id = '!aabbccdd'").first
+    end
+
+    # Insert the canonical test node with full user info and CLIENT_BASE role.
+    def seed_node(db)
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "num" => 0xaabbccdd,
+        "user" => {
+          "role" => "CLIENT_BASE",
+          "longName" => "Real Long Name",
+          "shortName" => "RLN",
+          "macaddr" => "aa:bb:cc:dd:ee:ff",
+          "hwModel" => "TBEAM",
+          "publicKey" => "abc123",
+        },
+      })
+    end
+
     let(:now) { Time.now.to_i }
   end
 
@@ -219,15 +240,16 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   describe "#upsert_node — last_heard zero handling" do
     include_context "with isolated db"
 
-    it "stores last_heard as approximately now when lastHeard is 0 and no position" do
+    it "treats lastHeard=0 as absent, storing approximately now instead" do
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
-      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      lh = read_node(db)["last_heard"]
       db.close
-      expect(row["last_heard"]).to be_within(5).of(now)
+      expect(lh).not_to eq(0)
+      expect(lh).to be_within(5).of(now)
     end
 
-    it "stores last_heard from position time when lastHeard is 0 and position is present" do
+    it "uses position time as last_heard fallback when lastHeard is 0" do
       pt = now - 300
       db = open_db
       dp.upsert_node(db, "!aabbccdd", {
@@ -235,35 +257,24 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "num" => 0xaabbccdd,
         "position" => { "time" => pt, "latitude" => 1.0, "longitude" => 2.0 },
       })
-      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["last_heard"]).to eq(pt)
       db.close
-      expect(row["last_heard"]).to eq(pt)
-    end
-
-    it "does not store 0 as last_heard regardless of the incoming value" do
-      db = open_db
-      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
-      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
-      db.close
-      expect(row["last_heard"]).not_to eq(0)
     end
 
     it "stores a positive lastHeard value as-is" do
       lh = now - 120
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => lh, "num" => 0xaabbccdd })
-      row = db.execute("SELECT last_heard FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["last_heard"]).to eq(lh)
       db.close
-      expect(row["last_heard"]).to eq(lh)
     end
 
     it "includes the node in query_nodes results after lastHeard=0 fix" do
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => 0, "num" => 0xaabbccdd })
       db.close
-      # query_nodes uses a 7-day floor; the node must appear
-      node_ids = dp.query_nodes(100).map { |n| n["node_id"] }
-      expect(node_ids).to include("!aabbccdd")
+      # query_nodes applies a 7-day floor; the node must appear
+      expect(dp.query_nodes(100).map { |n| n["node_id"] }).to include("!aabbccdd")
     end
   end
 
@@ -273,45 +284,32 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   describe "#upsert_node — role preservation" do
     include_context "with isolated db"
 
-    it "preserves an existing CLIENT_BASE role when a no-user packet arrives" do
+    it "preserves CLIENT_BASE role when a no-user packet arrives" do
       db = open_db
-      # First insert: full user info with CLIENT_BASE role
-      dp.upsert_node(db, "!aabbccdd", {
-        "lastHeard" => now - 100,
-        "num" => 0xaabbccdd,
-        "user" => { "role" => "CLIENT_BASE", "longName" => "Test Node", "shortName" => "TN" },
-      })
-      # Second update: higher lastHeard but no user section (topology packet)
+      seed_node(db)
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT role FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["role"]).to eq("CLIENT_BASE")
       db.close
-      expect(row["role"]).to eq("CLIENT_BASE")
     end
 
-    it "updates the role when an explicit role is supplied" do
+    it "updates role when an explicit role is supplied" do
       db = open_db
-      dp.upsert_node(db, "!aabbccdd", {
-        "lastHeard" => now - 100,
-        "num" => 0xaabbccdd,
-        "user" => { "role" => "CLIENT_BASE", "longName" => "Test Node", "shortName" => "TN" },
-      })
+      seed_node(db)
       dp.upsert_node(db, "!aabbccdd", {
         "lastHeard" => now,
         "num" => 0xaabbccdd,
-        "user" => { "role" => "CLIENT", "longName" => "Test Node", "shortName" => "TN" },
+        "user" => { "role" => "CLIENT", "longName" => "Real Long Name", "shortName" => "RLN" },
       })
-      row = db.execute("SELECT role FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["role"]).to eq("CLIENT")
       db.close
-      expect(row["role"]).to eq("CLIENT")
     end
 
     it "stores NULL role for new nodes without user info (display layer supplies CLIENT)" do
       db = open_db
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT role FROM nodes WHERE node_id = '!aabbccdd'").first
-      db.close
       # NULL is stored; query_nodes applies r["role"] ||= "CLIENT" for display
-      expect(row["role"]).to be_nil
+      expect(read_node(db)["role"]).to be_nil
+      db.close
     end
   end
 
@@ -321,28 +319,17 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   describe "#upsert_node — identity field preservation" do
     include_context "with isolated db"
 
-    def seed_node(db)
-      dp.upsert_node(db, "!aabbccdd", {
-        "lastHeard" => now - 100,
-        "num" => 0xaabbccdd,
-        "user" => {
-          "role" => "CLIENT_BASE",
-          "longName" => "Real Long Name",
-          "shortName" => "RLN",
-          "macaddr" => "aa:bb:cc:dd:ee:ff",
-          "hwModel" => "TBEAM",
-          "publicKey" => "abc123",
-        },
-      })
-    end
-
-    it "preserves short_name when a no-user packet arrives" do
+    it "preserves all identity fields when a no-user packet arrives" do
       db = open_db
       seed_node(db)
       dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT short_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      row = read_node(db)
       db.close
       expect(row["short_name"]).to eq("RLN")
+      expect(row["long_name"]).to eq("Real Long Name")
+      expect(row["macaddr"]).to eq("aa:bb:cc:dd:ee:ff")
+      expect(row["hw_model"]).to eq("TBEAM")
+      expect(row["public_key"]).to eq("abc123")
     end
 
     it "updates short_name when a real value is supplied" do
@@ -353,18 +340,8 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "num" => 0xaabbccdd,
         "user" => { "shortName" => "NEW", "longName" => "New Long Name" },
       })
-      row = db.execute("SELECT short_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["short_name"]).to eq("NEW")
       db.close
-      expect(row["short_name"]).to eq("NEW")
-    end
-
-    it "preserves long_name when a no-user packet arrives" do
-      db = open_db
-      seed_node(db)
-      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT long_name FROM nodes WHERE node_id = '!aabbccdd'").first
-      db.close
-      expect(row["long_name"]).to eq("Real Long Name")
     end
 
     it "does not overwrite a real long_name with a generic placeholder" do
@@ -375,55 +352,24 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "num" => 0xaabbccdd,
         "user" => { "longName" => "Meshtastic CCDD", "shortName" => "RLN" },
       })
-      row = db.execute("SELECT long_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["long_name"]).to eq("Real Long Name")
       db.close
-      expect(row["long_name"]).to eq("Real Long Name")
     end
 
     it "overwrites a generic placeholder long_name with a real long_name" do
       db = open_db
-      # Insert node with generic placeholder name first
       dp.upsert_node(db, "!aabbccdd", {
         "lastHeard" => now - 100,
         "num" => 0xaabbccdd,
         "user" => { "longName" => "Meshtastic CCDD", "shortName" => "CCDD" },
       })
-      # Then update with a real name
       dp.upsert_node(db, "!aabbccdd", {
         "lastHeard" => now,
         "num" => 0xaabbccdd,
         "user" => { "longName" => "Real Long Name", "shortName" => "RLN" },
       })
-      row = db.execute("SELECT long_name FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(read_node(db)["long_name"]).to eq("Real Long Name")
       db.close
-      expect(row["long_name"]).to eq("Real Long Name")
-    end
-
-    it "preserves macaddr when a no-user packet arrives" do
-      db = open_db
-      seed_node(db)
-      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT macaddr FROM nodes WHERE node_id = '!aabbccdd'").first
-      db.close
-      expect(row["macaddr"]).to eq("aa:bb:cc:dd:ee:ff")
-    end
-
-    it "preserves hw_model when a no-user packet arrives" do
-      db = open_db
-      seed_node(db)
-      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT hw_model FROM nodes WHERE node_id = '!aabbccdd'").first
-      db.close
-      expect(row["hw_model"]).to eq("TBEAM")
-    end
-
-    it "preserves public_key when a no-user packet arrives" do
-      db = open_db
-      seed_node(db)
-      dp.upsert_node(db, "!aabbccdd", { "lastHeard" => now, "num" => 0xaabbccdd })
-      row = db.execute("SELECT public_key FROM nodes WHERE node_id = '!aabbccdd'").first
-      db.close
-      expect(row["public_key"]).to eq("abc123")
     end
   end
 end
