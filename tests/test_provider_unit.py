@@ -35,6 +35,7 @@ from data.mesh_ingestor.connection import parse_tcp_target  # noqa: E402 - path 
 from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     EventType,
     MeshcoreProvider,
+    _CHANNEL_PROBE_FALLBACK_MAX,
     _MeshcoreInterface,
     _contact_to_node_dict,
     _derive_message_id,
@@ -1186,16 +1187,26 @@ def test_derive_modem_preset_none_on_missing():
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_mc_for_channels(channel_map: dict):
+def _make_fake_mc_for_channels(channel_map: dict, max_channels: int | None = None):
     """Build a minimal fake MeshCore instance for channel-probe tests.
 
     Parameters:
-        channel_map: Mapping of channel_idx → channel_name string, or
-            ``None`` to simulate an ERROR response for that index.
+        channel_map: Mapping of channel_idx → channel_name string; absent keys
+            simulate an ERROR response for that index.
+        max_channels: Value to return in the DEVICE_INFO ``max_channels`` field.
+            When ``None`` the device query returns an ERROR so the fallback bound
+            is used.
     """
-    import asyncio
 
     class _FakeCommands:
+        async def send_device_query(self):
+            if max_channels is None:
+                return types.SimpleNamespace(type=EventType.ERROR, payload={})
+            return types.SimpleNamespace(
+                type=EventType.DEVICE_INFO,
+                payload={"max_channels": max_channels},
+            )
+
         async def get_channel(self, idx):
             name = channel_map.get(idx)
             if name is None:
@@ -1207,8 +1218,7 @@ def _make_fake_mc_for_channels(channel_map: dict):
                 payload={"channel_idx": idx, "channel_name": name},
             )
 
-    mc = types.SimpleNamespace(commands=_FakeCommands())
-    return mc
+    return types.SimpleNamespace(commands=_FakeCommands())
 
 
 def test_ensure_channel_names_populates_cache(monkeypatch):
@@ -1220,8 +1230,8 @@ def test_ensure_channel_names_populates_cache(monkeypatch):
     _channels._reset_channel_cache()
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
-    fake_mc = _make_fake_mc_for_channels({0: "LongFast", 1: "Chat"})
-    asyncio.run(_ensure_channel_names(fake_mc, max_idx=4))
+    fake_mc = _make_fake_mc_for_channels({0: "LongFast", 1: "Chat"}, max_channels=4)
+    asyncio.run(_ensure_channel_names(fake_mc))
 
     assert _channels.channel_name(0) == "LongFast"
     assert _channels.channel_name(1) == "Chat"
@@ -1238,8 +1248,8 @@ def test_ensure_channel_names_tolerates_error_response(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
     # Index 0 returns ERROR; index 1 returns a valid name.
-    fake_mc = _make_fake_mc_for_channels({1: "Chat"})
-    asyncio.run(_ensure_channel_names(fake_mc, max_idx=4))
+    fake_mc = _make_fake_mc_for_channels({1: "Chat"}, max_channels=4)
+    asyncio.run(_ensure_channel_names(fake_mc))
 
     assert _channels.channel_name(0) is None
     assert _channels.channel_name(1) == "Chat"
@@ -1260,25 +1270,9 @@ def test_ensure_channel_names_probes_all_indices_on_sparse_config(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
     # Slots 0-4 return ERROR; slot 5 is configured.
-    channel_map = {5: "Admin"}
-
-    class _FakeCommands:
-        async def get_channel(self, idx):
-            name = channel_map.get(idx)
-            if name is None:
-                return types.SimpleNamespace(
-                    type=EventType.ERROR, payload={"reason": "not_found"}
-                )
-            return types.SimpleNamespace(
-                type=EventType.CHANNEL_INFO,
-                payload={"channel_idx": idx, "channel_name": name},
-            )
-
-    asyncio.run(
-        _ensure_channel_names(
-            types.SimpleNamespace(commands=_FakeCommands()), max_idx=8
-        )
-    )
+    # Device reports max_channels=8 so all indices are probed.
+    fake_mc = _make_fake_mc_for_channels({5: "Admin"}, max_channels=8)
+    asyncio.run(_ensure_channel_names(fake_mc))
 
     # Slot 5 must be registered despite the preceding empty slots.
     assert _channels.channel_name(5) == "Admin"
@@ -1301,15 +1295,16 @@ def test_ensure_channel_names_stops_on_exception(monkeypatch):
     )
 
     class _FakeCommands:
+        async def send_device_query(self):
+            return types.SimpleNamespace(
+                type=EventType.DEVICE_INFO, payload={"max_channels": 4}
+            )
+
         async def get_channel(self, idx):
             raise OSError("serial port disconnected")
 
     # Must complete without raising.
-    asyncio.run(
-        _ensure_channel_names(
-            types.SimpleNamespace(commands=_FakeCommands()), max_idx=4
-        )
-    )
+    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands())))
 
     assert "warning" in logged
     _channels._reset_channel_cache()
@@ -1330,6 +1325,59 @@ def test_on_channel_info_handler_registers_channel(monkeypatch):
     asyncio.run(handlers_map["CHANNEL_INFO"](evt))
 
     assert _channels.channel_name(2) == "Admin"
+    _channels._reset_channel_cache()
+
+
+def test_ensure_channel_names_uses_device_max_channels(monkeypatch):
+    """max_channels from DEVICE_INFO must bound the probe, not the fallback."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.channels as _channels
+
+    _channels._reset_channel_cache()
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    probed: list[int] = []
+
+    class _FakeCommands:
+        async def send_device_query(self):
+            # Device reports exactly 3 channels.
+            return types.SimpleNamespace(
+                type=EventType.DEVICE_INFO, payload={"max_channels": 3}
+            )
+
+        async def get_channel(self, idx):
+            probed.append(idx)
+            return types.SimpleNamespace(type=EventType.ERROR, payload={})
+
+    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands())))
+
+    assert probed == [0, 1, 2]
+    _channels._reset_channel_cache()
+
+
+def test_ensure_channel_names_falls_back_when_device_query_fails(monkeypatch):
+    """When DEVICE_INFO is unavailable the fallback bound must be used."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.channels as _channels
+
+    _channels._reset_channel_cache()
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    probed: list[int] = []
+
+    class _FakeCommands:
+        async def send_device_query(self):
+            return types.SimpleNamespace(type=EventType.ERROR, payload={})
+
+        async def get_channel(self, idx):
+            probed.append(idx)
+            return types.SimpleNamespace(type=EventType.ERROR, payload={})
+
+    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands())))
+
+    assert len(probed) == _CHANNEL_PROBE_FALLBACK_MAX
     _channels._reset_channel_cache()
 
 
@@ -1656,6 +1704,12 @@ def _make_fake_meshcore_mod(
     )
 
     class _FakeCommands:
+        async def send_device_query(self):
+            # Return minimal DEVICE_INFO — channel probing is not under test here.
+            return types.SimpleNamespace(
+                type=EventType.DEVICE_INFO, payload={"max_channels": 1}
+            )
+
         async def get_channel(self, idx):
             # Return ERROR for all channels — channel probing is not under test here.
             return types.SimpleNamespace(type=EventType.ERROR, payload={})
