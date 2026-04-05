@@ -280,3 +280,130 @@ test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
     assert.ok(innerHtml(div).includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
   });
 });
+
+// --- createMessageChatEntry: MeshCore channel message sender resolution ---
+
+test('createMessageChatEntry: meshcore channel message uses sender node short name when found', () => {
+  withApp((t) => {
+    // Seed a node with a known long_name so findNodeByLongName can resolve it.
+    t.rebuildNodeIndex([
+      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'T114-Zeh: Hello world',
+      rx_time: 1000,
+      protocol: 'meshcore',
+      node: null,
+    });
+    const html = innerHtml(div);
+    // Badge should NOT be the fallback '?' — the node's short_name should be used
+    assert.ok(html.includes('T'), 'badge should contain T from derived short name');
+    assert.ok(!html.includes('?'), 'badge should not show placeholder question mark');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message links sender name to node page', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'T114-Zeh: Hello world',
+      rx_time: 1000,
+      protocol: 'meshcore',
+      node: null,
+    });
+    const html = innerHtml(div);
+    assert.ok(html.includes('/nodes/!aabbccdd'), 'body should link sender name to node detail page');
+    assert.ok(html.includes('T114-Zeh'), 'sender long name should appear as link text');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message, sender node not found — badge is placeholder', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([]);  // empty — no nodes known
+    const div = t.createMessageChatEntry({
+      text: 'UnknownSender: Hello',
+      rx_time: 1000,
+      protocol: 'meshcore',
+      node: null,
+    });
+    const html = innerHtml(div);
+    // Sender name still appears but without a node link href
+    assert.ok(html.includes('UnknownSender'), 'unresolved sender name should still appear in body');
+    assert.ok(!html.includes('/nodes/'), 'should not produce a node link when sender is not found');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message, no colon in text — body unchanged', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'no colon here',
+      rx_time: 1000,
+      protocol: 'meshcore',
+      node: null,
+    });
+    const html = innerHtml(div);
+    assert.ok(html.includes('no colon here'), 'body text should be rendered as-is when no sender prefix found');
+    assert.ok(!html.includes('/nodes/'), 'should not produce a node link when no colon prefix');
+  });
+});
+
+test('createMessageChatEntry: meshcore message with @[Name] mention resolved to badge', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { node_id: '!11111111', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+      { node_id: '!22222222', long_name: 'BGruenauBot', short_name: ' BG ', role: 'CLIENT', protocol: 'meshcore' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'BGruenauBot: ack @[T114-Zeh]',
+      rx_time: 2000,
+      protocol: 'meshcore',
+      node: null,
+    });
+    const html = innerHtml(div);
+    // The @[T114-Zeh] mention should render as a short-name badge span
+    assert.ok(html.includes('short-name'), 'mention should produce a short-name badge');
+    // Sender link for BGruenauBot should appear
+    assert.ok(html.includes('/nodes/!22222222'), 'sender BGruenauBot should be linked');
+  });
+});
+
+test('createMessageChatEntry: meshcore message with @[Name] mention, node not found — fallback', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([]);
+    const div = t.createMessageChatEntry({
+      text: 'EchoBot: Pong! @[Ghost]',
+      rx_time: 3000,
+      protocol: 'meshcore',
+      node: null,
+    });
+    const html = innerHtml(div);
+    // @[Ghost] mention with no matching node renders as escaped plain text
+    assert.ok(html.includes('@[Ghost]'), 'unresolved mention should render as escaped @[Name] text');
+  });
+});
+
+test('createMessageChatEntry: meshtastic message with @[Name] is NOT resolved as mention', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { node_id: '!11111111', long_name: 'Alice', short_name: 'ALCE', role: 'CLIENT', protocol: 'meshtastic' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'hello @[Alice]',
+      rx_time: 4000,
+      protocol: 'meshtastic',
+      node: { short_name: 'ALCE', role: 'CLIENT', protocol: 'meshtastic' },
+    });
+    const html = innerHtml(div);
+    // Meshtastic messages do not process @[Name] — rendered as literal escaped text
+    assert.ok(html.includes('@[Alice]') || html.includes('@&#x5B;Alice&#x5D;') || html.includes('@&#91;Alice&#93;') || html.includes('@[Alice]'),
+      'meshtastic @[Name] should be escaped literally, not resolved');
+    // Ensure no mention badge was injected (no extra short-name span beyond the sender badge)
+    const shortNameCount = (html.match(/short-name/g) || []).length;
+    assert.ok(shortNameCount <= 1, 'only the sender badge should be present, no mention badge');
+  });
+});
