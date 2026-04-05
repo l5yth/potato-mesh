@@ -19,10 +19,10 @@ will pull the latest release images for you.
 | Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:<tag>` (e.g. `latest`, `0.6.0`, `v0.6.0`, or `0.7.0-rc1`)    |
 
 Images are published for every tagged release. Stable builds receive both
-semantic version tags (for example `3.0`) and a matching `v`-prefixed tag (for
-example `v3.0`), plus a `latest` tag that tracks the newest stable release.
+semantic version tags (for example `0.6.0`) and a matching `v`-prefixed tag (for
+example `v0.6.0`), plus a `latest` tag that tracks the newest stable release.
 Pre-release tags (for example `-rc`, `-beta`, `-alpha`, or `-dev` suffixes) are
-published only with their explicit version strings (`3.1.0-rc1` and `v3.1.0-rc1`
+published only with their explicit version strings (`0.7.0-rc1` and `v0.7.0-rc1`
 in this example) and do **not** advance `latest`. Pin the versioned tags when
 you need a specific build.
 
