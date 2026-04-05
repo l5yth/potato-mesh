@@ -87,7 +87,6 @@ __all__ = [
     "_radio_metadata_fields",
     "_record_ignored_packet",
     "base64_payload",
-    "_mark_packet_seen",
     "host_node_id",
     "last_packet_monotonic",
     "on_receive",
