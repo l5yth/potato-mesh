@@ -352,13 +352,20 @@ module PotatoMesh
         user = n["user"] || {}
         met = n["deviceMetrics"] || {}
         pos = n["position"] || {}
-        role = user["role"] || "CLIENT"
+        # nil when user info absent; COALESCE in the conflict clause preserves
+        # the stored role rather than overwriting with a default.
+        role = user["role"]
         lh = coerce_integer(n["lastHeard"])
         pt = coerce_integer(pos["time"])
         now = Time.now.to_i
         pt = nil if pt && pt > now
         lh = now if lh && lh > now
-        lh = pt if pt && (!lh || lh < pt)
+        # 0 is truthy in Ruby — `lh ||= now` won't replace it, leaving the
+        # 7-day list filter to evaluate `0 >= now-7days` → false (node hidden).
+        lh = nil if lh && lh <= 0
+        # position.time = 0 means no GPS fix; skip it as a last_heard anchor
+        # (would re-introduce the same zero-timestamp exclusion bug for lh).
+        lh = pt if pt && pt > 0 && (!lh || lh < pt)
         lh ||= now
         node_num = resolve_node_num(node_id, n)
 
@@ -425,8 +432,14 @@ module PotatoMesh
                               position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(node_id) DO UPDATE SET
-              num=excluded.num, short_name=excluded.short_name, long_name=#{long_name_conflict_sql}, macaddr=excluded.macaddr,
-              hw_model=excluded.hw_model, role=excluded.role, public_key=excluded.public_key, is_unmessagable=excluded.is_unmessagable,
+              num=COALESCE(excluded.num, nodes.num),
+              short_name=COALESCE(excluded.short_name, nodes.short_name),
+              long_name=#{long_name_conflict_sql},
+              macaddr=COALESCE(excluded.macaddr, nodes.macaddr),
+              hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
+              role=COALESCE(excluded.role, nodes.role),
+              public_key=COALESCE(excluded.public_key, nodes.public_key),
+              is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
               is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
               first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
               battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
