@@ -77,18 +77,18 @@ export function formatLoraFrequencyMHz(value) {
  *
  * @type {Array<{
  *   sf: number, bw: number, cr: number,
- *   longName: string, shortCode: string,
+ *   longName: string,
  *   minFreqMHz?: number, maxFreqMHz?: number
  * }>}
  */
 const MESHCORE_NAMED_PRESETS = [
-  { sf: 10, bw: 250, cr: 5, longName: 'AU/NZ Wide',   shortCode: 'Wi' },
-  { sf: 10, bw:  62, cr: 5, longName: 'AU/NZ Narrow', shortCode: 'Na' },
-  { sf: 11, bw: 250, cr: 5, longName: 'EU/UK Wide',   shortCode: 'Wi' },
-  { sf:  8, bw:  62, cr: 8, longName: 'EU/UK Narrow', shortCode: 'Na' },
+  { sf: 10, bw: 250, cr: 5, longName: 'AU/NZ Wide'   },
+  { sf: 10, bw:  62, cr: 5, longName: 'AU/NZ Narrow' },
+  { sf: 11, bw: 250, cr: 5, longName: 'EU/UK Wide'   },
+  { sf:  8, bw:  62, cr: 8, longName: 'EU/UK Narrow' },
   // SF7/BW62/CR5 is region-disambiguated by frequency threshold.
-  { sf: 7, bw: 62, cr: 5, longName: 'CZ/SK Narrow', shortCode: 'Na', maxFreqMHz: 900 },
-  { sf: 7, bw: 62, cr: 5, longName: 'US/CA Narrow', shortCode: 'Na', minFreqMHz: 900 },
+  { sf: 7, bw: 62, cr: 5, longName: 'CZ/SK Narrow', maxFreqMHz: 900 },
+  { sf: 7, bw: 62, cr: 5, longName: 'US/CA Narrow', minFreqMHz: 900 },
 ];
 
 /**
@@ -163,7 +163,7 @@ export function resolveMeshcorePresetDisplay(preset, freqMHz) {
   if (!tokens) return null;
 
   const { sf, bw, cr } = tokens;
-  const shortCode = bwToShortCode(bw) ?? null;
+  const shortCode = bwToShortCode(bw);
 
   const match = MESHCORE_NAMED_PRESETS.find(entry => {
     if (entry.sf !== sf || entry.bw !== bw || entry.cr !== cr) return false;
@@ -214,7 +214,8 @@ export function formatPresetDisplay(preset, freqMHz = null) {
  * @returns {string|null} Human-readable description or ``null`` when no data available.
  */
 export function formatModemDisplay(preset, frequency) {
-  const presetText = formatPresetDisplay(preset, typeof frequency === 'number' ? frequency : Number(frequency) || null);
+  const numericFreq = typeof frequency === 'number' ? frequency : Number(frequency);
+  const presetText = formatPresetDisplay(preset, Number.isFinite(numericFreq) && numericFreq > 0 ? numericFreq : null);
   const freqText = formatLoraFrequencyMHz(frequency);
 
   if (!presetText && !freqText) {

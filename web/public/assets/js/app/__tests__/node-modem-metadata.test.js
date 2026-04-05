@@ -151,50 +151,33 @@ describe('node-modem-metadata', () => {
       assert.equal(resolveMeshcorePresetDisplay(null, null), null);
     });
 
-    it('resolves AU/NZ Wide', () => {
-      const result = resolveMeshcorePresetDisplay('SF10/BW250/CR5', 915);
-      assert.deepEqual(result, { longName: 'AU/NZ Wide', shortCode: 'Wi', displayString: 'AU/NZ Wide' });
-    });
+    // Named preset table: [description, preset, freqMHz, expected]
+    const NAMED_CASES = [
+      ['AU/NZ Wide',                       'SF10/BW250/CR5', 915,  { longName: 'AU/NZ Wide',   shortCode: 'Wi', displayString: 'AU/NZ Wide'   }],
+      ['AU/NZ Narrow',                     'SF10/BW62/CR5',  915,  { longName: 'AU/NZ Narrow', shortCode: 'Na', displayString: 'AU/NZ Narrow' }],
+      ['EU/UK Wide',                       'SF11/BW250/CR5', 868,  { longName: 'EU/UK Wide',   shortCode: 'Wi', displayString: 'EU/UK Wide'   }],
+      ['EU/UK Narrow',                     'SF8/BW62/CR8',   868,  { longName: 'EU/UK Narrow', shortCode: 'Na', displayString: 'EU/UK Narrow' }],
+      ['CZ/SK Narrow (freq < 900)',        'SF7/BW62/CR5',   868,  { longName: 'CZ/SK Narrow', shortCode: 'Na', displayString: 'CZ/SK Narrow' }],
+      ['US/CA Narrow (freq >= 900)',        'SF7/BW62/CR5',   915,  { longName: 'US/CA Narrow', shortCode: 'Na', displayString: 'US/CA Narrow' }],
+      ['US/CA Narrow (exact 900 boundary)', 'SF7/BW62/CR5',   900,  { longName: 'US/CA Narrow', shortCode: 'Na', displayString: 'US/CA Narrow' }],
+    ];
+    for (const [desc, preset, freq, expected] of NAMED_CASES) {
+      it(`resolves ${desc}`, () => {
+        assert.deepEqual(resolveMeshcorePresetDisplay(preset, freq), expected);
+      });
+    }
 
-    it('resolves AU/NZ Narrow', () => {
-      const result = resolveMeshcorePresetDisplay('SF10/BW62/CR5', 915);
-      assert.deepEqual(result, { longName: 'AU/NZ Narrow', shortCode: 'Na', displayString: 'AU/NZ Narrow' });
-    });
-
-    it('resolves EU/UK Wide', () => {
-      const result = resolveMeshcorePresetDisplay('SF11/BW250/CR5', 868);
-      assert.deepEqual(result, { longName: 'EU/UK Wide', shortCode: 'Wi', displayString: 'EU/UK Wide' });
-    });
-
-    it('resolves EU/UK Narrow', () => {
-      const result = resolveMeshcorePresetDisplay('SF8/BW62/CR8', 868);
-      assert.deepEqual(result, { longName: 'EU/UK Narrow', shortCode: 'Na', displayString: 'EU/UK Narrow' });
-    });
-
-    it('resolves CZ/SK Narrow for freq < 900', () => {
-      const result = resolveMeshcorePresetDisplay('SF7/BW62/CR5', 868);
-      assert.deepEqual(result, { longName: 'CZ/SK Narrow', shortCode: 'Na', displayString: 'CZ/SK Narrow' });
-    });
-
-    it('resolves US/CA Narrow for freq >= 900', () => {
-      const result = resolveMeshcorePresetDisplay('SF7/BW62/CR5', 915);
-      assert.deepEqual(result, { longName: 'US/CA Narrow', shortCode: 'Na', displayString: 'US/CA Narrow' });
-    });
-
-    it('falls back to BW/SF/CR format for SF7/BW62/CR5 when freq is unknown', () => {
-      const result = resolveMeshcorePresetDisplay('SF7/BW62/CR5', null);
-      assert.deepEqual(result, { longName: null, shortCode: 'Na', displayString: 'BW62/SF7/CR5' });
-    });
-
-    it('falls back to BW/SF/CR format for unknown presets', () => {
-      const result = resolveMeshcorePresetDisplay('SF12/BW500/CR7', null);
-      assert.deepEqual(result, { longName: null, shortCode: null, displayString: 'BW500/SF12/CR7' });
-    });
-
-    it('provides BW-derived short code even for fallback presets', () => {
-      const result = resolveMeshcorePresetDisplay('SF9/BW125/CR6', null);
-      assert.deepEqual(result, { longName: null, shortCode: 'St', displayString: 'BW125/SF9/CR6' });
-    });
+    // Fallback cases: [description, preset, freqMHz, expected]
+    const FALLBACK_CASES = [
+      ['SF7/BW62/CR5 with unknown freq uses BW fallback', 'SF7/BW62/CR5',  null, { longName: null, shortCode: 'Na', displayString: 'BW62/SF7/CR5'   }],
+      ['unknown BW has no short code',                    'SF12/BW500/CR7', null, { longName: null, shortCode: null, displayString: 'BW500/SF12/CR7' }],
+      ['125 kHz BW gives St short code',                  'SF9/BW125/CR6',  null, { longName: null, shortCode: 'St', displayString: 'BW125/SF9/CR6'  }],
+    ];
+    for (const [desc, preset, freq, expected] of FALLBACK_CASES) {
+      it(`falls back: ${desc}`, () => {
+        assert.deepEqual(resolveMeshcorePresetDisplay(preset, freq), expected);
+      });
+    }
   });
 
   // ---------------------------------------------------------------------------

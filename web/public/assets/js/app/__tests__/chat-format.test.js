@@ -183,33 +183,22 @@ test('normalizePresetSlot enforces placeholders and uppercase output', () => {
 // abbreviatePreset — MeshCore SF/BW/CR presets
 // ---------------------------------------------------------------------------
 
-test('abbreviatePreset returns Wi for AU/NZ Wide SF10/BW250/CR5', () => {
-  assert.equal(abbreviatePreset('SF10/BW250/CR5', null), 'Wi');
-});
-
-test('abbreviatePreset returns Na for EU/UK Narrow SF8/BW62/CR8', () => {
-  assert.equal(abbreviatePreset('SF8/BW62/CR8', null), 'Na');
-});
-
-test('abbreviatePreset returns Na for CZ/SK Narrow SF7/BW62/CR5 at 868 MHz', () => {
-  assert.equal(abbreviatePreset('SF7/BW62/CR5', 868), 'Na');
-});
-
-test('abbreviatePreset returns Na for US/CA Narrow SF7/BW62/CR5 at 915 MHz', () => {
-  assert.equal(abbreviatePreset('SF7/BW62/CR5', 915), 'Na');
-});
-
-test('abbreviatePreset returns Na for SF7/BW62/CR5 when freq is unknown (BW fallback)', () => {
-  assert.equal(abbreviatePreset('SF7/BW62/CR5', null), 'Na');
-});
-
-test('abbreviatePreset returns null for unknown BW that has no short code', () => {
-  assert.equal(abbreviatePreset('SF12/BW500/CR7', null), null);
-});
-
-test('abbreviatePreset returns St for 125 kHz BW fallback preset', () => {
-  assert.equal(abbreviatePreset('SF9/BW125/CR6', null), 'St');
-});
+// [description, preset, freqMHz, expectedCode]
+const ABBREVIATE_MESHCORE_CASES = [
+  ['AU/NZ Wide → Wi',                         'SF10/BW250/CR5', null, 'Wi'],
+  ['EU/UK Narrow → Na',                        'SF8/BW62/CR8',   null, 'Na'],
+  ['CZ/SK Narrow at 868 MHz → Na',             'SF7/BW62/CR5',   868,  'Na'],
+  ['US/CA Narrow at 915 MHz → Na',             'SF7/BW62/CR5',   915,  'Na'],
+  ['US/CA Narrow at exact 900 MHz boundary',   'SF7/BW62/CR5',   900,  'Na'],
+  ['BW fallback Na when freq unknown',         'SF7/BW62/CR5',   null, 'Na'],
+  ['125 kHz BW fallback → St',                 'SF9/BW125/CR6',  null, 'St'],
+  ['unknown BW → null',                        'SF12/BW500/CR7', null,  null],
+];
+for (const [desc, preset, freq, expected] of ABBREVIATE_MESHCORE_CASES) {
+  test(`abbreviatePreset MeshCore: ${desc}`, () => {
+    assert.equal(abbreviatePreset(preset, freq), expected);
+  });
+}
 
 test('abbreviatePreset leaves Meshtastic named presets unaffected', () => {
   assert.equal(abbreviatePreset('MediumFast', null), 'MF');
