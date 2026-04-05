@@ -455,10 +455,10 @@ async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
     :attr:`~meshcore.EventType.CHANNEL_INFO` events and are registered into
     the shared channel cache via :func:`~data.mesh_ingestor.channels.register_channel`.
 
-    Stops early when three consecutive ``ERROR`` responses are received
-    (device has fewer channels than *max_idx*) or when an exception is raised
-    (connection issue).  Individual ``ERROR`` responses for unconfigured
-    intermediate slots are tolerated and skipped.
+    Probes every index in ``range(max_idx)`` without early-stopping on
+    consecutive ``ERROR`` responses, so sparse configurations (e.g. slots 0
+    and 5 configured, slots 1-4 empty) are handled correctly.  Only a hard
+    exception (connection loss, timeout) aborts the loop early.
 
     Parameters:
         mc: Connected :class:`~meshcore.MeshCore` instance.
@@ -468,7 +468,6 @@ async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
     """
     from .. import channels as _channels
 
-    consecutive_errors = 0
     for idx in range(max_idx):
         try:
             evt = await mc.commands.get_channel(idx)
@@ -476,10 +475,7 @@ async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
                 name = (evt.payload or {}).get("channel_name", "")
                 if name:
                     _channels.register_channel(idx, name)
-                consecutive_errors = 0
-            else:
-                # ERROR response — unconfigured slot; keep probing
-                consecutive_errors += 1
+            # ERROR response — unconfigured slot; continue to next index
         except Exception as exc:
             config._debug_log(
                 "Channel probe failed",
@@ -489,8 +485,6 @@ async def _ensure_channel_names(mc: object, max_idx: int = 8) -> None:
                 error=str(exc),
             )
             break
-        if consecutive_errors >= 3:
-            break  # device likely has fewer channels than max_idx
 
 
 # ---------------------------------------------------------------------------

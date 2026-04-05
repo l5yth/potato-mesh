@@ -1246,8 +1246,12 @@ def test_ensure_channel_names_tolerates_error_response(monkeypatch):
     _channels._reset_channel_cache()
 
 
-def test_ensure_channel_names_stops_on_three_consecutive_errors(monkeypatch):
-    """Three consecutive ERROR responses must stop the probe before max_idx."""
+def test_ensure_channel_names_probes_all_indices_on_sparse_config(monkeypatch):
+    """All indices must be probed even when earlier slots return ERROR.
+
+    Sparse configurations (e.g. slots 0 and 5 configured, 1-4 empty) must
+    not be truncated by consecutive-error heuristics.
+    """
     import asyncio
     import data.mesh_ingestor.protocols.meshcore as _mod
     import data.mesh_ingestor.channels as _channels
@@ -1255,19 +1259,30 @@ def test_ensure_channel_names_stops_on_three_consecutive_errors(monkeypatch):
     _channels._reset_channel_cache()
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
 
-    probed: list[int] = []
+    # Slots 0-4 return ERROR; slot 5 is configured.
+    channel_map = {5: "Admin"}
 
     class _FakeCommands:
         async def get_channel(self, idx):
-            probed.append(idx)
+            name = channel_map.get(idx)
+            if name is None:
+                return types.SimpleNamespace(
+                    type=EventType.ERROR, payload={"reason": "not_found"}
+                )
             return types.SimpleNamespace(
-                type=EventType.ERROR, payload={"reason": "not_found"}
+                type=EventType.CHANNEL_INFO,
+                payload={"channel_idx": idx, "channel_name": name},
             )
 
-    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands()), max_idx=8))
+    asyncio.run(
+        _ensure_channel_names(
+            types.SimpleNamespace(commands=_FakeCommands()), max_idx=8
+        )
+    )
 
-    # Should stop after 3 consecutive errors (indices 0, 1, 2).
-    assert probed == [0, 1, 2]
+    # Slot 5 must be registered despite the preceding empty slots.
+    assert _channels.channel_name(5) == "Admin"
+    assert _channels.channel_name(0) is None
     _channels._reset_channel_cache()
 
 
@@ -1280,7 +1295,9 @@ def test_ensure_channel_names_stops_on_exception(monkeypatch):
     _channels._reset_channel_cache()
     logged: list = []
     monkeypatch.setattr(
-        _mod.config, "_debug_log", lambda *_a, severity=None, **_k: logged.append(severity)
+        _mod.config,
+        "_debug_log",
+        lambda *_a, severity=None, **_k: logged.append(severity),
     )
 
     class _FakeCommands:
@@ -1288,7 +1305,11 @@ def test_ensure_channel_names_stops_on_exception(monkeypatch):
             raise OSError("serial port disconnected")
 
     # Must complete without raising.
-    asyncio.run(_ensure_channel_names(types.SimpleNamespace(commands=_FakeCommands()), max_idx=4))
+    asyncio.run(
+        _ensure_channel_names(
+            types.SimpleNamespace(commands=_FakeCommands()), max_idx=4
+        )
+    )
 
     assert "warning" in logged
     _channels._reset_channel_cache()
@@ -1305,9 +1326,7 @@ def test_on_channel_info_handler_registers_channel(monkeypatch):
     iface = _MeshcoreInterface(target=None)
     handlers_map = _make_event_handlers(iface, "/dev/ttyUSB0")
 
-    evt = types.SimpleNamespace(
-        payload={"channel_idx": 2, "channel_name": "Admin"}
-    )
+    evt = types.SimpleNamespace(payload={"channel_idx": 2, "channel_name": "Admin"})
     asyncio.run(handlers_map["CHANNEL_INFO"](evt))
 
     assert _channels.channel_name(2) == "Admin"
