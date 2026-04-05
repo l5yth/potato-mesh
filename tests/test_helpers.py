@@ -41,15 +41,6 @@ def reset_state(monkeypatch):
     importlib.reload(config)
 
 
-def test_config_module_port_aliases(monkeypatch):
-    """Ensure the config module keeps CONNECTION and PORT in sync."""
-
-    reloaded = importlib.reload(config)
-    monkeypatch.setattr(reloaded, "CONNECTION", "dev-tty", raising=False)
-    reloaded.PORT = "new-port"
-    assert reloaded.CONNECTION == "new-port"
-    assert reloaded.PORT == "new-port"
-
 
 def test_queue_stringification_and_ordering():
     """Exercise queue payload formatting and priority ordering."""

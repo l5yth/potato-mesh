@@ -1,5 +1,65 @@
 # CHANGELOG
 
+## v0.6.0
+
+**Breaking changes — remove deprecated environment variable aliases:**
+
+* Ingestor: remove `POTATOMESH_INSTANCE` env var — use `INSTANCE_DOMAIN` by @l5yth
+* Ingestor: remove `PROVIDER` env var — use `PROTOCOL` by @l5yth
+* Ingestor: remove `MESH_SERIAL` env var — use `CONNECTION` by @l5yth
+* Ingestor: remove `PORT` config alias — use `CONNECTION` by @l5yth
+* Docker: give `INSTANCE_DOMAIN` a default of `http://web:41447` in compose by @l5yth
+* Chore: bump version to 0.6.0 across web, matrix bridge, and mobile app by @l5yth
+
+## v0.5.12
+
+* Enh: surface meshcore role types (#680) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/685>
+* Chore: refactor codebase before meshcore release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/682>
+* [Meshcore] enh: short name should be 1st 4 hex digits of public key by @benallfree in <https://github.com/l5yth/potato-mesh/pull/679>
+* Chore: update xcode deps by @benallfree in <https://github.com/l5yth/potato-mesh/pull/674>
+* Chore: update mesh.sh to use requirements file by @benallfree in <https://github.com/l5yth/potato-mesh/pull/675>
+* Data/meshcore: fix ble and enable tcp by @l5yth in <https://github.com/l5yth/potato-mesh/pull/669>
+* Data: handle store_forward and router_heartbeat portnum by @l5yth in <https://github.com/l5yth/potato-mesh/pull/667>
+* Feat: implement meshcore provider by @l5yth in <https://github.com/l5yth/potato-mesh/pull/663>
+* Ci: update dependabot and codecov settings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/666>
+* Web: prepare release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/665>
+* App: only query meshtastic provider by @l5yth in <https://github.com/l5yth/potato-mesh/pull/664>
+* Data: prepare ingestor for meshcore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/658>
+* Web: fix css issues by @l5yth in <https://github.com/l5yth/potato-mesh/pull/659>
+* Web: prepare frontend for multi protocol by @l5yth in <https://github.com/l5yth/potato-mesh/pull/657>
+* Feat: split device and power-sensor telemetry charts (#643) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/656>
+* Web: implement a 'protocol' field across systems by @l5yth in <https://github.com/l5yth/potato-mesh/pull/655>
+* Fix upsert clearing node coordinates bug by @l5yth in <https://github.com/l5yth/potato-mesh/pull/654>
+* Data: resolve circular dependency of deamon.py by @l5yth in <https://github.com/l5yth/potato-mesh/pull/653>
+* Proposal: mesh provider pattern refactor by @benallfree in <https://github.com/l5yth/potato-mesh/pull/651>
+* Build(deps): bump rustls-webpki from 0.103.8 to 0.103.10 in /matrix by @dependabot[bot]< in https://github.com/l5yth/potato-mesh/pull/649>
+* Build(deps): bump quinn-proto from 0.11.13 to 0.11.14 in /matrix by @dependabot[bot]< in https://github.com/l5yth/potato-mesh/pull/646>
+
+## v0.5.11
+
+* Chore: bump version to 0.5.11 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/645>
+* Web: limit horizontal size of dropdown by @l5yth in <https://github.com/l5yth/potato-mesh/pull/644>
+
+## v0.5.10
+
+* Web: expose node stats in distinct api by @l5yth in <https://github.com/l5yth/potato-mesh/pull/641>
+* Web: do merge channels by name by @l5yth in <https://github.com/l5yth/potato-mesh/pull/640>
+* Web: do not merge channels by ID in frontend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/637>
+* Web: do not touch neighbor last seen on neighbor info by @l5yth in <https://github.com/l5yth/potato-mesh/pull/636>
+* Ingestor: report self id per packet by @l5yth in <https://github.com/l5yth/potato-mesh/pull/635>
+* Ci: fix docker compose and docs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/634>
+* Web: supress encrypted text messages in frontend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/633>
+* Federation: ensure requests timeout properly and can be terminated by @l5yth in <https://github.com/l5yth/potato-mesh/pull/631>
+* Build(deps): bump bytes from 1.11.0 to 1.11.1 in /matrix by @dependabot[bot]< in https://github.com/l5yth/potato-mesh/pull/627>
+* Matrix: config loading now merges optional TOML with CLI/env/secret inputs by @l5yth in <https://github.com/l5yth/potato-mesh/pull/617>
+* Matrix: logs only non-sensitive config fields by @l5yth in <https://github.com/l5yth/potato-mesh/pull/616>
+* Web: decrypted takes precedence by @l5yth in <https://github.com/l5yth/potato-mesh/pull/614>
+* Add Apache 2.0 license headers to missing sources by @l5yth in <https://github.com/l5yth/potato-mesh/pull/615>
+* Web: decrypt PSK-1 unencrypted messages on arrival by @l5yth in <https://github.com/l5yth/potato-mesh/pull/611>
+* Web: daemonize federation worker pool to avoid deadlocks on stuck announcments by @l5yth in <https://github.com/l5yth/potato-mesh/pull/610>
+* Web: add announcement banner by @l5yth in <https://github.com/l5yth/potato-mesh/pull/609>
+* L5Y chore version 0510 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/608>
+
 ## v0.5.9
 
 * Matrix: listen for synapse on port 41448 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/607>

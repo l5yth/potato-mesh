@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 import os
-import sys
 from datetime import datetime, timezone
-from types import ModuleType
 from typing import Any
 
 DEFAULT_SNAPSHOT_SECS = 60
@@ -49,12 +47,11 @@ DEFAULT_ENERGY_SLEEP_SECS = float(6 * 60 * 60)
 DEFAULT_INGESTOR_HEARTBEAT_SECS = float(60 * 60)
 """Interval between ingestor heartbeat announcements."""
 
-CONNECTION = os.environ.get("CONNECTION") or os.environ.get("MESH_SERIAL")
+CONNECTION = os.environ.get("CONNECTION")
 """Optional connection target for the mesh interface.
 
 When unset, platform-specific defaults will be inferred by the interface
-implementations. The legacy :envvar:`MESH_SERIAL` environment variable is still
-accepted for backwards compatibility.
+implementations.
 """
 
 SNAPSHOT_SECS = DEFAULT_SNAPSHOT_SECS
@@ -67,13 +64,7 @@ DEBUG = os.environ.get("DEBUG") == "1"
 
 _KNOWN_PROTOCOLS = ("meshtastic", "meshcore")
 
-# Prefer the canonical PROTOCOL env var; fall back to legacy PROVIDER for
-# backwards compatibility with existing deployments.
-_raw_protocol = (
-    (os.environ.get("PROTOCOL") or os.environ.get("PROVIDER", "meshtastic"))
-    .strip()
-    .lower()
-)
+_raw_protocol = os.environ.get("PROTOCOL", "meshtastic").strip().lower()
 if _raw_protocol not in _KNOWN_PROTOCOLS:
     raise ValueError(
         f"Unknown PROTOCOL={_raw_protocol!r}. "
@@ -84,11 +75,7 @@ PROTOCOL = _raw_protocol
 """Active ingestion protocol, selected via the :envvar:`PROTOCOL` environment variable.
 
 Accepted values are ``meshtastic`` (default) and ``meshcore``.
-The legacy :envvar:`PROVIDER` environment variable is still accepted as a fallback.
 """
-
-PROVIDER = PROTOCOL
-"""Deprecated alias for :data:`PROTOCOL`; kept for backwards compatibility."""
 
 
 def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
@@ -137,16 +124,11 @@ ALLOWED_CHANNELS = _parse_channel_names(os.environ.get("ALLOWED_CHANNELS"))
 def _resolve_instance_domain() -> str:
     """Resolve the configured instance domain from the environment.
 
-    The ingestor prefers the :envvar:`INSTANCE_DOMAIN` variable for clarity and
-    compatibility with the web application. For deployments that still
-    configure the legacy :envvar:`POTATOMESH_INSTANCE` variable, the resolver
-    falls back to that value when no primary domain is set.
+    Reads the :envvar:`INSTANCE_DOMAIN` variable. When the value does not
+    contain a scheme, ``https://`` is prepended automatically.
     """
 
-    instance_domain = os.environ.get("INSTANCE_DOMAIN", "")
-    legacy_instance = os.environ.get("POTATOMESH_INSTANCE", "")
-
-    configured_instance = (instance_domain or legacy_instance).rstrip("/")
+    configured_instance = os.environ.get("INSTANCE_DOMAIN", "").rstrip("/")
 
     if configured_instance and "://" not in configured_instance:
         return f"https://{configured_instance}"
@@ -172,9 +154,6 @@ _INACTIVITY_RECONNECT_SECS = DEFAULT_INACTIVITY_RECONNECT_SECS
 _ENERGY_ONLINE_DURATION_SECS = DEFAULT_ENERGY_ONLINE_DURATION_SECS
 _ENERGY_SLEEP_SECS = DEFAULT_ENERGY_SLEEP_SECS
 _INGESTOR_HEARTBEAT_SECS = DEFAULT_INGESTOR_HEARTBEAT_SECS
-
-# Backwards compatibility shim for legacy imports.
-PORT = CONNECTION
 
 
 def _debug_log(
@@ -232,23 +211,3 @@ __all__ = [
     "_INGESTOR_HEARTBEAT_SECS",
     "_debug_log",
 ]
-
-
-class _ConfigModule(ModuleType):
-    """Module proxy that keeps connection aliases synchronised."""
-
-    def __setattr__(self, name: str, value: Any) -> None:  # type: ignore[override]
-        """Propagate CONNECTION/PORT and PROTOCOL/PROVIDER assignments to both attributes."""
-
-        if name in {"CONNECTION", "PORT"}:
-            super().__setattr__("CONNECTION", value)
-            super().__setattr__("PORT", value)
-            return
-        if name in {"PROTOCOL", "PROVIDER"}:
-            super().__setattr__("PROTOCOL", value)
-            super().__setattr__("PROVIDER", value)
-            return
-        super().__setattr__(name, value)
-
-
-sys.modules[__name__].__class__ = _ConfigModule

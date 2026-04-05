@@ -219,16 +219,6 @@ else
     sed -i.bak '/^INSTANCE_DOMAIN=.*/d' .env
 fi
 
-# Migrate legacy connection settings and ensure defaults exist
-if grep -q "^MESH_SERIAL=" .env; then
-    legacy_connection=$(grep "^MESH_SERIAL=" .env | head -n1 | cut -d'=' -f2-)
-    if [ -n "$legacy_connection" ] && ! grep -q "^CONNECTION=" .env; then
-        echo "♻️  Migrating legacy MESH_SERIAL value to CONNECTION"
-        update_env "CONNECTION" "$legacy_connection"
-    fi
-    sed -i.bak '/^MESH_SERIAL=.*/d' .env
-fi
-
 if ! grep -q "^CONNECTION=" .env; then
     echo "CONNECTION=/dev/ttyACM0" >> .env
 fi

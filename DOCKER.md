@@ -13,10 +13,10 @@ will pull the latest release images for you.
 
 ## Images on GHCR
 
-| Service  | Image                                                                                                         |
-|----------|---------------------------------------------------------------------------------------------------------------|
-| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:<tag>` (e.g. `latest`, `3.0`, `v3.0`, or `3.1.0-rc1`)              |
-| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:<tag>` (e.g. `latest`, `3.0`, `v3.0`, or `3.1.0-rc1`)         |
+| Service  | Image                                                                                                          |
+|----------|----------------------------------------------------------------------------------------------------------------|
+| Web UI   | `ghcr.io/l5yth/potato-mesh-web-linux-amd64:<tag>` (e.g. `latest`, `0.6.0`, `v0.6.0`, or `0.7.0-rc1`)         |
+| Ingestor | `ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:<tag>` (e.g. `latest`, `0.6.0`, `v0.6.0`, or `0.7.0-rc1`)    |
 
 Images are published for every tagged release. Stable builds receive both
 semantic version tags (for example `3.0`) and a matching `v`-prefixed tag (for
@@ -60,9 +60,8 @@ Additional environment variables are optional:
 | `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the radio. |
 
 The ingestor posts to the URL configured via `INSTANCE_DOMAIN` (defaulting to
-`http://web:41447` in the provided compose file) and still accepts
-`POTATOMESH_INSTANCE` as a legacy alias when the primary variable is unset. Use
-`CHANNEL_INDEX` to select a LoRa channel on serial or Bluetooth connections.
+`http://web:41447` in the provided compose file). Use `CHANNEL_INDEX` to select
+a LoRa channel on serial or Bluetooth connections.
 
 ## Docker Compose file
 

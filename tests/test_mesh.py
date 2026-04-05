@@ -228,10 +228,9 @@ def mesh_module(monkeypatch):
 
 
 def test_instance_domain_prefers_primary_env(mesh_module, monkeypatch):
-    """Ensure the ingestor prefers ``INSTANCE_DOMAIN`` over the legacy variable."""
+    """Ensure the ingestor reads ``INSTANCE_DOMAIN``."""
 
     monkeypatch.setenv("INSTANCE_DOMAIN", "https://new.example")
-    monkeypatch.setenv("POTATOMESH_INSTANCE", "https://legacy.example")
 
     try:
         refreshed_instance = mesh_module.config._resolve_instance_domain()
@@ -242,26 +241,6 @@ def test_instance_domain_prefers_primary_env(mesh_module, monkeypatch):
         assert mesh_module.INSTANCE == "https://new.example"
     finally:
         monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
-        mesh_module.config.INSTANCE = mesh_module.config._resolve_instance_domain()
-        mesh_module.INSTANCE = mesh_module.config.INSTANCE
-
-
-def test_instance_domain_falls_back_to_legacy(mesh_module, monkeypatch):
-    """Verify ``POTATOMESH_INSTANCE`` is used when ``INSTANCE_DOMAIN`` is unset."""
-
-    monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
-    monkeypatch.setenv("POTATOMESH_INSTANCE", "https://legacy-only.example")
-
-    try:
-        refreshed_instance = mesh_module.config._resolve_instance_domain()
-        mesh_module.config.INSTANCE = refreshed_instance
-        mesh_module.INSTANCE = refreshed_instance
-
-        assert refreshed_instance == "https://legacy-only.example"
-        assert mesh_module.INSTANCE == "https://legacy-only.example"
-    finally:
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
         mesh_module.config.INSTANCE = mesh_module.config._resolve_instance_domain()
         mesh_module.INSTANCE = mesh_module.config.INSTANCE
 
@@ -270,7 +249,6 @@ def test_instance_domain_infers_scheme_for_hostnames(mesh_module, monkeypatch):
     """Ensure bare hostnames are promoted to HTTPS URLs for ingestion."""
 
     monkeypatch.setenv("INSTANCE_DOMAIN", "mesh.example.org")
-    monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
 
     try:
         refreshed_instance = mesh_module.config._resolve_instance_domain()
@@ -1637,7 +1615,7 @@ def test_main_retries_interface_creation(mesh_module, monkeypatch):
             raise RuntimeError("boom")
         return iface, port
 
-    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
+    monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
@@ -1709,7 +1687,7 @@ def test_main_reconnects_when_connection_event_clears(mesh_module, monkeypatch):
             self._flag = True
             return True
 
-    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
+    monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh.threading, "Event", DummyStopEvent)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
@@ -1773,7 +1751,7 @@ def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch)
     def record_upsert(node_id, node):
         upsert_calls.append(node_id)
 
-    monkeypatch.setattr(mesh, "PORT", "/dev/ttyTEST")
+    monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh, "upsert_node", record_upsert)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
@@ -1795,7 +1773,7 @@ def test_main_exits_when_defaults_unavailable(mesh_module, monkeypatch):
     def fail_default():
         raise mesh.NoAvailableMeshInterface("no interface available")
 
-    monkeypatch.setattr(mesh, "PORT", None)
+    monkeypatch.setattr(mesh, "CONNECTION", None)
     monkeypatch.setattr(mesh, "_create_default_interface", fail_default)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)
 
@@ -3203,7 +3181,7 @@ def test_queue_ingestor_heartbeat_enqueues_and_throttles(mesh_module, monkeypatc
 
 
 def test_queue_ingestor_heartbeat_protocol_meshcore(mesh_module, monkeypatch):
-    """Heartbeat payload must carry the configured PROVIDER as its protocol."""
+    """Heartbeat payload must carry the configured PROTOCOL as its protocol."""
     mesh = mesh_module
     captured = []
 
