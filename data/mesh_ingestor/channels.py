@@ -273,6 +273,43 @@ def is_hidden_channel(channel_name_value: str | None) -> bool:
     return False
 
 
+def register_channel(channel_idx: int, channel_name_value: str) -> None:
+    """Register a single channel index → name mapping.
+
+    Unlike :func:`capture_from_interface`, which scans a complete interface
+    object in one shot, this function registers entries one at a time.  It is
+    intended for protocols (e.g. MeshCore) that expose channel metadata via
+    per-index requests rather than a bulk channel list.
+
+    Idempotent: silently skips if *channel_idx* is already cached or
+    *channel_name_value* is blank, matching the first-seen-wins semantics of
+    :func:`capture_from_interface`.
+
+    Parameters:
+        channel_idx: Zero-based channel index.
+        channel_name_value: Human-readable channel name reported by the device.
+    """
+
+    global _CHANNEL_MAPPINGS, _CHANNEL_LOOKUP
+
+    if not isinstance(channel_name_value, str) or not channel_name_value.strip():
+        return
+    if channel_idx in _CHANNEL_LOOKUP:
+        return
+
+    name = channel_name_value.strip()
+    _CHANNEL_LOOKUP[channel_idx] = name
+    _CHANNEL_MAPPINGS = tuple(sorted(_CHANNEL_LOOKUP.items()))
+
+    config._debug_log(
+        "Registered channel",
+        context="channels.register",
+        severity="info",
+        channel_idx=channel_idx,
+        channel_name=name,
+    )
+
+
 def _reset_channel_cache() -> None:
     """Clear cached channel data. Intended for use in tests only."""
 
@@ -285,6 +322,7 @@ __all__ = [
     "capture_from_interface",
     "channel_mappings",
     "channel_name",
+    "register_channel",
     "allowed_channel_names",
     "hidden_channel_names",
     "is_allowed_channel",

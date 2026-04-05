@@ -33,11 +33,13 @@ from data.mesh_ingestor.protocols.meshtastic import (  # noqa: E402 - path setup
 )
 from data.mesh_ingestor.connection import parse_tcp_target  # noqa: E402 - path setup
 from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
+    EventType,
     MeshcoreProvider,
     _MeshcoreInterface,
     _contact_to_node_dict,
     _derive_message_id,
     _derive_modem_preset,
+    _ensure_channel_names,
     _make_connection,
     _make_event_handlers,
     _meshcore_adv_type_to_role,
@@ -1180,6 +1182,138 @@ def test_derive_modem_preset_none_on_missing():
 
 
 # ---------------------------------------------------------------------------
+# _ensure_channel_names
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_mc_for_channels(channel_map: dict):
+    """Build a minimal fake MeshCore instance for channel-probe tests.
+
+    Parameters:
+        channel_map: Mapping of channel_idx → channel_name string, or
+            ``None`` to simulate an ERROR response for that index.
+    """
+    import asyncio
+
+    class _FakeMC:
+        async def get_channel(self, idx):
+            name = channel_map.get(idx)
+            if name is None:
+                return types.SimpleNamespace(
+                    type=EventType.ERROR, payload={"reason": "not_found"}
+                )
+            return types.SimpleNamespace(
+                type=EventType.CHANNEL_INFO,
+                payload={"channel_idx": idx, "channel_name": name},
+            )
+
+    return _FakeMC()
+
+
+def test_ensure_channel_names_populates_cache(monkeypatch):
+    """Channel names returned by the device must be registered in the cache."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.channels as _channels
+
+    _channels._reset_channel_cache()
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    fake_mc = _make_fake_mc_for_channels({0: "LongFast", 1: "Chat"})
+    asyncio.run(_ensure_channel_names(fake_mc, max_idx=4))
+
+    assert _channels.channel_name(0) == "LongFast"
+    assert _channels.channel_name(1) == "Chat"
+    _channels._reset_channel_cache()
+
+
+def test_ensure_channel_names_tolerates_error_response(monkeypatch):
+    """An ERROR for one index must not prevent subsequent indices from registering."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.channels as _channels
+
+    _channels._reset_channel_cache()
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    # Index 0 returns ERROR; index 1 returns a valid name.
+    fake_mc = _make_fake_mc_for_channels({1: "Chat"})
+    asyncio.run(_ensure_channel_names(fake_mc, max_idx=4))
+
+    assert _channels.channel_name(0) is None
+    assert _channels.channel_name(1) == "Chat"
+    _channels._reset_channel_cache()
+
+
+def test_ensure_channel_names_stops_on_three_consecutive_errors(monkeypatch):
+    """Three consecutive ERROR responses must stop the probe before max_idx."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.channels as _channels
+
+    _channels._reset_channel_cache()
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    probed: list[int] = []
+
+    class _FakeMC:
+        async def get_channel(self, idx):
+            probed.append(idx)
+            return types.SimpleNamespace(
+                type=EventType.ERROR, payload={"reason": "not_found"}
+            )
+
+    asyncio.run(_ensure_channel_names(_FakeMC(), max_idx=8))
+
+    # Should stop after 3 consecutive errors (indices 0, 1, 2).
+    assert probed == [0, 1, 2]
+    _channels._reset_channel_cache()
+
+
+def test_ensure_channel_names_stops_on_exception(monkeypatch):
+    """An exception during get_channel must abort the probe without propagating."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.channels as _channels
+
+    _channels._reset_channel_cache()
+    logged: list = []
+    monkeypatch.setattr(
+        _mod.config, "_debug_log", lambda *_a, severity=None, **_k: logged.append(severity)
+    )
+
+    class _FakeMC:
+        async def get_channel(self, idx):
+            raise OSError("serial port disconnected")
+
+    # Must complete without raising.
+    asyncio.run(_ensure_channel_names(_FakeMC(), max_idx=4))
+
+    assert "warning" in logged
+    _channels._reset_channel_cache()
+
+
+def test_on_channel_info_handler_registers_channel(monkeypatch):
+    """CHANNEL_INFO event delivered to the handler must populate the channel cache."""
+    import asyncio
+    import data.mesh_ingestor.channels as _channels
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    _channels._reset_channel_cache()
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface = _MeshcoreInterface(target=None)
+    handlers_map = _make_event_handlers(iface, "/dev/ttyUSB0")
+
+    evt = types.SimpleNamespace(
+        payload={"channel_idx": 2, "channel_name": "Admin"}
+    )
+    asyncio.run(handlers_map["CHANNEL_INFO"](evt))
+
+    assert _channels.channel_name(2) == "Admin"
+    _channels._reset_channel_cache()
+
+
+# ---------------------------------------------------------------------------
 # _process_contacts
 # ---------------------------------------------------------------------------
 
@@ -1481,6 +1615,7 @@ def _make_fake_meshcore_mod(
     EventType = enum.Enum(
         "EventType",
         [
+            "CHANNEL_INFO",
             "SELF_INFO",
             "CONTACTS",
             "NEW_CONTACT",
@@ -1516,6 +1651,10 @@ def _make_fake_meshcore_mod(
         async def ensure_contacts(self):
             if fail_ensure_contacts:
                 raise RuntimeError("contacts unavailable")
+
+        async def get_channel(self, idx):
+            # Return ERROR for all channels — channel probing is not under test here.
+            return types.SimpleNamespace(type=EventType.ERROR, payload={})
 
         async def start_auto_message_fetching(self):
             pass

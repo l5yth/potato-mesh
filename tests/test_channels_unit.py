@@ -421,3 +421,54 @@ class TestIsHiddenChannel:
         """Non-configured names are not hidden."""
         monkeypatch.setattr(config, "HIDDEN_CHANNELS", ("Chat",))
         assert channels.is_hidden_channel("LongFast") is False
+
+
+# ---------------------------------------------------------------------------
+# register_channel
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterChannel:
+    """Tests for :func:`channels.register_channel`."""
+
+    def test_adds_to_lookup(self):
+        """register_channel must make the name retrievable via channel_name."""
+        channels.register_channel(1, "Chat")
+        assert channels.channel_name(1) == "Chat"
+
+    def test_no_overwrite(self):
+        """Second call with same index must not replace the first-registered name."""
+        channels.register_channel(0, "LongFast")
+        channels.register_channel(0, "Other")
+        assert channels.channel_name(0) == "LongFast"
+
+    def test_strips_whitespace(self):
+        """Leading and trailing whitespace is stripped from the channel name."""
+        channels.register_channel(2, "  Chat  ")
+        assert channels.channel_name(2) == "Chat"
+
+    def test_ignores_empty_string(self):
+        """Empty string is silently ignored and does not populate the cache."""
+        channels.register_channel(3, "")
+        assert channels.channel_name(3) is None
+
+    def test_ignores_whitespace_only_string(self):
+        """Whitespace-only name is silently ignored."""
+        channels.register_channel(3, "   ")
+        assert channels.channel_name(3) is None
+
+    def test_updates_mappings_tuple(self):
+        """channel_mappings() reflects all registered entries, sorted by index."""
+        channels.register_channel(2, "Admin")
+        channels.register_channel(0, "LongFast")
+        assert channels.channel_mappings() == ((0, "LongFast"), (2, "Admin"))
+
+    def test_coexists_with_capture_from_interface(self):
+        """Entries from register_channel and capture_from_interface merge correctly."""
+        # Simulate capture_from_interface populating index 0.
+        channels._CHANNEL_LOOKUP[0] = "LongFast"
+        channels._CHANNEL_MAPPINGS = ((0, "LongFast"),)
+        # register_channel should add index 1 without disturbing index 0.
+        channels.register_channel(1, "Chat")
+        assert channels.channel_name(0) == "LongFast"
+        assert channels.channel_name(1) == "Chat"
