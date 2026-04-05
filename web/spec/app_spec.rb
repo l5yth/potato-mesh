@@ -2923,6 +2923,94 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_heard).to eq(expected_last_heard(node))
       end
     end
+
+    it "does not overwrite a real long name with a generic fallback name" do
+      node_id = "!deadbeef"
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, long_name, last_heard) VALUES (?,?,?)",
+          [node_id, "Peter's Node", reference_time.to_i - 3600],
+        )
+      end
+
+      post "/api/nodes",
+           { node_id => { "user" => { "longName" => "Meshtastic BEEF" }, "lastHeard" => reference_time.to_i } }.to_json,
+           auth_headers
+
+      expect(last_response).to be_ok
+      with_db(readonly: true) do |db|
+        long_name = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
+        expect(long_name).to eq("Peter's Node")
+      end
+    end
+
+    it "writes a generic fallback long name when no real name is on record" do
+      node_id = "!deadbeef"
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard) VALUES (?,?)",
+          [node_id, reference_time.to_i - 3600],
+        )
+      end
+
+      post "/api/nodes",
+           { node_id => { "user" => { "longName" => "Meshtastic BEEF" }, "lastHeard" => reference_time.to_i } }.to_json,
+           auth_headers
+
+      expect(last_response).to be_ok
+      with_db(readonly: true) do |db|
+        long_name = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
+        expect(long_name).to eq("Meshtastic BEEF")
+      end
+    end
+
+    it "overwrites a generic fallback long name with a real name" do
+      node_id = "!deadbeef"
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, long_name, last_heard) VALUES (?,?,?)",
+          [node_id, "Meshtastic BEEF", reference_time.to_i - 3600],
+        )
+      end
+
+      post "/api/nodes",
+           { node_id => { "user" => { "longName" => "Peter's Node" }, "lastHeard" => reference_time.to_i } }.to_json,
+           auth_headers
+
+      expect(last_response).to be_ok
+      with_db(readonly: true) do |db|
+        long_name = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
+        expect(long_name).to eq("Peter's Node")
+      end
+    end
+
+    it "does not overwrite a real long name with a meshcore generic fallback name (Meshcore XXXX pattern)" do
+      node_id = "!deadbeef"
+      ingestor_id = "!aabbccdd"
+
+      post "/api/ingestors",
+           { node_id: ingestor_id, start_time: reference_time.to_i - 60, last_seen_time: reference_time.to_i,
+             version: "1.0.0", protocol: "meshcore" }.to_json,
+           auth_headers
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, long_name, last_heard) VALUES (?,?,?)",
+          [node_id, "Peter's Node", reference_time.to_i - 3600],
+        )
+      end
+
+      post "/api/nodes",
+           { node_id => { "user" => { "longName" => "Meshcore BEEF" }, "lastHeard" => reference_time.to_i },
+             "ingestor" => ingestor_id }.to_json,
+           auth_headers
+
+      expect(last_response).to be_ok
+      with_db(readonly: true) do |db|
+        long_name = db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
+        expect(long_name).to eq("Peter's Node")
+      end
+    end
   end
 
   describe "#ensure_unknown_node" do
