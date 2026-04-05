@@ -72,14 +72,19 @@ export function createMapCenterResetHandler({
     if (!map) return;
 
     // Re-enable autofit when the checkbox is present and not locked out by a
-    // hard zoom override (the element is disabled in that case).
+    // hard zoom override (the element is disabled in that case). Dispatch a
+    // change event so any listeners that synchronise UI state (e.g. aria
+    // attributes) are notified, mirroring the pattern in handleUserInteraction.
     if (fitBoundsEl && !fitBoundsEl.disabled) {
       autoFitController.runAutoFitOperation(() => {
         fitBoundsEl.checked = true;
+        fitBoundsEl.dispatchEvent(new Event('change', { bubbles: true }));
       });
     }
 
     // Re-apply the last known node-fit bounds produced by renderMap.
+    // fitMapToBounds already calls runAutoFitOperation internally, so the
+    // movestart/zoomstart handlers cannot uncheck auto-fit during the pan.
     const lastFit = autoFitController.getLastFit();
     if (lastFit) {
       fitMapToBounds(lastFit.bounds, {
@@ -91,11 +96,16 @@ export function createMapCenterResetHandler({
     }
 
     // Fallback: no prior fit recorded yet — reset to the configured centre.
+    // Wrap in runAutoFitOperation so the movestart/zoomstart handlers see
+    // autoFitInProgress=true and do not immediately uncheck the auto-fit
+    // checkbox as a side-effect of the programmatic setView call.
     const zoom = Number.isFinite(mapZoomOverride) && mapZoomOverride > 0
       ? mapZoomOverride
       : DEFAULT_CENTER_RESET_ZOOM;
     if (typeof map.setView === 'function') {
-      map.setView([mapCenterCoords.lat, mapCenterCoords.lon], zoom, { animate: true });
+      autoFitController.runAutoFitOperation(() => {
+        map.setView([mapCenterCoords.lat, mapCenterCoords.lon], zoom, { animate: true });
+      });
     }
   };
 }

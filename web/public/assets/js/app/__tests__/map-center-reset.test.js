@@ -139,8 +139,16 @@ test('handler returns without throwing when getMap returns null', () => {
 // ---------------------------------------------------------------------------
 
 test('handler enables fitBoundsEl when present and not disabled', () => {
-  const fitBoundsEl = { checked: false, disabled: false };
-  const controller = mockController();
+  const dispatched = [];
+  const fitBoundsEl = {
+    checked: false,
+    disabled: false,
+    dispatchEvent(e) { dispatched.push(e.type); }
+  };
+  // Provide a lastFit so the fallback setView path does not run — this test
+  // is only asserting the checkbox re-enable behaviour.
+  const lastFit = { bounds: [[0, 0], [1, 1]], options: { paddingPx: 12 } };
+  const controller = mockController({ bounds: lastFit });
   const handler = createMapCenterResetHandler({
     getMap: () => mockMap(),
     autoFitController: controller,
@@ -151,11 +159,35 @@ test('handler enables fitBoundsEl when present and not disabled', () => {
   handler();
   assert.equal(fitBoundsEl.checked, true);
   assert.equal(controller.runCallCount, 1);
+  assert.deepEqual(dispatched, ['change']);
+});
+
+test('handler dispatches a bubbling change event when re-enabling fitBoundsEl', () => {
+  let capturedEvent = null;
+  const fitBoundsEl = {
+    checked: false,
+    disabled: false,
+    dispatchEvent(e) { capturedEvent = e; }
+  };
+  const handler = createMapCenterResetHandler({
+    getMap: () => mockMap(),
+    autoFitController: mockController(),
+    fitBoundsEl,
+    fitMapToBounds: () => {},
+    mapCenterCoords: CENTER,
+  });
+  handler();
+  assert.ok(capturedEvent, 'expected a change event to be dispatched');
+  assert.equal(capturedEvent.type, 'change');
+  assert.equal(capturedEvent.bubbles, true);
 });
 
 test('handler does not modify fitBoundsEl.checked when element is disabled', () => {
   const fitBoundsEl = { checked: false, disabled: true };
-  const controller = mockController();
+  // Provide a lastFit so the fallback setView path does not run — this test
+  // is only asserting the checkbox non-modification when disabled.
+  const lastFit = { bounds: [[0, 0], [1, 1]], options: { paddingPx: 12 } };
+  const controller = mockController({ bounds: lastFit });
   const handler = createMapCenterResetHandler({
     getMap: () => mockMap(),
     autoFitController: controller,
@@ -234,9 +266,10 @@ test('handler forwards paddingPx and maxZoom from last-fit options', () => {
 
 test('handler calls setView with configured centre when no last fit exists', () => {
   const map = mockMap();
+  const controller = mockController({ bounds: null });
   const handler = createMapCenterResetHandler({
     getMap: () => map,
-    autoFitController: mockController({ bounds: null }),
+    autoFitController: controller,
     fitMapToBounds: () => {},
     mapCenterCoords: CENTER,
     mapZoomOverride: null,
@@ -246,6 +279,24 @@ test('handler calls setView with configured centre when no last fit exists', () 
   assert.deepEqual(map.calls[0].target, [CENTER.lat, CENTER.lon]);
   assert.equal(map.calls[0].zoom, DEFAULT_CENTER_RESET_ZOOM);
   assert.deepEqual(map.calls[0].options, { animate: true });
+});
+
+test('fallback setView is wrapped in runAutoFitOperation to prevent movestart/zoomstart unchecking auto-fit', () => {
+  // Without the wrapper, the programmatic setView triggers movestart which calls
+  // handleUserInteraction, undoing the auto-fit re-enable. runAutoFitOperation
+  // sets autoFitInProgress=true so handleUserInteraction returns early.
+  const map = mockMap();
+  const controller = mockController({ bounds: null });
+  const handler = createMapCenterResetHandler({
+    getMap: () => map,
+    autoFitController: controller,
+    fitMapToBounds: () => {},
+    mapCenterCoords: CENTER,
+  });
+  handler();
+  // runAutoFitOperation must have been called at least once for the setView fallback
+  assert.ok(controller.runCallCount >= 1, 'expected runAutoFitOperation to be called');
+  assert.equal(map.calls.length, 1);
 });
 
 test('fallback uses mapZoomOverride when provided', () => {

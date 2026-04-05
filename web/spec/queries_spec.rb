@@ -470,8 +470,8 @@ RSpec.describe PotatoMesh::App::Queries do
         end
         rows = queries.query_nodes(10, node_ref: "!cc000004")
         row = rows.find { |r| r["node_id"] == "!cc000004" }
-        # blank long_name → nil derived → original short_name preserved (or absent after compaction)
-        expect(row["short_name"]).to eq("CX").or(be_nil)
+        # blank long_name → nil derived → original short_name preserved by compact_api_row
+        expect(row["short_name"]).to eq("CX")
       end
 
       it "leaves the short_name unchanged for a CLIENT node with a multi-word long name" do
@@ -485,6 +485,19 @@ RSpec.describe PotatoMesh::App::Queries do
         rows = queries.query_nodes(10, node_ref: "!cc000005")
         row = rows.find { |r| r["node_id"] == "!cc000005" }
         expect(row["short_name"]).to eq("XY")
+      end
+
+      it "does not overwrite short_name when long_name is NULL in the DB for a COMPANION node" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000007", 0xcc000007, "CX", nil, now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000007")
+        row = rows.find { |r| r["node_id"] == "!cc000007" }
+        expect(row["short_name"]).to eq("CX")
       end
 
       it "leaves the short_name unchanged for a node whose role defaults to CLIENT (nil in DB)" do
