@@ -178,3 +178,68 @@ test('normalizePresetSlot enforces placeholders and uppercase output', () => {
   assert.equal(normalizePresetSlot(''), PRESET_PLACEHOLDER);
   assert.equal(normalizePresetSlot(null), PRESET_PLACEHOLDER);
 });
+
+// ---------------------------------------------------------------------------
+// abbreviatePreset — MeshCore SF/BW/CR presets
+// ---------------------------------------------------------------------------
+
+test('abbreviatePreset returns Wi for AU/NZ Wide SF10/BW250/CR5', () => {
+  assert.equal(abbreviatePreset('SF10/BW250/CR5', null), 'Wi');
+});
+
+test('abbreviatePreset returns Na for EU/UK Narrow SF8/BW62/CR8', () => {
+  assert.equal(abbreviatePreset('SF8/BW62/CR8', null), 'Na');
+});
+
+test('abbreviatePreset returns Na for CZ/SK Narrow SF7/BW62/CR5 at 868 MHz', () => {
+  assert.equal(abbreviatePreset('SF7/BW62/CR5', 868), 'Na');
+});
+
+test('abbreviatePreset returns Na for US/CA Narrow SF7/BW62/CR5 at 915 MHz', () => {
+  assert.equal(abbreviatePreset('SF7/BW62/CR5', 915), 'Na');
+});
+
+test('abbreviatePreset returns Na for SF7/BW62/CR5 when freq is unknown (BW fallback)', () => {
+  assert.equal(abbreviatePreset('SF7/BW62/CR5', null), 'Na');
+});
+
+test('abbreviatePreset returns null for unknown BW that has no short code', () => {
+  assert.equal(abbreviatePreset('SF12/BW500/CR7', null), null);
+});
+
+test('abbreviatePreset returns St for 125 kHz BW fallback preset', () => {
+  assert.equal(abbreviatePreset('SF9/BW125/CR6', null), 'St');
+});
+
+test('abbreviatePreset leaves Meshtastic named presets unaffected', () => {
+  assert.equal(abbreviatePreset('MediumFast', null), 'MF');
+  assert.equal(abbreviatePreset('LongSlow', null), 'LS');
+});
+
+// ---------------------------------------------------------------------------
+// extractChatMessageMetadata — SF/BW/CR preset + frequency
+// ---------------------------------------------------------------------------
+
+test('extractChatMessageMetadata produces Wi code for AU/NZ Wide with freq', () => {
+  const result = extractChatMessageMetadata({
+    region_frequency: 915,
+    modem_preset: 'SF10/BW250/CR5',
+  });
+  assert.equal(result.presetCode, 'Wi');
+  assert.equal(result.frequency, '915');
+});
+
+test('extractChatMessageMetadata produces Na code for EU/UK Narrow with freq', () => {
+  const result = extractChatMessageMetadata({
+    lora_freq: 868,
+    modem_preset: 'SF8/BW62/CR8',
+  });
+  assert.equal(result.presetCode, 'Na');
+});
+
+test('extractChatMessageMetadata uses BW fallback Na when freq is absent', () => {
+  const result = extractChatMessageMetadata({
+    modem_preset: 'SF7/BW62/CR5',
+  });
+  assert.equal(result.presetCode, 'Na');
+});
