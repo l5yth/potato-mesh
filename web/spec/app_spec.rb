@@ -2923,6 +2923,72 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_heard).to eq(expected_last_heard(node))
       end
     end
+
+    describe "generic fallback long name protection" do
+      # node_id !deadbeef → short_id BEEF; generic names are "<Label> BEEF"
+      let(:node_id) { "!deadbeef" }
+
+      def seed_node(long_name: nil)
+        with_db do |db|
+          if long_name
+            db.execute(
+              "INSERT INTO nodes(node_id, long_name, last_heard) VALUES (?,?,?)",
+              [node_id, long_name, reference_time.to_i - 3600],
+            )
+          else
+            db.execute(
+              "INSERT INTO nodes(node_id, last_heard) VALUES (?,?)",
+              [node_id, reference_time.to_i - 3600],
+            )
+          end
+        end
+      end
+
+      def post_long_name(long_name, ingestor: nil)
+        payload = { node_id => { "user" => { "longName" => long_name }, "lastHeard" => reference_time.to_i } }
+        payload["ingestor"] = ingestor if ingestor
+        post "/api/nodes", payload.to_json, auth_headers
+      end
+
+      def stored_long_name
+        with_db(readonly: true) do |db|
+          return db.get_first_value("SELECT long_name FROM nodes WHERE node_id = ?", [node_id])
+        end
+      end
+
+      it "does not overwrite a real name with a meshtastic generic fallback" do
+        seed_node(long_name: "Peter's Node")
+        post_long_name("Meshtastic BEEF")
+        expect(last_response).to be_ok
+        expect(stored_long_name).to eq("Peter's Node")
+      end
+
+      it "writes a generic fallback when no name is on record" do
+        seed_node
+        post_long_name("Meshtastic BEEF")
+        expect(last_response).to be_ok
+        expect(stored_long_name).to eq("Meshtastic BEEF")
+      end
+
+      it "overwrites a generic fallback with a real name" do
+        seed_node(long_name: "Meshtastic BEEF")
+        post_long_name("Peter's Node")
+        expect(last_response).to be_ok
+        expect(stored_long_name).to eq("Peter's Node")
+      end
+
+      it "does not overwrite a real name with a meshcore generic fallback" do
+        ingestor_id = "!aabbccdd"
+        post "/api/ingestors",
+             { node_id: ingestor_id, start_time: reference_time.to_i - 60,
+               last_seen_time: reference_time.to_i, version: "1.0.0", protocol: "meshcore" }.to_json,
+             auth_headers
+        seed_node(long_name: "Peter's Node")
+        post_long_name("Meshcore BEEF", ingestor: ingestor_id)
+        expect(last_response).to be_ok
+        expect(stored_long_name).to eq("Peter's Node")
+      end
+    end
   end
 
   describe "#ensure_unknown_node" do
