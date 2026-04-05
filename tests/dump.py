@@ -28,9 +28,7 @@ from meshtastic.mesh_interface import MeshInterface
 from meshtastic.serial_interface import SerialInterface
 from pubsub import pub
 
-CONNECTION = os.environ.get("CONNECTION") or os.environ.get(
-    "MESH_SERIAL", "/dev/ttyACM0"
-)
+CONNECTION = os.environ.get("CONNECTION", "/dev/ttyACM0")
 """Connection target opened to capture Meshtastic traffic."""
 OUT = os.environ.get("MESH_DUMP_FILE", "meshtastic-dump.ndjson")
 

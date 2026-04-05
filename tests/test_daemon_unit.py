@@ -891,13 +891,12 @@ def _reload_config() -> types.ModuleType:
 
 
 @pytest.fixture()
-def reset_provider_config():
-    """Reload config after the test so PROTOCOL/PROVIDER changes don't leak across tests."""
+def reset_protocol_config():
+    """Reload config after the test so PROTOCOL changes don't leak across tests."""
     yield
     import os
 
     os.environ.pop("PROTOCOL", None)
-    os.environ.pop("PROVIDER", None)
     _reload_config()
 
 
@@ -908,28 +907,17 @@ def reset_provider_config():
         ("meshcore", "meshcore"),
     ],
 )
-def test_config_protocol_env(monkeypatch, reset_provider_config, env_value, expected):
+def test_config_protocol_env(monkeypatch, reset_protocol_config, env_value, expected):
     """PROTOCOL env var selects the protocol; absent defaults to 'meshtastic'."""
     if env_value is None:
         monkeypatch.delenv("PROTOCOL", raising=False)
-        monkeypatch.delenv("PROVIDER", raising=False)
     else:
         monkeypatch.setenv("PROTOCOL", env_value)
     cfg = _reload_config()
     assert cfg.PROTOCOL == expected
-    assert cfg.PROVIDER == expected  # deprecated alias stays in sync
 
 
-def test_config_provider_env_fallback(monkeypatch, reset_provider_config):
-    """Legacy PROVIDER env var must still work when PROTOCOL is absent."""
-    monkeypatch.delenv("PROTOCOL", raising=False)
-    monkeypatch.setenv("PROVIDER", "meshcore")
-    cfg = _reload_config()
-    assert cfg.PROTOCOL == "meshcore"
-    assert cfg.PROVIDER == "meshcore"
-
-
-def test_config_protocol_unknown_raises(monkeypatch, reset_provider_config):
+def test_config_protocol_unknown_raises(monkeypatch, reset_protocol_config):
     """An unrecognised PROTOCOL value must raise ValueError at import time."""
     monkeypatch.setenv("PROTOCOL", "reticulum")
     with pytest.raises(ValueError, match="PROTOCOL"):

@@ -188,7 +188,7 @@ jobs:
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:${{ steps.version.outputs.version }}
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-ingestor-linux-amd64:${{ steps.version.outputs.version_with_v }}
         docker run --rm --name ingestor-test \
-          -e POTATOMESH_INSTANCE=http://localhost:41447 \
+          -e INSTANCE_DOMAIN=http://localhost:41447 \
           -e API_TOKEN=test-token \
           -e CONNECTION=mock \
           -e DEBUG=1 \

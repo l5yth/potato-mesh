@@ -102,39 +102,27 @@ class TestResolveInstanceDomain:
     def test_returns_instance_domain_when_set(self, monkeypatch):
         """Uses INSTANCE_DOMAIN when set."""
         monkeypatch.setenv("INSTANCE_DOMAIN", "mesh.example.com")
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
         result = config._resolve_instance_domain()
         assert result == "https://mesh.example.com"
 
     def test_adds_https_when_no_scheme(self, monkeypatch):
         """Adds https:// prefix when no scheme is present."""
         monkeypatch.setenv("INSTANCE_DOMAIN", "example.com")
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
         assert config._resolve_instance_domain() == "https://example.com"
 
     def test_preserves_existing_scheme(self, monkeypatch):
         """Leaves existing http:// scheme intact."""
         monkeypatch.setenv("INSTANCE_DOMAIN", "http://example.com")
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
         assert config._resolve_instance_domain() == "http://example.com"
 
     def test_strips_trailing_slash(self, monkeypatch):
         """Strips trailing slash from instance domain."""
         monkeypatch.setenv("INSTANCE_DOMAIN", "https://example.com/")
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
         assert config._resolve_instance_domain() == "https://example.com"
 
-    def test_falls_back_to_legacy_env(self, monkeypatch):
-        """Falls back to POTATOMESH_INSTANCE when INSTANCE_DOMAIN is absent."""
+    def test_returns_empty_when_not_set(self, monkeypatch):
+        """Returns empty string when INSTANCE_DOMAIN is unset."""
         monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
-        monkeypatch.setenv("POTATOMESH_INSTANCE", "legacy.example.com")
-        result = config._resolve_instance_domain()
-        assert result == "https://legacy.example.com"
-
-    def test_returns_empty_when_neither_set(self, monkeypatch):
-        """Returns empty string when neither env var is set."""
-        monkeypatch.delenv("INSTANCE_DOMAIN", raising=False)
-        monkeypatch.delenv("POTATOMESH_INSTANCE", raising=False)
         assert config._resolve_instance_domain() == ""
 
 
@@ -221,52 +209,3 @@ class TestProtocolValidation:
         # Restore to valid value so subsequent tests work
         monkeypatch.setenv("PROTOCOL", "meshtastic")
         importlib.reload(config)
-
-    def test_protocol_env_var_takes_priority_over_provider(self, monkeypatch):
-        """PROTOCOL env var must take precedence over legacy PROVIDER."""
-        import importlib
-
-        monkeypatch.setenv("PROTOCOL", "meshcore")
-        monkeypatch.setenv("PROVIDER", "meshtastic")
-        cfg = importlib.reload(config)
-        assert cfg.PROTOCOL == "meshcore"
-        assert cfg.PROVIDER == "meshcore"  # alias stays in sync
-        # Restore
-        monkeypatch.delenv("PROTOCOL")
-        monkeypatch.delenv("PROVIDER")
-        importlib.reload(config)
-
-    def test_provider_env_var_fallback(self, monkeypatch):
-        """Legacy PROVIDER env var must still be accepted when PROTOCOL is absent."""
-        import importlib
-
-        monkeypatch.delenv("PROTOCOL", raising=False)
-        monkeypatch.setenv("PROVIDER", "meshcore")
-        cfg = importlib.reload(config)
-        assert cfg.PROTOCOL == "meshcore"
-        assert cfg.PROVIDER == "meshcore"
-        # Restore
-        monkeypatch.delenv("PROVIDER")
-        importlib.reload(config)
-
-
-# ---------------------------------------------------------------------------
-# _ConfigModule proxy
-# ---------------------------------------------------------------------------
-
-
-class TestConfigModuleProxy:
-    """Tests for the :class:`config._ConfigModule` proxy behaviour."""
-
-    def test_connection_and_port_stay_in_sync(self):
-        """Setting CONNECTION also updates PORT and vice versa."""
-        original_connection = config.CONNECTION
-        original_port = config.PORT
-        try:
-            config.CONNECTION = "tcp://testhost"
-            assert config.PORT == "tcp://testhost"
-            config.PORT = "serial:/dev/ttyUSB0"
-            assert config.CONNECTION == "serial:/dev/ttyUSB0"
-        finally:
-            config.CONNECTION = original_connection
-            config.PORT = original_port

@@ -82,9 +82,6 @@ _CONFIG_ATTRS = {
     "_debug_log",
 }
 
-# Legacy export maintained for backwards compatibility.
-_CONFIG_ATTRS.add("PORT")
-
 _INTERFACE_ATTRS = {"BLEInterface", "SerialInterface", "TCPInterface"}
 
 _QUEUE_ATTRS = set(queue.__all__)

@@ -7,7 +7,10 @@
 [![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/l5yth/potato-mesh/issues)
 [![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
 
-A federated, Meshtastic-powered node dashboard for your local community.
+[![Meshtastic](https://img.shields.io/badge/Meshtastic-supported-67ea94)](https://meshtastic.org)
+[![MeshCore](https://img.shields.io/badge/MeshCore-supported-000000)](https://meshcore.co.uk)
+
+A federated, Meshtastic & Meshcore node dashboard for your local community.
 _No MQTT clutter, just local LoRa aether._
 
 * Web dashboard with chat window and map view showing nodes, positions, neighbors,
@@ -17,13 +20,15 @@ _No MQTT clutter, just local LoRa aether._
   * Allows searching and filtering for nodes in map and table view.
   * Federated: _automatically_ froms a federation with other communities running
     Potato Mesh!
+  * Supports Meshtastic and Meshcore
 * Supplemental Python ingestor to feed the POST APIs of the Web app with data remotely.
   * Supports multiple ingestors per instance.
+  * Supports Meshtastic and Meshcore
 * Matrix bridge that posts Meshtastic messages to a defined matrix channel (no
   radio required).
 * Mobile app to _read_ messages on your local aether (no radio required).
 
-Live demo for Berlin #MediumFast: [potatomesh.net](https://potatomesh.net)
+Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
 
 ![screenshot of the fourth version](./scrot-0.4.png)
 
