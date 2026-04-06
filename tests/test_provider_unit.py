@@ -55,7 +55,6 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _pubkey_prefix_to_node_id,
     _record_meshcore_message,
     _self_info_to_node_dict,
-    _short_name_from_long_name,
     _synthetic_node_dict,
     _to_json_safe,
 )
@@ -624,61 +623,6 @@ def test_parse_sender_name_whitespace_only_before_colon_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# _short_name_from_long_name
-# ---------------------------------------------------------------------------
-
-
-def test_short_name_from_long_name_single_word():
-    """Single-word long name yields two-space + initial + space."""
-    assert _short_name_from_long_name("Matze") == "  M "
-
-
-def test_short_name_from_long_name_two_words():
-    """Two-word long name yields space + first letters of both words + space."""
-    assert _short_name_from_long_name("MaLiBu Britz") == " MB "
-
-
-def test_short_name_from_long_name_emoji_takes_priority():
-    """Emoji in the name takes priority over word initials."""
-    assert _short_name_from_long_name("pete 🍁") == " 🍁 "
-
-
-def test_short_name_from_long_name_emoji_at_start():
-    """Emoji at the start of the name is used."""
-    assert _short_name_from_long_name("🚗 dd6ulf") == " 🚗 "
-
-
-def test_short_name_from_long_name_misc_symbols_emoji():
-    """Miscellaneous Symbols range (U+2600–U+27BF) is detected as emoji."""
-    assert _short_name_from_long_name("☕️ Morning") == " ☕ "
-
-
-def test_short_name_from_long_name_capitalises_initial():
-    """Initial letters are uppercased even when the name starts lowercase."""
-    assert _short_name_from_long_name("pete rock") == " PR "
-
-
-def test_short_name_from_long_name_none_input():
-    """None input returns None."""
-    assert _short_name_from_long_name(None) is None
-
-
-def test_short_name_from_long_name_empty_string():
-    """Empty string returns None."""
-    assert _short_name_from_long_name("") is None
-
-
-def test_short_name_from_long_name_whitespace_only():
-    """Whitespace-only string returns None."""
-    assert _short_name_from_long_name("   ") is None
-
-
-def test_short_name_from_long_name_more_than_two_words():
-    """Three-word name still uses only the first two initials."""
-    assert _short_name_from_long_name("Alpha Beta Gamma") == " AB "
-
-
-# ---------------------------------------------------------------------------
 # _derive_synthetic_node_id
 # ---------------------------------------------------------------------------
 
@@ -723,15 +667,9 @@ def test_synthetic_node_dict_fields():
     assert isinstance(nd["lastHeard"], int)
 
 
-def test_synthetic_node_dict_short_name_derived():
-    """Short name is derived from the long name, not from a public key."""
+def test_synthetic_node_dict_short_name_empty():
+    """Short name is always empty — the Ruby web app derives it at query time."""
     nd = _synthetic_node_dict("pete 🍁")
-    assert nd["user"]["shortName"] == " 🍁 "
-
-
-def test_synthetic_node_dict_short_name_fallback_empty():
-    """Short name falls back to empty string when derivation fails."""
-    nd = _synthetic_node_dict("   ")
     assert nd["user"]["shortName"] == ""
 
 

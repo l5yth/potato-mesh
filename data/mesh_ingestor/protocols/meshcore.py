@@ -227,59 +227,8 @@ def _parse_sender_name(text: str) -> str | None:
     return name if name else None
 
 
-# Matches emoji in the Supplementary Multilingual Plane (U+1F000–U+1FFFF),
-# Miscellaneous Symbols (U+2600–U+27BF), and Miscellaneous Symbols and Arrows
-# (U+2B00–U+2BFF).  Mirrors the Ruby MESHCORE_COMPANION_EMOJI_PATTERN constant.
-_COMPANION_EMOJI_RE = re.compile(
-    r"[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF]"
-)
-
 # Matches @[Name] mention patterns in MeshCore message bodies.
 _MENTION_RE = re.compile(r"@\[([^\]]+)\]")
-
-
-def _short_name_from_long_name(long_name: str | None) -> str | None:
-    """Derive a display short name for a synthetic MeshCore node from its long name.
-
-    Ports the Ruby ``meshcore_companion_display_short_name`` algorithm.  Applied
-    in priority order:
-
-    1. First emoji found in *long_name*: ``" E "`` (one space, emoji, one space).
-       Emoji are rendered double-width in monospace fonts, so one leading space
-       keeps the badge at four visual columns.
-    2. Two or more whitespace-separated words: ``" XY "`` (space, capitalised
-       first letters of the first two words, space).
-    3. Single word: ``"  A "`` (two spaces, capitalised first letter, space).
-    4. Returns ``None`` when no short name can be derived (blank input or word
-       without an extractable character).
-
-    Parameters:
-        long_name: Node long name, e.g. ``"T114-Zeh"`` or ``"pete 🍁"``.
-
-    Returns:
-        Four-character-wide short name string, or ``None``.
-    """
-    if not long_name or not isinstance(long_name, str):
-        return None
-    name = long_name.strip()
-    if not name:
-        return None
-
-    emoji_match = _COMPANION_EMOJI_RE.search(name)
-    if emoji_match:
-        # Wide emoji occupies two display columns, so use one leading space and
-        # one trailing space to stay within the four-column badge width.
-        return f" {emoji_match.group()} "
-
-    words = [w for w in name.split() if w]
-    if not words:
-        return None
-
-    if len(words) >= 2:
-        return f" {words[0][0].upper()}{words[1][0].upper()} "
-
-    letter = words[0][0].upper() if words[0] else None
-    return f"  {letter} " if letter else None
 
 
 def _derive_synthetic_node_id(long_name: str) -> str:
@@ -305,13 +254,13 @@ def _synthetic_node_dict(long_name: str) -> dict:
     Synthetic nodes are placeholder entries created when a channel message
     arrives from a sender who is not yet in the connected device's contacts
     roster.  They carry ``role=COMPANION`` (the only role capable of sending
-    channel messages) and a short name derived from the long name via
-    :func:`_short_name_from_long_name`.
+    channel messages).  The short name is intentionally omitted here — the
+    Ruby web app derives it at query time via
+    ``meshcore_companion_display_short_name`` for all COMPANION nodes.
 
-    When the real contact advertisement is later received and processed via
-    :func:`_process_contact_update`, the Ruby web app detects the matching
-    long name, migrates all messages from the synthetic node ID to the real
-    one, and removes the placeholder row.
+    When the real contact advertisement is later received, the Ruby web app
+    detects the matching long name, migrates all messages from the synthetic
+    node ID to the real one, and removes the placeholder row.
 
     Parameters:
         long_name: Sender name parsed from the ``"SenderName: body"`` prefix.
@@ -325,7 +274,7 @@ def _synthetic_node_dict(long_name: str) -> dict:
         "protocol": "meshcore",
         "user": {
             "longName": long_name,
-            "shortName": _short_name_from_long_name(long_name) or "",
+            "shortName": "",
             "role": "COMPANION",
             "synthetic": True,
         },
