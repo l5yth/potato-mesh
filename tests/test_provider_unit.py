@@ -441,6 +441,125 @@ def test_meshcore_node_snapshot_items_with_contacts(monkeypatch):
     iface.close()
 
 
+def test_meshcore_node_snapshot_items_includes_self_node_when_cached(monkeypatch):
+    """node_snapshot_items appends the self-node when _self_info_payload is set."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    self_pub_key = "deadbeef" + "00" * 28
+    iface._self_info_payload = {"public_key": self_pub_key, "name": "SelfNode"}
+
+    items = MeshcoreProvider().node_snapshot_items(iface)
+    assert len(items) == 1
+    node_id, node_dict = items[0]
+    assert node_id == "!deadbeef"
+    assert node_dict["user"]["longName"] == "SelfNode"
+    iface.close()
+
+
+def test_meshcore_node_snapshot_items_excludes_self_node_when_no_payload(monkeypatch):
+    """node_snapshot_items omits the self-node when no SELF_INFO has been received."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    assert iface._self_info_payload is None
+    items = MeshcoreProvider().node_snapshot_items(iface)
+    assert items == []
+    iface.close()
+
+
+def test_meshcore_node_snapshot_items_contacts_and_self(monkeypatch):
+    """node_snapshot_items includes both contacts and the self-node."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    contact_pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact(
+        {"public_key": contact_pub_key, "adv_name": "Peer", "last_advert": 1000}
+    )
+    self_pub_key = "deadbeef" + "00" * 28
+    iface._self_info_payload = {"public_key": self_pub_key, "name": "Self"}
+
+    items = MeshcoreProvider().node_snapshot_items(iface)
+    node_ids = {nid for nid, _ in items}
+    assert "!aabbccdd" in node_ids
+    assert "!deadbeef" in node_ids
+    assert len(items) == 2
+    iface.close()
+
+
+# ---------------------------------------------------------------------------
+# MeshcoreProvider.self_node_item
+# ---------------------------------------------------------------------------
+
+
+def test_meshcore_self_node_item_non_interface():
+    """self_node_item returns None for any non-_MeshcoreInterface object."""
+    assert MeshcoreProvider().self_node_item(object()) is None
+
+
+def test_meshcore_self_node_item_no_payload(monkeypatch):
+    """self_node_item returns None when no SELF_INFO payload is cached."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    assert iface._self_info_payload is None
+    assert MeshcoreProvider().self_node_item(iface) is None
+    iface.close()
+
+
+def test_meshcore_self_node_item_with_payload(monkeypatch):
+    """self_node_item returns the correct (node_id, node_dict) when payload cached."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    pub_key = "deadbeef" + "00" * 28
+    iface._self_info_payload = {"public_key": pub_key, "name": "MyHost"}
+
+    result = MeshcoreProvider().self_node_item(iface)
+    assert result is not None
+    node_id, node_dict = result
+    assert node_id == "!deadbeef"
+    assert node_dict["user"]["longName"] == "MyHost"
+    assert node_dict["protocol"] == "meshcore"
+    iface.close()
+
+
+def test_meshcore_self_node_item_empty_key(monkeypatch):
+    """self_node_item returns None when the cached public_key is empty."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod, "_run_meshcore", _fake_run_meshcore())
+    monkeypatch.setattr(_mod.config, "CONNECTION", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    iface, _, _ = MeshcoreProvider().connect(active_candidate="/dev/ttyUSB0")
+
+    # An empty key produces a None node_id from _meshcore_node_id.
+    iface._self_info_payload = {"public_key": "", "name": "Bad"}
+    assert MeshcoreProvider().self_node_item(iface) is None
+    iface.close()
+
+
 def test_parse_tcp_target_detects_host_port():
     """parse_tcp_target must return (host, port) for host:port strings."""
     assert parse_tcp_target("meshnode.local:4403") == ("meshnode.local", 4403)
@@ -1417,6 +1536,72 @@ def test_process_self_info_skips_empty_key():
 
     assert iface.host_node_id is None
     assert registered == []
+
+
+def test_process_self_info_caches_payload():
+    """_process_self_info must store the payload on iface._self_info_payload."""
+    stub = _make_stub_handlers_module()
+    iface = _MeshcoreInterface(target=None)
+    payload = {"public_key": "aabbccdd" + "00" * 28, "name": "Host"}
+
+    _process_self_info(payload, iface, stub)
+
+    assert iface._self_info_payload is payload
+
+
+def test_process_self_info_caches_payload_even_when_empty_key():
+    """_process_self_info caches the payload even when public_key is empty.
+
+    The payload is cached unconditionally so that radio metadata is always
+    preserved.  self_node_item will still return None for an empty key because
+    _meshcore_node_id returns None, but the cached payload lets radio metadata
+    be applied on reconnect without waiting for a second SELF_INFO.
+    """
+    stub = _make_stub_handlers_module()
+    iface = _MeshcoreInterface(target=None)
+    payload = {"public_key": "", "name": "Unknown"}
+
+    _process_self_info(payload, iface, stub)
+
+    assert iface._self_info_payload is payload
+
+
+def test_process_self_info_radio_metadata_set_before_upsert(monkeypatch):
+    """Radio metadata must be written to config BEFORE upsert_node is called.
+
+    Regression test for the ordering bug: previously LORA_FREQ/MODEM_PRESET
+    were captured after upsert_node, so _apply_radio_metadata_to_nodes found
+    no values and the first self-node upsert lacked radio metadata.
+    """
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "LORA_FREQ", None)
+    monkeypatch.setattr(_mod.config, "MODEM_PRESET", None)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    captured_lora_freq_at_upsert: list = []
+    captured_modem_preset_at_upsert: list = []
+
+    def _spy_upsert(node_id, node):
+        captured_lora_freq_at_upsert.append(_mod.config.LORA_FREQ)
+        captured_modem_preset_at_upsert.append(_mod.config.MODEM_PRESET)
+
+    stub = _make_stub_handlers_module()
+    stub.upsert_node = _spy_upsert
+
+    payload = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "name": "Host",
+        "radio_freq": 868.125,
+        "radio_sf": 8,
+        "radio_bw": 62.0,
+        "radio_cr": 8,
+    }
+    _process_self_info(payload, _MeshcoreInterface(target=None), stub)
+
+    # Config must have been set before upsert_node was invoked.
+    assert captured_lora_freq_at_upsert == [pytest.approx(868.125)]
+    assert captured_modem_preset_at_upsert == ["SF8/BW62/CR8"]
 
 
 # ---------------------------------------------------------------------------

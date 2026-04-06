@@ -264,6 +264,7 @@ class _DaemonState:
     last_inactivity_reconnect: float | None = None
     ingestor_announcement_sent: bool = False
     announced_target: bool = False
+    last_self_node_report: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +310,7 @@ def _try_connect(state: _DaemonState) -> bool:
         ingestors.set_ingestor_node_id(handlers.host_node_id())
         state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
         state.initial_snapshot_sent = False
+        state.last_self_node_report = None
         if not state.announced_target and state.resolved_target:
             config._debug_log(
                 "Using mesh interface",
@@ -387,6 +389,7 @@ def _check_energy_saving(state: _DaemonState) -> bool:
     state.iface = None
     state.announced_target = False
     state.initial_snapshot_sent = False
+    state.last_self_node_report = None
     state.energy_session_deadline = None
     _energy_sleep(state, reason)
     return True
@@ -507,9 +510,57 @@ def _check_inactivity_reconnect(state: _DaemonState) -> bool:
     state.iface = None
     state.announced_target = False
     state.initial_snapshot_sent = False
+    state.last_self_node_report = None
     state.energy_session_deadline = None
     state.iface_connected_at = None
     return True
+
+
+# ---------------------------------------------------------------------------
+# Periodic self-node report helper
+# ---------------------------------------------------------------------------
+
+
+def _try_send_self_node(state: _DaemonState) -> None:
+    """Re-upsert the host self-node when the provider supports it.
+
+    Called once immediately after the initial snapshot and then at most once
+    per :data:`~data.mesh_ingestor.config._SELF_NODE_REPORT_INTERVAL_SECS`.
+    This ensures the self-node's protocol and radio metadata are refreshed
+    even when the ingestor heartbeat races ahead of the first SELF_INFO event
+    (meshcore) or when the protocol never sends periodic NODEINFO for itself.
+
+    Parameters:
+        state: Current daemon loop state.
+
+    Returns:
+        ``None``.  Errors are logged and suppressed so a single failure does
+        not break the main loop.
+    """
+    self_node_fn = getattr(state.provider, "self_node_item", None)
+    if not callable(self_node_fn):
+        return
+    try:
+        item = self_node_fn(state.iface)
+        if item is None:
+            return
+        node_id, node = item
+        handlers.upsert_node(node_id, node)
+        state.last_self_node_report = time.monotonic()
+        config._debug_log(
+            "Sent periodic self-node report",
+            context="daemon.self_node",
+            severity="info",
+            node_id=node_id,
+        )
+    except Exception as exc:
+        config._debug_log(
+            "Self-node re-report failed",
+            context="daemon.self_node",
+            severity="warn",
+            error_class=exc.__class__.__name__,
+            error_message=str(exc),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +591,15 @@ def _loop_iteration(state: _DaemonState) -> bool:
     state.ingestor_announcement_sent = _process_ingestor_heartbeat(
         state.iface, ingestor_announcement_sent=state.ingestor_announcement_sent
     )
+    # Periodically re-upsert the host self-node so that its protocol and radio
+    # metadata are corrected after the ingestor heartbeat is registered, and
+    # kept fresh for protocols (e.g. meshcore) that only emit SELF_INFO once.
+    _now = time.monotonic()
+    if state.initial_snapshot_sent and (
+        state.last_self_node_report is None
+        or _now - state.last_self_node_report >= config._SELF_NODE_REPORT_INTERVAL_SECS
+    ):
+        _try_send_self_node(state)
     state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
     return False
 
@@ -644,6 +704,7 @@ __all__ = [
     "_process_ingestor_heartbeat",
     "_subscribe_receive_topics",
     "_try_connect",
+    "_try_send_self_node",
     "_try_send_snapshot",
     "main",
 ]

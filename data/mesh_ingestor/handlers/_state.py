@@ -45,6 +45,18 @@ every packet would overwrite the host's profile too aggressively; this window
 throttles updates to at most once per hour.
 """
 
+_host_nodeinfo_last_seen: float | None = None
+"""Monotonic timestamp of the last accepted host NODEINFO upsert."""
+
+_HOST_NODEINFO_INTERVAL_SECS: int = 60 * 60
+"""Minimum interval (seconds) between accepted host NODEINFO upserts.
+
+The meshtastic library re-broadcasts the local node's NODEINFO to the mesh
+periodically.  Accepting every broadcast would overwrite the host node record
+too aggressively; this window throttles self-NODEINFO upserts to at most once
+per hour.
+"""
+
 # ---------------------------------------------------------------------------
 # Packet receipt tracking
 # ---------------------------------------------------------------------------
@@ -69,10 +81,11 @@ def register_host_node_id(node_id: str | None) -> None:
             the current host assignment.
     """
 
-    global _host_node_id, _host_telemetry_last_rx
+    global _host_node_id, _host_telemetry_last_rx, _host_nodeinfo_last_seen
     canonical = _canonical_node_id(node_id)
     _host_node_id = canonical
     _host_telemetry_last_rx = None
+    _host_nodeinfo_last_seen = None
     if canonical:
         config._debug_log(
             "Registered host device node id",
@@ -128,6 +141,35 @@ def _host_telemetry_suppressed(rx_time: int) -> tuple[bool, int]:
     return True, int(math.ceil(remaining_secs / 60.0))
 
 
+def _host_nodeinfo_suppressed(now: float) -> bool:
+    """Return ``True`` when a host NODEINFO upsert should be suppressed.
+
+    Self-NODEINFO upserts are throttled to at most once per
+    :data:`_HOST_NODEINFO_INTERVAL_SECS` to prevent the meshtastic library's
+    periodic rebroadcast from overwriting the host node record too aggressively.
+
+    Parameters:
+        now: Current :func:`time.monotonic` value.
+
+    Returns:
+        ``True`` when the request should be dropped; ``False`` when it should
+        proceed.
+    """
+    if _host_nodeinfo_last_seen is None:
+        return False
+    return (now - _host_nodeinfo_last_seen) < _HOST_NODEINFO_INTERVAL_SECS
+
+
+def _mark_host_nodeinfo_seen(now: float) -> None:
+    """Record that a host NODEINFO upsert was accepted.
+
+    Parameters:
+        now: Current :func:`time.monotonic` value from the accepted upsert.
+    """
+    global _host_nodeinfo_last_seen
+    _host_nodeinfo_last_seen = now
+
+
 def last_packet_monotonic() -> float | None:
     """Return the monotonic timestamp of the most recently processed packet.
 
@@ -147,8 +189,11 @@ def _mark_packet_seen() -> None:
 
 
 __all__ = [
+    "_HOST_NODEINFO_INTERVAL_SECS",
     "_HOST_TELEMETRY_INTERVAL_SECS",
+    "_host_nodeinfo_suppressed",
     "_host_telemetry_suppressed",
+    "_mark_host_nodeinfo_seen",
     "_mark_host_telemetry_seen",
     "_mark_packet_seen",
     "host_node_id",
