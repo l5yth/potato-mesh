@@ -1858,9 +1858,10 @@ input[type="radio"] {
   color: inherit;
 }
 
-.footer-active-nodes {
+.meta-active-nodes {
   font-size: 0.85em;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 @media (max-width: 600px) {

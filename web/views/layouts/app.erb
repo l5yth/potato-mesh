@@ -166,7 +166,8 @@
             <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
           </div>
         <% end %>
-        <button id="refreshBtn" type="button">Refresh now</button>
+        <span id="footerActiveNodes" class="meta-active-nodes"></span>
+        <button id="refreshBtn" type="button">Refresh</button>
         <span id="status" class="refresh-timestamp" aria-live="polite"></span>
       </div>
     <% end %>
@@ -192,7 +193,6 @@
           <% if version && !version.empty? %>
             <span class="mono"><%= version %></span>
           <% end %>
-          <span id="footerActiveNodes" class="footer-active-nodes"></span>
           <span class="footer-separator" aria-hidden="true">—</span>
           <span class="footer-links">
             GitHub:
