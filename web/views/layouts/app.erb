@@ -118,7 +118,7 @@
             <a href="/map" class="site-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
             <a href="/chat" class="site-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="site-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
-            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="site-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
@@ -149,7 +149,7 @@
             <a href="/map" class="mobile-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
             <a href="/chat" class="mobile-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="mobile-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
-            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="mobile-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>

@@ -1312,6 +1312,8 @@ export function initializeApp(config) {
 
   let legendContainer = null;
   let legendToggleControl = null;
+  let meshcoreCountEl = null;
+  let meshtasticCountEl = null;
   let legendToggleButton = null;
   let legendVisible = true;
 
@@ -1565,13 +1567,16 @@ export function initializeApp(config) {
 
       const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
-      // --- MeshCore column (left) ---
-      const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      // --- MeshCore column (left, bottom-aligned) ---
+      const meshcoreCol = L.DomUtil.create('div', 'legend-column legend-column--bottom', itemsContainer);
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
       meshcoreColHeader.appendChild(buildMeshcoreIconImg());
       const meshcoreColTitle = document.createElement('span');
       meshcoreColTitle.textContent = 'MeshCore';
       meshcoreColHeader.appendChild(meshcoreColTitle);
+      meshcoreCountEl = document.createElement('span');
+      meshcoreCountEl.className = 'legend-protocol-count';
+      meshcoreColHeader.appendChild(meshcoreCountEl);
 
       // --- Meshtastic column (right) ---
       const meshtasticCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
@@ -1580,6 +1585,9 @@ export function initializeApp(config) {
       const meshtasticColTitle = document.createElement('span');
       meshtasticColTitle.textContent = 'Meshtastic';
       meshtasticColHeader.appendChild(meshtasticColTitle);
+      meshtasticCountEl = document.createElement('span');
+      meshtasticCountEl.className = 'legend-protocol-count';
+      meshtasticColHeader.appendChild(meshtasticCountEl);
 
       legendRoleButtons.clear();
       buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
@@ -4368,7 +4376,8 @@ export function initializeApp(config) {
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
-    updateCount(sortedNodes, nowSec);
+    updateCount(allNodes, nowSec);
+    updateLegendProtocolCounts(allNodes, nowSec);
     updateFooterStats(sortedNodes, nowSec);
     updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
@@ -4516,15 +4525,15 @@ export function initializeApp(config) {
   }
 
   /**
-   * Update the count badge showing how many nodes are displayed.
+   * Update the count badge showing how many nodes were active in the past 7 days.
    *
-   * @param {Array<Object>} nodes Node payloads.
+   * @param {Array<Object>} nodes Node payloads (all nodes, unfiltered).
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
    */
   function updateCount(nodes, nowSec) {
-    const dayAgoSec = nowSec - 86400;
-    const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= dayAgoSec).length;
+    const weekAgoSec = nowSec - 7 * 86_400;
+    const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= weekAgoSec).length;
     const text = `${baseTitle} (${count})`;
     titleEl.textContent = text;
     if (headerTitleTextEl) {
@@ -4532,6 +4541,23 @@ export function initializeApp(config) {
     } else if (headerEl) {
       headerEl.textContent = text;
     }
+  }
+
+  /**
+   * Update legend column headers with per-protocol active node counts (7 days).
+   *
+   * @param {Array<Object>} nodes All node payloads (unfiltered).
+   * @param {number} nowSec Reference timestamp.
+   * @returns {void}
+   */
+  function updateLegendProtocolCounts(nodes, nowSec) {
+    if (!meshcoreCountEl && !meshtasticCountEl) return;
+    const weekAgoSec = nowSec - 7 * 86_400;
+    const recentNodes = nodes.filter(n => Number.isFinite(Number(n.last_heard)) && Number(n.last_heard) >= weekAgoSec);
+    const meshcoreCount = recentNodes.filter(n => n.protocol === 'meshcore').length;
+    const meshtasticCount = recentNodes.filter(n => n.protocol !== 'meshcore').length;
+    if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${meshcoreCount})`;
+    if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${meshtasticCount})`;
   }
 
   /**

@@ -344,7 +344,7 @@ h1 {
 .mobile-menu {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: 1400;
   display: flex;
   justify-content: flex-end;
   pointer-events: none;
@@ -1702,7 +1702,7 @@ input[type="radio"] {
 
 .legend-items--columns {
   flex-direction: row;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 8px;
 }
 
@@ -1711,6 +1711,15 @@ input[type="radio"] {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+.legend-column--bottom {
+  justify-content: flex-end;
+}
+
+.legend-protocol-count {
+  font-weight: 400;
+  opacity: 0.7;
 }
 
 .legend-column-header {
@@ -1772,6 +1781,10 @@ input[type="radio"] {
   display: inline-block;
   vertical-align: middle;
   margin-right: 2px;
+}
+
+.nav-protocol-icon {
+  margin-right: 3px;
 }
 
 .legend-hidden {
