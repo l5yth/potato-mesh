@@ -44,8 +44,6 @@ export const MINIMAL_CONFIG = Object.freeze({
  */
 export function setupApp() {
   const env = createDomEnvironment({ includeBody: true });
-  // themeToggle is accessed without a null guard in initializeApp.
-  env.createElement('button', 'themeToggle');
   const { _testUtils } = initializeApp(MINIMAL_CONFIG);
   return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
 }

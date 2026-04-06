@@ -239,6 +239,9 @@ h1 {
 .site-header__left {
   flex: 1 1 auto;
   min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .site-header__right {
@@ -508,10 +511,6 @@ h1 {
 
   .site-header__left {
     flex-wrap: nowrap;
-  }
-
-  .site-header__left--federation {
-    flex-wrap: wrap;
   }
 
   .site-nav {
@@ -1515,74 +1514,24 @@ body.dark .node-detail__chart-grid-line {
   margin: 0;
 }
 
-.meta-info {
+.meta-controls {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-}
-
-.refresh-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-  width: 100%;
-}
-
-.refresh-info {
-  margin: 0;
-  color: #555;
-}
-
-.refresh-info--hidden {
-  display: none;
-}
-
-.refresh-row--no-info {
-  grid-template-columns: auto;
-}
-
-.refresh-row--no-info .refresh-actions {
-  justify-self: start;
-}
-
-.refresh-actions {
-  display: flex;
+  align-items: center;
   gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-self: end;
+  padding: 4px 0 8px;
 }
 
-.auto-refresh-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.controls {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.controls--full-screen {
+.meta-controls .filter-input {
   flex: 1 1 auto;
-  justify-content: flex-end;
-}
-
-.controls label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.controls .filter-input {
-  display: inline-flex;
-  align-items: center;
-  flex: 1 1 260px;
   position: relative;
+}
+
+.refresh-timestamp {
+  font-size: 0.85em;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .filter-input input[type="text"] {
@@ -1909,6 +1858,11 @@ input[type="radio"] {
   color: inherit;
 }
 
+.footer-active-nodes {
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
 @media (max-width: 600px) {
   .app-footer .footer-content {
     padding: 10px 12px;
@@ -2022,39 +1976,14 @@ input[type="radio"] {
     flex-direction: column;
   }
 
-  .controls {
-    order: 2;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    align-items: center;
-    width: 100%;
-    gap: 12px;
-  }
-
-  .controls .filter-input {
-    width: 100%;
-  }
-
-  .controls button {
-    justify-self: end;
-  }
-
-  .meta-info {
-    order: 1;
-    width: 100%;
-  }
-
-  .refresh-row {
-    grid-template-columns: 1fr;
-    row-gap: 8px;
-  }
-
-  .refresh-actions {
-    flex-direction: row;
-    align-items: center;
+  .meta-controls {
+    flex-wrap: wrap;
     gap: 8px;
-    justify-self: start;
-    flex-wrap: nowrap;
+  }
+
+  .meta-controls .filter-input {
+    flex: 1 1 100%;
+    order: -1;
   }
 
   #map {

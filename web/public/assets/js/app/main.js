@@ -131,30 +131,20 @@ import {
  */
 export function initializeApp(config) {
   const statusEl = document.getElementById('status');
-  const fitBoundsEl = document.getElementById('fitBounds');
-  const autoRefreshEl = document.getElementById('autoRefresh');
+  const footerActiveNodes = document.getElementById('footerActiveNodes');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterInput = document.getElementById('filterInput');
   const filterClearButton = document.getElementById('filterClear');
-  const themeToggle = document.getElementById('themeToggle');
-  const infoBtn = document.getElementById('infoBtn');
-  const infoOverlay = document.getElementById('infoOverlay');
-  const infoClose = document.getElementById('infoClose');
-  const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
   const overlayStack = createShortInfoOverlayStack({ document, window, template: shortInfoTemplate });
   const titleEl = document.querySelector('title');
   const headerEl = document.querySelector('h1');
   const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
   const chatEl = document.getElementById('chat');
-  const refreshInfo = document.getElementById('refreshInfo');
   const instanceSelect = document.getElementById('instanceSelect');
   const baseTitle = document.title;
   const nodesTable = document.getElementById('nodes');
   const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
-  const infoOverlayHome = infoOverlay
-    ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
-    : null;
   const bodyClassList = document.body ? document.body.classList : null;
   const isPrivateMode = document.body && document.body.dataset
     ? String(document.body.dataset.privateMode).toLowerCase() === 'true'
@@ -245,13 +235,6 @@ export function initializeApp(config) {
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
-  if (refreshInfo) {
-    if (isDashboardView) {
-      refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
-    } else {
-      refreshInfo.textContent = '';
-    }
-  }
 
   if (instanceSelectorEnabled && instanceSelect) {
     void initializeInstanceSelector({
@@ -265,7 +248,7 @@ export function initializeApp(config) {
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;
-  let refreshInfoRequestId = 0;
+  let footerStatsRequestId = 0;
 
   /**
    * Close any open short-info overlays that do not contain the provided anchor.
@@ -463,22 +446,16 @@ export function initializeApp(config) {
    */
   function restartAutoRefresh() {
     // Tear down any existing timer so the interval never double-fires when
-    // the user toggles auto-refresh or the config is re-applied.
+    // the config is re-applied.
     if (refreshTimer) {
       clearInterval(refreshTimer);
       refreshTimer = null;
     }
-    // Only arm the timer when the auto-refresh checkbox is checked; a
-    // disabled checkbox (e.g. during an active fetch) keeps it off.
-    if (autoRefreshEl && autoRefreshEl.checked) {
+    // Only arm the timer when a positive interval is configured; a zero or
+    // negative value means auto-refresh is intentionally disabled.
+    if (REFRESH_MS > 0) {
       refreshTimer = setInterval(refresh, REFRESH_MS);
     }
-  }
-
-  if (fitBoundsEl && mapZoomOverride !== null) {
-    fitBoundsEl.checked = false;
-    fitBoundsEl.disabled = true;
-    fitBoundsEl.setAttribute('aria-disabled', 'true');
   }
 
   const MAP_CENTER_COORDS = Object.freeze({ lat: config.mapCenter.lat, lon: config.mapCenter.lon });
@@ -524,7 +501,7 @@ export function initializeApp(config) {
   ];
 
   const autoFitController = createMapAutoFitController({
-    toggleEl: fitBoundsEl,
+    toggleEl: null,
     windowObject: typeof window !== 'undefined' ? window : undefined,
     defaultPaddingPx: AUTO_FIT_PADDING_PX
   });
@@ -542,7 +519,6 @@ export function initializeApp(config) {
   const centerResetHandler = createMapCenterResetHandler({
     getMap: () => map,
     autoFitController,
-    fitBoundsEl,
     fitMapToBounds,
     mapCenterCoords: MAP_CENTER_COORDS,
     mapZoomOverride,
@@ -740,62 +716,6 @@ export function initializeApp(config) {
   });
 
   /**
-   * Append the informational modal overlay to the fullscreen container when active.
-   *
-   * @returns {void}
-   */
-  function attachInfoOverlayToFullscreenHost() {
-    if (!infoOverlay || !fullscreenContainer) return;
-    if (infoOverlay.parentNode !== fullscreenContainer) {
-      fullscreenContainer.appendChild(infoOverlay);
-    }
-    if (infoOverlay.classList) {
-      infoOverlay.classList.add('info-overlay--fullscreen');
-    }
-  }
-
-  /**
-   * Restore the informational overlay to its original DOM position.
-   *
-   * @returns {void}
-   */
-  function restoreInfoOverlayToHome() {
-    if (!infoOverlay || !infoOverlayHome || !infoOverlayHome.parent) return;
-    if (infoOverlay.parentNode === infoOverlayHome.parent) {
-      if (infoOverlay.classList) {
-        infoOverlay.classList.remove('info-overlay--fullscreen');
-      }
-      return;
-    }
-    if (
-      infoOverlayHome.nextSibling &&
-      infoOverlayHome.nextSibling.parentNode === infoOverlayHome.parent &&
-      typeof infoOverlayHome.parent.insertBefore === 'function'
-    ) {
-      infoOverlayHome.parent.insertBefore(infoOverlay, infoOverlayHome.nextSibling);
-    } else if (typeof infoOverlayHome.parent.appendChild === 'function') {
-      infoOverlayHome.parent.appendChild(infoOverlay);
-    }
-    if (infoOverlay.classList) {
-      infoOverlay.classList.remove('info-overlay--fullscreen');
-    }
-  }
-
-  /**
-   * Ensure the informational overlay participates in the active fullscreen subtree.
-   *
-   * @returns {void}
-   */
-  function syncInfoOverlayHost() {
-    if (!infoOverlay) return;
-    if (isMapInFullscreen()) {
-      attachInfoOverlayToFullscreenHost();
-    } else {
-      restoreInfoOverlayToHome();
-    }
-  }
-
-  /**
    * Respond to fullscreen change events originating from the browser.
    *
    * @returns {void}
@@ -825,7 +745,6 @@ export function initializeApp(config) {
         mapContainer.style.minHeight = '';
       }
     }
-    syncInfoOverlayHost();
     updateFullscreenToggleState();
     refreshMapSize();
   }
@@ -852,8 +771,6 @@ export function initializeApp(config) {
       centerResetHandler();
     });
   }
-
-  syncInfoOverlayHost();
 
   /** @type {Set<string>} Active compound role-filter keys, each ``"<protocol>:<roleKey>"``. */
   const activeRoleFilters = new Set();
@@ -1768,72 +1685,6 @@ export function initializeApp(config) {
     });
   } else if (mapContainer && !hasLeaflet) {
     setLegendVisibility(false);
-  }
-
-    themeToggle.addEventListener('click', () => {
-      const dark = document.body.classList.toggle('dark');
-      const themeValue = dark ? 'dark' : 'light';
-      document.body.setAttribute('data-theme', themeValue);
-      if (document.documentElement) {
-        document.documentElement.setAttribute('data-theme', themeValue);
-      }
-      themeToggle.textContent = dark ? '☀️' : '🌙';
-      if (window.__themeCookie) {
-        if (typeof window.__themeCookie.persistTheme === 'function') {
-          window.__themeCookie.persistTheme(themeValue);
-        } else if (typeof window.__themeCookie.setCookie === 'function') {
-          window.__themeCookie.setCookie('theme', themeValue);
-        }
-      }
-      window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: themeValue } }));
-      if (typeof window.applyFiltersToAllTiles === 'function') window.applyFiltersToAllTiles();
-    });
-
-  let lastFocusBeforeInfo = null;
-
-  /**
-   * Display the modal overlay containing site information.
-   *
-   * @returns {void}
-   */
-  function openInfoOverlay() {
-    if (!infoOverlay || !infoDialog) return;
-    syncInfoOverlayHost();
-    lastFocusBeforeInfo = document.activeElement;
-    infoOverlay.hidden = false;
-    document.body.style.setProperty('overflow', 'hidden');
-    infoDialog.focus();
-  }
-
-  /**
-   * Hide the site information overlay and restore focus.
-   *
-   * @returns {void}
-   */
-  function closeInfoOverlay() {
-    if (!infoOverlay || !infoDialog) return;
-    infoOverlay.hidden = true;
-    document.body.style.removeProperty('overflow');
-    const target = lastFocusBeforeInfo && typeof lastFocusBeforeInfo.focus === 'function' ? lastFocusBeforeInfo : infoBtn;
-    if (target && typeof target.focus === 'function') {
-      target.focus();
-    }
-    lastFocusBeforeInfo = null;
-  }
-
-  if (infoBtn && infoOverlay && infoClose) {
-    infoBtn.addEventListener('click', openInfoOverlay);
-    infoClose.addEventListener('click', closeInfoOverlay);
-    infoOverlay.addEventListener('click', event => {
-      if (event.target === infoOverlay) {
-        closeInfoOverlay();
-      }
-    });
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && !infoOverlay.hidden) {
-        closeInfoOverlay();
-      }
-    });
   }
 
   const nodeDetailOverlayManager = createNodeDetailOverlayManager({
@@ -4435,10 +4286,6 @@ export function initializeApp(config) {
         },
       });
     }
-    if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
-      const bounds = computeBoundsForPoints(pts, { ...autoFitBoundsConfig });
-      fitMapToBounds(bounds, { animate: false, paddingPx: AUTO_FIT_PADDING_PX });
-    }
     overlayStack.cleanupOrphans();
   }
 
@@ -4522,7 +4369,7 @@ export function initializeApp(config) {
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
     updateCount(sortedNodes, nowSec);
-    updateRefreshInfo(sortedNodes, nowSec);
+    updateFooterStats(sortedNodes, nowSec);
     updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
     // highlight matching substrings in their original case.
@@ -4658,25 +4505,14 @@ export function initializeApp(config) {
     }
   }
 
-  // Kick off the first data load immediately; interval-based auto-refresh
-  // begins only if the checkbox is already checked on page load.
+  // Kick off the first data load immediately then start the silent background
+  // auto-refresh timer.
   refresh();
   restartAutoRefresh();
 
   if (refreshBtn) {
     // Manual refresh button bypasses the interval and runs a fetch right away.
     refreshBtn.addEventListener('click', refresh);
-  }
-
-  if (autoRefreshEl) {
-    // When the user enables auto-refresh mid-session, trigger an immediate
-    // fetch so the UI does not sit stale until the next interval fires.
-    autoRefreshEl.addEventListener('change', () => {
-      restartAutoRefresh();
-      if (autoRefreshEl.checked) {
-        refresh();
-      }
-    });
   }
 
   /**
@@ -4699,26 +4535,22 @@ export function initializeApp(config) {
   }
 
   /**
-   * Update the status message describing the currently rendered data.
+   * Update the footer active-node stats element with day/week/month counts.
    *
    * @param {Array<Object>} nodes Node payloads.
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
    */
-  function updateRefreshInfo(nodes, nowSec) {
-    if (!refreshInfo || !isDashboardView) {
+  function updateFooterStats(nodes, nowSec) {
+    if (!footerActiveNodes) {
       return;
     }
-    const requestId = ++refreshInfoRequestId;
+    const requestId = ++footerStatsRequestId;
     void fetchActiveNodeStats({ nodes, nowSeconds: nowSec }).then(stats => {
-      if (requestId !== refreshInfoRequestId) {
+      if (requestId !== footerStatsRequestId) {
         return;
       }
-      refreshInfo.textContent = formatActiveNodeStatsText({
-        channel: config.channel,
-        frequency: config.frequency,
-        stats
-      });
+      footerActiveNodes.textContent = 'Active: ' + formatActiveNodeStatsText({ stats });
     });
   }
 

@@ -19,23 +19,12 @@ module PotatoMesh
     module Routes
       module Root
         module Helpers
-          # Determine the initial theme from the request cookie and persist
-          # sanitised values back to the client to avoid invalid states.
+          # Return the fixed dark theme identifier. Light mode is no longer
+          # supported; theme selection and cookie persistence have been removed.
           #
-          # @return [String] normalised theme value ('dark' or 'light').
+          # @return [String] always 'dark'.
           def resolve_initial_theme
-            raw_theme = request.cookies["theme"]
-            theme = %w[dark light].include?(raw_theme) ? raw_theme : "dark"
-            if raw_theme != theme
-              response.set_cookie(
-                "theme",
-                value: theme,
-                path: "/",
-                max_age: 60 * 60 * 24 * 7,
-                same_site: :lax,
-              )
-            end
-            theme
+            "dark"
           end
 
           # Render a dashboard-oriented ERB template within the shared layout.

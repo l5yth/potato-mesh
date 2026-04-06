@@ -205,6 +205,18 @@ export async function initializeInstanceSelector(options) {
   const visibleEntries = filterDisplayableFederationInstances(payload);
   updateFederationNavCount({ documentObject: doc, count: visibleEntries.length });
 
+  // Hide the selector when fewer than two instances are available — a single
+  // entry (only the current instance) offers no meaningful navigation choice.
+  if (visibleEntries.length < 2) {
+    const selectorContainer = (typeof selectElement.closest === 'function'
+      ? selectElement.closest('.header-federation')
+      : null) || selectElement.parentElement;
+    if (selectorContainer) {
+      selectorContainer.hidden = true;
+    }
+    return;
+  }
+
   const sanitizedDomain = typeof instanceDomain === 'string' ? instanceDomain.trim().toLowerCase() : null;
 
   const sortedEntries = visibleEntries

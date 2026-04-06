@@ -183,28 +183,10 @@ test('fetchActiveNodeStats falls back to local counts on invalid payloads', asyn
   assert.equal(stats.month, 0);
 });
 
-test('formatActiveNodeStatsText emits expected dashboard string', () => {
+test('formatActiveNodeStatsText emits compact day/week/month footer string', () => {
   const text = formatActiveNodeStatsText({
-    channel: 'LongFast',
-    frequency: '868MHz',
-    stats: { hour: 1, day: 2, week: 3, month: 4, sampled: false },
+    stats: { day: 2, week: 3, month: 4, sampled: false },
   });
 
-  assert.equal(
-    text,
-    'LongFast (868MHz) — active nodes: 1/hour, 2/day, 3/week, 4/month.'
-  );
-});
-
-test('formatActiveNodeStatsText appends sampled marker when local fallback is used', () => {
-  const text = formatActiveNodeStatsText({
-    channel: 'LongFast',
-    frequency: '868MHz',
-    stats: { hour: 9, day: 8, week: 7, month: 6, sampled: true },
-  });
-
-  assert.equal(
-    text,
-    'LongFast (868MHz) — active nodes: 9/hour, 8/day, 7/week, 6/month (sampled).'
-  );
+  assert.equal(text, '2/day \u00b7 3/week \u00b7 4/month');
 });
