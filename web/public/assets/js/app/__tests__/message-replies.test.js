@@ -151,3 +151,131 @@ test('buildMessageBody appends reaction counts for REACTION_APP packets without 
 
   assert.equal(body, 'EMOJI(🌶) ESC(×2)');
 });
+
+// ---------------------------------------------------------------------------
+// buildMessageBody — renderMentionHtml callback
+// ---------------------------------------------------------------------------
+
+// Shared mock helpers reused across the mention-callback tests below.
+const esc = v => `ESC(${v})`;
+const emoji = v => `EMOJI(${v})`;
+const badge = name => `BADGE(${name})`;
+
+test('buildMessageBody throws TypeError when renderMentionHtml is not a function', () => {
+  assert.throws(
+    () => buildMessageBody({
+      message: { text: 'hello' },
+      escapeHtml: v => v,
+      renderEmojiHtml: v => v,
+      renderMentionHtml: 42,
+    }),
+    { name: 'TypeError', message: 'renderMentionHtml must be a function when provided' }
+  );
+});
+
+test('buildMessageBody without renderMentionHtml escapes @[Name] literally', () => {
+  const body = buildMessageBody({
+    message: { text: 'hello @[Alice]' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+  });
+  assert.equal(body, 'ESC(hello @[Alice])');
+});
+
+test('buildMessageBody with renderMentionHtml replaces single @[Name] mention', () => {
+  const body = buildMessageBody({
+    message: { text: 'hi @[Alice] there' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: badge,
+  });
+  assert.equal(body, 'ESC(hi )BADGE(Alice)ESC( there)');
+});
+
+test('buildMessageBody with renderMentionHtml handles multiple mentions', () => {
+  const calls = [];
+  const body = buildMessageBody({
+    message: { text: '@[A] and @[B]' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: (name) => { calls.push(name); return `BADGE(${name})`; },
+  });
+  assert.deepEqual(calls, ['A', 'B']);
+  assert.equal(body, 'BADGE(A)ESC( and )BADGE(B)');
+});
+
+test('buildMessageBody with renderMentionHtml escapes literal segments', () => {
+  const body = buildMessageBody({
+    message: { text: '<b> @[Alice]' },
+    escapeHtml: v => v.replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+    renderEmojiHtml: emoji,
+    renderMentionHtml: badge,
+  });
+  assert.equal(body, '&lt;b&gt; BADGE(Alice)');
+});
+
+test('buildMessageBody with renderMentionHtml at start of text', () => {
+  const body = buildMessageBody({
+    message: { text: '@[Alice] hello' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: badge,
+  });
+  assert.equal(body, 'BADGE(Alice)ESC( hello)');
+});
+
+test('buildMessageBody with renderMentionHtml at end of text', () => {
+  const body = buildMessageBody({
+    message: { text: 'hello @[Alice]' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: badge,
+  });
+  assert.equal(body, 'ESC(hello )BADGE(Alice)');
+});
+
+test('buildMessageBody with renderMentionHtml: no mentions, callback not invoked', () => {
+  let called = false;
+  const body = buildMessageBody({
+    message: { text: 'plain text' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: () => { called = true; return 'BADGE'; },
+  });
+  assert.equal(called, false);
+  assert.equal(body, 'ESC(plain text)');
+});
+
+test('buildMessageBody with renderMentionHtml: null renderMentionHtml behaves like no callback', () => {
+  const body = buildMessageBody({
+    message: { text: 'hi @[Alice]' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: null,
+  });
+  assert.equal(body, 'ESC(hi @[Alice])');
+});
+
+test('buildMessageBody reaction path unaffected by renderMentionHtml', () => {
+  const reaction = { text: '1', emoji: '👍', portnum: 'REACTION_APP' };
+  let called = false;
+  const body = buildMessageBody({
+    message: reaction,
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: () => { called = true; return 'BADGE'; },
+  });
+  assert.equal(called, false);
+  assert.equal(body, 'EMOJI(👍)');
+});
+
+test('buildMessageBody with renderMentionHtml: unclosed @[ treated as literal', () => {
+  const body = buildMessageBody({
+    message: { text: 'hello @[unclosed' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: () => 'BADGE',
+  });
+  // @[ without closing ] does not match the pattern — treated as literal
+  assert.equal(body, 'ESC(hello @[unclosed)');
+});

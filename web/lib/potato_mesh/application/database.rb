@@ -136,6 +136,17 @@ module PotatoMesh
             db.execute("ALTER TABLE nodes ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
             db.execute("UPDATE nodes SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
           end
+
+          unless node_columns.include?("synthetic")
+            db.execute("ALTER TABLE nodes ADD COLUMN synthetic BOOLEAN NOT NULL DEFAULT 0")
+          end
+
+          if node_columns.include?("long_name")
+            existing_indexes = db.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='nodes'").flatten
+            unless existing_indexes.include?("idx_nodes_long_name")
+              db.execute("CREATE INDEX IF NOT EXISTS idx_nodes_long_name ON nodes(long_name)")
+            end
+          end
         end
 
         message_table_exists = db.get_first_value(

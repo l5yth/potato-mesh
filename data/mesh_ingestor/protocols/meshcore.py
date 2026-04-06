@@ -45,6 +45,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -202,6 +203,94 @@ def _meshcore_adv_type_to_role(adv_type: object) -> str | None:
     if not isinstance(adv_type, int):
         return None
     return _MESHCORE_ADV_TYPE_ROLE.get(adv_type)
+
+
+def _parse_sender_name(text: str) -> str | None:
+    """Extract the sender name from a MeshCore channel message text.
+
+    MeshCore channel messages use the convention ``"SenderName: body"``.
+    Only the first colon is treated as the separator; colons that appear in the
+    body are preserved.  The sender name is stripped of leading and trailing
+    whitespace.
+
+    Parameters:
+        text: Raw message text as stored in the database.
+
+    Returns:
+        Stripped sender name string, or ``None`` when the text does not
+        contain a colon or the portion before the colon is blank.
+    """
+    colon_idx = text.find(":")
+    if colon_idx < 0:
+        return None
+    name = text[:colon_idx].strip()
+    return name if name else None
+
+
+# Matches @[Name] mention patterns in MeshCore message bodies.
+_MENTION_RE = re.compile(r"@\[([^\]]+)\]")
+
+
+def _derive_synthetic_node_id(long_name: str) -> str:
+    """Derive a deterministic synthetic ``!xxxxxxxx`` node ID from a long name.
+
+    Uses the first four bytes of SHA-256(UTF-8 encoded name), formatted as
+    ``!xxxxxxxx``.  The same long name always produces the same ID across
+    restarts.  The probability of collision with a real public-key-derived ID
+    is ~1 in 4 billion per pair, which is negligible in practice.
+
+    Parameters:
+        long_name: Node long name used as the hash input.
+
+    Returns:
+        Canonical ``!xxxxxxxx`` node ID string.
+    """
+    return "!" + hashlib.sha256(long_name.encode("utf-8")).hexdigest()[:8]
+
+
+def _synthetic_node_dict(long_name: str) -> dict:
+    """Build a synthetic node dict for an unknown MeshCore channel sender.
+
+    Synthetic nodes are placeholder entries created when a channel message
+    arrives from a sender who is not yet in the connected device's contacts
+    roster.  They carry ``role=COMPANION`` (the only role capable of sending
+    channel messages).  The short name is intentionally omitted here — the
+    Ruby web app derives it at query time via
+    ``meshcore_companion_display_short_name`` for all COMPANION nodes.
+
+    When the real contact advertisement is later received, the Ruby web app
+    detects the matching long name, migrates all messages from the synthetic
+    node ID to the real one, and removes the placeholder row.
+
+    Parameters:
+        long_name: Sender name parsed from the ``"SenderName: body"`` prefix.
+
+    Returns:
+        Node dict compatible with the ``POST /api/nodes`` payload format,
+        with ``user.synthetic`` set to ``True``.
+    """
+    return {
+        "lastHeard": int(time.time()),
+        "protocol": "meshcore",
+        "user": {
+            "longName": long_name,
+            "shortName": "",
+            "role": "COMPANION",
+            "synthetic": True,
+        },
+    }
+
+
+def _extract_mention_names(text: str) -> list[str]:
+    """Extract all ``@[Name]`` mention names from a MeshCore message body.
+
+    Parameters:
+        text: Raw message text that may contain ``@[Name]`` mention patterns.
+
+    Returns:
+        List of extracted name strings (may be empty).
+    """
+    return _MENTION_RE.findall(text)
 
 
 def _pubkey_prefix_to_node_id(contacts: dict, pubkey_prefix: str) -> str | None:
@@ -371,6 +460,12 @@ class _MeshcoreInterface:
         self._contacts_lock = threading.Lock()
         self._contacts: dict = {}
         self.isConnected: bool = False
+        # Tracks synthetic node IDs already upserted this session to avoid
+        # repeating the HTTP POST for every message from the same unknown sender.
+        # This set is reset on reconnect (because _MeshcoreInterface is recreated),
+        # which may cause extra upserts after a disconnect — the ON CONFLICT guard
+        # in the Ruby web app ensures those are idempotent and safe.
+        self._synthetic_node_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Contact management (called from the asyncio thread)
@@ -416,6 +511,32 @@ class _MeshcoreInterface:
         """
         with self._contacts_lock:
             return _pubkey_prefix_to_node_id(self._contacts, pubkey_prefix)
+
+    def lookup_node_id_by_name(self, adv_name: str) -> str | None:
+        """Return the canonical node ID for the contact whose ``adv_name`` matches.
+
+        Used to resolve the sender of a MeshCore channel message from the
+        ``"SenderName: body"`` text prefix when no ``pubkey_prefix`` is
+        available in the event payload.  The comparison is case-sensitive
+        because ``adv_name`` values come verbatim from the MeshCore firmware.
+
+        Parameters:
+            adv_name: Advertised name to look up.  Leading and trailing
+                whitespace is stripped before comparison.
+
+        Returns:
+            Canonical ``!xxxxxxxx`` node ID, or ``None`` when no contact with
+            that name is known.
+        """
+        name = adv_name.strip() if adv_name else ""
+        if not name:
+            return None
+        with self._contacts_lock:
+            for pub_key, contact in self._contacts.items():
+                contact_name = (contact.get("adv_name") or "").strip()
+                if contact_name == name:
+                    return _meshcore_node_id(pub_key)
+        return None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -657,11 +778,40 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         rx_time = int(time.time())
         channel_idx = payload.get("channel_idx", 0)
 
+        # MeshCore channel messages carry no sender identifier in the event
+        # payload.  Try to resolve the sender from the "SenderName: body"
+        # convention embedded in the message text, matched against the known
+        # contacts roster.  When the contacts roster does not yet contain the
+        # sender, create a synthetic placeholder node so that the message
+        # receives a stable from_id and the UI can render a badge immediately.
+        # The web app will migrate messages to the real node ID once the sender
+        # is seen via a contact advertisement.
+        sender_name = _parse_sender_name(text)
+        from_id = iface.lookup_node_id_by_name(sender_name) if sender_name else None
+        if from_id is None and sender_name:
+            synthetic_id = _derive_synthetic_node_id(sender_name)
+            if synthetic_id not in iface._synthetic_node_ids:
+                _handlers.upsert_node(synthetic_id, _synthetic_node_dict(sender_name))
+                iface._synthetic_node_ids.add(synthetic_id)
+            from_id = synthetic_id
+
+        # Upsert synthetic placeholder nodes for any @[Name] mentions in the
+        # message body whose names are not yet in the contacts roster.  This
+        # ensures mention badges resolve even before the mentioned node is seen.
+        for mention_name in _extract_mention_names(text):
+            if not iface.lookup_node_id_by_name(mention_name):
+                mention_id = _derive_synthetic_node_id(mention_name)
+                if mention_id not in iface._synthetic_node_ids:
+                    _handlers.upsert_node(
+                        mention_id, _synthetic_node_dict(mention_name)
+                    )
+                    iface._synthetic_node_ids.add(mention_id)
+
         packet = {
             "id": _derive_message_id(sender_ts, f"c{channel_idx}", text),
             "rxTime": rx_time,
             "rx_time": rx_time,
-            "from_id": None,
+            "from_id": from_id,
             "to_id": "^all",
             "channel": channel_idx,
             "snr": payload.get("SNR"),
@@ -679,6 +829,8 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
             "MeshCore channel message",
             context="meshcore.channel_msg",
             channel=channel_idx,
+            sender=sender_name,
+            from_id=from_id,
         )
 
     async def on_contact_msg(evt) -> None:

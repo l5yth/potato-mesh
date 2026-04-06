@@ -457,7 +457,7 @@ RSpec.describe PotatoMesh::App::Queries do
         end
         rows = queries.query_nodes(10, node_ref: "!cc000003")
         row = rows.find { |r| r["node_id"] == "!cc000003" }
-        expect(row["short_name"]).to eq("  \u{1F600} ")
+        expect(row["short_name"]).to eq(" \u{1F600} ")
       end
 
       it "does not overwrite short_name when long_name is blank for a COMPANION node" do

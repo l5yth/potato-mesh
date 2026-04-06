@@ -83,6 +83,7 @@ import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
+import { parseMeshcoreSenderPrefix, findNodeByLongName } from './meshcore-chat-helpers.js';
 import {
   SNAPSHOT_WINDOW,
   aggregateNeighborSnapshots,
@@ -2002,7 +2003,22 @@ export function initializeApp(config) {
     if (!short) {
       return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
     }
-    const padded = escapeHtml(String(short).padStart(4, ' ')).replace(/ /g, '&nbsp;');
+    // Centre the label within a 4-column badge.  padStart alone only adds
+    // leading spaces, producing "   C" for a 1-char name with no trailing
+    // space.  Instead distribute padding evenly: 1-char → "  C ", 2-char →
+    // " AB ", 3-char → " ABC", 4-char → unchanged.  Names already at 4+
+    // chars are left as-is (meshtastic always stores exactly 4; the Ruby
+    // COMPANION override also produces exactly 4).
+    const raw = String(short);
+    let centred;
+    if (raw.length >= 4) {
+      centred = raw;
+    } else {
+      const leading = Math.ceil((4 - raw.length) / 2);
+      const trailing = 4 - raw.length - leading;
+      centred = ' '.repeat(leading) + raw + ' '.repeat(trailing);
+    }
+    const padded = escapeHtml(centred).replace(/ /g, '&nbsp;');
     const protocol = nodeData?.protocol ?? null;
     const color = getRoleColor(roleValue, protocol);
     const textColor = getRoleTextColor(roleValue, protocol);
@@ -3163,8 +3179,40 @@ export function initializeApp(config) {
     );
     const tsDate = tsSeconds != null ? new Date(tsSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
-    const short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     const messageProtocol = pickFirstProperty([m, m?.node], ['protocol']);
+
+    // MeshCore channel messages use "SenderName: body" text format.  The
+    // ingestor tries to resolve from_id via the contacts roster; when it
+    // succeeds m.node is hydrated normally.  When it fails (contact not yet
+    // known), m.node is null and we fall back to a name-based lookup here.
+    // Detection: channel messages always have to_id "^all".
+    const toId = m.to_id ?? m.toId;
+    const isMeshcoreChannelMsg = isMeshcoreProtocol(messageProtocol) && toId === '^all';
+
+    let meshcoreSenderNode = null;
+    let parsedMeshcorePrefix = null;
+    if (isMeshcoreChannelMsg && m?.text) {
+      parsedMeshcorePrefix = parseMeshcoreSenderPrefix(String(m.text));
+      // Only attempt the name lookup when the ingestor couldn't resolve the
+      // sender (m.node is null).  If it's already hydrated, m.node is used.
+      if (parsedMeshcorePrefix && !m.node) {
+        meshcoreSenderNode = findNodeByLongName(parsedMeshcorePrefix.senderName, nodesById);
+      }
+    }
+
+    let short;
+    if (isMeshcoreChannelMsg && !m.node && meshcoreSenderNode) {
+      // Fallback: ingestor couldn't resolve sender, but JS found the node by name.
+      short = renderShortHtml(
+        meshcoreSenderNode.short_name ?? meshcoreSenderNode.shortName,
+        meshcoreSenderNode.role,
+        meshcoreSenderNode.long_name ?? meshcoreSenderNode.longName,
+        meshcoreSenderNode
+      );
+    } else {
+      short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
+    }
+
     const nodeProtocolPrefix = protocolIconPrefixHtml(messageProtocol);
     const replyPrefix = resolveReplyPrefix({
       message: m,
@@ -3184,11 +3232,39 @@ export function initializeApp(config) {
         messageBodyHtml = '';
       }
     } else {
+      // Mention rendering is active for all MeshCore messages (channel + DM):
+      // @[Name] patterns are replaced with a short-name badge when the named
+      // node is present in nodesById.
+      const isMeshcoreMsg = isMeshcoreProtocol(messageProtocol);
+      const renderMentionHtml = isMeshcoreMsg
+        ? (mentionedName) => {
+            const mentionNode = findNodeByLongName(mentionedName, nodesById);
+            if (mentionNode) {
+              return renderShortHtml(
+                mentionNode.short_name ?? mentionNode.shortName,
+                mentionNode.role,
+                mentionNode.long_name ?? mentionNode.longName,
+                mentionNode
+              );
+            }
+            // Node not found — render as escaped plain text fallback.
+            return `@[${escapeHtml(mentionedName)}]`;
+          }
+        : null;
+
+      // For channel messages, strip the "SenderName: " prefix before building
+      // the body so we can prepend a linked version of the sender name instead.
+      const bodyMsg = (isMeshcoreChannelMsg && parsedMeshcorePrefix)
+        ? { ...m, text: parsedMeshcorePrefix.bodyText }
+        : m;
+
       messageBodyHtml = buildMessageBody({
-        message: m || {},
+        message: bodyMsg || {},
         escapeHtml,
-        renderEmojiHtml
+        renderEmojiHtml,
+        renderMentionHtml,
       });
+
     }
 
     const combinedSegments = [];
@@ -4650,7 +4726,7 @@ export function initializeApp(config) {
    * Inner closures exposed for unit tests. Production callers should ignore
    * this return value.
    *
-   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function, buildDisplayContext: Function } }}
+   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function, buildDisplayContext: Function, rebuildNodeIndex: Function } }}
    */
   return {
     _testUtils: {
@@ -4659,6 +4735,7 @@ export function initializeApp(config) {
       createAnnouncementEntry,
       createMessageChatEntry,
       buildDisplayContext,
+      rebuildNodeIndex,
       makeRoleFilterKey,
       normalizeFilterProtocol,
       matchesRoleFilter,

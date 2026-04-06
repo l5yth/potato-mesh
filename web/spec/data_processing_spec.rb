@@ -372,4 +372,201 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db.close
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # upsert_node — synthetic flag + merge
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — synthetic node handling", :db do
+    include_context "with isolated db"
+
+    let(:now) { Time.now.to_i }
+
+    def seed_message(db, from_id:)
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [42, now, "2025-01-01T00:00:00Z", from_id, "^all", "meshcore"],
+      )
+    end
+
+    it "stores synthetic=1 when user.synthetic is true" do
+      db = open_db
+      dp.upsert_node(db, "!synth111", {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!synth111'").first
+      expect(row[0]).to eq(1)
+      db.close
+    end
+
+    it "stores synthetic=0 when user.synthetic is false" do
+      db = open_db
+      dp.upsert_node(db, "!real1111", {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION", "synthetic" => false },
+      }, protocol: "meshcore")
+      row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!real1111'").first
+      expect(row[0]).to eq(0)
+      db.close
+    end
+
+    it "does not overwrite a real node with a synthetic upsert" do
+      db = open_db
+      # Insert real node first.
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION" },
+      }, protocol: "meshcore")
+      # Attempt to overwrite with synthetic upsert at a later time.
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!aabbccdd'").first
+      expect(row[0]).to eq(0)
+      db.close
+    end
+
+    it "real wins over synthetic — synthetic=0 is never overwritten by synthetic=1" do
+      db = open_db
+      # Insert synthetic first, then real.
+      dp.upsert_node(db, "!synth222", {
+        "lastHeard" => now - 200,
+        "user" => { "longName" => "Bob", "shortName" => " B ", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      dp.upsert_node(db, "!synth222", {
+        "lastHeard" => now,
+        "user" => { "longName" => "Bob", "shortName" => " B ", "role" => "COMPANION", "synthetic" => false },
+      }, protocol: "meshcore")
+      row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!synth222'").first
+      expect(row[0]).to eq(0)
+      db.close
+    end
+
+    it "migrates messages from synthetic node to real node on name match" do
+      db = open_db
+      synth_id = "!synth333"
+      real_id = "!real3333"
+      # Create synthetic node and a message from it.
+      dp.upsert_node(db, synth_id, {
+        "lastHeard" => now - 500,
+        "user" => { "longName" => "Carol", "shortName" => "  C ", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      seed_message(db, from_id: synth_id)
+      # Upsert the real node with the same long name.
+      dp.upsert_node(db, real_id, {
+        "lastHeard" => now,
+        "user" => { "longName" => "Carol", "shortName" => "  C ", "role" => "COMPANION", "publicKey" => "cc" * 32 },
+      }, protocol: "meshcore")
+      # Message should now point to the real node.
+      msg_from = db.execute("SELECT from_id FROM messages WHERE id = 42").first[0]
+      expect(msg_from).to eq(real_id)
+      # Synthetic node should be gone.
+      synth_row = db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first
+      expect(synth_row).to be_nil
+      db.close
+    end
+
+    it "does not delete real nodes during merge" do
+      db = open_db
+      real_id = "!real4444"
+      # Insert a real node with the same long name as the incoming real node.
+      dp.upsert_node(db, real_id, {
+        "lastHeard" => now - 100,
+        "user" => { "longName" => "Dave", "shortName" => "  D ", "role" => "COMPANION" },
+      }, protocol: "meshcore")
+      # Upsert same node again — should not delete itself.
+      dp.upsert_node(db, real_id, {
+        "lastHeard" => now,
+        "user" => { "longName" => "Dave", "shortName" => "  D ", "role" => "COMPANION" },
+      }, protocol: "meshcore")
+      row = db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_id]).first
+      expect(row).not_to be_nil
+      db.close
+    end
+
+    it "migrates messages from multiple synthetic nodes to a single real node" do
+      db = open_db
+      synth_a = "!synth5a5a"
+      synth_b = "!synth5b5b"
+      real_id = "!real5555"
+      # Two synthetic nodes with the same long name (could happen from two
+      # ingestors or a race).
+      dp.upsert_node(db, synth_a, {
+        "lastHeard" => now - 600,
+        "user" => { "longName" => "Eve", "shortName" => "  E ", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      dp.upsert_node(db, synth_b, {
+        "lastHeard" => now - 500,
+        "user" => { "longName" => "Eve", "shortName" => "  E ", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [51, now - 600, "2025-01-01T00:00:00Z", synth_a, "^all", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [52, now - 500, "2025-01-01T00:00:00Z", synth_b, "^all", "meshcore"],
+      )
+      # Upsert real node.
+      dp.upsert_node(db, real_id, {
+        "lastHeard" => now,
+        "user" => { "longName" => "Eve", "shortName" => "  E ", "role" => "COMPANION", "publicKey" => "ee" * 32 },
+      }, protocol: "meshcore")
+      # Both messages should now reference the real node.
+      from_ids = db.execute("SELECT from_id FROM messages WHERE id IN (51,52) ORDER BY id").map { |r| r[0] }
+      expect(from_ids).to all(eq(real_id))
+      # Both synthetic nodes gone.
+      remaining = db.execute("SELECT node_id FROM nodes WHERE node_id IN (?,?)", [synth_a, synth_b]).flatten
+      expect(remaining).to be_empty
+      db.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # merge_synthetic_nodes
+  # ---------------------------------------------------------------------------
+  describe "#merge_synthetic_nodes" do
+    include_context "with isolated db"
+
+    let(:now) { Time.now.to_i }
+
+    it "is a no-op when no synthetic nodes match the long name" do
+      db = open_db
+      dp.upsert_node(db, "!real6666", {
+        "lastHeard" => now - 100,
+        "user" => { "longName" => "Frank", "shortName" => "  F " },
+      }, protocol: "meshcore")
+      # Should not raise and should leave the real node intact.
+      dp.merge_synthetic_nodes(db, "!real6666", "Frank")
+      row = db.execute("SELECT node_id FROM nodes WHERE node_id = '!real6666'").first
+      expect(row).not_to be_nil
+      db.close
+    end
+
+    it "does not migrate messages from a synthetic node on a different protocol" do
+      db = open_db
+      # A synthetic meshtastic node that happens to share the same long name as
+      # an incoming real meshcore contact must NOT be merged.
+      synth_id = "!synth7777"
+      real_id = "!real7777"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Grace", "meshtastic", 1, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [61, now - 100, "2025-01-01T00:00:00Z", synth_id, "^all", "meshtastic"],
+      )
+      dp.merge_synthetic_nodes(db, real_id, "Grace")
+      # meshtastic synthetic node must be untouched.
+      synth_row = db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first
+      expect(synth_row).not_to be_nil
+      msg_from = db.execute("SELECT from_id FROM messages WHERE id = 61").first[0]
+      expect(msg_from).to eq(synth_id)
+      db.close
+    end
+  end
 end

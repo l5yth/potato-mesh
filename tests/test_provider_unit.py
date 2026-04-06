@@ -40,18 +40,22 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _contact_to_node_dict,
     _derive_message_id,
     _derive_modem_preset,
+    _derive_synthetic_node_id,
     _ensure_channel_names,
+    _extract_mention_names,
     _make_connection,
     _make_event_handlers,
     _meshcore_adv_type_to_role,
     _meshcore_node_id,
     _meshcore_short_name,
+    _parse_sender_name,
     _process_contact_update,
     _process_contacts,
     _process_self_info,
     _pubkey_prefix_to_node_id,
     _record_meshcore_message,
     _self_info_to_node_dict,
+    _synthetic_node_dict,
     _to_json_safe,
 )
 
@@ -579,6 +583,182 @@ def test_pubkey_prefix_returns_none_for_empty_contacts():
 
 
 # ---------------------------------------------------------------------------
+# _parse_sender_name
+# ---------------------------------------------------------------------------
+
+
+def test_parse_sender_name_typical():
+    """Returns the name portion of 'SenderName: body' text."""
+    assert _parse_sender_name("T114-Zeh: Hello world") == "T114-Zeh"
+
+
+def test_parse_sender_name_trims_whitespace():
+    """Leading and trailing whitespace is stripped from the sender name."""
+    assert _parse_sender_name("  Alice : body  ") == "Alice"
+
+
+def test_parse_sender_name_body_may_contain_colons():
+    """Only the first colon separates sender from body; body colons are kept."""
+    assert _parse_sender_name("BGruenauBot: ack | 80,42,68 (3 hops)") == "BGruenauBot"
+
+
+def test_parse_sender_name_no_colon_returns_none():
+    """Returns None when the text contains no colon."""
+    assert _parse_sender_name("no colon here") is None
+
+
+def test_parse_sender_name_empty_string_returns_none():
+    """Returns None for an empty string."""
+    assert _parse_sender_name("") is None
+
+
+def test_parse_sender_name_colon_first_returns_none():
+    """Returns None when the colon is the first character (empty sender)."""
+    assert _parse_sender_name(":body") is None
+
+
+def test_parse_sender_name_whitespace_only_before_colon_returns_none():
+    """Returns None when only whitespace appears before the colon."""
+    assert _parse_sender_name("   : body") is None
+
+
+# ---------------------------------------------------------------------------
+# _derive_synthetic_node_id
+# ---------------------------------------------------------------------------
+
+
+def test_derive_synthetic_node_id_format():
+    """Synthetic node ID must start with ! and have eight hex chars."""
+    nid = _derive_synthetic_node_id("Alice")
+    assert nid.startswith("!")
+    assert len(nid) == 9
+    assert all(c in "0123456789abcdef" for c in nid[1:])
+
+
+def test_derive_synthetic_node_id_deterministic():
+    """Same long name always produces the same node ID."""
+    assert _derive_synthetic_node_id("Alice") == _derive_synthetic_node_id("Alice")
+
+
+def test_derive_synthetic_node_id_distinct_names():
+    """Different long names produce different node IDs."""
+    assert _derive_synthetic_node_id("Alice") != _derive_synthetic_node_id("Bob")
+
+
+def test_derive_synthetic_node_id_unicode():
+    """Unicode names produce valid IDs."""
+    nid = _derive_synthetic_node_id("pete 🍁")
+    assert nid.startswith("!")
+    assert len(nid) == 9
+
+
+# ---------------------------------------------------------------------------
+# _synthetic_node_dict
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_node_dict_fields():
+    """_synthetic_node_dict returns a node dict with correct user fields."""
+    nd = _synthetic_node_dict("T114-Zeh")
+    assert nd["protocol"] == "meshcore"
+    assert nd["user"]["longName"] == "T114-Zeh"
+    assert nd["user"]["role"] == "COMPANION"
+    assert nd["user"]["synthetic"] is True
+    assert isinstance(nd["lastHeard"], int)
+
+
+def test_synthetic_node_dict_short_name_empty():
+    """Short name is always empty — the Ruby web app derives it at query time."""
+    nd = _synthetic_node_dict("pete 🍁")
+    assert nd["user"]["shortName"] == ""
+
+
+# ---------------------------------------------------------------------------
+# _extract_mention_names
+# ---------------------------------------------------------------------------
+
+
+def test_extract_mention_names_single():
+    """Extracts one mention name."""
+    assert _extract_mention_names("Hey @[Alice]!") == ["Alice"]
+
+
+def test_extract_mention_names_multiple():
+    """Extracts multiple mention names in order."""
+    assert _extract_mention_names("@[Alpha] and @[Beta]") == ["Alpha", "Beta"]
+
+
+def test_extract_mention_names_none():
+    """Returns empty list when no mentions are present."""
+    assert _extract_mention_names("no mentions here") == []
+
+
+def test_extract_mention_names_preserves_spaces():
+    """Names with spaces inside brackets are preserved."""
+    assert _extract_mention_names("Hi @[MaLiBu'2 Britz-Sued]") == [
+        "MaLiBu'2 Britz-Sued"
+    ]
+
+
+# ---------------------------------------------------------------------------
+# _MeshcoreInterface.lookup_node_id_by_name
+# ---------------------------------------------------------------------------
+
+
+def test_lookup_node_id_by_name_finds_exact_match():
+    """Returns the node ID when a contact with the given adv_name exists."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("Alice") == "!aabbccdd"
+
+
+def test_lookup_node_id_by_name_trims_query():
+    """Strips whitespace from the query before comparing."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("  Alice  ") == "!aabbccdd"
+
+
+def test_lookup_node_id_by_name_case_sensitive_mismatch():
+    """Returns None for a case-insensitive match — comparison is case-sensitive."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("alice") is None
+
+
+def test_lookup_node_id_by_name_no_contacts():
+    """Returns None when no contacts are registered."""
+    iface = _MeshcoreInterface(target=None)
+    assert iface.lookup_node_id_by_name("Alice") is None
+
+
+def test_lookup_node_id_by_name_empty_string():
+    """Returns None for an empty name query."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.lookup_node_id_by_name("") is None
+
+
+def test_lookup_node_id_by_name_none_query():
+    """Returns None when adv_name argument is None."""
+    iface = _MeshcoreInterface(target=None)
+    assert iface.lookup_node_id_by_name(None) is None
+
+
+def test_lookup_node_id_by_name_multiple_contacts():
+    """Returns the correct node ID when multiple contacts are registered."""
+    iface = _MeshcoreInterface(target=None)
+    iface._update_contact({"public_key": "11111111" + "00" * 28, "adv_name": "Alpha"})
+    iface._update_contact({"public_key": "22222222" + "00" * 28, "adv_name": "Beta"})
+    assert iface.lookup_node_id_by_name("Alpha") == "!11111111"
+    assert iface.lookup_node_id_by_name("Beta") == "!22222222"
+
+
+# ---------------------------------------------------------------------------
 # _meshcore_adv_type_to_role
 # ---------------------------------------------------------------------------
 
@@ -829,26 +1009,56 @@ def _make_stub_handlers_module():
     return mod
 
 
-def test_on_channel_msg_queues_packet(monkeypatch):
-    """on_channel_msg must call store_packet_dict with the correct packet fields."""
-    import asyncio
+class _FakeEvt:
+    """Minimal stand-in for a MeshCore SDK event object used in handler tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+
+def _setup_channel_msg_handlers(monkeypatch, *, contacts=None):
+    """Set up the patched handler environment for ``CHANNEL_MSG_RECV`` tests.
+
+    Patches the debug logger and the ``handlers`` module reference so that
+    :func:`_make_event_handlers` can be called without a real connection.
+
+    Parameters:
+        monkeypatch: pytest monkeypatch fixture.
+        contacts: Optional list of contact dicts to pre-register on the
+            returned interface, e.g. ``[{"public_key": "aabb…", "adv_name": "Alice"}]``.
+
+    Returns:
+        Tuple of ``(captured, upserted, iface, hmap)`` where *captured* is the
+        list of packets passed to ``store_packet_dict``, *upserted* is the list
+        of ``(node_id, node_dict)`` pairs passed to ``upsert_node``, *iface* is
+        the :class:`_MeshcoreInterface` instance, and *hmap* is the event
+        handler map returned by :func:`_make_event_handlers`.
+    """
     import data.mesh_ingestor as _mesh_pkg
     import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
+    upserted: list = []
     stub = _make_stub_handlers_module()
     stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    stub.upsert_node = lambda node_id, node_dict: upserted.append((node_id, node_dict))
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    # _make_event_handlers does `from .. import handlers`; patch the package attr
-    # so the deferred import resolves to our stub without touching sys.modules.
     monkeypatch.setattr(_mesh_pkg, "handlers", stub)
 
-    class _FakeEvt:
-        def __init__(self, payload):
-            self.payload = payload
-
     iface = _MeshcoreInterface(target=None)
+    for contact in contacts or []:
+        iface._update_contact(contact)
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    return captured, upserted, iface, hmap
+
+
+def test_on_channel_msg_queues_packet(monkeypatch):
+    """on_channel_msg must call store_packet_dict with the correct packet fields."""
+    import asyncio
+
+    # _make_event_handlers does `from .. import handlers`; _setup_channel_msg_handlers
+    # patches the package attribute so the deferred import resolves to a stub.
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -868,11 +1078,172 @@ def test_on_channel_msg_queues_packet(monkeypatch):
     assert pkt["decoded"]["text"] == "hello mesh"
     assert pkt["channel"] == 2
     assert pkt["to_id"] == "^all"
+    # Text has no "SenderName:" prefix so from_id cannot be resolved.
     assert pkt["from_id"] is None
     assert pkt["snr"] == 5
     assert pkt["rssi"] == -80
     # ID must be the hash-derived value, not the raw timestamp
     assert pkt["id"] == _derive_message_id(1_758_000_000, "c2", "hello mesh")
+
+
+def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
+    """on_channel_msg sets from_id when sender name matches a known contact."""
+    import asyncio
+
+    pub_key = "aabbccdd" + "00" * 28
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(
+        monkeypatch,
+        contacts=[{"public_key": pub_key, "adv_name": "T114-Zeh"}],
+    )
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_002,
+                    "text": "T114-Zeh: Test message",
+                    "channel_idx": 0,
+                    "SNR": 7,
+                    "RSSI": -70,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    pkt = captured[0]
+    assert pkt["decoded"]["text"] == "T114-Zeh: Test message"
+    assert pkt["to_id"] == "^all"
+    # Sender resolved from contacts via name prefix — no synthetic upsert needed.
+    assert pkt["from_id"] == "!aabbccdd"
+
+
+def test_on_channel_msg_creates_synthetic_node_when_sender_not_in_contacts(monkeypatch):
+    """on_channel_msg upserts a synthetic node and sets from_id when sender is unknown."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_003,
+                    "text": "UnknownSender: Hello",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    expected_id = _derive_synthetic_node_id("UnknownSender")
+    assert captured[0]["from_id"] == expected_id
+    # A synthetic node should have been upserted for the sender.
+    synth_upserts = [(nid, nd) for nid, nd in upserted if nid == expected_id]
+    assert len(synth_upserts) == 1
+    synth_node = synth_upserts[0][1]
+    assert synth_node["user"]["longName"] == "UnknownSender"
+    assert synth_node["user"]["role"] == "COMPANION"
+    assert synth_node["user"]["synthetic"] is True
+
+
+def test_on_channel_msg_synthetic_upserted_only_once_per_session(monkeypatch):
+    """on_channel_msg only calls upsert_node once per unique synthetic ID per session."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    payload = {
+        "sender_timestamp": 1_758_000_010,
+        "text": "UnknownSender: First",
+        "channel_idx": 0,
+    }
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload)))
+    payload2 = {
+        "sender_timestamp": 1_758_000_011,
+        "text": "UnknownSender: Second",
+        "channel_idx": 0,
+    }
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload2)))
+
+    expected_id = _derive_synthetic_node_id("UnknownSender")
+    sender_upserts = [nid for nid, _ in upserted if nid == expected_id]
+    # Second message must NOT re-upsert the same synthetic node.
+    assert len(sender_upserts) == 1
+
+
+def test_on_channel_msg_no_synthetic_when_no_sender_prefix(monkeypatch):
+    """on_channel_msg leaves from_id None when text has no SenderName: prefix."""
+    import asyncio
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_004,
+                    "text": "no colon here",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["from_id"] is None
+    assert upserted == []
+
+
+def test_on_channel_msg_upserts_synthetic_for_unknown_mention(monkeypatch):
+    """on_channel_msg upserts synthetic nodes for @[Name] mentions not in contacts."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_005,
+                    "text": "Alice: Hey @[Bob] and @[Carol]",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    upserted_ids = {nid for nid, _ in upserted}
+    assert _derive_synthetic_node_id("Bob") in upserted_ids
+    assert _derive_synthetic_node_id("Carol") in upserted_ids
+
+
+def test_on_channel_msg_skips_synthetic_for_known_mention(monkeypatch):
+    """on_channel_msg does not upsert synthetic for @[Name] if name is in contacts."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    pub_key = "aabbccdd" + "00" * 28
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(
+        monkeypatch,
+        contacts=[{"public_key": pub_key, "adv_name": "Bob"}],
+    )
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_006,
+                    "text": "Alice: Hey @[Bob]",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    # Bob is in contacts — no synthetic upsert for Bob.
+    bob_upserts = [
+        nid for nid, _ in upserted if nid == _derive_synthetic_node_id("Bob")
+    ]
+    assert bob_upserts == []
 
 
 def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
@@ -891,10 +1262,6 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
     iface = _MeshcoreInterface(target=None)
     iface.host_node_id = "!deadbeef"
     iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
-
-    class _FakeEvt:
-        def __init__(self, payload):
-            self.payload = payload
 
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
     asyncio.run(

@@ -180,27 +180,27 @@ RSpec.describe PotatoMesh::App::Helpers do
 
     it "returns the first emoji from the SMP range (U+1F000–U+1FFFF)" do
       name = "Node \u{1F600}"
-      expect(helper.meshcore_companion_display_short_name(name)).to eq("  \u{1F600} ")
+      expect(helper.meshcore_companion_display_short_name(name)).to eq(" \u{1F600} ")
     end
 
     it "returns the first emoji from the misc symbols range (U+2600–U+27BF)" do
       name = "\u{2600} Sun"
-      expect(helper.meshcore_companion_display_short_name(name)).to eq("  \u{2600} ")
+      expect(helper.meshcore_companion_display_short_name(name)).to eq(" \u{2600} ")
     end
 
     it "returns the first emoji from the arrows range (U+2B00–U+2BFF)" do
       name = "\u{2B50} Star"
-      expect(helper.meshcore_companion_display_short_name(name)).to eq("  \u{2B50} ")
+      expect(helper.meshcore_companion_display_short_name(name)).to eq(" \u{2B50} ")
     end
 
     it "uses the FIRST emoji when multiple are present" do
       name = "\u{1F600}\u{1F601} Two"
-      expect(helper.meshcore_companion_display_short_name(name)).to eq("  \u{1F600} ")
+      expect(helper.meshcore_companion_display_short_name(name)).to eq(" \u{1F600} ")
     end
 
     it "prefers emoji over initials when both are present" do
       name = "Alice \u{1F600} Bob"
-      expect(helper.meshcore_companion_display_short_name(name)).to eq("  \u{1F600} ")
+      expect(helper.meshcore_companion_display_short_name(name)).to eq(" \u{1F600} ")
     end
 
     it "returns the single initial when the name is one word with no emoji" do

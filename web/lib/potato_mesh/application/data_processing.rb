@@ -373,12 +373,16 @@ module PotatoMesh
 
         lora_freq = coerce_integer(n["lora_freq"] || n["loraFrequency"])
         modem_preset = string_or_nil(n["modem_preset"] || n["modemPreset"])
+        # Synthetic flag: true for placeholder nodes created from channel message
+        # sender names before the real contact advertisement is received.
+        synthetic = user["synthetic"] ? 1 : 0
+        long_name = user["longName"]
 
         # If the incoming long name is a generic placeholder, prefer any real
         # name already on record so we never stomp known data with fallback
         # text.  For new nodes there is nothing to preserve, so the generic
         # name is still written via the INSERT VALUES path.
-        long_name_conflict_sql = if generic_fallback_name?(user["longName"], node_id, protocol)
+        long_name_conflict_sql = if generic_fallback_name?(long_name, node_id, protocol)
             # Generic placeholder: keep any real name already on record.
             # COALESCE returns nodes.long_name when non-null, otherwise falls
             # back to the incoming generic — so brand-new nodes still get it.
@@ -395,7 +399,7 @@ module PotatoMesh
           node_id,
           node_num,
           user["shortName"],
-          user["longName"],
+          long_name,
           user["macaddr"],
           user["hwModel"] || n["hwModel"],
           role,
@@ -424,36 +428,82 @@ module PotatoMesh
           lora_freq,
           modem_preset,
           protocol,
+          synthetic,
         ]
         with_busy_retry do
-          db.execute(<<~SQL, row)
-            INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
-                              hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
-                              position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(node_id) DO UPDATE SET
-              num=COALESCE(excluded.num, nodes.num),
-              short_name=COALESCE(excluded.short_name, nodes.short_name),
-              long_name=#{long_name_conflict_sql},
-              macaddr=COALESCE(excluded.macaddr, nodes.macaddr),
-              hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
-              role=COALESCE(excluded.role, nodes.role),
-              public_key=COALESCE(excluded.public_key, nodes.public_key),
-              is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
-              is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
-              first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
-              battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
-              air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
-              position_time=COALESCE(excluded.position_time, nodes.position_time),
-              location_source=COALESCE(excluded.location_source, nodes.location_source),
-              precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
-              latitude=COALESCE(excluded.latitude, nodes.latitude),
-              longitude=COALESCE(excluded.longitude, nodes.longitude),
-              altitude=COALESCE(excluded.altitude, nodes.altitude),
-              lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset,
-              protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol)
-            WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
-          SQL
+          db.transaction do
+            db.execute(<<~SQL, row)
+              INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
+                                hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
+                                position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              ON CONFLICT(node_id) DO UPDATE SET
+                num=COALESCE(excluded.num, nodes.num),
+                short_name=COALESCE(excluded.short_name, nodes.short_name),
+                long_name=#{long_name_conflict_sql},
+                macaddr=COALESCE(excluded.macaddr, nodes.macaddr),
+                hw_model=COALESCE(excluded.hw_model, nodes.hw_model),
+                role=COALESCE(excluded.role, nodes.role),
+                public_key=COALESCE(excluded.public_key, nodes.public_key),
+                is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
+                is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
+                battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
+                air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
+                position_time=COALESCE(excluded.position_time, nodes.position_time),
+                location_source=COALESCE(excluded.location_source, nodes.location_source),
+                precision_bits=COALESCE(excluded.precision_bits, nodes.precision_bits),
+                latitude=COALESCE(excluded.latitude, nodes.latitude),
+                longitude=COALESCE(excluded.longitude, nodes.longitude),
+                altitude=COALESCE(excluded.altitude, nodes.altitude),
+                lora_freq=excluded.lora_freq, modem_preset=excluded.modem_preset,
+                protocol=COALESCE(NULLIF(nodes.protocol,'meshtastic'), excluded.protocol),
+                synthetic=MIN(COALESCE(excluded.synthetic,1), COALESCE(nodes.synthetic,1))
+              WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
+                AND NOT (COALESCE(nodes.synthetic,0) = 0 AND excluded.synthetic = 1)
+            SQL
+
+            # When a real (non-synthetic) node is upserted with a known long
+            # name, migrate any synthetic placeholder rows that share that name.
+            # This fires when the MeshCore device finally receives the sender's
+            # contact advertisement, resolving the placeholder to a real node ID.
+            if synthetic == 0 && long_name && !long_name.empty?
+              merge_synthetic_nodes(db, node_id, long_name)
+            end
+          end
+        end
+      end
+
+      # Migrate messages from synthetic placeholder nodes to a newly confirmed
+      # real node, then remove the placeholders.
+      #
+      # Called inside a transaction from +upsert_node+ when a real (non-synthetic)
+      # MeshCore node with the same +long_name+ is upserted.
+      #
+      # Only +messages.from_id+ is migrated.  Synthetic nodes are placeholders
+      # created solely from parsed channel message sender names, so they cannot
+      # have associated positions, telemetry, neighbors, or traces — those tables
+      # are intentionally left untouched.
+      #
+      # @param db [SQLite3::Database] open database connection.
+      # @param real_node_id [String] canonical node ID for the real contact.
+      # @param long_name [String] long name to match against synthetic rows.
+      # @return [void]
+      def merge_synthetic_nodes(db, real_node_id, long_name)
+        synthetic_ids = db.execute(
+          "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 1 AND protocol = 'meshcore' AND node_id != ?",
+          [long_name, real_node_id],
+        ).map { |row| row[0] }
+
+        synthetic_ids.each do |synthetic_id|
+          db.execute(
+            "UPDATE messages SET from_id = ? WHERE from_id = ?",
+            [real_node_id, synthetic_id],
+          )
+          db.execute(
+            "DELETE FROM nodes WHERE node_id = ? AND synthetic = 1",
+            [synthetic_id],
+          )
         end
       end
 

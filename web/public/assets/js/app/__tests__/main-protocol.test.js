@@ -17,64 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDomEnvironment } from './dom-environment.js';
-import { initializeApp } from '../main.js';
-
-const MINIMAL_CONFIG = Object.freeze({
-  channel: 'Primary',
-  frequency: '915MHz',
-  refreshMs: 0,
-  refreshIntervalSeconds: 30,
-  chatEnabled: true,
-  mapCenter: { lat: 0, lon: 0 },
-  mapZoom: null,
-  maxDistanceKm: 0,
-  tileFilters: { light: '', dark: '' },
-  instancesFeatureEnabled: false,
-  instanceDomain: null,
-  snapshotWindowSeconds: 3600,
-});
-
-/**
- * Spin up a minimal DOM environment, call initializeApp with a stub config,
- * and return the inner test utilities alongside an env.cleanup() handle.
- *
- * @returns {{ testUtils: Object, cleanup: Function }}
- */
-function setupApp() {
-  const env = createDomEnvironment({ includeBody: true });
-  // themeToggle is accessed without a null guard in initializeApp.
-  env.createElement('button', 'themeToggle');
-  const { _testUtils } = initializeApp(MINIMAL_CONFIG);
-  return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
-}
-
-/**
- * Run a test body with a fresh app instance, ensuring cleanup regardless of
- * outcome.  Eliminates the repetitive try/finally boilerplate across tests.
- *
- * @param {function(Object): void} fn Receives the _testUtils object.
- */
-function withApp(fn) {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    fn(testUtils);
-  } finally {
-    cleanup();
-  }
-}
-
-/**
- * Extract the serialised HTML string from a DOM element returned by the test
- * utils.  The stub environment exposes innerHTML as a plain string; this
- * normalises the fallback path for environments where it may not be.
- *
- * @param {HTMLElement} el
- * @returns {string}
- */
-function innerHtml(el) {
-  return String(typeof el.innerHTML === 'string' ? el.innerHTML : el.childNodes?.[0] ?? '');
-}
+import { withApp, innerHtml } from './main-app-test-helpers.js';
 
 // --- buildDisplayContext ---
 
@@ -278,5 +221,128 @@ test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
       node: { short_name: 'MC1', role: 'REPEATER', protocol: 'meshcore' },
     });
     assert.ok(innerHtml(div).includes('meshcore.svg'), 'chat entry for meshcore node should show meshcore icon');
+  });
+});
+
+// --- createMessageChatEntry: MeshCore channel message sender resolution ---
+
+/**
+ * A MeshCore COMPANION node used as the canonical sender fixture in the
+ * channel-message tests below.
+ */
+const T114_ZEH = { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'COMPANION', protocol: 'meshcore' };
+
+/**
+ * Build a minimal MeshCore channel message payload for createMessageChatEntry.
+ * @param {string} text Message text (typically "SenderName: body" format).
+ * @param {object} [overrides] Properties to merge in.
+ */
+function makeMeshcoreChannelMsg(text, overrides = {}) {
+  return { text, rx_time: 1000, protocol: 'meshcore', to_id: '^all', node: null, ...overrides };
+}
+
+test('createMessageChatEntry: meshcore channel message uses sender node short name when found', () => {
+  withApp((t) => {
+    // Seed a node with a known long_name so findNodeByLongName can resolve it.
+    t.rebuildNodeIndex([T114_ZEH]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Hello world'));
+    const html = innerHtml(div);
+    // Badge should NOT be the fallback '?' — the node's short_name should be used
+    assert.ok(html.includes('T'), 'badge should contain T from derived short name');
+    assert.ok(!html.includes('?'), 'badge should not show placeholder question mark');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message hides sender long name — only body shown', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([T114_ZEH]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Hello world'));
+    const html = innerHtml(div);
+    // The sender long name is NOT prepended as a link — only the text after the colon is shown
+    assert.ok(html.includes('Hello world'), 'body text after colon should be rendered');
+    // Sender name should not appear as a link (href to node page) in the body
+    assert.ok(!html.includes('T114-Zeh:'), 'sender long name prefix with colon should not appear in body');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message, sender node not found — shows body only', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([]);  // empty — no nodes known
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('UnknownSender: Hello'));
+    const html = innerHtml(div);
+    // Only the body text is shown; sender name is not prepended as a link
+    assert.ok(html.includes('Hello'), 'body text after colon should still be rendered');
+    assert.ok(!html.includes('UnknownSender:'), 'sender long name prefix with colon should not appear in body');
+    assert.ok(!html.includes('/nodes/'), 'should not produce a node link when sender is not found');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message, no colon in text — body unchanged', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([T114_ZEH]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('no colon here'));
+    const html = innerHtml(div);
+    assert.ok(html.includes('no colon here'), 'body text should be rendered as-is when no sender prefix found');
+    assert.ok(!html.includes('/nodes/'), 'should not produce a node link when no colon prefix');
+  });
+});
+
+test('createMessageChatEntry: meshcore message with @[Name] mention resolved to badge', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { ...T114_ZEH, node_id: '!11111111' },
+      { node_id: '!22222222', long_name: 'BGruenauBot', short_name: ' BG ', role: 'CLIENT', protocol: 'meshcore' },
+    ]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('BGruenauBot: ack @[T114-Zeh]', { rx_time: 2000 }));
+    const html = innerHtml(div);
+    // The @[T114-Zeh] mention should render as a short-name badge span
+    assert.ok(html.includes('short-name'), 'mention should produce a short-name badge');
+    // The sender long name is not prepended as a link in the body
+    assert.ok(!html.includes('BGruenauBot:'), 'sender long name prefix with colon should not appear in body');
+  });
+});
+
+test('createMessageChatEntry: meshcore message with @[Name] mention, node not found — fallback', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('EchoBot: Pong! @[Ghost]', { rx_time: 3000 }));
+    const html = innerHtml(div);
+    // @[Ghost] mention with no matching node renders as escaped plain text
+    assert.ok(html.includes('@[Ghost]'), 'unresolved mention should render as escaped @[Name] text');
+  });
+});
+
+test('createMessageChatEntry: meshcore channel message with hydrated node — body only shown', () => {
+  // Simulates the case where the ingestor resolved from_id successfully.
+  // The node is hydrated (m.node is not null), and the body still has "SenderName: body".
+  withApp((t) => {
+    t.rebuildNodeIndex([T114_ZEH]);
+    // node is already hydrated — ingestor resolved from_id via contacts
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Test message', { rx_time: 5000, node: T114_ZEH }));
+    const html = innerHtml(div);
+    // Only the body text after the colon is shown; sender long name is not prepended as a link
+    assert.ok(html.includes('Test message'), 'body text after colon should be rendered');
+    assert.ok(!html.includes('T114-Zeh:'), 'sender long name prefix with colon should not appear in body');
+  });
+});
+
+test('createMessageChatEntry: meshtastic message with @[Name] is NOT resolved as mention', () => {
+  withApp((t) => {
+    t.rebuildNodeIndex([
+      { node_id: '!11111111', long_name: 'Alice', short_name: 'ALCE', role: 'CLIENT', protocol: 'meshtastic' },
+    ]);
+    const div = t.createMessageChatEntry({
+      text: 'hello @[Alice]',
+      rx_time: 4000,
+      protocol: 'meshtastic',
+      node: { short_name: 'ALCE', role: 'CLIENT', protocol: 'meshtastic' },
+    });
+    const html = innerHtml(div);
+    // Meshtastic messages do not process @[Name] — rendered as literal escaped text
+    assert.ok(html.includes('@[Alice]') || html.includes('@&#x5B;Alice&#x5D;') || html.includes('@&#91;Alice&#93;') || html.includes('@[Alice]'),
+      'meshtastic @[Name] should be escaped literally, not resolved');
+    // Ensure no mention badge was injected (no extra short-name span beyond the sender badge)
+    const shortNameCount = (html.match(/short-name/g) || []).length;
+    assert.ok(shortNameCount <= 1, 'only the sender badge should be present, no mention badge');
   });
 });
