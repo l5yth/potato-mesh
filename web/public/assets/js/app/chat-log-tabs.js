@@ -83,8 +83,15 @@ function resolveSnapshotList(entry) {
  * }} params Aggregation inputs.
  * @returns {{
  *   logEntries: Array<{ ts: number, type: string, nodeId?: string, nodeNum?: number }>,
- *   channels: Array<{ id: string, index: number, label: string, entries: Array<{ ts: number, message: Object }> }>
- * }} Sorted tab model data.
+ *   channels: Array<{
+ *     id: string,
+ *     index: number,
+ *     label: string,
+ *     messageCount: number,
+ *     entries: Array<{ ts: number, message: Object }>
+ *   }>
+ * }} Tab model data. Channels are sorted by {@code messageCount} descending (7-day activity),
+ *   with alphabetical label ordering as a tiebreaker.
  */
 export function buildChatTabModel({
   nodes = [],
@@ -299,15 +306,15 @@ export function buildChatTabModel({
 
   logEntries.sort((a, b) => a.ts - b.ts);
 
-  const channels = Array.from(channelBuckets.values()).sort((a, b) => {
-    if (a.index !== b.index) {
-      return a.index - b.index;
-    }
-    return a.label.localeCompare(b.label);
-  });
-  for (const channel of channels) {
+  // Sort entries chronologically and record the 7-day message count before sorting channels.
+  for (const channel of channelBuckets.values()) {
     channel.entries.sort((a, b) => a.ts - b.ts);
+    channel.messageCount = channel.entries.length;
   }
+  // Sort channels by activity (most messages first), then alphabetically on ties.
+  const channels = Array.from(channelBuckets.values()).sort((a, b) =>
+    b.messageCount - a.messageCount || a.label.localeCompare(b.label)
+  );
 
   return { logEntries, channels };
 }

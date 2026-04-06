@@ -17,7 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderChatTabs } from '../chat-tabs.js';
+import { renderChatTabs, __test__ as chatTabsTest } from '../chat-tabs.js';
 
 class MockClassList {
   constructor() {
@@ -67,6 +67,10 @@ class MockElement {
     this.hidden = false;
     this.scrollTop = 0;
     this.scrollHeight = 200;
+    this.scrollLeft = 0;
+    this.clientWidth = 0;
+    this.scrollWidth = 0;
+    this.scrollIntoViewCalls = [];
   }
 
   appendChild(node) {
@@ -122,6 +126,14 @@ class MockElement {
       handler({});
     }
   }
+
+  scrollIntoView(opts) {
+    this.scrollIntoViewCalls.push(opts);
+  }
+
+  scrollBy() {
+    // no-op in tests; presence is enough to avoid guards
+  }
 }
 
 class MockTextNode {
@@ -164,9 +176,13 @@ test('renderChatTabs creates tab markup and selects default active tab', () => {
 
   assert.equal(active, 'channel-0');
   assert.equal(container.dataset.activeTab, 'channel-0');
+  // container now holds [tabListWrapper, panelWrapper]
   assert.equal(container.children.length, 2);
 
-  const [tabList, panelWrapper] = container.children;
+  const [tabListWrapper, panelWrapper] = container.children;
+  // tabListWrapper holds [prevBtn, tabList, nextBtn]
+  assert.equal(tabListWrapper.children.length, 3);
+  const [, tabList] = tabListWrapper.children;
   assert.equal(tabList.children.length, 3);
   assert.equal(panelWrapper.children.length, 3);
   assert.equal(panelWrapper.children[1].hidden, false);
@@ -198,7 +214,8 @@ test('renderChatTabs reuses previous active tab when still available', () => {
   });
 
   assert.equal(active, 'log');
-  const [tabList, panels] = container.children;
+  const [tabListWrapper, panels] = container.children;
+  const [, tabList] = tabListWrapper.children;
   assert.equal(tabList.children[0].getAttribute('aria-selected'), 'true');
   assert.equal(panels.children[0].hidden, false);
 });
@@ -224,7 +241,8 @@ test('renderChatTabs renders icon img child when tab.iconSrc is provided', () =>
 
   renderChatTabs({ document, container, tabs });
 
-  const [tabList] = container.children;
+  const [tabListWrapper] = container.children;
+  const [, tabList] = tabListWrapper.children;
   const button = tabList.children[0];
   // Button has one element child (the icon <img>) and one text node — two childNodes total.
   assert.equal(button.children.length, 1, 'should have exactly one element child (icon img)');
@@ -246,9 +264,52 @@ test('renderChatTabs uses textContent when no iconSrc is provided', () => {
 
   renderChatTabs({ document, container, tabs });
 
-  const [tabList] = container.children;
+  const [tabListWrapper] = container.children;
+  const [, tabList] = tabListWrapper.children;
   const button = tabList.children[0];
   assert.equal(button.textContent, 'Log');
   // No icon child elements
   assert.equal(button.children.length, 0);
+});
+
+test('renderChatTabs includes prev and next scroll buttons inside the wrapper', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  renderChatTabs({
+    document,
+    container,
+    tabs: [{ id: 'log', label: 'Log', content: new MockElement('div') }]
+  });
+
+  const [tabListWrapper] = container.children;
+  const [prevBtn, , nextBtn] = tabListWrapper.children;
+  assert.equal(prevBtn.getAttribute('aria-hidden'), 'true');
+  assert.equal(nextBtn.getAttribute('aria-hidden'), 'true');
+  assert.ok(prevBtn.className.includes('chat-tab-scroll-btn--prev'));
+  assert.ok(nextBtn.className.includes('chat-tab-scroll-btn--next'));
+  // Both start hidden (no overflow in test environment)
+  assert.equal(prevBtn.hidden, true);
+  assert.equal(nextBtn.hidden, true);
+});
+
+test('renderChatTabs scrolls active button into view on tab switch', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'ch1', label: 'Channel (5)', content: new MockElement('div') }
+  ];
+
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+
+  const [tabListWrapper] = container.children;
+  const [, tabList] = tabListWrapper.children;
+  const ch1Button = tabList.children[1];
+
+  ch1Button.dispatch('click');
+  assert.equal(container.dataset.activeTab, 'ch1');
+  assert.equal(ch1Button.scrollIntoViewCalls.length, 1);
+  assert.deepEqual(ch1Button.scrollIntoViewCalls[0], { block: 'nearest', inline: 'nearest' });
 });

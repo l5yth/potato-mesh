@@ -3410,7 +3410,7 @@ export function initializeApp(config) {
 
     const channelTabs = filteredChannels.map(channel => ({
       id: channel.id || `channel-${channel.index}`,
-      label: channel.label,
+      label: `${channel.label} (${channel.messageCount ?? channel.entries.length})`,
       iconSrc: isMeshtasticProtocol(channel.protocol)
         ? MESHTASTIC_ICON_SRC
         : isMeshcoreProtocol(channel.protocol)

@@ -932,15 +932,32 @@ body.view-chat .page-shell {
   min-height: 0;
 }
 
+/* Wrapper spans the full width and owns the bottom border so the arrow
+   buttons are visually part of the tab bar. */
+.chat-tablist-wrapper {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+}
+
 .chat-tablist {
   display: flex;
   gap: 4px;
   padding: 6px 6px 0;
-  border-bottom: 1px solid var(--line);
+  flex: 1;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none; /* Firefox */
+}
+
+.chat-tablist::-webkit-scrollbar {
+  display: none; /* Chrome / Safari */
 }
 
 .chat-tab {
-  flex: 1;
+  flex: none; /* natural content width — no equal-stretch */
+  white-space: nowrap;
   border: none;
   background: transparent;
   color: inherit;
@@ -949,6 +966,31 @@ body.view-chat .page-shell {
   cursor: pointer;
   font-size: 12px;
   transition: background-color 120ms ease, color 120ms ease;
+}
+
+/* Scroll arrow buttons flanking the tab list */
+.chat-tab-scroll-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  background: var(--bg2);
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted, #666);
+  font-size: 10px;
+  padding: 0;
+  z-index: 1;
+  transition: background-color 120ms ease;
+}
+
+.chat-tab-scroll-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.chat-tab-scroll-btn[hidden] {
+  display: none;
 }
 
 .chat-tab:is(:focus-visible, :hover) {
@@ -2110,8 +2152,21 @@ body.dark .chat-panel {
   color: #eee;
 }
 
+body.dark .chat-tablist-wrapper {
+  border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+
 body.dark .chat-tablist {
   border-bottom-color: rgba(255, 255, 255, 0.18);
+}
+
+body.dark .chat-tab-scroll-btn {
+  background: #1a1a1a;
+  color: #aaa;
+}
+
+body.dark .chat-tab-scroll-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 body.dark .chat-tab {

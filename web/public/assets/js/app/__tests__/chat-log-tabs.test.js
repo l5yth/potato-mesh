@@ -92,13 +92,14 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   );
 
   assert.equal(model.channels.length, 6);
+  // All channels have 1 message each; ties are broken alphabetically by label.
   assert.deepEqual(model.channels.map(channel => channel.label), [
+    '1',
+    'BerlinMesh',
     'EnvDefault',
     'Fallback',
     'MediumFast',
-    'ShortFast',
-    '1',
-    'BerlinMesh'
+    'ShortFast'
   ]);
 
   const channelByLabel = Object.fromEntries(model.channels.map(channel => [channel.label, channel]));
@@ -453,4 +454,61 @@ test('buildChatTabModel falls back to hashed id for unsluggable secondary labels
   assert.equal(channel.index, 2);
   assert.ok(channel.id.startsWith('channel-secondary-name-'));
   assert.ok(channel.id.length > 'channel-secondary-name-'.length);
+});
+
+test('buildChatTabModel sets messageCount equal to entries.length on each channel', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: 'a', rx_time: NOW - 10, channel: 0, channel_name: 'Primary' },
+      { id: 'b', rx_time: NOW - 8, channel: 0, channel_name: 'Primary' },
+      { id: 'c', rx_time: NOW - 6, channel: 1, channel_name: 'Secondary' }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  for (const channel of model.channels) {
+    assert.equal(channel.messageCount, channel.entries.length);
+  }
+  const primary = model.channels.find(channel => channel.label === 'Primary');
+  assert.ok(primary);
+  assert.equal(primary.messageCount, 2);
+});
+
+test('buildChatTabModel sorts channels by messageCount descending', () => {
+  // Channel A has 3 messages, Channel B has 1. A must come first.
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: 'b1', rx_time: NOW - 15, channel: 1, channel_name: 'Beta' },
+      { id: 'a1', rx_time: NOW - 12, channel: 2, channel_name: 'Alpha' },
+      { id: 'a2', rx_time: NOW - 10, channel: 2, channel_name: 'Alpha' },
+      { id: 'a3', rx_time: NOW - 8, channel: 2, channel_name: 'Alpha' }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.equal(model.channels.length, 2);
+  assert.equal(model.channels[0].label, 'Alpha');
+  assert.equal(model.channels[0].messageCount, 3);
+  assert.equal(model.channels[1].label, 'Beta');
+  assert.equal(model.channels[1].messageCount, 1);
+});
+
+test('buildChatTabModel breaks messageCount ties alphabetically', () => {
+  // Zebra and Apple each have 2 messages; Apple should sort first.
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: 'z1', rx_time: NOW - 20, channel: 1, channel_name: 'Zebra' },
+      { id: 'z2', rx_time: NOW - 18, channel: 1, channel_name: 'Zebra' },
+      { id: 'ap1', rx_time: NOW - 16, channel: 2, channel_name: 'Apple' },
+      { id: 'ap2', rx_time: NOW - 14, channel: 2, channel_name: 'Apple' }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.equal(model.channels.length, 2);
+  assert.equal(model.channels[0].label, 'Apple');
+  assert.equal(model.channels[1].label, 'Zebra');
 });
