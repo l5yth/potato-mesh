@@ -39,10 +39,12 @@ def reset_handler_state():
     """Reset global handler state between tests."""
     _state_mod._host_node_id = None
     _state_mod._host_telemetry_last_rx = None
+    _state_mod._host_nodeinfo_last_seen = None
     _state_mod._last_packet_monotonic = None
     yield
     _state_mod._host_node_id = None
     _state_mod._host_telemetry_last_rx = None
+    _state_mod._host_nodeinfo_last_seen = None
     _state_mod._last_packet_monotonic = None
 
 
@@ -74,6 +76,12 @@ class TestHostNodeId:
         _state_mod._host_telemetry_last_rx = 999_999
         handlers.register_host_node_id("!aabbccdd")
         assert _state_mod._host_telemetry_last_rx is None
+
+    def test_register_resets_nodeinfo_window(self):
+        """Registering a new host ID resets the NODEINFO suppression window."""
+        _state_mod._host_nodeinfo_last_seen = 12345.0
+        handlers.register_host_node_id("!aabbccdd")
+        assert _state_mod._host_nodeinfo_last_seen is None
 
     def test_register_canonicalises_numeric(self):
         """Numeric node ID is converted to !xxxxxxxx form."""
@@ -150,6 +158,51 @@ class TestHostTelemetrySuppressed:
         suppressed, mins = _state_mod._host_telemetry_suppressed(now)
         assert suppressed is True
         assert mins == 1
+
+
+# ---------------------------------------------------------------------------
+# _state: _host_nodeinfo_suppressed / _mark_host_nodeinfo_seen
+# ---------------------------------------------------------------------------
+
+
+class TestHostNodeinfoSuppressed:
+    """Tests for host NODEINFO suppression logic."""
+
+    def test_not_suppressed_when_no_previous(self):
+        """Not suppressed when no previous NODEINFO timestamp is set."""
+        assert _state_mod._host_nodeinfo_suppressed(time.monotonic()) is False
+
+    def test_suppressed_within_interval(self):
+        """Suppressed when within the suppression window."""
+        now = time.monotonic()
+        _state_mod._host_nodeinfo_last_seen = now - 10.0  # 10 seconds ago
+        assert _state_mod._host_nodeinfo_suppressed(now) is True
+
+    def test_not_suppressed_after_interval(self):
+        """Not suppressed after the full interval has elapsed."""
+        now = time.monotonic()
+        _state_mod._host_nodeinfo_last_seen = (
+            now - _state_mod._HOST_NODEINFO_INTERVAL_SECS - 1.0
+        )
+        assert _state_mod._host_nodeinfo_suppressed(now) is False
+
+    def test_mark_updates_timestamp(self):
+        """_mark_host_nodeinfo_seen stores the provided timestamp."""
+        now = time.monotonic()
+        _state_mod._mark_host_nodeinfo_seen(now)
+        assert _state_mod._host_nodeinfo_last_seen == now
+
+    def test_suppressed_after_mark(self):
+        """Immediately after marking, a second call is suppressed."""
+        now = time.monotonic()
+        _state_mod._mark_host_nodeinfo_seen(now)
+        assert _state_mod._host_nodeinfo_suppressed(now + 1.0) is True
+
+    def test_not_suppressed_after_mark_and_full_interval(self):
+        """After a full interval has elapsed, suppression lifts."""
+        long_ago = time.monotonic() - _state_mod._HOST_NODEINFO_INTERVAL_SECS - 5.0
+        _state_mod._mark_host_nodeinfo_seen(long_ago)
+        assert _state_mod._host_nodeinfo_suppressed(time.monotonic()) is False
 
 
 # ---------------------------------------------------------------------------
@@ -663,6 +716,91 @@ class TestStoreNodeinfoPacket:
         finally:
             q._queue_post_json = original
         assert sent == []
+
+    def test_host_nodeinfo_not_suppressed_on_first_call(self):
+        """First NODEINFO from the host node is always forwarded."""
+        import data.mesh_ingestor.queue as q
+
+        handlers.register_host_node_id("!aabbccdd")
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(path)
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 1, "rxTime": 100, "fromId": "!aabbccdd"},
+                {"user": {"id": "!aabbccdd", "shortName": "AB", "longName": "Alpha"}},
+            )
+        finally:
+            q._queue_post_json = original
+        assert "/api/nodes" in sent
+
+    def test_host_nodeinfo_suppressed_within_window(self, monkeypatch):
+        """Second NODEINFO from the host within the throttle window is dropped."""
+        import data.mesh_ingestor.queue as q
+
+        handlers.register_host_node_id("!aabbccdd")
+        # Simulate a recent upsert so the window is active.
+        _state_mod._mark_host_nodeinfo_seen(time.monotonic())
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(path)
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 2, "rxTime": 200, "fromId": "!aabbccdd"},
+                {"user": {"id": "!aabbccdd", "shortName": "AB", "longName": "Alpha"}},
+            )
+        finally:
+            q._queue_post_json = original
+        assert sent == []
+
+    def test_host_nodeinfo_allowed_after_window_expires(self, monkeypatch):
+        """NODEINFO from the host is forwarded after the throttle window expires."""
+        import data.mesh_ingestor.queue as q
+
+        handlers.register_host_node_id("!aabbccdd")
+        # Place last-seen far in the past so the window has expired.
+        _state_mod._host_nodeinfo_last_seen = (
+            time.monotonic() - _state_mod._HOST_NODEINFO_INTERVAL_SECS - 10.0
+        )
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(path)
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 3, "rxTime": 300, "fromId": "!aabbccdd"},
+                {"user": {"id": "!aabbccdd", "shortName": "AB", "longName": "Alpha"}},
+            )
+        finally:
+            q._queue_post_json = original
+        assert "/api/nodes" in sent
+
+    def test_non_host_nodeinfo_never_suppressed(self):
+        """NODEINFO from a non-host node is never throttled."""
+        import data.mesh_ingestor.queue as q
+
+        handlers.register_host_node_id("!aabbccdd")
+        # Mark the host as recently seen to activate the throttle.
+        _state_mod._mark_host_nodeinfo_seen(time.monotonic())
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(path)
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 4, "rxTime": 400, "fromId": "!11223344"},
+                {
+                    "user": {
+                        "id": "!11223344",
+                        "shortName": "CD",
+                        "longName": "Charlie Delta",
+                    }
+                },
+            )
+        finally:
+            q._queue_post_json = original
+        assert "/api/nodes" in sent
 
 
 # ---------------------------------------------------------------------------
