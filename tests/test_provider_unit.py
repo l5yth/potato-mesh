@@ -1070,7 +1070,9 @@ def test_store_meshcore_position_queues_to_api_positions(monkeypatch):
 
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append((route, payload))
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
     )
 
     _store_meshcore_position("!aabbccdd", 51.5, -0.1, 1700001234, "!ingestor1")
@@ -1093,7 +1095,9 @@ def test_store_meshcore_position_id_is_stable_for_same_node_and_time(monkeypatch
 
     ids: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: ids.append(payload["id"])
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: ids.append(payload["id"]),
     )
 
     _store_meshcore_position("!aabbccdd", 51.5, -0.1, 1700001234, None)
@@ -1108,7 +1112,9 @@ def test_store_meshcore_position_id_differs_for_different_times(monkeypatch):
 
     ids: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: ids.append(payload["id"])
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: ids.append(payload["id"]),
     )
 
     _store_meshcore_position("!aabbccdd", 51.5, -0.1, 1700001234, None)
@@ -1117,14 +1123,18 @@ def test_store_meshcore_position_id_differs_for_different_times(monkeypatch):
     assert ids[0] != ids[1]
 
 
-def test_store_meshcore_position_falls_back_to_rx_time_when_no_position_time(monkeypatch):
+def test_store_meshcore_position_falls_back_to_rx_time_when_no_position_time(
+    monkeypatch,
+):
     """When position_time is None, rx_time must be used as position_time."""
     import time as _time
     import data.mesh_ingestor.protocols.meshcore as _mod
 
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append(payload)
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(payload),
     )
 
     before = int(_time.time())
@@ -1887,9 +1897,10 @@ def test_process_self_info_queues_ingestor_heartbeat_before_upsert(monkeypatch):
     payload = {"public_key": "aabbccdd" + "00" * 28, "name": "Host"}
     _process_self_info(payload, _MeshcoreInterface(target=None), stub)
 
-    assert call_order[:2] == ["heartbeat", "upsert"], (
-        "Ingestor heartbeat must be queued before node upsert"
-    )
+    assert call_order[:2] == [
+        "heartbeat",
+        "upsert",
+    ], "Ingestor heartbeat must be queued before node upsert"
 
 
 # ---------------------------------------------------------------------------
@@ -2163,14 +2174,24 @@ def test_process_contacts_queues_position_for_contacts_with_latlon(monkeypatch):
 
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append((route, payload))
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
     )
 
     stub = _make_stub_handlers_module()
     iface = _MeshcoreInterface(target=None)
     pub_key = "aabbccdd" + "00" * 28
     _process_contacts(
-        {pub_key: {"public_key": pub_key, "adv_name": "Alice", "adv_lat": 51.5, "adv_lon": -0.1, "last_advert": 1700001234}},
+        {
+            pub_key: {
+                "public_key": pub_key,
+                "adv_name": "Alice",
+                "adv_lat": 51.5,
+                "adv_lon": -0.1,
+                "last_advert": 1700001234,
+            }
+        },
         iface,
         stub,
     )
@@ -2188,7 +2209,9 @@ def test_process_contacts_skips_position_for_contacts_without_latlon(monkeypatch
 
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append(route)
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(route),
     )
 
     stub = _make_stub_handlers_module()
@@ -2209,7 +2232,9 @@ def test_process_contacts_only_posts_positions_for_located_contacts(monkeypatch)
 
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append((route, payload))
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
     )
 
     stub = _make_stub_handlers_module()
@@ -2218,7 +2243,12 @@ def test_process_contacts_only_posts_positions_for_located_contacts(monkeypatch)
     key_without_pos = "11223344" + "00" * 28
     _process_contacts(
         {
-            key_with_pos: {"public_key": key_with_pos, "adv_name": "A", "adv_lat": 10.0, "adv_lon": 20.0},
+            key_with_pos: {
+                "public_key": key_with_pos,
+                "adv_name": "A",
+                "adv_lat": 10.0,
+                "adv_lon": 20.0,
+            },
             key_without_pos: {"public_key": key_without_pos, "adv_name": "B"},
         },
         iface,
@@ -2277,14 +2307,22 @@ def test_process_contact_update_queues_position_when_latlon_present(monkeypatch)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append((route, payload))
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
     )
 
     stub = _make_stub_handlers_module()
     iface = _MeshcoreInterface(target=None)
     pub_key = "aabbccdd" + "00" * 28
     _process_contact_update(
-        {"public_key": pub_key, "adv_name": "Bob", "adv_lat": 52.0, "adv_lon": 4.0, "last_advert": 1700005678},
+        {
+            "public_key": pub_key,
+            "adv_name": "Bob",
+            "adv_lat": 52.0,
+            "adv_lon": 4.0,
+            "last_advert": 1700005678,
+        },
         iface,
         stub,
     )
@@ -2303,7 +2341,9 @@ def test_process_contact_update_skips_position_when_no_latlon(monkeypatch):
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     posted: list = []
     monkeypatch.setattr(
-        _mod._queue, "_queue_post_json", lambda route, payload, **_k: posted.append(route)
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(route),
     )
 
     stub = _make_stub_handlers_module()

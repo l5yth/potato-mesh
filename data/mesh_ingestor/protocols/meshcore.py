@@ -774,7 +774,9 @@ def _process_contacts(
         lon = contact.get("adv_lon")
         if lat is not None and lon is not None and (lat or lon):
             _store_meshcore_position(
-                node_id, lat, lon,
+                node_id,
+                lat,
+                lon,
                 contact.get("last_advert"),
                 handlers.host_node_id(),
             )
@@ -801,7 +803,9 @@ def _process_contact_update(
     lon = contact.get("adv_lon")
     if lat is not None and lon is not None and (lat or lon):
         _store_meshcore_position(
-            node_id, lat, lon,
+            node_id,
+            lat,
+            lon,
             contact.get("last_advert"),
             handlers.host_node_id(),
         )
