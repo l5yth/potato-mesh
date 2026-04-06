@@ -17,64 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDomEnvironment } from './dom-environment.js';
-import { initializeApp } from '../main.js';
-
-const MINIMAL_CONFIG = Object.freeze({
-  channel: 'Primary',
-  frequency: '915MHz',
-  refreshMs: 0,
-  refreshIntervalSeconds: 30,
-  chatEnabled: true,
-  mapCenter: { lat: 0, lon: 0 },
-  mapZoom: null,
-  maxDistanceKm: 0,
-  tileFilters: { light: '', dark: '' },
-  instancesFeatureEnabled: false,
-  instanceDomain: null,
-  snapshotWindowSeconds: 3600,
-});
-
-/**
- * Spin up a minimal DOM environment, call initializeApp with a stub config,
- * and return the inner test utilities alongside an env.cleanup() handle.
- *
- * @returns {{ testUtils: Object, cleanup: Function }}
- */
-function setupApp() {
-  const env = createDomEnvironment({ includeBody: true });
-  // themeToggle is accessed without a null guard in initializeApp.
-  env.createElement('button', 'themeToggle');
-  const { _testUtils } = initializeApp(MINIMAL_CONFIG);
-  return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
-}
-
-/**
- * Run a test body with a fresh app instance, ensuring cleanup regardless of
- * outcome.  Eliminates the repetitive try/finally boilerplate across tests.
- *
- * @param {function(Object): void} fn Receives the _testUtils object.
- */
-function withApp(fn) {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    fn(testUtils);
-  } finally {
-    cleanup();
-  }
-}
-
-/**
- * Extract the serialised HTML string from a DOM element returned by the test
- * utils.  The stub environment exposes innerHTML as a plain string; this
- * normalises the fallback path for environments where it may not be.
- *
- * @param {HTMLElement} el
- * @returns {string}
- */
-function innerHtml(el) {
-  return String(typeof el.innerHTML === 'string' ? el.innerHTML : el.childNodes?.[0] ?? '');
-}
+import { withApp, innerHtml } from './main-app-test-helpers.js';
 
 // --- buildDisplayContext ---
 

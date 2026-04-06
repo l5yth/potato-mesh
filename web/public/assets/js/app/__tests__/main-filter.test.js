@@ -17,49 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDomEnvironment } from './dom-environment.js';
-import { initializeApp } from '../main.js';
-
-const MINIMAL_CONFIG = Object.freeze({
-  channel: 'Primary',
-  frequency: '915MHz',
-  refreshMs: 0,
-  refreshIntervalSeconds: 30,
-  chatEnabled: true,
-  mapCenter: { lat: 0, lon: 0 },
-  mapZoom: null,
-  maxDistanceKm: 0,
-  tileFilters: { light: '', dark: '' },
-  instancesFeatureEnabled: false,
-  instanceDomain: null,
-  snapshotWindowSeconds: 3600,
-});
-
-/**
- * Spin up a minimal app and return test utilities with a cleanup handle.
- *
- * @returns {{ testUtils: Object, cleanup: Function }}
- */
-function setupApp() {
-  const env = createDomEnvironment({ includeBody: true });
-  env.createElement('button', 'themeToggle');
-  const { _testUtils } = initializeApp(MINIMAL_CONFIG);
-  return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
-}
-
-/**
- * Run a test body with a fresh app instance, ensuring cleanup regardless of outcome.
- *
- * @param {function(Object): void} fn Receives the _testUtils object.
- */
-function withApp(fn) {
-  const { testUtils, cleanup } = setupApp();
-  try {
-    fn(testUtils);
-  } finally {
-    cleanup();
-  }
-}
+import { withApp } from './main-app-test-helpers.js';
 
 // ---------------------------------------------------------------------------
 // makeRoleFilterKey
