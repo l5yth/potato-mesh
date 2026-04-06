@@ -2696,7 +2696,8 @@ def test_traceroute_packet_without_identifiers_is_ignored(mesh_module, monkeypat
     assert captured == []
 
 
-def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
+def test_post_queue_prioritises_nodes_over_messages(mesh_module, monkeypatch):
+    """Nodes (priority 20) must be processed before messages (priority 30)."""
     mesh = mesh_module
     mesh._clear_post_queue()
     calls = []
@@ -2713,7 +2714,7 @@ def test_post_queue_prioritises_messages(mesh_module, monkeypatch):
 
     mesh._drain_post_queue()
 
-    assert [path for path, _ in calls] == ["/api/messages", "/api/nodes"]
+    assert [path for path, _ in calls] == ["/api/nodes", "/api/messages"]
 
 
 def test_drain_post_queue_handles_enqueued_items_during_send(mesh_module):

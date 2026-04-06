@@ -70,8 +70,9 @@ from meshcore import (
     TCPConnection,
 )
 
-from .. import config
+from .. import config, ingestors as _ingestors, queue as _queue
 from ..connection import default_serial_targets, parse_ble_target, parse_tcp_target
+from ..serialization import _iso, _node_num_from_id
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -338,7 +339,11 @@ def _contact_to_node_dict(contact: dict) -> dict:
     lat = contact.get("adv_lat")
     lon = contact.get("adv_lon")
     if lat is not None and lon is not None and (lat or lon):
-        node["position"] = {"latitude": lat, "longitude": lon}
+        pos: dict = {"latitude": lat, "longitude": lon}
+        last_advert = contact.get("last_advert")
+        if last_advert is not None:
+            pos["time"] = last_advert
+        node["position"] = pos
     return node
 
 
@@ -386,8 +391,54 @@ def _self_info_to_node_dict(self_info: dict) -> dict:
     lat = self_info.get("adv_lat")
     lon = self_info.get("adv_lon")
     if lat is not None and lon is not None and (lat or lon):
-        node["position"] = {"latitude": lat, "longitude": lon}
+        node["position"] = {"latitude": lat, "longitude": lon, "time": int(time.time())}
     return node
+
+
+def _store_meshcore_position(
+    node_id: str,
+    lat: float,
+    lon: float,
+    position_time: int | None,
+    ingestor: str | None,
+) -> None:
+    """Enqueue a ``POST /api/positions`` for a MeshCore contact's advertised position.
+
+    MeshCore does not issue dedicated position packets; position data is embedded
+    in contact advertisements.  A stable pseudo-ID is derived from the node
+    identity and the position timestamp so repeated advertisements of the same
+    position are idempotently de-duplicated by the web app's ``ON CONFLICT``
+    clause.
+
+    Parameters:
+        node_id: Canonical ``!xxxxxxxx`` node identifier.
+        lat: Latitude in decimal degrees.
+        lon: Longitude in decimal degrees.
+        position_time: Unix timestamp from the contact's ``last_advert`` field,
+            or ``None`` to fall back to the current wall-clock time.
+        ingestor: Canonical node ID of the host ingestor, or ``None``.
+    """
+    rx_time = int(time.time())
+    pt = position_time or rx_time
+    # Stable 63-bit pseudo-ID unique to (node, position_time) so that the web
+    # app ON CONFLICT clause de-duplicates repeated advertisements of the same
+    # position without collisions between different nodes.
+    digest = hashlib.sha256(f"{node_id}:{pt}".encode()).digest()
+    pos_id = int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
+    node_num = _node_num_from_id(node_id)
+    payload = {
+        "id": pos_id,
+        "rx_time": rx_time,
+        "rx_iso": _iso(rx_time),
+        "node_id": node_id,
+        "node_num": node_num,
+        "from_id": node_id,
+        "latitude": lat,
+        "longitude": lon,
+        "position_time": pt,
+        "ingestor": ingestor,
+    }
+    _queue._queue_post_json("/api/positions", payload)
 
 
 def _to_json_safe(value: object) -> object:
@@ -673,7 +724,18 @@ def _process_self_info(
     if node_id:
         iface.host_node_id = node_id
         handlers.register_host_node_id(node_id)
+        # Queue the ingestor registration BEFORE any node upserts so the web
+        # backend assigns the correct protocol to all subsequent records.
+        # Radio metadata (LORA_FREQ, MODEM_PRESET) is captured just above and
+        # will be included in the heartbeat payload by queue_ingestor_heartbeat.
+        _ingestors.queue_ingestor_heartbeat(force=True, node_id=node_id)
         handlers.upsert_node(node_id, _self_info_to_node_dict(payload))
+        lat = payload.get("adv_lat")
+        lon = payload.get("adv_lon")
+        if lat is not None and lon is not None and (lat or lon):
+            _store_meshcore_position(
+                node_id, lat, lon, int(time.time()), handlers.host_node_id()
+            )
 
     config._debug_log(
         "MeshCore radio metadata captured",
@@ -708,6 +770,16 @@ def _process_contacts(
             continue
         iface._update_contact(contact)
         handlers.upsert_node(node_id, _contact_to_node_dict(contact))
+        lat = contact.get("adv_lat")
+        lon = contact.get("adv_lon")
+        if lat is not None and lon is not None and (lat or lon):
+            _store_meshcore_position(
+                node_id,
+                lat,
+                lon,
+                contact.get("last_advert"),
+                handlers.host_node_id(),
+            )
     handlers._mark_packet_seen()
 
 
@@ -727,6 +799,16 @@ def _process_contact_update(
         return
     iface._update_contact(contact)
     handlers.upsert_node(node_id, _contact_to_node_dict(contact))
+    lat = contact.get("adv_lat")
+    lon = contact.get("adv_lon")
+    if lat is not None and lon is not None and (lat or lon):
+        _store_meshcore_position(
+            node_id,
+            lat,
+            lon,
+            contact.get("last_advert"),
+            handlers.host_node_id(),
+        )
     handlers._mark_packet_seen()
     config._debug_log(
         "MeshCore contact updated",
