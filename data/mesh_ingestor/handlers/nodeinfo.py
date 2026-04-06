@@ -76,6 +76,21 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     if node_id is None:
         return
 
+    # Throttle self-NODEINFO upserts to at most once per hour.  The meshtastic
+    # library rebroadcasts the local node's NODEINFO periodically; accepting
+    # every broadcast would overwrite the host node record too aggressively.
+    if node_id == _state.host_node_id():
+        _now = time.monotonic()
+        if _state._host_nodeinfo_suppressed(_now):
+            if config.DEBUG:
+                config._debug_log(
+                    "Suppressed host self-NODEINFO update within throttle window",
+                    context="handlers.store_nodeinfo",
+                    node_id=node_id,
+                )
+            return
+        _state._mark_host_nodeinfo_seen(_now)
+
     node_payload: dict = {}
     if user_dict:
         node_payload["user"] = user_dict

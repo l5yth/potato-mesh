@@ -466,6 +466,8 @@ class _MeshcoreInterface:
         # which may cause extra upserts after a disconnect — the ON CONFLICT guard
         # in the Ruby web app ensures those are idempotent and safe.
         self._synthetic_node_ids: set[str] = set()
+        self._self_info_payload: dict | None = None
+        """Most recent SELF_INFO payload received from the device, or ``None``."""
 
     # ------------------------------------------------------------------
     # Contact management (called from the asyncio thread)
@@ -650,15 +652,15 @@ def _process_self_info(
         handlers: Module reference for :func:`~data.mesh_ingestor.handlers`
             functions (passed to avoid circular-import issues).
     """
+    # Cache the payload so node_snapshot_items / self_node_item can use it later.
+    iface._self_info_payload = payload
+
     pub_key = payload.get("public_key", "")
     node_id = _meshcore_node_id(pub_key)
-    if node_id:
-        iface.host_node_id = node_id
-        handlers.register_host_node_id(node_id)
-        handlers.upsert_node(node_id, _self_info_to_node_dict(payload))
 
-    # Capture radio metadata once — never overwrite a previously cached value.
-    # Mirrors the guard used by interfaces._ensure_radio_metadata for Meshtastic.
+    # Capture radio metadata BEFORE upserting the node so that
+    # _apply_radio_metadata_to_nodes finds populated values on the very first
+    # SELF_INFO.  Never overwrite a previously cached value.
     radio_freq = payload.get("radio_freq")
     if radio_freq is not None and getattr(config, "LORA_FREQ", None) is None:
         config.LORA_FREQ = radio_freq
@@ -667,6 +669,12 @@ def _process_self_info(
     )
     if modem_preset is not None and getattr(config, "MODEM_PRESET", None) is None:
         config.MODEM_PRESET = modem_preset
+
+    if node_id:
+        iface.host_node_id = node_id
+        handlers.register_host_node_id(node_id)
+        handlers.upsert_node(node_id, _self_info_to_node_dict(payload))
+
     config._debug_log(
         "MeshCore radio metadata captured",
         context="meshcore.self_info.radio",
@@ -1146,8 +1154,36 @@ class MeshcoreProvider:
         """
         return getattr(iface, "host_node_id", None)
 
+    def self_node_item(self, iface: object) -> tuple[str, dict] | None:
+        """Return the ``(node_id, node_dict)`` pair for the host self-node.
+
+        Uses the most recently cached ``SELF_INFO`` payload stored on the
+        interface.  Returns ``None`` when no SELF_INFO has been received yet
+        or when the public key cannot be mapped to a valid node ID.
+
+        Parameters:
+            iface: Active :class:`_MeshcoreInterface` instance.
+
+        Returns:
+            ``(canonical_node_id, node_dict)`` tuple or ``None``.
+        """
+        if not isinstance(iface, _MeshcoreInterface):
+            return None
+        payload = getattr(iface, "_self_info_payload", None)
+        if not payload:
+            return None
+        node_id = _meshcore_node_id(payload.get("public_key", ""))
+        if not node_id:
+            return None
+        return node_id, _self_info_to_node_dict(payload)
+
     def node_snapshot_items(self, iface: object) -> list[tuple[str, dict]]:
         """Return a snapshot of all known MeshCore contacts as node entries.
+
+        Includes the host self-node when a ``SELF_INFO`` payload has already
+        been received, so that the initial snapshot sent by the daemon
+        covers the local device even when the background event loop delivers
+        ``SELF_INFO`` before the snapshot is taken.
 
         Parameters:
             iface: Active :class:`_MeshcoreInterface` instance.  Any other
@@ -1159,7 +1195,11 @@ class MeshcoreProvider:
         """
         if not isinstance(iface, _MeshcoreInterface):
             return []
-        return iface.contacts_snapshot()
+        items: list[tuple[str, dict]] = list(iface.contacts_snapshot())
+        self_item = self.self_node_item(iface)
+        if self_item is not None:
+            items.append(self_item)
+        return items
 
 
 __all__ = ["MeshcoreProvider"]
