@@ -248,7 +248,7 @@ export function initializeApp(config) {
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;
-  let footerStatsRequestId = 0;
+  let activeStatsRequestId = 0;
 
   /**
    * Close any open short-info overlays that do not contain the provided anchor.
@@ -4376,7 +4376,9 @@ export function initializeApp(config) {
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
-    updateCount(allNodes, nowSec);
+    // Title and legend counts are intentionally global — they reflect the whole
+    // network, not just the nodes visible under the current filter.
+    updateTitleCount(allNodes, nowSec);
     updateLegendProtocolCounts(allNodes, nowSec);
     updateFooterStats(sortedNodes, nowSec);
     updateSortIndicators();
@@ -4525,13 +4527,13 @@ export function initializeApp(config) {
   }
 
   /**
-   * Update the count badge showing how many nodes were active in the past 7 days.
+   * Update the page/tab title with the total active-node count for the past 7 days.
    *
-   * @param {Array<Object>} nodes Node payloads (all nodes, unfiltered).
+   * @param {Array<Object>} nodes All node payloads (unfiltered — counts are global).
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
    */
-  function updateCount(nodes, nowSec) {
+  function updateTitleCount(nodes, nowSec) {
     const weekAgoSec = nowSec - 7 * 86_400;
     const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= weekAgoSec).length;
     const text = `${baseTitle} (${count})`;
@@ -4555,6 +4557,7 @@ export function initializeApp(config) {
     const weekAgoSec = nowSec - 7 * 86_400;
     const recentNodes = nodes.filter(n => Number.isFinite(Number(n.last_heard)) && Number(n.last_heard) >= weekAgoSec);
     const meshcoreCount = recentNodes.filter(n => n.protocol === 'meshcore').length;
+    // Treat any non-meshcore node as Meshtastic until additional protocols are supported.
     const meshtasticCount = recentNodes.filter(n => n.protocol !== 'meshcore').length;
     if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${meshcoreCount})`;
     if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${meshtasticCount})`;
@@ -4571,9 +4574,9 @@ export function initializeApp(config) {
     if (!footerActiveNodes) {
       return;
     }
-    const requestId = ++footerStatsRequestId;
+    const requestId = ++activeStatsRequestId;
     void fetchActiveNodeStats({ nodes, nowSeconds: nowSec }).then(stats => {
-      if (requestId !== footerStatsRequestId) {
+      if (requestId !== activeStatsRequestId) {
         return;
       }
       footerActiveNodes.textContent = 'Active: ' + formatActiveNodeStatsText({ stats });
