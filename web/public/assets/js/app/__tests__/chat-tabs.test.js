@@ -17,7 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderChatTabs, __test__ as chatTabsTest } from '../chat-tabs.js';
+import { renderChatTabs } from '../chat-tabs.js';
 
 class MockClassList {
   constructor() {
@@ -312,4 +312,43 @@ test('renderChatTabs scrolls active button into view on tab switch', () => {
   assert.equal(container.dataset.activeTab, 'ch1');
   assert.equal(ch1Button.scrollIntoViewCalls.length, 1);
   assert.deepEqual(ch1Button.scrollIntoViewCalls[0], { block: 'nearest', inline: 'nearest' });
+});
+
+test('renderChatTabs arrow buttons reflect scroll position via scroll event', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+
+  renderChatTabs({
+    document,
+    container,
+    tabs: [{ id: 'log', label: 'Log', content: new MockElement('div') }]
+  });
+
+  const [tabListWrapper] = container.children;
+  const [prevBtn, tabList, nextBtn] = tabListWrapper.children;
+
+  // Simulate a scrollable list: total width 400, viewport 100, scrolled 50.
+  tabList.scrollLeft = 50;
+  tabList.clientWidth = 100;
+  tabList.scrollWidth = 400;
+
+  // Fire the scroll event so updateArrows recalculates.
+  tabList.dispatch('scroll');
+
+  // scrolled past start → prev should be visible
+  assert.equal(prevBtn.hidden, false);
+  // not yet at end (50 + 100 = 150 < 400 - 1) → next should be visible
+  assert.equal(nextBtn.hidden, false);
+
+  // Scroll to the very end.
+  tabList.scrollLeft = 300; // 300 + 100 = 400 >= 400 - 1
+  tabList.dispatch('scroll');
+  assert.equal(prevBtn.hidden, false);
+  assert.equal(nextBtn.hidden, true);
+
+  // Scroll back to start.
+  tabList.scrollLeft = 0;
+  tabList.dispatch('scroll');
+  assert.equal(prevBtn.hidden, true);
+  assert.equal(nextBtn.hidden, false);
 });

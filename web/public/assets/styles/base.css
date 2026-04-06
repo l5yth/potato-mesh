@@ -2156,10 +2156,6 @@ body.dark .chat-tablist-wrapper {
   border-bottom-color: rgba(255, 255, 255, 0.18);
 }
 
-body.dark .chat-tablist {
-  border-bottom-color: rgba(255, 255, 255, 0.18);
-}
-
 body.dark .chat-tab-scroll-btn {
   background: #1a1a1a;
   color: #aaa;

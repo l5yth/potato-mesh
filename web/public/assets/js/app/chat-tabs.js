@@ -197,6 +197,9 @@ export function renderChatTabs({
     tabList.addEventListener('scroll', updateArrows);
   }
   if (typeof globalThis !== 'undefined' && typeof globalThis.ResizeObserver === 'function') {
+    // The observer is intentionally not disconnected: renderChatTabs replaces
+    // the entire DOM subtree on each call, so the previous tabList element is
+    // detached and the observer will not fire again after that point.
     const ro = new globalThis.ResizeObserver(updateArrows);
     ro.observe(tabList);
   }
