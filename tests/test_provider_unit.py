@@ -928,9 +928,30 @@ def _make_stub_handlers_module():
     return mod
 
 
-def test_on_channel_msg_queues_packet(monkeypatch):
-    """on_channel_msg must call store_packet_dict with the correct packet fields."""
-    import asyncio
+class _FakeEvt:
+    """Minimal stand-in for a MeshCore SDK event object used in handler tests."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+
+def _setup_channel_msg_handlers(monkeypatch, *, contacts=None):
+    """Set up the patched handler environment for ``CHANNEL_MSG_RECV`` tests.
+
+    Patches the debug logger and the ``handlers`` module reference so that
+    :func:`_make_event_handlers` can be called without a real connection.
+
+    Parameters:
+        monkeypatch: pytest monkeypatch fixture.
+        contacts: Optional list of contact dicts to pre-register on the
+            returned interface, e.g. ``[{"public_key": "aabb…", "adv_name": "Alice"}]``.
+
+    Returns:
+        Tuple of ``(captured, iface, hmap)`` where *captured* is the list
+        that receives every packet passed to ``store_packet_dict``, *iface* is
+        the :class:`_MeshcoreInterface` instance, and *hmap* is the event
+        handler map returned by :func:`_make_event_handlers`.
+    """
     import data.mesh_ingestor as _mesh_pkg
     import data.mesh_ingestor.protocols.meshcore as _mod
 
@@ -938,16 +959,22 @@ def test_on_channel_msg_queues_packet(monkeypatch):
     stub = _make_stub_handlers_module()
     stub.store_packet_dict = lambda pkt: captured.append(pkt)
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    # _make_event_handlers does `from .. import handlers`; patch the package attr
-    # so the deferred import resolves to our stub without touching sys.modules.
     monkeypatch.setattr(_mesh_pkg, "handlers", stub)
 
-    class _FakeEvt:
-        def __init__(self, payload):
-            self.payload = payload
-
     iface = _MeshcoreInterface(target=None)
+    for contact in contacts or []:
+        iface._update_contact(contact)
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    return captured, iface, hmap
+
+
+def test_on_channel_msg_queues_packet(monkeypatch):
+    """on_channel_msg must call store_packet_dict with the correct packet fields."""
+    import asyncio
+
+    # _make_event_handlers does `from .. import handlers`; _setup_channel_msg_handlers
+    # patches the package attribute so the deferred import resolves to a stub.
+    captured, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -978,25 +1005,12 @@ def test_on_channel_msg_queues_packet(monkeypatch):
 def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
     """on_channel_msg sets from_id when sender name matches a known contact."""
     import asyncio
-    import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.protocols.meshcore as _mod
 
-    captured: list = []
-    stub = _make_stub_handlers_module()
-    stub.store_packet_dict = lambda pkt: captured.append(pkt)
-    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
-
-    class _FakeEvt:
-        def __init__(self, payload):
-            self.payload = payload
-
-    # Register the contact whose adv_name matches the message prefix.
     pub_key = "aabbccdd" + "00" * 28
-    iface = _MeshcoreInterface(target=None)
-    iface._update_contact({"public_key": pub_key, "adv_name": "T114-Zeh"})
-
-    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    captured, _iface, hmap = _setup_channel_msg_handlers(
+        monkeypatch,
+        contacts=[{"public_key": pub_key, "adv_name": "T114-Zeh"}],
+    )
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -1022,22 +1036,9 @@ def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
 def test_on_channel_msg_from_id_none_when_sender_not_in_contacts(monkeypatch):
     """on_channel_msg leaves from_id as None when sender name has no matching contact."""
     import asyncio
-    import data.mesh_ingestor as _mesh_pkg
-    import data.mesh_ingestor.protocols.meshcore as _mod
-
-    captured: list = []
-    stub = _make_stub_handlers_module()
-    stub.store_packet_dict = lambda pkt: captured.append(pkt)
-    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
-
-    class _FakeEvt:
-        def __init__(self, payload):
-            self.payload = payload
 
     # No contacts registered — name lookup cannot match.
-    iface = _MeshcoreInterface(target=None)
-    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    captured, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(

@@ -283,19 +283,26 @@ test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
 
 // --- createMessageChatEntry: MeshCore channel message sender resolution ---
 
+/**
+ * A MeshCore COMPANION node used as the canonical sender fixture in the
+ * channel-message tests below.
+ */
+const T114_ZEH = { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' };
+
+/**
+ * Build a minimal MeshCore channel message payload for createMessageChatEntry.
+ * @param {string} text Message text (typically "SenderName: body" format).
+ * @param {object} [overrides] Properties to merge in.
+ */
+function makeMeshcoreChannelMsg(text, overrides = {}) {
+  return { text, rx_time: 1000, protocol: 'meshcore', to_id: '^all', node: null, ...overrides };
+}
+
 test('createMessageChatEntry: meshcore channel message uses sender node short name when found', () => {
   withApp((t) => {
     // Seed a node with a known long_name so findNodeByLongName can resolve it.
-    t.rebuildNodeIndex([
-      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
-    ]);
-    const div = t.createMessageChatEntry({
-      text: 'T114-Zeh: Hello world',
-      rx_time: 1000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      node: null,
-    });
+    t.rebuildNodeIndex([T114_ZEH]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Hello world'));
     const html = innerHtml(div);
     // Badge should NOT be the fallback '?' — the node's short_name should be used
     assert.ok(html.includes('T'), 'badge should contain T from derived short name');
@@ -305,16 +312,8 @@ test('createMessageChatEntry: meshcore channel message uses sender node short na
 
 test('createMessageChatEntry: meshcore channel message links sender name to node page', () => {
   withApp((t) => {
-    t.rebuildNodeIndex([
-      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
-    ]);
-    const div = t.createMessageChatEntry({
-      text: 'T114-Zeh: Hello world',
-      rx_time: 1000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      node: null,
-    });
+    t.rebuildNodeIndex([T114_ZEH]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Hello world'));
     const html = innerHtml(div);
     assert.ok(html.includes('/nodes/!aabbccdd'), 'body should link sender name to node detail page');
     assert.ok(html.includes('T114-Zeh'), 'sender long name should appear as link text');
@@ -324,13 +323,7 @@ test('createMessageChatEntry: meshcore channel message links sender name to node
 test('createMessageChatEntry: meshcore channel message, sender node not found — badge is placeholder', () => {
   withApp((t) => {
     t.rebuildNodeIndex([]);  // empty — no nodes known
-    const div = t.createMessageChatEntry({
-      text: 'UnknownSender: Hello',
-      rx_time: 1000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      node: null,
-    });
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('UnknownSender: Hello'));
     const html = innerHtml(div);
     // Sender name still appears but without a node link href
     assert.ok(html.includes('UnknownSender'), 'unresolved sender name should still appear in body');
@@ -340,16 +333,8 @@ test('createMessageChatEntry: meshcore channel message, sender node not found �
 
 test('createMessageChatEntry: meshcore channel message, no colon in text — body unchanged', () => {
   withApp((t) => {
-    t.rebuildNodeIndex([
-      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
-    ]);
-    const div = t.createMessageChatEntry({
-      text: 'no colon here',
-      rx_time: 1000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      node: null,
-    });
+    t.rebuildNodeIndex([T114_ZEH]);
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('no colon here'));
     const html = innerHtml(div);
     assert.ok(html.includes('no colon here'), 'body text should be rendered as-is when no sender prefix found');
     assert.ok(!html.includes('/nodes/'), 'should not produce a node link when no colon prefix');
@@ -359,16 +344,10 @@ test('createMessageChatEntry: meshcore channel message, no colon in text — bod
 test('createMessageChatEntry: meshcore message with @[Name] mention resolved to badge', () => {
   withApp((t) => {
     t.rebuildNodeIndex([
-      { node_id: '!11111111', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
+      { ...T114_ZEH, node_id: '!11111111' },
       { node_id: '!22222222', long_name: 'BGruenauBot', short_name: ' BG ', role: 'CLIENT', protocol: 'meshcore' },
     ]);
-    const div = t.createMessageChatEntry({
-      text: 'BGruenauBot: ack @[T114-Zeh]',
-      rx_time: 2000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      node: null,
-    });
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('BGruenauBot: ack @[T114-Zeh]', { rx_time: 2000 }));
     const html = innerHtml(div);
     // The @[T114-Zeh] mention should render as a short-name badge span
     assert.ok(html.includes('short-name'), 'mention should produce a short-name badge');
@@ -380,13 +359,7 @@ test('createMessageChatEntry: meshcore message with @[Name] mention resolved to 
 test('createMessageChatEntry: meshcore message with @[Name] mention, node not found — fallback', () => {
   withApp((t) => {
     t.rebuildNodeIndex([]);
-    const div = t.createMessageChatEntry({
-      text: 'EchoBot: Pong! @[Ghost]',
-      rx_time: 3000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      node: null,
-    });
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('EchoBot: Pong! @[Ghost]', { rx_time: 3000 }));
     const html = innerHtml(div);
     // @[Ghost] mention with no matching node renders as escaped plain text
     assert.ok(html.includes('@[Ghost]'), 'unresolved mention should render as escaped @[Name] text');
@@ -397,17 +370,9 @@ test('createMessageChatEntry: meshcore channel message with hydrated node links 
   // Simulates the case where the ingestor resolved from_id successfully.
   // The node is hydrated (m.node is not null), and the body still has "SenderName: body".
   withApp((t) => {
-    t.rebuildNodeIndex([
-      { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
-    ]);
-    const div = t.createMessageChatEntry({
-      text: 'T114-Zeh: Test message',
-      rx_time: 5000,
-      protocol: 'meshcore',
-      to_id: '^all',
-      // node is already hydrated by the ingestor-resolved from_id
-      node: { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' },
-    });
+    t.rebuildNodeIndex([T114_ZEH]);
+    // node is already hydrated — ingestor resolved from_id via contacts
+    const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Test message', { rx_time: 5000, node: T114_ZEH }));
     const html = innerHtml(div);
     // Sender name should be linked using m.node.node_id
     assert.ok(html.includes('/nodes/!aabbccdd'), 'hydrated node should produce a link in the body');

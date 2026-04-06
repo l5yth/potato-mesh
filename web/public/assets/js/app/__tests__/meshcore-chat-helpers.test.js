@@ -91,9 +91,14 @@ test('parseMeshcoreSenderPrefix: sender with slash and plus preserved', () => {
 // findNodeByLongName
 // ---------------------------------------------------------------------------
 
+/** Shared single-entry map used across the findNodeByLongName tests below. */
+function makeAliceMap(nodeOverride = {}) {
+  const node = { node_id: '!aabbccdd', long_name: 'Alice', ...nodeOverride };
+  return { node, map: new Map([['!aabbccdd', node]]) };
+}
+
 test('findNodeByLongName: exact match on snake_case long_name', () => {
-  const node = { node_id: '!aabbccdd', long_name: 'Alice', role: 'CLIENT' };
-  const map = new Map([['!aabbccdd', node]]);
+  const { node, map } = makeAliceMap();
   assert.equal(findNodeByLongName('Alice', map), node);
 });
 
@@ -104,22 +109,22 @@ test('findNodeByLongName: exact match on camelCase longName', () => {
 });
 
 test('findNodeByLongName: no match returns null', () => {
-  const map = new Map([['!aabbccdd', { long_name: 'Alice' }]]);
+  const { map } = makeAliceMap();
   assert.equal(findNodeByLongName('Unknown', map), null);
 });
 
 test('findNodeByLongName: null longName returns null', () => {
-  const map = new Map([['!aabbccdd', { long_name: 'Alice' }]]);
+  const { map } = makeAliceMap();
   assert.equal(findNodeByLongName(null, map), null);
 });
 
 test('findNodeByLongName: undefined longName returns null', () => {
-  const map = new Map([['!aabbccdd', { long_name: 'Alice' }]]);
+  const { map } = makeAliceMap();
   assert.equal(findNodeByLongName(undefined, map), null);
 });
 
 test('findNodeByLongName: empty string longName returns null', () => {
-  const map = new Map([['!aabbccdd', { long_name: 'Alice' }]]);
+  const { map } = makeAliceMap();
   assert.equal(findNodeByLongName('', map), null);
 });
 
@@ -136,7 +141,7 @@ test('findNodeByLongName: empty Map returns null', () => {
 });
 
 test('findNodeByLongName: case-sensitive — lowercase mismatch returns null', () => {
-  const map = new Map([['!aabbccdd', { long_name: 'Alice' }]]);
+  const { map } = makeAliceMap();
   assert.equal(findNodeByLongName('alice', map), null);
 });
 
