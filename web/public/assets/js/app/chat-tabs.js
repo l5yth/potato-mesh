@@ -23,6 +23,11 @@
  * data (img src does not execute script).  The ``label`` field is always
  * inserted as a text node.
  *
+ * When the tab list overflows its container, ◀ / ▶ scroll buttons are
+ * rendered on either side of the list.  They are hidden via the
+ * {@code hidden} attribute while the corresponding scroll direction is
+ * not available.
+ *
  * @param {{
  *   document: Document,
  *   container: HTMLElement,
@@ -54,14 +59,40 @@ export function renderChatTabs({
   }
 
   const fragment = createFragment(document);
+
+  // Wrapper holds the scroll buttons + the tab list so the border-bottom
+  // spans the full width including the arrow buttons.
+  const tabListWrapper = document.createElement('div');
+  tabListWrapper.className = 'chat-tablist-wrapper';
+
+  const prevBtn = document.createElement('button');
+  prevBtn.type = 'button';
+  prevBtn.className = 'chat-tab-scroll-btn chat-tab-scroll-btn--prev';
+  prevBtn.setAttribute('aria-hidden', 'true');
+  prevBtn.setAttribute('tabindex', '-1');
+  prevBtn.textContent = '◀';
+  prevBtn.hidden = true;
+
+  const nextBtn = document.createElement('button');
+  nextBtn.type = 'button';
+  nextBtn.className = 'chat-tab-scroll-btn chat-tab-scroll-btn--next';
+  nextBtn.setAttribute('aria-hidden', 'true');
+  nextBtn.setAttribute('tabindex', '-1');
+  nextBtn.textContent = '▶';
+  nextBtn.hidden = true;
+
   const tabList = document.createElement('div');
   tabList.className = 'chat-tablist';
   tabList.setAttribute('role', 'tablist');
 
+  tabListWrapper.appendChild(prevBtn);
+  tabListWrapper.appendChild(tabList);
+  tabListWrapper.appendChild(nextBtn);
+
   const panelWrapper = document.createElement('div');
   panelWrapper.className = 'chat-tabpanels';
 
-  fragment.appendChild(tabList);
+  fragment.appendChild(tabListWrapper);
   fragment.appendChild(panelWrapper);
 
   const tabElements = [];
@@ -148,6 +179,45 @@ export function renderChatTabs({
     container.appendChild(fragment);
   }
 
+  /**
+   * Refresh the hidden state of the scroll arrow buttons based on the
+   * current scroll position of the tab list.
+   */
+  const updateArrows = () => {
+    const scrollLeft = tabList.scrollLeft || 0;
+    const clientWidth = tabList.clientWidth || 0;
+    const scrollWidth = tabList.scrollWidth || 0;
+    prevBtn.hidden = scrollLeft <= 0;
+    // Allow 1 px rounding tolerance.
+    nextBtn.hidden = scrollLeft + clientWidth >= scrollWidth - 1;
+  };
+
+  // Recalculate arrow visibility on scroll and on container resize.
+  if (typeof tabList.addEventListener === 'function') {
+    tabList.addEventListener('scroll', updateArrows);
+  }
+  if (typeof globalThis !== 'undefined' && typeof globalThis.ResizeObserver === 'function') {
+    // The observer is intentionally not disconnected: renderChatTabs replaces
+    // the entire DOM subtree on each call, so the previous tabList element is
+    // detached and the observer will not fire again after that point.
+    const ro = new globalThis.ResizeObserver(updateArrows);
+    ro.observe(tabList);
+  }
+
+  prevBtn.addEventListener('click', () => {
+    if (typeof tabList.scrollBy === 'function') {
+      tabList.scrollBy({ left: -150, behavior: 'smooth' });
+    }
+  });
+  nextBtn.addEventListener('click', () => {
+    if (typeof tabList.scrollBy === 'function') {
+      tabList.scrollBy({ left: 150, behavior: 'smooth' });
+    }
+  });
+
+  // Initial arrow state after the DOM is in place.
+  updateArrows();
+
   const setActiveTab = newId => {
     if (!newId) return;
     let matched = false;
@@ -162,6 +232,10 @@ export function renderChatTabs({
         container.dataset.activeTab = newId;
         if (typeof entry.panel.scrollHeight === 'number' && typeof entry.panel.scrollTop === 'number') {
           entry.panel.scrollTop = entry.panel.scrollHeight;
+        }
+        // Scroll the active tab button into view within the overflow tab list.
+        if (typeof entry.button.scrollIntoView === 'function') {
+          entry.button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         }
       } else {
         entry.button.classList.remove('is-active');
