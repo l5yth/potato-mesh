@@ -540,11 +540,11 @@ def _try_send_self_node(state: _DaemonState) -> None:
     self_node_fn = getattr(state.provider, "self_node_item", None)
     if not callable(self_node_fn):
         return
-    item = self_node_fn(state.iface)
-    if item is None:
-        return
-    node_id, node = item
     try:
+        item = self_node_fn(state.iface)
+        if item is None:
+            return
+        node_id, node = item
         handlers.upsert_node(node_id, node)
         state.last_self_node_report = time.monotonic()
         config._debug_log(

@@ -1550,15 +1550,19 @@ def test_process_self_info_caches_payload():
 
 
 def test_process_self_info_caches_payload_even_when_empty_key():
-    """_process_self_info caches the payload even when public_key is empty."""
+    """_process_self_info caches the payload even when public_key is empty.
+
+    The payload is cached unconditionally so that radio metadata is always
+    preserved.  self_node_item will still return None for an empty key because
+    _meshcore_node_id returns None, but the cached payload lets radio metadata
+    be applied on reconnect without waiting for a second SELF_INFO.
+    """
     stub = _make_stub_handlers_module()
     iface = _MeshcoreInterface(target=None)
     payload = {"public_key": "", "name": "Unknown"}
 
     _process_self_info(payload, iface, stub)
 
-    # Payload is still cached so self_node_item can return it later if the key
-    # becomes available (e.g. after firmware update).
     assert iface._self_info_payload is payload
 
 

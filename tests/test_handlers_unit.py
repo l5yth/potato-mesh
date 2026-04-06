@@ -734,7 +734,7 @@ class TestStoreNodeinfoPacket:
             q._queue_post_json = original
         assert "/api/nodes" in sent
 
-    def test_host_nodeinfo_suppressed_within_window(self, monkeypatch):
+    def test_host_nodeinfo_suppressed_within_window(self):
         """Second NODEINFO from the host within the throttle window is dropped."""
         import data.mesh_ingestor.queue as q
 
@@ -754,7 +754,7 @@ class TestStoreNodeinfoPacket:
             q._queue_post_json = original
         assert sent == []
 
-    def test_host_nodeinfo_allowed_after_window_expires(self, monkeypatch):
+    def test_host_nodeinfo_allowed_after_window_expires(self):
         """NODEINFO from the host is forwarded after the throttle window expires."""
         import data.mesh_ingestor.queue as q
 

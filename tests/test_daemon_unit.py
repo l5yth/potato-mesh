@@ -1177,15 +1177,33 @@ def test_try_send_self_node_upsert_error_suppressed(monkeypatch):
     assert any(c.get("context") == "daemon.self_node" for c in logged)
 
 
+def test_try_send_self_node_self_node_item_error_suppressed(monkeypatch):
+    """_try_send_self_node suppresses errors raised by self_node_item itself."""
+
+    class _BrokenSelfNode:
+        def self_node_item(self, iface):
+            raise RuntimeError("provider error")
+
+    logged = []
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *a, **kw: logged.append(kw))
+
+    state = _make_state()
+    state.provider = _BrokenSelfNode()  # type: ignore[assignment]
+    state.iface = DummyInterface()
+    # Must not raise.
+    daemon._try_send_self_node(state)
+
+    assert state.last_self_node_report is None
+    assert any(c.get("context") == "daemon.self_node" for c in logged)
+
+
 # ---------------------------------------------------------------------------
 # _loop_iteration — periodic self-node report
 # ---------------------------------------------------------------------------
 
 
-def test_loop_iteration_triggers_self_node_report_immediately_after_snapshot(
-    monkeypatch,
-):
-    """Self-node report fires on the first iteration after the initial snapshot."""
+def _make_self_node_provider(node_item=("!aabbccdd", {"user": {}})):
+    """Return a minimal provider stub that exposes ``self_node_item``."""
 
     class _SelfNodeProvider:
         name = "test"
@@ -1197,25 +1215,37 @@ def test_loop_iteration_triggers_self_node_report_immediately_after_snapshot(
             return []
 
         def self_node_item(self, iface):
-            return "!aabbccdd", {"user": {}}
+            return node_item
 
-    upserted = []
-    monkeypatch.setattr(
-        daemon.handlers, "upsert_node", lambda nid, n: upserted.append(nid)
-    )
+    return _SelfNodeProvider()
+
+
+def _patch_loop_iteration_common(monkeypatch, *, now=100.0):
+    """Apply monkeypatches shared by all _loop_iteration self-node tests."""
     monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
     monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
     monkeypatch.setattr(daemon.config, "_SELF_NODE_REPORT_INTERVAL_SECS", 3600.0)
-    monkeypatch.setattr(daemon.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: now)
     monkeypatch.setattr(
         daemon,
         "_process_ingestor_heartbeat",
         lambda iface, **kw: kw.get("ingestor_announcement_sent", False),
     )
 
+
+def test_loop_iteration_triggers_self_node_report_immediately_after_snapshot(
+    monkeypatch,
+):
+    """Self-node report fires on the first iteration after the initial snapshot."""
+    upserted = []
+    monkeypatch.setattr(
+        daemon.handlers, "upsert_node", lambda nid, n: upserted.append(nid)
+    )
+    _patch_loop_iteration_common(monkeypatch)
+
     state = _make_state()
     state.iface = DummyInterface()
-    state.provider = _SelfNodeProvider()  # type: ignore[assignment]
+    state.provider = _make_self_node_provider()  # type: ignore[assignment]
     state.initial_snapshot_sent = True
     state.last_self_node_report = None  # never reported before
 
@@ -1226,43 +1256,20 @@ def test_loop_iteration_triggers_self_node_report_immediately_after_snapshot(
 
 def test_loop_iteration_self_node_not_triggered_before_snapshot(monkeypatch):
     """Self-node report is NOT triggered before the initial snapshot is sent."""
-
-    class _SelfNodeProvider:
-        name = "test"
-
-        def subscribe(self):
-            return []
-
-        def node_snapshot_items(self, iface):
-            return []
-
-        def connect(self, *, active_candidate):
-            return DummyInterface(), None, None
-
-        def extract_host_node_id(self, iface):
-            return None
-
-        def self_node_item(self, iface):
-            return "!aabbccdd", {"user": {}}
-
     upserted = []
     monkeypatch.setattr(
         daemon.handlers, "upsert_node", lambda nid, n: upserted.append(nid)
     )
-    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
-    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(daemon.config, "_SELF_NODE_REPORT_INTERVAL_SECS", 3600.0)
-    monkeypatch.setattr(daemon.time, "monotonic", lambda: 100.0)
-    monkeypatch.setattr(
-        daemon,
-        "_process_ingestor_heartbeat",
-        lambda iface, **kw: kw.get("ingestor_announcement_sent", False),
-    )
+    _patch_loop_iteration_common(monkeypatch)
 
     state = _make_state()
     state.iface = DummyInterface()
-    state.provider = _SelfNodeProvider()  # type: ignore[assignment]
+    state.provider = _make_self_node_provider()  # type: ignore[assignment]
     state.initial_snapshot_sent = False  # snapshot not yet sent
+
+    # _loop_iteration will attempt _try_connect because iface is set but
+    # initial_snapshot_sent is False — prevent real connect by patching snapshot
+    monkeypatch.setattr(daemon, "_try_send_snapshot", lambda s: True)
 
     daemon._loop_iteration(state)
 
@@ -1271,36 +1278,15 @@ def test_loop_iteration_self_node_not_triggered_before_snapshot(monkeypatch):
 
 def test_loop_iteration_self_node_not_retried_within_interval(monkeypatch):
     """Self-node report is NOT re-fired within the throttle interval."""
-
-    class _SelfNodeProvider:
-        name = "test"
-
-        def subscribe(self):
-            return []
-
-        def node_snapshot_items(self, iface):
-            return []
-
-        def self_node_item(self, iface):
-            return "!aabbccdd", {"user": {}}
-
     upserted = []
     monkeypatch.setattr(
         daemon.handlers, "upsert_node", lambda nid, n: upserted.append(nid)
     )
-    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
-    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(daemon.config, "_SELF_NODE_REPORT_INTERVAL_SECS", 3600.0)
-    monkeypatch.setattr(daemon.time, "monotonic", lambda: 100.0)
-    monkeypatch.setattr(
-        daemon,
-        "_process_ingestor_heartbeat",
-        lambda iface, **kw: kw.get("ingestor_announcement_sent", False),
-    )
+    _patch_loop_iteration_common(monkeypatch, now=100.0)
 
     state = _make_state()
     state.iface = DummyInterface()
-    state.provider = _SelfNodeProvider()  # type: ignore[assignment]
+    state.provider = _make_self_node_provider()  # type: ignore[assignment]
     state.initial_snapshot_sent = True
     # Simulate a recent report: 100 - 50 = 50 seconds ago < 3600 interval
     state.last_self_node_report = 50.0
@@ -1312,37 +1298,16 @@ def test_loop_iteration_self_node_not_retried_within_interval(monkeypatch):
 
 def test_loop_iteration_self_node_retried_after_interval(monkeypatch):
     """Self-node report fires again after the full interval has elapsed."""
-
-    class _SelfNodeProvider:
-        name = "test"
-
-        def subscribe(self):
-            return []
-
-        def node_snapshot_items(self, iface):
-            return []
-
-        def self_node_item(self, iface):
-            return "!aabbccdd", {"user": {}}
-
     upserted = []
     monkeypatch.setattr(
         daemon.handlers, "upsert_node", lambda nid, n: upserted.append(nid)
     )
-    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
-    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
-    monkeypatch.setattr(daemon.config, "_SELF_NODE_REPORT_INTERVAL_SECS", 3600.0)
     # now=5000; last_report=1000; elapsed=4000 > 3600 → should fire
-    monkeypatch.setattr(daemon.time, "monotonic", lambda: 5000.0)
-    monkeypatch.setattr(
-        daemon,
-        "_process_ingestor_heartbeat",
-        lambda iface, **kw: kw.get("ingestor_announcement_sent", False),
-    )
+    _patch_loop_iteration_common(monkeypatch, now=5000.0)
 
     state = _make_state()
     state.iface = DummyInterface()
-    state.provider = _SelfNodeProvider()  # type: ignore[assignment]
+    state.provider = _make_self_node_provider()  # type: ignore[assignment]
     state.initial_snapshot_sent = True
     state.last_self_node_report = 1000.0  # 4000 seconds ago
 
