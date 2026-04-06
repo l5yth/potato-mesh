@@ -339,27 +339,60 @@ function resolveMessageTextSegment(message, isReaction) {
 }
 
 /**
+ * Render a text segment, replacing ``@[Name]`` mention patterns with the
+ * output of ``renderMentionHtml`` when provided.  Segments between mentions
+ * are passed through ``escapeHtml`` to prevent XSS.
+ *
+ * When ``renderMentionHtml`` is ``null`` the function behaves identically to
+ * ``escapeHtml(text)``, preserving backward compatibility.
+ *
+ * @param {string} text Raw message text segment.
+ * @param {Function} escapeHtml HTML-escape function.
+ * @param {Function|null} renderMentionHtml Called with the mention name (the
+ *   string between ``@[`` and ``]``); should return an HTML snippet.
+ * @returns {string} HTML string safe for insertion into the DOM.
+ */
+function renderTextWithMentions(text, escapeHtml, renderMentionHtml) {
+  if (typeof renderMentionHtml !== 'function') return escapeHtml(text);
+  // split() with a capturing group interleaves literal segments (even indices)
+  // and captured mention names (odd indices): ["before", "Alice", "after", ...]
+  const parts = text.split(/@\[([^\]]+)\]/);
+  return parts.map((part, i) => {
+    if (i % 2 === 1) return renderMentionHtml(part);
+    // Empty literal segments (e.g. when a mention is at the start or end) can
+    // be skipped to avoid unnecessary escapeHtml calls on empty strings.
+    return part ? escapeHtml(part) : '';
+  }).join('');
+}
+
+/**
  * Build the rendered message body containing text and optional emoji.
  *
  * @param {{
  *   message: Object,
  *   escapeHtml: Function,
- *   renderEmojiHtml: Function
- * }} params Rendering dependencies.
+ *   renderEmojiHtml: Function,
+ *   renderMentionHtml?: Function|null
+ * }} params Rendering dependencies.  When ``renderMentionHtml`` is provided it
+ *   is called for each ``@[Name]`` mention found in the message text so the
+ *   caller can substitute a badge or link in place of the raw mention string.
  * @returns {string} HTML snippet describing the message body.
  */
-export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
+export function buildMessageBody({ message, escapeHtml, renderEmojiHtml, renderMentionHtml = null }) {
   if (typeof escapeHtml !== 'function') {
     throw new TypeError('escapeHtml must be a function');
   }
   if (typeof renderEmojiHtml !== 'function') {
     throw new TypeError('renderEmojiHtml must be a function');
   }
+  if (renderMentionHtml !== null && typeof renderMentionHtml !== 'function') {
+    throw new TypeError('renderMentionHtml must be a function when provided');
+  }
   if (!message || typeof message !== 'object') {
     return '';
   }
 
- const segments = [];
+  const segments = [];
   const reaction = isReactionMessage(message);
   const textSegment = resolveMessageTextSegment(message, reaction);
   const reactionCount = reaction && textSegment && /^×\d+$/.test(textSegment) ? textSegment : null;
@@ -368,7 +401,7 @@ export function buildMessageBody({ message, escapeHtml, renderEmojiHtml }) {
   let reactionEmoji = reaction && !emojiIsNumericPlaceholder ? emoji : null;
 
   if (!reaction && textSegment) {
-    segments.push(escapeHtml(textSegment));
+    segments.push(renderTextWithMentions(textSegment, escapeHtml, renderMentionHtml));
   }
 
   if (reaction) {
