@@ -36,15 +36,44 @@ from data.mesh_ingestor.queue import (
     _enqueue_post_json,
     _post_json,
     _queue_post_json,
+    _CHANNEL_POST_PRIORITY,
     _DEFAULT_POST_PRIORITY,
+    _INGESTOR_POST_PRIORITY,
     _MESSAGE_POST_PRIORITY,
+    _NEIGHBOR_POST_PRIORITY,
     _NODE_POST_PRIORITY,
+    _POSITION_POST_PRIORITY,
+    _TELEMETRY_POST_PRIORITY,
+    _TRACE_POST_PRIORITY,
 )
 
 
 def _fresh_state() -> QueueState:
     """Return a new QueueState for isolation."""
     return QueueState()
+
+
+# ---------------------------------------------------------------------------
+# Priority constant ordering
+# ---------------------------------------------------------------------------
+
+
+def test_priority_constants_ordering():
+    """Verify the intended priority hierarchy: ingestor first, telemetry last.
+
+    Lower numeric values are dequeued first (min-heap semantics).  The ordering
+    must be: ingestor < channel < node < message < neighbor < trace < position
+    < telemetry < default.  Any regression in this order means the web backend
+    may assign the wrong protocol to nodes and messages on startup.
+    """
+    assert _INGESTOR_POST_PRIORITY < _CHANNEL_POST_PRIORITY
+    assert _CHANNEL_POST_PRIORITY < _NODE_POST_PRIORITY
+    assert _NODE_POST_PRIORITY < _MESSAGE_POST_PRIORITY
+    assert _MESSAGE_POST_PRIORITY < _NEIGHBOR_POST_PRIORITY
+    assert _NEIGHBOR_POST_PRIORITY < _TRACE_POST_PRIORITY
+    assert _TRACE_POST_PRIORITY < _POSITION_POST_PRIORITY
+    assert _POSITION_POST_PRIORITY < _TELEMETRY_POST_PRIORITY
+    assert _TELEMETRY_POST_PRIORITY < _DEFAULT_POST_PRIORITY
 
 
 # ---------------------------------------------------------------------------
