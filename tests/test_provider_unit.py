@@ -640,17 +640,17 @@ def test_short_name_from_long_name_two_words():
 
 def test_short_name_from_long_name_emoji_takes_priority():
     """Emoji in the name takes priority over word initials."""
-    assert _short_name_from_long_name("pete 🍁") == "  🍁 "
+    assert _short_name_from_long_name("pete 🍁") == " 🍁 "
 
 
 def test_short_name_from_long_name_emoji_at_start():
     """Emoji at the start of the name is used."""
-    assert _short_name_from_long_name("🚗 dd6ulf") == "  🚗 "
+    assert _short_name_from_long_name("🚗 dd6ulf") == " 🚗 "
 
 
 def test_short_name_from_long_name_misc_symbols_emoji():
     """Miscellaneous Symbols range (U+2600–U+27BF) is detected as emoji."""
-    assert _short_name_from_long_name("☕️ Morning") == "  ☕ "
+    assert _short_name_from_long_name("☕️ Morning") == " ☕ "
 
 
 def test_short_name_from_long_name_capitalises_initial():
@@ -726,7 +726,7 @@ def test_synthetic_node_dict_fields():
 def test_synthetic_node_dict_short_name_derived():
     """Short name is derived from the long name, not from a public key."""
     nd = _synthetic_node_dict("pete 🍁")
-    assert nd["user"]["shortName"] == "  🍁 "
+    assert nd["user"]["shortName"] == " 🍁 "
 
 
 def test_synthetic_node_dict_short_name_fallback_empty():
@@ -1207,6 +1207,23 @@ def test_on_channel_msg_creates_synthetic_node_when_sender_not_in_contacts(monke
     assert synth_node["user"]["synthetic"] is True
 
 
+def test_on_channel_msg_synthetic_upserted_only_once_per_session(monkeypatch):
+    """on_channel_msg only calls upsert_node once per unique synthetic ID per session."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    payload = {"sender_timestamp": 1_758_000_010, "text": "UnknownSender: First", "channel_idx": 0}
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload)))
+    payload2 = {"sender_timestamp": 1_758_000_011, "text": "UnknownSender: Second", "channel_idx": 0}
+    asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload2)))
+
+    expected_id = _derive_synthetic_node_id("UnknownSender")
+    sender_upserts = [nid for nid, _ in upserted if nid == expected_id]
+    # Second message must NOT re-upsert the same synthetic node.
+    assert len(sender_upserts) == 1
+
+
 def test_on_channel_msg_no_synthetic_when_no_sender_prefix(monkeypatch):
     """on_channel_msg leaves from_id None when text has no SenderName: prefix."""
     import asyncio
@@ -1289,10 +1306,6 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
     iface = _MeshcoreInterface(target=None)
     iface.host_node_id = "!deadbeef"
     iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
-
-    class _FakeEvt:
-        def __init__(self, payload):
-            self.payload = payload
 
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
     asyncio.run(

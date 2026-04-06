@@ -486,7 +486,7 @@ module PotatoMesh
       # @return [void]
       def merge_synthetic_nodes(db, real_node_id, long_name)
         synthetic_ids = db.execute(
-          "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 1 AND node_id != ?",
+          "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 1 AND protocol = 'meshcore' AND node_id != ?",
           [long_name, real_node_id],
         ).map { |row| row[0] }
 

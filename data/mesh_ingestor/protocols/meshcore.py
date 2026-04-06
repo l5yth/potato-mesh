@@ -244,7 +244,9 @@ def _short_name_from_long_name(long_name: str | None) -> str | None:
     Ports the Ruby ``meshcore_companion_display_short_name`` algorithm.  Applied
     in priority order:
 
-    1. First emoji found in *long_name*: ``"  E "`` (two spaces, emoji, space).
+    1. First emoji found in *long_name*: ``" E "`` (one space, emoji, one space).
+       Emoji are rendered double-width in monospace fonts, so one leading space
+       keeps the badge at four visual columns.
     2. Two or more whitespace-separated words: ``" XY "`` (space, capitalised
        first letters of the first two words, space).
     3. Single word: ``"  A "`` (two spaces, capitalised first letter, space).
@@ -265,17 +267,16 @@ def _short_name_from_long_name(long_name: str | None) -> str | None:
 
     emoji_match = _COMPANION_EMOJI_RE.search(name)
     if emoji_match:
-        return f"  {emoji_match.group()} "
+        # Wide emoji occupies two display columns, so use one leading space and
+        # one trailing space to stay within the four-column badge width.
+        return f" {emoji_match.group()} "
 
     words = [w for w in name.split() if w]
     if not words:
         return None
 
     if len(words) >= 2:
-        first = words[0][0].upper()
-        second = words[1][0].upper()
-        if first and second:
-            return f" {first}{second} "
+        return f" {words[0][0].upper()}{words[1][0].upper()} "
 
     letter = words[0][0].upper() if words[0] else None
     return f"  {letter} " if letter else None
@@ -510,6 +511,9 @@ class _MeshcoreInterface:
         self._contacts_lock = threading.Lock()
         self._contacts: dict = {}
         self.isConnected: bool = False
+        # Tracks synthetic node IDs already upserted this session to avoid
+        # repeating the HTTP POST for every message from the same unknown sender.
+        self._synthetic_node_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Contact management (called from the asyncio thread)
@@ -834,7 +838,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         from_id = iface.lookup_node_id_by_name(sender_name) if sender_name else None
         if from_id is None and sender_name:
             synthetic_id = _derive_synthetic_node_id(sender_name)
-            _handlers.upsert_node(synthetic_id, _synthetic_node_dict(sender_name))
+            if synthetic_id not in iface._synthetic_node_ids:
+                _handlers.upsert_node(synthetic_id, _synthetic_node_dict(sender_name))
+                iface._synthetic_node_ids.add(synthetic_id)
             from_id = synthetic_id
 
         # Upsert synthetic placeholder nodes for any @[Name] mentions in the
@@ -843,7 +849,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         for mention_name in _extract_mention_names(text):
             if not iface.lookup_node_id_by_name(mention_name):
                 mention_id = _derive_synthetic_node_id(mention_name)
-                _handlers.upsert_node(mention_id, _synthetic_node_dict(mention_name))
+                if mention_id not in iface._synthetic_node_ids:
+                    _handlers.upsert_node(mention_id, _synthetic_node_dict(mention_name))
+                    iface._synthetic_node_ids.add(mention_id)
 
         packet = {
             "id": _derive_message_id(sender_ts, f"c{channel_idx}", text),

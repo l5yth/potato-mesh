@@ -49,3 +49,4 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);
 CREATE INDEX IF NOT EXISTS idx_nodes_hw_model  ON nodes(hw_model);
 CREATE INDEX IF NOT EXISTS idx_nodes_latlon    ON nodes(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_nodes_long_name ON nodes(long_name);

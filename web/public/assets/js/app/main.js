@@ -3250,21 +3250,6 @@ export function initializeApp(config) {
         renderMentionHtml,
       });
 
-      // Prepend the linked sender name for channel messages.
-      // Prefer the hydrated m.node (ingestor resolved from_id) over the
-      // JS-side name-resolved fallback node.
-      if (isMeshcoreChannelMsg && parsedMeshcorePrefix) {
-        const bodySenderNode = m.node || meshcoreSenderNode;
-        const senderNodeId = bodySenderNode?.node_id ?? bodySenderNode?.nodeId ?? null;
-        const senderLink = renderNodeLongNameLink(
-          parsedMeshcorePrefix.senderName,
-          senderNodeId,
-          { protocol: messageProtocol }
-        );
-        messageBodyHtml = messageBodyHtml
-          ? `${senderLink}: ${messageBodyHtml}`
-          : `${senderLink}:`;
-      }
     }
 
     const combinedSegments = [];

@@ -545,5 +545,28 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(row).not_to be_nil
       db.close
     end
+
+    it "does not migrate messages from a synthetic node on a different protocol" do
+      db = open_db
+      # A synthetic meshtastic node that happens to share the same long name as
+      # an incoming real meshcore contact must NOT be merged.
+      synth_id = "!synth7777"
+      real_id  = "!real7777"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Grace", "meshtastic", 1, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [61, now - 100, "2025-01-01T00:00:00Z", synth_id, "^all", "meshtastic"],
+      )
+      dp.merge_synthetic_nodes(db, real_id, "Grace")
+      # meshtastic synthetic node must be untouched.
+      synth_row = db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first
+      expect(synth_row).not_to be_nil
+      msg_from = db.execute("SELECT from_id FROM messages WHERE id = 61").first[0]
+      expect(msg_from).to eq(synth_id)
+      db.close
+    end
   end
 end

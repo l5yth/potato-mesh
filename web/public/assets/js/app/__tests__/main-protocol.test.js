@@ -310,23 +310,25 @@ test('createMessageChatEntry: meshcore channel message uses sender node short na
   });
 });
 
-test('createMessageChatEntry: meshcore channel message links sender name to node page', () => {
+test('createMessageChatEntry: meshcore channel message hides sender long name — only body shown', () => {
   withApp((t) => {
     t.rebuildNodeIndex([T114_ZEH]);
     const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Hello world'));
     const html = innerHtml(div);
-    assert.ok(html.includes('/nodes/!aabbccdd'), 'body should link sender name to node detail page');
-    assert.ok(html.includes('T114-Zeh'), 'sender long name should appear as link text');
+    // The sender long name is NOT prepended in the body — only the text after the colon is shown
+    assert.ok(html.includes('Hello world'), 'body text after colon should be rendered');
+    assert.ok(!html.includes('T114-Zeh'), 'sender long name should NOT appear in body');
   });
 });
 
-test('createMessageChatEntry: meshcore channel message, sender node not found — badge is placeholder', () => {
+test('createMessageChatEntry: meshcore channel message, sender node not found — shows body only', () => {
   withApp((t) => {
     t.rebuildNodeIndex([]);  // empty — no nodes known
     const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('UnknownSender: Hello'));
     const html = innerHtml(div);
-    // Sender name still appears but without a node link href
-    assert.ok(html.includes('UnknownSender'), 'unresolved sender name should still appear in body');
+    // Only the body text is shown; sender name is NOT in body
+    assert.ok(html.includes('Hello'), 'body text after colon should still be rendered');
+    assert.ok(!html.includes('UnknownSender'), 'sender long name should not appear in body');
     assert.ok(!html.includes('/nodes/'), 'should not produce a node link when sender is not found');
   });
 });
@@ -351,8 +353,8 @@ test('createMessageChatEntry: meshcore message with @[Name] mention resolved to 
     const html = innerHtml(div);
     // The @[T114-Zeh] mention should render as a short-name badge span
     assert.ok(html.includes('short-name'), 'mention should produce a short-name badge');
-    // Sender link for BGruenauBot should appear
-    assert.ok(html.includes('/nodes/!22222222'), 'sender BGruenauBot should be linked');
+    // The sender long name is not prepended in the body
+    assert.ok(!html.includes('BGruenauBot'), 'sender long name should not appear in body');
   });
 });
 
@@ -366,7 +368,7 @@ test('createMessageChatEntry: meshcore message with @[Name] mention, node not fo
   });
 });
 
-test('createMessageChatEntry: meshcore channel message with hydrated node links sender name', () => {
+test('createMessageChatEntry: meshcore channel message with hydrated node — body only shown', () => {
   // Simulates the case where the ingestor resolved from_id successfully.
   // The node is hydrated (m.node is not null), and the body still has "SenderName: body".
   withApp((t) => {
@@ -374,11 +376,9 @@ test('createMessageChatEntry: meshcore channel message with hydrated node links 
     // node is already hydrated — ingestor resolved from_id via contacts
     const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('T114-Zeh: Test message', { rx_time: 5000, node: T114_ZEH }));
     const html = innerHtml(div);
-    // Sender name should be linked using m.node.node_id
-    assert.ok(html.includes('/nodes/!aabbccdd'), 'hydrated node should produce a link in the body');
-    assert.ok(html.includes('T114-Zeh'), 'sender name should appear as link text');
-    // Test message body should still be present
+    // Only the body text after the colon is shown; sender long name is NOT in body
     assert.ok(html.includes('Test message'), 'body text after colon should be rendered');
+    assert.ok(!html.includes('T114-Zeh'), 'sender long name should not appear in body');
   });
 });
 

@@ -81,7 +81,9 @@ module PotatoMesh
       # Algorithm (applied in priority order):
       # 1. If the long name contains an emoji character (see
       #    +MESHCORE_COMPANION_EMOJI_PATTERN+), use the first emoji embedded in a
-      #    4-character display slot: ``"  E "`` (two leading spaces, emoji, space).
+      #    4-column display slot: ``" E "`` (one leading space, emoji, one trailing
+      #    space). Emoji are rendered double-width in monospace fonts, so one leading
+      #    space keeps the badge at four visual columns.
       # 2. If the long name contains two or more whitespace-separated words, use
       #    the capitalised first letters of the first two words: ``" XY "``.
       # 3. If the long name is a single word, use its capitalised first letter:
@@ -96,7 +98,9 @@ module PotatoMesh
         return nil unless name
 
         emoji = name.scan(MESHCORE_COMPANION_EMOJI_PATTERN).first
-        return "  #{emoji} " if emoji
+        # Wide emoji occupies two display columns, so use one leading space and
+        # one trailing space to stay within the four-column badge width.
+        return " #{emoji} " if emoji
 
         words = name.strip.split(/\s+/).reject(&:empty?)
         return nil if words.empty?
