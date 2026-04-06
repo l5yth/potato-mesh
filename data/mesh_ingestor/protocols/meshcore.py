@@ -45,6 +45,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -224,6 +225,122 @@ def _parse_sender_name(text: str) -> str | None:
         return None
     name = text[:colon_idx].strip()
     return name if name else None
+
+
+# Matches emoji in the Supplementary Multilingual Plane (U+1F000–U+1FFFF),
+# Miscellaneous Symbols (U+2600–U+27BF), and Miscellaneous Symbols and Arrows
+# (U+2B00–U+2BFF).  Mirrors the Ruby MESHCORE_COMPANION_EMOJI_PATTERN constant.
+_COMPANION_EMOJI_RE = re.compile(
+    r"[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF]"
+)
+
+# Matches @[Name] mention patterns in MeshCore message bodies.
+_MENTION_RE = re.compile(r"@\[([^\]]+)\]")
+
+
+def _short_name_from_long_name(long_name: str | None) -> str | None:
+    """Derive a display short name for a synthetic MeshCore node from its long name.
+
+    Ports the Ruby ``meshcore_companion_display_short_name`` algorithm.  Applied
+    in priority order:
+
+    1. First emoji found in *long_name*: ``"  E "`` (two spaces, emoji, space).
+    2. Two or more whitespace-separated words: ``" XY "`` (space, capitalised
+       first letters of the first two words, space).
+    3. Single word: ``"  A "`` (two spaces, capitalised first letter, space).
+    4. Returns ``None`` when no short name can be derived (blank input or word
+       without an extractable character).
+
+    Parameters:
+        long_name: Node long name, e.g. ``"T114-Zeh"`` or ``"pete 🍁"``.
+
+    Returns:
+        Four-character-wide short name string, or ``None``.
+    """
+    if not long_name or not isinstance(long_name, str):
+        return None
+    name = long_name.strip()
+    if not name:
+        return None
+
+    emoji_match = _COMPANION_EMOJI_RE.search(name)
+    if emoji_match:
+        return f"  {emoji_match.group()} "
+
+    words = [w for w in name.split() if w]
+    if not words:
+        return None
+
+    if len(words) >= 2:
+        first = words[0][0].upper()
+        second = words[1][0].upper()
+        if first and second:
+            return f" {first}{second} "
+
+    letter = words[0][0].upper() if words[0] else None
+    return f"  {letter} " if letter else None
+
+
+def _derive_synthetic_node_id(long_name: str) -> str:
+    """Derive a deterministic synthetic ``!xxxxxxxx`` node ID from a long name.
+
+    Uses the first four bytes of SHA-256(UTF-8 encoded name), formatted as
+    ``!xxxxxxxx``.  The same long name always produces the same ID across
+    restarts.  The probability of collision with a real public-key-derived ID
+    is ~1 in 4 billion per pair, which is negligible in practice.
+
+    Parameters:
+        long_name: Node long name used as the hash input.
+
+    Returns:
+        Canonical ``!xxxxxxxx`` node ID string.
+    """
+    return "!" + hashlib.sha256(long_name.encode("utf-8")).hexdigest()[:8]
+
+
+def _synthetic_node_dict(long_name: str) -> dict:
+    """Build a synthetic node dict for an unknown MeshCore channel sender.
+
+    Synthetic nodes are placeholder entries created when a channel message
+    arrives from a sender who is not yet in the connected device's contacts
+    roster.  They carry ``role=COMPANION`` (the only role capable of sending
+    channel messages) and a short name derived from the long name via
+    :func:`_short_name_from_long_name`.
+
+    When the real contact advertisement is later received and processed via
+    :func:`_process_contact_update`, the Ruby web app detects the matching
+    long name, migrates all messages from the synthetic node ID to the real
+    one, and removes the placeholder row.
+
+    Parameters:
+        long_name: Sender name parsed from the ``"SenderName: body"`` prefix.
+
+    Returns:
+        Node dict compatible with the ``POST /api/nodes`` payload format,
+        with ``user.synthetic`` set to ``True``.
+    """
+    return {
+        "lastHeard": int(time.time()),
+        "protocol": "meshcore",
+        "user": {
+            "longName": long_name,
+            "shortName": _short_name_from_long_name(long_name) or "",
+            "role": "COMPANION",
+            "synthetic": True,
+        },
+    }
+
+
+def _extract_mention_names(text: str) -> list[str]:
+    """Extract all ``@[Name]`` mention names from a MeshCore message body.
+
+    Parameters:
+        text: Raw message text that may contain ``@[Name]`` mention patterns.
+
+    Returns:
+        List of extracted name strings (may be empty).
+    """
+    return _MENTION_RE.findall(text)
 
 
 def _pubkey_prefix_to_node_id(contacts: dict, pubkey_prefix: str) -> str | None:
@@ -708,9 +825,25 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         # MeshCore channel messages carry no sender identifier in the event
         # payload.  Try to resolve the sender from the "SenderName: body"
         # convention embedded in the message text, matched against the known
-        # contacts roster.
+        # contacts roster.  When the contacts roster does not yet contain the
+        # sender, create a synthetic placeholder node so that the message
+        # receives a stable from_id and the UI can render a badge immediately.
+        # The web app will migrate messages to the real node ID once the sender
+        # is seen via a contact advertisement.
         sender_name = _parse_sender_name(text)
         from_id = iface.lookup_node_id_by_name(sender_name) if sender_name else None
+        if from_id is None and sender_name:
+            synthetic_id = _derive_synthetic_node_id(sender_name)
+            _handlers.upsert_node(synthetic_id, _synthetic_node_dict(sender_name))
+            from_id = synthetic_id
+
+        # Upsert synthetic placeholder nodes for any @[Name] mentions in the
+        # message body whose names are not yet in the contacts roster.  This
+        # ensures mention badges resolve even before the mentioned node is seen.
+        for mention_name in _extract_mention_names(text):
+            if not iface.lookup_node_id_by_name(mention_name):
+                mention_id = _derive_synthetic_node_id(mention_name)
+                _handlers.upsert_node(mention_id, _synthetic_node_dict(mention_name))
 
         packet = {
             "id": _derive_message_id(sender_ts, f"c{channel_idx}", text),

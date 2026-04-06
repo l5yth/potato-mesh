@@ -136,6 +136,10 @@ module PotatoMesh
             db.execute("ALTER TABLE nodes ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
             db.execute("UPDATE nodes SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
           end
+
+          unless node_columns.include?("synthetic")
+            db.execute("ALTER TABLE nodes ADD COLUMN synthetic BOOLEAN NOT NULL DEFAULT 0")
+          end
         end
 
         message_table_exists = db.get_first_value(

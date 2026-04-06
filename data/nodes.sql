@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   altitude           REAL,
   lora_freq          INTEGER,
   modem_preset       TEXT,
-  protocol           TEXT NOT NULL DEFAULT 'meshtastic'
+  protocol           TEXT NOT NULL DEFAULT 'meshtastic',
+  synthetic          BOOLEAN NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);

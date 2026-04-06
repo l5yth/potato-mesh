@@ -40,7 +40,9 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _contact_to_node_dict,
     _derive_message_id,
     _derive_modem_preset,
+    _derive_synthetic_node_id,
     _ensure_channel_names,
+    _extract_mention_names,
     _make_connection,
     _make_event_handlers,
     _meshcore_adv_type_to_role,
@@ -53,6 +55,8 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _pubkey_prefix_to_node_id,
     _record_meshcore_message,
     _self_info_to_node_dict,
+    _short_name_from_long_name,
+    _synthetic_node_dict,
     _to_json_safe,
 )
 
@@ -620,6 +624,143 @@ def test_parse_sender_name_whitespace_only_before_colon_returns_none():
 
 
 # ---------------------------------------------------------------------------
+# _short_name_from_long_name
+# ---------------------------------------------------------------------------
+
+
+def test_short_name_from_long_name_single_word():
+    """Single-word long name yields two-space + initial + space."""
+    assert _short_name_from_long_name("Matze") == "  M "
+
+
+def test_short_name_from_long_name_two_words():
+    """Two-word long name yields space + first letters of both words + space."""
+    assert _short_name_from_long_name("MaLiBu Britz") == " MB "
+
+
+def test_short_name_from_long_name_emoji_takes_priority():
+    """Emoji in the name takes priority over word initials."""
+    assert _short_name_from_long_name("pete 🍁") == "  🍁 "
+
+
+def test_short_name_from_long_name_emoji_at_start():
+    """Emoji at the start of the name is used."""
+    assert _short_name_from_long_name("🚗 dd6ulf") == "  🚗 "
+
+
+def test_short_name_from_long_name_misc_symbols_emoji():
+    """Miscellaneous Symbols range (U+2600–U+27BF) is detected as emoji."""
+    assert _short_name_from_long_name("☕️ Morning") == "  ☕ "
+
+
+def test_short_name_from_long_name_capitalises_initial():
+    """Initial letters are uppercased even when the name starts lowercase."""
+    assert _short_name_from_long_name("pete rock") == " PR "
+
+
+def test_short_name_from_long_name_none_input():
+    """None input returns None."""
+    assert _short_name_from_long_name(None) is None
+
+
+def test_short_name_from_long_name_empty_string():
+    """Empty string returns None."""
+    assert _short_name_from_long_name("") is None
+
+
+def test_short_name_from_long_name_whitespace_only():
+    """Whitespace-only string returns None."""
+    assert _short_name_from_long_name("   ") is None
+
+
+def test_short_name_from_long_name_more_than_two_words():
+    """Three-word name still uses only the first two initials."""
+    assert _short_name_from_long_name("Alpha Beta Gamma") == " AB "
+
+
+# ---------------------------------------------------------------------------
+# _derive_synthetic_node_id
+# ---------------------------------------------------------------------------
+
+
+def test_derive_synthetic_node_id_format():
+    """Synthetic node ID must start with ! and have eight hex chars."""
+    nid = _derive_synthetic_node_id("Alice")
+    assert nid.startswith("!")
+    assert len(nid) == 9
+    assert all(c in "0123456789abcdef" for c in nid[1:])
+
+
+def test_derive_synthetic_node_id_deterministic():
+    """Same long name always produces the same node ID."""
+    assert _derive_synthetic_node_id("Alice") == _derive_synthetic_node_id("Alice")
+
+
+def test_derive_synthetic_node_id_distinct_names():
+    """Different long names produce different node IDs."""
+    assert _derive_synthetic_node_id("Alice") != _derive_synthetic_node_id("Bob")
+
+
+def test_derive_synthetic_node_id_unicode():
+    """Unicode names produce valid IDs."""
+    nid = _derive_synthetic_node_id("pete 🍁")
+    assert nid.startswith("!")
+    assert len(nid) == 9
+
+
+# ---------------------------------------------------------------------------
+# _synthetic_node_dict
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_node_dict_fields():
+    """_synthetic_node_dict returns a node dict with correct user fields."""
+    nd = _synthetic_node_dict("T114-Zeh")
+    assert nd["protocol"] == "meshcore"
+    assert nd["user"]["longName"] == "T114-Zeh"
+    assert nd["user"]["role"] == "COMPANION"
+    assert nd["user"]["synthetic"] is True
+    assert isinstance(nd["lastHeard"], int)
+
+
+def test_synthetic_node_dict_short_name_derived():
+    """Short name is derived from the long name, not from a public key."""
+    nd = _synthetic_node_dict("pete 🍁")
+    assert nd["user"]["shortName"] == "  🍁 "
+
+
+def test_synthetic_node_dict_short_name_fallback_empty():
+    """Short name falls back to empty string when derivation fails."""
+    nd = _synthetic_node_dict("   ")
+    assert nd["user"]["shortName"] == ""
+
+
+# ---------------------------------------------------------------------------
+# _extract_mention_names
+# ---------------------------------------------------------------------------
+
+
+def test_extract_mention_names_single():
+    """Extracts one mention name."""
+    assert _extract_mention_names("Hey @[Alice]!") == ["Alice"]
+
+
+def test_extract_mention_names_multiple():
+    """Extracts multiple mention names in order."""
+    assert _extract_mention_names("@[Alpha] and @[Beta]") == ["Alpha", "Beta"]
+
+
+def test_extract_mention_names_none():
+    """Returns empty list when no mentions are present."""
+    assert _extract_mention_names("no mentions here") == []
+
+
+def test_extract_mention_names_preserves_spaces():
+    """Names with spaces inside brackets are preserved."""
+    assert _extract_mention_names("Hi @[MaLiBu'2 Britz-Sued]") == ["MaLiBu'2 Britz-Sued"]
+
+
+# ---------------------------------------------------------------------------
 # _MeshcoreInterface.lookup_node_id_by_name
 # ---------------------------------------------------------------------------
 
@@ -947,8 +1088,9 @@ def _setup_channel_msg_handlers(monkeypatch, *, contacts=None):
             returned interface, e.g. ``[{"public_key": "aabb…", "adv_name": "Alice"}]``.
 
     Returns:
-        Tuple of ``(captured, iface, hmap)`` where *captured* is the list
-        that receives every packet passed to ``store_packet_dict``, *iface* is
+        Tuple of ``(captured, upserted, iface, hmap)`` where *captured* is the
+        list of packets passed to ``store_packet_dict``, *upserted* is the list
+        of ``(node_id, node_dict)`` pairs passed to ``upsert_node``, *iface* is
         the :class:`_MeshcoreInterface` instance, and *hmap* is the event
         handler map returned by :func:`_make_event_handlers`.
     """
@@ -956,8 +1098,10 @@ def _setup_channel_msg_handlers(monkeypatch, *, contacts=None):
     import data.mesh_ingestor.protocols.meshcore as _mod
 
     captured: list = []
+    upserted: list = []
     stub = _make_stub_handlers_module()
     stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    stub.upsert_node = lambda node_id, node_dict: upserted.append((node_id, node_dict))
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
     monkeypatch.setattr(_mesh_pkg, "handlers", stub)
 
@@ -965,7 +1109,7 @@ def _setup_channel_msg_handlers(monkeypatch, *, contacts=None):
     for contact in contacts or []:
         iface._update_contact(contact)
     hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
-    return captured, iface, hmap
+    return captured, upserted, iface, hmap
 
 
 def test_on_channel_msg_queues_packet(monkeypatch):
@@ -974,7 +1118,7 @@ def test_on_channel_msg_queues_packet(monkeypatch):
 
     # _make_event_handlers does `from .. import handlers`; _setup_channel_msg_handlers
     # patches the package attribute so the deferred import resolves to a stub.
-    captured, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -1007,7 +1151,7 @@ def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
     import asyncio
 
     pub_key = "aabbccdd" + "00" * 28
-    captured, _iface, hmap = _setup_channel_msg_handlers(
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(
         monkeypatch,
         contacts=[{"public_key": pub_key, "adv_name": "T114-Zeh"}],
     )
@@ -1029,16 +1173,16 @@ def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
     pkt = captured[0]
     assert pkt["decoded"]["text"] == "T114-Zeh: Test message"
     assert pkt["to_id"] == "^all"
-    # Sender resolved from contacts via name prefix.
+    # Sender resolved from contacts via name prefix — no synthetic upsert needed.
     assert pkt["from_id"] == "!aabbccdd"
 
 
-def test_on_channel_msg_from_id_none_when_sender_not_in_contacts(monkeypatch):
-    """on_channel_msg leaves from_id as None when sender name has no matching contact."""
+def test_on_channel_msg_creates_synthetic_node_when_sender_not_in_contacts(monkeypatch):
+    """on_channel_msg upserts a synthetic node and sets from_id when sender is unknown."""
     import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
 
-    # No contacts registered — name lookup cannot match.
-    captured, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
             _FakeEvt(
@@ -1052,7 +1196,81 @@ def test_on_channel_msg_from_id_none_when_sender_not_in_contacts(monkeypatch):
     )
 
     assert len(captured) == 1
+    expected_id = _derive_synthetic_node_id("UnknownSender")
+    assert captured[0]["from_id"] == expected_id
+    # A synthetic node should have been upserted for the sender.
+    synth_upserts = [(nid, nd) for nid, nd in upserted if nid == expected_id]
+    assert len(synth_upserts) == 1
+    synth_node = synth_upserts[0][1]
+    assert synth_node["user"]["longName"] == "UnknownSender"
+    assert synth_node["user"]["role"] == "COMPANION"
+    assert synth_node["user"]["synthetic"] is True
+
+
+def test_on_channel_msg_no_synthetic_when_no_sender_prefix(monkeypatch):
+    """on_channel_msg leaves from_id None when text has no SenderName: prefix."""
+    import asyncio
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt({"sender_timestamp": 1_758_000_004, "text": "no colon here", "channel_idx": 0})
+        )
+    )
+
+    assert len(captured) == 1
     assert captured[0]["from_id"] is None
+    assert upserted == []
+
+
+def test_on_channel_msg_upserts_synthetic_for_unknown_mention(monkeypatch):
+    """on_channel_msg upserts synthetic nodes for @[Name] mentions not in contacts."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_005,
+                    "text": "Alice: Hey @[Bob] and @[Carol]",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    upserted_ids = {nid for nid, _ in upserted}
+    assert _derive_synthetic_node_id("Bob") in upserted_ids
+    assert _derive_synthetic_node_id("Carol") in upserted_ids
+
+
+def test_on_channel_msg_skips_synthetic_for_known_mention(monkeypatch):
+    """on_channel_msg does not upsert synthetic for @[Name] if name is in contacts."""
+    import asyncio
+    from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
+
+    pub_key = "aabbccdd" + "00" * 28
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(
+        monkeypatch,
+        contacts=[{"public_key": pub_key, "adv_name": "Bob"}],
+    )
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_006,
+                    "text": "Alice: Hey @[Bob]",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    # Bob is in contacts — no synthetic upsert for Bob.
+    bob_upserts = [nid for nid, _ in upserted if nid == _derive_synthetic_node_id("Bob")]
+    assert bob_upserts == []
 
 
 def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
