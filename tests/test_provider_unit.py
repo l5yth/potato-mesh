@@ -695,7 +695,9 @@ def test_extract_mention_names_none():
 
 def test_extract_mention_names_preserves_spaces():
     """Names with spaces inside brackets are preserved."""
-    assert _extract_mention_names("Hi @[MaLiBu'2 Britz-Sued]") == ["MaLiBu'2 Britz-Sued"]
+    assert _extract_mention_names("Hi @[MaLiBu'2 Britz-Sued]") == [
+        "MaLiBu'2 Britz-Sued"
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1151,9 +1153,17 @@ def test_on_channel_msg_synthetic_upserted_only_once_per_session(monkeypatch):
     from data.mesh_ingestor.protocols.meshcore import _derive_synthetic_node_id
 
     captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
-    payload = {"sender_timestamp": 1_758_000_010, "text": "UnknownSender: First", "channel_idx": 0}
+    payload = {
+        "sender_timestamp": 1_758_000_010,
+        "text": "UnknownSender: First",
+        "channel_idx": 0,
+    }
     asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload)))
-    payload2 = {"sender_timestamp": 1_758_000_011, "text": "UnknownSender: Second", "channel_idx": 0}
+    payload2 = {
+        "sender_timestamp": 1_758_000_011,
+        "text": "UnknownSender: Second",
+        "channel_idx": 0,
+    }
     asyncio.run(hmap["CHANNEL_MSG_RECV"](_FakeEvt(payload2)))
 
     expected_id = _derive_synthetic_node_id("UnknownSender")
@@ -1169,7 +1179,13 @@ def test_on_channel_msg_no_synthetic_when_no_sender_prefix(monkeypatch):
     captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
     asyncio.run(
         hmap["CHANNEL_MSG_RECV"](
-            _FakeEvt({"sender_timestamp": 1_758_000_004, "text": "no colon here", "channel_idx": 0})
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_004,
+                    "text": "no colon here",
+                    "channel_idx": 0,
+                }
+            )
         )
     )
 
@@ -1224,7 +1240,9 @@ def test_on_channel_msg_skips_synthetic_for_known_mention(monkeypatch):
     )
 
     # Bob is in contacts — no synthetic upsert for Bob.
-    bob_upserts = [nid for nid, _ in upserted if nid == _derive_synthetic_node_id("Bob")]
+    bob_upserts = [
+        nid for nid, _ in upserted if nid == _derive_synthetic_node_id("Bob")
+    ]
     assert bob_upserts == []
 
 

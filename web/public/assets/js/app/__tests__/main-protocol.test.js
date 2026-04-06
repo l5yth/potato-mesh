@@ -287,7 +287,7 @@ test('createMessageChatEntry shows meshcore icon for meshcore node', () => {
  * A MeshCore COMPANION node used as the canonical sender fixture in the
  * channel-message tests below.
  */
-const T114_ZEH = { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'CLIENT', protocol: 'meshcore' };
+const T114_ZEH = { node_id: '!aabbccdd', long_name: 'T114-Zeh', short_name: '  T ', role: 'COMPANION', protocol: 'meshcore' };
 
 /**
  * Build a minimal MeshCore channel message payload for createMessageChatEntry.

@@ -480,6 +480,11 @@ module PotatoMesh
       # Called inside a transaction from +upsert_node+ when a real (non-synthetic)
       # MeshCore node with the same +long_name+ is upserted.
       #
+      # Only +messages.from_id+ is migrated.  Synthetic nodes are placeholders
+      # created solely from parsed channel message sender names, so they cannot
+      # have associated positions, telemetry, neighbors, or traces — those tables
+      # are intentionally left untouched.
+      #
       # @param db [SQLite3::Database] open database connection.
       # @param real_node_id [String] canonical node ID for the real contact.
       # @param long_name [String] long name to match against synthetic rows.

@@ -551,7 +551,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # A synthetic meshtastic node that happens to share the same long name as
       # an incoming real meshcore contact must NOT be merged.
       synth_id = "!synth7777"
-      real_id  = "!real7777"
+      real_id = "!real7777"
       db.execute(
         "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
         [synth_id, "Grace", "meshtastic", 1, now - 100, now - 100],

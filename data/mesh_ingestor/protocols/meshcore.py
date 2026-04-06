@@ -462,6 +462,9 @@ class _MeshcoreInterface:
         self.isConnected: bool = False
         # Tracks synthetic node IDs already upserted this session to avoid
         # repeating the HTTP POST for every message from the same unknown sender.
+        # This set is reset on reconnect (because _MeshcoreInterface is recreated),
+        # which may cause extra upserts after a disconnect — the ON CONFLICT guard
+        # in the Ruby web app ensures those are idempotent and safe.
         self._synthetic_node_ids: set[str] = set()
 
     # ------------------------------------------------------------------
@@ -799,7 +802,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
             if not iface.lookup_node_id_by_name(mention_name):
                 mention_id = _derive_synthetic_node_id(mention_name)
                 if mention_id not in iface._synthetic_node_ids:
-                    _handlers.upsert_node(mention_id, _synthetic_node_dict(mention_name))
+                    _handlers.upsert_node(
+                        mention_id, _synthetic_node_dict(mention_name)
+                    )
                     iface._synthetic_node_ids.add(mention_id)
 
         packet = {

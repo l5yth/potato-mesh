@@ -47,6 +47,11 @@ export function parseMeshcoreSenderPrefix(text) {
  * Both the snake_case (``long_name``) and camelCase (``longName``) property
  * variants are checked to accommodate different serialisation paths.
  *
+ * This is an O(n) scan over all nodes. For the typical node counts seen in
+ * practice (hundreds) this is negligible; a long-name index is not maintained
+ * in the client-side Map because insertions and lookups occur at different
+ * phases of the rendering pipeline.
+ *
  * @param {string} longName Long name to search for.
  * @param {Map<string, object>} nodesById Loaded node registry keyed by node ID.
  * @returns {object|null} The first matching node, or ``null`` when not found.
