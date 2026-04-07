@@ -210,8 +210,8 @@ function renderContactHtml(text) {
       // Whitelisted <a> tag — extract href, validate, re-render safely
       const hrefMatch = HREF_ATTR_PATTERN.exec(tag);
       const href = hrefMatch ? (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '') : '';
-      // Strip any inner tags to get plain link text
-      const linkText = tag.replace(/<[^>]+>/g, '').trim();
+      // Strip angle brackets to derive plain link text; content is still escaped below
+      const linkText = tag.replace(/[<>]/g, '').trim();
       if (SAFE_HREF_RE.test(href)) {
         parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkText || href)}</a>`);
       } else {
