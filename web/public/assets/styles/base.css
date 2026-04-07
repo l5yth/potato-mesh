@@ -1668,6 +1668,19 @@ input[type="radio"] {
   transition: accent-color 160ms ease, background-color 160ms ease;
 }
 
+/* Wrapper that places the toggle button to the LEFT of the legend panel. */
+.legend-outer {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 4px;
+  /* Reset Leaflet control chrome so only the inner elements have styling. */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
 .legend {
   position: relative;
   background: #fff;
@@ -1758,9 +1771,9 @@ input[type="radio"] {
 }
 
 .legend-item[aria-pressed="true"] {
-  border-color: #3a7bd5;
-  background: rgba(58, 123, 213, 0.18);
-  color: #1a4a9e;
+  border-color: #2a6bc5;
+  background: rgba(58, 123, 213, 0.32);
+  color: #0e3a8a;
   font-weight: 600;
 }
 
@@ -1869,6 +1882,22 @@ input[type="radio"] {
 
 .app-footer a {
   color: inherit;
+}
+
+/* Slim footer variant used on Charts and Federation pages — flows with the
+   page rather than floating as a fixed bar, padding collapsed to text height. */
+.app-footer--slim {
+  position: static;
+  background: transparent;
+  border-top: none;
+  z-index: auto;
+  width: auto;
+  inset: auto;
+}
+
+.app-footer--slim .footer-content {
+  padding-block: 4px;
+  font-size: 11px;
 }
 
 .meta-active-nodes {
@@ -2182,9 +2211,9 @@ body.dark .legend-item:hover {
 }
 
 body.dark .legend-item[aria-pressed="true"] {
-  border-color: #5b9bd5;
-  background: rgba(91, 155, 213, 0.28);
-  color: #a8d4ff;
+  border-color: #70b3f0;
+  background: rgba(91, 155, 213, 0.48);
+  color: #c8e8ff;
   font-weight: 600;
 }
 

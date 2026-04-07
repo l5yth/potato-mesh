@@ -339,12 +339,55 @@ function resolveMessageTextSegment(message, isReaction) {
 }
 
 /**
- * Render a text segment, replacing ``@[Name]`` mention patterns with the
- * output of ``renderMentionHtml`` when provided.  Segments between mentions
- * are passed through ``escapeHtml`` to prevent XSS.
+ * Regex with a single capturing group that matches http:// and https:// URLs.
+ * Used by {@link renderLiteralWithLinks} to split text into URL and non-URL
+ * segments while preserving the matched URL in the resulting array.
+ * @type {RegExp}
+ */
+const URL_SPLIT_PATTERN = /(https?:\/\/[^\s<>"'[\]]+)/;
+
+/**
+ * Strip trailing punctuation characters that are typically sentence
+ * delimiters rather than part of a URL (e.g. a period at end of sentence).
  *
- * When ``renderMentionHtml`` is ``null`` the function behaves identically to
- * ``escapeHtml(text)``, preserving backward compatibility.
+ * @param {string} url Raw URL candidate.
+ * @returns {string} URL with trailing punctuation trimmed.
+ */
+function trimUrlTrailingPunctuation(url) {
+  return url.replace(/[.,;!?)]+$/, '');
+}
+
+/**
+ * Render a single raw text segment, converting any ``http://`` or
+ * ``https://`` URLs into ``<a>`` elements that open in a new tab.
+ * Non-URL text is passed through ``escapeHtml`` unchanged.
+ *
+ * @param {string} text Raw (unescaped) literal text.
+ * @param {Function} escapeHtml HTML-escape function.
+ * @returns {string} Safe HTML with URLs wrapped in anchor elements.
+ */
+export function renderLiteralWithLinks(text, escapeHtml) {
+  // split() with a capturing group interleaves plain text (even indices)
+  // and matched URLs (odd indices): ["before", "https://x", " after", ...]
+  const parts = text.split(URL_SPLIT_PATTERN);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) {
+      return part ? escapeHtml(part) : '';
+    }
+    // URL segment — strip trailing punctuation then linkify.
+    const url = trimUrlTrailingPunctuation(part);
+    const trailing = part.slice(url.length);
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>${trailing ? escapeHtml(trailing) : ''}`;
+  }).join('');
+}
+
+/**
+ * Render a text segment, replacing ``@[Name]`` mention patterns with the
+ * output of ``renderMentionHtml`` when provided.  Literal text segments are
+ * passed through {@link renderLiteralWithLinks} so that URLs become clickable.
+ *
+ * When ``renderMentionHtml`` is ``null`` the function is equivalent to
+ * calling {@link renderLiteralWithLinks} on the whole string.
  *
  * @param {string} text Raw message text segment.
  * @param {Function} escapeHtml HTML-escape function.
@@ -353,20 +396,22 @@ function resolveMessageTextSegment(message, isReaction) {
  * @returns {string} HTML string safe for insertion into the DOM.
  */
 function renderTextWithMentions(text, escapeHtml, renderMentionHtml) {
-  if (typeof renderMentionHtml !== 'function') return escapeHtml(text);
+  if (typeof renderMentionHtml !== 'function') return renderLiteralWithLinks(text, escapeHtml);
   // split() with a capturing group interleaves literal segments (even indices)
   // and captured mention names (odd indices): ["before", "Alice", "after", ...]
   const parts = text.split(/@\[([^\]]+)\]/);
   return parts.map((part, i) => {
     if (i % 2 === 1) return renderMentionHtml(part);
     // Empty literal segments (e.g. when a mention is at the start or end) can
-    // be skipped to avoid unnecessary escapeHtml calls on empty strings.
-    return part ? escapeHtml(part) : '';
+    // be skipped to avoid unnecessary renderLiteralWithLinks calls.
+    return part ? renderLiteralWithLinks(part, escapeHtml) : '';
   }).join('');
 }
 
 /**
  * Build the rendered message body containing text and optional emoji.
+ * ``http://`` and ``https://`` URLs in the message text are automatically
+ * converted to ``<a>`` elements that open in a new tab.
  *
  * @param {{
  *   message: Object,

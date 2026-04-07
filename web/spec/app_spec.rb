@@ -1408,13 +1408,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).not_to include('id="metaRow"')
     end
 
-    it "renders the footer on the federation page" do
+    it "renders the slim footer on the federation page" do
       allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
 
       get "/federation"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include('<footer class="app-footer">')
+      expect(last_response.body).to include('class="app-footer app-footer--slim"')
     end
   end
 
@@ -1457,14 +1457,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /charts" do
-    it "renders the charts page with the footer but without meta-controls" do
+    it "renders the charts page with the slim footer but without meta-controls" do
       get "/charts"
 
       expect(last_response).to be_ok
       expect(last_response.body).to include("initializeChartsPage")
       expect(last_response.body).not_to include('id="metaRow"')
       expect(last_response.body).not_to include('id="filterInput"')
-      expect(last_response.body).to include('<footer class="app-footer">')
+      expect(last_response.body).to include('class="app-footer app-footer--slim"')
     end
   end
 

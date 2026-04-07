@@ -1398,7 +1398,9 @@ export function initializeApp(config) {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
     neighborLinesToggleButton.textContent = label;
-    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
+    // aria-pressed reflects whether the user has *activated* the toggle (i.e. lines are
+    // currently hidden). When lines are visible (default), the button is unpressed.
+    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'false' : 'true');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -1430,7 +1432,8 @@ export function initializeApp(config) {
     if (!traceLinesToggleButton) return;
     const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
     traceLinesToggleButton.textContent = label;
-    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
+    // aria-pressed reflects whether the user has *activated* the toggle (lines hidden).
+    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'false' : 'true');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -1548,14 +1551,30 @@ export function initializeApp(config) {
   }
 
   if (map && hasLeaflet) {
-    const legend = L.control({ position: 'bottomright' });
+    // Single combined control: [toggle button | legend panel] in a flex row.
+    // The toggle sits to the left so it remains accessible when the legend is collapsed.
+    const legendControl = L.control({ position: 'bottomright' });
     /**
-     * Leaflet control factory that renders the legend UI.
+     * Leaflet control factory that renders the toggle button and legend panel
+     * as a single side-by-side control.
      *
-     * @returns {HTMLElement} Legend DOM element.
+     * @returns {HTMLElement} Wrapper element containing both children.
      */
-    legend.onAdd = function () {
-      const div = L.DomUtil.create('div', 'legend');
+    legendControl.onAdd = function () {
+      const wrapper = L.DomUtil.create('div', 'legend-outer');
+
+      // --- Toggle button (left) ---
+      const button = L.DomUtil.create('button', 'legend-toggle-button', wrapper);
+      button.type = 'button';
+      button.setAttribute('aria-pressed', 'true');
+      button.setAttribute('aria-controls', 'mapLegend');
+      button.addEventListener('click', legendClickHandler(() => {
+        setLegendVisibility(!legendVisible);
+      }));
+      legendToggleButton = button;
+
+      // --- Legend panel (right) ---
+      const div = L.DomUtil.create('div', 'legend', wrapper);
       div.id = 'mapLegend';
       div.setAttribute('role', 'region');
       div.setAttribute('aria-label', 'Map legend');
@@ -1593,13 +1612,9 @@ export function initializeApp(config) {
       buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
       buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
 
-      // --- Protocol hide toggles — one per column footer ---
+      // --- MeshCore column footer: protocol hide toggle ---
       legendProtocolButtons.clear();
-      const protocolColDefs = [
-        { protocol: 'meshcore', col: meshcoreCol },
-        { protocol: 'meshtastic', col: meshtasticCol },
-      ];
-      for (const { protocol, col } of protocolColDefs) {
+      const buildProtocolToggle = (protocol, col) => {
         const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
         const btn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', col);
         btn.type = 'button';
@@ -1615,9 +1630,10 @@ export function initializeApp(config) {
           applyFilter();
         }));
         legendProtocolButtons.set(protocol, btn);
-      }
+      };
+      buildProtocolToggle('meshcore', meshcoreCol);
 
-      // --- Line toggles in the Meshtastic column ---
+      // --- Meshtastic column: line toggles then protocol hide toggle at bottom ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
       neighborLinesToggleButton.type = 'button';
       neighborLinesToggleButton.addEventListener('click', legendClickHandler(() => {
@@ -1632,12 +1648,15 @@ export function initializeApp(config) {
       }));
       updateTraceLinesToggleState();
 
+      // Hide Meshtastic toggle at the very bottom of the Meshtastic column.
+      buildProtocolToggle('meshtastic', meshtasticCol);
+
       updateLegendRoleFiltersUI();
 
       // --- Clear filters — full-width below the two columns ---
-      const toggle = L.DomUtil.create('div', 'legend-toggle', div);
+      const filterToggle = L.DomUtil.create('div', 'legend-toggle', div);
 
-      const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
+      const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', filterToggle);
       resetButton.type = 'button';
       resetButton.textContent = 'Clear filters';
       resetButton.addEventListener('click', legendClickHandler(() => {
@@ -1647,38 +1666,12 @@ export function initializeApp(config) {
         applyFilter();
       }));
 
-      L.DomEvent.disableClickPropagation(div);
-      L.DomEvent.disableScrollPropagation(div);
-
-      return div;
-    };
-    legend.addTo(map);
-    legendContainer = legend.getContainer();
-
-    legendToggleControl = L.control({ position: 'bottomright' });
-    /**
-     * Leaflet control factory for the legend visibility toggle.
-     *
-     * @returns {HTMLElement} Toggle button element.
-     */
-    legendToggleControl.onAdd = function () {
-      const container = L.DomUtil.create('div', 'leaflet-control legend-toggle');
-      const button = L.DomUtil.create('button', 'legend-toggle-button', container);
-      button.type = 'button';
-      button.textContent = 'Hide legend (filters)';
-      button.setAttribute('aria-pressed', 'true');
-      button.setAttribute('aria-label', 'Hide map legend');
-      button.setAttribute('aria-controls', 'mapLegend');
-      button.addEventListener('click', legendClickHandler(() => {
-        setLegendVisibility(!legendVisible);
-      }));
-      legendToggleButton = button;
       updateLegendToggleState();
-      L.DomEvent.disableClickPropagation(container);
-      L.DomEvent.disableScrollPropagation(container);
-      return container;
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+      return wrapper;
     };
-    legendToggleControl.addTo(map);
+    legendControl.addTo(map);
 
     const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
     const initialLegendVisible = resolveLegendVisibility({
