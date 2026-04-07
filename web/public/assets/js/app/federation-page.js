@@ -113,50 +113,121 @@ function colorForNodeCount(count) {
 }
 
 /**
- * Pattern matching URLs, mailto links, matrix: URIs, and Matrix room aliases
- * in the form `#room:domain.tld`. The Matrix room alias branch is handled
- * separately below — it resolves to a matrix.to permalink.
+ * Matches recognised link-like segments in plain text:
+ * - Absolute URLs (https?://, mailto:, matrix:)
+ * - Matrix room aliases  (#room:domain.tld)
+ * - Matrix user IDs      (@user:domain.tld)
+ * - Bare domain-with-path (discord.gg/..., t.me/...)
  */
-const CONTACT_LINK_PATTERN = /(https?:\/\/[^\s]+|mailto:[^\s]+|matrix:[^\s]+|#[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/gi;
+const CONTACT_LINK_PATTERN =
+  /(https?:\/\/[^\s]+|mailto:[^\s]+|matrix:[^\s]+|[@#][a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\/[^\s<>"']+)/gi;
 
 /**
- * Render arbitrary contact or channel text while hyperlinking recognised
- * URL-like segments.  Matrix room aliases (`#room:domain.tld`) are resolved
- * to `https://matrix.to/#/#room:domain.tld` permalinks.
+ * Regex matching `<a>` elements (including malformed unquoted attributes) and
+ * any other HTML tags so they can be handled separately from plain text.
+ */
+const HTML_SEGMENT_PATTERN = /(<a\b[^>]*>[\s\S]*?<\/a\s*>|<[^>]+>)/gi;
+
+/** Extracts the href value from an `<a>` opening tag, quoted or unquoted. */
+const HREF_ATTR_PATTERN = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i;
+
+/** Protocols allowed in whitelisted `<a>` hrefs. */
+const SAFE_HREF_RE = /^(?:https?:\/\/|matrix:|mailto:)/i;
+
+/**
+ * Resolve a raw matched token to an href string.
  *
- * @param {*} text Raw text value from the API.
+ * @param {string} raw Matched token from CONTACT_LINK_PATTERN.
+ * @returns {string} Absolute href suitable for use in an anchor element.
+ */
+function resolveHref(raw) {
+  if (raw.startsWith('#') || raw.startsWith('@')) {
+    // Matrix room alias or user ID → matrix.to permalink
+    return `https://matrix.to/#/${raw}`;
+  }
+  if (/^[a-zA-Z0-9-]+\./.test(raw) && !raw.includes('://')) {
+    // Bare domain-with-path (e.g. discord.gg/…) — prepend https://
+    return `https://${raw}`;
+  }
+  return raw;
+}
+
+/**
+ * Linkify URL-like tokens in a plain-text (already HTML-free) segment.
+ *
+ * @param {string} text Plain text with no HTML tags.
+ * @returns {string} HTML-safe string with recognised links wrapped in anchors.
+ */
+function renderPlainSegment(text) {
+  const parts = [];
+  let lastIndex = 0;
+  const pattern = new RegExp(CONTACT_LINK_PATTERN.source, 'gi');
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+    if (before) parts.push(escapeHtml(before));
+    const raw = match[0];
+    const href = resolveHref(raw);
+    parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(raw)}</a>`);
+    lastIndex = match.index + raw.length;
+  }
+  const trailing = text.slice(lastIndex);
+  if (trailing) parts.push(escapeHtml(trailing));
+  return parts.join('');
+}
+
+/**
+ * Render arbitrary contact or channel text as safe HTML.
+ *
+ * - Existing `<a>` tags are sanitised: href is validated against an allowlist
+ *   of safe protocols (https, http, matrix:, mailto:), link text is escaped,
+ *   and `target="_blank" rel="noopener noreferrer"` is always applied.
+ * - Other HTML tags (e.g. `<b>`) are stripped; their text content is kept.
+ * - Plain-text segments are scanned for URLs, Matrix aliases/user-IDs, and
+ *   bare domain-with-path references (e.g. discord.gg/…) and linkified.
+ * - Line breaks are converted to `<br>`.
+ *
+ * @param {*} text Raw value from the API (may contain HTML).
  * @returns {string} HTML markup safe for insertion.
  */
 function renderContactHtml(text) {
   if (typeof text !== 'string') return '';
   const trimmed = text.trim();
   if (!trimmed) return '';
+
   const parts = [];
   let lastIndex = 0;
+  const segPattern = new RegExp(HTML_SEGMENT_PATTERN.source, 'gi');
   let match;
-  const pattern = new RegExp(CONTACT_LINK_PATTERN.source, 'gi');
 
-  while ((match = pattern.exec(trimmed)) !== null) {
-    const textBefore = trimmed.slice(lastIndex, match.index);
-    if (textBefore) {
-      parts.push(escapeHtml(textBefore));
+  while ((match = segPattern.exec(trimmed)) !== null) {
+    // Linkify plain text before this HTML segment
+    const before = trimmed.slice(lastIndex, match.index);
+    if (before) parts.push(renderPlainSegment(before));
+
+    const tag = match[0];
+    if (/^<a\b/i.test(tag)) {
+      // Whitelisted <a> tag — extract href, validate, re-render safely
+      const hrefMatch = HREF_ATTR_PATTERN.exec(tag);
+      const href = hrefMatch ? (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '') : '';
+      // Strip any inner tags to get plain link text
+      const linkText = tag.replace(/<[^>]+>/g, '').trim();
+      if (SAFE_HREF_RE.test(href)) {
+        parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkText || href)}</a>`);
+      } else {
+        // Unsafe or missing href — render link text only
+        parts.push(escapeHtml(linkText));
+      }
     }
-    const raw = match[0];
-    let href;
-    if (raw.startsWith('#')) {
-      // Matrix room alias — link to matrix.to permalink, e.g. #room:server.tld → https://matrix.to/#/#room:server.tld
-      href = `https://matrix.to/#/${raw}`;
-    } else {
-      href = raw;
-    }
-    parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(raw)}</a>`);
-    lastIndex = match.index + raw.length;
+    // Other tags (<b>, </b>, etc.) are stripped; their text content falls
+    // through as plain text in subsequent iterations.
+
+    lastIndex = match.index + tag.length;
   }
 
+  // Linkify any remaining plain text after the last HTML segment
   const trailing = trimmed.slice(lastIndex);
-  if (trailing) {
-    parts.push(escapeHtml(trailing));
-  }
+  if (trailing) parts.push(renderPlainSegment(trailing));
 
   return parts.join('').replace(/\r?\n/g, '<br>');
 }
