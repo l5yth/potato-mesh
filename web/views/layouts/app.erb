@@ -67,7 +67,7 @@
 </head>
 <% body_classes = ["dark"]
    view_mode = (defined?(current_view_mode) && current_view_mode) ? current_view_mode.to_sym : :dashboard
-   full_screen_view = view_mode != :dashboard
+   full_screen_view = !%i[dashboard charts federation].include?(view_mode)
    body_classes << "view-#{view_mode}"
    shell_classes = ["page-shell"]
    shell_classes << "page-shell--full-screen" if full_screen_view

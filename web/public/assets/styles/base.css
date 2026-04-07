@@ -174,12 +174,10 @@ body {
 
 .page-shell--full-screen {
   padding: 0;
-  padding-bottom: 0;
-  gap: 0;
+  gap: var(--pad);
 }
 
 .page-shell--full-screen .site-header,
-.page-shell--full-screen .row.meta,
 .page-shell--full-screen .app-footer {
   padding-left: var(--pad);
   padding-right: var(--pad);
@@ -187,11 +185,6 @@ body {
 
 .page-shell--full-screen .site-header {
   padding-top: var(--pad);
-}
-
-.page-shell--full-screen .row.meta {
-  padding-bottom: var(--pad);
-  margin-bottom: 0;
 }
 
 .page-shell--full-screen .app-footer {
@@ -224,6 +217,7 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   gap: 16px;
   min-height: 56px;
   padding: 4px 0;
@@ -1212,7 +1206,7 @@ body.dark .node-detail-overlay__close:hover {
 }
 
 .charts-page {
-  padding: 24px var(--pad) 48px;
+  padding: 0 0 var(--pad);
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
@@ -2222,14 +2216,10 @@ body.dark #map .leaflet-tile.map-tiles {
 }
 
 .federation-page {
-  padding: 24px var(--pad) 48px;
+  padding: 0 0 var(--pad);
   max-width: none;
   margin: 0;
   width: 100%;
-}
-
-.federation-page--full-width {
-  padding-top: 0;
 }
 
 .federation-page__content {

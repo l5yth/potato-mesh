@@ -1391,7 +1391,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/federation"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include('class="federation-page federation-page--full-width"')
+      expect(last_response.body).to include('class="federation-page"')
       expect(last_response.body).to include("initializeFederationPage")
     end
 
