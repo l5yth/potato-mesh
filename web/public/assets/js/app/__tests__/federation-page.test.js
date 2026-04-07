@@ -809,3 +809,45 @@ test('federation page sorts by full site names before truncating visible labels'
     cleanup();
   }
 });
+
+test('federation table links Matrix room aliases to matrix.to permalinks', async () => {
+  const { env, tbodyEl, cleanup } = (() => {
+    const e = createBasicFederationPageHarness();
+    return { env: e, tbodyEl: e.tbodyEl, cleanup: e.cleanup.bind(e) };
+  })();
+
+  const fetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'mesh.example',
+        name: 'Room Test',
+        contactLink: '#help:mesh.example',
+        channel: '#mesh:server.tld',
+        version: '1.0.0',
+        latitude: 0,
+        longitude: 0,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60,
+        nodesCount: 3
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({
+      config: {},
+      fetchImpl,
+      leaflet: createBasicLeafletStub()
+    });
+
+    const rowHtml = tbodyEl.childNodes[0].innerHTML;
+    // Contact: #help:mesh.example → https://matrix.to/#/#help:mesh.example
+    assert.match(rowHtml, /href="https:\/\/matrix\.to\/#\/#help:mesh\.example"/);
+    assert.match(rowHtml, /#help:mesh\.example/);
+    // Channel: #mesh:server.tld → https://matrix.to/#/#mesh:server.tld
+    assert.match(rowHtml, /href="https:\/\/matrix\.to\/#\/#mesh:server\.tld"/);
+    assert.match(rowHtml, /#mesh:server\.tld/);
+  } finally {
+    cleanup();
+  }
+});

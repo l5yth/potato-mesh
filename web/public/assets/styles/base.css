@@ -65,6 +65,7 @@ body.dark {
   --announcement-bg: #3b2500;
   --announcement-fg: #ffd184;
   --announcement-border: #a56a00;
+  --map-tiles-filter: var(--map-tile-filter-dark);
 }
 
 html,
@@ -1843,7 +1844,7 @@ input[type="radio"] {
   position: fixed;
   inset-block-end: 0;
   inset-inline: 0;
-  width: 100%;
+  box-sizing: border-box;
   background: #fafafa;
   border-top: 1px solid #ddd;
   font-size: 12px;
@@ -1923,85 +1924,6 @@ input[type="radio"] {
   }
 }
 
-.info-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--pad);
-  z-index: 13000;
-}
-
-.info-overlay[hidden] {
-  display: none;
-}
-
-.info-dialog {
-  background: #fff;
-  color: #111;
-  max-width: 420px;
-  width: min(100%, 420px);
-  border-radius: 12px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
-  position: relative;
-  padding: 20px 24px;
-  outline: none;
-}
-
-.info-dialog:focus {
-  outline: 2px solid #4a90e2;
-  outline-offset: 4px;
-}
-
-.info-close {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  padding: 4px;
-  border: none;
-  background: transparent;
-  font-size: 20px;
-  line-height: 1;
-  border-radius: 999px;
-}
-
-.info-close:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-.info-title {
-  margin: 0 0 8px;
-  font-size: 20px;
-}
-
-.info-intro {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: #444;
-}
-
-.info-details {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.info-details dt {
-  font-weight: 600;
-  margin-top: 12px;
-  color: #222;
-}
-
-.info-details dd {
-  margin: 4px 0 0;
-}
-
-.info-details dd a {
-  color: inherit;
-  word-break: break-word;
-}
 
 @media (max-width: 1024px) {
   .row {
@@ -2096,17 +2018,7 @@ input[type="radio"] {
   }
 }
 
-body.dark {
-  background: #111;
-  color: #eee;
-  --map-tiles-filter: var(--map-tile-filter-dark);
-}
-
 body.dark .meta {
-  color: #bbb;
-}
-
-body.dark .refresh-info {
   color: #bbb;
 }
 
@@ -2256,28 +2168,6 @@ body.dark .short-name {
 
 body.dark .chat-entry-date {
   color: #bbb;
-}
-
-body.dark .info-overlay {
-  background: rgba(0, 0, 0, 0.7);
-}
-
-body.dark .info-dialog {
-  background: #1c1c1c;
-  color: #eee;
-  border: 1px solid #444;
-}
-
-body.dark .info-intro {
-  color: #bbb;
-}
-
-body.dark .info-details dt {
-  color: #ddd;
-}
-
-body.dark .info-close:hover {
-  background: rgba(255, 255, 255, 0.1);
 }
 
 body.dark .short-info-overlay {

@@ -113,29 +113,44 @@ function colorForNodeCount(count) {
 }
 
 /**
- * Render arbitrary contact text while hyperlinking recognised URL-like segments.
+ * Pattern matching URLs, mailto links, matrix: URIs, and Matrix room aliases
+ * in the form `#room:domain.tld`. The Matrix room alias branch is handled
+ * separately below — it resolves to a matrix.to permalink.
+ */
+const CONTACT_LINK_PATTERN = /(https?:\/\/[^\s]+|mailto:[^\s]+|matrix:[^\s]+|#[a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/gi;
+
+/**
+ * Render arbitrary contact or channel text while hyperlinking recognised
+ * URL-like segments.  Matrix room aliases (`#room:domain.tld`) are resolved
+ * to `https://matrix.to/#/#room:domain.tld` permalinks.
  *
- * @param {*} contact Raw contact value from the API.
+ * @param {*} text Raw text value from the API.
  * @returns {string} HTML markup safe for insertion.
  */
-function renderContactHtml(contact) {
-  if (typeof contact !== 'string') return '';
-  const trimmed = contact.trim();
+function renderContactHtml(text) {
+  if (typeof text !== 'string') return '';
+  const trimmed = text.trim();
   if (!trimmed) return '';
-  const urlPattern = /(https?:\/\/[^\s]+|mailto:[^\s]+|matrix:[^\s]+)/gi;
   const parts = [];
   let lastIndex = 0;
   let match;
+  const pattern = new RegExp(CONTACT_LINK_PATTERN.source, 'gi');
 
-  while ((match = urlPattern.exec(trimmed)) !== null) {
+  while ((match = pattern.exec(trimmed)) !== null) {
     const textBefore = trimmed.slice(lastIndex, match.index);
     if (textBefore) {
       parts.push(escapeHtml(textBefore));
     }
-    const url = match[0];
-    const safeUrl = escapeHtml(url);
-    parts.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>`);
-    lastIndex = match.index + url.length;
+    const raw = match[0];
+    let href;
+    if (raw.startsWith('#')) {
+      // Matrix room alias — link to matrix.to permalink, e.g. #room:server.tld → https://matrix.to/#/#room:server.tld
+      href = `https://matrix.to/#/${raw}`;
+    } else {
+      href = raw;
+    }
+    parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(raw)}</a>`);
+    lastIndex = match.index + raw.length;
   }
 
   const trailing = trimmed.slice(lastIndex);
@@ -143,8 +158,7 @@ function renderContactHtml(contact) {
     parts.push(escapeHtml(trailing));
   }
 
-  const html = parts.join('');
-  return html.replace(/\r?\n/g, '<br>');
+  return parts.join('').replace(/\r?\n/g, '<br>');
 }
 
 /**
@@ -387,7 +401,7 @@ export async function initializeFederationPage(options = {}) {
         <td class="instances-col instances-col--domain mono">${domainHtml}</td>
         <td class="instances-col instances-col--contact">${contactHtml || '<em>—</em>'}</td>
         <td class="instances-col instances-col--version mono">${escapeHtml(instance.version || '')}</td>
-        <td class="instances-col instances-col--channel">${escapeHtml(instance.channel || '')}</td>
+        <td class="instances-col instances-col--channel">${renderContactHtml(instance.channel) || ''}</td>
         <td class="instances-col instances-col--frequency">${escapeHtml(instance.frequency || '')}</td>
         <td class="instances-col instances-col--nodes mono">${nodesCountText}</td>
         <td class="instances-col instances-col--latitude mono">${fmtCoords(instance.latitude)}</td>
