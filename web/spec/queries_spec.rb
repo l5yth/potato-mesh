@@ -447,6 +447,19 @@ RSpec.describe PotatoMesh::App::Queries do
         expect(row["short_name"]).to eq("CX")
       end
 
+      it "falls back to first four hex chars of the node ID when DB short name is empty for COMPANION" do
+        with_db do |db|
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
+            "VALUES (?,?,?,?,?,?,?)",
+            ["!cc000009", 0xcc000009, "", "Feierabend", now, now, "COMPANION"],
+          )
+        end
+        rows = queries.query_nodes(10, node_ref: "!cc000009")
+        row = rows.find { |r| r["node_id"] == "!cc000009" }
+        expect(row["short_name"]).to eq("cc00")
+      end
+
       it "derives an emoji short name for a COMPANION node whose long name contains an emoji" do
         with_db do |db|
           db.execute(

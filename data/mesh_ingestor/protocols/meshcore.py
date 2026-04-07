@@ -35,8 +35,8 @@ Connection type is detected automatically from the target string:
 Node identities are derived from the first four bytes (eight hex characters)
 of each contact's 32-byte public key, formatted as ``!xxxxxxxx`` to match
 the canonical node-ID schema used across the system.  Ingested
-``user.shortName`` is the first four hex digits of that key (two bytes),
-not the advertised name.
+``user.shortName`` is the first two bytes (four hex characters) of the
+node ID, not the advertised name.
 """
 
 from __future__ import annotations
@@ -165,23 +165,28 @@ def _meshcore_node_id(public_key_hex: str | None) -> str | None:
     return "!" + public_key_hex[:8].lower()
 
 
-def _meshcore_short_name(public_key_hex: str | None) -> str:
-    """Return the first four hex digits of a MeshCore public key as short name.
+def _meshcore_short_name(node_id: str | None) -> str:
+    """Derive a four-character short name from a canonical node ID.
 
-    Meshtastic-style ``shortName`` fields are four characters wide; MeshCore
-    ingest uses the leading two bytes of the 32-byte public key in lowercase
-    hex so the label is stable and unique per key prefix.
+    Uses the first two bytes (four hex characters) of the ``!xxxxxxxx`` node
+    ID.  This keeps the short name consistent with the node ID itself — if the
+    node ID is later replaced when the real public key is heard, the short name
+    will update alongside it.
 
     Parameters:
-        public_key_hex: Full public key as a hex string from the MeshCore API.
+        node_id: Canonical ``!xxxxxxxx`` node ID string (as returned by
+            :func:`_meshcore_node_id`).
 
     Returns:
-        Four lowercase hex characters (e.g. ``"aabb"``), or an empty string
-        when the key is missing or shorter than four hex characters.
+        Four lowercase hex characters (e.g. ``"cafe"``), or an empty string
+        when the node ID is missing or too short.
     """
-    if not public_key_hex or len(public_key_hex) < 4:
+    if not node_id:
         return ""
-    return public_key_hex[:4].lower()
+    raw = node_id.lstrip("!")
+    if len(raw) < 4:
+        return ""
+    return raw[:4].lower()
 
 
 def _meshcore_adv_type_to_role(adv_type: object) -> str | None:
@@ -324,6 +329,7 @@ def _contact_to_node_dict(contact: dict) -> dict:
         Node dict compatible with the ``POST /api/nodes`` payload format.
     """
     pub_key = contact.get("public_key", "")
+    node_id = _meshcore_node_id(pub_key)
     name = (contact.get("adv_name") or "").strip()
     role = _meshcore_adv_type_to_role(contact.get("type"))
     node: dict = {
@@ -331,7 +337,7 @@ def _contact_to_node_dict(contact: dict) -> dict:
         "protocol": "meshcore",
         "user": {
             "longName": name,
-            "shortName": _meshcore_short_name(pub_key),
+            "shortName": _meshcore_short_name(node_id),
             "publicKey": pub_key,
             **({"role": role} if role is not None else {}),
         },
@@ -377,13 +383,14 @@ def _self_info_to_node_dict(self_info: dict) -> dict:
     """
     name = (self_info.get("name") or "").strip()
     pub_key = self_info.get("public_key", "")
+    node_id = _meshcore_node_id(pub_key)
     role = _meshcore_adv_type_to_role(self_info.get("adv_type"))
     node: dict = {
         "lastHeard": int(time.time()),
         "protocol": "meshcore",
         "user": {
             "longName": name,
-            "shortName": _meshcore_short_name(pub_key),
+            "shortName": _meshcore_short_name(node_id),
             "publicKey": pub_key,
             **({"role": role} if role is not None else {}),
         },

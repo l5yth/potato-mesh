@@ -661,21 +661,22 @@ def test_meshcore_node_id_none_on_empty():
     assert _meshcore_node_id(None) is None  # type: ignore[arg-type]
 
 
-def test_meshcore_short_name_first_four_hex_digits():
-    """_meshcore_short_name returns the first four hex chars, lowercased."""
-    assert _meshcore_short_name("AABBccdd" + "00" * 28) == "aabb"
+def test_meshcore_short_name_first_two_bytes_of_node_id():
+    """_meshcore_short_name returns the first four hex chars of the node ID."""
+    assert _meshcore_short_name("!aabbccdd") == "aabb"
+    assert _meshcore_short_name("!AABBccdd") == "aabb"
 
 
 def test_meshcore_short_name_empty_when_too_short():
-    """_meshcore_short_name returns '' when the key has fewer than four hex digits."""
+    """_meshcore_short_name returns '' when the node ID is missing or too short."""
     assert _meshcore_short_name("") == ""
-    assert _meshcore_short_name("abc") == ""
+    assert _meshcore_short_name("!ab") == ""
     assert _meshcore_short_name(None) == ""  # type: ignore[arg-type]
 
 
-def test_meshcore_short_name_exactly_four_chars():
-    """_meshcore_short_name with exactly four hex chars returns those four chars."""
-    assert _meshcore_short_name("abcd") == "abcd"
+def test_meshcore_short_name_without_bang_prefix():
+    """_meshcore_short_name handles node IDs without the leading '!' prefix."""
+    assert _meshcore_short_name("cafef00d") == "cafe"
 
 
 # ---------------------------------------------------------------------------
