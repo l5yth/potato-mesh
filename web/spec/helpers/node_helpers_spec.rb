@@ -158,8 +158,8 @@ RSpec.describe PotatoMesh::App::Helpers do
       expect(helper.meshcore_companion_display_short_name("   ")).to be_nil
     end
 
-    it "returns '  A ' for a single-word name" do
-      expect(helper.meshcore_companion_display_short_name("Alice")).to eq("  A ")
+    it "returns nil for a single-word name (falls back to raw DB short name)" do
+      expect(helper.meshcore_companion_display_short_name("Alice")).to be_nil
     end
 
     it "returns ' AB ' for a two-word name" do
@@ -203,8 +203,8 @@ RSpec.describe PotatoMesh::App::Helpers do
       expect(helper.meshcore_companion_display_short_name(name)).to eq(" \u{1F600} ")
     end
 
-    it "returns the single initial when the name is one word with no emoji" do
-      expect(helper.meshcore_companion_display_short_name("Zigzag")).to eq("  Z ")
+    it "returns nil for a single-word name with no emoji (falls back to raw DB short name)" do
+      expect(helper.meshcore_companion_display_short_name("Zigzag")).to be_nil
     end
   end
 end

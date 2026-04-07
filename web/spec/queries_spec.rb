@@ -434,7 +434,7 @@ RSpec.describe PotatoMesh::App::Queries do
         expect(row["short_name"]).to eq(" AB ")
       end
 
-      it "derives a single-initial short name for a COMPANION node with a one-word long name" do
+      it "uses the raw DB short name for a COMPANION node with a single-word long name" do
         with_db do |db|
           db.execute(
             "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role) " \
@@ -444,7 +444,7 @@ RSpec.describe PotatoMesh::App::Queries do
         end
         rows = queries.query_nodes(10, node_ref: "!cc000002")
         row = rows.find { |r| r["node_id"] == "!cc000002" }
-        expect(row["short_name"]).to eq("  Z ")
+        expect(row["short_name"]).to eq("CX")
       end
 
       it "derives an emoji short name for a COMPANION node whose long name contains an emoji" do

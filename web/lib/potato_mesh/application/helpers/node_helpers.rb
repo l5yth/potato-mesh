@@ -86,10 +86,9 @@ module PotatoMesh
       #    space keeps the badge at four visual columns.
       # 2. If the long name contains two or more whitespace-separated words, use
       #    the capitalised first letters of the first two words: ``" XY "``.
-      # 3. If the long name is a single word, use its capitalised first letter:
-      #    ``"  A "``.
-      # 4. Return +nil+ when no short name can be derived (blank input, or a
-      #    word without extractable characters).
+      # 3. Return +nil+ — single-word names fall back to the raw short name stored
+      #    in the database (typically the first two bytes of the node ID). A single
+      #    initial looked poor and carried no more information than the raw value.
       #
       # @param long_name [String, nil] long name stored on the node.
       # @return [String, nil] derived display short name or +nil+.
@@ -111,8 +110,7 @@ module PotatoMesh
           return " #{first}#{second} " if first && second
         end
 
-        letter = words[0][0]&.upcase
-        letter ? "  #{letter} " : nil
+        nil
       end
 
       # Recursively coerce hash keys to strings and normalise nested arrays.
