@@ -75,7 +75,7 @@
    main_classes << "page-main--dashboard" if view_mode == :dashboard
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = true
-   show_footer = !full_screen_view
+   show_footer = !full_screen_view || %i[charts federation].include?(view_mode)
    show_filter_input = !%i[node_detail charts federation].include?(view_mode)
    show_meta_row = !%i[charts federation].include?(view_mode)
    nodes_nav_href = "/nodes"

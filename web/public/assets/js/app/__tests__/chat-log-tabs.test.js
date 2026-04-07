@@ -92,14 +92,15 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   );
 
   assert.equal(model.channels.length, 6);
-  // All channels have 1 message each; ties are broken alphabetically by label.
+  // Primary channels (index 0) come first, secondary channels (index > 0) come last.
+  // Within each tier, ties on messageCount are broken alphabetically by label.
   assert.deepEqual(model.channels.map(channel => channel.label), [
-    '1',
-    'BerlinMesh',
     'EnvDefault',
     'Fallback',
     'MediumFast',
-    'ShortFast'
+    'ShortFast',
+    '1',
+    'BerlinMesh',
   ]);
 
   const channelByLabel = Object.fromEntries(model.channels.map(channel => [channel.label, channel]));
@@ -511,4 +512,71 @@ test('buildChatTabModel breaks messageCount ties alphabetically', () => {
   assert.equal(model.channels.length, 2);
   assert.equal(model.channels[0].label, 'Apple');
   assert.equal(model.channels[1].label, 'Zebra');
+});
+
+test('buildChatTabModel puts primary channels (index 0) before secondary channels', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      // Secondary channels with many messages
+      { id: 's1', rx_time: NOW - 30, channel: 2, channel_name: 'SecondaryA' },
+      { id: 's2', rx_time: NOW - 28, channel: 2, channel_name: 'SecondaryA' },
+      { id: 's3', rx_time: NOW - 26, channel: 2, channel_name: 'SecondaryA' },
+      // Primary channel (index 0) with fewer messages
+      { id: 'p1', rx_time: NOW - 20, channel: 0, channel_name: 'LongFast' },
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.equal(model.channels.length, 2);
+  assert.equal(model.channels[0].label, 'LongFast', 'primary channel must come first regardless of activity');
+  assert.equal(model.channels[0].index, 0);
+  assert.equal(model.channels[1].label, 'SecondaryA', 'secondary channel must come second');
+});
+
+test('buildChatTabModel sorts primary channels by activity then alpha within the primary tier', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      // LongFast: 1 message
+      { id: 'lf1', rx_time: NOW - 30, channel: 0, channel_name: 'LongFast' },
+      // MediumFast: 3 messages (most active primary)
+      { id: 'mf1', rx_time: NOW - 28, channel: 0, channel_name: 'MediumFast' },
+      { id: 'mf2', rx_time: NOW - 26, channel: 0, channel_name: 'MediumFast' },
+      { id: 'mf3', rx_time: NOW - 24, channel: 0, channel_name: 'MediumFast' },
+      // Public: 2 messages
+      { id: 'pb1', rx_time: NOW - 22, channel: 0, channel_name: 'Public' },
+      { id: 'pb2', rx_time: NOW - 20, channel: 0, channel_name: 'Public' },
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.equal(model.channels.length, 3);
+  assert.equal(model.channels[0].label, 'MediumFast', 'most active primary first');
+  assert.equal(model.channels[1].label, 'Public', 'second most active primary second');
+  assert.equal(model.channels[2].label, 'LongFast', 'least active primary last');
+});
+
+test('buildChatTabModel sorts secondary channels by activity then alpha after all primaries', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      // Primary with 1 message
+      { id: 'p1', rx_time: NOW - 50, channel: 0, channel_name: 'LongFast' },
+      // Secondary channels
+      { id: 'b1', rx_time: NOW - 40, channel: 3, channel_name: 'Beta' },
+      { id: 'a1', rx_time: NOW - 38, channel: 1, channel_name: 'Alpha' },
+      { id: 'a2', rx_time: NOW - 36, channel: 1, channel_name: 'Alpha' },
+      { id: 'a3', rx_time: NOW - 34, channel: 1, channel_name: 'Alpha' },
+      { id: 'g1', rx_time: NOW - 32, channel: 2, channel_name: 'Gamma' },
+      { id: 'g2', rx_time: NOW - 30, channel: 2, channel_name: 'Gamma' },
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.equal(model.channels.length, 4);
+  assert.equal(model.channels[0].label, 'LongFast', 'primary always first');
+  assert.equal(model.channels[1].label, 'Alpha', 'most active secondary first');
+  assert.equal(model.channels[2].label, 'Gamma', 'second most active secondary second');
+  assert.equal(model.channels[3].label, 'Beta', 'least active secondary last');
 });

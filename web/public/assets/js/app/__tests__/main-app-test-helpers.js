@@ -64,6 +64,24 @@ export function withApp(fn) {
 }
 
 /**
+ * Spin up a DOM environment, optionally pre-register elements by id, then
+ * initialise the app with a custom config override.  Returns the test utils,
+ * the environment (for DOM inspection), and a cleanup handle.
+ *
+ * @param {{ extraElements?: string[], configOverrides?: Object }} [opts]
+ * @returns {{ testUtils: Object, env: Object, cleanup: Function }}
+ */
+export function setupAppWithOptions({ extraElements = [], configOverrides = {} } = {}) {
+  const env = createDomEnvironment({ includeBody: true });
+  for (const id of extraElements) {
+    env.registerElement(id, env.createElement('span', id));
+  }
+  const config = { ...MINIMAL_CONFIG, ...configOverrides };
+  const { _testUtils } = initializeApp(config);
+  return { testUtils: _testUtils, env, cleanup: env.cleanup.bind(env) };
+}
+
+/**
  * Extract the serialised HTML string from a DOM element returned by the test
  * utils.  The stub environment exposes innerHTML as a plain string; this
  * normalises the fallback path for environments where it may not be.

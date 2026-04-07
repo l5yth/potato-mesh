@@ -311,10 +311,17 @@ export function buildChatTabModel({
     channel.entries.sort((a, b) => a.ts - b.ts);
     channel.messageCount = channel.entries.length;
   }
-  // Sort channels by activity (most messages first), then alphabetically on ties.
-  const channels = Array.from(channelBuckets.values()).sort((a, b) =>
-    b.messageCount - a.messageCount || a.label.localeCompare(b.label)
-  );
+  // Sort channels into two tiers:
+  //   1. Primary channels (channel index 0 — LongFast, MediumFast, Public, etc.)
+  //      ordered by activity desc so the most-active protocol leads within the tier.
+  //   2. Secondary channels (index > 0) ordered by activity desc, then alpha.
+  // Within each tier, ties on messageCount are broken alphabetically by label.
+  const channels = Array.from(channelBuckets.values()).sort((a, b) => {
+    const aTier = a.index === 0 ? 0 : 1;
+    const bTier = b.index === 0 ? 0 : 1;
+    if (aTier !== bTier) return aTier - bTier;
+    return b.messageCount - a.messageCount || a.label.localeCompare(b.label);
+  });
 
   return { logEntries, channels };
 }

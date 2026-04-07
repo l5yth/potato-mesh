@@ -4611,6 +4611,15 @@ export function initializeApp(config) {
       hiddenProtocols,
       legendRoleButtons,
       legendProtocolButtons,
+      updateTitleCount,
+      updateLegendProtocolCounts,
+      updateFooterStats,
+      restartAutoRefresh,
+      /** Inject mock count span elements for legend protocol count tests. */
+      _setProtocolCountElements(mc, mt) {
+        meshcoreCountEl = mc;
+        meshtasticCountEl = mt;
+      },
     },
   };
 }

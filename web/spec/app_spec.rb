@@ -1407,6 +1407,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).not_to include('id="themeToggle"')
       expect(last_response.body).not_to include('id="metaRow"')
     end
+
+    it "renders the footer on the federation page" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
+
+      get "/federation"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('<footer class="app-footer">')
+    end
   end
 
   describe "GET /chat" do
@@ -1444,6 +1453,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
+    end
+  end
+
+  describe "GET /charts" do
+    it "renders the charts page with the footer but without meta-controls" do
+      get "/charts"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include("initializeChartsPage")
+      expect(last_response.body).not_to include('id="metaRow"')
+      expect(last_response.body).not_to include('id="filterInput"')
+      expect(last_response.body).to include('<footer class="app-footer">')
     end
   end
 
