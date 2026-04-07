@@ -230,7 +230,7 @@ test('initializeInstanceSelector navigates to the chosen instance domain', async
   const fetchImpl = async () => ({
     ok: true,
     async json() {
-      return [{ domain: 'mesh.example' }];
+      return [{ domain: 'mesh.example' }, { domain: 'other.mesh' }];
     }
   });
 
@@ -249,13 +249,75 @@ test('initializeInstanceSelector navigates to the chosen instance domain', async
       defaultLabel: 'Select region ...'
     });
 
-    assert.equal(select.options.length, 2);
+    assert.equal(select.options.length, 3);
     assert.equal(select.options[1].value, 'mesh.example');
 
     select.value = 'mesh.example';
     select.dispatchEvent({ type: 'change', target: select });
 
     assert.equal(navigatedTo, 'https://mesh.example');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('initializeInstanceSelector hides the selector container when fewer than 2 instances are available', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+
+  // Simulate a parent container; mock elements lack closest() so we set
+  // parentElement directly so the hide logic falls back to it.
+  const container = env.document.createElement('div');
+  container.classList.add('header-federation');
+  select.parentElement = container;
+  env.document.body.appendChild(container);
+
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return [{ domain: 'only.mesh' }];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.equal(container.hidden, true, 'container should be hidden with fewer than 2 instances');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('initializeInstanceSelector keeps the selector visible when 2 or more instances are available', async () => {
+  const env = createDomEnvironment();
+  const select = setupSelectElement(env.document);
+
+  const container = env.document.createElement('div');
+  container.classList.add('header-federation');
+  select.parentElement = container;
+  env.document.body.appendChild(container);
+
+  const fetchImpl = async () => ({
+    ok: true,
+    async json() {
+      return [{ domain: 'alpha.mesh' }, { domain: 'beta.mesh' }];
+    }
+  });
+
+  try {
+    await initializeInstanceSelector({
+      selectElement: select,
+      fetchImpl,
+      windowObject: env.window,
+      documentObject: env.document
+    });
+
+    assert.ok(!container.hidden, 'container should remain visible with 2 or more instances');
   } finally {
     env.cleanup();
   }

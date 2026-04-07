@@ -14,7 +14,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<html lang="en" data-theme="<%= initial_theme %>">
+<html lang="en" data-theme="dark">
 <head>
   <meta name="color-scheme" content="dark light">
   <meta charset="utf-8" />
@@ -65,10 +65,9 @@
     crossorigin=""
   ></script>
 </head>
-<% body_classes = []
-   body_classes << "dark" if initial_theme == "dark"
+<% body_classes = ["dark"]
    view_mode = (defined?(current_view_mode) && current_view_mode) ? current_view_mode.to_sym : :dashboard
-   full_screen_view = view_mode != :dashboard
+   full_screen_view = !%i[dashboard charts federation].include?(view_mode)
    body_classes << "view-#{view_mode}"
    shell_classes = ["page-shell"]
    shell_classes << "page-shell--full-screen" if full_screen_view
@@ -76,25 +75,13 @@
    main_classes << "page-main--dashboard" if view_mode == :dashboard
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = true
-   show_meta_info = true
-   show_auto_refresh_controls = view_mode != :federation
-   show_auto_fit_toggle = %i[dashboard map].include?(view_mode)
-   map_zoom_override = defined?(map_zoom) ? map_zoom : nil
-   show_info_button = true
-   show_footer = !full_screen_view
+   show_footer = !full_screen_view || %i[charts federation].include?(view_mode)
+   footer_slim = %i[charts federation].include?(view_mode)
    show_filter_input = !%i[node_detail charts federation].include?(view_mode)
-   show_auto_refresh_toggle = show_auto_refresh_controls
-   show_refresh_actions = show_auto_refresh_controls || view_mode == :federation
+   show_meta_row = !%i[charts federation].include?(view_mode)
    nodes_nav_href = "/nodes"
    nodes_nav_active = %i[nodes node_detail].include?(view_mode)
    federation_nav_enabled = !private_mode && federation_enabled
-   controls_classes = ["controls"]
-   controls_classes << "controls--full-screen" if full_screen_view
-   refresh_row_classes = ["refresh-row"]
-   refresh_info_text = full_screen_view ? nil : "#{channel} (#{frequency}) — active nodes: …"
-   refresh_row_classes << "refresh-row--no-info" if refresh_info_text.nil?
-   refresh_info_classes = ["refresh-info"]
-   refresh_info_classes << "refresh-info--hidden" if refresh_info_text.nil?
    announcement_markup = announcement_html %>
 <body
   class="<%= body_classes.join(" ") %>"
@@ -110,7 +97,7 @@
         </div>
       <% end %>
       <header class="site-header">
-        <div class="site-header__left<%= federation_nav_enabled ? " site-header__left--federation" : "" %>">
+        <div class="site-header__left">
           <h1 class="site-title">
             <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
             <span class="site-title-text"><%= site_name %></span>
@@ -132,7 +119,7 @@
             <a href="/map" class="site-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
             <a href="/chat" class="site-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="site-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
-            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="site-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
@@ -163,7 +150,7 @@
             <a href="/map" class="mobile-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
             <a href="/chat" class="mobile-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="mobile-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
-            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
+            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="mobile-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
@@ -172,75 +159,19 @@
       </div>
     <% end %>
 
-    <div id="metaRow" class="row meta">
-      <% if show_meta_info %>
-        <div class="meta-info">
-          <div class="<%= refresh_row_classes.join(" ") %>">
-            <% if refresh_info_text %>
-              <p id="refreshInfo" class="refresh-info" aria-live="polite"><%= refresh_info_text %></p>
-            <% else %>
-              <p id="refreshInfo" class="<%= refresh_info_classes.join(" ") %>" aria-live="polite"></p>
-            <% end %>
-            <% if show_refresh_actions %>
-              <div class="refresh-actions">
-                <% if show_auto_refresh_toggle %>
-                  <label class="auto-refresh-toggle"><input type="checkbox" id="autoRefresh" checked /> Auto-refresh every <%= refresh_interval_seconds %> seconds</label>
-                <% end %>
-                <button id="refreshBtn" type="button">Refresh now</button>
-                <span id="status" class="pill">loading…</span>
-              </div>
-            <% end %>
-          </div>
-        </div>
-      <% end %>
-      <div class="<%= controls_classes.join(" ") %>">
-        <% if show_auto_fit_toggle %>
-          <% auto_fit_attrs = [] %>
-          <% if map_zoom_override.nil? %>
-            <% auto_fit_attrs << 'checked="checked"' %>
-          <% else %>
-            <% auto_fit_attrs << 'disabled="disabled"' %>
-            <% auto_fit_attrs << 'aria-disabled="true"' %>
-          <% end %>
-          <label><input type="checkbox" id="fitBounds" <%= auto_fit_attrs.join(" ") %> /> Auto-fit map</label>
-        <% end %>
+    <% if show_meta_row %>
+      <div id="metaRow" class="meta-controls">
         <% if show_filter_input %>
           <div class="filter-input">
             <input type="text" id="filterInput" placeholder="Filter nodes" />
             <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
           </div>
         <% end %>
-        <button id="themeToggle" class="icon-button" type="button" aria-label="Toggle dark mode"><span aria-hidden="true">🌙</span></button>
-        <% if show_info_button %>
-          <button id="infoBtn" class="icon-button" type="button" aria-haspopup="dialog" aria-controls="infoOverlay" aria-label="Show site information"><span aria-hidden="true">ℹ️</span></button>
-        <% end %>
+        <span id="footerActiveNodes" class="meta-active-nodes"></span>
+        <button id="refreshBtn" type="button">Refresh</button>
+        <span id="status" class="refresh-timestamp" aria-live="polite"></span>
       </div>
-    </div>
-
-    <div id="infoOverlay" class="info-overlay" role="dialog" aria-modal="true" aria-labelledby="infoTitle" hidden>
-      <div class="info-dialog" tabindex="-1">
-        <button type="button" class="info-close" id="infoClose" aria-label="Close site information">×</button>
-        <h2 id="infoTitle" class="info-title">About <%= site_name %></h2>
-        <dl class="info-details">
-          <dt>Channel</dt>
-          <dd><%= channel %></dd>
-          <dt>Frequency</dt>
-          <dd><%= frequency %></dd>
-          <dt>Map center</dt>
-          <dd><%= format("%.5f, %.5f", map_center_lat, map_center_lon) %></dd>
-          <dt>Visible range</dt>
-          <dd>Nodes within roughly <%= max_distance_km %> km of the center are shown.</dd>
-          <% if contact_link && !contact_link.empty? %>
-            <dt>Chat</dt>
-            <% if contact_link_url %>
-              <dd><a href="<%= contact_link_url %>" target="_blank" rel="noreferrer noopener"><%= contact_link %></a></dd>
-            <% else %>
-              <dd><%= contact_link %></dd>
-            <% end %>
-          <% end %>
-        </dl>
-      </div>
-    </div>
+    <% end %>
 
     <div id="nodeDetailOverlay" class="node-detail-overlay" hidden>
       <div class="node-detail-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="nodeDetailOverlayHeader" tabindex="-1">
@@ -257,30 +188,7 @@
     </main>
 
     <% if show_footer %>
-      <footer class="app-footer">
-        <div class="footer-content">
-          <span class="footer-brand">PotatoMesh</span>
-          <% if version && !version.empty? %>
-            <span class="mono"><%= version %></span>
-          <% end %>
-          <span class="footer-separator" aria-hidden="true">—</span>
-          <span class="footer-links">
-            GitHub:
-            <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
-            <% if contact_link && !contact_link.empty? %>
-              <span class="footer-separator" aria-hidden="true">—</span>
-              <span class="footer-contact">
-                <%= site_name %> chat:
-                <% if contact_link_url %>
-                  <a href="<%= contact_link_url %>" target="_blank"><%= contact_link %></a>
-                <% else %>
-                  <%= contact_link %>
-                <% end %>
-              </span>
-            <% end %>
-          </span>
-        </div>
-      </footer>
+      <%= erb :"shared/_footer", locals: { site_name: site_name, version: version, contact_link: contact_link, contact_link_url: contact_link_url, slim: footer_slim } %>
     <% end %>
   </div>
 

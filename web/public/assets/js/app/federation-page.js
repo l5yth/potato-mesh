@@ -113,38 +113,135 @@ function colorForNodeCount(count) {
 }
 
 /**
- * Render arbitrary contact text while hyperlinking recognised URL-like segments.
+ * Matches recognised link-like segments in plain text:
+ * - Absolute URLs (https?://, mailto:, matrix:)
+ * - Matrix room aliases  (#room:domain.tld)
+ * - Matrix user IDs      (@user:domain.tld)
+ * - Bare domain-with-path (discord.gg/..., t.me/...)
  *
- * @param {*} contact Raw contact value from the API.
- * @returns {string} HTML markup safe for insertion.
+ * Character classes use possessive-style atomic groupings (no overlap) so the
+ * regex engine cannot backtrack into super-linear runtime.
  */
-function renderContactHtml(contact) {
-  if (typeof contact !== 'string') return '';
-  const trimmed = contact.trim();
-  if (!trimmed) return '';
-  const urlPattern = /(https?:\/\/[^\s]+|mailto:[^\s]+|matrix:[^\s]+)/gi;
+const CONTACT_LINK_PATTERN =
+  /(https?:\/\/\S+|mailto:\S+|matrix:\S+|[@#][a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\/\S+)/gi;
+
+/**
+ * Regex matching `<a>` elements (including malformed unquoted attributes) and
+ * any other HTML tags so they can be handled separately from plain text.
+ *
+ * The `<a>` branch uses `[^<]*` (no nesting) instead of `[\s\S]*?` to avoid
+ * super-linear backtracking when nested or malformed tags are present.
+ */
+const HTML_SEGMENT_PATTERN = /(<a\b[^>]*>[^<]*<\/a\s*>|<[^>]+>)/gi;
+
+/** Extracts the href value from an `<a>` opening tag, quoted or unquoted. */
+const HREF_ATTR_PATTERN = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i;
+
+/** Protocols allowed in whitelisted `<a>` hrefs. */
+const SAFE_HREF_RE = /^(?:https?:\/\/|matrix:|mailto:)/i;
+
+/**
+ * Resolve a raw matched token to an href string.
+ *
+ * @param {string} raw Matched token from CONTACT_LINK_PATTERN.
+ * @returns {string} Absolute href suitable for use in an anchor element.
+ */
+function resolveHref(raw) {
+  if (raw.startsWith('#') || raw.startsWith('@')) {
+    // Matrix room alias or user ID → matrix.to permalink
+    return `https://matrix.to/#/${raw}`;
+  }
+  if (/^[a-zA-Z0-9-]+\./.test(raw) && !raw.includes('://')) {
+    // Bare domain-with-path (e.g. discord.gg/…) — prepend https://
+    return `https://${raw}`;
+  }
+  return raw;
+}
+
+/**
+ * Linkify URL-like tokens in a plain-text (already HTML-free) segment.
+ *
+ * @param {string} text Plain text with no HTML tags.
+ * @returns {string} HTML-safe string with recognised links wrapped in anchors.
+ */
+function renderPlainSegment(text) {
   const parts = [];
   let lastIndex = 0;
+  const pattern = new RegExp(CONTACT_LINK_PATTERN.source, 'gi');
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+    if (before) parts.push(escapeHtml(before));
+    const raw = match[0];
+    const href = resolveHref(raw);
+    parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(raw)}</a>`);
+    lastIndex = match.index + raw.length;
+  }
+  const trailing = text.slice(lastIndex);
+  if (trailing) parts.push(escapeHtml(trailing));
+  return parts.join('');
+}
+
+/**
+ * Render arbitrary contact or channel text as safe HTML.
+ *
+ * - Existing `<a>` tags are sanitised: href is validated against an allowlist
+ *   of safe protocols (https, http, matrix:, mailto:), link text is escaped,
+ *   and `target="_blank" rel="noopener noreferrer"` is always applied.
+ * - Other HTML tags (e.g. `<b>`) are stripped; their text content is kept.
+ * - Plain-text segments are scanned for URLs, Matrix aliases/user-IDs, and
+ *   bare domain-with-path references (e.g. discord.gg/…) and linkified.
+ * - Line breaks are converted to `<br>`.
+ *
+ * @param {*} text Raw value from the API (may contain HTML).
+ * @returns {string} HTML markup safe for insertion.
+ */
+function renderContactHtml(text) {
+  if (typeof text !== 'string') return '';
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+
+  const parts = [];
+  let lastIndex = 0;
+  const segPattern = new RegExp(HTML_SEGMENT_PATTERN.source, 'gi');
   let match;
 
-  while ((match = urlPattern.exec(trimmed)) !== null) {
-    const textBefore = trimmed.slice(lastIndex, match.index);
-    if (textBefore) {
-      parts.push(escapeHtml(textBefore));
+  while ((match = segPattern.exec(trimmed)) !== null) {
+    // Linkify plain text before this HTML segment
+    const before = trimmed.slice(lastIndex, match.index);
+    if (before) parts.push(renderPlainSegment(before));
+
+    const tag = match[0];
+    if (/^<a\b/i.test(tag)) {
+      // Whitelisted <a> tag — extract href, validate, re-render safely
+      const hrefMatch = HREF_ATTR_PATTERN.exec(tag);
+      const href = hrefMatch ? (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '') : '';
+      // Strip HTML tags to derive plain link text; content is still escaped below.
+      // The replace runs in a loop to handle residual tags left after the first
+      // pass — this is safe because a single-pass replace of `<…>` can leave
+      // behind a reconstructed tag when the input contains e.g. `<<script>`.
+      let linkText = tag;
+      let prev;
+      do { prev = linkText; linkText = linkText.replace(/<[^>]*>/g, ''); } while (linkText !== prev);
+      linkText = linkText.trim();
+      if (SAFE_HREF_RE.test(href)) {
+        parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkText || href)}</a>`);
+      } else {
+        // Unsafe or missing href — render link text only
+        parts.push(escapeHtml(linkText));
+      }
     }
-    const url = match[0];
-    const safeUrl = escapeHtml(url);
-    parts.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeUrl}</a>`);
-    lastIndex = match.index + url.length;
+    // Other tags (<b>, </b>, etc.) are stripped; their text content falls
+    // through as plain text in subsequent iterations.
+
+    lastIndex = match.index + tag.length;
   }
 
+  // Linkify any remaining plain text after the last HTML segment
   const trailing = trimmed.slice(lastIndex);
-  if (trailing) {
-    parts.push(escapeHtml(trailing));
-  }
+  if (trailing) parts.push(renderPlainSegment(trailing));
 
-  const html = parts.join('');
-  return html.replace(/\r?\n/g, '<br>');
+  return parts.join('').replace(/\r?\n/g, '<br>');
 }
 
 /**
@@ -387,7 +484,7 @@ export async function initializeFederationPage(options = {}) {
         <td class="instances-col instances-col--domain mono">${domainHtml}</td>
         <td class="instances-col instances-col--contact">${contactHtml || '<em>—</em>'}</td>
         <td class="instances-col instances-col--version mono">${escapeHtml(instance.version || '')}</td>
-        <td class="instances-col instances-col--channel">${escapeHtml(instance.channel || '')}</td>
+        <td class="instances-col instances-col--channel">${renderContactHtml(instance.channel) || ''}</td>
         <td class="instances-col instances-col--frequency">${escapeHtml(instance.frequency || '')}</td>
         <td class="instances-col instances-col--nodes mono">${nodesCountText}</td>
         <td class="instances-col instances-col--latitude mono">${fmtCoords(instance.latitude)}</td>

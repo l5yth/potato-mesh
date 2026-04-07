@@ -237,29 +237,16 @@ test('fetchActiveNodeStats concurrent calls share a single in-flight request', a
 // formatActiveNodeStatsText
 // ---------------------------------------------------------------------------
 
-test('formatActiveNodeStatsText emits expected dashboard sentence', () => {
+test('formatActiveNodeStatsText emits compact day/week/month string', () => {
   assert.equal(
     formatActiveNodeStatsText({
-      channel: 'LongFast',
-      frequency: '868MHz',
-      stats: { hour: 1, day: 2, week: 3, month: 4, sampled: false },
+      stats: { day: 2, week: 3, month: 4, sampled: false },
     }),
-    'LongFast (868MHz) \u2014 active nodes: 1/hour, 2/day, 3/week, 4/month.'
-  );
-});
-
-test('formatActiveNodeStatsText appends sampled marker', () => {
-  assert.equal(
-    formatActiveNodeStatsText({
-      channel: 'LongFast',
-      frequency: '868MHz',
-      stats: { hour: 9, day: 8, week: 7, month: 6, sampled: true },
-    }),
-    'LongFast (868MHz) \u2014 active nodes: 9/hour, 8/day, 7/week, 6/month (sampled).'
+    '2/day \u00b7 3/week \u00b7 4/month'
   );
 });
 
 test('formatActiveNodeStatsText handles missing or null stats gracefully', () => {
-  const text = formatActiveNodeStatsText({ channel: 'X', frequency: 'Y', stats: null });
-  assert.ok(text.includes('0/hour'), 'defaults to zero counts for null stats');
+  const text = formatActiveNodeStatsText({ stats: null });
+  assert.equal(text, '0/day \u00b7 0/week \u00b7 0/month', 'defaults to zero counts for null stats');
 });

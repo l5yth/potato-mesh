@@ -131,30 +131,20 @@ import {
  */
 export function initializeApp(config) {
   const statusEl = document.getElementById('status');
-  const fitBoundsEl = document.getElementById('fitBounds');
-  const autoRefreshEl = document.getElementById('autoRefresh');
+  const footerActiveNodes = document.getElementById('footerActiveNodes');
   const refreshBtn = document.getElementById('refreshBtn');
   const filterInput = document.getElementById('filterInput');
   const filterClearButton = document.getElementById('filterClear');
-  const themeToggle = document.getElementById('themeToggle');
-  const infoBtn = document.getElementById('infoBtn');
-  const infoOverlay = document.getElementById('infoOverlay');
-  const infoClose = document.getElementById('infoClose');
-  const infoDialog = infoOverlay ? infoOverlay.querySelector('.info-dialog') : null;
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
   const overlayStack = createShortInfoOverlayStack({ document, window, template: shortInfoTemplate });
   const titleEl = document.querySelector('title');
   const headerEl = document.querySelector('h1');
   const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
   const chatEl = document.getElementById('chat');
-  const refreshInfo = document.getElementById('refreshInfo');
   const instanceSelect = document.getElementById('instanceSelect');
   const baseTitle = document.title;
   const nodesTable = document.getElementById('nodes');
   const sortButtons = nodesTable ? Array.from(nodesTable.querySelectorAll('thead .sort-button[data-sort-key]')) : [];
-  const infoOverlayHome = infoOverlay
-    ? { parent: infoOverlay.parentNode, nextSibling: infoOverlay.nextSibling }
-    : null;
   const bodyClassList = document.body ? document.body.classList : null;
   const isPrivateMode = document.body && document.body.dataset
     ? String(document.body.dataset.privateMode).toLowerCase() === 'true'
@@ -245,13 +235,6 @@ export function initializeApp(config) {
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
-  if (refreshInfo) {
-    if (isDashboardView) {
-      refreshInfo.textContent = `${config.channel} (${config.frequency}) — active nodes: …`;
-    } else {
-      refreshInfo.textContent = '';
-    }
-  }
 
   if (instanceSelectorEnabled && instanceSelect) {
     void initializeInstanceSelector({
@@ -265,7 +248,7 @@ export function initializeApp(config) {
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;
-  let refreshInfoRequestId = 0;
+  let activeStatsRequestId = 0;
 
   /**
    * Close any open short-info overlays that do not contain the provided anchor.
@@ -463,22 +446,16 @@ export function initializeApp(config) {
    */
   function restartAutoRefresh() {
     // Tear down any existing timer so the interval never double-fires when
-    // the user toggles auto-refresh or the config is re-applied.
+    // the config is re-applied.
     if (refreshTimer) {
       clearInterval(refreshTimer);
       refreshTimer = null;
     }
-    // Only arm the timer when the auto-refresh checkbox is checked; a
-    // disabled checkbox (e.g. during an active fetch) keeps it off.
-    if (autoRefreshEl && autoRefreshEl.checked) {
+    // Only arm the timer when a positive interval is configured; a zero or
+    // negative value means auto-refresh is intentionally disabled.
+    if (REFRESH_MS > 0) {
       refreshTimer = setInterval(refresh, REFRESH_MS);
     }
-  }
-
-  if (fitBoundsEl && mapZoomOverride !== null) {
-    fitBoundsEl.checked = false;
-    fitBoundsEl.disabled = true;
-    fitBoundsEl.setAttribute('aria-disabled', 'true');
   }
 
   const MAP_CENTER_COORDS = Object.freeze({ lat: config.mapCenter.lat, lon: config.mapCenter.lon });
@@ -524,7 +501,7 @@ export function initializeApp(config) {
   ];
 
   const autoFitController = createMapAutoFitController({
-    toggleEl: fitBoundsEl,
+    toggleEl: null,
     windowObject: typeof window !== 'undefined' ? window : undefined,
     defaultPaddingPx: AUTO_FIT_PADDING_PX
   });
@@ -542,7 +519,6 @@ export function initializeApp(config) {
   const centerResetHandler = createMapCenterResetHandler({
     getMap: () => map,
     autoFitController,
-    fitBoundsEl,
     fitMapToBounds,
     mapCenterCoords: MAP_CENTER_COORDS,
     mapZoomOverride,
@@ -740,62 +716,6 @@ export function initializeApp(config) {
   });
 
   /**
-   * Append the informational modal overlay to the fullscreen container when active.
-   *
-   * @returns {void}
-   */
-  function attachInfoOverlayToFullscreenHost() {
-    if (!infoOverlay || !fullscreenContainer) return;
-    if (infoOverlay.parentNode !== fullscreenContainer) {
-      fullscreenContainer.appendChild(infoOverlay);
-    }
-    if (infoOverlay.classList) {
-      infoOverlay.classList.add('info-overlay--fullscreen');
-    }
-  }
-
-  /**
-   * Restore the informational overlay to its original DOM position.
-   *
-   * @returns {void}
-   */
-  function restoreInfoOverlayToHome() {
-    if (!infoOverlay || !infoOverlayHome || !infoOverlayHome.parent) return;
-    if (infoOverlay.parentNode === infoOverlayHome.parent) {
-      if (infoOverlay.classList) {
-        infoOverlay.classList.remove('info-overlay--fullscreen');
-      }
-      return;
-    }
-    if (
-      infoOverlayHome.nextSibling &&
-      infoOverlayHome.nextSibling.parentNode === infoOverlayHome.parent &&
-      typeof infoOverlayHome.parent.insertBefore === 'function'
-    ) {
-      infoOverlayHome.parent.insertBefore(infoOverlay, infoOverlayHome.nextSibling);
-    } else if (typeof infoOverlayHome.parent.appendChild === 'function') {
-      infoOverlayHome.parent.appendChild(infoOverlay);
-    }
-    if (infoOverlay.classList) {
-      infoOverlay.classList.remove('info-overlay--fullscreen');
-    }
-  }
-
-  /**
-   * Ensure the informational overlay participates in the active fullscreen subtree.
-   *
-   * @returns {void}
-   */
-  function syncInfoOverlayHost() {
-    if (!infoOverlay) return;
-    if (isMapInFullscreen()) {
-      attachInfoOverlayToFullscreenHost();
-    } else {
-      restoreInfoOverlayToHome();
-    }
-  }
-
-  /**
    * Respond to fullscreen change events originating from the browser.
    *
    * @returns {void}
@@ -825,7 +745,6 @@ export function initializeApp(config) {
         mapContainer.style.minHeight = '';
       }
     }
-    syncInfoOverlayHost();
     updateFullscreenToggleState();
     refreshMapSize();
   }
@@ -852,8 +771,6 @@ export function initializeApp(config) {
       centerResetHandler();
     });
   }
-
-  syncInfoOverlayHost();
 
   /** @type {Set<string>} Active compound role-filter keys, each ``"<protocol>:<roleKey>"``. */
   const activeRoleFilters = new Set();
@@ -1395,6 +1312,8 @@ export function initializeApp(config) {
 
   let legendContainer = null;
   let legendToggleControl = null;
+  let meshcoreCountEl = null;
+  let meshtasticCountEl = null;
   let legendToggleButton = null;
   let legendVisible = true;
 
@@ -1479,7 +1398,9 @@ export function initializeApp(config) {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
     neighborLinesToggleButton.textContent = label;
-    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
+    // aria-pressed reflects whether the user has *activated* the toggle (i.e. lines are
+    // currently hidden). When lines are visible (default), the button is unpressed.
+    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'false' : 'true');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -1511,7 +1432,8 @@ export function initializeApp(config) {
     if (!traceLinesToggleButton) return;
     const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
     traceLinesToggleButton.textContent = label;
-    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
+    // aria-pressed reflects whether the user has *activated* the toggle (lines hidden).
+    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'false' : 'true');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -1629,14 +1551,30 @@ export function initializeApp(config) {
   }
 
   if (map && hasLeaflet) {
-    const legend = L.control({ position: 'bottomright' });
+    // Single combined control: [toggle button | legend panel] in a flex row.
+    // The toggle sits to the left so it remains accessible when the legend is collapsed.
+    const legendControl = L.control({ position: 'bottomright' });
     /**
-     * Leaflet control factory that renders the legend UI.
+     * Leaflet control factory that renders the toggle button and legend panel
+     * as a single side-by-side control.
      *
-     * @returns {HTMLElement} Legend DOM element.
+     * @returns {HTMLElement} Wrapper element containing both children.
      */
-    legend.onAdd = function () {
-      const div = L.DomUtil.create('div', 'legend');
+    legendControl.onAdd = function () {
+      const wrapper = L.DomUtil.create('div', 'legend-outer');
+
+      // --- Toggle button (left) ---
+      const button = L.DomUtil.create('button', 'legend-toggle-button', wrapper);
+      button.type = 'button';
+      button.setAttribute('aria-pressed', 'true');
+      button.setAttribute('aria-controls', 'mapLegend');
+      button.addEventListener('click', legendClickHandler(() => {
+        setLegendVisibility(!legendVisible);
+      }));
+      legendToggleButton = button;
+
+      // --- Legend panel (right) ---
+      const div = L.DomUtil.create('div', 'legend', wrapper);
       div.id = 'mapLegend';
       div.setAttribute('role', 'region');
       div.setAttribute('aria-label', 'Map legend');
@@ -1648,13 +1586,16 @@ export function initializeApp(config) {
 
       const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
-      // --- MeshCore column (left) ---
-      const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      // --- MeshCore column (left, bottom-aligned) ---
+      const meshcoreCol = L.DomUtil.create('div', 'legend-column legend-column--bottom', itemsContainer);
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
       meshcoreColHeader.appendChild(buildMeshcoreIconImg());
       const meshcoreColTitle = document.createElement('span');
       meshcoreColTitle.textContent = 'MeshCore';
       meshcoreColHeader.appendChild(meshcoreColTitle);
+      meshcoreCountEl = document.createElement('span');
+      meshcoreCountEl.className = 'legend-protocol-count';
+      meshcoreColHeader.appendChild(meshcoreCountEl);
 
       // --- Meshtastic column (right) ---
       const meshtasticCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
@@ -1663,18 +1604,17 @@ export function initializeApp(config) {
       const meshtasticColTitle = document.createElement('span');
       meshtasticColTitle.textContent = 'Meshtastic';
       meshtasticColHeader.appendChild(meshtasticColTitle);
+      meshtasticCountEl = document.createElement('span');
+      meshtasticCountEl.className = 'legend-protocol-count';
+      meshtasticColHeader.appendChild(meshtasticCountEl);
 
       legendRoleButtons.clear();
       buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
       buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
 
-      // --- Protocol hide toggles — one per column footer ---
+      // --- MeshCore column footer: protocol hide toggle ---
       legendProtocolButtons.clear();
-      const protocolColDefs = [
-        { protocol: 'meshcore', col: meshcoreCol },
-        { protocol: 'meshtastic', col: meshtasticCol },
-      ];
-      for (const { protocol, col } of protocolColDefs) {
+      const buildProtocolToggle = (protocol, col) => {
         const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
         const btn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', col);
         btn.type = 'button';
@@ -1690,9 +1630,10 @@ export function initializeApp(config) {
           applyFilter();
         }));
         legendProtocolButtons.set(protocol, btn);
-      }
+      };
+      buildProtocolToggle('meshcore', meshcoreCol);
 
-      // --- Line toggles in the Meshtastic column ---
+      // --- Meshtastic column: line toggles then protocol hide toggle at bottom ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
       neighborLinesToggleButton.type = 'button';
       neighborLinesToggleButton.addEventListener('click', legendClickHandler(() => {
@@ -1707,12 +1648,15 @@ export function initializeApp(config) {
       }));
       updateTraceLinesToggleState();
 
+      // Hide Meshtastic toggle at the very bottom of the Meshtastic column.
+      buildProtocolToggle('meshtastic', meshtasticCol);
+
       updateLegendRoleFiltersUI();
 
       // --- Clear filters — full-width below the two columns ---
-      const toggle = L.DomUtil.create('div', 'legend-toggle', div);
+      const filterToggle = L.DomUtil.create('div', 'legend-toggle', div);
 
-      const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', toggle);
+      const resetButton = L.DomUtil.create('button', 'legend-item legend-reset', filterToggle);
       resetButton.type = 'button';
       resetButton.textContent = 'Clear filters';
       resetButton.addEventListener('click', legendClickHandler(() => {
@@ -1722,38 +1666,12 @@ export function initializeApp(config) {
         applyFilter();
       }));
 
-      L.DomEvent.disableClickPropagation(div);
-      L.DomEvent.disableScrollPropagation(div);
-
-      return div;
-    };
-    legend.addTo(map);
-    legendContainer = legend.getContainer();
-
-    legendToggleControl = L.control({ position: 'bottomright' });
-    /**
-     * Leaflet control factory for the legend visibility toggle.
-     *
-     * @returns {HTMLElement} Toggle button element.
-     */
-    legendToggleControl.onAdd = function () {
-      const container = L.DomUtil.create('div', 'leaflet-control legend-toggle');
-      const button = L.DomUtil.create('button', 'legend-toggle-button', container);
-      button.type = 'button';
-      button.textContent = 'Hide legend (filters)';
-      button.setAttribute('aria-pressed', 'true');
-      button.setAttribute('aria-label', 'Hide map legend');
-      button.setAttribute('aria-controls', 'mapLegend');
-      button.addEventListener('click', legendClickHandler(() => {
-        setLegendVisibility(!legendVisible);
-      }));
-      legendToggleButton = button;
       updateLegendToggleState();
-      L.DomEvent.disableClickPropagation(container);
-      L.DomEvent.disableScrollPropagation(container);
-      return container;
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+      return wrapper;
     };
-    legendToggleControl.addTo(map);
+    legendControl.addTo(map);
 
     const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
     const initialLegendVisible = resolveLegendVisibility({
@@ -1768,72 +1686,6 @@ export function initializeApp(config) {
     });
   } else if (mapContainer && !hasLeaflet) {
     setLegendVisibility(false);
-  }
-
-    themeToggle.addEventListener('click', () => {
-      const dark = document.body.classList.toggle('dark');
-      const themeValue = dark ? 'dark' : 'light';
-      document.body.setAttribute('data-theme', themeValue);
-      if (document.documentElement) {
-        document.documentElement.setAttribute('data-theme', themeValue);
-      }
-      themeToggle.textContent = dark ? '☀️' : '🌙';
-      if (window.__themeCookie) {
-        if (typeof window.__themeCookie.persistTheme === 'function') {
-          window.__themeCookie.persistTheme(themeValue);
-        } else if (typeof window.__themeCookie.setCookie === 'function') {
-          window.__themeCookie.setCookie('theme', themeValue);
-        }
-      }
-      window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: themeValue } }));
-      if (typeof window.applyFiltersToAllTiles === 'function') window.applyFiltersToAllTiles();
-    });
-
-  let lastFocusBeforeInfo = null;
-
-  /**
-   * Display the modal overlay containing site information.
-   *
-   * @returns {void}
-   */
-  function openInfoOverlay() {
-    if (!infoOverlay || !infoDialog) return;
-    syncInfoOverlayHost();
-    lastFocusBeforeInfo = document.activeElement;
-    infoOverlay.hidden = false;
-    document.body.style.setProperty('overflow', 'hidden');
-    infoDialog.focus();
-  }
-
-  /**
-   * Hide the site information overlay and restore focus.
-   *
-   * @returns {void}
-   */
-  function closeInfoOverlay() {
-    if (!infoOverlay || !infoDialog) return;
-    infoOverlay.hidden = true;
-    document.body.style.removeProperty('overflow');
-    const target = lastFocusBeforeInfo && typeof lastFocusBeforeInfo.focus === 'function' ? lastFocusBeforeInfo : infoBtn;
-    if (target && typeof target.focus === 'function') {
-      target.focus();
-    }
-    lastFocusBeforeInfo = null;
-  }
-
-  if (infoBtn && infoOverlay && infoClose) {
-    infoBtn.addEventListener('click', openInfoOverlay);
-    infoClose.addEventListener('click', closeInfoOverlay);
-    infoOverlay.addEventListener('click', event => {
-      if (event.target === infoOverlay) {
-        closeInfoOverlay();
-      }
-    });
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && !infoOverlay.hidden) {
-        closeInfoOverlay();
-      }
-    });
   }
 
   const nodeDetailOverlayManager = createNodeDetailOverlayManager({
@@ -4435,10 +4287,6 @@ export function initializeApp(config) {
         },
       });
     }
-    if (pts.length && fitBoundsEl && fitBoundsEl.checked) {
-      const bounds = computeBoundsForPoints(pts, { ...autoFitBoundsConfig });
-      fitMapToBounds(bounds, { animate: false, paddingPx: AUTO_FIT_PADDING_PX });
-    }
     overlayStack.cleanupOrphans();
   }
 
@@ -4521,8 +4369,11 @@ export function initializeApp(config) {
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
-    updateCount(sortedNodes, nowSec);
-    updateRefreshInfo(sortedNodes, nowSec);
+    // Title and legend counts are intentionally global — they reflect the whole
+    // network, not just the nodes visible under the current filter.
+    updateTitleCount(allNodes, nowSec);
+    updateLegendProtocolCounts(allNodes, nowSec);
+    updateFooterStats(sortedNodes, nowSec);
     updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
     // highlight matching substrings in their original case.
@@ -4658,8 +4509,8 @@ export function initializeApp(config) {
     }
   }
 
-  // Kick off the first data load immediately; interval-based auto-refresh
-  // begins only if the checkbox is already checked on page load.
+  // Kick off the first data load immediately then start the silent background
+  // auto-refresh timer.
   refresh();
   restartAutoRefresh();
 
@@ -4668,27 +4519,16 @@ export function initializeApp(config) {
     refreshBtn.addEventListener('click', refresh);
   }
 
-  if (autoRefreshEl) {
-    // When the user enables auto-refresh mid-session, trigger an immediate
-    // fetch so the UI does not sit stale until the next interval fires.
-    autoRefreshEl.addEventListener('change', () => {
-      restartAutoRefresh();
-      if (autoRefreshEl.checked) {
-        refresh();
-      }
-    });
-  }
-
   /**
-   * Update the count badge showing how many nodes are displayed.
+   * Update the page/tab title with the total active-node count for the past 7 days.
    *
-   * @param {Array<Object>} nodes Node payloads.
+   * @param {Array<Object>} nodes All node payloads (unfiltered — counts are global).
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
    */
-  function updateCount(nodes, nowSec) {
-    const dayAgoSec = nowSec - 86400;
-    const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= dayAgoSec).length;
+  function updateTitleCount(nodes, nowSec) {
+    const weekAgoSec = nowSec - 7 * 86_400;
+    const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= weekAgoSec).length;
     const text = `${baseTitle} (${count})`;
     titleEl.textContent = text;
     if (headerTitleTextEl) {
@@ -4699,26 +4539,40 @@ export function initializeApp(config) {
   }
 
   /**
-   * Update the status message describing the currently rendered data.
+   * Update legend column headers with per-protocol active node counts (7 days).
+   *
+   * @param {Array<Object>} nodes All node payloads (unfiltered).
+   * @param {number} nowSec Reference timestamp.
+   * @returns {void}
+   */
+  function updateLegendProtocolCounts(nodes, nowSec) {
+    if (!meshcoreCountEl && !meshtasticCountEl) return;
+    const weekAgoSec = nowSec - 7 * 86_400;
+    const recentNodes = nodes.filter(n => Number.isFinite(Number(n.last_heard)) && Number(n.last_heard) >= weekAgoSec);
+    const meshcoreCount = recentNodes.filter(n => n.protocol === 'meshcore').length;
+    // Treat any non-meshcore node as Meshtastic until additional protocols are supported.
+    const meshtasticCount = recentNodes.filter(n => n.protocol !== 'meshcore').length;
+    if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${meshcoreCount})`;
+    if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${meshtasticCount})`;
+  }
+
+  /**
+   * Update the footer active-node stats element with day/week/month counts.
    *
    * @param {Array<Object>} nodes Node payloads.
    * @param {number} nowSec Reference timestamp.
    * @returns {void}
    */
-  function updateRefreshInfo(nodes, nowSec) {
-    if (!refreshInfo || !isDashboardView) {
+  function updateFooterStats(nodes, nowSec) {
+    if (!footerActiveNodes) {
       return;
     }
-    const requestId = ++refreshInfoRequestId;
+    const requestId = ++activeStatsRequestId;
     void fetchActiveNodeStats({ nodes, nowSeconds: nowSec }).then(stats => {
-      if (requestId !== refreshInfoRequestId) {
+      if (requestId !== activeStatsRequestId) {
         return;
       }
-      refreshInfo.textContent = formatActiveNodeStatsText({
-        channel: config.channel,
-        frequency: config.frequency,
-        stats
-      });
+      footerActiveNodes.textContent = 'Active: ' + formatActiveNodeStatsText({ stats });
     });
   }
 
@@ -4750,6 +4604,15 @@ export function initializeApp(config) {
       hiddenProtocols,
       legendRoleButtons,
       legendProtocolButtons,
+      updateTitleCount,
+      updateLegendProtocolCounts,
+      updateFooterStats,
+      restartAutoRefresh,
+      /** Inject mock count span elements for legend protocol count tests. */
+      _setProtocolCountElements(mc, mt) {
+        meshcoreCountEl = mc;
+        meshtasticCountEl = mt;
+      },
     },
   };
 }

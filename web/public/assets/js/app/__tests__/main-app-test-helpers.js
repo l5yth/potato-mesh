@@ -44,8 +44,6 @@ export const MINIMAL_CONFIG = Object.freeze({
  */
 export function setupApp() {
   const env = createDomEnvironment({ includeBody: true });
-  // themeToggle is accessed without a null guard in initializeApp.
-  env.createElement('button', 'themeToggle');
   const { _testUtils } = initializeApp(MINIMAL_CONFIG);
   return { testUtils: _testUtils, cleanup: env.cleanup.bind(env) };
 }
@@ -63,6 +61,24 @@ export function withApp(fn) {
   } finally {
     cleanup();
   }
+}
+
+/**
+ * Spin up a DOM environment, optionally pre-register elements by id, then
+ * initialise the app with a custom config override.  Returns the test utils,
+ * the environment (for DOM inspection), and a cleanup handle.
+ *
+ * @param {{ extraElements?: string[], configOverrides?: Object }} [opts]
+ * @returns {{ testUtils: Object, env: Object, cleanup: Function }}
+ */
+export function setupAppWithOptions({ extraElements = [], configOverrides = {} } = {}) {
+  const env = createDomEnvironment({ includeBody: true });
+  for (const id of extraElements) {
+    env.registerElement(id, env.createElement('span', id));
+  }
+  const config = { ...MINIMAL_CONFIG, ...configOverrides };
+  const { _testUtils } = initializeApp(config);
+  return { testUtils: _testUtils, env, cleanup: env.cleanup.bind(env) };
 }
 
 /**

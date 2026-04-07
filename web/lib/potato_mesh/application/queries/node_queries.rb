@@ -159,7 +159,16 @@ module PotatoMesh
           r["role"] ||= "CLIENT"
           if r["role"] == "COMPANION"
             derived = meshcore_companion_display_short_name(r["long_name"])
-            r["short_name"] = derived if derived
+            if derived
+              r["short_name"] = derived
+            elsif r["short_name"].nil? || r["short_name"].strip.empty?
+              # No derived name and no stored public-key hex — synthesise from
+              # the node ID (first four hex chars after the leading "!") so the
+              # badge is stable, unique, and consistent with how the ingestor
+              # builds short names from public keys.
+              node_id = r["node_id"].to_s.delete_prefix("!")
+              r["short_name"] = node_id[0, 4] unless node_id.empty?
+            end
           end
           lh = r["last_heard"]&.to_i
           pt = r["position_time"]&.to_i

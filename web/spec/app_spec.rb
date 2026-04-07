@@ -1351,13 +1351,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('<meta name="twitter:image" content="http://example.org/potatomesh-logo.svg" />')
     end
 
-    it "disables the auto-fit toggle when a map zoom override is configured" do
+    it "does not include the removed auto-fit checkbox regardless of map zoom override" do
       allow(PotatoMesh::Config).to receive(:map_zoom).and_return(11.0)
 
       get "/"
 
-      expect(last_response.body).to include('id="fitBounds" disabled="disabled"')
-      expect(last_response.body).not_to include('id="fitBounds" checked="checked"')
+      expect(last_response.body).not_to include('id="fitBounds"')
     end
   end
 
@@ -1369,20 +1368,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('class="map-panel map-panel--full"')
       expect(last_response.body).to include('id="map"')
       expect(last_response.body).to include('id="filterInput"')
-      expect(last_response.body).to include('id="autoRefresh"')
+      expect(last_response.body).not_to include('id="autoRefresh"')
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
-      expect(last_response.body).to include('id="fitBounds"')
+      expect(last_response.body).not_to include('id="fitBounds"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
-    end
-
-    it "disables the auto-fit toggle when a map zoom override is configured" do
-      allow(PotatoMesh::Config).to receive(:map_zoom).and_return(9.5)
-
-      get "/map"
-
-      expect(last_response.body).to include('id="fitBounds" disabled="disabled"')
-      expect(last_response.body).not_to include('id="fitBounds" checked="checked"')
     end
   end
 
@@ -1401,11 +1391,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/federation"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include('class="federation-page federation-page--full-width"')
+      expect(last_response.body).to include('class="federation-page"')
       expect(last_response.body).to include("initializeFederationPage")
     end
 
-    it "hides dashboard-only refresh controls while keeping manual refresh and theme toggle" do
+    it "hides the meta-controls row entirely on the federation page" do
       allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
 
       get "/federation"
@@ -1413,8 +1403,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       expect(last_response.body).not_to include('id="autoRefresh"')
       expect(last_response.body).not_to include('id="filterInput"')
-      expect(last_response.body).to include('id="refreshBtn"')
-      expect(last_response.body).to include('id="themeToggle"')
+      expect(last_response.body).not_to include('id="refreshBtn"')
+      expect(last_response.body).not_to include('id="themeToggle"')
+      expect(last_response.body).not_to include('id="metaRow"')
+    end
+
+    it "renders the slim footer on the federation page" do
+      allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
+
+      get "/federation"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include('class="app-footer app-footer--slim"')
     end
   end
 
@@ -1425,7 +1425,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       expect(last_response.body).to include('class="chat-panel chat-panel--full"')
       expect(last_response.body).to include('id="filterInput"')
-      expect(last_response.body).to include('id="autoRefresh"')
+      expect(last_response.body).not_to include('id="autoRefresh"')
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
@@ -1449,10 +1449,22 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('class="nodes-table-wrapper"')
       expect(last_response.body).to include('id="nodes"')
       expect(last_response.body).to include('id="filterInput"')
-      expect(last_response.body).to include('id="autoRefresh"')
+      expect(last_response.body).not_to include('id="autoRefresh"')
       expect(last_response.body).to include('id="refreshBtn"')
       expect(last_response.body).to include('id="status"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
+    end
+  end
+
+  describe "GET /charts" do
+    it "renders the charts page with the slim footer but without meta-controls" do
+      get "/charts"
+
+      expect(last_response).to be_ok
+      expect(last_response.body).to include("initializeChartsPage")
+      expect(last_response.body).not_to include('id="metaRow"')
+      expect(last_response.body).not_to include('id="filterInput"')
+      expect(last_response.body).to include('class="app-footer app-footer--slim"')
     end
   end
 

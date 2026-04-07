@@ -154,18 +154,16 @@ export async function fetchActiveNodeStats({ nodes, nowSeconds, fetchImpl = fetc
 }
 
 /**
- * Format the dashboard refresh-info sentence for active-node counts.
+ * Format the active-node counts for display in the footer.
  *
- * @param {{channel: string, frequency: string, stats: {hour:number,day:number,week:number,month:number,sampled:boolean}}} params Formatting data.
- * @returns {string} User-visible sentence for the dashboard header.
+ * @param {{stats: {day:number,week:number,month:number,sampled:boolean}}} params Formatting data.
+ * @returns {string} Compact user-visible string, e.g. ``"569/day · 729/week · 1168/month"``.
  */
-export function formatActiveNodeStatsText({ channel, frequency, stats }) {
+export function formatActiveNodeStatsText({ stats }) {
   const parts = [
-    `${Number(stats?.hour) || 0}/hour`,
     `${Number(stats?.day) || 0}/day`,
     `${Number(stats?.week) || 0}/week`,
     `${Number(stats?.month) || 0}/month`
   ];
-  const suffix = stats?.sampled ? ' (sampled)' : '';
-  return `${channel} (${frequency}) — active nodes: ${parts.join(', ')}${suffix}.`;
+  return parts.join(' · ');
 }

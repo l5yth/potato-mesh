@@ -809,3 +809,136 @@ test('federation page sorts by full site names before truncating visible labels'
     cleanup();
   }
 });
+
+test('federation table linkifies Matrix room aliases, user IDs, and bare domain paths', async () => {
+  const { tbodyEl, cleanup } = (() => {
+    const e = createBasicFederationPageHarness();
+    return { tbodyEl: e.tbodyEl, cleanup: e.cleanup.bind(e) };
+  })();
+
+  const fetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'mesh.example',
+        name: 'Room Test',
+        contactLink: '@jmrplens:matrix.jmrp.io',
+        channel: '#mesh:server.tld',
+        version: '1.0.0',
+        latitude: 0,
+        longitude: 0,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60,
+        nodesCount: 3
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl, leaflet: createBasicLeafletStub() });
+
+    const rowHtml = tbodyEl.childNodes[0].innerHTML;
+    // Matrix user ID: @jmrplens:matrix.jmrp.io → https://matrix.to/#/@jmrplens:matrix.jmrp.io
+    assert.match(rowHtml, /href="https:\/\/matrix\.to\/#\/@jmrplens:matrix\.jmrp\.io"/);
+    assert.match(rowHtml, /@jmrplens:matrix\.jmrp\.io/);
+    // Matrix room alias in channel cell: #mesh:server.tld → https://matrix.to/#/#mesh:server.tld
+    assert.match(rowHtml, /href="https:\/\/matrix\.to\/#\/#mesh:server\.tld"/);
+    assert.match(rowHtml, /#mesh:server\.tld/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('federation table linkifies bare domain-with-path as https', async () => {
+  const { tbodyEl, cleanup } = (() => {
+    const e = createBasicFederationPageHarness();
+    return { tbodyEl: e.tbodyEl, cleanup: e.cleanup.bind(e) };
+  })();
+
+  const fetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'mesh.example',
+        contactLink: 'discord.gg/EGdbRKQnFk',
+        version: '1.0.0',
+        latitude: 0,
+        longitude: 0,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60,
+        nodesCount: 1
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl, leaflet: createBasicLeafletStub() });
+
+    const rowHtml = tbodyEl.childNodes[0].innerHTML;
+    assert.match(rowHtml, /href="https:\/\/discord\.gg\/EGdbRKQnFk"/);
+    assert.match(rowHtml, /discord\.gg\/EGdbRKQnFk/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('federation table sanitises <a> tags and strips other HTML in contact field', async () => {
+  const { tbodyEl, cleanup } = (() => {
+    const e = createBasicFederationPageHarness();
+    return { tbodyEl: e.tbodyEl, cleanup: e.cleanup.bind(e) };
+  })();
+
+  const contactWithHtml =
+    '<a href=https://t.me/+BpSW3no2mJgzM2I8 target=_blank>YO Telegram group</a><b>  Contact:</b>  YO3IBZ';
+  const contactViber =
+    '<a href="https://invite.viber.com/?g=64h1QIFIC1Unai6DS6SE2Ot8ks9xoTm6">Viber Group</a>';
+
+  const fetchImpl = () => Promise.resolve({
+    ok: true,
+    json: async () => [
+      {
+        domain: 'a.mesh',
+        contactLink: contactWithHtml,
+        version: '1.0.0',
+        latitude: 0,
+        longitude: 0,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60,
+        nodesCount: 1
+      },
+      {
+        domain: 'b.mesh',
+        contactLink: contactViber,
+        version: '1.0.0',
+        latitude: 0,
+        longitude: 0,
+        lastUpdateTime: Math.floor(Date.now() / 1000) - 60,
+        nodesCount: 1
+      }
+    ]
+  });
+
+  try {
+    await initializeFederationPage({ config: {}, fetchImpl, leaflet: createBasicLeafletStub() });
+
+    const rows = tbodyEl.childNodes;
+    const aHtml = rows[0].innerHTML;
+    const bHtml = rows[1].innerHTML;
+
+    // Unquoted href extracted and normalised
+    assert.match(aHtml, /href="https:\/\/t\.me\/\+BpSW3no2mJgzM2I8"/);
+    assert.match(aHtml, /YO Telegram group/);
+    // <b> tag stripped, text content preserved
+    assert.match(aHtml, /Contact:/);
+    assert.doesNotMatch(aHtml, /<b>/);
+    // Remaining plain text present
+    assert.match(aHtml, /YO3IBZ/);
+
+    // Quoted href passes through correctly
+    assert.match(bHtml, /href="https:\/\/invite\.viber\.com\/\?g=64h1QIFIC1Unai6DS6SE2Ot8ks9xoTm6"/);
+    assert.match(bHtml, /Viber Group/);
+
+    // No raw HTML from input leaks into output
+    assert.doesNotMatch(aHtml, /target=_blank/);
+    assert.doesNotMatch(aHtml, /<\/b>/);
+  } finally {
+    cleanup();
+  }
+});

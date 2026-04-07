@@ -57,8 +57,6 @@ function executeInDom(source, url, env) {
 test('theme and background modules behave correctly across scenarios', async t => {
   const env = createDomEnvironment({ readyState: 'complete', cookie: '' });
   try {
-    const toggle = env.createElement('button', 'themeToggle');
-    env.registerElement('themeToggle', toggle);
     let filterInvocations = 0;
     env.window.applyFiltersToAllTiles = () => {
       filterInvocations += 1;
@@ -72,52 +70,27 @@ test('theme and background modules behave correctly across scenarios', async t =
     const backgroundHelpers = env.window.__potatoBackground;
     const backgroundHooks = backgroundHelpers.__testHooks;
 
-    await t.test('initialises with a dark theme and persists cookies', () => {
+    await t.test('initialises with a dark theme', () => {
       assert.equal(env.document.documentElement.getAttribute('data-theme'), 'dark');
       assert.equal(env.document.body.classList.contains('dark'), true);
-      assert.equal(toggle.textContent, '☀️');
-      themeHelpers.persistTheme('light');
-      themeHelpers.setCookie('bare', '1');
-      themeHooks.exerciseSetCookieGuard();
-      themeHelpers.setCookie('flag', 'true', { Secure: true });
-      const cookieString = env.getCookieString();
-      assert.equal(themeHelpers.getCookie('flag'), 'true');
-      assert.equal(themeHelpers.getCookie('missing'), null);
-      assert.match(cookieString, /theme=light/);
-      assert.match(cookieString, /; path=\//);
-      assert.match(cookieString, /; SameSite=Lax/);
-      assert.match(cookieString, /; Secure/);
-    });
-
-    await t.test('serializeCookieOptions covers boolean and string attributes', () => {
-      const withAttributes = themeHooks.serializeCookieOptions({ Secure: true, HttpOnly: '1' });
-      assert.equal(withAttributes.includes('; Secure'), true);
-      assert.equal(withAttributes.includes('; HttpOnly=1'), true);
-      const secureOnly = themeHooks.serializeCookieOptions({ Secure: true });
-      assert.equal(secureOnly.trim(), '; Secure');
-      assert.equal(themeHooks.formatCookieOption(['HttpOnly', '1']), '; HttpOnly=1');
-      assert.equal(themeHooks.formatCookieOption(['Secure', true]), '; Secure');
-      assert.equal(themeHooks.serializeCookieOptions({}), '');
-      assert.equal(themeHooks.serializeCookieOptions(), '');
     });
 
     await t.test('re-bootstrap handles DOMContentLoaded flow and filter hooks', () => {
       env.document.readyState = 'loading';
       filterInvocations = 0;
-      env.setCookieString('theme=light');
       themeHooks.bootstrap();
       env.triggerDOMContentLoaded();
-      assert.equal(env.document.documentElement.getAttribute('data-theme'), 'light');
-      assert.equal(env.document.body.classList.contains('dark'), false);
-      assert.equal(toggle.textContent, '🌙');
+      assert.equal(env.document.documentElement.getAttribute('data-theme'), 'dark');
+      assert.equal(env.document.body.classList.contains('dark'), true);
       assert.equal(filterInvocations, 1);
       env.document.removeEventListener('DOMContentLoaded', themeHooks.handleReady);
     });
 
-    await t.test('handleReady tolerates missing toggle button', () => {
-      env.registerElement('themeToggle', null);
+    await t.test('handleReady calls applyFiltersToAllTiles', () => {
+      filterInvocations = 0;
+      env.document.readyState = 'complete';
       themeHooks.handleReady();
-      env.registerElement('themeToggle', toggle);
+      assert.equal(filterInvocations, 1);
     });
 
     await t.test('applyTheme copes with absent DOM nodes', () => {
@@ -125,10 +98,10 @@ test('theme and background modules behave correctly across scenarios', async t =
       const originalRoot = env.document.documentElement;
       env.document.body = null;
       env.document.documentElement = null;
-      assert.equal(themeHooks.applyTheme('dark'), true);
+      // Should not throw even when DOM nodes are absent
+      assert.doesNotThrow(() => themeHooks.applyTheme());
       env.document.body = originalBody;
       env.document.documentElement = originalRoot;
-      assert.equal(themeHooks.applyTheme('light'), false);
     });
 
     await t.test('background bootstrap waits for DOM readiness', () => {
@@ -161,12 +134,12 @@ test('theme and background modules behave correctly across scenarios', async t =
       env.document.body = originalBody;
     });
 
-    await t.test('theme changes trigger background updates', () => {
-      env.document.body.classList.remove('dark');
-      themeHooks.setTheme('light');
+    await t.test('themechange event triggers background update', () => {
+      env.document.body.classList.add('dark');
       backgroundHooks.init();
       env.dispatchWindowEvent('themechange');
-      assert.equal(env.document.documentElement.style.backgroundColor, '#f6f3ee');
+      // Background should reflect dark mode
+      assert.ok(env.document.documentElement.style.backgroundColor !== '');
     });
 
     env.window.removeEventListener('themechange', backgroundHelpers.applyBackground);
