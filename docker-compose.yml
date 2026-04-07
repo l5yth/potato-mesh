@@ -54,6 +54,8 @@ x-ingestor-base: &ingestor-base
     API_TOKEN: ${API_TOKEN}
     INSTANCE_DOMAIN: ${INSTANCE_DOMAIN:-http://web:41447}
     DEBUG: ${DEBUG:-0}
+    PROTOCOL: ${PROTOCOL:-meshtastic}
+    ENERGY_SAVING: ${ENERGY_SAVING:-0}
     FEDERATION: ${FEDERATION:-1}
     PRIVATE: ${PRIVATE:-0}
   volumes:

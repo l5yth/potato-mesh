@@ -1,3 +1,6 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 # Prometheus Monitoring for PotatoMesh
 
 PotatoMesh exposes runtime telemetry through a dedicated Prometheus endpoint so you can

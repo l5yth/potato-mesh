@@ -50,6 +50,7 @@ USER potatomesh
 ENV CONNECTION=/dev/ttyACM0 \
     CHANNEL_INDEX=0 \
     DEBUG=0 \
+    PROTOCOL=meshtastic \
     ALLOWED_CHANNELS="" \
     HIDDEN_CHANNELS="" \
     INSTANCE_DOMAIN="" \
@@ -77,6 +78,7 @@ USER ContainerUser
 ENV CONNECTION=/dev/ttyACM0 \
     CHANNEL_INDEX=0 \
     DEBUG=0 \
+    PROTOCOL=meshtastic \
     ALLOWED_CHANNELS="" \
     HIDDEN_CHANNELS="" \
     INSTANCE_DOMAIN="" \

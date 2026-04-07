@@ -1,3 +1,6 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 # PotatoMesh Docker Guide
 
 PotatoMesh publishes ready-to-run container images to the GitHub Packages container
