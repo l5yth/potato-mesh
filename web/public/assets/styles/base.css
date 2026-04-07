@@ -2012,10 +2012,6 @@ input[type="radio"] {
   }
 }
 
-body.dark .meta {
-  color: #bbb;
-}
-
 body.dark .pill {
   background: #444;
 }

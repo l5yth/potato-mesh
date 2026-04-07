@@ -344,7 +344,7 @@ function resolveMessageTextSegment(message, isReaction) {
  * segments while preserving the matched URL in the resulting array.
  * @type {RegExp}
  */
-const URL_SPLIT_PATTERN = /(https?:\/\/[^\s<>"'[\]]+)/;
+const URL_SPLIT_PATTERN = /(https?:\/\/[^\s<>"'[\]]{1,2048})/;
 
 /**
  * Strip trailing punctuation characters that are typically sentence

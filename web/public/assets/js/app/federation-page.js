@@ -118,15 +118,21 @@ function colorForNodeCount(count) {
  * - Matrix room aliases  (#room:domain.tld)
  * - Matrix user IDs      (@user:domain.tld)
  * - Bare domain-with-path (discord.gg/..., t.me/...)
+ *
+ * Character classes use possessive-style atomic groupings (no overlap) so the
+ * regex engine cannot backtrack into super-linear runtime.
  */
 const CONTACT_LINK_PATTERN =
-  /(https?:\/\/[^\s]+|mailto:[^\s]+|matrix:[^\s]+|[@#][a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\/[^\s<>"']+)/gi;
+  /(https?:\/\/\S+|mailto:\S+|matrix:\S+|[@#][a-zA-Z0-9._/-]+:[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\/\S+)/gi;
 
 /**
  * Regex matching `<a>` elements (including malformed unquoted attributes) and
  * any other HTML tags so they can be handled separately from plain text.
+ *
+ * The `<a>` branch uses `[^<]*` (no nesting) instead of `[\s\S]*?` to avoid
+ * super-linear backtracking when nested or malformed tags are present.
  */
-const HTML_SEGMENT_PATTERN = /(<a\b[^>]*>[\s\S]*?<\/a\s*>|<[^>]+>)/gi;
+const HTML_SEGMENT_PATTERN = /(<a\b[^>]*>[^<]*<\/a\s*>|<[^>]+>)/gi;
 
 /** Extracts the href value from an `<a>` opening tag, quoted or unquoted. */
 const HREF_ATTR_PATTERN = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i;
@@ -210,8 +216,14 @@ function renderContactHtml(text) {
       // Whitelisted <a> tag — extract href, validate, re-render safely
       const hrefMatch = HREF_ATTR_PATTERN.exec(tag);
       const href = hrefMatch ? (hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '') : '';
-      // Strip angle brackets to derive plain link text; content is still escaped below
-      const linkText = tag.replace(/[<>]/g, '').trim();
+      // Strip HTML tags to derive plain link text; content is still escaped below.
+      // The replace runs in a loop to handle residual tags left after the first
+      // pass — this is safe because a single-pass replace of `<…>` can leave
+      // behind a reconstructed tag when the input contains e.g. `<<script>`.
+      let linkText = tag;
+      let prev;
+      do { prev = linkText; linkText = linkText.replace(/<[^>]*>/g, ''); } while (linkText !== prev);
+      linkText = linkText.trim();
       if (SAFE_HREF_RE.test(href)) {
         parts.push(`<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(linkText || href)}</a>`);
       } else {
