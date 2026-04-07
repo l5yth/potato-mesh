@@ -1884,20 +1884,20 @@ input[type="radio"] {
   color: inherit;
 }
 
-/* Slim footer variant used on Charts and Federation pages — flows with the
-   page rather than floating as a fixed bar, padding collapsed to text height. */
+/* Slim footer variant used on Charts and Federation pages — floats like the
+   dashboard footer but with a transparent background and no border. */
 .app-footer--slim {
-  position: static;
   background: transparent;
   border-top: none;
-  z-index: auto;
-  width: auto;
-  inset: auto;
 }
 
-.app-footer--slim .footer-content {
-  padding-block: 4px;
-  font-size: 11px;
+/* Cancel the extra block padding that .page-shell--full-screen injects on
+   .app-footer — slim footers use the same visual height as the dashboard. */
+.page-shell--full-screen .app-footer--slim {
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .meta-active-nodes {
