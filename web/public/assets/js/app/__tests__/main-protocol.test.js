@@ -374,3 +374,18 @@ test('renderShortHtml adds single space padding for surrogate pair emoji', () =>
     assert.ok(html.includes('&nbsp;\uD83D\uDE43&nbsp;'), 'surrogate emoji should have one space on each side');
   });
 });
+
+test('renderShortHtml adds single space padding for ZWJ emoji sequence', () => {
+  withApp(() => {
+    const zwj = '\u{1F3C3}\u{200D}\u{2642}\u{FE0F}'; // 🏃‍♂️ — length 5, 1 grapheme
+    const html = globalThis.PotatoMesh.renderShortHtml(zwj, 'CLIENT');
+    assert.ok(html.includes(`&nbsp;${zwj}&nbsp;`), 'ZWJ emoji should have one space on each side');
+  });
+});
+
+test('renderShortHtml adds single space padding for plain 2-char name', () => {
+  withApp(() => {
+    const html = globalThis.PotatoMesh.renderShortHtml('ab', 'CLIENT');
+    assert.ok(html.includes('&nbsp;ab&nbsp;'), '2-char name should have one space on each side');
+  });
+});

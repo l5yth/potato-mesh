@@ -1853,7 +1853,7 @@ export function initializeApp(config) {
       infoAttr = attrParts.join('');
     }
     if (!short) {
-      return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
+      return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
     }
     // Pad the label for the badge.  For plain-ASCII names that are already
     // 4 characters (meshtastic always stores exactly 4) no padding is added.
