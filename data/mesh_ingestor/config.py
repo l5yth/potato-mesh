@@ -129,6 +129,11 @@ def _resolve_instance_domain() -> str:
 
     Reads the :envvar:`INSTANCE_DOMAIN` variable. When the value does not
     contain a scheme, ``https://`` is prepended automatically.
+
+    .. note::
+
+        Kept for backward compatibility with existing tests and callers.
+        New code should use :func:`_resolve_instance_domains` instead.
     """
 
     configured_instance = os.environ.get("INSTANCE_DOMAIN", "").rstrip("/")
@@ -139,8 +144,80 @@ def _resolve_instance_domain() -> str:
     return configured_instance
 
 
-INSTANCE = _resolve_instance_domain()
-API_TOKEN = os.environ.get("API_TOKEN", "")
+def _normalise_domain(raw: str) -> str:
+    """Strip whitespace and trailing slashes, prepend ``https://`` when needed.
+
+    Parameters:
+        raw: Single domain string to normalise.
+
+    Returns:
+        A URL string with a scheme prefix.
+    """
+
+    domain = raw.strip().rstrip("/")
+    if domain and "://" not in domain:
+        return f"https://{domain}"
+    return domain
+
+
+def _resolve_instance_domains() -> tuple[tuple[str, str], ...]:
+    """Parse :envvar:`INSTANCE_DOMAIN` and :envvar:`API_TOKEN` into paired tuples.
+
+    When ``INSTANCE_DOMAIN`` contains comma-separated values, each entry is
+    treated as an independent target.  ``API_TOKEN`` is either broadcast to
+    every target (single value) or positionally paired (comma-separated with
+    a matching count).
+
+    Returns:
+        A tuple of ``(instance_url, api_token)`` pairs, deduplicated by URL.
+
+    Raises:
+        ValueError: When the number of comma-separated tokens exceeds the
+            number of domains.
+    """
+
+    raw_domain = os.environ.get("INSTANCE_DOMAIN", "")
+    raw_token = os.environ.get("API_TOKEN", "")
+
+    domains: list[str] = []
+    seen: set[str] = set()
+    for part in raw_domain.split(","):
+        normalised = _normalise_domain(part)
+        if not normalised:
+            continue
+        key = normalised.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        domains.append(normalised)
+
+    if not domains:
+        return ()
+
+    tokens = [t.strip() for t in raw_token.split(",")]
+    # A single token (including empty string) is broadcast to all domains.
+    if len(tokens) == 1:
+        token = tokens[0]
+        return tuple((d, token) for d in domains)
+
+    if len(tokens) != len(domains):
+        raise ValueError(
+            f"API_TOKEN has {len(tokens)} comma-separated values but "
+            f"INSTANCE_DOMAIN has {len(domains)}; counts must match or "
+            f"API_TOKEN must be a single value"
+        )
+
+    return tuple(zip(domains, tokens))
+
+
+INSTANCES: tuple[tuple[str, str], ...] = _resolve_instance_domains()
+"""Paired ``(instance_url, api_token)`` tuples derived from the environment."""
+
+INSTANCE = INSTANCES[0][0] if INSTANCES else _resolve_instance_domain()
+"""First configured instance URL, kept for backward compatibility."""
+
+API_TOKEN = INSTANCES[0][1] if INSTANCES else os.environ.get("API_TOKEN", "")
+"""API token for the first configured instance, kept for backward compatibility."""
 ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 """When ``True``, enables the ingestor's energy saving mode."""
 
@@ -202,6 +279,7 @@ __all__ = [
     "HIDDEN_CHANNELS",
     "ALLOWED_CHANNELS",
     "INSTANCE",
+    "INSTANCES",
     "API_TOKEN",
     "ENERGY_SAVING",
     "LORA_FREQ",

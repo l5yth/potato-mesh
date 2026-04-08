@@ -96,6 +96,84 @@ class TestParseHiddenChannels:
 # ---------------------------------------------------------------------------
 
 
+class TestResolveInstanceDomains:
+    """Tests for :func:`config._resolve_instance_domains`."""
+
+    def test_single_domain(self, monkeypatch):
+        """Single domain produces one-element tuple."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld")
+        monkeypatch.setenv("API_TOKEN", "secret")
+        result = config._resolve_instance_domains()
+        assert result == (("https://foo.tld", "secret"),)
+
+    def test_multi_domain_broadcast_token(self, monkeypatch):
+        """Multiple domains with a single token broadcast the token."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld, bar.tld")
+        monkeypatch.setenv("API_TOKEN", "shared")
+        result = config._resolve_instance_domains()
+        assert result == (
+            ("https://foo.tld", "shared"),
+            ("https://bar.tld", "shared"),
+        )
+
+    def test_multi_domain_per_instance_tokens(self, monkeypatch):
+        """Comma-separated tokens are positionally paired with domains."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "a.tld,b.tld")
+        monkeypatch.setenv("API_TOKEN", "tok1,tok2")
+        result = config._resolve_instance_domains()
+        assert result == (("https://a.tld", "tok1"), ("https://b.tld", "tok2"))
+
+    def test_token_count_mismatch_raises(self, monkeypatch):
+        """Mismatched counts raise ValueError at parse time."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "a.tld,b.tld")
+        monkeypatch.setenv("API_TOKEN", "t1,t2,t3")
+        with pytest.raises(ValueError, match="counts must match"):
+            config._resolve_instance_domains()
+
+    def test_deduplicates_domains(self, monkeypatch):
+        """Duplicate domains are collapsed to a single entry."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld, foo.tld")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == (("https://foo.tld", "tok"),)
+
+    def test_preserves_explicit_scheme(self, monkeypatch):
+        """Domains with explicit schemes keep them; others get https://."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "http://local:41447,bar.tld")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == (
+            ("http://local:41447", "tok"),
+            ("https://bar.tld", "tok"),
+        )
+
+    def test_empty_domain(self, monkeypatch):
+        """Empty INSTANCE_DOMAIN returns an empty tuple."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == ()
+
+    def test_strips_trailing_slashes(self, monkeypatch):
+        """Trailing slashes are stripped from domains."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld/")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == (("https://foo.tld", "tok"),)
+
+    def test_empty_token_broadcast(self, monkeypatch):
+        """Empty API_TOKEN broadcasts empty string to all instances."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "a.tld,b.tld")
+        monkeypatch.setenv("API_TOKEN", "")
+        result = config._resolve_instance_domains()
+        assert result == (("https://a.tld", ""), ("https://b.tld", ""))
+
+
+# ---------------------------------------------------------------------------
+# _resolve_instance_domain (legacy, kept for backward compatibility)
+# ---------------------------------------------------------------------------
+
+
 class TestResolveInstanceDomain:
     """Tests for :func:`config._resolve_instance_domain`."""
 

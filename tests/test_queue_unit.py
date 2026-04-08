@@ -53,6 +53,19 @@ def _fresh_state() -> QueueState:
     return QueueState()
 
 
+class _FakeResp:
+    """Minimal context-manager response stub for ``urlopen`` patches."""
+
+    def read(self):
+        return b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Priority constant ordering
 # ---------------------------------------------------------------------------
@@ -85,33 +98,24 @@ class TestPostJson:
     """Tests for :func:`queue._post_json`."""
 
     def test_skips_when_no_instance(self, monkeypatch):
-        """Does nothing when INSTANCE is empty."""
+        """Does nothing when INSTANCES is empty."""
+        monkeypatch.setattr(config, "INSTANCES", ())
         monkeypatch.setattr(config, "INSTANCE", "")
-        sent = []
         with patch("urllib.request.urlopen") as mock_open:
             _post_json("/api/test", {"key": "val"})
             mock_open.assert_not_called()
 
     def test_sends_json_post(self, monkeypatch):
         """Sends a POST request with JSON body and correct headers."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://localhost", "tok"),))
         monkeypatch.setattr(config, "INSTANCE", "http://localhost")
         monkeypatch.setattr(config, "API_TOKEN", "tok")
 
         captured_req = []
 
-        class FakeResp:
-            def read(self):
-                return b""
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                pass
-
         def fake_urlopen(req, timeout=None):
             captured_req.append(req)
-            return FakeResp()
+            return _FakeResp()
 
         with patch("urllib.request.urlopen", fake_urlopen):
             _post_json("/api/nodes", {"a": 1})
@@ -124,6 +128,7 @@ class TestPostJson:
 
     def test_handles_network_error_gracefully(self, monkeypatch, capsys):
         """Network errors are caught and logged, not raised."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://localhost", ""),))
         monkeypatch.setattr(config, "INSTANCE", "http://localhost")
         monkeypatch.setattr(config, "API_TOKEN", "")
         monkeypatch.setattr(config, "DEBUG", True)
@@ -140,19 +145,9 @@ class TestPostJson:
 
         captured_req = []
 
-        class FakeResp:
-            def read(self):
-                return b""
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                pass
-
         def fake_urlopen(req, timeout=None):
             captured_req.append(req)
-            return FakeResp()
+            return _FakeResp()
 
         with patch("urllib.request.urlopen", fake_urlopen):
             _post_json("/api/test", {}, instance="http://override")
@@ -161,24 +156,15 @@ class TestPostJson:
 
     def test_no_auth_header_when_token_empty(self, monkeypatch):
         """No Authorization header is added when API_TOKEN is empty."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://localhost", ""),))
         monkeypatch.setattr(config, "INSTANCE", "http://localhost")
         monkeypatch.setattr(config, "API_TOKEN", "")
 
         captured_req = []
 
-        class FakeResp:
-            def read(self):
-                return b""
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                pass
-
         def fake_urlopen(req, timeout=None):
             captured_req.append(req)
-            return FakeResp()
+            return _FakeResp()
 
         with patch("urllib.request.urlopen", fake_urlopen):
             _post_json("/api/test", {})
@@ -394,3 +380,106 @@ class TestClearPostQueue:
         state = _fresh_state()
         _clear_post_queue(state=state)
         assert state.queue == []
+
+
+# ---------------------------------------------------------------------------
+# Multi-instance fan-out
+# ---------------------------------------------------------------------------
+
+
+class TestMultiInstanceFanOut:
+    """Tests for multi-instance POST fan-out in :func:`queue._post_json`."""
+
+    def test_fans_out_to_all_instances(self, monkeypatch):
+        """Each configured instance receives the payload."""
+        monkeypatch.setattr(
+            config,
+            "INSTANCES",
+            (("http://alpha", "t1"), ("http://beta", "t2")),
+        )
+
+        captured = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            return _FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/nodes", {"a": 1})
+
+        assert len(captured) == 2
+        urls = {r.get_full_url() for r in captured}
+        assert urls == {"http://alpha/api/nodes", "http://beta/api/nodes"}
+        tokens = {r.get_header("Authorization") for r in captured}
+        assert tokens == {"Bearer t1", "Bearer t2"}
+
+    def test_failure_isolation(self, monkeypatch):
+        """A failure on one instance does not prevent delivery to the next."""
+        monkeypatch.setattr(
+            config,
+            "INSTANCES",
+            (("http://broken", "t1"), ("http://ok", "t2")),
+        )
+        monkeypatch.setattr(config, "DEBUG", False)
+
+        captured = []
+
+        def fake_urlopen(req, timeout=None):
+            if "broken" in req.get_full_url():
+                raise OSError("connection refused")
+            captured.append(req)
+            return _FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/test", {"x": 1})
+
+        assert len(captured) == 1
+        assert "http://ok" in captured[0].get_full_url()
+
+    def test_explicit_instance_skips_fanout(self, monkeypatch):
+        """Passing instance= explicitly bypasses the INSTANCES fan-out."""
+        monkeypatch.setattr(
+            config,
+            "INSTANCES",
+            (("http://a", "t1"), ("http://b", "t2")),
+        )
+
+        captured = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            return _FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/test", {}, instance="http://override")
+
+        assert len(captured) == 1
+        assert "http://override" in captured[0].get_full_url()
+
+    def test_empty_instances_noop(self, monkeypatch):
+        """No requests are made when INSTANCES is empty."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "")
+
+        with patch("urllib.request.urlopen") as mock_open:
+            _post_json("/api/test", {})
+            mock_open.assert_not_called()
+
+    def test_backward_compat_fallback(self, monkeypatch):
+        """Falls back to config.INSTANCE when INSTANCES is empty."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "http://legacy")
+        monkeypatch.setattr(config, "API_TOKEN", "tok")
+
+        captured = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            return _FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/test", {"v": 1})
+
+        assert len(captured) == 1
+        assert "http://legacy" in captured[0].get_full_url()
+        assert captured[0].get_header("Authorization") == "Bearer tok"

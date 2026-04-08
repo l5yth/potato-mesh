@@ -666,11 +666,16 @@ def main(*, provider: MeshProtocol | None = None) -> None:
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGTERM, handle_sigterm)
 
+    instance_label = (
+        ", ".join(inst for inst, _ in config.INSTANCES)
+        if config.INSTANCES
+        else "(no INSTANCE_DOMAIN configured)"
+    )
     config._debug_log(
         "Mesh daemon starting",
         context="daemon.main",
         severity="info",
-        target=config.INSTANCE or "(no INSTANCE_DOMAIN configured)",
+        target=instance_label,
         port=config.CONNECTION or "auto",
         channel=config.CHANNEL_INDEX,
     )
