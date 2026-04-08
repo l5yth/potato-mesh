@@ -1,6 +1,9 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 # Repository Guidelines
 
-Keep code as modular as possible to reduce duplication and improve reusability and readability. If a module grows large, split it into a submodule structure. Prefer composing small, single-purpose units over monolithic files.
+Keep code as modular as possible to reduce duplication and improve reusability and readability — this applies to tests as well as production code. If a module grows large, split it into a submodule structure. Prefer composing small, single-purpose units over monolithic files.
 
 Make sure all tests pass for Python (`pytest`), Ruby (`rspec`), and JavaScript (`npm test`).
 
@@ -8,7 +11,7 @@ All code must be 100% unit tested — every line, branch, and code path must hav
 
 All code must be 100% documented according to the language's API-doc standard (PDoc for Python, RDoc for Ruby, JSDoc for JavaScript, rustdoc for Rust, dartdoc for Dart). Documentation must be sufficient to generate complete API docs from source. In addition to API-level docs, add inline comments wherever the logic is not immediately self-evident.
 
-New source files should have Apache v2 license headers using the exact string `Copyright © 2025-26 l5yth & contributors`.
+Every file in the repository must carry an Apache v2 license notice using the exact string `Copyright © 2025-26 l5yth & contributors`. **Source-code files** (`.rb`, `.py`, `.js`, `.rs`, `.dart`, etc.) must include the full Apache v2 license header block. **Non-source files** (docs, configs, YAML, TOML, Dockerfiles, etc.) must include a short 2-line Apache v2 notice (copyright line + license reference).
 
 Run linters for Python (`black`) and Ruby (`rufo`) to ensure consistent code formatting.
 

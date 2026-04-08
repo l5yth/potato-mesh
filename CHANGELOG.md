@@ -1,6 +1,19 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 # CHANGELOG
 
 ## v0.6.0
+
+**Official multi-protocol release.** This version introduces first-class
+support for both Meshtastic and MeshCore mesh protocols via the new `PROTOCOL`
+environment variable. Key additions since v0.5.12:
+
+* Feat: official MeshCore provider with BLE, TCP, and serial support
+* Feat: multi-protocol awareness across web frontend, ingestor, and mobile app
+* Enh: surface MeshCore role types and distinguish protocols in the UI
+
+See v0.5.12 below for the full commit history of multi-protocol groundwork.
 
 **Breaking changes — remove deprecated environment variable aliases:**
 

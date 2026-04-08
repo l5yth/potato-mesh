@@ -1,3 +1,6 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 ## Mesh ingestor contracts (stable interfaces)
 
 This repo’s ingestion pipeline is split into:

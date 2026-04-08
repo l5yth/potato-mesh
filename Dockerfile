@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # Copyright © 2025-26 l5yth & contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +26,9 @@ ENV BUNDLE_FORCE_RUBY_PLATFORM=true
 # Install build dependencies and SQLite3
 RUN apk add --no-cache \
     build-base \
+    python3 \
+    py3-pip \
+    py3-virtualenv \
     sqlite-dev \
     linux-headers \
     pkgconfig
@@ -40,11 +44,16 @@ RUN bundle config set --local force_ruby_platform true && \
     bundle config set --local without 'development test' && \
     bundle install --jobs=4 --retry=3
 
+# Install Meshtastic decoder dependencies in a dedicated venv
+RUN python3 -m venv /opt/meshtastic-venv && \
+    /opt/meshtastic-venv/bin/pip install --no-cache-dir meshtastic protobuf
+
 # Production stage
 FROM ruby:3.3-alpine AS production
 
 # Install runtime dependencies
 RUN apk add --no-cache \
+    python3 \
     sqlite \
     tzdata \
     curl
@@ -58,18 +67,27 @@ WORKDIR /app
 
 # Copy installed gems from builder stage
 COPY --from=builder /usr/local/bundle /usr/local/bundle
+COPY --from=builder /opt/meshtastic-venv /opt/meshtastic-venv
 
-# Copy application code (exclude Dockerfile from web directory)
-COPY --chown=potatomesh:potatomesh web/app.rb web/app.sh web/Gemfile web/Gemfile.lock* web/spec/ ./
+# Copy application code (excluding the Dockerfile which is not required at runtime)
+COPY --chown=potatomesh:potatomesh web/app.rb ./
+COPY --chown=potatomesh:potatomesh web/app.sh ./
+COPY --chown=potatomesh:potatomesh web/Gemfile ./
+COPY --chown=potatomesh:potatomesh web/Gemfile.lock* ./
+COPY --chown=potatomesh:potatomesh web/lib ./lib
+COPY --chown=potatomesh:potatomesh web/spec ./spec
 COPY --chown=potatomesh:potatomesh web/public ./public
-COPY --chown=potatomesh:potatomesh web/views/ ./views/
+COPY --chown=potatomesh:potatomesh web/views ./views
+COPY --chown=potatomesh:potatomesh web/scripts ./scripts
 
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
+COPY --chown=potatomesh:potatomesh data/mesh_ingestor/decode_payload.py /app/data/mesh_ingestor/decode_payload.py
 
-# Create data directory for SQLite database
-RUN mkdir -p /app/data /app/.local/share/potato-mesh && \
-    chown -R potatomesh:potatomesh /app/data /app/.local
+# Create data and configuration directories with correct ownership
+RUN mkdir -p /app/.local/share/potato-mesh \
+    && mkdir -p /app/.config/potato-mesh/well-known \
+    && chown -R potatomesh:potatomesh /app/.local/share /app/.config
 
 # Switch to non-root user
 USER potatomesh
@@ -78,13 +96,16 @@ USER potatomesh
 EXPOSE 41447
 
 # Default environment variables (can be overridden by host)
-ENV APP_ENV=production \
-    RACK_ENV=production \
+ENV RACK_ENV=production \
+    APP_ENV=production \
+    MESHTASTIC_PYTHON=/opt/meshtastic-venv/bin/python \
+    XDG_DATA_HOME=/app/.local/share \
+    XDG_CONFIG_HOME=/app/.config \
     SITE_NAME="PotatoMesh Demo" \
-    INSTANCE_DOMAIN="potato.example.com" \
     CHANNEL="#LongFast" \
     FREQUENCY="915MHz" \
     MAP_CENTER="38.761944,-27.090833" \
+    MAP_ZOOM="" \
     MAX_DISTANCE=42 \
     CONTACT_LINK="#potatomesh:dod.ngo" \
     DEBUG=0

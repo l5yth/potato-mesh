@@ -1,3 +1,6 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 # 🥔 PotatoMesh
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/l5yth/potato-mesh/ruby.yml?branch=main)](https://github.com/l5yth/potato-mesh/actions)
@@ -30,7 +33,7 @@ _No MQTT clutter, just local LoRa aether._
 
 Live demo for Berlin: [potatomesh.net](https://potatomesh.net)
 
-![screenshot of the fourth version](./scrot-0.4.png)
+![screenshot of the sixth version](./scrot-0.7.png)
 
 ## Web App
 
@@ -275,9 +278,9 @@ docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-arm64:latest
 docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-armv7:latest
 
 # version-pinned examples
-docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:v0.5.5
-docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:v0.5.5
-docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-amd64:v0.5.5
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:v0.6.0
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:v0.6.0
+docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-amd64:v0.6.0
 ```
 
 Note: `latest` is only published for non-prerelease versions. Pre-release tags

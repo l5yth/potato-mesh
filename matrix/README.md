@@ -1,3 +1,6 @@
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
+
 # potatomesh-matrix-bridge
 
 A small Rust daemon that bridges **PotatoMesh** LoRa messages into a **Matrix** room.
@@ -90,7 +93,7 @@ room_id = "!yourroomid:example.org"
 [state]
 # Where to persist last seen message id
 state_file = "bridge_state.json"
-````
+```
 
 The `hs_token` is used to validate inbound appservice transactions. Keep it identical in `Config.toml` and your Matrix appservice registration file.
 

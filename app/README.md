@@ -1,6 +1,10 @@
-# Meshtastic Reader
+<!-- Copyright © 2025-26 l5yth & contributors -->
+<!-- Licensed under the Apache License, Version 2.0 (see LICENSE) -->
 
-Meshtastic Reader – read-only PotatoMesh chat client for Android and iOS.
+# PotatoMesh Mobile
+
+PotatoMesh Mobile — read-only mesh chat client for Android and iOS.
+Supports Meshtastic and MeshCore networks.
 
 ## Setup
 

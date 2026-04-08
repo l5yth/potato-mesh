@@ -49,3 +49,21 @@ services:
     environment:
       DEBUG: 0
     restart: always
+
+  matrix-bridge:
+    build:
+      context: .
+      dockerfile: matrix/Dockerfile
+      target: runtime
+    environment:
+      DEBUG: 0
+    restart: always
+
+  matrix-bridge-bridge:
+    build:
+      context: .
+      dockerfile: matrix/Dockerfile
+      target: runtime
+    environment:
+      DEBUG: 0
+    restart: always
