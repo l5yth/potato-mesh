@@ -78,7 +78,7 @@
    show_footer = !full_screen_view || %i[charts federation].include?(view_mode)
    footer_slim = %i[charts federation].include?(view_mode)
    show_filter_input = !%i[node_detail charts federation].include?(view_mode)
-   show_meta_row = !%i[charts federation].include?(view_mode)
+   show_meta_row = !%i[node_detail charts federation].include?(view_mode)
    nodes_nav_href = "/nodes"
    nodes_nav_active = %i[nodes node_detail].include?(view_mode)
    federation_nav_enabled = !private_mode && federation_enabled
@@ -99,8 +99,10 @@
       <header class="site-header">
         <div class="site-header__left">
           <h1 class="site-title">
-            <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
-            <span class="site-title-text"><%= site_name %></span>
+            <a href="/" class="site-title__link">
+              <img src="/potatomesh-logo.svg" alt="" aria-hidden="true" />
+              <span class="site-title-text"><%= site_name %></span>
+            </a>
           </h1>
           <% if federation_nav_enabled %>
             <div class="header-federation">

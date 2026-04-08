@@ -1311,6 +1311,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('class="footer-content"')
     end
 
+    it "renders the site title as a link to the dashboard" do
+      get "/"
+
+      expect(last_response.body).to include('class="site-title__link"')
+      expect(last_response.body).to match(%r{<a href="/" class="site-title__link">})
+    end
+
     it "renders the federation instance selector when federation is enabled" do
       get "/"
 
@@ -6978,6 +6985,14 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       expect(last_response.body).to include("data-node-reference=")
       expect(last_response.body).to include(node["node_id"])
+    end
+
+    it "does not render the meta row on the node detail page" do
+      node = nodes_fixture.first
+      get "/nodes/#{node["node_id"]}"
+      expect(last_response).to be_ok
+      expect(last_response.body).not_to include('id="metaRow"')
+      expect(last_response.body).not_to include('id="refreshBtn"')
     end
 
     it "returns 404 when the node cannot be located" do

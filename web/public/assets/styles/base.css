@@ -274,6 +274,15 @@ h1 {
   min-width: 0;
 }
 
+.site-title__link {
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
 .site-title-text {
   min-width: 0;
   max-width: 100%;
