@@ -55,6 +55,8 @@ services:
       context: .
       dockerfile: matrix/Dockerfile
       target: runtime
+    environment:
+      DEBUG: 0
     restart: always
 
   matrix-bridge-bridge:
@@ -62,4 +64,6 @@ services:
       context: .
       dockerfile: matrix/Dockerfile
       target: runtime
+    environment:
+      DEBUG: 0
     restart: always
