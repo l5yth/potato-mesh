@@ -20,6 +20,8 @@ gem "sqlite3", "~> 1.7"
 gem "rackup", "~> 2.2"
 gem "puma", "~> 7.0"
 gem "prometheus-client"
+gem "kramdown", "~> 2.4"
+gem "kramdown-parser-gfm", "~> 1.1"
 
 group :test do
   gem "rspec", "~> 3.12"
@@ -29,3 +31,5 @@ group :test do
   gem "simplecov_json_formatter", "~> 0.1", require: false
   gem "rspec_junit_formatter", "~> 0.6", require: false
 end
+
+gem "sanitize", "7.0.0"

@@ -81,6 +81,18 @@ the container. This path stores the instance private key and staged
 of container lifecycle events, generated credentials are not replaced on reboot
 or re-deploy.
 
+The `potatomesh_pages` volume mounts to `/app/pages` and holds operator-managed
+Markdown files that are rendered as static content pages in the web UI. On first
+start the default `1-about.md` page is copied from the image into the volume.
+You can add, edit, or remove `.md` files in this volume to customise your
+instance's navigation. To use a host directory instead of a named volume, replace
+the volume entry with a bind mount:
+
+```yaml
+volumes:
+  - ./my-pages:/app/pages
+```
+
 ## Start the stack
 
 From the directory containing the Compose file:

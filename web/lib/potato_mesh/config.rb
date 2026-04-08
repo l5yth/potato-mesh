@@ -84,6 +84,26 @@ module PotatoMesh
       value.to_s.strip != "0"
     end
 
+    # Resolve the absolute path to the operator-managed static pages directory.
+    #
+    # The directory defaults to +pages/+ at the application root and can be
+    # overridden with the +PAGES_DIR+ environment variable.
+    #
+    # @return [String] absolute filesystem path to the pages directory.
+    def pages_directory
+      custom = fetch_string("PAGES_DIR", nil)
+      return File.expand_path(custom) if custom
+
+      File.join(web_root, "pages")
+    end
+
+    # Maximum file size in bytes accepted when reading a static page.
+    #
+    # @return [Integer] byte ceiling for markdown files.
+    def max_page_file_bytes
+      512 * 1024
+    end
+
     # Resolve the absolute path to the web application root directory.
     #
     # @return [String] absolute filesystem path of the web folder.

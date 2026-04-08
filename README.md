@@ -128,6 +128,28 @@ well-known document is staged in
 
 The database can be found in `$XDG_DATA_HOME/potato-mesh`.
 
+### Custom Pages
+
+Instance operators can publish static content pages (contact details, mesh
+protocol information, legal notices, etc.) by placing Markdown files in the
+`pages/` directory inside `web/`. Each `.md` file automatically becomes a nav
+entry and a route under `/pages/<slug>`.
+
+Files are named `<sort-prefix>-<slug>.md` — the numeric prefix controls
+navigation order and the slug becomes the URL path and nav label:
+
+| Filename               | Nav Label      | URL                     |
+| ---------------------- | -------------- | ----------------------- |
+| `1-about.md`           | About          | `/pages/about`          |
+| `5-rules.md`           | Rules          | `/pages/rules`          |
+| `9-contact.md`         | Contact        | `/pages/contact`        |
+| `20-impressum.md`      | Impressum      | `/pages/impressum`      |
+
+A default `1-about.md` ships with the app. In Docker deployments the directory
+is exposed as the `potatomesh_pages` volume (mounted at `/app/pages`) so you can
+add or edit pages without rebuilding the image. The pages directory can also be
+overridden with the `PAGES_DIR` environment variable.
+
 ### Federation
 
 PotatoMesh instances can optionally federate by publishing signed metadata and

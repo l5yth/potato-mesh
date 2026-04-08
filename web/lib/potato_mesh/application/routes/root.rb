@@ -59,6 +59,7 @@ module PotatoMesh
               initial_theme: theme,
               current_view_mode: view_mode_sym,
               map_zoom: PotatoMesh::Config.map_zoom,
+              static_pages: PotatoMesh::App::Pages.static_pages,
             }
             sanitized_locals = extra_locals.is_a?(Hash) ? extra_locals : {}
             merged_locals = base_locals.merge(sanitized_locals)
@@ -178,6 +179,26 @@ module PotatoMesh
           app.get %r{/federation/?} do
             halt 404 unless federation_enabled?
             render_root_view(:federation, view_mode: :federation)
+          end
+
+          app.get "/pages/:slug" do
+            slug = params.fetch("slug", "")
+            halt 400, "Bad Request" unless slug.match?(PotatoMesh::App::Pages::SLUG_PATTERN)
+
+            page = PotatoMesh::App::Pages.find_page_by_slug(slug)
+            halt 404, "Not Found" unless page
+
+            page_html = PotatoMesh::App::Pages.render_page_content(page)
+            halt 500, "Internal Server Error" unless page_html
+
+            render_root_view(
+              :page,
+              view_mode: :"page_#{slug}",
+              extra_locals: {
+                page_title: page.title,
+                page_content_html: page_html,
+              },
+            )
           end
 
           app.get "/nodes/:id" do

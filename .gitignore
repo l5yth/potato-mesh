@@ -74,6 +74,9 @@ web/.config
 node_modules/
 web/node_modules/
 
+# Operator-customised static pages (keep only the shipped default)
+web/pages/*.md
+
 # Debug symbols
 ignored.txt
 ignored-*.txt
