@@ -346,3 +346,31 @@ test('createMessageChatEntry: meshtastic message with @[Name] is NOT resolved as
     assert.ok(shortNameCount <= 1, 'only the sender badge should be present, no mention badge');
   });
 });
+
+// --- renderShortHtml badge padding ---
+
+test('renderShortHtml leaves 4-char ASCII names unpadded', () => {
+  withApp(() => {
+    const html = globalThis.PotatoMesh.renderShortHtml('0ac7', 'CLIENT');
+    assert.ok(!html.includes('&nbsp;0ac7'), 'should not add leading space');
+    assert.ok(!html.includes('0ac7&nbsp;'), 'should not add trailing space');
+  });
+});
+
+test('renderShortHtml adds single space padding for short emoji names', () => {
+  withApp(() => {
+    const html = globalThis.PotatoMesh.renderShortHtml('\u26A1', 'CLIENT');
+    // Should produce " ⚡ " — one leading, one trailing space (as &nbsp;)
+    assert.ok(html.includes('&nbsp;\u26A1&nbsp;'), 'emoji should have one space on each side');
+    // Should NOT have double leading spaces
+    assert.ok(!html.includes('&nbsp;&nbsp;\u26A1'), 'should not double-pad emoji');
+  });
+});
+
+test('renderShortHtml adds single space padding for surrogate pair emoji', () => {
+  withApp(() => {
+    const html = globalThis.PotatoMesh.renderShortHtml('\uD83D\uDE43', 'CLIENT');
+    // 🙃 is a surrogate pair (length 2 in JS) but 1 grapheme
+    assert.ok(html.includes('&nbsp;\uD83D\uDE43&nbsp;'), 'surrogate emoji should have one space on each side');
+  });
+});
