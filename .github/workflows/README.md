@@ -12,3 +12,4 @@
 - **`javascript.yml`** - Frontend test suite
 - **`mobile.yml`** - Flutter mobile tests with coverage reporting
 - **`release.yml`** - Tag-triggered Flutter release builds for Android and iOS
+

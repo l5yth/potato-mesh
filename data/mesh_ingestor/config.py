@@ -129,6 +129,11 @@ def _resolve_instance_domain() -> str:
 
     Reads the :envvar:`INSTANCE_DOMAIN` variable. When the value does not
     contain a scheme, ``https://`` is prepended automatically.
+
+    .. note::
+
+        Kept for backward compatibility with existing tests and callers.
+        New code should use :func:`_resolve_instance_domains` instead.
     """
 
     configured_instance = os.environ.get("INSTANCE_DOMAIN", "").rstrip("/")

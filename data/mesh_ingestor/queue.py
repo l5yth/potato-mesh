@@ -112,6 +112,9 @@ def _send_single(
         payload: JSON-serialisable body to transmit.
     """
 
+    if not instance:
+        return
+
     url = f"{instance}{path}"
     data = json.dumps(payload).encode("utf-8")
 
@@ -174,14 +177,14 @@ def _post_json(
         _send_single(instance, api_token or "", path, payload)
         return
 
-    targets: tuple[tuple[str, str], ...] = getattr(config, "INSTANCES", ())
+    targets: tuple[tuple[str, str], ...] = config.INSTANCES
     if not targets:
         # Backward-compatible fallback for callers that only set
         # config.INSTANCE / config.API_TOKEN directly.
-        inst = getattr(config, "INSTANCE", "")
+        inst = config.INSTANCE
         if not inst:
             return
-        _send_single(inst, api_token or getattr(config, "API_TOKEN", ""), path, payload)
+        _send_single(inst, api_token or config.API_TOKEN, path, payload)
         return
 
     for inst, token in targets:
@@ -311,6 +314,5 @@ __all__ = [
     "_drain_post_queue",
     "_enqueue_post_json",
     "_post_json",
-    "_send_single",
     "_queue_post_json",
 ]
