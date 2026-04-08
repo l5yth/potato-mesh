@@ -53,14 +53,19 @@ module PotatoMesh
       # directory-bomb scenarios from consuming unbounded memory.
       MAX_PAGES = 50
 
-      # Kramdown options shared across all page renders. Raw HTML passthrough
-      # is disabled to prevent XSS from operator-supplied content.
+      # Kramdown options shared across all page renders.
       KRAMDOWN_OPTIONS = {
         input: "GFM",
-        parse_block_html: false,
-        parse_span_html: false,
         hard_wrap: false,
       }.freeze
+
+      # HTML tags allowed in rendered markdown output. Tags not in this list
+      # are stripped after rendering to prevent XSS from operator content.
+      ALLOWED_TAGS = Set.new(%w[
+        h1 h2 h3 h4 h5 h6 p a em strong b i u s del code pre br hr
+        ul ol li dl dt dd blockquote table thead tbody tfoot tr th td
+        img span div sup sub abbr mark small details summary
+      ]).freeze
 
       @pages_cache = nil
       @pages_cache_mutex = Mutex.new
@@ -167,9 +172,29 @@ module PotatoMesh
         return nil if size > PotatoMesh::Config.max_page_file_bytes
 
         content = File.read(page_entry.path, encoding: "utf-8")
-        Kramdown::Document.new(content, **KRAMDOWN_OPTIONS).to_html
+        raw_html = Kramdown::Document.new(content, **KRAMDOWN_OPTIONS).to_html
+        strip_unsafe_html(raw_html)
       rescue SystemCallError
         nil
+      end
+
+      # Remove HTML tags not present in {ALLOWED_TAGS} from the rendered
+      # output. This provides a safety net against XSS when operators include
+      # raw HTML in their Markdown source.
+      #
+      # @param html [String] raw HTML produced by kramdown.
+      # @return [String] HTML with disallowed tags stripped.
+      def strip_unsafe_html(html)
+        html.gsub(%r{<(/?)(\w+)([^>]*)>}) do
+          slash = Regexp.last_match(1)
+          tag = Regexp.last_match(2).downcase
+          attrs = Regexp.last_match(3)
+          if ALLOWED_TAGS.include?(tag)
+            "<#{slash}#{tag}#{attrs}>"
+          else
+            ""
+          end
+        end
       end
 
       # Invalidate the in-memory page cache so the next call to
