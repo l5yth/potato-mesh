@@ -124,6 +124,7 @@ module PotatoMesh
         end
 
         entries.sort_by!(&:sort_key)
+        entries.uniq!(&:slug)
         entries.take(MAX_PAGES).freeze
       end
 
@@ -178,23 +179,39 @@ module PotatoMesh
         nil
       end
 
-      # Remove HTML tags not present in {ALLOWED_TAGS} from the rendered
-      # output. This provides a safety net against XSS when operators include
-      # raw HTML in their Markdown source.
+      # Remove HTML tags not present in {ALLOWED_TAGS} and strip dangerous
+      # attributes (event handlers, javascript: URIs) from the rendered output.
+      # This provides a safety net against XSS when operators include raw HTML
+      # in their Markdown source.
       #
       # @param html [String] raw HTML produced by kramdown.
-      # @return [String] HTML with disallowed tags stripped.
+      # @return [String] HTML with disallowed tags and attributes stripped.
       def strip_unsafe_html(html)
         html.gsub(%r{<(/?)(\w+)([^>]*)>}) do
           slash = Regexp.last_match(1)
           tag = Regexp.last_match(2).downcase
           attrs = Regexp.last_match(3)
           if ALLOWED_TAGS.include?(tag)
-            "<#{slash}#{tag}#{attrs}>"
+            safe_attrs = strip_unsafe_attributes(attrs)
+            "<#{slash}#{tag}#{safe_attrs}>"
           else
             ""
           end
         end
+      end
+
+      # Remove event-handler attributes and javascript: URIs from an HTML
+      # attribute string.
+      #
+      # @param attrs [String] raw attribute string from inside an HTML tag.
+      # @return [String] attribute string with dangerous entries removed.
+      def strip_unsafe_attributes(attrs)
+        return attrs if attrs.nil? || attrs.strip.empty?
+
+        attrs
+          .gsub(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/i, "")
+          .gsub(/\s+href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
+          .gsub(/\s+src\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
       end
 
       # Invalidate the in-memory page cache so the next call to

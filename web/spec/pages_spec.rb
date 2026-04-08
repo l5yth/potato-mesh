@@ -148,6 +148,15 @@ RSpec.describe PotatoMesh::App::Pages do
       expect(result.first.slug).to eq("good")
     end
 
+    it "deduplicates entries with the same slug keeping the first" do
+      File.write(File.join(pages_dir, "1-about.md"), "# First")
+      File.write(File.join(pages_dir, "2-about.md"), "# Second")
+
+      result = described_class.load_static_pages(pages_dir)
+      expect(result.length).to eq(1)
+      expect(result.first.sort_key).to eq("1-about")
+    end
+
     it "limits entries to MAX_PAGES" do
       (1..55).each do |i|
         File.write(File.join(pages_dir, "#{i}-page#{i}.md"), "# Page #{i}")
@@ -277,6 +286,29 @@ RSpec.describe PotatoMesh::App::Pages do
       allow(File).to receive(:read).with(path, encoding: "utf-8").and_raise(Errno::EIO)
 
       expect(described_class.render_page_content(entry)).to be_nil
+    end
+
+    it "strips event-handler attributes from allowed tags" do
+      path = File.join(pages_dir, "1-test.md")
+      File.write(path, '<a href="https://example.com" onclick="alert(1)">link</a>')
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-test", slug: "test", title: "Test", path: path,
+      )
+
+      html = described_class.render_page_content(entry)
+      expect(html).to include('href="https://example.com"')
+      expect(html).not_to include("onclick")
+    end
+
+    it "strips javascript: URIs from href attributes" do
+      path = File.join(pages_dir, "1-test.md")
+      File.write(path, '<a href="javascript:alert(1)">link</a>')
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-test", slug: "test", title: "Test", path: path,
+      )
+
+      html = described_class.render_page_content(entry)
+      expect(html).not_to include("javascript:")
     end
 
     it "preserves allowed HTML tags while stripping disallowed ones" do
