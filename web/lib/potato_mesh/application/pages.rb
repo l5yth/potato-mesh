@@ -16,6 +16,7 @@
 
 require "kramdown"
 require "kramdown-parser-gfm"
+require "sanitize"
 
 module PotatoMesh
   module App
@@ -187,38 +188,33 @@ module PotatoMesh
       # @param html [String] raw HTML produced by kramdown.
       # @return [String] HTML with disallowed tags and attributes stripped.
       def strip_unsafe_html(html)
-        html.gsub(%r{<(/?)(\w+)([^>]*)>}) do
-          slash = Regexp.last_match(1)
-          tag = Regexp.last_match(2).downcase
-          attrs = Regexp.last_match(3)
-          if ALLOWED_TAGS.include?(tag)
-            safe_attrs = strip_unsafe_attributes(attrs)
-            "<#{slash}#{tag}#{safe_attrs}>"
-          else
-            ""
-          end
-        end
+        # Delegate to the sanitize gem for robust HTML and attribute
+        # sanitization instead of relying on ad-hoc regular expressions.
+        Sanitize.fragment(
+          html,
+          elements: ALLOWED_TAGS,
+          attributes: {
+            # Allow a conservative set of common attributes on all elements.
+            :all => %w[id class title alt]
+          },
+          protocols: {
+            "a"   => { "href" => ["http", "https", "mailto"] },
+            "img" => { "src"  => ["http", "https"] }
+          }
+        )
       end
 
       # Remove event-handler attributes and javascript: URIs from an HTML
       # attribute string.
       #
+      # This method is retained for compatibility but no longer performs
+      # manual sanitization; sanitization is handled centrally by
+      # {strip_unsafe_html} via the sanitize gem.
+      #
       # @param attrs [String] raw attribute string from inside an HTML tag.
       # @return [String] attribute string with dangerous entries removed.
       def strip_unsafe_attributes(attrs)
-        return attrs if attrs.nil? || attrs.strip.empty?
-
-        result = attrs
-        loop do
-          cleaned = result
-            .gsub(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/i, "")
-            .gsub(/\s+href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
-            .gsub(/\s+src\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
-          break if cleaned == result
-
-          result = cleaned
-        end
-        result
+        attrs
       end
 
       # Invalidate the in-memory page cache so the next call to
