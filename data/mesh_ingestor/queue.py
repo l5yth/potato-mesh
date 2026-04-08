@@ -97,29 +97,21 @@ class QueueState:
 STATE = QueueState()
 
 
-def _post_json(
+def _send_single(
+    instance: str,
+    api_token: str,
     path: str,
     payload: dict,
-    *,
-    instance: str | None = None,
-    api_token: str | None = None,
 ) -> None:
-    """Send a JSON payload to the configured web API.
+    """Transmit a single JSON payload to one instance.
 
     Parameters:
-        path: API path relative to the configured instance root.
+        instance: Base URL of the target instance.
+        api_token: Bearer token for this instance (may be empty).
+        path: API path relative to the instance root.
         payload: JSON-serialisable body to transmit.
-        instance: Optional override for :data:`config.INSTANCE`.
-        api_token: Optional override for :data:`config.API_TOKEN`.
     """
 
-    if instance is None:
-        instance = config.INSTANCE
-    if api_token is None:
-        api_token = config.API_TOKEN
-
-    if not instance:
-        return
     url = f"{instance}{path}"
     data = json.dumps(payload).encode("utf-8")
 
@@ -153,6 +145,49 @@ def _post_json(
             error_class=exc.__class__.__name__,
             error_message=str(exc),
         )
+
+
+def _post_json(
+    path: str,
+    payload: dict,
+    *,
+    instance: str | None = None,
+    api_token: str | None = None,
+) -> None:
+    """Send a JSON payload to one or more configured web API instances.
+
+    When ``instance`` is provided explicitly the payload is sent to that
+    single target.  Otherwise every ``(url, token)`` pair in
+    :data:`config.INSTANCES` receives the payload independently so that
+    one failure does not block delivery to the remaining targets.
+
+    Parameters:
+        path: API path relative to the instance root.
+        payload: JSON-serialisable body to transmit.
+        instance: Optional single-instance override.
+        api_token: Optional token override (only used with ``instance``).
+    """
+
+    if instance is not None:
+        if not instance:
+            return
+        _send_single(instance, api_token or "", path, payload)
+        return
+
+    targets: tuple[tuple[str, str], ...] = getattr(config, "INSTANCES", ())
+    if not targets:
+        # Backward-compatible fallback for callers that only set
+        # config.INSTANCE / config.API_TOKEN directly.
+        inst = getattr(config, "INSTANCE", "")
+        if not inst:
+            return
+        _send_single(inst, api_token or getattr(config, "API_TOKEN", ""), path, payload)
+        return
+
+    for inst, token in targets:
+        if not inst:
+            continue
+        _send_single(inst, token, path, payload)
 
 
 def _enqueue_post_json(
@@ -276,5 +311,6 @@ __all__ = [
     "_drain_post_queue",
     "_enqueue_post_json",
     "_post_json",
+    "_send_single",
     "_queue_post_json",
 ]

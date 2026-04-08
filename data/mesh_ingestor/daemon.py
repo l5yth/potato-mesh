@@ -670,7 +670,7 @@ def main(*, provider: MeshProtocol | None = None) -> None:
         "Mesh daemon starting",
         context="daemon.main",
         severity="info",
-        target=config.INSTANCE or "(no INSTANCE_DOMAIN configured)",
+        target=", ".join(inst for inst, _ in config.INSTANCES) if config.INSTANCES else "(no INSTANCE_DOMAIN configured)",
         port=config.CONNECTION or "auto",
         channel=config.CHANNEL_INDEX,
     )

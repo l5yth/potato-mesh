@@ -85,15 +85,16 @@ class TestPostJson:
     """Tests for :func:`queue._post_json`."""
 
     def test_skips_when_no_instance(self, monkeypatch):
-        """Does nothing when INSTANCE is empty."""
+        """Does nothing when INSTANCES is empty."""
+        monkeypatch.setattr(config, "INSTANCES", ())
         monkeypatch.setattr(config, "INSTANCE", "")
-        sent = []
         with patch("urllib.request.urlopen") as mock_open:
             _post_json("/api/test", {"key": "val"})
             mock_open.assert_not_called()
 
     def test_sends_json_post(self, monkeypatch):
         """Sends a POST request with JSON body and correct headers."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://localhost", "tok"),))
         monkeypatch.setattr(config, "INSTANCE", "http://localhost")
         monkeypatch.setattr(config, "API_TOKEN", "tok")
 
@@ -124,6 +125,7 @@ class TestPostJson:
 
     def test_handles_network_error_gracefully(self, monkeypatch, capsys):
         """Network errors are caught and logged, not raised."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://localhost", ""),))
         monkeypatch.setattr(config, "INSTANCE", "http://localhost")
         monkeypatch.setattr(config, "API_TOKEN", "")
         monkeypatch.setattr(config, "DEBUG", True)
@@ -161,6 +163,7 @@ class TestPostJson:
 
     def test_no_auth_header_when_token_empty(self, monkeypatch):
         """No Authorization header is added when API_TOKEN is empty."""
+        monkeypatch.setattr(config, "INSTANCES", (("http://localhost", ""),))
         monkeypatch.setattr(config, "INSTANCE", "http://localhost")
         monkeypatch.setattr(config, "API_TOKEN", "")
 
@@ -394,3 +397,224 @@ class TestClearPostQueue:
         state = _fresh_state()
         _clear_post_queue(state=state)
         assert state.queue == []
+
+
+# ---------------------------------------------------------------------------
+# Multi-instance fan-out
+# ---------------------------------------------------------------------------
+
+
+class TestMultiInstanceFanOut:
+    """Tests for multi-instance POST fan-out in :func:`queue._post_json`."""
+
+    def test_fans_out_to_all_instances(self, monkeypatch):
+        """Each configured instance receives the payload."""
+        monkeypatch.setattr(
+            config,
+            "INSTANCES",
+            (("http://alpha", "t1"), ("http://beta", "t2")),
+        )
+
+        captured = []
+
+        class FakeResp:
+            def read(self):
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            return FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/nodes", {"a": 1})
+
+        assert len(captured) == 2
+        urls = {r.get_full_url() for r in captured}
+        assert urls == {"http://alpha/api/nodes", "http://beta/api/nodes"}
+        tokens = {r.get_header("Authorization") for r in captured}
+        assert tokens == {"Bearer t1", "Bearer t2"}
+
+    def test_failure_isolation(self, monkeypatch):
+        """A failure on one instance does not prevent delivery to the next."""
+        monkeypatch.setattr(
+            config,
+            "INSTANCES",
+            (("http://broken", "t1"), ("http://ok", "t2")),
+        )
+        monkeypatch.setattr(config, "DEBUG", False)
+
+        captured = []
+
+        class FakeResp:
+            def read(self):
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            if "broken" in req.get_full_url():
+                raise OSError("connection refused")
+            captured.append(req)
+            return FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/test", {"x": 1})
+
+        assert len(captured) == 1
+        assert "http://ok" in captured[0].get_full_url()
+
+    def test_explicit_instance_skips_fanout(self, monkeypatch):
+        """Passing instance= explicitly bypasses the INSTANCES fan-out."""
+        monkeypatch.setattr(
+            config,
+            "INSTANCES",
+            (("http://a", "t1"), ("http://b", "t2")),
+        )
+
+        captured = []
+
+        class FakeResp:
+            def read(self):
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            return FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/test", {}, instance="http://override")
+
+        assert len(captured) == 1
+        assert "http://override" in captured[0].get_full_url()
+
+    def test_empty_instances_noop(self, monkeypatch):
+        """No requests are made when INSTANCES is empty."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "")
+
+        with patch("urllib.request.urlopen") as mock_open:
+            _post_json("/api/test", {})
+            mock_open.assert_not_called()
+
+    def test_backward_compat_fallback(self, monkeypatch):
+        """Falls back to config.INSTANCE when INSTANCES is empty."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "http://legacy")
+        monkeypatch.setattr(config, "API_TOKEN", "tok")
+
+        captured = []
+
+        class FakeResp:
+            def read(self):
+                return b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req)
+            return FakeResp()
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            _post_json("/api/test", {"v": 1})
+
+        assert len(captured) == 1
+        assert "http://legacy" in captured[0].get_full_url()
+        assert captured[0].get_header("Authorization") == "Bearer tok"
+
+
+# ---------------------------------------------------------------------------
+# Config: _resolve_instance_domains
+# ---------------------------------------------------------------------------
+
+
+class TestResolveInstanceDomains:
+    """Tests for :func:`config._resolve_instance_domains`."""
+
+    def test_single_domain(self, monkeypatch):
+        """Single domain produces one-element tuple."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld")
+        monkeypatch.setenv("API_TOKEN", "secret")
+        result = config._resolve_instance_domains()
+        assert result == (("https://foo.tld", "secret"),)
+
+    def test_multi_domain_broadcast_token(self, monkeypatch):
+        """Multiple domains with a single token broadcast the token."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld, bar.tld")
+        monkeypatch.setenv("API_TOKEN", "shared")
+        result = config._resolve_instance_domains()
+        assert result == (
+            ("https://foo.tld", "shared"),
+            ("https://bar.tld", "shared"),
+        )
+
+    def test_multi_domain_per_instance_tokens(self, monkeypatch):
+        """Comma-separated tokens are positionally paired with domains."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "a.tld,b.tld")
+        monkeypatch.setenv("API_TOKEN", "tok1,tok2")
+        result = config._resolve_instance_domains()
+        assert result == (("https://a.tld", "tok1"), ("https://b.tld", "tok2"))
+
+    def test_token_count_mismatch_raises(self, monkeypatch):
+        """Mismatched counts raise ValueError at parse time."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "a.tld,b.tld")
+        monkeypatch.setenv("API_TOKEN", "t1,t2,t3")
+        with pytest.raises(ValueError, match="counts must match"):
+            config._resolve_instance_domains()
+
+    def test_deduplicates_domains(self, monkeypatch):
+        """Duplicate domains are collapsed to a single entry."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld, foo.tld")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == (("https://foo.tld", "tok"),)
+
+    def test_preserves_explicit_scheme(self, monkeypatch):
+        """Domains with explicit schemes keep them; others get https://."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "http://local:41447,bar.tld")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == (
+            ("http://local:41447", "tok"),
+            ("https://bar.tld", "tok"),
+        )
+
+    def test_empty_domain(self, monkeypatch):
+        """Empty INSTANCE_DOMAIN returns an empty tuple."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == ()
+
+    def test_strips_trailing_slashes(self, monkeypatch):
+        """Trailing slashes are stripped from domains."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "foo.tld/")
+        monkeypatch.setenv("API_TOKEN", "tok")
+        result = config._resolve_instance_domains()
+        assert result == (("https://foo.tld", "tok"),)
+
+    def test_empty_token_broadcast(self, monkeypatch):
+        """Empty API_TOKEN broadcasts empty string to all instances."""
+        monkeypatch.setenv("INSTANCE_DOMAIN", "a.tld,b.tld")
+        monkeypatch.setenv("API_TOKEN", "")
+        result = config._resolve_instance_domains()
+        assert result == (("https://a.tld", ""), ("https://b.tld", ""))
