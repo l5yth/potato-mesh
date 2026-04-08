@@ -67,7 +67,8 @@
 </head>
 <% body_classes = ["dark"]
    view_mode = (defined?(current_view_mode) && current_view_mode) ? current_view_mode.to_sym : :dashboard
-   full_screen_view = !%i[dashboard charts federation].include?(view_mode)
+   page_view = view_mode.to_s.start_with?("page_")
+   full_screen_view = !(%i[dashboard charts federation].include?(view_mode) || page_view)
    body_classes << "view-#{view_mode}"
    shell_classes = ["page-shell"]
    shell_classes << "page-shell--full-screen" if full_screen_view
@@ -75,10 +76,10 @@
    main_classes << "page-main--dashboard" if view_mode == :dashboard
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = true
-   show_footer = !full_screen_view || %i[charts federation].include?(view_mode)
-   footer_slim = %i[charts federation].include?(view_mode)
-   show_filter_input = !%i[node_detail charts federation].include?(view_mode)
-   show_meta_row = !%i[node_detail charts federation].include?(view_mode)
+   show_footer = !full_screen_view || %i[charts federation].include?(view_mode) || page_view
+   footer_slim = %i[charts federation].include?(view_mode) || page_view
+   show_filter_input = !(%i[node_detail charts federation].include?(view_mode) || page_view)
+   show_meta_row = !(%i[node_detail charts federation].include?(view_mode) || page_view)
    nodes_nav_href = "/nodes"
    nodes_nav_active = %i[nodes node_detail].include?(view_mode)
    federation_nav_enabled = !private_mode && federation_enabled
@@ -125,6 +126,10 @@
             <% if federation_nav_enabled %>
               <a href="/federation" class="site-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
             <% end %>
+            <% static_pages.each do |sp| %>
+              <% sp_active = view_mode.to_s == "page_#{sp.slug}" %>
+              <a href="/pages/<%= Rack::Utils.escape_path(sp.slug) %>" class="site-nav__link<%= sp_active ? " is-active" : "" %>"<%= sp_active ? ' aria-current="page"' : "" %>><%= Rack::Utils.escape_html(sp.title) %></a>
+            <% end %>
           </nav>
           <button
             id="mobileMenuToggle"
@@ -155,6 +160,10 @@
             <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="mobile-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
+            <% end %>
+            <% static_pages.each do |sp| %>
+              <% sp_active = view_mode.to_s == "page_#{sp.slug}" %>
+              <a href="/pages/<%= Rack::Utils.escape_path(sp.slug) %>" class="mobile-nav__link<%= sp_active ? " is-active" : "" %>"<%= sp_active ? ' aria-current="page"' : "" %>><%= Rack::Utils.escape_html(sp.title) %></a>
             <% end %>
           </nav>
         </div>

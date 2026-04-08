@@ -76,6 +76,7 @@ COPY --chown=potatomesh:potatomesh web/spec ./spec
 COPY --chown=potatomesh:potatomesh web/public ./public
 COPY --chown=potatomesh:potatomesh web/views ./views
 COPY --chown=potatomesh:potatomesh web/scripts ./scripts
+COPY --chown=potatomesh:potatomesh web/pages ./pages
 
 # Copy SQL schema files from data directory
 COPY --chown=potatomesh:potatomesh data/*.sql /data/
@@ -84,7 +85,8 @@ COPY --chown=potatomesh:potatomesh data/mesh_ingestor/decode_payload.py /app/dat
 # Create data and configuration directories with correct ownership
 RUN mkdir -p /app/.local/share/potato-mesh \
     && mkdir -p /app/.config/potato-mesh/well-known \
-    && chown -R potatomesh:potatomesh /app/.local/share /app/.config
+    && mkdir -p /app/pages \
+    && chown -R potatomesh:potatomesh /app/.local/share /app/.config /app/pages
 
 # Switch to non-root user
 USER potatomesh
