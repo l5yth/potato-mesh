@@ -208,10 +208,17 @@ module PotatoMesh
       def strip_unsafe_attributes(attrs)
         return attrs if attrs.nil? || attrs.strip.empty?
 
-        attrs
-          .gsub(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/i, "")
-          .gsub(/\s+href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
-          .gsub(/\s+src\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
+        result = attrs
+        loop do
+          cleaned = result
+            .gsub(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/i, "")
+            .gsub(/\s+href\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
+            .gsub(/\s+src\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/i, "")
+          break if cleaned == result
+
+          result = cleaned
+        end
+        result
       end
 
       # Invalidate the in-memory page cache so the next call to

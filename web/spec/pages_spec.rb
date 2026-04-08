@@ -300,6 +300,17 @@ RSpec.describe PotatoMesh::App::Pages do
       expect(html).not_to include("onclick")
     end
 
+    it "strips nested event-handler bypass attempts" do
+      path = File.join(pages_dir, "1-test.md")
+      File.write(path, '<a href="#" oonnclick="alert(1)">link</a>')
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-test", slug: "test", title: "Test", path: path,
+      )
+
+      html = described_class.render_page_content(entry)
+      expect(html).not_to include("onclick")
+    end
+
     it "strips javascript: URIs from href attributes" do
       path = File.join(pages_dir, "1-test.md")
       File.write(path, '<a href="javascript:alert(1)">link</a>')
