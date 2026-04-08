@@ -248,6 +248,7 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   height: 1.6em;
   padding: 0 var(--pad);
   border-radius: 999px;

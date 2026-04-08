@@ -1,23 +1,30 @@
 # About This Mesh
 
-Welcome to this [PotatoMesh](https://github.com/l5yth/potato-mesh) instance — a
-community dashboard for off-grid mesh networks.
+Welcome to this [PotatoMesh](https://github.com/l5yth/potato-mesh) instance - a community dashboard for off-grid mesh networks. This is an example page, please modify it before deploying.
 
 ## What Is Meshtastic?
 
 [Meshtastic](https://meshtastic.org) is an open-source project that turns
 affordable LoRa radios into a decentralised, long-range communication network.
-No cellular service or internet connection is required — nodes relay messages
+No cellular service or internet connection is required - nodes relay messages
 across the mesh automatically.
+
+## What Is Meshcore?
+
+[Meshcore](https://meshcore.co.uk) is a firmware for LoRa radios focused on
+reliable, low-power mesh networking. It provides a public channel system and
+supports narrow-band presets optimised for long range in dense environments.
 
 ## Network Details
 
-| Setting   | Value           |
-| --------- | --------------- |
-| Protocol  | Meshtastic      |
-| Channel   | #LongFast       |
-| Frequency | 915 MHz         |
-| Preset    | Long / Fast     |
+| Setting   | Meshtastic      | Meshcore          |
+| --------- | --------------- | ----------------- |
+| Channel   | #MediumFast     | Public            |
+| Frequency | 869.525 MHz     | 869.618 MHz       |
+| Bandwidth | 250 kHz         | 62.5 kHz          |
+| SF        | 8               | 8                 |
+| CR        | 4/5             | 4/8               |
+| Preset    | Medium / Fast   | EU/UK Narrow      |
 
 > Adjust this table to match the configuration of your local mesh.
 
@@ -38,9 +45,9 @@ becomes a new entry in the navigation bar.
 <sort-prefix>-<slug>.md
 ```
 
-- **Sort prefix** — a number that controls the order in the nav bar (e.g. `1`,
+- **Sort prefix** - a number that controls the order in the nav bar (e.g. `1`,
   `5`, `10`). Files are sorted alphabetically by their full filename.
-- **Slug** — lowercase, hyphen-separated words that become the URL path and nav
+- **Slug** - lowercase, hyphen-separated words that become the URL path and nav
   label. `contact` becomes `/pages/contact` with the label "Contact";
   `privacy-policy` becomes `/pages/privacy-policy` labelled "Privacy Policy".
 
@@ -62,5 +69,5 @@ Telemediengesetz) can create an `impressum.md` page:
 20-impressum.md
 ```
 
-Fill it with your legally required contact details — name, address, email, phone
-— and it will appear in the navigation as "Impressum".
+Fill it with your legally required contact details - name, address, email, phone
+- and it will appear in the navigation as "Impressum".
