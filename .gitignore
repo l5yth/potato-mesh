@@ -76,7 +76,6 @@ web/node_modules/
 
 # Operator-customised static pages (keep only the shipped default)
 web/pages/*.md
-!web/pages/1-about.md
 
 # Debug symbols
 ignored.txt

@@ -194,8 +194,9 @@ module PotatoMesh
           html,
           elements: ALLOWED_TAGS,
           attributes: {
-            # Allow a conservative set of common attributes on all elements.
-            :all => %w[id class title alt]
+            :all  => %w[id class title alt],
+            "a"   => %w[href],
+            "img" => %w[src width height loading decoding],
           },
           protocols: {
             "a"   => { "href" => ["http", "https", "mailto"] },
@@ -204,18 +205,6 @@ module PotatoMesh
         )
       end
 
-      # Remove event-handler attributes and javascript: URIs from an HTML
-      # attribute string.
-      #
-      # This method is retained for compatibility but no longer performs
-      # manual sanitization; sanitization is handled centrally by
-      # {strip_unsafe_html} via the sanitize gem.
-      #
-      # @param attrs [String] raw attribute string from inside an HTML tag.
-      # @return [String] attribute string with dangerous entries removed.
-      def strip_unsafe_attributes(attrs)
-        attrs
-      end
 
       # Invalidate the in-memory page cache so the next call to
       # {static_pages} re-scans the directory. Intended for test teardown.
