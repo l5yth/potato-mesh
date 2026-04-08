@@ -194,17 +194,16 @@ module PotatoMesh
           html,
           elements: ALLOWED_TAGS,
           attributes: {
-            :all  => %w[id class title alt],
-            "a"   => %w[href],
+            :all => %w[id class title alt],
+            "a" => %w[href],
             "img" => %w[src width height loading decoding],
           },
           protocols: {
-            "a"   => { "href" => ["http", "https", "mailto"] },
-            "img" => { "src"  => ["http", "https"] }
-          }
+            "a" => { "href" => ["http", "https", "mailto"] },
+            "img" => { "src" => ["http", "https"] },
+          },
         )
       end
-
 
       # Invalidate the in-memory page cache so the next call to
       # {static_pages} re-scans the directory. Intended for test teardown.
