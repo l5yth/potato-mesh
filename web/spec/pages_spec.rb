@@ -102,6 +102,12 @@ RSpec.describe PotatoMesh::App::Pages do
       expect(result).to be_frozen
     end
 
+    it "returns an empty array when the directory argument is nil" do
+      result = described_class.load_static_pages(nil)
+      expect(result).to eq([])
+      expect(result).to be_frozen
+    end
+
     it "returns an empty array when the directory is empty" do
       result = described_class.load_static_pages(pages_dir)
       expect(result).to eq([])
@@ -260,6 +266,30 @@ RSpec.describe PotatoMesh::App::Pages do
       )
       expect(described_class.render_page_content(entry)).to be_nil
     end
+
+    it "returns nil on a filesystem error" do
+      path = File.join(pages_dir, "1-err.md")
+      File.write(path, "# Error")
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-err", slug: "err", title: "Err", path: path,
+      )
+
+      allow(File).to receive(:read).with(path, encoding: "utf-8").and_raise(Errno::EIO)
+
+      expect(described_class.render_page_content(entry)).to be_nil
+    end
+
+    it "preserves allowed HTML tags while stripping disallowed ones" do
+      path = File.join(pages_dir, "1-mixed.md")
+      File.write(path, "<strong>bold</strong> <script>bad</script>")
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-mixed", slug: "mixed", title: "Mixed", path: path,
+      )
+
+      html = described_class.render_page_content(entry)
+      expect(html).to include("<strong>")
+      expect(html).not_to include("<script")
+    end
   end
 
   # ── find_page_by_slug ───────────────────────────────────────
@@ -315,6 +345,29 @@ RSpec.describe PotatoMesh::App::Pages do
     it "returns false in the test environment" do
       expect(described_class.production_environment?).to be false
     end
+
+    it "returns true when RACK_ENV is production" do
+      original = ENV["RACK_ENV"]
+      begin
+        ENV["RACK_ENV"] = "production"
+        expect(described_class.production_environment?).to be true
+      ensure
+        ENV["RACK_ENV"] = original
+      end
+    end
+
+    it "returns true when APP_ENV is production" do
+      original_rack = ENV["RACK_ENV"]
+      original_app = ENV["APP_ENV"]
+      begin
+        ENV["RACK_ENV"] = "test"
+        ENV["APP_ENV"] = "production"
+        expect(described_class.production_environment?).to be true
+      ensure
+        ENV["RACK_ENV"] = original_rack
+        ENV["APP_ENV"] = original_app
+      end
+    end
   end
 
   # ── Route integration ───────────────────────────────────────
@@ -366,6 +419,16 @@ RSpec.describe PotatoMesh::App::Pages do
     it "returns 400 for a slug with encoded special characters" do
       get "/pages/a%3Cb"
       expect(last_response.status).to eq(400)
+    end
+
+    it "returns 500 when page content cannot be rendered" do
+      File.write(File.join(pages_dir, "1-about.md"), "# About")
+      PotatoMesh::App::Pages.clear_pages_cache!
+
+      allow(PotatoMesh::App::Pages).to receive(:render_page_content).and_return(nil)
+
+      get "/pages/about"
+      expect(last_response.status).to eq(500)
     end
 
     it "includes nav links for static pages" do

@@ -627,6 +627,31 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".pages_directory" do
+    it "defaults to pages/ under the web root" do
+      within_env("PAGES_DIR" => nil) do
+        expect(described_class.pages_directory).to eq(
+          File.join(described_class.web_root, "pages"),
+        )
+      end
+    end
+
+    it "uses PAGES_DIR when set" do
+      Dir.mktmpdir do |dir|
+        within_env("PAGES_DIR" => dir) do
+          expect(described_class.pages_directory).to eq(File.expand_path(dir))
+        end
+      end
+    end
+  end
+
+  describe ".max_page_file_bytes" do
+    it "returns a positive integer" do
+      expect(described_class.max_page_file_bytes).to be_a(Integer)
+      expect(described_class.max_page_file_bytes).to be > 0
+    end
+  end
+
   # Execute the provided block with temporary environment overrides.
   #
   # @param values [Hash{String=>String, nil}] key/value pairs to set in ENV.
