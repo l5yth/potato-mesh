@@ -43,7 +43,7 @@ jobs:
         - language: javascript-typescript
           build-mode: none
         - language: swift
-          build-mode: autobuild
+          build-mode: manual
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
@@ -52,6 +52,18 @@ jobs:
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
+    - name: Set up Flutter
+      if: matrix.language == 'swift'
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Build Swift (Flutter iOS)
+      if: matrix.language == 'swift'
+      run: |
+        flutter pub get
+        flutter build ios --debug --no-codesign
+      working-directory: ./app
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
       with:
