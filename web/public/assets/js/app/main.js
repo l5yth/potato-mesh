@@ -1853,22 +1853,22 @@ export function initializeApp(config) {
       infoAttr = attrParts.join('');
     }
     if (!short) {
-      return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>?&nbsp;&nbsp;&nbsp;</span>`;
+      return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
     }
-    // Centre the label within a 4-column badge.  padStart alone only adds
-    // leading spaces, producing "   C" for a 1-char name with no trailing
-    // space.  Instead distribute padding evenly: 1-char → "  C ", 2-char →
-    // " AB ", 3-char → " ABC", 4-char → unchanged.  Names already at 4+
-    // chars are left as-is (meshtastic always stores exactly 4; the Ruby
-    // COMPANION override also produces exactly 4).
+    // Pad the label for the badge.  For plain-ASCII names that are already
+    // 4 characters (meshtastic always stores exactly 4) no padding is added.
+    // Shorter names or names containing emoji/non-ASCII get a single space
+    // on each side — grapheme width varies too much for character-count
+    // centering to work reliably.
     const raw = String(short);
+    const graphemeCount = typeof Intl !== 'undefined' && Intl.Segmenter
+      ? [...new Intl.Segmenter().segment(raw)].length
+      : raw.length;
     let centred;
-    if (raw.length >= 4) {
+    if (graphemeCount >= 4) {
       centred = raw;
     } else {
-      const leading = Math.ceil((4 - raw.length) / 2);
-      const trailing = 4 - raw.length - leading;
-      centred = ' '.repeat(leading) + raw + ' '.repeat(trailing);
+      centred = ` ${raw} `;
     }
     const padded = escapeHtml(centred).replace(/ /g, '&nbsp;');
     const protocol = nodeData?.protocol ?? null;

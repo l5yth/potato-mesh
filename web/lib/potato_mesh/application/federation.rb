@@ -297,9 +297,12 @@ module PotatoMesh
       def shutdown_federation_background_work!(timeout: nil)
         request_federation_shutdown!
         timeout_value = timeout || PotatoMesh::Config.federation_shutdown_timeout_seconds
+        # Drain the worker pool first so federation threads blocked in
+        # wait_for_federation_tasks unblock promptly instead of waiting
+        # for each task's individual timeout to expire.
+        shutdown_federation_worker_pool!
         stop_federation_thread!(:initial_federation_thread, timeout: timeout_value)
         stop_federation_thread!(:federation_thread, timeout: timeout_value)
-        shutdown_federation_worker_pool!
         clear_federation_crawl_state!
       end
 
