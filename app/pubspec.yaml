@@ -1,7 +1,7 @@
 name: potato_mesh_reader
 description: Meshtastic Reader — read-only view for PotatoMesh messages.
 publish_to: "none"
-version: 0.6.0
+version: 0.6.1
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

@@ -5,48 +5,78 @@
 
 ## v0.6.0
 
-**Official multi-protocol release.** This version introduces first-class
-support for both Meshtastic and MeshCore mesh protocols via the new `PROTOCOL`
-environment variable. Key additions since v0.5.12:
+This is a service release of the radio mesh app-suite `potato-mesh` v0.6.0 which introduces new features and overhauls the user interface. The primary notable change is added support for multi-protocol along with an implementation of **Meshcore** in ingestor, web app, and frontend.
 
-* Feat: official MeshCore provider with BLE, TCP, and serial support
-* Feat: multi-protocol awareness across web frontend, ingestor, and mobile app
-* Enh: surface MeshCore role types and distinguish protocols in the UI
+Demo: <https://potatomesh.net/>
 
-See v0.5.12 below for the full commit history of multi-protocol groundwork.
+### Meshcore
 
-**Breaking changes — remove deprecated environment variable aliases:**
+To start ingesting Meshcore data to an upgraded potato-mesh web app, simply tell your ingestor to use the `PROTOCOL="meshcore"`.
 
-* Ingestor: remove `POTATOMESH_INSTANCE` env var — use `INSTANCE_DOMAIN` by @l5yth
-* Ingestor: remove `PROVIDER` env var — use `PROTOCOL` by @l5yth
-* Ingestor: remove `MESH_SERIAL` env var — use `CONNECTION` by @l5yth
-* Ingestor: remove `PORT` config alias — use `CONNECTION` by @l5yth
-* Docker: give `INSTANCE_DOMAIN` a default of `http://web:41447` in compose by @l5yth
-* Chore: bump version to 0.6.0 across web, matrix bridge, and mobile app by @l5yth
+### About Pages
+
+The other notable feature is the removal of the "darkmode" and "info" buttons in favor of customizable markdown pages that allow for more flexibility with regard to custom content (info about presets, contact information, etc.) - see `/pages/*.md` in the web app ([#723](https://github.com/l5yth/potato-mesh/pull/723)).
+
+### Breaking Variable Changes
+
+The following deprecated environmental variables have been removed in this release finally ([#704](https://github.com/l5yth/potato-mesh/pull/704)):
+* ~~POTATOMESH_INSTANCE~~ - please use `INSTANCE_DOMAIN`
+* ~~MESH_SERIAL~~ and ~~PORT~~ - please use `CONNECTION`
+
+### Features
+* Web: add markdown static pages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/723>
+* Data: trace analysus multi ingestor support by @l5yth in <https://github.com/l5yth/potato-mesh/pull/721>
+* Web: facelift by @l5yth in <https://github.com/l5yth/potato-mesh/pull/716>
+* Web: sort channels by activity not index by @l5yth in <https://github.com/l5yth/potato-mesh/pull/711>
+* Data: derive meshcore channel probe bound from device max_channels by @l5yth in <https://github.com/l5yth/potato-mesh/pull/701>
+* Web: define meshcore modem presets by @l5yth in <https://github.com/l5yth/potato-mesh/pull/696>
+* Data: register meshcore channel mappings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/695>
+* Data: provide frequency and modem preset for meshcore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/694>
+* Web: distinguish meshcore from meshtastic in frontend by @l5yth in <https://github.com/l5yth/potato-mesh/pull/688>
+* [Meshcore] fix: get meshcore protocol icon displaying correctly by @benallfree in <https://github.com/l5yth/potato-mesh/pull/681>
+
+### Fixes
+* Web: fix federation for multi protocol by @l5yth in <https://github.com/l5yth/potato-mesh/pull/722>
+* Data: fix position time updates by @l5yth in <https://github.com/l5yth/potato-mesh/pull/715>
+* Data: fix meshcore ingestor self reporting by @l5yth in <https://github.com/l5yth/potato-mesh/pull/713>
+* Web: reference meshcore nodes in chat by @l5yth in <https://github.com/l5yth/potato-mesh/pull/709>
+* Web: fix node disappearance role reset by @l5yth in <https://github.com/l5yth/potato-mesh/pull/707>
+* Web: protect real node names from fallback by @l5yth in <https://github.com/l5yth/potato-mesh/pull/702>
+* Web: add proper short names for meshcore companions by @l5yth in <https://github.com/l5yth/potato-mesh/pull/693>
+* Fix: address review comments from PRs #676 and #681 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/689>
+* [Meshcore] fix: race condition  by @benallfree in <https://github.com/l5yth/potato-mesh/pull/676>
+
+### Chores
+* Release: v0.6.0 — remove deprecated env var aliases by @l5yth in <https://github.com/l5yth/potato-mesh/pull/704>
+* Chore: prepare codebase for breaking release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/718>
 
 ## v0.5.12
 
-* Enh: surface meshcore role types (#680) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/685>
-* Chore: refactor codebase before meshcore release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/682>
-* [Meshcore] enh: short name should be 1st 4 hex digits of public key by @benallfree in <https://github.com/l5yth/potato-mesh/pull/679>
-* Chore: update xcode deps by @benallfree in <https://github.com/l5yth/potato-mesh/pull/674>
-* Chore: update mesh.sh to use requirements file by @benallfree in <https://github.com/l5yth/potato-mesh/pull/675>
-* Data/meshcore: fix ble and enable tcp by @l5yth in <https://github.com/l5yth/potato-mesh/pull/669>
-* Data: handle store_forward and router_heartbeat portnum by @l5yth in <https://github.com/l5yth/potato-mesh/pull/667>
-* Feat: implement meshcore provider by @l5yth in <https://github.com/l5yth/potato-mesh/pull/663>
-* Ci: update dependabot and codecov settings by @l5yth in <https://github.com/l5yth/potato-mesh/pull/666>
-* Web: prepare release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/665>
-* App: only query meshtastic provider by @l5yth in <https://github.com/l5yth/potato-mesh/pull/664>
-* Data: prepare ingestor for meshcore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/658>
-* Web: fix css issues by @l5yth in <https://github.com/l5yth/potato-mesh/pull/659>
-* Web: prepare frontend for multi protocol by @l5yth in <https://github.com/l5yth/potato-mesh/pull/657>
-* Feat: split device and power-sensor telemetry charts (#643) by @l5yth in <https://github.com/l5yth/potato-mesh/pull/656>
-* Web: implement a 'protocol' field across systems by @l5yth in <https://github.com/l5yth/potato-mesh/pull/655>
-* Fix upsert clearing node coordinates bug by @l5yth in <https://github.com/l5yth/potato-mesh/pull/654>
-* Data: resolve circular dependency of deamon.py by @l5yth in <https://github.com/l5yth/potato-mesh/pull/653>
-* Proposal: mesh provider pattern refactor by @benallfree in <https://github.com/l5yth/potato-mesh/pull/651>
-* Build(deps): bump rustls-webpki from 0.103.8 to 0.103.10 in /matrix by @dependabot[bot]< in https://github.com/l5yth/potato-mesh/pull/649>
-* Build(deps): bump quinn-proto from 0.11.13 to 0.11.14 in /matrix by @dependabot[bot]< in https://github.com/l5yth/potato-mesh/pull/646>
+This is a service release of the app potato-mesh v0.5.12 which improves performance and stability.
+
+Notably, the frontend went through some graphical tweaks to prepare for an upcoming multi-protocol release (meshcore, reticulum, etc.).
+
+* Enh: surface meshcore role types (#680) by @l5yth in https://github.com/l5yth/potato-mesh/pull/685
+* Chore: refactor codebase before meshcore release by @l5yth in https://github.com/l5yth/potato-mesh/pull/682
+* [Meshcore] enh: short name should be 1st 4 hex digits of public key by @benallfree in https://github.com/l5yth/potato-mesh/pull/679
+* Chore: update xcode deps by @benallfree in https://github.com/l5yth/potato-mesh/pull/674
+* Chore: update mesh.sh to use requirements file by @benallfree in https://github.com/l5yth/potato-mesh/pull/675
+* Data/meshcore: fix ble and enable tcp by @l5yth in https://github.com/l5yth/potato-mesh/pull/669
+* Data: handle store_forward and router_heartbeat portnum by @l5yth in https://github.com/l5yth/potato-mesh/pull/667
+* Feat: implement meshcore provider by @l5yth in https://github.com/l5yth/potato-mesh/pull/663
+* Ci: update dependabot and codecov settings by @l5yth in https://github.com/l5yth/potato-mesh/pull/666
+* Web: prepare release by @l5yth in https://github.com/l5yth/potato-mesh/pull/665
+* App: only query meshtastic provider by @l5yth in https://github.com/l5yth/potato-mesh/pull/664
+* Data: prepare ingestor for meshcore by @l5yth in https://github.com/l5yth/potato-mesh/pull/658
+* Web: fix css issues by @l5yth in https://github.com/l5yth/potato-mesh/pull/659
+* Web: prepare frontend for multi protocol by @l5yth in https://github.com/l5yth/potato-mesh/pull/657
+* Feat: split device and power-sensor telemetry charts (#643) by @l5yth in https://github.com/l5yth/potato-mesh/pull/656
+* Web: implement a 'protocol' field across systems by @l5yth in https://github.com/l5yth/potato-mesh/pull/655
+* Fix upsert clearing node coordinates bug by @l5yth in https://github.com/l5yth/potato-mesh/pull/654
+* Data: resolve circular dependency of deamon.py by @l5yth in https://github.com/l5yth/potato-mesh/pull/653
+* Proposal: mesh provider pattern refactor by @benallfree in https://github.com/l5yth/potato-mesh/pull/651
+* Build(deps): bump rustls-webpki from 0.103.8 to 0.103.10 in /matrix by @dependabot[bot] in https://github.com/l5yth/potato-mesh/pull/649
+* Build(deps): bump quinn-proto from 0.11.13 to 0.11.14 in /matrix by @dependabot[bot] in https://github.com/l5yth/potato-mesh/pull/646
 
 ## v0.5.11
 
