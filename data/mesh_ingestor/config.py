@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -81,19 +82,22 @@ Accepted values are ``meshtastic`` (default) and ``meshcore``.
 """
 
 
-def _parse_lora_freq_env(raw: str | None) -> float | int | str | None:
-    """Parse the ``FREQUENCY`` environment variable into a typed LoRa frequency.
+def _parse_lora_freq_env(raw: str | None) -> float | int | None:
+    """Parse the ``FREQUENCY`` environment variable into a numeric LoRa frequency.
 
     Returns an :class:`int` for whole-number strings (e.g. ``"868"``), a
-    :class:`float` for decimal strings (e.g. ``"869.525"``), the original
-    string for non-numeric labels (e.g. ``"EU_868"``), or ``None`` when *raw*
-    is empty or absent.
+    :class:`float` for decimal strings (e.g. ``"869.525"``), or ``None`` when
+    *raw* is empty, absent, non-numeric, or non-finite (e.g. ``"inf"``).
+
+    Non-numeric labels such as ``"EU_868"`` intentionally return ``None`` so
+    that :data:`LORA_FREQ` is left unset and :func:`~interfaces._ensure_radio_metadata`
+    can still populate it from the detected radio configuration.
 
     Parameters:
         raw: Raw value of the ``FREQUENCY`` environment variable.
 
     Returns:
-        Typed frequency value, or ``None``.
+        Numeric frequency value, or ``None``.
     """
     if not raw:
         return None
@@ -102,9 +106,11 @@ def _parse_lora_freq_env(raw: str | None) -> float | int | str | None:
         return None
     try:
         as_float = float(stripped)
-        return int(as_float) if as_float == int(as_float) else as_float
     except ValueError:
-        return stripped
+        return None
+    if not math.isfinite(as_float):
+        return None
+    return int(as_float) if as_float == int(as_float) else as_float
 
 
 def _parse_channel_names(raw_value: str | None) -> tuple[str, ...]:
@@ -250,9 +256,10 @@ ENERGY_SAVING = os.environ.get("ENERGY_SAVING") == "1"
 LORA_FREQ: float | int | str | None = _parse_lora_freq_env(os.environ.get("FREQUENCY"))
 """Frequency of the local node's configured LoRa region in MHz or raw region label.
 
-Pre-seeded from the ``FREQUENCY`` environment variable when set, allowing
-operators to override auto-detected values.  Auto-detection from the radio
-interface fills this in when it is ``None``.
+Pre-seeded from the ``FREQUENCY`` environment variable when set to a finite
+numeric value, allowing operators to override auto-detected values.
+Non-numeric or non-finite values are ignored so that auto-detection from the
+radio interface can still fill this in.
 """
 
 MODEM_PRESET: str | None = None
@@ -313,7 +320,6 @@ __all__ = [
     "INSTANCES",
     "API_TOKEN",
     "ENERGY_SAVING",
-    "_parse_lora_freq_env",
     "LORA_FREQ",
     "MODEM_PRESET",
     "_RECONNECT_INITIAL_DELAY_SECS",

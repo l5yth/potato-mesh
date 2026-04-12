@@ -511,8 +511,12 @@ def _resolve_lora_message(local_config: Any) -> Any | None:
     return None
 
 
+# Maps Meshtastic region enum name to (base_freq_MHz, channel_spacing_MHz).
+# Values are derived from the Meshtastic firmware RegionInfo tables.
+# Used by _computed_channel_frequency to derive the actual radio frequency
+# from the region and channel index.
 _REGION_CHANNEL_PARAMS: dict[str, tuple[float, float]] = {
-    "US": (902.0, 0.25),
+    "US": (902.0, 0.25),  # 902–928 MHz; e.g. ch 52 ≈ 915 MHz at 250 kHz spacing
     "EU_433": (433.175, 0.2),
     "EU_868": (869.525, 0.5),  # actual primary ≈ 869.525 MHz, not 868
     "CN": (470.0, 0.2),
@@ -542,12 +546,6 @@ _REGION_CHANNEL_PARAMS: dict[str, tuple[float, float]] = {
     # enum value is unresolvable at runtime.  Operators on IL firmware should
     # set the FREQUENCY environment variable to override.
 }
-"""Maps Meshtastic region enum name to ``(base_freq_MHz, channel_spacing_MHz)``.
-
-Values are derived from the Meshtastic firmware ``RegionInfo`` tables.
-Used by :func:`_computed_channel_frequency` to derive the actual radio
-frequency from the region and channel index.
-"""
 
 
 def _computed_channel_frequency(

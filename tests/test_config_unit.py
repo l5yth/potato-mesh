@@ -327,9 +327,25 @@ class TestParseLoraFreqEnv:
         assert result == pytest.approx(869.525)
         assert isinstance(result, float)
 
-    def test_label_string_returned_as_is(self):
-        """Non-numeric string is returned unchanged."""
-        assert config._parse_lora_freq_env("EU_868") == "EU_868"
+    def test_non_numeric_label_returns_none(self):
+        """Non-numeric string returns None so auto-detection is not blocked."""
+        assert config._parse_lora_freq_env("EU_868") is None
+
+    def test_unit_suffixed_string_returns_none(self):
+        """String like '915MHz' returns None (not numeric)."""
+        assert config._parse_lora_freq_env("915MHz") is None
+
+    def test_inf_returns_none(self):
+        """'inf' is non-finite and returns None."""
+        assert config._parse_lora_freq_env("inf") is None
+
+    def test_large_exponent_returns_none(self):
+        """'1e309' overflows to inf and returns None."""
+        assert config._parse_lora_freq_env("1e309") is None
+
+    def test_nan_returns_none(self):
+        """'nan' is non-finite and returns None."""
+        assert config._parse_lora_freq_env("nan") is None
 
     def test_whitespace_stripped(self):
         """Leading/trailing whitespace is ignored."""
