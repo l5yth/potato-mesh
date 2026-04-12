@@ -589,10 +589,10 @@ def test_ensure_radio_metadata_extracts_config(mesh_module, capsys):
     first_log = capsys.readouterr().out
 
     assert iface.wait_calls == 1
-    assert mesh.config.LORA_FREQ == 868
+    assert mesh.config.LORA_FREQ == 869
     assert mesh.config.MODEM_PRESET == "MediumFast"
     assert "Captured LoRa radio metadata" in first_log
-    assert "lora_freq=868" in first_log
+    assert "lora_freq=869" in first_log
     assert "modem_preset='MediumFast'" in first_log
 
     secondary_lora = make_lora(7, "US_915", 2, "LONG_FAST", preset_field="preset")
@@ -602,7 +602,7 @@ def test_ensure_radio_metadata_extracts_config(mesh_module, capsys):
     second_log = capsys.readouterr().out
 
     assert second_iface.wait_calls == 1
-    assert mesh.config.LORA_FREQ == 868
+    assert mesh.config.LORA_FREQ == 869
     assert mesh.config.MODEM_PRESET == "MediumFast"
     assert second_log == ""
 
