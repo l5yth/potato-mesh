@@ -227,7 +227,7 @@ def test_region_frequency_and_resolution_helpers():
     assert freq == "915MHz"
 
     freq = interfaces._region_frequency(LoraMessage(2))
-    assert freq == "US"
+    assert freq == 902  # "US" is in the region lookup table → base 902 MHz
 
     class StringRegionMessage:
         def __init__(self, region):

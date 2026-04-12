@@ -268,6 +268,72 @@ class TestEnumNameFromField:
 
 
 # ---------------------------------------------------------------------------
+# _computed_channel_frequency
+# ---------------------------------------------------------------------------
+
+
+class TestComputedChannelFrequency:
+    """Tests for :func:`interfaces._computed_channel_frequency`."""
+
+    def test_none_enum_name_returns_none(self):
+        """None enum_name returns None."""
+        assert ifaces._computed_channel_frequency(None, 0) is None
+
+    def test_unknown_region_returns_none(self):
+        """Enum name not in lookup table returns None."""
+        assert ifaces._computed_channel_frequency("UNKNOWN_REGION", 0) is None
+
+    def test_us_channel_0_base_frequency(self):
+        """US region, channel 0, returns floor(902.0 + 0*0.25) = 902."""
+        assert ifaces._computed_channel_frequency("US", 0) == 902
+
+    def test_us_channel_52_mid_band(self):
+        """US region, channel 52, returns floor(902.0 + 52*0.25) = 915."""
+        assert ifaces._computed_channel_frequency("US", 52) == 915
+
+    def test_eu_868_channel_0_returns_869(self):
+        """EU_868 region, channel 0, returns floor(869.525) = 869, not 868."""
+        assert ifaces._computed_channel_frequency("EU_868", 0) == 869
+
+    def test_eu_868_channel_1_returns_870(self):
+        """EU_868 region, channel 1, returns floor(869.525 + 0.5) = 870."""
+        assert ifaces._computed_channel_frequency("EU_868", 1) == 870
+
+    def test_my_919_channel_0(self):
+        """MY_919 region, channel 0, returns floor(919.0) = 919."""
+        assert ifaces._computed_channel_frequency("MY_919", 0) == 919
+
+    def test_lora_24_channel_0(self):
+        """LORA_24 region, channel 0, returns floor(2400.0) = 2400."""
+        assert ifaces._computed_channel_frequency("LORA_24", 0) == 2400
+
+    def test_none_channel_num_defaults_to_zero(self):
+        """None channel_num is treated as 0, returning the base frequency."""
+        assert ifaces._computed_channel_frequency("ANZ", None) == 916
+
+    def test_negative_channel_num_clamped_to_zero(self):
+        """Negative channel_num is clamped to 0, returning the base frequency."""
+        assert ifaces._computed_channel_frequency("ANZ", -1) == 916
+
+    def test_result_is_int(self):
+        """Return type is int (math.floor result), not float."""
+        result = ifaces._computed_channel_frequency("EU_868", 0)
+        assert isinstance(result, int)
+
+    def test_nz_865_channel_0(self):
+        """NZ_865 region, channel 0, returns floor(864.0) = 864."""
+        assert ifaces._computed_channel_frequency("NZ_865", 0) == 864
+
+    def test_br_902_channel_4_spacing_0_25(self):
+        """BR_902 region, channel 4, returns floor(902.0 + 4*0.25) = 903."""
+        assert ifaces._computed_channel_frequency("BR_902", 4) == 903
+
+    def test_kz_863_channel_0(self):
+        """KZ_863 region, channel 0, returns floor(863.125) = 863."""
+        assert ifaces._computed_channel_frequency("KZ_863", 0) == 863
+
+
+# ---------------------------------------------------------------------------
 # _region_frequency
 # ---------------------------------------------------------------------------
 
@@ -322,6 +388,65 @@ class TestRegionFrequency:
         """Non-empty string region is returned directly."""
         msg = SimpleNamespace(DESCRIPTOR=None, override_frequency=None, region="EU433")
         assert ifaces._region_frequency(msg) == "EU433"
+
+    def test_us_enum_lookup_table_used(self):
+        """US region with channel_num=0 returns 902 from lookup table, not None."""
+        enum_val = SimpleNamespace(name="US")
+        enum_type = SimpleNamespace(values_by_number={1: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"region": field_desc})
+        msg = SimpleNamespace(
+            DESCRIPTOR=desc, override_frequency=None, region=1, channel_num=0
+        )
+        assert ifaces._region_frequency(msg) == 902
+
+    def test_eu_868_returns_869_not_868(self):
+        """EU_868 region returns 869 from lookup table, not 868 parsed from name."""
+        enum_val = SimpleNamespace(name="EU_868")
+        enum_type = SimpleNamespace(values_by_number={3: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"region": field_desc})
+        msg = SimpleNamespace(
+            DESCRIPTOR=desc, override_frequency=None, region=3, channel_num=0
+        )
+        assert ifaces._region_frequency(msg) == 869
+
+    def test_unrecognised_int_falls_through(self):
+        """Raw int region with no DESCRIPTOR and value < 100 returns None."""
+        msg = SimpleNamespace(DESCRIPTOR=None, override_frequency=None, region=99)
+        assert ifaces._region_frequency(msg) is None
+
+    def test_missing_channel_num_attr_uses_base(self):
+        """Region in lookup table with no channel_num attribute returns base freq."""
+        enum_val = SimpleNamespace(name="MY_919")
+        enum_type = SimpleNamespace(values_by_number={17: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"region": field_desc})
+        # deliberately no channel_num attribute
+        msg = SimpleNamespace(DESCRIPTOR=desc, override_frequency=None, region=17)
+        assert ifaces._region_frequency(msg) == 919
+
+    def test_override_takes_priority_over_lookup_table(self):
+        """override_frequency takes priority over the lookup table."""
+        enum_val = SimpleNamespace(name="EU_868")
+        enum_type = SimpleNamespace(values_by_number={3: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"region": field_desc})
+        msg = SimpleNamespace(
+            DESCRIPTOR=desc, override_frequency=867.3, region=3, channel_num=0
+        )
+        assert ifaces._region_frequency(msg) == 867
+
+    def test_unknown_enum_name_falls_to_digit_parse(self):
+        """Enum name not in lookup table falls through to digit parsing."""
+        enum_val = SimpleNamespace(name="FUTURE_999")
+        enum_type = SimpleNamespace(values_by_number={99: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"region": field_desc})
+        msg = SimpleNamespace(
+            DESCRIPTOR=desc, override_frequency=None, region=99, channel_num=0
+        )
+        assert ifaces._region_frequency(msg) == 999
 
 
 # ---------------------------------------------------------------------------

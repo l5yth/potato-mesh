@@ -287,3 +287,85 @@ class TestProtocolValidation:
         # Restore to valid value so subsequent tests work
         monkeypatch.setenv("PROTOCOL", "meshtastic")
         importlib.reload(config)
+
+
+# ---------------------------------------------------------------------------
+# _parse_lora_freq_env
+# ---------------------------------------------------------------------------
+
+
+class TestParseLoraFreqEnv:
+    """Tests for :func:`config._parse_lora_freq_env`."""
+
+    def test_none_returns_none(self):
+        """None input returns None."""
+        assert config._parse_lora_freq_env(None) is None
+
+    def test_empty_string_returns_none(self):
+        """Empty string returns None."""
+        assert config._parse_lora_freq_env("") is None
+
+    def test_whitespace_only_returns_none(self):
+        """Whitespace-only string returns None."""
+        assert config._parse_lora_freq_env("   ") is None
+
+    def test_integer_string_returns_int(self):
+        """Whole-number string returns int."""
+        result = config._parse_lora_freq_env("868")
+        assert result == 868
+        assert isinstance(result, int)
+
+    def test_float_integer_value_returns_int(self):
+        """String like '915.0' (whole float) returns int 915."""
+        result = config._parse_lora_freq_env("915.0")
+        assert result == 915
+        assert isinstance(result, int)
+
+    def test_decimal_string_returns_float(self):
+        """Decimal string returns float."""
+        result = config._parse_lora_freq_env("869.525")
+        assert result == pytest.approx(869.525)
+        assert isinstance(result, float)
+
+    def test_non_numeric_label_returns_none(self):
+        """Non-numeric string returns None so auto-detection is not blocked."""
+        assert config._parse_lora_freq_env("EU_868") is None
+
+    def test_unit_suffixed_string_returns_none(self):
+        """String like '915MHz' returns None (not numeric)."""
+        assert config._parse_lora_freq_env("915MHz") is None
+
+    def test_inf_returns_none(self):
+        """'inf' is non-finite and returns None."""
+        assert config._parse_lora_freq_env("inf") is None
+
+    def test_large_exponent_returns_none(self):
+        """'1e309' overflows to inf and returns None."""
+        assert config._parse_lora_freq_env("1e309") is None
+
+    def test_nan_returns_none(self):
+        """'nan' is non-finite and returns None."""
+        assert config._parse_lora_freq_env("nan") is None
+
+    def test_whitespace_stripped(self):
+        """Leading/trailing whitespace is ignored."""
+        assert config._parse_lora_freq_env("  919  ") == 919
+
+    def test_frequency_env_preseeds_lora_freq(self, monkeypatch):
+        """FREQUENCY env var pre-seeds LORA_FREQ at module load."""
+        import importlib
+
+        monkeypatch.setenv("FREQUENCY", "915")
+        importlib.reload(config)
+        assert config.LORA_FREQ == 915
+        # Restore
+        monkeypatch.delenv("FREQUENCY")
+        importlib.reload(config)
+
+    def test_no_frequency_env_leaves_lora_freq_none(self, monkeypatch):
+        """Absent FREQUENCY env var leaves LORA_FREQ as None."""
+        import importlib
+
+        monkeypatch.delenv("FREQUENCY", raising=False)
+        importlib.reload(config)
+        assert config.LORA_FREQ is None

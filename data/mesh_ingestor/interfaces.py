@@ -511,16 +511,96 @@ def _resolve_lora_message(local_config: Any) -> Any | None:
     return None
 
 
+# Maps Meshtastic region enum name to (base_freq_MHz, channel_spacing_MHz).
+# Values are derived from the Meshtastic firmware RegionInfo tables.
+# Used by _computed_channel_frequency to derive the actual radio frequency
+# from the region and channel index.
+_REGION_CHANNEL_PARAMS: dict[str, tuple[float, float]] = {
+    "US": (902.0, 0.25),  # 902–928 MHz; e.g. ch 52 ≈ 915 MHz at 250 kHz spacing
+    "EU_433": (433.175, 0.2),
+    "EU_868": (869.525, 0.5),  # actual primary ≈ 869.525 MHz, not 868
+    "CN": (470.0, 0.2),
+    "JP": (920.875, 0.5),
+    "ANZ": (916.0, 0.5),
+    "KR": (921.9, 0.5),
+    "TW": (923.0, 0.5),
+    "RU": (868.9, 0.5),
+    "IN": (865.0, 0.5),
+    "NZ_865": (864.0, 0.5),
+    "TH": (920.0, 0.5),
+    "LORA_24": (2400.0, 0.5),
+    "UA_433": (433.175, 0.2),
+    "UA_868": (868.0, 0.5),
+    "MY_433": (433.0, 0.2),
+    "MY_919": (919.0, 0.5),
+    "SG_923": (923.0, 0.5),
+    "PH_433": (433.0, 0.2),
+    "PH_868": (868.0, 0.5),
+    "PH_915": (915.0, 0.5),
+    "ANZ_433": (433.0, 0.2),
+    "KZ_433": (433.0, 0.2),
+    "KZ_863": (863.125, 0.5),
+    "NP_865": (865.0, 0.5),
+    "BR_902": (902.0, 0.25),
+    # IL (Israel) is absent from meshtastic Python lib 2.7.8 protobufs; the
+    # enum value is unresolvable at runtime.  Operators on IL firmware should
+    # set the FREQUENCY environment variable to override.
+}
+
+
+def _computed_channel_frequency(
+    enum_name: str | None,
+    channel_num: int | None,
+) -> int | None:
+    """Compute the floor MHz frequency for a known region and channel index.
+
+    Looks up *enum_name* in :data:`_REGION_CHANNEL_PARAMS` and returns
+    ``floor(base_freq + channel_num * spacing)``.  Returns ``None`` when the
+    region is not in the table.  A missing or negative *channel_num* is
+    treated as 0 so the base frequency is always usable.
+
+    Args:
+        enum_name: Region enum name as returned by
+            :func:`_enum_name_from_field`, e.g. ``"EU_868"`` or ``"US"``.
+        channel_num: Zero-based channel index from the device LoRa config.
+
+    Returns:
+        Floored MHz as :class:`int`, or ``None`` if the region is unknown.
+    """
+    if enum_name is None:
+        return None
+    params = _REGION_CHANNEL_PARAMS.get(enum_name)
+    if params is None:
+        return None
+    base, spacing = params
+    idx = channel_num if (isinstance(channel_num, int) and channel_num >= 0) else 0
+    return math.floor(base + idx * spacing)
+
+
 def _region_frequency(lora_message: Any) -> int | float | str | None:
     """Derive the LoRa region frequency in MHz or the region label from ``lora_message``.
 
-    Numeric override values are floored to the nearest MHz to align with the
-    integer frequencies expected elsewhere in the ingestion pipeline.
+    Frequency sources are tried in priority order:
+
+    1. ``override_frequency > 0`` — explicit radio override, floored to MHz.
+    2. :data:`_REGION_CHANNEL_PARAMS` lookup + ``channel_num`` — actual
+       band-plan frequency derived from the device's region and channel index,
+       floored to MHz.
+    3. Largest digit token ≥ 100 parsed from the region enum name string.
+    4. Largest digit token < 100 from the enum name (reversed scan).
+    5. Full enum name string, raw integer ≥ 100, or raw string as a label.
+
+    Args:
+        lora_message: A LoRa config protobuf message or compatible object.
+
+    Returns:
+        An integer MHz frequency, a fallback string label, or ``None``.
     """
 
     if lora_message is None:
         return None
 
+    # Step 1 — explicit radio override
     override_frequency = getattr(lora_message, "override_frequency", None)
     if override_frequency is not None:
         if isinstance(override_frequency, (int, float)):
@@ -533,6 +613,15 @@ def _region_frequency(lora_message: Any) -> int | float | str | None:
     if region_value is None:
         return None
     enum_name = _enum_name_from_field(lora_message, "region", region_value)
+
+    # Step 2 — lookup table + channel offset (actual band-plan frequency)
+    if enum_name:
+        channel_num = getattr(lora_message, "channel_num", None)
+        computed = _computed_channel_frequency(enum_name, channel_num)
+        if computed is not None:
+            return computed
+
+    # Steps 3–5 — parse digits from enum name (fallback for unknown regions)
     if enum_name:
         digits = re.findall(r"\d+", enum_name)
         for token in digits:
