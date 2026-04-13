@@ -92,6 +92,10 @@ class QueueState:
     queue: list[tuple[int, int, str, dict]] = field(default_factory=list)
     counter: Iterable[int] = field(default_factory=itertools.count)
     active: bool = False
+    # Background drain thread.  When the drainer is alive, _queue_post_json
+    # signals drain_event instead of blocking the caller with HTTP calls.
+    drain_event: threading.Event = field(default_factory=threading.Event)
+    drainer: threading.Thread | None = None
 
 
 STATE = QueueState()
@@ -144,6 +148,7 @@ def _send_single(
             "POST request failed",
             context="queue.post_json",
             severity="warn",
+            always=True,
             url=url,
             error_class=exc.__class__.__name__,
             error_message=str(exc),
@@ -244,6 +249,45 @@ def _drain_post_queue(
             state.active = False
 
 
+def _queue_drainer_loop(state: QueueState = STATE) -> None:
+    """Body of the background queue-drain daemon thread.
+
+    Blocks on :attr:`QueueState.drain_event`, clears it, then empties the
+    queue by calling :func:`_drain_post_queue`.  Loops forever; the thread
+    is started as a daemon thread so it terminates automatically when the
+    process exits.
+
+    Parameters:
+        state: Queue state instance to drain.
+    """
+    while True:
+        state.drain_event.wait()
+        state.drain_event.clear()
+        _drain_post_queue(state)
+
+
+def _start_queue_drainer(state: QueueState = STATE) -> None:
+    """Idempotently start the background queue-drain thread.
+
+    Calling this function when a drainer thread is already alive is a
+    no-op.  The thread is created as a daemon so it does not prevent
+    process exit.
+
+    Parameters:
+        state: Queue state whose :func:`_queue_drainer_loop` to start.
+    """
+    if state.drainer is not None and state.drainer.is_alive():
+        return
+    t = threading.Thread(
+        target=_queue_drainer_loop,
+        args=(state,),
+        name="queue-drainer",
+        daemon=True,
+    )
+    t.start()
+    state.drainer = t
+
+
 def _queue_post_json(
     path: str,
     payload: dict,
@@ -252,14 +296,32 @@ def _queue_post_json(
     state: QueueState = STATE,
     send: Callable[[str, dict], None] | None = None,
 ) -> None:
-    """Queue a POST request and start processing if idle.
+    """Queue a POST request and wake the drain thread (or drain inline).
+
+    When a background drainer thread is running (started via
+    :func:`_start_queue_drainer`), this function enqueues the item and
+    signals :attr:`QueueState.drain_event` without blocking — the drain
+    happens on the dedicated thread.  This keeps the caller's thread (which
+    may be the Meshtastic asyncio I/O thread) free to process serial events.
+
+    When no background drainer is alive the call falls back to a
+    synchronous inline drain.  This path is used by tests (which pass a
+    ``send`` override via :func:`_fresh_state`) and for any standalone use
+    without calling :func:`_start_queue_drainer`.
+
+    .. note::
+        The background drainer is used **only** when no custom ``send``
+        override is provided (i.e. the production ``_post_json`` path).
+        Any caller that supplies a custom ``send`` (tests, heartbeat
+        helpers) always gets the synchronous inline drain so its transport
+        is honoured correctly.
 
     Parameters:
         path: API path for the request.
         payload: JSON payload to send.
         priority: Scheduling priority where lower values run first.
         state: Queue container used to store pending requests.
-        send: Optional transport override, primarily for tests.
+        send: Optional transport override (synchronous fallback only).
     """
 
     if send is None:
@@ -279,6 +341,16 @@ def _queue_post_json(
         )
 
     _enqueue_post_json(path, payload, priority, state=state)
+
+    # Use the background drainer only when it is alive AND no custom send
+    # override is in play.  A custom send (used by tests and callers such as
+    # ingestors.queue_ingestor_heartbeat) must be honoured synchronously
+    # because the background drainer always calls _drain_post_queue without
+    # a send override.
+    if send is _post_json and state.drainer is not None and state.drainer.is_alive():
+        state.drain_event.set()
+        return
+
     with state.lock:
         if state.active:
             return
@@ -314,5 +386,7 @@ __all__ = [
     "_drain_post_queue",
     "_enqueue_post_json",
     "_post_json",
+    "_queue_drainer_loop",
     "_queue_post_json",
+    "_start_queue_drainer",
 ]

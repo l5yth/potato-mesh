@@ -1089,6 +1089,71 @@ def test_check_inactivity_reconnect_elapsed_triggers(monkeypatch):
     assert result is True
 
 
+def test_inactivity_reconnect_bypasses_throttle_when_explicitly_disconnected(
+    monkeypatch,
+):
+    """Explicit disconnect reconnects even when last_inactivity_reconnect is recent.
+
+    When isConnected reports False the daemon must not wait the full
+    inactivity window before reconnecting.  It uses the shorter
+    _RECONNECT_MAX_DELAY_SECS window instead.
+    """
+    state = _make_state(inactivity_reconnect_secs=3600.0)
+    state.iface = DummyInterface(is_connected=False)
+    state.iface_connected_at = 0.0
+    # 61 seconds since last reconnect attempt — outside the 60 s anti-thrash window.
+    state.last_inactivity_reconnect = 3589.0
+
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 3650.0)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 60.0)
+    monkeypatch.setattr(daemon.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon, "_close_interface", lambda iface: None)
+
+    result = daemon._check_inactivity_reconnect(state)
+    assert (
+        result is True
+    ), "Expected reconnect to fire when explicitly disconnected and 61s have elapsed"
+
+
+def test_inactivity_reconnect_still_throttles_inactivity(monkeypatch):
+    """The full inactivity window still throttles reconnects that are not explicit disconnects."""
+    state = _make_state(inactivity_reconnect_secs=3600.0)
+    # isConnected=True → inactivity-only trigger (no explicit disconnect signal)
+    state.iface = DummyInterface(is_connected=True)
+    state.iface_connected_at = 0.0
+    # now=3700, last_inactivity_reconnect=3691 → 9 s elapsed, well within 3600 s window.
+    state.last_inactivity_reconnect = 3691.0
+
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 3700.0)
+    # No recent packet → inactivity_elapsed = 3700 s > inactivity_reconnect_secs (3600 s)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 60.0)
+
+    # Even though enough inactive time has passed, last_inactivity_reconnect is
+    # only 9 s ago (< 3600 s throttle window) → reconnect is suppressed.
+    result = daemon._check_inactivity_reconnect(state)
+    assert (
+        result is False
+    ), "Expected throttle to suppress reconnect when last attempt was 9 s ago"
+
+
+def test_main_starts_queue_drainer(monkeypatch):
+    """main() calls queue._start_queue_drainer after subscribing."""
+    drainer_calls: list[object] = []
+    monkeypatch.setattr(
+        daemon.queue,
+        "_start_queue_drainer",
+        lambda state=None: drainer_calls.append(state),
+    )
+
+    _patch_daemon_for_fast_exit(monkeypatch)
+    provider = _make_minimal_fake_provider("meshtastic")
+    daemon.main(provider=provider)
+
+    assert len(drainer_calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # _try_send_self_node
 # ---------------------------------------------------------------------------

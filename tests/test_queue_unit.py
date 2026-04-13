@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -29,13 +30,16 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import data.mesh_ingestor.config as config
+import data.mesh_ingestor.queue as _queue_mod
 from data.mesh_ingestor.queue import (
     QueueState,
     _clear_post_queue,
     _drain_post_queue,
     _enqueue_post_json,
     _post_json,
+    _queue_drainer_loop,
     _queue_post_json,
+    _start_queue_drainer,
     _CHANNEL_POST_PRIORITY,
     _DEFAULT_POST_PRIORITY,
     _INGESTOR_POST_PRIORITY,
@@ -483,3 +487,122 @@ class TestMultiInstanceFanOut:
         assert len(captured) == 1
         assert "http://legacy" in captured[0].get_full_url()
         assert captured[0].get_header("Authorization") == "Bearer tok"
+
+
+# ---------------------------------------------------------------------------
+# HTTP failure always-logging
+# ---------------------------------------------------------------------------
+
+
+def test_http_failure_always_logged(monkeypatch):
+    """POST failures are logged with always=True regardless of DEBUG mode.
+
+    Operators must be able to see HTTP errors without enabling DEBUG so they
+    can tell whether the ingestor is silently dropping data.
+    """
+    monkeypatch.setattr(config, "INSTANCES", (("http://localhost", ""),))
+    monkeypatch.setattr(config, "INSTANCE", "http://localhost")
+    monkeypatch.setattr(config, "DEBUG", False)
+
+    log_calls: list[dict] = []
+    original_debug_log = config._debug_log
+
+    def capture_debug_log(msg, **kwargs):
+        log_calls.append(kwargs)
+        original_debug_log(msg, **kwargs)
+
+    monkeypatch.setattr(config, "_debug_log", capture_debug_log)
+
+    def raise_error(req, timeout=None):
+        raise OSError("connection refused")
+
+    with patch("urllib.request.urlopen", raise_error):
+        from data.mesh_ingestor.queue import _send_single
+
+        _send_single("http://localhost", "", "/api/test", {"x": 1})
+
+    assert any(
+        c.get("always") is True for c in log_calls
+    ), "Expected at least one _debug_log call with always=True on HTTP failure"
+
+
+# ---------------------------------------------------------------------------
+# Background drain thread
+# ---------------------------------------------------------------------------
+
+
+class TestQueueDrainer:
+    """Tests for :func:`_start_queue_drainer` and :func:`_queue_drainer_loop`."""
+
+    def test_start_queue_drainer_starts_thread(self):
+        """_start_queue_drainer creates and starts a daemon thread."""
+        state = _fresh_state()
+        assert state.drainer is None
+        _start_queue_drainer(state)
+        assert state.drainer is not None
+        assert state.drainer.is_alive()
+        # Unblock the drainer so the thread can exit cleanly with the process.
+        state.drain_event.set()
+
+    def test_start_queue_drainer_idempotent(self):
+        """Calling _start_queue_drainer twice does not create a second thread."""
+        state = _fresh_state()
+        _start_queue_drainer(state)
+        first_thread = state.drainer
+        _start_queue_drainer(state)
+        assert state.drainer is first_thread
+        state.drain_event.set()
+
+    def test_queue_drainer_loop_drains_items(self):
+        """_queue_drainer_loop drains enqueued items when signalled."""
+        state = _fresh_state()
+        drained: list[str] = []
+
+        original_post_json = _queue_mod._post_json
+        _queue_mod._post_json = lambda path, payload: drained.append(path)
+        try:
+            t = threading.Thread(target=_queue_drainer_loop, args=(state,), daemon=True)
+            t.start()
+            _enqueue_post_json("/api/drainer-test", {}, 10, state=state)
+            state.drain_event.set()
+            deadline = time.monotonic() + 2.0
+            while "/api/drainer-test" not in drained and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert "/api/drainer-test" in drained
+        finally:
+            _queue_mod._post_json = original_post_json
+            state.drain_event.set()
+
+    def test_queue_post_json_signals_drain_event_with_drainer(self):
+        """When a drainer is alive, _queue_post_json signals drain_event instead of blocking."""
+        state = _fresh_state()
+        drained: list[str] = []
+
+        original_post_json = _queue_mod._post_json
+        _queue_mod._post_json = lambda path, payload: drained.append(path)
+        try:
+            _start_queue_drainer(state)
+            # With a live drainer, the call should return immediately
+            # (signal only) and the drainer processes the item in the background.
+            _queue_post_json("/api/bg-test", {"k": 1}, priority=10, state=state)
+            deadline = time.monotonic() + 2.0
+            while "/api/bg-test" not in drained and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert "/api/bg-test" in drained
+        finally:
+            _queue_mod._post_json = original_post_json
+            state.drain_event.set()
+
+    def test_queue_post_json_falls_back_to_sync_drain_without_drainer(self):
+        """When no drainer is running, _queue_post_json drains synchronously."""
+        state = _fresh_state()
+        # state.drainer is None → synchronous path
+        sent: list[str] = []
+        _queue_post_json(
+            "/api/sync",
+            {"v": 1},
+            priority=10,
+            state=state,
+            send=lambda p, d: sent.append(p),
+        )
+        assert "/api/sync" in sent

@@ -24,7 +24,7 @@ import time
 
 from pubsub import pub
 
-from . import config, handlers, ingestors, interfaces
+from . import config, handlers, ingestors, interfaces, queue
 from .mesh_protocol import MeshProtocol
 from .utils import _retry_dict_snapshot
 
@@ -488,22 +488,30 @@ def _check_inactivity_reconnect(state: _DaemonState) -> bool:
     ):
         return False
 
-    if (
-        state.last_inactivity_reconnect is not None
-        and now - state.last_inactivity_reconnect < state.inactivity_reconnect_secs
-    ):
-        return False
+    if state.last_inactivity_reconnect is not None:
+        # For explicit disconnects use the shorter max-reconnect-delay window
+        # so the daemon reconnects promptly without thrashing.  For inactivity-
+        # only triggers retain the full inactivity window as the throttle.
+        throttle_secs = (
+            config._RECONNECT_MAX_DELAY_SECS
+            if believed_disconnected
+            else state.inactivity_reconnect_secs
+        )
+        if now - state.last_inactivity_reconnect < throttle_secs:
+            return False
 
     reason = (
         "disconnected"
         if believed_disconnected
         else f"no data for {inactivity_elapsed:.0f}s"
     )
+    queue_depth = len(queue.STATE.queue)
     config._debug_log(
         "Mesh interface inactivity detected",
         context="daemon.interface",
         severity="warn",
         reason=reason,
+        queue_depth=queue_depth,
     )
     state.last_inactivity_reconnect = now
     _close_interface(state.iface)
@@ -630,6 +638,8 @@ def main(*, provider: MeshProtocol | None = None) -> None:
             severity="info",
             topics=subscribed,
         )
+
+    queue._start_queue_drainer(queue.STATE)
 
     state = _DaemonState(
         provider=provider,
