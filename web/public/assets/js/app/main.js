@@ -4373,8 +4373,12 @@ export function initializeApp(config) {
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
-    // Title, legend, and footer counts all derive from /api/stats so they
-    // reflect the full network regardless of client-side filters.
+    // Show an immediate local estimate for the title so it doesn't flicker
+    // to (0) while waiting for the async /api/stats response.
+    const localStats = computeLocalActiveNodeStats(allNodes, nowSec);
+    updateTitleCount(localStats);
+    // Title, legend, footer, and visibility are then corrected by /api/stats
+    // which provides the authoritative, uncapped counts.
     const statsRequestId = ++activeStatsRequestId;
     void fetchActiveNodeStats({ nodes: allNodes, nowSeconds: nowSec }).then(stats => {
       if (statsRequestId !== activeStatsRequestId) return;
@@ -4537,7 +4541,7 @@ export function initializeApp(config) {
   function updateTitleCount(stats) {
     const count = stats?.week ?? 0;
     const text = `${baseTitle} (${count})`;
-    titleEl.textContent = text;
+    if (titleEl) titleEl.textContent = text;
     if (headerTitleTextEl) {
       headerTitleTextEl.textContent = text;
     } else if (headerEl) {

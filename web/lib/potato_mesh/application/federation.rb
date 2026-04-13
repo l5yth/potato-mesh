@@ -64,7 +64,10 @@ module PotatoMesh
         domain = self_instance_domain
         last_update = latest_node_update_timestamp || Time.now.to_i
         cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
-        nodes_count = active_node_count_since(cutoff)
+        db = open_database(readonly: true)
+        nodes_count = active_node_count_since(cutoff, db: db)
+        mc_count = active_node_count_since_for_protocol(cutoff, "meshcore", db: db)
+        mt_count = active_node_count_since_for_protocol(cutoff, "meshtastic", db: db)
         {
           id: app_constant(:SELF_INSTANCE_ID),
           domain: domain,
@@ -79,9 +82,11 @@ module PotatoMesh
           is_private: private_mode?,
           contact_link: sanitized_contact_link,
           nodes_count: nodes_count,
-          meshcore_nodes_count: active_node_count_since_for_protocol(cutoff, "meshcore"),
-          meshtastic_nodes_count: active_node_count_since_for_protocol(cutoff, "meshtastic"),
+          meshcore_nodes_count: mc_count,
+          meshtastic_nodes_count: mt_count,
         }
+      ensure
+        db&.close
       end
 
       # Count the number of nodes active since the supplied timestamp.

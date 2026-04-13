@@ -22,6 +22,32 @@ import { setupApp, setupAppWithOptions } from './main-app-test-helpers.js';
 const NOW = 1_700_000_000;
 
 // ---------------------------------------------------------------------------
+// updateTitleCount
+// ---------------------------------------------------------------------------
+
+test('updateTitleCount does not throw when title and header elements are absent', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    assert.doesNotThrow(() => {
+      testUtils.updateTitleCount({ hour: 5, day: 20, week: 42, month: 100, sampled: false });
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('updateTitleCount handles null and undefined stats gracefully', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    assert.doesNotThrow(() => testUtils.updateTitleCount(null));
+    assert.doesNotThrow(() => testUtils.updateTitleCount(undefined));
+    assert.doesNotThrow(() => testUtils.updateTitleCount({}));
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // updateLegendProtocolCounts
 // ---------------------------------------------------------------------------
 
