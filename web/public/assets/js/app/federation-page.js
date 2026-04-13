@@ -23,6 +23,7 @@ import {
 import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
+import { meshcoreIconHtml, meshtasticIconHtml } from './protocol-helpers.js';
 
 /**
  * Escape HTML special characters to prevent XSS.
@@ -393,6 +394,18 @@ export async function initializeFederationPage(options = {}) {
       hasValue: hasNumberValue,
       defaultDirection: 'desc'
     },
+    meshcoreNodesCount: {
+      getValue: inst => toFiniteNumber(inst.meshcoreNodesCount),
+      compare: compareNumber,
+      hasValue: hasNumberValue,
+      defaultDirection: 'desc'
+    },
+    meshtasticNodesCount: {
+      getValue: inst => toFiniteNumber(inst.meshtasticNodesCount),
+      compare: compareNumber,
+      hasValue: hasNumberValue,
+      defaultDirection: 'desc'
+    },
     latitude: { getValue: inst => toFiniteNumber(inst.latitude), compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
     longitude: { getValue: inst => toFiniteNumber(inst.longitude), compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
     lastUpdateTime: {
@@ -478,6 +491,10 @@ export async function initializeFederationPage(options = {}) {
       const contactHtml = renderContactHtml(instance.contactLink);
       const nodesCountValue = toFiniteNumber(instance.nodesCount ?? instance.nodes_count);
       const nodesCountText = nodesCountValue == null ? '<em>—</em>' : escapeHtml(String(nodesCountValue));
+      const mcNodesVal = toFiniteNumber(instance.meshcoreNodesCount);
+      const mcNodesText = mcNodesVal == null ? '<em>—</em>' : `${meshcoreIconHtml()} ${escapeHtml(String(mcNodesVal))}`;
+      const mtNodesVal = toFiniteNumber(instance.meshtasticNodesCount);
+      const mtNodesText = mtNodesVal == null ? '<em>—</em>' : `${meshtasticIconHtml()} ${escapeHtml(String(mtNodesVal))}`;
 
       tr.innerHTML = `
         <td class="instances-col instances-col--name">${nameHtml}</td>
@@ -487,6 +504,8 @@ export async function initializeFederationPage(options = {}) {
         <td class="instances-col instances-col--channel">${renderContactHtml(instance.channel) || ''}</td>
         <td class="instances-col instances-col--frequency">${escapeHtml(instance.frequency || '')}</td>
         <td class="instances-col instances-col--nodes mono">${nodesCountText}</td>
+        <td class="instances-col instances-col--meshcore-nodes mono">${mcNodesText}</td>
+        <td class="instances-col instances-col--meshtastic-nodes mono">${mtNodesText}</td>
         <td class="instances-col instances-col--latitude mono">${fmtCoords(instance.latitude)}</td>
         <td class="instances-col instances-col--longitude mono">${fmtCoords(instance.longitude)}</td>
         <td class="instances-col instances-col--last-update mono">${timeAgo(instance.lastUpdateTime, nowSec)}</td>

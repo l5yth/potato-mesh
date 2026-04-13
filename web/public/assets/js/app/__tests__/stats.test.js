@@ -32,39 +32,41 @@ const NOW = 1_700_000_000;
 
 test('computeLocalActiveNodeStats counts nodes within each window', () => {
   const nodes = [
-    { last_heard: NOW - 60 },          // within hour, day, week, month
-    { last_heard: NOW - 4_000 },       // within day, week, month
-    { last_heard: NOW - 90_000 },      // within week, month
-    { last_heard: NOW - (8 * 86_400) },  // within month only
-    { last_heard: NOW - (20 * 86_400) }, // within month only
+    { last_heard: NOW - 60, protocol: 'meshtastic' },   // within hour, day, week, month
+    { last_heard: NOW - 4_000, protocol: 'meshcore' },   // within day, week, month
+    { last_heard: NOW - 90_000, protocol: 'meshtastic' }, // within week, month
+    { last_heard: NOW - (8 * 86_400), protocol: 'meshcore' },  // within month only
+    { last_heard: NOW - (20 * 86_400), protocol: 'meshtastic' }, // within month only
   ];
 
-  assert.deepEqual(computeLocalActiveNodeStats(nodes, NOW), {
-    hour: 1,
-    day: 2,
-    week: 3,
-    month: 5,
-    sampled: true,
-  });
+  const result = computeLocalActiveNodeStats(nodes, NOW);
+  assert.equal(result.hour, 1);
+  assert.equal(result.day, 2);
+  assert.equal(result.week, 3);
+  assert.equal(result.month, 5);
+  assert.equal(result.sampled, true);
+  assert.deepEqual(result.meshcore, { hour: 0, day: 1, week: 1, month: 2 });
+  assert.deepEqual(result.meshtastic, { hour: 1, day: 1, week: 2, month: 3 });
 });
 
 test('computeLocalActiveNodeStats returns zero counts for empty node array', () => {
-  assert.deepEqual(computeLocalActiveNodeStats([], NOW), {
-    hour: 0,
-    day: 0,
-    week: 0,
-    month: 0,
-    sampled: true,
-  });
+  const result = computeLocalActiveNodeStats([], NOW);
+  assert.equal(result.hour, 0);
+  assert.equal(result.day, 0);
+  assert.equal(result.week, 0);
+  assert.equal(result.month, 0);
+  assert.equal(result.sampled, true);
+  assert.deepEqual(result.meshcore, { hour: 0, day: 0, week: 0, month: 0 });
+  assert.deepEqual(result.meshtastic, { hour: 0, day: 0, week: 0, month: 0 });
 });
 
 test('computeLocalActiveNodeStats handles non-array nodes gracefully', () => {
-  assert.deepEqual(computeLocalActiveNodeStats(null, NOW), {
-    hour: 0, day: 0, week: 0, month: 0, sampled: true,
-  });
-  assert.deepEqual(computeLocalActiveNodeStats(undefined, NOW), {
-    hour: 0, day: 0, week: 0, month: 0, sampled: true,
-  });
+  const result = computeLocalActiveNodeStats(null, NOW);
+  assert.equal(result.hour, 0);
+  assert.deepEqual(result.meshcore, { hour: 0, day: 0, week: 0, month: 0 });
+  const result2 = computeLocalActiveNodeStats(undefined, NOW);
+  assert.equal(result2.hour, 0);
+  assert.deepEqual(result2.meshcore, { hour: 0, day: 0, week: 0, month: 0 });
 });
 
 test('computeLocalActiveNodeStats ignores nodes with missing last_heard', () => {
@@ -74,9 +76,10 @@ test('computeLocalActiveNodeStats ignores nodes with missing last_heard', () => 
     { last_heard: undefined },
     { last_heard: 'not-a-number' },
   ];
-  assert.deepEqual(computeLocalActiveNodeStats(nodes, NOW), {
-    hour: 0, day: 0, week: 0, month: 0, sampled: true,
-  });
+  const result = computeLocalActiveNodeStats(nodes, NOW);
+  assert.equal(result.hour, 0);
+  assert.deepEqual(result.meshcore, { hour: 0, day: 0, week: 0, month: 0 });
+  assert.deepEqual(result.meshtastic, { hour: 0, day: 0, week: 0, month: 0 });
 });
 
 test('computeLocalActiveNodeStats uses Date.now() when nowSeconds is non-finite', () => {
@@ -84,13 +87,27 @@ test('computeLocalActiveNodeStats uses Date.now() when nowSeconds is non-finite'
   const result = computeLocalActiveNodeStats([{ last_heard: Date.now() / 1000 - 60 }], NaN);
   assert.equal(typeof result.hour, 'number');
   assert.ok(result.hour >= 0);
+  assert.ok(result.meshcore != null);
 });
 
 test('computeLocalActiveNodeStats counts nodes exactly at window boundary', () => {
   // A node whose last_heard equals exactly now - 3600 is within the hour window (<=).
-  const nodes = [{ last_heard: NOW - 3600 }];
+  const nodes = [{ last_heard: NOW - 3600, protocol: 'meshtastic' }];
   const result = computeLocalActiveNodeStats(nodes, NOW);
   assert.equal(result.hour, 1);
+  assert.equal(result.meshtastic.hour, 1);
+  assert.equal(result.meshcore.hour, 0);
+});
+
+test('computeLocalActiveNodeStats bins unknown protocols into meshtastic bucket', () => {
+  const nodes = [
+    { last_heard: NOW - 100, protocol: 'reticulum' },
+    { last_heard: NOW - 200, protocol: 'meshcore' },
+  ];
+  const result = computeLocalActiveNodeStats(nodes, NOW);
+  assert.equal(result.hour, 2);
+  assert.equal(result.meshcore.hour, 1);
+  assert.equal(result.meshtastic.hour, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -98,13 +115,47 @@ test('computeLocalActiveNodeStats counts nodes exactly at window boundary', () =
 // ---------------------------------------------------------------------------
 
 test('normaliseActiveNodeStatsPayload validates and normalises API payload', () => {
-  assert.deepEqual(
-    normaliseActiveNodeStatsPayload({
-      active_nodes: { hour: '11', day: 22, week: 33, month: 44 },
-      sampled: false,
-    }),
-    { hour: 11, day: 22, week: 33, month: 44, sampled: false }
-  );
+  const result = normaliseActiveNodeStatsPayload({
+    active_nodes: { hour: '11', day: 22, week: 33, month: 44 },
+    sampled: false,
+  });
+  assert.equal(result.hour, 11);
+  assert.equal(result.day, 22);
+  assert.equal(result.week, 33);
+  assert.equal(result.month, 44);
+  assert.equal(result.sampled, false);
+});
+
+test('normaliseActiveNodeStatsPayload includes per-protocol buckets when present', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    active_nodes: { hour: 10, day: 20, week: 30, month: 40 },
+    meshcore: { hour: 3, day: 8, week: 12, month: 15 },
+    meshtastic: { hour: 7, day: 12, week: 18, month: 25 },
+    sampled: false,
+  });
+  assert.deepEqual(result.meshcore, { hour: 3, day: 8, week: 12, month: 15 });
+  assert.deepEqual(result.meshtastic, { hour: 7, day: 12, week: 18, month: 25 });
+});
+
+test('normaliseActiveNodeStatsPayload omits per-protocol buckets when absent', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    active_nodes: { hour: 1, day: 2, week: 3, month: 4 },
+    sampled: false,
+  });
+  assert.equal(result.meshcore, undefined);
+  assert.equal(result.meshtastic, undefined);
+});
+
+test('normaliseActiveNodeStatsPayload ignores malformed per-protocol buckets', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    active_nodes: { hour: 1, day: 2, week: 3, month: 4 },
+    meshcore: { hour: 'bad', day: 1, week: 1, month: 1 },
+    meshtastic: 'not-an-object',
+    sampled: false,
+  });
+  assert.equal(result.hour, 1);
+  assert.equal(result.meshcore, undefined);
+  assert.equal(result.meshtastic, undefined);
 });
 
 test('normaliseActiveNodeStatsPayload returns null for missing active_nodes', () => {
@@ -157,13 +208,22 @@ test('fetchActiveNodeStats returns remote stats when /api/stats succeeds', async
 });
 
 test('fetchActiveNodeStats falls back to local counts on network error', async () => {
-  const nodes = [{ last_heard: NOW - 120 }, { last_heard: NOW - (10 * 86_400) }];
+  const nodes = [
+    { last_heard: NOW - 120, protocol: 'meshtastic' },
+    { last_heard: NOW - (10 * 86_400), protocol: 'meshcore' },
+  ];
   const stats = await fetchActiveNodeStats({
     nodes,
     nowSeconds: NOW,
     fetchImpl: async () => { throw new Error('network down'); },
   });
-  assert.deepEqual(stats, { hour: 1, day: 1, week: 1, month: 2, sampled: true });
+  assert.equal(stats.hour, 1);
+  assert.equal(stats.day, 1);
+  assert.equal(stats.week, 1);
+  assert.equal(stats.month, 2);
+  assert.equal(stats.sampled, true);
+  assert.ok(stats.meshcore != null, 'fallback should include meshcore');
+  assert.ok(stats.meshtastic != null, 'fallback should include meshtastic');
 });
 
 test('fetchActiveNodeStats falls back to local counts on non-OK status', async () => {

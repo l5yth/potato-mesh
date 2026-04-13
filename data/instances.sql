@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS instances (
   last_update_time  INTEGER,
   is_private        BOOLEAN NOT NULL DEFAULT 0,
   nodes_count       INTEGER,
+  meshcore_nodes_count   INTEGER,
+  meshtastic_nodes_count INTEGER,
   contact_link      TEXT,
   signature         TEXT
 );

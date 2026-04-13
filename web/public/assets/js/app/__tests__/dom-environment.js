@@ -326,6 +326,14 @@ export function createDomEnvironment(options = {}) {
     querySelector() {
       return null;
     },
+    querySelectorAll(selector) {
+      // Delegate to body when available — MockElement.querySelectorAll supports
+      // class selectors which covers the majority of test-time lookups.
+      if (document.body && typeof document.body.querySelectorAll === 'function') {
+        return document.body.querySelectorAll(selector);
+      }
+      return [];
+    },
     createElement(tagName) {
       return new MockElement(tagName, registry);
     },

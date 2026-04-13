@@ -144,6 +144,8 @@ module PotatoMesh
           "lastUpdateTime" => last_update_time,
           "isPrivate" => private_flag,
           "nodesCount" => coerce_integer(row["nodes_count"]),
+          "meshcoreNodesCount" => coerce_integer(row["meshcore_nodes_count"]),
+          "meshtasticNodesCount" => coerce_integer(row["meshtastic_nodes_count"]),
           "contactLink" => string_or_nil(row["contact_link"]),
           "signature" => signature,
         }
@@ -175,7 +177,8 @@ module PotatoMesh
         min_last_update_time = now - PotatoMesh::Config.week_seconds
         sql = <<~SQL
           SELECT id, domain, pubkey, name, version, channel, frequency,
-                 latitude, longitude, last_update_time, is_private, nodes_count, contact_link, signature
+                 latitude, longitude, last_update_time, is_private, nodes_count,
+                 meshcore_nodes_count, meshtastic_nodes_count, contact_link, signature
           FROM instances
           WHERE domain IS NOT NULL AND TRIM(domain) != ''
             AND pubkey IS NOT NULL AND TRIM(pubkey) != ''

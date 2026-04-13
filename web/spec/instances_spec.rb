@@ -176,5 +176,52 @@ RSpec.describe PotatoMesh::App::Instances do
       expect(with_nodes["nodesCount"]).to eq(42)
       expect(zero_nodes["nodesCount"]).to eq(0)
     end
+
+    it "includes per-protocol node counts when present and omits when nil" do
+      fixed_time = Time.utc(2025, 2, 3, 8, 0, 0)
+      allow(Time).to receive(:now).and_return(fixed_time)
+
+      with_db do |db|
+        db.execute(
+          <<~SQL,
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count, meshcore_nodes_count, meshtastic_nodes_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+          [
+            "instance-proto-counts",
+            "proto.mesh.test",
+            PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+            fixed_time.to_i,
+            0,
+            50,
+            20,
+            30,
+          ],
+        )
+        db.execute(
+          <<~SQL,
+          INSERT INTO instances (id, domain, pubkey, last_update_time, is_private, nodes_count)
+          VALUES (?, ?, ?, ?, ?, ?)
+        SQL
+          [
+            "instance-no-proto",
+            "noproto.mesh.test",
+            PotatoMesh::Application::INSTANCE_PUBLIC_KEY_PEM,
+            fixed_time.to_i,
+            0,
+            10,
+          ],
+        )
+      end
+
+      payload = application_class.load_instances_for_api
+      with_proto = payload.find { |row| row["domain"] == "proto.mesh.test" }
+      without_proto = payload.find { |row| row["domain"] == "noproto.mesh.test" }
+
+      expect(with_proto["meshcoreNodesCount"]).to eq(20)
+      expect(with_proto["meshtasticNodesCount"]).to eq(30)
+      expect(without_proto.key?("meshcoreNodesCount")).to be(false)
+      expect(without_proto.key?("meshtasticNodesCount")).to be(false)
+    end
   end
 end
