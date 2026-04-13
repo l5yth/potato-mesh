@@ -1176,7 +1176,10 @@ def test_inactivity_reconnect_logs_queue_depth(monkeypatch):
 
 
 def test_main_exits_early_when_no_instances(monkeypatch):
-    """main() returns immediately when no INSTANCE_DOMAIN is configured."""
+    """main() returns immediately when no INSTANCE_DOMAIN is configured.
+
+    The queue drainer must NOT be started on the early-exit path.
+    """
     monkeypatch.setattr(daemon.config, "INSTANCES", ())
     monkeypatch.setattr(daemon.config, "INSTANCE", "")
     log_msgs: list[str] = []
@@ -1185,11 +1188,18 @@ def test_main_exits_early_when_no_instances(monkeypatch):
         "_debug_log",
         lambda msg, **kw: log_msgs.append(msg),
     )
+    drainer_calls: list[object] = []
+    monkeypatch.setattr(
+        daemon.queue,
+        "_start_queue_drainer",
+        lambda state=None: drainer_calls.append(state),
+    )
 
     provider = _make_minimal_fake_provider("meshtastic")
     daemon.main(provider=provider)
 
     assert any("no instance_domain" in m.lower() for m in log_msgs)
+    assert drainer_calls == [], "Drainer must not start when no instances configured"
 
 
 def test_main_starts_queue_drainer(monkeypatch):

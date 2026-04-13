@@ -641,6 +641,15 @@ def main(*, provider: MeshProtocol | None = None) -> None:
             topics=subscribed,
         )
 
+    if not config.INSTANCES and not config.INSTANCE:
+        config._debug_log(
+            "No INSTANCE_DOMAIN configured — cannot forward data; exiting",
+            context="daemon.main",
+            severity="error",
+            always=True,
+        )
+        return
+
     queue._start_queue_drainer(queue.STATE)
 
     state = _DaemonState(
@@ -677,15 +686,6 @@ def main(*, provider: MeshProtocol | None = None) -> None:
     if threading.current_thread() == threading.main_thread():
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGTERM, handle_sigterm)
-
-    if not config.INSTANCES and not config.INSTANCE:
-        config._debug_log(
-            "No INSTANCE_DOMAIN configured — cannot forward data; exiting",
-            context="daemon.main",
-            severity="error",
-            always=True,
-        )
-        return
 
     instance_label = ", ".join(inst for inst, _ in config.INSTANCES)
     config._debug_log(

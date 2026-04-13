@@ -153,7 +153,7 @@ def _send_single(
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
         return True
-    except Exception as exc:  # pragma: no cover - exercised in production
+    except Exception as exc:
         config._debug_log(
             "POST request failed",
             context="queue.post_json",
@@ -208,22 +208,24 @@ def _post_json(
                 config._debug_log(
                     "No target instances configured; discarding payload",
                     context="queue.post_json",
-                    severity="warn",
+                    severity="error",
                     always=True,
                     path=path,
                 )
             except Exception:
                 pass
-            return True
+            return False
         return _send_single(inst, api_token or config.API_TOKEN, path, payload)
 
     any_ok = False
+    any_attempted = False
     for inst, token in targets:
         if not inst:
             continue
+        any_attempted = True
         if _send_single(inst, token, path, payload):
             any_ok = True
-    return any_ok
+    return any_ok or not any_attempted
 
 
 def _enqueue_post_json(
@@ -384,7 +386,7 @@ def _queue_drainer_loop(state: QueueState = STATE) -> None:
                 config._debug_log(
                     "Queue drainer error",
                     context="queue.drainer",
-                    severity="warn",
+                    severity="error",
                     always=True,
                     error_class=exc.__class__.__name__,
                     error_message=str(exc),

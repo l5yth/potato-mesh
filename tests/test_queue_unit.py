@@ -1002,8 +1002,8 @@ class TestDrainerAutoRestart:
 class TestNoInstancesWarning:
     """Tests for the warning log when no target instances are configured."""
 
-    def test_post_json_warns_when_no_instances(self, monkeypatch):
-        """A warning is logged when INSTANCES and INSTANCE are both empty."""
+    def test_post_json_errors_when_no_instances(self, monkeypatch):
+        """An error is logged when INSTANCES and INSTANCE are both empty."""
         monkeypatch.setattr(config, "INSTANCES", ())
         monkeypatch.setattr(config, "INSTANCE", "")
         log_kwargs: list[dict] = []
@@ -1015,14 +1015,14 @@ class TestNoInstancesWarning:
 
         result = _post_json("/api/nowhere", {"v": 1})
 
-        assert result is True  # Not a transient failure
+        assert result is False
         assert any(
-            kw.get("always") is True and kw.get("severity") == "warn"
+            kw.get("always") is True and kw.get("severity") == "error"
             for kw in log_kwargs
         )
 
     def test_post_json_survives_log_exception_on_no_instances(self, monkeypatch):
-        """_post_json still returns True when logging itself raises."""
+        """_post_json still returns False when logging itself raises."""
         monkeypatch.setattr(config, "INSTANCES", ())
         monkeypatch.setattr(config, "INSTANCE", "")
         monkeypatch.setattr(
@@ -1030,7 +1030,7 @@ class TestNoInstancesWarning:
             "_debug_log",
             lambda *a, **kw: (_ for _ in ()).throw(OSError("log broken")),
         )
-        assert _post_json("/api/nowhere", {}) is True
+        assert _post_json("/api/nowhere", {}) is False
 
 
 # ---------------------------------------------------------------------------
