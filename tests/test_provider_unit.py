@@ -125,6 +125,8 @@ def test_daemon_main_uses_provider_connect(monkeypatch):
         ),
     )
 
+    monkeypatch.setattr(daemon.config, "INSTANCES", (("http://test", ""),))
+    monkeypatch.setattr(daemon.config, "INSTANCE", "http://test")
     monkeypatch.setattr(
         daemon.handlers, "register_host_node_id", lambda *_a, **_k: None
     )
