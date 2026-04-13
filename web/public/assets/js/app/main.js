@@ -1314,6 +1314,8 @@ export function initializeApp(config) {
   let legendToggleControl = null;
   let meshcoreCountEl = null;
   let meshtasticCountEl = null;
+  let meshcoreColEl = null;
+  let meshtasticColEl = null;
   let legendToggleButton = null;
   let legendVisible = true;
 
@@ -1588,6 +1590,7 @@ export function initializeApp(config) {
 
       // --- MeshCore column (left, bottom-aligned) ---
       const meshcoreCol = L.DomUtil.create('div', 'legend-column legend-column--bottom', itemsContainer);
+      meshcoreColEl = meshcoreCol;
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
       meshcoreColHeader.appendChild(buildMeshcoreIconImg());
       const meshcoreColTitle = document.createElement('span');
@@ -1599,6 +1602,7 @@ export function initializeApp(config) {
 
       // --- Meshtastic column (right) ---
       const meshtasticCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
+      meshtasticColEl = meshtasticCol;
       const meshtasticColHeader = L.DomUtil.create('div', 'legend-column-header', meshtasticCol);
       meshtasticColHeader.appendChild(buildMeshtasticIconImg());
       const meshtasticColTitle = document.createElement('span');
@@ -4369,11 +4373,16 @@ export function initializeApp(config) {
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
-    // Title and legend counts are intentionally global — they reflect the whole
-    // network, not just the nodes visible under the current filter.
-    updateTitleCount(allNodes, nowSec);
-    updateLegendProtocolCounts(allNodes, nowSec);
-    updateFooterStats(sortedNodes, nowSec);
+    // Title, legend, and footer counts all derive from /api/stats so they
+    // reflect the full network regardless of client-side filters.
+    const statsRequestId = ++activeStatsRequestId;
+    void fetchActiveNodeStats({ nodes: allNodes, nowSeconds: nowSec }).then(stats => {
+      if (statsRequestId !== activeStatsRequestId) return;
+      updateTitleCount(stats);
+      updateLegendProtocolCounts(stats);
+      updateFooterStats(stats);
+      applyProtocolVisibility(stats);
+    });
     updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
     // highlight matching substrings in their original case.
@@ -4522,13 +4531,11 @@ export function initializeApp(config) {
   /**
    * Update the page/tab title with the total active-node count for the past 7 days.
    *
-   * @param {Array<Object>} nodes All node payloads (unfiltered — counts are global).
-   * @param {number} nowSec Reference timestamp.
+   * @param {{week: number}} stats Active-node stats from /api/stats.
    * @returns {void}
    */
-  function updateTitleCount(nodes, nowSec) {
-    const weekAgoSec = nowSec - 7 * 86_400;
-    const count = nodes.filter(n => n.last_heard && Number(n.last_heard) >= weekAgoSec).length;
+  function updateTitleCount(stats) {
+    const count = stats?.week ?? 0;
     const text = `${baseTitle} (${count})`;
     titleEl.textContent = text;
     if (headerTitleTextEl) {
@@ -4541,38 +4548,46 @@ export function initializeApp(config) {
   /**
    * Update legend column headers with per-protocol active node counts (7 days).
    *
-   * @param {Array<Object>} nodes All node payloads (unfiltered).
-   * @param {number} nowSec Reference timestamp.
+   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}}} stats Stats from /api/stats.
    * @returns {void}
    */
-  function updateLegendProtocolCounts(nodes, nowSec) {
+  function updateLegendProtocolCounts(stats) {
     if (!meshcoreCountEl && !meshtasticCountEl) return;
-    const weekAgoSec = nowSec - 7 * 86_400;
-    const recentNodes = nodes.filter(n => Number.isFinite(Number(n.last_heard)) && Number(n.last_heard) >= weekAgoSec);
-    const meshcoreCount = recentNodes.filter(n => n.protocol === 'meshcore').length;
-    // Treat any non-meshcore node as Meshtastic until additional protocols are supported.
-    const meshtasticCount = recentNodes.filter(n => n.protocol !== 'meshcore').length;
-    if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${meshcoreCount})`;
-    if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${meshtasticCount})`;
+    if (meshcoreCountEl) meshcoreCountEl.textContent = ` (${stats?.meshcore?.week ?? 0})`;
+    if (meshtasticCountEl) meshtasticCountEl.textContent = ` (${stats?.meshtastic?.week ?? 0})`;
   }
 
   /**
    * Update the footer active-node stats element with day/week/month counts.
    *
-   * @param {Array<Object>} nodes Node payloads.
-   * @param {number} nowSec Reference timestamp.
+   * @param {{day: number, week: number, month: number, sampled: boolean}} stats Stats from /api/stats.
    * @returns {void}
    */
-  function updateFooterStats(nodes, nowSec) {
-    if (!footerActiveNodes) {
-      return;
-    }
-    const requestId = ++activeStatsRequestId;
-    void fetchActiveNodeStats({ nodes, nowSeconds: nowSec }).then(stats => {
-      if (requestId !== activeStatsRequestId) {
-        return;
-      }
-      footerActiveNodes.textContent = 'Active: ' + formatActiveNodeStatsText({ stats });
+  function updateFooterStats(stats) {
+    if (!footerActiveNodes) return;
+    footerActiveNodes.textContent = 'Active: ' + formatActiveNodeStatsText({ stats });
+  }
+
+  /**
+   * Hide/show UI elements based on per-protocol activity in the past 7 days.
+   *
+   * Hides the Charts nav link when meshtastic has no active nodes, and hides
+   * legend columns for protocols with zero weekly activity.
+   *
+   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}}} stats Stats from /api/stats.
+   * @returns {void}
+   */
+  function applyProtocolVisibility(stats) {
+    const meshcoreWeek = stats?.meshcore?.week ?? 0;
+    const meshtasticWeek = stats?.meshtastic?.week ?? 0;
+
+    // Hide legend columns for protocols with no activity in the past 7 days.
+    if (meshcoreColEl) meshcoreColEl.style.display = meshcoreWeek === 0 ? 'none' : '';
+    if (meshtasticColEl) meshtasticColEl.style.display = meshtasticWeek === 0 ? 'none' : '';
+
+    // Charts is meshtastic-only; hide the nav link when no meshtastic activity.
+    document.querySelectorAll('a[href="/charts"]').forEach(el => {
+      el.style.display = meshtasticWeek === 0 ? 'none' : '';
     });
   }
 
@@ -4607,11 +4622,17 @@ export function initializeApp(config) {
       updateTitleCount,
       updateLegendProtocolCounts,
       updateFooterStats,
+      applyProtocolVisibility,
       restartAutoRefresh,
       /** Inject mock count span elements for legend protocol count tests. */
       _setProtocolCountElements(mc, mt) {
         meshcoreCountEl = mc;
         meshtasticCountEl = mt;
+      },
+      /** Inject mock column elements for protocol visibility tests. */
+      _setProtocolColElements(mc, mt) {
+        meshcoreColEl = mc;
+        meshtasticColEl = mt;
       },
     },
   };

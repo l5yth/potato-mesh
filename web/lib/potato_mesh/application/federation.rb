@@ -63,7 +63,8 @@ module PotatoMesh
       def self_instance_attributes
         domain = self_instance_domain
         last_update = latest_node_update_timestamp || Time.now.to_i
-        nodes_count = active_node_count_since(Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age)
+        cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+        nodes_count = active_node_count_since(cutoff)
         {
           id: app_constant(:SELF_INSTANCE_ID),
           domain: domain,
@@ -78,6 +79,8 @@ module PotatoMesh
           is_private: private_mode?,
           contact_link: sanitized_contact_link,
           nodes_count: nodes_count,
+          meshcore_nodes_count: active_node_count_since_for_protocol(cutoff, "meshcore"),
+          meshtastic_nodes_count: active_node_count_since_for_protocol(cutoff, "meshtastic"),
         }
       end
 
@@ -99,6 +102,39 @@ module PotatoMesh
         warn_log(
           "Failed to count active nodes",
           context: "instances.nodes_count",
+          error_class: e.class.name,
+          error_message: e.message,
+        )
+        nil
+      ensure
+        handle&.close unless db
+      end
+
+      # Count the number of nodes for a specific protocol active since the
+      # supplied timestamp.
+      #
+      # @param cutoff [Integer] unix timestamp in seconds.
+      # @param protocol [String] protocol name (e.g. "meshcore", "meshtastic").
+      # @param db [SQLite3::Database, nil] optional open handle to reuse.
+      # @return [Integer, nil] node count or nil when unavailable.
+      def active_node_count_since_for_protocol(cutoff, protocol, db: nil)
+        return nil unless cutoff && protocol
+
+        handle = db || open_database(readonly: true)
+        count =
+          with_busy_retry do
+            handle.get_first_value(
+              "SELECT COUNT(*) FROM nodes WHERE last_heard >= ? AND protocol = ?",
+              cutoff.to_i,
+              protocol,
+            )
+          end
+        Integer(count)
+      rescue SQLite3::Exception, ArgumentError => e
+        warn_log(
+          "Failed to count active nodes for protocol",
+          context: "instances.protocol_nodes_count",
+          protocol: protocol,
           error_class: e.class.name,
           error_message: e.message,
         )
@@ -1097,6 +1133,14 @@ module PotatoMesh
           )
           attributes[:nodes_count] = stats_count if stats_count
 
+          # Extract per-protocol 24h counts (informational, not signed).
+          if stats_payload.is_a?(Hash)
+            mc_day = stats_payload.dig("meshcore", "day")
+            mt_day = stats_payload.dig("meshtastic", "day")
+            attributes[:meshcore_nodes_count] = coerce_integer(mc_day) if mc_day
+            attributes[:meshtastic_nodes_count] = coerce_integer(mt_day) if mt_day
+          end
+
           nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"
           nodes_since_window, nodes_since_metadata = fetch_instance_json(attributes[:domain], nodes_since_path)
           if stats_count.nil? && attributes[:nodes_count].nil? && nodes_since_window.is_a?(Array)
@@ -1398,8 +1442,9 @@ module PotatoMesh
         sql = <<~SQL
           INSERT INTO instances (
             id, domain, pubkey, name, version, channel, frequency,
-            latitude, longitude, last_update_time, is_private, nodes_count, contact_link, signature
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            latitude, longitude, last_update_time, is_private, nodes_count,
+            meshcore_nodes_count, meshtastic_nodes_count, contact_link, signature
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             domain=excluded.domain,
             pubkey=excluded.pubkey,
@@ -1412,6 +1457,8 @@ module PotatoMesh
             last_update_time=excluded.last_update_time,
             is_private=excluded.is_private,
             nodes_count=excluded.nodes_count,
+            meshcore_nodes_count=excluded.meshcore_nodes_count,
+            meshtastic_nodes_count=excluded.meshtastic_nodes_count,
             contact_link=excluded.contact_link,
             signature=excluded.signature
         SQL
@@ -1430,6 +1477,8 @@ module PotatoMesh
           attributes[:last_update_time],
           attributes[:is_private] ? 1 : 0,
           nodes_count,
+          coerce_integer(attributes[:meshcore_nodes_count]),
+          coerce_integer(attributes[:meshtastic_nodes_count]),
           attributes[:contact_link],
           signature,
         ]

@@ -26,11 +26,12 @@
  */
 
 /**
- * Compute active-node counts from a local node array.
+ * Compute active-node counts from a local node array, including per-protocol
+ * breakdowns for meshcore and meshtastic.
  *
  * @param {Array<Object>} nodes Node payloads.
  * @param {number} nowSeconds Reference timestamp (Unix seconds).
- * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean}} Local count snapshot.
+ * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}} Local count snapshot.
  */
 export function computeLocalActiveNodeStats(nodes, nowSeconds) {
   const safeNodes = Array.isArray(nodes) ? nodes : [];
@@ -42,20 +43,48 @@ export function computeLocalActiveNodeStats(nodes, nowSeconds) {
     { key: 'month', secs: 30 * 86_400 }
   ];
   const counts = { sampled: true };
+  const meshcore = {};
+  const meshtastic = {};
   for (const window of windows) {
-    counts[window.key] = safeNodes.filter(node => {
+    const active = safeNodes.filter(node => {
       const lastHeard = Number(node?.last_heard);
       return Number.isFinite(lastHeard) && referenceNow - lastHeard <= window.secs;
-    }).length;
+    });
+    counts[window.key] = active.length;
+    meshcore[window.key] = active.filter(n => n.protocol === 'meshcore').length;
+    meshtastic[window.key] = active.filter(n => n.protocol !== 'meshcore').length;
   }
+  counts.meshcore = meshcore;
+  counts.meshtastic = meshtastic;
   return counts;
+}
+
+/**
+ * Normalise a per-protocol bucket ({hour, day, week, month}) from the payload.
+ *
+ * @param {*} bucket Candidate object.
+ * @returns {{hour: number, day: number, week: number, month: number}|null} Normalized bucket or null.
+ */
+function normaliseProtocolBucket(bucket) {
+  if (!bucket || typeof bucket !== 'object') return null;
+  const hour = Number(bucket.hour);
+  const day = Number(bucket.day);
+  const week = Number(bucket.week);
+  const month = Number(bucket.month);
+  if (![hour, day, week, month].every(Number.isFinite)) return null;
+  return {
+    hour: Math.max(0, Math.trunc(hour)),
+    day: Math.max(0, Math.trunc(day)),
+    week: Math.max(0, Math.trunc(week)),
+    month: Math.max(0, Math.trunc(month)),
+  };
 }
 
 /**
  * Parse and validate the ``/api/stats`` payload.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
- * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean}|null} Normalized stats or null.
+ * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}|null} Normalized stats or null.
  */
 export function normaliseActiveNodeStatsPayload(payload) {
   const activeNodes = payload && typeof payload === 'object' ? payload.active_nodes : null;
@@ -69,13 +98,18 @@ export function normaliseActiveNodeStatsPayload(payload) {
   if (![hour, day, week, month].every(Number.isFinite)) {
     return null;
   }
-  return {
+  const result = {
     hour: Math.max(0, Math.trunc(hour)),
     day: Math.max(0, Math.trunc(day)),
     week: Math.max(0, Math.trunc(week)),
     month: Math.max(0, Math.trunc(month)),
     sampled: Boolean(payload.sampled)
   };
+  const meshcore = normaliseProtocolBucket(payload.meshcore);
+  const meshtastic = normaliseProtocolBucket(payload.meshtastic);
+  if (meshcore) result.meshcore = meshcore;
+  if (meshtastic) result.meshtastic = meshtastic;
+  return result;
 }
 
 // Module-level cache state for the remote stats endpoint.

@@ -5909,14 +5909,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/stats" do
-    it "returns exact SQL-backed activity counts without list-endpoint sampling" do
+    it "returns exact SQL-backed activity counts with per-protocol breakdowns" do
       clear_database
       now = reference_time.to_i
       allow(Time).to receive(:now).and_return(reference_time)
 
       with_db do |db|
         db.transaction
-        1005.times do |index|
+        # 1000 meshtastic nodes heard within the hour (protocol defaults to meshtastic)
+        1000.times do |index|
           heard = now - (index % 1800)
           node_id = format("!%08x", index + 1)
           db.execute(
@@ -5924,10 +5925,21 @@ RSpec.describe "Potato Mesh Sinatra app" do
             [node_id, index + 1, "n#{index}", "Node #{index}", "TBEAM", "CLIENT", heard, heard],
           )
         end
+        # 5 meshcore nodes heard within the hour
+        5.times do |index|
+          heard = now - (index % 1800)
+          node_id = format("!mc%06x", index + 1)
+          db.execute(
+            "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?,?,?)",
+            [node_id, 100_001 + index, "mc#{index}", "MC Node #{index}", "TBEAM", "CLIENT", heard, heard, "meshcore"],
+          )
+        end
+        # 1 meshtastic node heard 2 days ago (week window only)
         db.execute(
           INSERT_NODE_WITH_METADATA_SQL,
           ["!week0001", 200_001, "week", "Week Node", "TBEAM", "CLIENT", now - (2 * 86_400), now - (2 * 86_400)],
         )
+        # 1 meshtastic node heard 20 days ago (month window only)
         db.execute(
           INSERT_NODE_WITH_METADATA_SQL,
           ["!month001", 200_002, "month", "Month Node", "TBEAM", "CLIENT", now - (20 * 86_400), now - (20 * 86_400)],
@@ -5945,6 +5957,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "day" => 1005,
         "week" => 1006,
         "month" => 1007,
+      )
+      expect(payload["meshcore"]).to include(
+        "hour" => 5,
+        "day" => 5,
+        "week" => 5,
+        "month" => 5,
+      )
+      expect(payload["meshtastic"]).to include(
+        "hour" => 1000,
+        "day" => 1000,
+        "week" => 1001,
+        "month" => 1002,
       )
     end
   end

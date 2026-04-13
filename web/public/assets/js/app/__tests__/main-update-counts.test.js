@@ -30,10 +30,11 @@ test('updateLegendProtocolCounts returns early when both count elements are null
   try {
     // Default state: meshcoreCountEl and meshtasticCountEl are null — should not throw.
     assert.doesNotThrow(() => {
-      testUtils.updateLegendProtocolCounts(
-        [{ last_heard: NOW - 100, protocol: 'meshcore' }],
-        NOW,
-      );
+      testUtils.updateLegendProtocolCounts({
+        week: 10,
+        meshcore: { hour: 1, day: 2, week: 3, month: 4 },
+        meshtastic: { hour: 5, day: 6, week: 7, month: 8 },
+      });
     });
   } finally {
     cleanup();
@@ -47,13 +48,11 @@ test('updateLegendProtocolCounts sets per-protocol counts when elements are pres
     const mtEl = { textContent: '' };
     testUtils._setProtocolCountElements(mcEl, mtEl);
 
-    const nodes = [
-      { last_heard: NOW - 100, protocol: 'meshcore' },
-      { last_heard: NOW - 200, protocol: 'meshcore' },
-      { last_heard: NOW - 300, protocol: 'meshtastic' },
-      { last_heard: NOW - (8 * 86_400) }, // outside 7-day window, should not count
-    ];
-    testUtils.updateLegendProtocolCounts(nodes, NOW);
+    testUtils.updateLegendProtocolCounts({
+      week: 3,
+      meshcore: { hour: 1, day: 1, week: 2, month: 3 },
+      meshtastic: { hour: 0, day: 1, week: 1, month: 2 },
+    });
 
     assert.equal(mcEl.textContent, ' (2)', 'meshcore count should be 2');
     assert.equal(mtEl.textContent, ' (1)', 'meshtastic count should be 1');
@@ -62,21 +61,18 @@ test('updateLegendProtocolCounts sets per-protocol counts when elements are pres
   }
 });
 
-test('updateLegendProtocolCounts bins unknown protocols into the meshtastic column', () => {
+test('updateLegendProtocolCounts handles missing per-protocol data gracefully', () => {
   const { testUtils, cleanup } = setupApp();
   try {
     const mcEl = { textContent: '' };
     const mtEl = { textContent: '' };
     testUtils._setProtocolCountElements(mcEl, mtEl);
 
-    const nodes = [
-      { last_heard: NOW - 100, protocol: 'reticulum' }, // unknown → meshtastic bucket
-      { last_heard: NOW - 200, protocol: 'meshcore' },
-    ];
-    testUtils.updateLegendProtocolCounts(nodes, NOW);
+    // Stats without per-protocol breakdowns (e.g. from an old instance).
+    testUtils.updateLegendProtocolCounts({ week: 5 });
 
-    assert.equal(mcEl.textContent, ' (1)');
-    assert.equal(mtEl.textContent, ' (1)');
+    assert.equal(mcEl.textContent, ' (0)');
+    assert.equal(mtEl.textContent, ' (0)');
   } finally {
     cleanup();
   }
@@ -88,10 +84,10 @@ test('updateLegendProtocolCounts works when only meshcoreCountEl is present', ()
     const mcEl = { textContent: '' };
     testUtils._setProtocolCountElements(mcEl, null);
 
-    testUtils.updateLegendProtocolCounts(
-      [{ last_heard: NOW - 100, protocol: 'meshcore' }],
-      NOW,
-    );
+    testUtils.updateLegendProtocolCounts({
+      week: 5,
+      meshcore: { hour: 0, day: 0, week: 1, month: 2 },
+    });
     assert.equal(mcEl.textContent, ' (1)');
   } finally {
     cleanup();
@@ -104,10 +100,10 @@ test('updateLegendProtocolCounts works when only meshtasticCountEl is present', 
     const mtEl = { textContent: '' };
     testUtils._setProtocolCountElements(null, mtEl);
 
-    testUtils.updateLegendProtocolCounts(
-      [{ last_heard: NOW - 100, protocol: 'meshtastic' }],
-      NOW,
-    );
+    testUtils.updateLegendProtocolCounts({
+      week: 5,
+      meshtastic: { hour: 0, day: 0, week: 1, month: 2 },
+    });
     assert.equal(mtEl.textContent, ' (1)');
   } finally {
     cleanup();
@@ -122,53 +118,107 @@ test('updateFooterStats is a no-op when footerActiveNodes element is absent', ()
   const { testUtils, cleanup } = setupApp();
   try {
     assert.doesNotThrow(() => {
-      testUtils.updateFooterStats([{ last_heard: NOW - 100 }], NOW);
+      testUtils.updateFooterStats({ day: 1, week: 2, month: 3, sampled: false });
     });
   } finally {
     cleanup();
   }
 });
 
-test('updateFooterStats populates the active-stats element when present', async () => {
+test('updateFooterStats populates the active-stats element when present', () => {
   const { testUtils, env, cleanup } = setupAppWithOptions({
     extraElements: ['footerActiveNodes'],
   });
   try {
     const el = env.document.getElementById('footerActiveNodes');
-    testUtils.updateFooterStats([{ last_heard: NOW - 100 }], NOW);
-
-    // Drain the microtask queue so the async .then callback executes.
-    await new Promise(resolve => setImmediate(resolve));
+    testUtils.updateFooterStats({ day: 10, week: 20, month: 30, sampled: false });
 
     assert.ok(
       el.textContent.includes('/day'),
       `expected footerActiveNodes to contain "/day", got: ${el.textContent}`,
+    );
+    assert.ok(
+      el.textContent.includes('10/day'),
+      `expected footerActiveNodes to contain "10/day", got: ${el.textContent}`,
     );
   } finally {
     cleanup();
   }
 });
 
-test('updateFooterStats discards stale responses when a newer request is in flight', async () => {
-  const { testUtils, env, cleanup } = setupAppWithOptions({
-    extraElements: ['footerActiveNodes'],
-  });
+// ---------------------------------------------------------------------------
+// applyProtocolVisibility
+// ---------------------------------------------------------------------------
+
+test('applyProtocolVisibility hides meshcore column when meshcore week is 0', () => {
+  const { testUtils, cleanup } = setupApp();
   try {
-    const el = env.document.getElementById('footerActiveNodes');
+    const mcCol = { style: { display: '' } };
+    const mtCol = { style: { display: '' } };
+    testUtils._setProtocolColElements(mcCol, mtCol);
 
-    // Fire two sequential updates; only the second should be applied.
-    testUtils.updateFooterStats([{ last_heard: NOW - 100 }], NOW);
-    testUtils.updateFooterStats([{ last_heard: NOW - 200 }], NOW);
+    testUtils.applyProtocolVisibility({
+      meshcore: { hour: 0, day: 0, week: 0, month: 0 },
+      meshtastic: { hour: 1, day: 5, week: 10, month: 20 },
+    });
 
-    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(mcCol.style.display, 'none', 'meshcore column should be hidden');
+    assert.equal(mtCol.style.display, '', 'meshtastic column should remain visible');
+  } finally {
+    cleanup();
+  }
+});
 
-    // Either one or neither result lands; the key invariant is no error thrown
-    // and the element text is a valid stats string or empty.
-    const text = el.textContent;
-    assert.ok(
-      text === '' || text.includes('/day'),
-      `unexpected footerActiveNodes content: ${text}`,
-    );
+test('applyProtocolVisibility hides meshtastic column when meshtastic week is 0', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const mcCol = { style: { display: '' } };
+    const mtCol = { style: { display: '' } };
+    testUtils._setProtocolColElements(mcCol, mtCol);
+
+    testUtils.applyProtocolVisibility({
+      meshcore: { hour: 1, day: 5, week: 10, month: 20 },
+      meshtastic: { hour: 0, day: 0, week: 0, month: 0 },
+    });
+
+    assert.equal(mcCol.style.display, '', 'meshcore column should remain visible');
+    assert.equal(mtCol.style.display, 'none', 'meshtastic column should be hidden');
+  } finally {
+    cleanup();
+  }
+});
+
+test('applyProtocolVisibility shows both columns when both protocols have active nodes', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const mcCol = { style: { display: 'none' } };
+    const mtCol = { style: { display: 'none' } };
+    testUtils._setProtocolColElements(mcCol, mtCol);
+
+    testUtils.applyProtocolVisibility({
+      meshcore: { hour: 1, day: 2, week: 5, month: 10 },
+      meshtastic: { hour: 2, day: 3, week: 8, month: 15 },
+    });
+
+    assert.equal(mcCol.style.display, '', 'meshcore column should be visible');
+    assert.equal(mtCol.style.display, '', 'meshtastic column should be visible');
+  } finally {
+    cleanup();
+  }
+});
+
+test('applyProtocolVisibility handles missing per-protocol data gracefully', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    const mcCol = { style: { display: '' } };
+    const mtCol = { style: { display: '' } };
+    testUtils._setProtocolColElements(mcCol, mtCol);
+
+    // No per-protocol data at all — treat as 0.
+    testUtils.applyProtocolVisibility({ week: 5 });
+
+    assert.equal(mcCol.style.display, 'none');
+    assert.equal(mtCol.style.display, 'none');
   } finally {
     cleanup();
   }

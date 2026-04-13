@@ -626,6 +626,48 @@ RSpec.describe PotatoMesh::App::Federation do
         expect(row[2]).to eq("sig-2")
       end
     end
+
+    it "stores per-protocol node counts for new records" do
+      with_db do |db|
+        attrs = base_attributes.merge(
+          nodes_count: 50,
+          meshcore_nodes_count: 20,
+          meshtastic_nodes_count: 30,
+        )
+        federation_helpers.send(:upsert_instance_record, db, attrs, "sig-1")
+
+        row = db.get_first_row(
+          "SELECT nodes_count, meshcore_nodes_count, meshtastic_nodes_count FROM instances WHERE id = ?",
+          base_attributes[:id],
+        )
+        expect(row[0]).to eq(50)
+        expect(row[1]).to eq(20)
+        expect(row[2]).to eq(30)
+      end
+    end
+
+    it "updates per-protocol node counts on conflict" do
+      with_db do |db|
+        attrs = base_attributes.merge(
+          meshcore_nodes_count: 10,
+          meshtastic_nodes_count: 15,
+        )
+        federation_helpers.send(:upsert_instance_record, db, attrs, "sig-1")
+
+        updated_attrs = base_attributes.merge(
+          meshcore_nodes_count: 25,
+          meshtastic_nodes_count: 40,
+        )
+        federation_helpers.send(:upsert_instance_record, db, updated_attrs, "sig-2")
+
+        row = db.get_first_row(
+          "SELECT meshcore_nodes_count, meshtastic_nodes_count FROM instances WHERE id = ?",
+          base_attributes[:id],
+        )
+        expect(row[0]).to eq(25)
+        expect(row[1]).to eq(40)
+      end
+    end
   end
 
   describe ".federation_user_agent_header" do

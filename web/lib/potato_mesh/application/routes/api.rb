@@ -69,8 +69,14 @@ module PotatoMesh
 
           app.get "/api/stats" do
             content_type :json
+            stats = query_active_node_stats
             {
-              active_nodes: query_active_node_stats,
+              active_nodes: {
+                "hour" => stats["hour"], "day" => stats["day"],
+                "week" => stats["week"], "month" => stats["month"],
+              },
+              meshcore: stats["meshcore"],
+              meshtastic: stats["meshtastic"],
               sampled: false,
             }.to_json
           end

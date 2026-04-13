@@ -209,6 +209,17 @@ module PotatoMesh
 
         unless instance_columns.include?("nodes_count")
           db.execute("ALTER TABLE instances ADD COLUMN nodes_count INTEGER")
+          instance_columns << "nodes_count"
+        end
+
+        unless instance_columns.include?("meshcore_nodes_count")
+          db.execute("ALTER TABLE instances ADD COLUMN meshcore_nodes_count INTEGER")
+          instance_columns << "meshcore_nodes_count"
+        end
+
+        unless instance_columns.include?("meshtastic_nodes_count")
+          db.execute("ALTER TABLE instances ADD COLUMN meshtastic_nodes_count INTEGER")
+          instance_columns << "meshtastic_nodes_count"
         end
 
         telemetry_tables =

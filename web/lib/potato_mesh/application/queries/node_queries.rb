@@ -238,7 +238,8 @@ module PotatoMesh
       #
       # @param now [Integer] reference unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open database handle to reuse.
-      # @return [Hash{String => Integer}] counts keyed by hour/day/week/month.
+      # @return [Hash{String => Object}] counts keyed by hour/day/week/month plus
+      #   per-protocol breakdowns under "meshcore" and "meshtastic" sub-hashes.
       def query_active_node_stats(now: Time.now.to_i, db: nil)
         handle = db || open_database(readonly: true)
         handle.results_as_hash = true
@@ -247,22 +248,48 @@ module PotatoMesh
         day_cutoff = reference_now - 86_400
         week_cutoff = reference_now - PotatoMesh::Config.week_seconds
         month_cutoff = reference_now - (30 * 24 * 60 * 60)
-        private_filter = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        pf = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        proto = " AND protocol = ?"
         sql = <<~SQL
           SELECT
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS hour_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS day_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS week_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_filter}) AS month_count
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS hour_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS day_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS week_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS month_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_hour,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_day,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_week,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_month,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_hour,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_day,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_week,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_month
         SQL
+        cutoffs = [hour_cutoff, day_cutoff, week_cutoff, month_cutoff]
+        # Total counts bind only cutoffs; per-protocol counts bind cutoff + protocol string.
+        params = cutoffs +
+                 cutoffs.flat_map { |c| [c, "meshcore"] } +
+                 cutoffs.flat_map { |c| [c, "meshtastic"] }
         row = with_busy_retry do
-          handle.get_first_row(sql, [hour_cutoff, day_cutoff, week_cutoff, month_cutoff])
+          handle.get_first_row(sql, params)
         end || {}
         {
           "hour" => row["hour_count"].to_i,
           "day" => row["day_count"].to_i,
           "week" => row["week_count"].to_i,
           "month" => row["month_count"].to_i,
+          "meshcore" => {
+            "hour" => row["mc_hour"].to_i,
+            "day" => row["mc_day"].to_i,
+            "week" => row["mc_week"].to_i,
+            "month" => row["mc_month"].to_i,
+          },
+          "meshtastic" => {
+            "hour" => row["mt_hour"].to_i,
+            "day" => row["mt_day"].to_i,
+            "week" => row["mt_week"].to_i,
+            "month" => row["mt_month"].to_i,
+          },
         }
       ensure
         handle&.close unless db
