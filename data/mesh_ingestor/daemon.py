@@ -678,11 +678,16 @@ def main(*, provider: MeshProtocol | None = None) -> None:
         signal.signal(signal.SIGINT, handle_sigint)
         signal.signal(signal.SIGTERM, handle_sigterm)
 
-    instance_label = (
-        ", ".join(inst for inst, _ in config.INSTANCES)
-        if config.INSTANCES
-        else "(no INSTANCE_DOMAIN configured)"
-    )
+    if not config.INSTANCES and not config.INSTANCE:
+        config._debug_log(
+            "No INSTANCE_DOMAIN configured — cannot forward data; exiting",
+            context="daemon.main",
+            severity="error",
+            always=True,
+        )
+        return
+
+    instance_label = ", ".join(inst for inst, _ in config.INSTANCES)
     config._debug_log(
         "Mesh daemon starting",
         context="daemon.main",

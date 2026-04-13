@@ -1621,6 +1621,8 @@ def test_main_retries_interface_creation(mesh_module, monkeypatch):
             raise RuntimeError("boom")
         return iface, port
 
+    monkeypatch.setattr(mesh, "INSTANCES", (("http://test", ""),))
+    monkeypatch.setattr(mesh, "INSTANCE", "http://test")
     monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh.threading, "Event", DummyEvent)
@@ -1693,6 +1695,8 @@ def test_main_reconnects_when_connection_event_clears(mesh_module, monkeypatch):
             self._flag = True
             return True
 
+    monkeypatch.setattr(mesh, "INSTANCES", (("http://test", ""),))
+    monkeypatch.setattr(mesh, "INSTANCE", "http://test")
     monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh.threading, "Event", DummyStopEvent)
@@ -1757,6 +1761,8 @@ def test_main_recreates_interface_after_snapshot_error(mesh_module, monkeypatch)
     def record_upsert(node_id, node):
         upsert_calls.append(node_id)
 
+    monkeypatch.setattr(mesh, "INSTANCES", (("http://test", ""),))
+    monkeypatch.setattr(mesh, "INSTANCE", "http://test")
     monkeypatch.setattr(mesh, "CONNECTION", "/dev/ttyTEST")
     monkeypatch.setattr(mesh, "_create_serial_interface", fake_create)
     monkeypatch.setattr(mesh, "upsert_node", record_upsert)
@@ -1779,6 +1785,8 @@ def test_main_exits_when_defaults_unavailable(mesh_module, monkeypatch):
     def fail_default():
         raise mesh.NoAvailableMeshInterface("no interface available")
 
+    monkeypatch.setattr(mesh, "INSTANCES", (("http://test", ""),))
+    monkeypatch.setattr(mesh, "INSTANCE", "http://test")
     monkeypatch.setattr(mesh, "CONNECTION", None)
     monkeypatch.setattr(mesh, "_create_default_interface", fail_default)
     monkeypatch.setattr(mesh.signal, "signal", lambda *_, **__: None)

@@ -261,6 +261,8 @@ def _configure_common_defaults(
 ):
     """Set fast configuration defaults shared by daemon integration tests."""
 
+    monkeypatch.setattr(daemon.config, "INSTANCES", (("http://test", ""),))
+    monkeypatch.setattr(daemon.config, "INSTANCE", "http://test")
     monkeypatch.setattr(daemon.config, "SNAPSHOT_SECS", 0)
     monkeypatch.setattr(daemon.config, "_RECONNECT_INITIAL_DELAY_SECS", 0)
     monkeypatch.setattr(daemon.config, "_RECONNECT_MAX_DELAY_SECS", 0)
@@ -1171,6 +1173,23 @@ def test_inactivity_reconnect_logs_queue_depth(monkeypatch):
     finally:
         # Clean up global state so other tests are not affected.
         STATE.queue.clear()
+
+
+def test_main_exits_early_when_no_instances(monkeypatch):
+    """main() returns immediately when no INSTANCE_DOMAIN is configured."""
+    monkeypatch.setattr(daemon.config, "INSTANCES", ())
+    monkeypatch.setattr(daemon.config, "INSTANCE", "")
+    log_msgs: list[str] = []
+    monkeypatch.setattr(
+        daemon.config,
+        "_debug_log",
+        lambda msg, **kw: log_msgs.append(msg),
+    )
+
+    provider = _make_minimal_fake_provider("meshtastic")
+    daemon.main(provider=provider)
+
+    assert any("no instance_domain" in m.lower() for m in log_msgs)
 
 
 def test_main_starts_queue_drainer(monkeypatch):

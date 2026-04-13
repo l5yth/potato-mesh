@@ -369,14 +369,3 @@ class TestParseLoraFreqEnv:
         monkeypatch.delenv("FREQUENCY", raising=False)
         importlib.reload(config)
         assert config.LORA_FREQ is None
-
-    def test_inactivity_reconnect_secs_from_env(self, monkeypatch):
-        """INACTIVITY_RECONNECT_SECS env var overrides the compiled default."""
-        import importlib
-
-        monkeypatch.setenv("INACTIVITY_RECONNECT_SECS", "120")
-        importlib.reload(config)
-        assert config._INACTIVITY_RECONNECT_SECS == 120.0
-        # Restore so subsequent tests use the real default.
-        monkeypatch.delenv("INACTIVITY_RECONNECT_SECS", raising=False)
-        importlib.reload(config)

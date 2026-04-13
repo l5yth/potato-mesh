@@ -1020,3 +1020,179 @@ class TestNoInstancesWarning:
             kw.get("always") is True and kw.get("severity") == "warn"
             for kw in log_kwargs
         )
+
+    def test_post_json_survives_log_exception_on_no_instances(self, monkeypatch):
+        """_post_json still returns True when logging itself raises."""
+        monkeypatch.setattr(config, "INSTANCES", ())
+        monkeypatch.setattr(config, "INSTANCE", "")
+        monkeypatch.setattr(
+            config,
+            "_debug_log",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("log broken")),
+        )
+        assert _post_json("/api/nowhere", {}) is True
+
+
+# ---------------------------------------------------------------------------
+# Defensive exception guard coverage
+# ---------------------------------------------------------------------------
+
+
+class TestDefensiveExceptionGuards:
+    """Cover the ``except Exception: pass`` guards wrapping ``_debug_log`` calls.
+
+    These guards ensure that a broken logging backend (e.g. ``BrokenPipeError``
+    from ``print()`` to a closed stdout) never crashes the drainer thread or
+    drops data.
+    """
+
+    def test_drain_drop_log_exception(self, monkeypatch):
+        """Max-retries drop path survives a broken _debug_log."""
+        state = _fresh_state()
+        monkeypatch.setattr(
+            config,
+            "_debug_log",
+            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
+        )
+
+        attempts: list[str] = []
+
+        def always_fail(path, payload):
+            attempts.append(path)
+            return False
+
+        _enqueue_post_json("/api/fail", {}, 10, state=state)
+        # Should not raise even though _debug_log throws on the drop message.
+        _drain_post_queue(state, send=always_fail)
+        assert attempts.count("/api/fail") == _MAX_SEND_RETRIES + 1
+
+    def test_drainer_startup_log_exception(self, monkeypatch):
+        """Drainer thread starts even when the startup log raises."""
+        state = _fresh_state()
+        monkeypatch.setattr(
+            config,
+            "_debug_log",
+            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
+        )
+        _start_queue_drainer(state)
+        time.sleep(0.15)
+        assert state.drainer is not None
+        assert state.drainer.is_alive()
+        # Restore log so stop can log cleanly.
+        monkeypatch.undo()
+        _stop_queue_drainer(state)
+
+    def test_drainer_exit_log_exception(self, monkeypatch):
+        """Drainer thread exits cleanly even when the exit log raises."""
+        state = _fresh_state()
+        _start_queue_drainer(state)
+        time.sleep(0.05)
+        # Break _debug_log AFTER startup so only the exit log raises.
+        monkeypatch.setattr(
+            config,
+            "_debug_log",
+            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
+        )
+        _stop_queue_drainer(state)
+        assert state.drainer is None
+
+    def test_drainer_depth_warning_log_exception(self, monkeypatch):
+        """Drainer survives a broken _debug_log during depth warning."""
+        state = _fresh_state()
+        drained: list[str] = []
+
+        original_post_json = _queue_mod._post_json
+        _queue_mod._post_json = lambda path, payload: drained.append(path)
+        try:
+            _start_queue_drainer(state)
+            time.sleep(0.05)
+            # Break _debug_log so the depth warning raises.
+            monkeypatch.setattr(
+                config,
+                "_debug_log",
+                lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
+            )
+            for i in range(_QUEUE_DEPTH_WARNING_THRESHOLD + 1):
+                _enqueue_post_json(f"/api/{i}", {}, 10, state=state)
+            state.drain_event.set()
+            deadline = time.monotonic() + 2.0
+            while (
+                len(drained) < _QUEUE_DEPTH_WARNING_THRESHOLD + 1
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            assert len(drained) == _QUEUE_DEPTH_WARNING_THRESHOLD + 1
+        finally:
+            _queue_mod._post_json = original_post_json
+            monkeypatch.undo()
+            _stop_queue_drainer(state)
+
+    def test_drainer_error_handler_log_exception(self, monkeypatch):
+        """Drainer survives when both drain and error-log raise."""
+        state = _fresh_state()
+        call_count = [0]
+        original_drain = _queue_mod._drain_post_queue
+
+        def flaky_drain(s, send=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("drain boom")
+            original_drain(s, send=send)
+
+        drained: list[str] = []
+        original_post_json = _queue_mod._post_json
+        _queue_mod._post_json = lambda path, payload: drained.append(path)
+        monkeypatch.setattr(_queue_mod, "_drain_post_queue", flaky_drain)
+        # _debug_log raises on the error handler's inner logging call.
+        monkeypatch.setattr(
+            config,
+            "_debug_log",
+            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
+        )
+        try:
+            _start_queue_drainer(state)
+            _enqueue_post_json("/api/first", {}, 10, state=state)
+            state.drain_event.set()
+            time.sleep(0.3)
+            assert state.drainer.is_alive()
+            # Restore to process an item normally.
+            monkeypatch.undo()
+            _queue_mod._post_json = lambda path, payload: drained.append(path)
+            monkeypatch.setattr(_queue_mod, "_drain_post_queue", original_drain)
+            _enqueue_post_json("/api/second", {}, 10, state=state)
+            state.drain_event.set()
+            deadline = time.monotonic() + 2.0
+            while "/api/second" not in drained and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert "/api/second" in drained
+        finally:
+            _queue_mod._post_json = original_post_json
+            _stop_queue_drainer(state)
+
+    def test_restart_warning_log_exception(self, monkeypatch):
+        """Drainer restart proceeds even when the restart warning log raises."""
+        state = _fresh_state()
+        drained: list[str] = []
+        original_post_json = _queue_mod._post_json
+        _queue_mod._post_json = lambda path, payload: drained.append(path)
+        monkeypatch.setattr(
+            config,
+            "_debug_log",
+            lambda *a, **kw: (_ for _ in ()).throw(BrokenPipeError("broken")),
+        )
+        try:
+            # Simulate a crashed drainer (dead Thread, not None).
+            state.drainer = threading.Thread(target=lambda: None, daemon=True)
+            state.drainer.start()
+            state.drainer.join()
+            assert not state.drainer.is_alive()
+
+            _queue_post_json("/api/restarted", {"v": 1}, priority=10, state=state)
+            deadline = time.monotonic() + 2.0
+            while "/api/restarted" not in drained and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert "/api/restarted" in drained
+        finally:
+            _queue_mod._post_json = original_post_json
+            monkeypatch.undo()
+            _stop_queue_drainer(state)
