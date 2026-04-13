@@ -39,6 +39,7 @@ from data.mesh_ingestor.queue import (
     _post_json,
     _queue_drainer_loop,
     _queue_post_json,
+    _send_single,
     _start_queue_drainer,
     _CHANNEL_POST_PRIORITY,
     _DEFAULT_POST_PRIORITY,
@@ -517,8 +518,6 @@ def test_http_failure_always_logged(monkeypatch):
         raise OSError("connection refused")
 
     with patch("urllib.request.urlopen", raise_error):
-        from data.mesh_ingestor.queue import _send_single
-
         _send_single("http://localhost", "", "/api/test", {"x": 1})
 
     assert any(

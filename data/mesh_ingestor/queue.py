@@ -263,7 +263,17 @@ def _queue_drainer_loop(state: QueueState = STATE) -> None:
     while True:
         state.drain_event.wait()
         state.drain_event.clear()
-        _drain_post_queue(state)
+        try:
+            _drain_post_queue(state)
+        except Exception as exc:  # pragma: no cover - unexpected drain failure
+            config._debug_log(
+                "Queue drainer error",
+                context="queue.drainer",
+                severity="warn",
+                always=True,
+                error_class=exc.__class__.__name__,
+                error_message=str(exc),
+            )
 
 
 def _start_queue_drainer(state: QueueState = STATE) -> None:
@@ -271,21 +281,29 @@ def _start_queue_drainer(state: QueueState = STATE) -> None:
 
     Calling this function when a drainer thread is already alive is a
     no-op.  The thread is created as a daemon so it does not prevent
-    process exit.
+    process exit.  The check-and-start is performed under :attr:`state.lock`
+    to avoid starting duplicate threads under concurrent callers.
+
+    If items are already in the queue when the drainer is started,
+    :attr:`QueueState.drain_event` is signalled immediately so they are not
+    stranded waiting for the next packet to arrive.
 
     Parameters:
         state: Queue state whose :func:`_queue_drainer_loop` to start.
     """
-    if state.drainer is not None and state.drainer.is_alive():
-        return
-    t = threading.Thread(
-        target=_queue_drainer_loop,
-        args=(state,),
-        name="queue-drainer",
-        daemon=True,
-    )
-    t.start()
-    state.drainer = t
+    with state.lock:
+        if state.drainer is not None and state.drainer.is_alive():
+            return
+        t = threading.Thread(
+            target=_queue_drainer_loop,
+            args=(state,),
+            name="queue-drainer",
+            daemon=True,
+        )
+        t.start()
+        state.drainer = t
+        if state.queue:
+            state.drain_event.set()
 
 
 def _queue_post_json(
