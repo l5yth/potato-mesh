@@ -96,6 +96,8 @@ class QueueState:
     # signals drain_event instead of blocking the caller with HTTP calls.
     drain_event: threading.Event = field(default_factory=threading.Event)
     drainer: threading.Thread | None = None
+    # Set to request the drainer thread to exit its loop cleanly.
+    shutdown: threading.Event = field(default_factory=threading.Event)
 
 
 STATE = QueueState()
@@ -253,15 +255,30 @@ def _queue_drainer_loop(state: QueueState = STATE) -> None:
     """Body of the background queue-drain daemon thread.
 
     Blocks on :attr:`QueueState.drain_event`, clears it, then empties the
-    queue by calling :func:`_drain_post_queue`.  Loops forever; the thread
-    is started as a daemon thread so it terminates automatically when the
-    process exits.
+    queue by calling :func:`_drain_post_queue`.  The thread is created as a
+    daemon so it terminates automatically when the process exits.
+
+    The loop exits cleanly when :attr:`QueueState.shutdown` is set, allowing
+    tests (and graceful-shutdown paths) to join the thread instead of leaking
+    daemon threads that accumulate across a test run.
+
+    .. note::
+        There is a benign race between ``drain_event.clear()`` and the end
+        of :func:`_drain_post_queue`: a signal arriving in that window is
+        consumed by ``clear()`` but the item is still drained because the
+        drain loop empties the queue completely.  However, an item enqueued
+        *after* the drain loop finds the queue empty and *before*
+        ``wait()`` re-blocks will sit until the next ``drain_event.set()``
+        call (i.e. the next enqueue).  This is acceptable for a best-effort
+        ingestor — maximum extra latency equals the inter-packet interval.
 
     Parameters:
         state: Queue state instance to drain.
     """
-    while True:
-        state.drain_event.wait()
+    while not state.shutdown.is_set():
+        state.drain_event.wait(timeout=1.0)
+        if state.shutdown.is_set():
+            break
         state.drain_event.clear()
         try:
             _drain_post_queue(state)
@@ -304,6 +321,27 @@ def _start_queue_drainer(state: QueueState = STATE) -> None:
         state.drainer = t
         if state.queue:
             state.drain_event.set()
+
+
+def _stop_queue_drainer(state: QueueState = STATE, timeout: float = 5.0) -> None:
+    """Signal the drainer thread to exit and wait for it to finish.
+
+    Sets :attr:`QueueState.shutdown` and :attr:`QueueState.drain_event` so
+    the loop wakes up, observes the shutdown flag, and terminates.  After
+    joining (up to *timeout* seconds) the drainer reference is cleared.
+
+    Safe to call when no drainer is running (no-op).
+
+    Parameters:
+        state: Queue state whose drainer to stop.
+        timeout: Maximum seconds to wait for the thread to finish.
+    """
+    if state.drainer is None or not state.drainer.is_alive():
+        return
+    state.shutdown.set()
+    state.drain_event.set()
+    state.drainer.join(timeout=timeout)
+    state.drainer = None
 
 
 def _queue_post_json(
@@ -365,6 +403,10 @@ def _queue_post_json(
     # ingestors.queue_ingestor_heartbeat) must be honoured synchronously
     # because the background drainer always calls _drain_post_queue without
     # a send override.
+    #
+    # The ``is`` check is intentional: _post_json is a module-level function
+    # so identity comparison reliably detects the "no override" default that
+    # was assigned at the top of this function.
     if send is _post_json and state.drainer is not None and state.drainer.is_alive():
         state.drain_event.set()
         return
@@ -407,4 +449,5 @@ __all__ = [
     "_queue_drainer_loop",
     "_queue_post_json",
     "_start_queue_drainer",
+    "_stop_queue_drainer",
 ]

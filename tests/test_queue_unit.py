@@ -41,6 +41,7 @@ from data.mesh_ingestor.queue import (
     _queue_post_json,
     _send_single,
     _start_queue_drainer,
+    _stop_queue_drainer,
     _CHANNEL_POST_PRIORITY,
     _DEFAULT_POST_PRIORITY,
     _INGESTOR_POST_PRIORITY,
@@ -540,8 +541,7 @@ class TestQueueDrainer:
         _start_queue_drainer(state)
         assert state.drainer is not None
         assert state.drainer.is_alive()
-        # Unblock the drainer so the thread can exit cleanly with the process.
-        state.drain_event.set()
+        _stop_queue_drainer(state)
 
     def test_start_queue_drainer_idempotent(self):
         """Calling _start_queue_drainer twice does not create a second thread."""
@@ -550,7 +550,7 @@ class TestQueueDrainer:
         first_thread = state.drainer
         _start_queue_drainer(state)
         assert state.drainer is first_thread
-        state.drain_event.set()
+        _stop_queue_drainer(state)
 
     def test_queue_drainer_loop_drains_items(self):
         """_queue_drainer_loop drains enqueued items when signalled."""
@@ -560,8 +560,7 @@ class TestQueueDrainer:
         original_post_json = _queue_mod._post_json
         _queue_mod._post_json = lambda path, payload: drained.append(path)
         try:
-            t = threading.Thread(target=_queue_drainer_loop, args=(state,), daemon=True)
-            t.start()
+            _start_queue_drainer(state)
             _enqueue_post_json("/api/drainer-test", {}, 10, state=state)
             state.drain_event.set()
             deadline = time.monotonic() + 2.0
@@ -570,7 +569,7 @@ class TestQueueDrainer:
             assert "/api/drainer-test" in drained
         finally:
             _queue_mod._post_json = original_post_json
-            state.drain_event.set()
+            _stop_queue_drainer(state)
 
     def test_queue_post_json_signals_drain_event_with_drainer(self):
         """When a drainer is alive, _queue_post_json signals drain_event instead of blocking."""
@@ -590,7 +589,7 @@ class TestQueueDrainer:
             assert "/api/bg-test" in drained
         finally:
             _queue_mod._post_json = original_post_json
-            state.drain_event.set()
+            _stop_queue_drainer(state)
 
     def test_queue_post_json_falls_back_to_sync_drain_without_drainer(self):
         """When no drainer is running, _queue_post_json drains synchronously."""
@@ -605,3 +604,56 @@ class TestQueueDrainer:
             send=lambda p, d: sent.append(p),
         )
         assert "/api/sync" in sent
+
+    def test_enqueue_during_drain_is_processed(self):
+        """Items enqueued while the drainer is mid-drain are still drained.
+
+        Simulates the race where a new item arrives while
+        ``_drain_post_queue`` is actively processing.  The new item must
+        be picked up within the same drain cycle or on the next signal.
+        """
+        state = _fresh_state()
+        drained: list[str] = []
+        gate = threading.Event()
+
+        original_post_json = _queue_mod._post_json
+
+        def slow_send(path, payload):
+            """Drain the first item slowly, allowing a second enqueue."""
+            drained.append(path)
+            if path == "/api/first":
+                gate.set()
+
+        _queue_mod._post_json = slow_send
+        try:
+            _start_queue_drainer(state)
+            _enqueue_post_json("/api/first", {}, 10, state=state)
+            state.drain_event.set()
+            # Wait until the drainer has started processing /api/first.
+            gate.wait(timeout=2.0)
+            # Enqueue a second item while the drainer is active.
+            _enqueue_post_json("/api/second", {}, 10, state=state)
+            state.drain_event.set()
+            deadline = time.monotonic() + 2.0
+            while "/api/second" not in drained and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert "/api/second" in drained
+        finally:
+            _queue_mod._post_json = original_post_json
+            _stop_queue_drainer(state)
+
+    def test_stop_queue_drainer(self):
+        """_stop_queue_drainer signals the thread to exit and joins it."""
+        state = _fresh_state()
+        _start_queue_drainer(state)
+        assert state.drainer is not None
+        assert state.drainer.is_alive()
+        _stop_queue_drainer(state)
+        assert state.drainer is None
+        assert state.shutdown.is_set()
+
+    def test_stop_queue_drainer_noop_when_not_running(self):
+        """_stop_queue_drainer is safe to call with no drainer."""
+        state = _fresh_state()
+        _stop_queue_drainer(state)
+        assert state.drainer is None

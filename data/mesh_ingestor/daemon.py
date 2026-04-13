@@ -505,6 +505,8 @@ def _check_inactivity_reconnect(state: _DaemonState) -> bool:
         if believed_disconnected
         else f"no data for {inactivity_elapsed:.0f}s"
     )
+    # Uses the module-level global STATE — acceptable because there is only
+    # one queue in production, and in tests this is purely informational.
     queue_depth = len(queue.STATE.queue)
     config._debug_log(
         "Mesh interface inactivity detected",

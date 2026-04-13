@@ -1138,6 +1138,41 @@ def test_inactivity_reconnect_still_throttles_inactivity(monkeypatch):
     ), "Expected throttle to suppress reconnect when last attempt was 9 s ago"
 
 
+def test_inactivity_reconnect_logs_queue_depth(monkeypatch):
+    """The inactivity reconnect debug log includes the current queue depth."""
+    state = _make_state(inactivity_reconnect_secs=30.0)
+    state.iface = DummyInterface(is_connected=True)
+    state.iface_connected_at = 0.0
+    state.last_inactivity_reconnect = None
+
+    monkeypatch.setattr(daemon.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(daemon.handlers, "last_packet_monotonic", lambda: None)
+    monkeypatch.setattr(daemon, "_close_interface", lambda iface: None)
+
+    # Seed the global queue with two dummy items so queue_depth is non-zero.
+    from data.mesh_ingestor.queue import STATE, _enqueue_post_json
+
+    _enqueue_post_json("/api/a", {}, 10, state=STATE)
+    _enqueue_post_json("/api/b", {}, 20, state=STATE)
+
+    log_kwargs: list[dict] = []
+    monkeypatch.setattr(
+        daemon.config,
+        "_debug_log",
+        lambda msg, **kw: log_kwargs.append(kw),
+    )
+
+    try:
+        result = daemon._check_inactivity_reconnect(state)
+        assert result is True
+        assert any(
+            kw.get("queue_depth") == 2 for kw in log_kwargs
+        ), f"Expected queue_depth=2 in log kwargs, got {log_kwargs}"
+    finally:
+        # Clean up global state so other tests are not affected.
+        STATE.queue.clear()
+
+
 def test_main_starts_queue_drainer(monkeypatch):
     """main() calls queue._start_queue_drainer after subscribing."""
     drainer_calls: list[object] = []
