@@ -778,7 +778,7 @@ export function initializeApp(config) {
     });
   }
 
-  /** @type {Set<string>} Active compound role-filter keys, each ``"<protocol>:<roleKey>"``. */
+  /** @type {Set<string>} Hidden role compound keys — roles in this set are excluded from display. */
   const activeRoleFilters = new Set();
   /** @type {Map<string, HTMLElement>} Compound key → legend button element. */
   const legendRoleButtons = new Map();
@@ -833,8 +833,7 @@ export function initializeApp(config) {
     return `${normalizeFilterProtocol(protocol)}:${getRoleKey(role)}`;
   }
 
-  /** @type {Readonly<Record<string,string>>} Display names for protocol tokens. */
-  const PROTOCOL_DISPLAY_NAMES = Object.freeze({ meshtastic: 'Meshtastic', meshcore: 'MeshCore' });
+
 
   /**
    * Lazily create the floating map status element used for progress messages.
@@ -1471,11 +1470,14 @@ export function initializeApp(config) {
    */
   function updateLegendRoleFiltersUI() {
     const hasFilters = activeRoleFilters.size > 0;
-    // legendRoleButtons is keyed by compound key ("protocol:roleKey")
+    // activeRoleFilters is a *hidden-roles* set: roles present in the set are
+    // hidden.  Buttons show aria-pressed="true" when the role is *visible*
+    // (i.e. NOT in the hidden set) so that the default all-visible state
+    // highlights every button.
     legendRoleButtons.forEach((button, compoundKey) => {
       if (!button) return;
-      const isActive = activeRoleFilters.has(compoundKey);
-      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      const isHidden = activeRoleFilters.has(compoundKey);
+      button.setAttribute('aria-pressed', isHidden ? 'false' : 'true');
     });
     if (legendContainer) {
       if (hasFilters || hiddenProtocols.size > 0) {
@@ -1552,7 +1554,7 @@ export function initializeApp(config) {
       item.className = 'legend-item';
       colEl.appendChild(item);
       item.type = 'button';
-      item.setAttribute('aria-pressed', 'false');
+      item.setAttribute('aria-pressed', 'true');
       item.dataset.role = role;
       item.dataset.protocol = protocol;
       const swatch = document.createElement('span');
@@ -1567,6 +1569,7 @@ export function initializeApp(config) {
       item.addEventListener('click', legendClickHandler(event => {
         const exclusive = event.metaKey || event.ctrlKey;
         if (exclusive) {
+          // Ctrl/Cmd+Click: hide only this role (all others become visible).
           activeRoleFilters.clear();
           activeRoleFilters.add(compoundKey);
           updateLegendRoleFiltersUI();
@@ -4342,7 +4345,7 @@ export function initializeApp(config) {
   function matchesRoleFilter(node) {
     if (!activeRoleFilters.size) return true;
     const compoundKey = makeRoleFilterKey(node && node.role, node && node.protocol);
-    return activeRoleFilters.has(compoundKey);
+    return !activeRoleFilters.has(compoundKey);
   }
 
   /**
@@ -4426,9 +4429,10 @@ export function initializeApp(config) {
     const statsRequestId = ++activeStatsRequestId;
     void fetchActiveNodeStats({ nodes: allNodes, nowSeconds: nowSec }).then(stats => {
       if (statsRequestId !== activeStatsRequestId) return;
-      updateTitleCount(adjustStatsForHiddenProtocols(stats));
+      const visibleStats = adjustStatsForHiddenProtocols(stats);
+      updateTitleCount(visibleStats);
       updateLegendProtocolCounts(stats);
-      updateFooterStats(adjustStatsForHiddenProtocols(stats));
+      updateFooterStats(visibleStats);
       applyProtocolVisibility(stats);
     });
     updateSortIndicators();

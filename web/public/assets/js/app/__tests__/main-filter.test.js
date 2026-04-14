@@ -66,7 +66,7 @@ test('makeRoleFilterKey SENSOR and REPEATER produce distinct keys across protoco
 // matchesRoleFilter — no active filters
 // ---------------------------------------------------------------------------
 
-test('matchesRoleFilter returns true when no filters are active', () => {
+test('matchesRoleFilter returns true when no roles are hidden', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     assert.equal(t.matchesRoleFilter({ role: 'ROUTER', protocol: 'meshtastic' }), true);
@@ -75,56 +75,56 @@ test('matchesRoleFilter returns true when no filters are active', () => {
 });
 
 // ---------------------------------------------------------------------------
-// matchesRoleFilter — protocol-aware compound key matching
+// matchesRoleFilter — exclusion-set semantics (roles in set are hidden)
 // ---------------------------------------------------------------------------
 
-test('matchesRoleFilter matches meshtastic SENSOR filter for meshtastic node', () => {
+test('matchesRoleFilter hides meshtastic SENSOR when in exclusion set', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshtastic:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), true);
-  });
-});
-
-test('matchesRoleFilter does not match meshtastic SENSOR filter for meshcore node', () => {
-  withApp((t) => {
-    t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshtastic:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), false);
-  });
-});
-
-test('matchesRoleFilter matches meshcore SENSOR filter for meshcore node', () => {
-  withApp((t) => {
-    t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshcore:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), true);
-  });
-});
-
-test('matchesRoleFilter does not match meshcore SENSOR filter for meshtastic node', () => {
-  withApp((t) => {
-    t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshcore:SENSOR');
     assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), false);
   });
 });
 
-test('matchesRoleFilter matches meshtastic REPEATER filter for meshtastic node', () => {
+test('matchesRoleFilter does not hide meshcore SENSOR when meshtastic SENSOR is hidden', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshtastic:REPEATER');
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), false);
+    t.activeRoleFilters.add('meshtastic:SENSOR');
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), true);
   });
 });
 
-test('matchesRoleFilter matches meshcore REPEATER filter for meshcore node', () => {
+test('matchesRoleFilter hides meshcore SENSOR when in exclusion set', () => {
+  withApp((t) => {
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshcore:SENSOR');
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), false);
+  });
+});
+
+test('matchesRoleFilter does not hide meshtastic SENSOR when meshcore SENSOR is hidden', () => {
+  withApp((t) => {
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshcore:SENSOR');
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), true);
+  });
+});
+
+test('matchesRoleFilter hides meshtastic REPEATER but not meshcore REPEATER', () => {
+  withApp((t) => {
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshtastic:REPEATER');
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), true);
+  });
+});
+
+test('matchesRoleFilter hides meshcore REPEATER but not meshtastic REPEATER', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:REPEATER');
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), true);
   });
 });
 
@@ -132,27 +132,27 @@ test('matchesRoleFilter matches meshcore REPEATER filter for meshcore node', () 
 // matchesRoleFilter — null/absent protocol treated as meshtastic
 // ---------------------------------------------------------------------------
 
-test('matchesRoleFilter treats null protocol as meshtastic for filter matching', () => {
+test('matchesRoleFilter treats null protocol as meshtastic for exclusion', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshtastic:SENSOR');
-    // null-protocol node should match the meshtastic SENSOR filter
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), true);
-    // but not the meshcore one
+    // null-protocol node should be hidden by the meshtastic SENSOR exclusion
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), false);
+    // but meshcore SENSOR exclusion should not affect null-protocol nodes
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), true);
   });
 });
 
-test('matchesRoleFilter with multiple active filters returns true when any matches', () => {
+test('matchesRoleFilter with multiple hidden roles hides only those roles', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshtastic:SENSOR');
     t.activeRoleFilters.add('meshcore:REPEATER');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'ROUTER', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'ROUTER', protocol: 'meshtastic' }), true);
   });
 });
 
@@ -391,14 +391,14 @@ test('buildRoleButtons keeps meshtastic and meshcore SENSOR keys distinct', () =
   });
 });
 
-test('buildRoleButtons sets aria-pressed to false initially', () => {
+test('buildRoleButtons sets aria-pressed to true initially (all visible)', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
     t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     assert.ok(btn, 'button should be in legendRoleButtons');
-    assert.equal(btn.getAttribute('aria-pressed'), 'false');
+    assert.equal(btn.getAttribute('aria-pressed'), 'true');
   });
 });
 
@@ -432,7 +432,7 @@ test('buildRoleButtons creates label child with role text', () => {
 // updateLegendRoleFiltersUI
 // ---------------------------------------------------------------------------
 
-test('updateLegendRoleFiltersUI sets aria-pressed true on active role buttons', () => {
+test('updateLegendRoleFiltersUI sets aria-pressed false on hidden role buttons', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
@@ -441,11 +441,11 @@ test('updateLegendRoleFiltersUI sets aria-pressed true on active role buttons', 
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:SENSOR');
     t.updateLegendRoleFiltersUI();
-    assert.equal(btn.getAttribute('aria-pressed'), 'true');
+    assert.equal(btn.getAttribute('aria-pressed'), 'false');
   });
 });
 
-test('updateLegendRoleFiltersUI sets aria-pressed false on inactive role buttons', () => {
+test('updateLegendRoleFiltersUI sets aria-pressed true on visible role buttons', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
@@ -453,7 +453,7 @@ test('updateLegendRoleFiltersUI sets aria-pressed false on inactive role buttons
     const btn = t.legendRoleButtons.get('meshcore:SENSOR');
     t.activeRoleFilters.clear();
     t.updateLegendRoleFiltersUI();
-    assert.equal(btn.getAttribute('aria-pressed'), 'false');
+    assert.equal(btn.getAttribute('aria-pressed'), 'true');
   });
 });
 
