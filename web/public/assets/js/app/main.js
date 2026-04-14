@@ -3257,15 +3257,20 @@ export function initializeApp(config) {
 
     const enrichedLogEntries = attachNodeContextToLogEntries(logEntries);
     // When a protocol is hidden, exclude its entries from the chat display.
-    // Entries without a resolved node (system entries, announcements) are kept.
+    // Entries without a resolved node are kept; entries with a node but a
+    // null/missing protocol are treated as meshtastic (the default protocol).
     const protocolVisibleEntries = hiddenProtocols.size > 0
       ? enrichedLogEntries.filter(e => {
-        const proto = e && e.node && e.node.protocol;
-        return !proto || !hiddenProtocols.has(proto);
+        if (!e || !e.node) return true;
+        const proto = normalizeFilterProtocol(e.node.protocol);
+        return !hiddenProtocols.has(proto);
       })
       : enrichedLogEntries;
     const protocolVisibleChannels = hiddenProtocols.size > 0
-      ? channels.filter(ch => !ch.protocol || !hiddenProtocols.has(ch.protocol))
+      ? channels.filter(ch => {
+        const proto = ch.protocol ? normalizeFilterProtocol(ch.protocol) : null;
+        return !proto || !hiddenProtocols.has(proto);
+      })
       : channels;
     const { logEntries: filteredLogEntries, channels: filteredChannels } = filterChatModel(
       { logEntries: protocolVisibleEntries, channels: protocolVisibleChannels },
@@ -4676,9 +4681,11 @@ export function initializeApp(config) {
     if (meshcoreColEl) meshcoreColEl.style.display = meshcoreWeek === 0 ? 'none' : '';
     if (meshtasticColEl) meshtasticColEl.style.display = meshtasticWeek === 0 ? 'none' : '';
 
-    // Show/hide meta-row protocol toggle buttons based on weekly activity.
-    if (protocolToggleMeshcore) protocolToggleMeshcore.hidden = meshcoreWeek === 0;
-    if (protocolToggleMeshtastic) protocolToggleMeshtastic.hidden = meshtasticWeek === 0;
+    // Show protocol toggle buttons only when both protocols have weekly
+    // activity — filtering is pointless when only one protocol is present.
+    const bothActive = meshcoreWeek > 0 && meshtasticWeek > 0;
+    if (protocolToggleMeshcore) protocolToggleMeshcore.hidden = !bothActive;
+    if (protocolToggleMeshtastic) protocolToggleMeshtastic.hidden = !bothActive;
 
     // Charts is meshtastic-only; hide the nav link when no meshtastic activity.
     document.querySelectorAll('a[href="/charts"]').forEach(el => {

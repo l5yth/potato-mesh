@@ -17,7 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { withApp, setupAppWithOptions, MINIMAL_CONFIG } from './main-app-test-helpers.js';
+import { withApp } from './main-app-test-helpers.js';
 
 // ---------------------------------------------------------------------------
 // isAutorefreshPaused
@@ -30,20 +30,11 @@ test('isAutorefreshPaused returns false by default', () => {
 });
 
 // ---------------------------------------------------------------------------
-// restartAutoRefresh respects paused state
+// restartAutoRefresh is safe when called without a timer
 // ---------------------------------------------------------------------------
 
-test('restartAutoRefresh does not arm timer when autorefresh is paused', () => {
-  // Use a positive refreshMs so the timer would normally arm.
-  const { testUtils: t, cleanup } = setupAppWithOptions({
-    configOverrides: { refreshMs: 60000 },
+test('restartAutoRefresh does not throw when invoked with refreshMs 0', () => {
+  withApp((t) => {
+    assert.doesNotThrow(() => t.restartAutoRefresh());
   });
-  try {
-    // Simulate pause by calling the exposed method — the timer should not arm.
-    // We cannot directly set the internal flag, but we verify the initial
-    // (non-paused) state produces a truthy timer-arm path.
-    assert.equal(t.isAutorefreshPaused(), false);
-  } finally {
-    cleanup();
-  }
 });

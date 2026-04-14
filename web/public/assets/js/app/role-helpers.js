@@ -144,17 +144,17 @@ export const meshtasticRoleRenderOrder = Object.freeze({
 });
 
 /**
- * MeshCore-specific render priority overrides.  Only roles whose stacking
- * order differs from the Meshtastic palette need to appear here — any role
- * absent from this map falls through to {@link meshtasticRoleRenderOrder}.
+ * MeshCore-specific render priority overrides.  Bottom-up stacking order:
+ * REPEATER → ROOM_SERVER → SENSOR → COMPANION (top), so companion nodes
+ * are always visible above infrastructure roles.
  *
  * @type {Readonly<Record<string, number>>}
  */
 export const meshcoreRoleRenderOrder = Object.freeze({
-  SENSOR: 3,
-  COMPANION: 7,
-  ROOM_SERVER: 9,
-  REPEATER: 12,
+  REPEATER: 3,
+  ROOM_SERVER: 7,
+  SENSOR: 9,
+  COMPANION: 12,
 });
 
 /**
