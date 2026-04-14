@@ -509,12 +509,12 @@ module PotatoMesh
             ip = address&.to_s
             http = build_remote_http_client(uri, ip_address: ip)
             return Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
-              http.start do |connection|
-                request = build_federation_http_request(Net::HTTP::Post, uri)
-                request.body = payload_json
-                connection.request(request)
-              end
-            end
+                     http.start do |connection|
+                       request = build_federation_http_request(Net::HTTP::Post, uri)
+                       request.body = payload_json
+                       connection.request(request)
+                     end
+                   end
           rescue StandardError => e
             if connection_refused_or_unreachable?(e)
               last_error = e
