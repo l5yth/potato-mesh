@@ -505,16 +505,10 @@ module PotatoMesh
 
         last_error = nil
         addresses.each do |address|
+          break if federation_shutdown_requested?
+
           begin
-            ip = address&.to_s
-            http = build_remote_http_client(uri, ip_address: ip)
-            return Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
-                     http.start do |connection|
-                       request = build_federation_http_request(Net::HTTP::Post, uri)
-                       request.body = payload_json
-                       connection.request(request)
-                     end
-                   end
+            return perform_single_announce_request(uri, payload_json, ip_address: address&.to_s)
           rescue StandardError => e
             if connection_refused_or_unreachable?(e)
               last_error = e
@@ -524,7 +518,27 @@ module PotatoMesh
           end
         end
 
-        raise last_error
+        raise(last_error || StandardError.new("all resolved addresses failed"))
+      end
+
+      # Execute a single POST announcement request, optionally pinning the
+      # connection to a specific IP address.
+      #
+      # @param uri [URI::Generic] target endpoint.
+      # @param payload_json [String] JSON-encoded announcement body.
+      # @param ip_address [String, nil] resolved IP address to pin the
+      #   connection to, or +nil+ to let {build_remote_http_client} resolve.
+      # @return [Net::HTTPResponse] the HTTP response.
+      # @raise [StandardError] when the request fails.
+      def perform_single_announce_request(uri, payload_json, ip_address: nil)
+        http = build_remote_http_client(uri, ip_address: ip_address)
+        Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
+          http.start do |connection|
+            request = build_federation_http_request(Net::HTTP::Post, uri)
+            request.body = payload_json
+            connection.request(request)
+          end
+        end
       end
 
       # Determine whether an HTTPS announcement failure should fall back to HTTP.
@@ -559,7 +573,7 @@ module PotatoMesh
           Errno::ECONNRESET,
           Errno::ETIMEDOUT,
           Net::OpenTimeout,
-        ].freeze
+        ]
         current = error
         while current
           return true if retryable_classes.any? { |klass| current.is_a?(klass) }
@@ -787,17 +801,16 @@ module PotatoMesh
         raise InstanceFetchError, "federation shutdown requested" if federation_shutdown_requested?
 
         remote_addresses = sort_addresses_for_connection(resolve_remote_ip_addresses(uri))
-
-        return perform_single_http_request(uri) if remote_addresses.empty?
+        addresses = remote_addresses.empty? ? [nil] : remote_addresses
 
         last_error = nil
-        remote_addresses.each do |address|
+        addresses.each do |address|
           break if federation_shutdown_requested?
 
           begin
-            return perform_single_http_request(uri, ip_address: address.to_s)
+            return perform_single_http_request(uri, ip_address: address&.to_s)
           rescue InstanceFetchError => e
-            if connection_refused_or_unreachable?(e) || connection_refused_or_unreachable?(e.cause)
+            if connection_refused_or_unreachable?(e)
               last_error = e
             else
               raise
@@ -1369,7 +1382,8 @@ module PotatoMesh
       def sort_addresses_for_connection(addresses)
         return addresses if addresses.nil? || addresses.length <= 1
 
-        addresses.sort_by { |ip| ip.ipv6? ? 1 : 0 }
+        v4, v6 = addresses.partition { |ip| !ip.ipv6? }
+        v4 + v6
       end
 
       # Build an HTTP client configured for communication with a remote instance.
