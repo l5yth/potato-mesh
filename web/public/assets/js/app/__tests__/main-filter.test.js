@@ -348,7 +348,7 @@ test('buildRoleButtons appends one child per palette entry', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4', REPEATER: '#C8D0DC' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E', REPEATER: '#B8C4D4' }, 'meshcore');
     assert.equal(col.childNodes.length, 2);
   });
 });
@@ -357,7 +357,7 @@ test('buildRoleButtons sets dataset.role and dataset.protocol on each button', (
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E' }, 'meshcore');
     const btn = t.legendRoleButtons.get('meshcore:SENSOR');
     assert.ok(btn, 'button should be in legendRoleButtons');
     assert.equal(btn.dataset.role, 'SENSOR');
@@ -369,7 +369,7 @@ test('buildRoleButtons registers compound keys in legendRoleButtons', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4', REPEATER: '#C8D0DC' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E', REPEATER: '#B8C4D4' }, 'meshcore');
     assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
     assert.ok(t.legendRoleButtons.has('meshcore:REPEATER'));
   });
@@ -380,7 +380,7 @@ test('buildRoleButtons keeps meshtastic and meshcore SENSOR keys distinct', () =
     t.legendRoleButtons.clear();
     const colMc = document.createElement('div');
     const colMt = document.createElement('div');
-    t.buildRoleButtons(colMc, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(colMc, { SENSOR: '#40749E' }, 'meshcore');
     t.buildRoleButtons(colMt, { SENSOR: '#B2D880' }, 'meshtastic');
     assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
     assert.ok(t.legendRoleButtons.has('meshtastic:SENSOR'));
@@ -436,7 +436,7 @@ test('updateLegendRoleFiltersUI sets aria-pressed true on active role buttons', 
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E' }, 'meshcore');
     const btn = t.legendRoleButtons.get('meshcore:SENSOR');
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:SENSOR');
@@ -449,7 +449,7 @@ test('updateLegendRoleFiltersUI sets aria-pressed false on inactive role buttons
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E' }, 'meshcore');
     const btn = t.legendRoleButtons.get('meshcore:SENSOR');
     t.activeRoleFilters.clear();
     t.updateLegendRoleFiltersUI();

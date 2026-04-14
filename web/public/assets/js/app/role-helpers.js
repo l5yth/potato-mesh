@@ -77,10 +77,10 @@ export const roleColors = Object.freeze({
  * @type {Readonly<Record<string, string>>}
  */
 export const meshcoreRoleColors = Object.freeze({
-  REPEATER: '#C8D0DC',
-  ROOM_SERVER: '#8AAAC6',
-  SENSOR: '#4A7EB4',
-  COMPANION: '#1A5498',
+  REPEATER: '#B8C4D4',
+  ROOM_SERVER: '#7A9EBC',
+  SENSOR: '#40749E',
+  COMPANION: '#164A88',
 });
 
 /**
