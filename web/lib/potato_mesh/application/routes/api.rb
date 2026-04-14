@@ -395,7 +395,6 @@ module PotatoMesh
             JSON.generate(payload)
           end
         end
-
       end
     end
   end
