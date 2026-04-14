@@ -133,6 +133,9 @@ export function initializeApp(config) {
   const statusEl = document.getElementById('status');
   const footerActiveNodes = document.getElementById('footerActiveNodes');
   const refreshBtn = document.getElementById('refreshBtn');
+  const autorefreshToggle = document.getElementById('autorefreshToggle');
+  const protocolToggleMeshcore = document.getElementById('protocolToggleMeshcore');
+  const protocolToggleMeshtastic = document.getElementById('protocolToggleMeshtastic');
   const filterInput = document.getElementById('filterInput');
   const filterClearButton = document.getElementById('filterClear');
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
@@ -248,6 +251,7 @@ export function initializeApp(config) {
 
   /** @type {ReturnType<typeof setTimeout>|null} */
   let refreshTimer = null;
+  let autorefreshPaused = false;
   let activeStatsRequestId = 0;
 
   /**
@@ -453,7 +457,9 @@ export function initializeApp(config) {
     }
     // Only arm the timer when a positive interval is configured; a zero or
     // negative value means auto-refresh is intentionally disabled.
-    if (REFRESH_MS > 0) {
+    // When the user has explicitly paused auto-refresh, skip arming the timer
+    // entirely so no background API requests are made.
+    if (REFRESH_MS > 0 && !autorefreshPaused) {
       refreshTimer = setInterval(refresh, REFRESH_MS);
     }
   }
@@ -772,7 +778,7 @@ export function initializeApp(config) {
     });
   }
 
-  /** @type {Set<string>} Active compound role-filter keys, each ``"<protocol>:<roleKey>"``. */
+  /** @type {Set<string>} Hidden role compound keys — roles in this set are excluded from display. */
   const activeRoleFilters = new Set();
   /** @type {Map<string, HTMLElement>} Compound key → legend button element. */
   const legendRoleButtons = new Map();
@@ -827,8 +833,7 @@ export function initializeApp(config) {
     return `${normalizeFilterProtocol(protocol)}:${getRoleKey(role)}`;
   }
 
-  /** @type {Readonly<Record<string,string>>} Display names for protocol tokens. */
-  const PROTOCOL_DISPLAY_NAMES = Object.freeze({ meshtastic: 'Meshtastic', meshcore: 'MeshCore' });
+
 
   /**
    * Lazily create the floating map status element used for progress messages.
@@ -1465,18 +1470,14 @@ export function initializeApp(config) {
    */
   function updateLegendRoleFiltersUI() {
     const hasFilters = activeRoleFilters.size > 0;
-    // legendRoleButtons is keyed by compound key ("protocol:roleKey")
+    // activeRoleFilters is a *hidden-roles* set: roles present in the set are
+    // hidden.  Buttons show aria-pressed="true" when the role is *visible*
+    // (i.e. NOT in the hidden set) so that the default all-visible state
+    // highlights every button.
     legendRoleButtons.forEach((button, compoundKey) => {
       if (!button) return;
-      const isActive = activeRoleFilters.has(compoundKey);
-      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    });
-    legendProtocolButtons.forEach((button, protocol) => {
-      if (!button) return;
-      const isHidden = hiddenProtocols.has(protocol);
-      const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
-      button.setAttribute('aria-pressed', isHidden ? 'true' : 'false');
-      button.textContent = isHidden ? `Show ${displayName}` : `Hide ${displayName}`;
+      const isHidden = activeRoleFilters.has(compoundKey);
+      button.setAttribute('aria-pressed', isHidden ? 'false' : 'true');
     });
     if (legendContainer) {
       if (hasFilters || hiddenProtocols.size > 0) {
@@ -1485,7 +1486,35 @@ export function initializeApp(config) {
         legendContainer.removeAttribute('data-has-active-filters');
       }
     }
+    updateMetaProtocolToggleUI();
     updateLegendToggleState();
+  }
+
+  /**
+   * Sync the meta-row protocol toggle buttons with the current
+   * {@link hiddenProtocols} state.
+   *
+   * When a protocol is hidden the button's ``<img>`` receives a greyscale
+   * filter and ``aria-pressed`` is set to ``"true"``.
+   *
+   * @returns {void}
+   */
+  function updateMetaProtocolToggleUI() {
+    /** @type {Array<{btn: HTMLElement|null, protocol: string, name: string}>} */
+    const toggles = [
+      { btn: protocolToggleMeshcore, protocol: 'meshcore', name: 'MeshCore' },
+      { btn: protocolToggleMeshtastic, protocol: 'meshtastic', name: 'Meshtastic' },
+    ];
+    toggles.forEach(({ btn, protocol, name }) => {
+      if (!btn) return;
+      const isHidden = hiddenProtocols.has(protocol);
+      btn.setAttribute('aria-pressed', isHidden ? 'true' : 'false');
+      btn.setAttribute('aria-label', isHidden ? `Show ${name} nodes` : `Hide ${name} nodes`);
+      const img = btn.querySelector('.protocol-toggle-icon');
+      if (img) {
+        img.style.filter = isHidden ? 'grayscale(1) opacity(0.4)' : '';
+      }
+    });
   }
 
   /**
@@ -1525,7 +1554,7 @@ export function initializeApp(config) {
       item.className = 'legend-item';
       colEl.appendChild(item);
       item.type = 'button';
-      item.setAttribute('aria-pressed', 'false');
+      item.setAttribute('aria-pressed', 'true');
       item.dataset.role = role;
       item.dataset.protocol = protocol;
       const swatch = document.createElement('span');
@@ -1540,6 +1569,7 @@ export function initializeApp(config) {
       item.addEventListener('click', legendClickHandler(event => {
         const exclusive = event.metaKey || event.ctrlKey;
         if (exclusive) {
+          // Ctrl/Cmd+Click: hide only this role (all others become visible).
           activeRoleFilters.clear();
           activeRoleFilters.add(compoundKey);
           updateLegendRoleFiltersUI();
@@ -1616,28 +1646,7 @@ export function initializeApp(config) {
       buildRoleButtons(meshcoreCol, meshcoreRoleColors, 'meshcore');
       buildRoleButtons(meshtasticCol, roleColors, 'meshtastic');
 
-      // --- MeshCore column footer: protocol hide toggle ---
-      legendProtocolButtons.clear();
-      const buildProtocolToggle = (protocol, col) => {
-        const displayName = PROTOCOL_DISPLAY_NAMES[protocol] ?? protocol;
-        const btn = L.DomUtil.create('button', 'legend-item legend-protocol-toggle', col);
-        btn.type = 'button';
-        btn.setAttribute('aria-pressed', 'false');
-        btn.textContent = `Hide ${displayName}`;
-        btn.addEventListener('click', legendClickHandler(() => {
-          if (hiddenProtocols.has(protocol)) {
-            hiddenProtocols.delete(protocol);
-          } else {
-            hiddenProtocols.add(protocol);
-          }
-          updateLegendRoleFiltersUI();
-          applyFilter();
-        }));
-        legendProtocolButtons.set(protocol, btn);
-      };
-      buildProtocolToggle('meshcore', meshcoreCol);
-
-      // --- Meshtastic column: line toggles then protocol hide toggle at bottom ---
+      // --- Meshtastic column: line toggles at bottom ---
       neighborLinesToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-neighbors', meshtasticCol);
       neighborLinesToggleButton.type = 'button';
       neighborLinesToggleButton.addEventListener('click', legendClickHandler(() => {
@@ -1651,9 +1660,6 @@ export function initializeApp(config) {
         setTraceLinesVisibility(!traceLinesVisible);
       }));
       updateTraceLinesToggleState();
-
-      // Hide Meshtastic toggle at the very bottom of the Meshtastic column.
-      buildProtocolToggle('meshtastic', meshtasticCol);
 
       updateLegendRoleFiltersUI();
 
@@ -3253,8 +3259,24 @@ export function initializeApp(config) {
     });
 
     const enrichedLogEntries = attachNodeContextToLogEntries(logEntries);
+    // When a protocol is hidden, exclude its entries from the chat display.
+    // Entries without a resolved node are kept; entries with a node but a
+    // null/missing protocol are treated as meshtastic (the default protocol).
+    const protocolVisibleEntries = hiddenProtocols.size > 0
+      ? enrichedLogEntries.filter(e => {
+        if (!e || !e.node) return true;
+        const proto = normalizeFilterProtocol(e.node.protocol);
+        return !hiddenProtocols.has(proto);
+      })
+      : enrichedLogEntries;
+    const protocolVisibleChannels = hiddenProtocols.size > 0
+      ? channels.filter(ch => {
+        const proto = ch.protocol ? normalizeFilterProtocol(ch.protocol) : null;
+        return !proto || !hiddenProtocols.has(proto);
+      })
+      : channels;
     const { logEntries: filteredLogEntries, channels: filteredChannels } = filterChatModel(
-      { logEntries: enrichedLogEntries, channels },
+      { logEntries: protocolVisibleEntries, channels: protocolVisibleChannels },
       filterQuery
     );
 
@@ -4323,7 +4345,7 @@ export function initializeApp(config) {
   function matchesRoleFilter(node) {
     if (!activeRoleFilters.size) return true;
     const compoundKey = makeRoleFilterKey(node && node.role, node && node.protocol);
-    return activeRoleFilters.has(compoundKey);
+    return !activeRoleFilters.has(compoundKey);
   }
 
   /**
@@ -4355,6 +4377,31 @@ export function initializeApp(config) {
   }
 
   /**
+   * Return a copy of the stats object with totals reduced by the counts of
+   * any protocols the user has explicitly hidden.
+   *
+   * Per-protocol sub-objects are left untouched so legend column counts and
+   * visibility decisions still use the raw server values.
+   *
+   * @param {Object|null} stats Normalised stats from ``/api/stats``.
+   * @returns {Object|null} Adjusted stats (new object) or the original if nothing is hidden.
+   */
+  function adjustStatsForHiddenProtocols(stats) {
+    if (!hiddenProtocols.size || !stats) return stats;
+    const adjusted = { ...stats };
+    for (const protocol of hiddenProtocols) {
+      const bucket = stats[protocol];
+      if (!bucket || typeof bucket !== 'object') continue;
+      for (const key of ['hour', 'day', 'week', 'month']) {
+        if (typeof adjusted[key] === 'number' && typeof bucket[key] === 'number') {
+          adjusted[key] = Math.max(0, adjusted[key] - bucket[key]);
+        }
+      }
+    }
+    return adjusted;
+  }
+
+  /**
    * Apply text and role filters to the node list and re-render outputs.
    *
    * @returns {void}
@@ -4376,15 +4423,16 @@ export function initializeApp(config) {
     // Show an immediate local estimate for the title so it doesn't flicker
     // to (0) while waiting for the async /api/stats response.
     const localStats = computeLocalActiveNodeStats(allNodes, nowSec);
-    updateTitleCount(localStats);
+    updateTitleCount(adjustStatsForHiddenProtocols(localStats));
     // Title, legend, footer, and visibility are then corrected by /api/stats
     // which provides the authoritative, uncapped counts.
     const statsRequestId = ++activeStatsRequestId;
     void fetchActiveNodeStats({ nodes: allNodes, nowSeconds: nowSec }).then(stats => {
       if (statsRequestId !== activeStatsRequestId) return;
-      updateTitleCount(stats);
+      const visibleStats = adjustStatsForHiddenProtocols(stats);
+      updateTitleCount(visibleStats);
       updateLegendProtocolCounts(stats);
-      updateFooterStats(stats);
+      updateFooterStats(visibleStats);
       applyProtocolVisibility(stats);
     });
     updateSortIndicators();
@@ -4532,6 +4580,54 @@ export function initializeApp(config) {
     refreshBtn.addEventListener('click', refresh);
   }
 
+  // --- Auto-refresh play/pause toggle ---
+  if (autorefreshToggle) {
+    autorefreshToggle.addEventListener('click', () => {
+      autorefreshPaused = !autorefreshPaused;
+      if (autorefreshPaused) {
+        if (refreshTimer) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+        autorefreshToggle.textContent = '\u25B6';
+        autorefreshToggle.setAttribute('aria-label', 'Resume auto-refresh');
+        autorefreshToggle.setAttribute('aria-pressed', 'true');
+        if (statusEl) statusEl.textContent = 'Refresh paused.';
+      } else {
+        autorefreshToggle.textContent = '\u23F8';
+        autorefreshToggle.setAttribute('aria-label', 'Pause auto-refresh');
+        autorefreshToggle.setAttribute('aria-pressed', 'false');
+        refresh();
+        restartAutoRefresh();
+      }
+    });
+  }
+
+  // --- Meta-row protocol toggle buttons ---
+  /**
+   * Wire a meta-row protocol toggle button to the shared
+   * {@link hiddenProtocols} set.
+   *
+   * @param {HTMLElement|null} btn Button element.
+   * @param {string} protocol Protocol token (``'meshcore'`` or ``'meshtastic'``).
+   * @returns {void}
+   */
+  function setupMetaProtocolToggle(btn, protocol) {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      if (hiddenProtocols.has(protocol)) {
+        hiddenProtocols.delete(protocol);
+      } else {
+        hiddenProtocols.add(protocol);
+      }
+      updateMetaProtocolToggleUI();
+      updateLegendRoleFiltersUI();
+      applyFilter();
+    });
+  }
+  setupMetaProtocolToggle(protocolToggleMeshcore, 'meshcore');
+  setupMetaProtocolToggle(protocolToggleMeshtastic, 'meshtastic');
+
   /**
    * Update the page/tab title with the total active-node count for the past 7 days.
    *
@@ -4589,6 +4685,12 @@ export function initializeApp(config) {
     if (meshcoreColEl) meshcoreColEl.style.display = meshcoreWeek === 0 ? 'none' : '';
     if (meshtasticColEl) meshtasticColEl.style.display = meshtasticWeek === 0 ? 'none' : '';
 
+    // Show protocol toggle buttons only when both protocols have weekly
+    // activity — filtering is pointless when only one protocol is present.
+    const bothActive = meshcoreWeek > 0 && meshtasticWeek > 0;
+    if (protocolToggleMeshcore) protocolToggleMeshcore.hidden = !bothActive;
+    if (protocolToggleMeshtastic) protocolToggleMeshtastic.hidden = !bothActive;
+
     // Charts is meshtastic-only; hide the nav link when no meshtastic activity.
     document.querySelectorAll('a[href="/charts"]').forEach(el => {
       el.style.display = meshtasticWeek === 0 ? 'none' : '';
@@ -4628,6 +4730,10 @@ export function initializeApp(config) {
       updateFooterStats,
       applyProtocolVisibility,
       restartAutoRefresh,
+      updateMetaProtocolToggleUI,
+      adjustStatsForHiddenProtocols,
+      /** Whether auto-refresh is currently paused. */
+      isAutorefreshPaused: () => autorefreshPaused,
       /** Inject mock count span elements for legend protocol count tests. */
       _setProtocolCountElements(mc, mt) {
         meshcoreCountEl = mc;

@@ -178,8 +178,15 @@
             <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
           </div>
         <% end %>
+        <button id="protocolToggleMeshcore" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide MeshCore nodes" aria-pressed="false" title="Toggle MeshCore node visibility" hidden>
+          <img src="/assets/img/meshcore.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
+        </button>
+        <button id="protocolToggleMeshtastic" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide Meshtastic nodes" aria-pressed="false" title="Toggle Meshtastic node visibility" hidden>
+          <img src="/assets/img/meshtastic.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
+        </button>
         <span id="footerActiveNodes" class="meta-active-nodes"></span>
-        <button id="refreshBtn" type="button">Refresh</button>
+        <button id="refreshBtn" type="button" title="Fetch latest data now">Refresh</button>
+        <button id="autorefreshToggle" type="button" aria-label="Pause auto-refresh" aria-pressed="false" title="Pause or resume automatic data refresh">⏸</button>
         <span id="status" class="refresh-timestamp" aria-live="polite"></span>
       </div>
     <% end %>

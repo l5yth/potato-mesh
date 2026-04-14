@@ -66,7 +66,7 @@ test('makeRoleFilterKey SENSOR and REPEATER produce distinct keys across protoco
 // matchesRoleFilter — no active filters
 // ---------------------------------------------------------------------------
 
-test('matchesRoleFilter returns true when no filters are active', () => {
+test('matchesRoleFilter returns true when no roles are hidden', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     assert.equal(t.matchesRoleFilter({ role: 'ROUTER', protocol: 'meshtastic' }), true);
@@ -75,56 +75,56 @@ test('matchesRoleFilter returns true when no filters are active', () => {
 });
 
 // ---------------------------------------------------------------------------
-// matchesRoleFilter — protocol-aware compound key matching
+// matchesRoleFilter — exclusion-set semantics (roles in set are hidden)
 // ---------------------------------------------------------------------------
 
-test('matchesRoleFilter matches meshtastic SENSOR filter for meshtastic node', () => {
+test('matchesRoleFilter hides meshtastic SENSOR when in exclusion set', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshtastic:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), true);
-  });
-});
-
-test('matchesRoleFilter does not match meshtastic SENSOR filter for meshcore node', () => {
-  withApp((t) => {
-    t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshtastic:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), false);
-  });
-});
-
-test('matchesRoleFilter matches meshcore SENSOR filter for meshcore node', () => {
-  withApp((t) => {
-    t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshcore:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), true);
-  });
-});
-
-test('matchesRoleFilter does not match meshcore SENSOR filter for meshtastic node', () => {
-  withApp((t) => {
-    t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshcore:SENSOR');
     assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), false);
   });
 });
 
-test('matchesRoleFilter matches meshtastic REPEATER filter for meshtastic node', () => {
+test('matchesRoleFilter does not hide meshcore SENSOR when meshtastic SENSOR is hidden', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
-    t.activeRoleFilters.add('meshtastic:REPEATER');
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), false);
+    t.activeRoleFilters.add('meshtastic:SENSOR');
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), true);
   });
 });
 
-test('matchesRoleFilter matches meshcore REPEATER filter for meshcore node', () => {
+test('matchesRoleFilter hides meshcore SENSOR when in exclusion set', () => {
+  withApp((t) => {
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshcore:SENSOR');
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshcore' }), false);
+  });
+});
+
+test('matchesRoleFilter does not hide meshtastic SENSOR when meshcore SENSOR is hidden', () => {
+  withApp((t) => {
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshcore:SENSOR');
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), true);
+  });
+});
+
+test('matchesRoleFilter hides meshtastic REPEATER but not meshcore REPEATER', () => {
+  withApp((t) => {
+    t.activeRoleFilters.clear();
+    t.activeRoleFilters.add('meshtastic:REPEATER');
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), true);
+  });
+});
+
+test('matchesRoleFilter hides meshcore REPEATER but not meshtastic REPEATER', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:REPEATER');
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshtastic' }), true);
   });
 });
 
@@ -132,27 +132,27 @@ test('matchesRoleFilter matches meshcore REPEATER filter for meshcore node', () 
 // matchesRoleFilter — null/absent protocol treated as meshtastic
 // ---------------------------------------------------------------------------
 
-test('matchesRoleFilter treats null protocol as meshtastic for filter matching', () => {
+test('matchesRoleFilter treats null protocol as meshtastic for exclusion', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshtastic:SENSOR');
-    // null-protocol node should match the meshtastic SENSOR filter
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), true);
-    // but not the meshcore one
+    // null-protocol node should be hidden by the meshtastic SENSOR exclusion
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), false);
+    // but meshcore SENSOR exclusion should not affect null-protocol nodes
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:SENSOR');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: null }), true);
   });
 });
 
-test('matchesRoleFilter with multiple active filters returns true when any matches', () => {
+test('matchesRoleFilter with multiple hidden roles hides only those roles', () => {
   withApp((t) => {
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshtastic:SENSOR');
     t.activeRoleFilters.add('meshcore:REPEATER');
-    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), true);
-    assert.equal(t.matchesRoleFilter({ role: 'ROUTER', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'SENSOR', protocol: 'meshtastic' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'REPEATER', protocol: 'meshcore' }), false);
+    assert.equal(t.matchesRoleFilter({ role: 'ROUTER', protocol: 'meshtastic' }), true);
   });
 });
 
@@ -348,7 +348,7 @@ test('buildRoleButtons appends one child per palette entry', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4', REPEATER: '#C8D0DC' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E', REPEATER: '#B8C4D4' }, 'meshcore');
     assert.equal(col.childNodes.length, 2);
   });
 });
@@ -357,7 +357,7 @@ test('buildRoleButtons sets dataset.role and dataset.protocol on each button', (
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E' }, 'meshcore');
     const btn = t.legendRoleButtons.get('meshcore:SENSOR');
     assert.ok(btn, 'button should be in legendRoleButtons');
     assert.equal(btn.dataset.role, 'SENSOR');
@@ -369,7 +369,7 @@ test('buildRoleButtons registers compound keys in legendRoleButtons', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4', REPEATER: '#C8D0DC' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E', REPEATER: '#B8C4D4' }, 'meshcore');
     assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
     assert.ok(t.legendRoleButtons.has('meshcore:REPEATER'));
   });
@@ -380,8 +380,8 @@ test('buildRoleButtons keeps meshtastic and meshcore SENSOR keys distinct', () =
     t.legendRoleButtons.clear();
     const colMc = document.createElement('div');
     const colMt = document.createElement('div');
-    t.buildRoleButtons(colMc, { SENSOR: '#4A7EB4' }, 'meshcore');
-    t.buildRoleButtons(colMt, { SENSOR: '#B2D880' }, 'meshtastic');
+    t.buildRoleButtons(colMc, { SENSOR: '#40749E' }, 'meshcore');
+    t.buildRoleButtons(colMt, { SENSOR: '#A8D5BA' }, 'meshtastic');
     assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
     assert.ok(t.legendRoleButtons.has('meshtastic:SENSOR'));
     assert.notEqual(
@@ -391,14 +391,14 @@ test('buildRoleButtons keeps meshtastic and meshcore SENSOR keys distinct', () =
   });
 });
 
-test('buildRoleButtons sets aria-pressed to false initially', () => {
+test('buildRoleButtons sets aria-pressed to true initially (all visible)', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     assert.ok(btn, 'button should be in legendRoleButtons');
-    assert.equal(btn.getAttribute('aria-pressed'), 'false');
+    assert.equal(btn.getAttribute('aria-pressed'), 'true');
   });
 });
 
@@ -406,7 +406,7 @@ test('buildRoleButtons creates swatch child with background color', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     // swatch is the first child of the button
     const swatch = btn.childNodes[0];
@@ -419,7 +419,7 @@ test('buildRoleButtons creates label child with role text', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     // label is the second child of the button
     const label = btn.childNodes[1];
@@ -432,55 +432,28 @@ test('buildRoleButtons creates label child with role text', () => {
 // updateLegendRoleFiltersUI
 // ---------------------------------------------------------------------------
 
-test('updateLegendRoleFiltersUI sets aria-pressed true on active role buttons', () => {
+test('updateLegendRoleFiltersUI sets aria-pressed false on hidden role buttons', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
+    t.buildRoleButtons(col, { SENSOR: '#40749E' }, 'meshcore');
     const btn = t.legendRoleButtons.get('meshcore:SENSOR');
     t.activeRoleFilters.clear();
     t.activeRoleFilters.add('meshcore:SENSOR');
-    t.updateLegendRoleFiltersUI();
-    assert.equal(btn.getAttribute('aria-pressed'), 'true');
-  });
-});
-
-test('updateLegendRoleFiltersUI sets aria-pressed false on inactive role buttons', () => {
-  withApp((t) => {
-    t.legendRoleButtons.clear();
-    const col = document.createElement('div');
-    t.buildRoleButtons(col, { SENSOR: '#4A7EB4' }, 'meshcore');
-    const btn = t.legendRoleButtons.get('meshcore:SENSOR');
-    t.activeRoleFilters.clear();
     t.updateLegendRoleFiltersUI();
     assert.equal(btn.getAttribute('aria-pressed'), 'false');
   });
 });
 
-test('updateLegendRoleFiltersUI updates protocol button text to Show when hidden', () => {
+test('updateLegendRoleFiltersUI sets aria-pressed true on visible role buttons', () => {
   withApp((t) => {
-    t.legendProtocolButtons.clear();
-    const fakeBtn = document.createElement('button');
-    fakeBtn.setAttribute('aria-pressed', 'false');
-    t.legendProtocolButtons.set('meshtastic', fakeBtn);
-    t.hiddenProtocols.clear();
-    t.hiddenProtocols.add('meshtastic');
+    t.legendRoleButtons.clear();
+    const col = document.createElement('div');
+    t.buildRoleButtons(col, { SENSOR: '#40749E' }, 'meshcore');
+    const btn = t.legendRoleButtons.get('meshcore:SENSOR');
+    t.activeRoleFilters.clear();
     t.updateLegendRoleFiltersUI();
-    assert.equal(fakeBtn.getAttribute('aria-pressed'), 'true');
-    assert.ok(fakeBtn.textContent.startsWith('Show'));
-  });
-});
-
-test('updateLegendRoleFiltersUI updates protocol button text to Hide when visible', () => {
-  withApp((t) => {
-    t.legendProtocolButtons.clear();
-    const fakeBtn = document.createElement('button');
-    fakeBtn.setAttribute('aria-pressed', 'true');
-    t.legendProtocolButtons.set('meshcore', fakeBtn);
-    t.hiddenProtocols.clear();
-    t.updateLegendRoleFiltersUI();
-    assert.equal(fakeBtn.getAttribute('aria-pressed'), 'false');
-    assert.ok(fakeBtn.textContent.startsWith('Hide'));
+    assert.equal(btn.getAttribute('aria-pressed'), 'true');
   });
 });
 
@@ -488,5 +461,83 @@ test('updateLegendRoleFiltersUI is safe when legendContainer is null', () => {
   withApp((t) => {
     // legendContainer starts null in tests (no map); should not throw
     assert.doesNotThrow(() => t.updateLegendRoleFiltersUI());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// adjustStatsForHiddenProtocols
+// ---------------------------------------------------------------------------
+
+test('adjustStatsForHiddenProtocols returns original stats when nothing is hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result, stats);
+  });
+});
+
+test('adjustStatsForHiddenProtocols subtracts meshcore counts when meshcore hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 80);
+    assert.equal(result.day, 40);
+    assert.equal(result.month, 160);
+    assert.equal(result.hour, 8);
+  });
+});
+
+test('adjustStatsForHiddenProtocols subtracts meshtastic counts when meshtastic hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshtastic');
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 20);
+    assert.equal(result.day, 10);
+  });
+});
+
+test('adjustStatsForHiddenProtocols subtracts both when both hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    t.hiddenProtocols.add('meshtastic');
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 0);
+    assert.equal(result.day, 0);
+  });
+});
+
+test('adjustStatsForHiddenProtocols floors at zero', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    const stats = { hour: 1, day: 5, week: 10, month: 20, meshcore: { hour: 50, day: 50, week: 50, month: 50 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 0);
+    assert.equal(result.day, 0);
+  });
+});
+
+test('adjustStatsForHiddenProtocols handles null stats gracefully', () => {
+  withApp((t) => {
+    t.hiddenProtocols.add('meshcore');
+    assert.equal(t.adjustStatsForHiddenProtocols(null), null);
+    assert.equal(t.adjustStatsForHiddenProtocols(undefined), undefined);
+  });
+});
+
+test('adjustStatsForHiddenProtocols handles missing protocol bucket', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    const stats = { hour: 10, day: 50, week: 100, month: 200 };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 100);
   });
 });

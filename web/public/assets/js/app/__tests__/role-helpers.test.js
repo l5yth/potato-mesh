@@ -62,35 +62,35 @@ test('render priority uses canonical role keys and defaults to zero for unknowns
 });
 
 test('render priority is protocol-aware for shared roles', () => {
-  // SENSOR: meshtastic=2, meshcore=3
+  // SENSOR: meshtastic=2, meshcore=9
   assert.equal(getRoleRenderPriority('SENSOR', 'meshtastic'), 2);
-  assert.equal(getRoleRenderPriority('SENSOR', 'meshcore'), 3);
+  assert.equal(getRoleRenderPriority('SENSOR', 'meshcore'), 9);
   assert.ok(getRoleRenderPriority('SENSOR', 'meshcore') > getRoleRenderPriority('SENSOR', 'meshtastic'));
-  // REPEATER: meshtastic=11, meshcore=12
+  // REPEATER: meshtastic=11, meshcore=3
   assert.equal(getRoleRenderPriority('REPEATER', 'meshtastic'), 11);
-  assert.equal(getRoleRenderPriority('REPEATER', 'meshcore'), 12);
-  assert.ok(getRoleRenderPriority('REPEATER', 'meshcore') > getRoleRenderPriority('REPEATER', 'meshtastic'));
+  assert.equal(getRoleRenderPriority('REPEATER', 'meshcore'), 3);
+  assert.ok(getRoleRenderPriority('REPEATER', 'meshtastic') > getRoleRenderPriority('REPEATER', 'meshcore'));
 });
 
 test('render priority meshcore-exclusive roles have defined priorities', () => {
-  assert.equal(getRoleRenderPriority('COMPANION', 'meshcore'), 7);
-  assert.equal(getRoleRenderPriority('ROOM_SERVER', 'meshcore'), 9);
+  assert.equal(getRoleRenderPriority('COMPANION', 'meshcore'), 12);
+  assert.equal(getRoleRenderPriority('ROOM_SERVER', 'meshcore'), 7);
 });
 
 test('render priority respects the full bottom-to-top order', () => {
   const order = [
     ['CLIENT_HIDDEN', null],
     ['SENSOR', 'meshtastic'],
-    ['SENSOR', 'meshcore'],
+    ['REPEATER', 'meshcore'],
     ['TRACKER', null],
     ['CLIENT_MUTE', null],
     ['CLIENT', null],
-    ['COMPANION', 'meshcore'],
-    ['CLIENT_BASE', null],
     ['ROOM_SERVER', 'meshcore'],
+    ['CLIENT_BASE', null],
+    ['SENSOR', 'meshcore'],
     ['ROUTER_LATE', null],
     ['REPEATER', 'meshtastic'],
-    ['REPEATER', 'meshcore'],
+    ['COMPANION', 'meshcore'],
     ['ROUTER', null],
     ['LOST_AND_FOUND', null],
   ];
