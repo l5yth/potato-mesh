@@ -36,6 +36,14 @@ module PotatoMesh
               val = raw&.to_s&.strip&.downcase
               known_protocols.include?(val) ? val : nil
             end
+
+            # Set Cache-Control headers appropriate for the current mode.
+            # Private-mode instances must not allow intermediary caches to
+            # store responses that may contain filtered data.
+            define_method(:api_cache_control) do |max_age: 10|
+              visibility = private_mode? ? :private : :public
+              cache_control visibility, :must_revalidate, max_age: max_age
+            end
           end
 
           app.before "/api/messages*" do
@@ -86,14 +94,14 @@ module PotatoMesh
             if since_val > 0
               json_body = query_nodes(limit, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:nodes:#{limit}:#{protocol}:#{priv}", ttl_seconds: 15) do
                 query_nodes(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -115,7 +123,7 @@ module PotatoMesh
             end
 
             etag cached[:etag], kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             cached[:value]
           end
 
@@ -128,7 +136,7 @@ module PotatoMesh
             halt 404, { error: "not found" }.to_json if rows.empty?
             json_body = rows.first.to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             json_body
           end
 
@@ -142,14 +150,14 @@ module PotatoMesh
             if since_val > 0
               json_body = query_ingestors(limit, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:ingestors:#{limit}:#{protocol}", ttl_seconds: 30) do
                 query_ingestors(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -166,14 +174,14 @@ module PotatoMesh
             if since > 0
               json_body = query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:messages:#{limit}:#{enc_key}:#{protocol}", ttl_seconds: 10) do
                 query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -194,7 +202,7 @@ module PotatoMesh
               protocol: sanitize_protocol(params["protocol"]),
             ).to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             json_body
           end
 
@@ -208,14 +216,14 @@ module PotatoMesh
             if since_val > 0
               json_body = query_positions(limit, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:positions:#{limit}:#{protocol}", ttl_seconds: 15) do
                 query_positions(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -227,7 +235,7 @@ module PotatoMesh
             limit = coerce_query_limit(params["limit"])
             json_body = query_positions(limit, node_ref: node_ref, since: params["since"], protocol: sanitize_protocol(params["protocol"])).to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             json_body
           end
 
@@ -241,14 +249,14 @@ module PotatoMesh
             if since_val > 0
               json_body = query_neighbors(limit, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:neighbors:#{limit}:#{protocol}", ttl_seconds: 30) do
                 query_neighbors(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -260,7 +268,7 @@ module PotatoMesh
             limit = coerce_query_limit(params["limit"])
             json_body = query_neighbors(limit, node_ref: node_ref, since: params["since"], protocol: sanitize_protocol(params["protocol"])).to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             json_body
           end
 
@@ -274,14 +282,14 @@ module PotatoMesh
             if since_val > 0
               json_body = query_telemetry(limit, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:telemetry:#{limit}:#{protocol}", ttl_seconds: 15) do
                 query_telemetry(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -320,7 +328,7 @@ module PotatoMesh
             if since_val > 0
               json_body = query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 30
+              api_cache_control(max_age: 30)
               json_body
             else
               cache_key = "api:telemetry_agg:#{window_seconds}:#{bucket_seconds}"
@@ -328,7 +336,7 @@ module PotatoMesh
                 query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 30
+              api_cache_control(max_age: 30)
               cached[:value]
             end
           end
@@ -340,7 +348,7 @@ module PotatoMesh
             limit = coerce_query_limit(params["limit"])
             json_body = query_telemetry(limit, node_ref: node_ref, since: params["since"], protocol: sanitize_protocol(params["protocol"])).to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             json_body
           end
 
@@ -354,14 +362,14 @@ module PotatoMesh
             if since_val > 0
               json_body = query_traces(limit, since: since, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               json_body
             else
               cached = PotatoMesh::App::ApiCache.fetch("api:traces:#{limit}:#{protocol}", ttl_seconds: 30) do
                 query_traces(limit, since: since, protocol: protocol).to_json
               end
               etag cached[:etag], kind: :weak
-              cache_control :public, :must_revalidate, max_age: 10
+              api_cache_control
               cached[:value]
             end
           end
@@ -373,7 +381,7 @@ module PotatoMesh
             limit = coerce_query_limit(params["limit"])
             json_body = query_traces(limit, node_ref: node_ref, since: params["since"], protocol: sanitize_protocol(params["protocol"])).to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
-            cache_control :public, :must_revalidate, max_age: 10
+            api_cache_control
             json_body
           end
 
@@ -388,19 +396,6 @@ module PotatoMesh
           end
         end
 
-        # Sanitise the protocol parameter to a known value or nil.
-        #
-        # Prevents attacker-controlled strings from polluting the cache
-        # keyspace.  Only +"meshcore"+ and +"meshtastic"+ are accepted.
-        # Defined in the +registered+ block's scope as a Sinatra helper so
-        # route handlers can call it directly.
-        #
-        # @param raw [String, nil] raw protocol value from the request.
-        # @return [String, nil] whitelisted protocol or nil.
-        def self.sanitize_protocol(raw)
-          val = raw&.to_s&.strip&.downcase
-          KNOWN_PROTOCOLS.include?(val) ? val : nil
-        end
       end
     end
   end

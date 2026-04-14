@@ -16,7 +16,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { maxRecordTimestamp, mergeById, trimToLimit } from '../incremental-helpers.js';
+import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit } from '../incremental-helpers.js';
 
 // ---------------------------------------------------------------------------
 // maxRecordTimestamp
@@ -126,6 +126,38 @@ test('mergeById skips items with null or undefined key', () => {
 test('mergeById returns all incoming when existing is empty', () => {
   const result = mergeById([], [{ id: 1 }, { id: 2 }], 'id');
   assert.equal(result.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// mergeByCompositeKey
+// ---------------------------------------------------------------------------
+
+test('mergeByCompositeKey deduplicates by composite key', () => {
+  const existing = [
+    { node_id: '!a', neighbor_id: '!b', snr: 5 },
+    { node_id: '!a', neighbor_id: '!c', snr: 3 },
+  ];
+  const incoming = [
+    { node_id: '!a', neighbor_id: '!b', snr: 8 },
+    { node_id: '!a', neighbor_id: '!d', snr: 1 },
+  ];
+  const result = mergeByCompositeKey(existing, incoming, ['node_id', 'neighbor_id']);
+  assert.equal(result.length, 3);
+  const ab = result.find(r => r.neighbor_id === '!b');
+  assert.equal(ab.snr, 8, 'incoming should overwrite existing for same composite key');
+});
+
+test('mergeByCompositeKey returns existing when incoming is empty', () => {
+  const existing = [{ a: 1, b: 2 }];
+  assert.strictEqual(mergeByCompositeKey(existing, [], ['a', 'b']), existing);
+  assert.strictEqual(mergeByCompositeKey(existing, null, ['a', 'b']), existing);
+});
+
+test('mergeByCompositeKey handles missing key fields gracefully', () => {
+  const existing = [{ node_id: '!a' }];
+  const incoming = [{ node_id: '!a', neighbor_id: '!b' }];
+  const result = mergeByCompositeKey(existing, incoming, ['node_id', 'neighbor_id']);
+  assert.equal(result.length, 2, 'different composite keys due to missing field');
 });
 
 // ---------------------------------------------------------------------------

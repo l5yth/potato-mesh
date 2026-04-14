@@ -92,7 +92,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
-import { maxRecordTimestamp, mergeById, trimToLimit } from './incremental-helpers.js';
+import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit } from './incremental-helpers.js';
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
@@ -4599,7 +4599,7 @@ export function initializeApp(config) {
         ? trimToLimit(mergeById(allPositionEntries, incomingPositions, 'id'), NODE_LIMIT)
         : incomingPositions;
       const neighborTuples = useSince
-        ? mergeById(allNeighbors, incomingNeighbors, 'node_id')
+        ? mergeByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id'])
         : incomingNeighbors;
       const telemetryEntries = useSince
         ? trimToLimit(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), NODE_LIMIT)

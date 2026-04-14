@@ -67,8 +67,9 @@ module PotatoMesh
             end
 
             # Single-flight: if another thread is already computing this key,
-            # wait for it to finish and use its result.
-            if @inflight.key?(key)
+            # wait for it to finish and use its result.  The loop guards
+            # against spurious wakeups from ConditionVariable#wait.
+            while @inflight.key?(key)
               cv = @inflight[key]
               cv.wait(@mutex)
               entry = @store[key]

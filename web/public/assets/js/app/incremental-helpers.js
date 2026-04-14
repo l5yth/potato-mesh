@@ -62,6 +62,35 @@ export function mergeById(existing, incoming, keyField) {
 }
 
 /**
+ * Merge incremental rows using a composite key built from multiple fields.
+ *
+ * Behaves like {@link mergeById} but joins the values of several fields
+ * into a single string key so records with a composite primary key (e.g.
+ * ``node_id`` + ``neighbor_id``) are deduplicated correctly.
+ *
+ * @param {Array<Object>} existing Previous full dataset.
+ * @param {Array<Object>} incoming New incremental rows.
+ * @param {Array<string>} keyFields Properties whose values form the composite key.
+ * @returns {Array<Object>} Merged array.
+ */
+export function mergeByCompositeKey(existing, incoming, keyFields) {
+  if (!incoming || incoming.length === 0) return existing;
+
+  function buildKey(item) {
+    return keyFields.map(f => String(item[f] ?? '')).join('\0');
+  }
+
+  const map = new Map();
+  for (const item of existing) {
+    map.set(buildKey(item), item);
+  }
+  for (const item of incoming) {
+    map.set(buildKey(item), item);
+  }
+  return Array.from(map.values());
+}
+
+/**
  * Trim an array to at most ``limit`` entries, keeping the ones with the
  * highest timestamp value.  Prevents unbounded growth from incremental
  * merges over a long-running browser tab.

@@ -141,4 +141,25 @@ RSpec.describe PotatoMesh::App::ApiCache do
       expect(described_class.size).to eq(1)
     end
   end
+
+  describe "error handling" do
+    it "does not cache the value when the block raises" do
+      expect {
+        described_class.fetch("err:raise", ttl_seconds: 60) { raise "boom" }
+      }.to raise_error(RuntimeError, "boom")
+
+      expect(described_class.size).to eq(0)
+    end
+
+    it "allows a subsequent fetch after a block error" do
+      begin
+        described_class.fetch("err:retry", ttl_seconds: 60) { raise "first" }
+      rescue RuntimeError
+        # expected
+      end
+
+      result = described_class.fetch("err:retry", ttl_seconds: 60) { "recovered" }
+      expect(result[:value]).to eq("recovered")
+    end
+  end
 end
