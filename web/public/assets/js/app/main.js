@@ -92,6 +92,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
+import { maxRecordTimestamp, mergeById, trimToLimit } from './incremental-helpers.js';
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
@@ -3738,52 +3739,6 @@ export function initializeApp(config) {
     return Number.isFinite(num) ? num : null;
   }
 
-  /**
-   * Extract the maximum timestamp from an array of records.
-   *
-   * Inspects common timestamp fields (``rx_time``, ``last_heard``,
-   * ``telemetry_time``, ``position_time``) and returns the highest value
-   * found.  Returns 0 when the array is empty or contains no timestamps.
-   *
-   * @param {Array<Object>} records API response rows.
-   * @param {Array<string>} [fields] Timestamp field names to inspect.
-   * @returns {number} Maximum unix timestamp across all records.
-   */
-  function maxRecordTimestamp(records, fields = ['rx_time', 'last_heard']) {
-    let max = 0;
-    if (!Array.isArray(records)) return max;
-    for (const record of records) {
-      if (!record || typeof record !== 'object') continue;
-      for (const field of fields) {
-        const val = record[field];
-        if (typeof val === 'number' && val > max) max = val;
-      }
-    }
-    return max;
-  }
-
-  /**
-   * Merge incremental rows into an existing collection, deduplicating by a
-   * key field.  New rows replace existing entries with the same key.
-   *
-   * @param {Array<Object>} existing Previous full dataset.
-   * @param {Array<Object>} incoming New incremental rows.
-   * @param {string} keyField Property used for deduplication.
-   * @returns {Array<Object>} Merged array.
-   */
-  function mergeById(existing, incoming, keyField) {
-    if (!incoming || incoming.length === 0) return existing;
-    const map = new Map();
-    for (const item of existing) {
-      const key = item[keyField];
-      if (key != null) map.set(key, item);
-    }
-    for (const item of incoming) {
-      const key = item[keyField];
-      if (key != null) map.set(key, item);
-    }
-    return Array.from(map.values());
-  }
 
   /**
    * Determine the best-effort timestamp in seconds from numeric or ISO values.
@@ -4636,18 +4591,27 @@ export function initializeApp(config) {
 
       // Merge incremental results with existing data.  On first load the
       // existing arrays are empty so the merge is effectively a no-op.
+      // Merge incremental results with existing data then trim to the
+      // configured limits so long-running tabs do not accumulate stale
+      // entries beyond what the server would return on a fresh fetch.
       const nodes = useSince ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
-      const positions = useSince ? mergeById(allPositionEntries, incomingPositions, 'id') : incomingPositions;
+      const positions = useSince
+        ? trimToLimit(mergeById(allPositionEntries, incomingPositions, 'id'), NODE_LIMIT)
+        : incomingPositions;
       const neighborTuples = useSince
         ? mergeById(allNeighbors, incomingNeighbors, 'node_id')
         : incomingNeighbors;
       const telemetryEntries = useSince
-        ? mergeById(allTelemetryEntries, incomingTelemetry, 'id')
+        ? trimToLimit(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), NODE_LIMIT)
         : incomingTelemetry;
-      const traceEntries = useSince ? mergeById(allTraces, incomingTraces, 'id') : incomingTraces;
-      const messages = useSince ? mergeById(allMessages, incomingMessages, 'id') : incomingMessages;
+      const traceEntries = useSince
+        ? trimToLimit(mergeById(allTraces, incomingTraces, 'id'), TRACE_LIMIT)
+        : incomingTraces;
+      const messages = useSince
+        ? trimToLimit(mergeById(allMessages, incomingMessages, 'id'), MESSAGE_LIMIT)
+        : incomingMessages;
       const encryptedMessages = useSince
-        ? mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id')
+        ? trimToLimit(mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id'), MESSAGE_LIMIT)
         : incomingEncryptedMessages;
 
       // Collapse per-source snapshot arrays into single merged records; the
@@ -4866,6 +4830,8 @@ export function initializeApp(config) {
         meshcoreColEl = mc;
         meshtasticColEl = mt;
       },
+      /** Trigger a manual refresh cycle (test use only). */
+      refresh,
     },
   };
 }

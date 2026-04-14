@@ -14,61 +14,116 @@
 
 # frozen_string_literal: true
 
+require "digest"
+
 module PotatoMesh
   module App
     # Thread-safe in-memory cache for serialised API responses.
     #
-    # Each entry is stored with a monotonic expiration time.  Expired entries
-    # are lazily evicted on the next +fetch+ for the same key.  The module is
-    # designed to sit between the Sinatra route handler and the query layer so
-    # that identical polling requests (same limit / protocol / parameters)
-    # served within the TTL window return the previously computed JSON string
-    # without touching SQLite.
+    # Each entry is stored with a monotonic expiration time and a pre-computed
+    # ETag so the route handler can skip recomputing the digest on cache hits.
     #
-    # Invalidation is intentionally coarse-grained: any successful ingest POST
-    # calls {invalidate_all} so the next GET rebuilds from the database.  This
-    # is safe because ingestors typically post every few minutes, making the
-    # rebuild cost negligible compared to the savings from serving cached
-    # responses to multiple concurrent dashboard clients.
+    # The cache is bounded to {MAX_ENTRIES} to prevent unbounded memory growth
+    # from attacker-controlled query parameters.  When the limit is reached the
+    # oldest entry by insertion order is evicted (LRU-ish via Ruby hash ordering).
+    #
+    # Invalidation can target a specific prefix (e.g. +"api:nodes:"+) so that an
+    # ingest POST to +/api/messages+ does not flush the neighbors cache.
+    # A single-flight guard coalesces concurrent misses for the same key so only
+    # one thread computes the value while others wait for the result.
     module ApiCache
+      # Hard cap on the number of cached entries to prevent memory exhaustion.
+      # With the whitelisted protocol values and known limit set, the realistic
+      # key space is ~30 entries.  64 provides generous headroom.
+      MAX_ENTRIES = 64
+
       @store = {}
+      @inflight = {}
       @mutex = Mutex.new
 
       class << self
         # Retrieve a cached value or compute and store it.
+        #
+        # When multiple threads request the same cold key concurrently only one
+        # executes the block; the others wait for the result (single-flight).
+        #
+        # The returned hash contains both +:value+ (the JSON string) and +:etag+
+        # (pre-computed weak ETag) so callers can set the header without
+        # re-hashing the body.
         #
         # @param key [String] cache key incorporating all relevant query
         #   parameters (limit, protocol, etc.).
         # @param ttl_seconds [Numeric] time-to-live for the cached entry.
         # @yield Computes the value to cache when the entry is missing or
         #   expired.  The block should return the serialised JSON string.
-        # @return [Object] cached or freshly computed value.
+        # @return [Hash{Symbol => String}] +:value+ and +:etag+ of the response.
         def fetch(key, ttl_seconds:)
           now = monotonic_now
+
           @mutex.synchronize do
             entry = @store[key]
-            return entry[:value] if entry && now < entry[:expires_at]
+            if entry && now < entry[:expires_at]
+              return { value: entry[:value], etag: entry[:etag] }
+            end
+
+            # Single-flight: if another thread is already computing this key,
+            # wait for it to finish and use its result.
+            if @inflight.key?(key)
+              cv = @inflight[key]
+              cv.wait(@mutex)
+              entry = @store[key]
+              if entry && monotonic_now < entry[:expires_at]
+                return { value: entry[:value], etag: entry[:etag] }
+              end
+            end
+
+            # Mark this key as in-flight so concurrent requests wait.
+            @inflight[key] = ConditionVariable.new
           end
 
           value = yield
+          etag = Digest::MD5.hexdigest(value)
 
           @mutex.synchronize do
-            @store[key] = { value: value, expires_at: monotonic_now + ttl_seconds }
+            evict_oldest_if_full
+            @store[key] = { value: value, etag: etag, expires_at: monotonic_now + ttl_seconds }
+            cv = @inflight.delete(key)
+            cv&.broadcast
           end
-          value
+
+          { value: value, etag: etag }
+        rescue => e
+          # On error, unblock any waiters and re-raise.
+          @mutex.synchronize do
+            cv = @inflight.delete(key)
+            cv&.broadcast
+          end
+          raise e
+        end
+
+        # Remove entries whose keys start with any of the given prefixes.
+        #
+        # Targeted invalidation so that e.g. a messages POST does not flush the
+        # neighbors or telemetry caches.
+        #
+        # @param prefixes [Array<String>] key prefixes to match.
+        # @return [void]
+        def invalidate_prefix(*prefixes)
+          @mutex.synchronize do
+            @store.reject! do |key, _|
+              prefixes.any? { |p| key.start_with?(p) }
+            end
+          end
         end
 
         # Remove all entries from the cache.
-        #
-        # Called after successful ingest POST operations so subsequent GET
-        # requests pick up the newly written data.
         #
         # @return [void]
         def invalidate_all
           @mutex.synchronize { @store.clear }
         end
 
-        # Remove specific entries by key.
+        # Remove specific entries by exact key.
         #
         # @param keys [Array<String>] cache keys to evict.
         # @return [void]
@@ -79,8 +134,6 @@ module PotatoMesh
         end
 
         # Return the number of entries currently held in the cache.
-        #
-        # Intended for testing and diagnostics only.
         #
         # @return [Integer] entry count.
         def size
@@ -93,6 +146,15 @@ module PotatoMesh
         # adjustments (NTP jumps, DST transitions, etc.).
         def monotonic_now
           Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        end
+
+        # Evict the oldest entry when the store is at capacity.  Ruby hashes
+        # preserve insertion order, so +first+ is the oldest key.
+        def evict_oldest_if_full
+          while @store.size >= MAX_ENTRIES
+            oldest_key = @store.each_key.first
+            @store.delete(oldest_key)
+          end
         end
       end
     end
