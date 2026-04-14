@@ -24,7 +24,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 
-const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
+const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 const TELEMETRY_LIMIT = 1000;
 const POSITION_LIMIT = SNAPSHOT_WINDOW;
 const NEIGHBOR_LIMIT = 1000;

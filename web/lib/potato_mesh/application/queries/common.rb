@@ -133,6 +133,57 @@ module PotatoMesh
         coerced
       end
 
+      # Resolve a collection of raw node reference strings to their canonical
+      # +node_id+ values in a single batch query.  This avoids the N+1 pattern
+      # of calling +normalize_node_id+ once per row.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param refs [Array<String>] raw node identifiers (hex strings or numeric
+      #   strings) to resolve.
+      # @return [Hash{String => String}] mapping from each input reference to its
+      #   canonical +node_id+, omitting entries that could not be resolved.
+      def batch_resolve_node_ids(db, refs)
+        return {} if refs.nil? || refs.empty?
+
+        result = {}
+        string_refs = []
+        numeric_refs = []
+
+        refs.each do |ref|
+          next if ref.nil? || ref.strip.empty?
+          string_refs << ref.strip
+          begin
+            numeric_refs << Integer(ref.strip, 10)
+          rescue ArgumentError
+            # not a numeric reference — skip the numeric branch
+          end
+        end
+
+        # Batch lookup by node_id (string match)
+        unless string_refs.empty?
+          placeholders = Array.new(string_refs.length, "?").join(", ")
+          rows = db.execute("SELECT node_id FROM nodes WHERE node_id IN (#{placeholders})", string_refs)
+          rows.each do |row|
+            nid = row.is_a?(Hash) ? row["node_id"] : row[0]
+            result[nid] = nid if nid
+          end
+        end
+
+        # Batch lookup by num (numeric match) for refs not yet resolved
+        unresolved_numeric = numeric_refs.select { |n| !result.key?(n.to_s) }
+        unless unresolved_numeric.empty?
+          placeholders = Array.new(unresolved_numeric.length, "?").join(", ")
+          rows = db.execute("SELECT node_id, num FROM nodes WHERE num IN (#{placeholders})", unresolved_numeric)
+          rows.each do |row|
+            nid = row.is_a?(Hash) ? row["node_id"] : row[0]
+            num = row.is_a?(Hash) ? row["num"] : row[1]
+            result[num.to_s] = nid if nid && num
+          end
+        end
+
+        result
+      end
+
       # Normalise a caller-supplied timestamp for API pagination windows.
       #
       # @param since [Object] requested lower bound expressed as seconds since the epoch.

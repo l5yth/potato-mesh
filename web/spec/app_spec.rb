@@ -496,6 +496,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     ENV.delete("PRIVATE")
     allow(Time).to receive(:now).and_return(reference_time)
     clear_database
+    PotatoMesh::App::ApiCache.invalidate_all
   end
 
   after do

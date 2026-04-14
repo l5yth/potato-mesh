@@ -64,6 +64,12 @@ module PotatoMesh
         SQL
         params << limit
         rows = db.execute(sql, params)
+
+        # Batch-resolve all unique from_id values to canonical node_ids in a
+        # single query instead of issuing 1-2 SELECTs per message row.
+        raw_from_ids = rows.filter_map { |r| string_or_nil(r["from_id"]&.to_s&.strip) }.uniq
+        canonical_map = batch_resolve_node_ids(db, raw_from_ids)
+
         rows.each do |r|
           r.delete_if { |key, _| key.is_a?(Integer) }
           r["reply_id"] = coerce_integer(r["reply_id"]) if r.key?("reply_id")
@@ -81,7 +87,7 @@ module PotatoMesh
             )
           end
 
-          canonical_from_id = string_or_nil(normalize_node_id(db, r["from_id"]))
+          canonical_from_id = canonical_map[r["from_id"]&.to_s&.strip]
           node_id = canonical_from_id || string_or_nil(r["from_id"])
 
           if canonical_from_id

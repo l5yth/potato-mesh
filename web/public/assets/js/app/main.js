@@ -92,6 +92,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
+import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit } from './incremental-helpers.js';
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
@@ -229,6 +230,18 @@ export function initializeApp(config) {
     applyNodeFallback: applyNodeNameFallback,
     logger: console,
   });
+  // Timestamps of the most recent record seen per data type.  Used to pass
+  // the ``since`` query parameter on subsequent refreshes so only new/changed
+  // rows are transferred over the wire.
+  let lastNodeTimestamp = 0;
+  let lastMessageTimestamp = 0;
+  let lastPositionTimestamp = 0;
+  let lastTelemetryTimestamp = 0;
+  let lastNeighborTimestamp = 0;
+  let lastTraceTimestamp = 0;
+  /** Whether the very first full fetch has completed. */
+  let initialFetchDone = false;
+
   const NODE_LIMIT = 1000;
   const TRACE_LIMIT = 200;
   const TRACE_MAX_AGE_SECONDS = 28 * 24 * 60 * 60;
@@ -3597,11 +3610,14 @@ export function initializeApp(config) {
    * Fetch the latest nodes from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of records.
+   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
    * @returns {Promise<Array<Object>>} Parsed node payloads.
    */
-  async function fetchNodes(limit = NODE_LIMIT) {
+  async function fetchNodes(limit = NODE_LIMIT, since = 0) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/nodes?limit=${effectiveLimit}`, { cache: 'no-store' });
+    let url = `/api/nodes?limit=${effectiveLimit}`;
+    if (since > 0) url += `&since=${since}`;
+    const r = await fetch(url, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3616,7 +3632,7 @@ export function initializeApp(config) {
     if (typeof nodeId !== 'string') return null;
     const trimmed = nodeId.trim();
     if (trimmed.length === 0) return null;
-    const r = await fetch(`/api/nodes/${encodeURIComponent(trimmed)}`, { cache: 'no-store' });
+    const r = await fetch(`/api/nodes/${encodeURIComponent(trimmed)}`, { cache: 'default' });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
@@ -3626,7 +3642,7 @@ export function initializeApp(config) {
    * Fetch recent messages from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
-   * @param {{ encrypted?: boolean }} [options] Optional retrieval flags.
+   * @param {{ encrypted?: boolean, since?: number }} [options] Optional retrieval flags.
    * @returns {Promise<Array<Object>>} Parsed message payloads.
    */
   async function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
@@ -3636,8 +3652,11 @@ export function initializeApp(config) {
     if (options && options.encrypted) {
       params.set('encrypted', 'true');
     }
+    if (options && options.since > 0) {
+      params.set('since', String(options.since));
+    }
     const query = params.toString();
-    const r = await fetch(`/api/messages?${query}`, { cache: 'no-store' });
+    const r = await fetch(`/api/messages?${query}`, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3646,11 +3665,14 @@ export function initializeApp(config) {
    * Fetch neighbour information from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
    * @returns {Promise<Array<Object>>} Parsed neighbour payloads.
    */
-  async function fetchNeighbors(limit = NODE_LIMIT) {
+  async function fetchNeighbors(limit = NODE_LIMIT, since = 0) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/neighbors?limit=${effectiveLimit}`, { cache: 'no-store' });
+    let url = `/api/neighbors?limit=${effectiveLimit}`;
+    if (since > 0) url += `&since=${since}`;
+    const r = await fetch(url, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3659,12 +3681,15 @@ export function initializeApp(config) {
    * Fetch traceroute observations from the JSON API.
    *
    * @param {number} [limit=TRACE_LIMIT] Maximum number of records.
+   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
    * @returns {Promise<Array<Object>>} Parsed trace payloads.
    */
-  async function fetchTraces(limit = TRACE_LIMIT) {
+  async function fetchTraces(limit = TRACE_LIMIT, since = 0) {
     const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
     const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
-    const r = await fetch(`/api/traces?limit=${effectiveLimit}`, { cache: 'no-store' });
+    let url = `/api/traces?limit=${effectiveLimit}`;
+    if (since > 0) url += `&since=${since}`;
+    const r = await fetch(url, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const traces = await r.json();
     return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
@@ -3674,11 +3699,14 @@ export function initializeApp(config) {
    * Fetch telemetry entries from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
    * @returns {Promise<Array<Object>>} Parsed telemetry payloads.
    */
-  async function fetchTelemetry(limit = NODE_LIMIT) {
+  async function fetchTelemetry(limit = NODE_LIMIT, since = 0) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/telemetry?limit=${effectiveLimit}`, { cache: 'no-store' });
+    let url = `/api/telemetry?limit=${effectiveLimit}`;
+    if (since > 0) url += `&since=${since}`;
+    const r = await fetch(url, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3687,11 +3715,14 @@ export function initializeApp(config) {
    * Fetch position packets from the JSON API.
    *
    * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
    * @returns {Promise<Array<Object>>} Parsed position payloads.
    */
-  async function fetchPositions(limit = NODE_LIMIT) {
+  async function fetchPositions(limit = NODE_LIMIT, since = 0) {
     const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    const r = await fetch(`/api/positions?limit=${effectiveLimit}`, { cache: 'no-store' });
+    let url = `/api/positions?limit=${effectiveLimit}`;
+    if (since > 0) url += `&since=${since}`;
+    const r = await fetch(url, { cache: 'default' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
@@ -3707,6 +3738,7 @@ export function initializeApp(config) {
     const num = typeof value === 'number' ? value : Number(value);
     return Number.isFinite(num) ? num : null;
   }
+
 
   /**
    * Determine the best-effort timestamp in seconds from numeric or ISO values.
@@ -4486,49 +4518,102 @@ export function initializeApp(config) {
       if (statusEl) {
         statusEl.textContent = 'refreshing…';
       }
+      // On the first load fetch the full dataset; subsequent refreshes pass
+      // the ``since`` timestamp so only new/changed rows are transferred.
+      // A 1-second overlap avoids missing rows that arrive at the boundary.
+      const useSince = initialFetchDone;
+      const nodeSince = useSince ? Math.max(0, lastNodeTimestamp - 1) : 0;
+      const msgSince = useSince ? Math.max(0, lastMessageTimestamp - 1) : 0;
+      const posSince = useSince ? Math.max(0, lastPositionTimestamp - 1) : 0;
+      const telSince = useSince ? Math.max(0, lastTelemetryTimestamp - 1) : 0;
+      const nbSince = useSince ? Math.max(0, lastNeighborTimestamp - 1) : 0;
+      const trSince = useSince ? Math.max(0, lastTraceTimestamp - 1) : 0;
+
       // Secondary fetches are fire-and-forget with individual error handlers so
       // that a failure in one stream (e.g. telemetry) does not abort the whole
       // refresh cycle.  Each promise resolves to an empty array on error, which
       // preserves the previous data until the next successful fetch.
-      const neighborPromise = fetchNeighbors().catch(err => {
+      const neighborPromise = fetchNeighbors(NODE_LIMIT, nbSince).catch(err => {
         console.warn('neighbor refresh failed; continuing without connections', err);
         return [];
       });
-      const telemetryPromise = fetchTelemetry().catch(err => {
+      const telemetryPromise = fetchTelemetry(NODE_LIMIT, telSince).catch(err => {
         console.warn('telemetry refresh failed; continuing without telemetry', err);
         return [];
       });
-      const positionsPromise = fetchPositions().catch(err => {
+      const positionsPromise = fetchPositions(NODE_LIMIT, posSince).catch(err => {
         console.warn('position refresh failed; continuing without updates', err);
         return [];
       });
-      const tracesPromise = fetchTraces().catch(err => {
+      const tracesPromise = fetchTraces(TRACE_LIMIT, trSince).catch(err => {
         console.warn('trace refresh failed; continuing without traceroutes', err);
         return [];
       });
-      const encryptedMessagesPromise = fetchMessages(MESSAGE_LIMIT, { encrypted: true }).catch(err => {
+      const encryptedMessagesPromise = fetchMessages(MESSAGE_LIMIT, { encrypted: true, since: msgSince }).catch(err => {
         console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
         return [];
       });
       // Fan-out all requests simultaneously; nodes are the primary resource and
       // must succeed for rendering to proceed.
       const [
-        nodes,
-        positions,
-        neighborTuples,
-        traceEntries,
-        messages,
-        telemetryEntries,
-        encryptedMessages
+        incomingNodes,
+        incomingPositions,
+        incomingNeighbors,
+        incomingTraces,
+        incomingMessages,
+        incomingTelemetry,
+        incomingEncryptedMessages
       ] = await Promise.all([
-        fetchNodes(),
+        fetchNodes(NODE_LIMIT, nodeSince),
         positionsPromise,
         neighborPromise,
         tracesPromise,
-        fetchMessages(MESSAGE_LIMIT),
+        fetchMessages(MESSAGE_LIMIT, { since: msgSince }),
         telemetryPromise,
         encryptedMessagesPromise
       ]);
+
+      // Update high-water marks for incremental fetching.
+      const incomingNodeTs = maxRecordTimestamp(incomingNodes, ['last_heard']);
+      const incomingMsgTs = maxRecordTimestamp(incomingMessages, ['rx_time']);
+      const incomingEncMsgTs = maxRecordTimestamp(incomingEncryptedMessages, ['rx_time']);
+      const incomingPosTs = maxRecordTimestamp(incomingPositions, ['rx_time', 'position_time']);
+      const incomingTelTs = maxRecordTimestamp(incomingTelemetry, ['rx_time', 'telemetry_time']);
+      const incomingNbTs = maxRecordTimestamp(incomingNeighbors, ['rx_time']);
+      const incomingTrTs = maxRecordTimestamp(incomingTraces, ['rx_time']);
+      if (incomingNodeTs > lastNodeTimestamp) lastNodeTimestamp = incomingNodeTs;
+      const latestMsgTs = Math.max(incomingMsgTs, incomingEncMsgTs);
+      if (latestMsgTs > lastMessageTimestamp) lastMessageTimestamp = latestMsgTs;
+      if (incomingPosTs > lastPositionTimestamp) lastPositionTimestamp = incomingPosTs;
+      if (incomingTelTs > lastTelemetryTimestamp) lastTelemetryTimestamp = incomingTelTs;
+      if (incomingNbTs > lastNeighborTimestamp) lastNeighborTimestamp = incomingNbTs;
+      if (incomingTrTs > lastTraceTimestamp) lastTraceTimestamp = incomingTrTs;
+
+      // Merge incremental results with existing data.  On first load the
+      // existing arrays are empty so the merge is effectively a no-op.
+      // Merge incremental results with existing data then trim to the
+      // configured limits so long-running tabs do not accumulate stale
+      // entries beyond what the server would return on a fresh fetch.
+      const nodes = useSince ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
+      const positions = useSince
+        ? trimToLimit(mergeById(allPositionEntries, incomingPositions, 'id'), NODE_LIMIT)
+        : incomingPositions;
+      const neighborTuples = useSince
+        ? mergeByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id'])
+        : incomingNeighbors;
+      const telemetryEntries = useSince
+        ? trimToLimit(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), NODE_LIMIT)
+        : incomingTelemetry;
+      const traceEntries = useSince
+        ? trimToLimit(mergeById(allTraces, incomingTraces, 'id'), TRACE_LIMIT)
+        : incomingTraces;
+      const messages = useSince
+        ? trimToLimit(mergeById(allMessages, incomingMessages, 'id'), MESSAGE_LIMIT)
+        : incomingMessages;
+      const encryptedMessages = useSince
+        ? trimToLimit(mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id'), MESSAGE_LIMIT)
+        : incomingEncryptedMessages;
+
       // Collapse per-source snapshot arrays into single merged records; the
       // snapshot window de-duplicates entries from multiple ingestors.
       const aggregatedNodes = aggregateNodeSnapshots(nodes);
@@ -4558,6 +4643,7 @@ export function initializeApp(config) {
       allPositionEntries = aggregatedPositions;
       allNeighbors = aggregatedNeighbors;
       allTraces = Array.isArray(traceEntries) ? traceEntries : [];
+      initialFetchDone = true;
       applyFilter();
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
@@ -4744,6 +4830,8 @@ export function initializeApp(config) {
         meshcoreColEl = mc;
         meshtasticColEl = mt;
       },
+      /** Trigger a manual refresh cycle (test use only). */
+      refresh,
     },
   };
 }

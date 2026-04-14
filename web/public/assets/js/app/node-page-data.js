@@ -24,8 +24,8 @@
  * @module node-page-data
  */
 
-/** Shared fetch options that disable the browser HTTP cache for all API calls. */
-const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
+/** Shared fetch options for API calls, allowing conditional ETag revalidation. */
+const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 
 /** Maximum number of messages to request from the messages API. */
 const MESSAGE_LIMIT = 50;

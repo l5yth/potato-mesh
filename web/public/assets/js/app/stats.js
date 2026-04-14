@@ -138,7 +138,7 @@ async function fetchRemoteActiveNodeStats(fetchImpl) {
 
   activeNodeStatsFetchImpl = fetchImpl;
   activeNodeStatsFetchPromise = (async () => {
-    const response = await fetchImpl('/api/stats', { cache: 'no-store' });
+    const response = await fetchImpl('/api/stats', { cache: 'default' });
     if (!response?.ok) {
       throw new Error(`stats HTTP ${response?.status ?? 'unknown'}`);
     }

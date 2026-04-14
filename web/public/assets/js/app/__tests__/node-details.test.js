@@ -109,7 +109,7 @@ test('refreshNodeInformation merges telemetry metrics when the base node lacks t
 
   assert.equal(calls.length, 4);
   calls.forEach(call => {
-    assert.deepEqual(call.options, { cache: 'no-store' });
+    assert.deepEqual(call.options, { cache: 'default' });
   });
 });
 

@@ -45,6 +45,7 @@ module PotatoMesh
               upsert_node(db, node_id, node, protocol: protocol)
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -65,6 +66,7 @@ module PotatoMesh
             messages.each do |msg|
               insert_message(db, msg, protocol_cache: protocol_cache)
             end
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:stats:")
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -84,6 +86,7 @@ module PotatoMesh
             db = open_database
             stored = upsert_ingestor(db, payload)
             halt 400, { error: "invalid payload" }.to_json unless stored
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:ingestors:")
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -314,6 +317,7 @@ module PotatoMesh
             positions.each do |pos|
               insert_position(db, pos, protocol_cache: protocol_cache)
             end
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:positions:", "api:nodes:", "api:stats:")
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -334,6 +338,7 @@ module PotatoMesh
             neighbor_payloads.each do |packet|
               insert_neighbors(db, packet, protocol_cache: protocol_cache)
             end
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:neighbors:", "api:stats:")
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -354,6 +359,7 @@ module PotatoMesh
             telemetry_packets.each do |packet|
               insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:stats:")
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -374,6 +380,7 @@ module PotatoMesh
             trace_packets.each do |packet|
               insert_trace(db, packet, protocol_cache: protocol_cache)
             end
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:traces:", "api:stats:")
             { status: "ok" }.to_json
           ensure
             db&.close
