@@ -381,7 +381,7 @@ test('buildRoleButtons keeps meshtastic and meshcore SENSOR keys distinct', () =
     const colMc = document.createElement('div');
     const colMt = document.createElement('div');
     t.buildRoleButtons(colMc, { SENSOR: '#40749E' }, 'meshcore');
-    t.buildRoleButtons(colMt, { SENSOR: '#B2D880' }, 'meshtastic');
+    t.buildRoleButtons(colMt, { SENSOR: '#A8D5BA' }, 'meshtastic');
     assert.ok(t.legendRoleButtons.has('meshcore:SENSOR'));
     assert.ok(t.legendRoleButtons.has('meshtastic:SENSOR'));
     assert.notEqual(
@@ -395,7 +395,7 @@ test('buildRoleButtons sets aria-pressed to false initially', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     assert.ok(btn, 'button should be in legendRoleButtons');
     assert.equal(btn.getAttribute('aria-pressed'), 'false');
@@ -406,7 +406,7 @@ test('buildRoleButtons creates swatch child with background color', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     // swatch is the first child of the button
     const swatch = btn.childNodes[0];
@@ -419,7 +419,7 @@ test('buildRoleButtons creates label child with role text', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();
     const col = document.createElement('div');
-    t.buildRoleButtons(col, { ROUTER: '#D44E14' }, 'meshtastic');
+    t.buildRoleButtons(col, { ROUTER: '#ff0019' }, 'meshtastic');
     const btn = t.legendRoleButtons.get('meshtastic:ROUTER');
     // label is the second child of the button
     const label = btn.childNodes[1];
@@ -457,36 +457,87 @@ test('updateLegendRoleFiltersUI sets aria-pressed false on inactive role buttons
   });
 });
 
-test('updateLegendRoleFiltersUI updates protocol button text to Show when hidden', () => {
-  withApp((t) => {
-    t.legendProtocolButtons.clear();
-    const fakeBtn = document.createElement('button');
-    fakeBtn.setAttribute('aria-pressed', 'false');
-    t.legendProtocolButtons.set('meshtastic', fakeBtn);
-    t.hiddenProtocols.clear();
-    t.hiddenProtocols.add('meshtastic');
-    t.updateLegendRoleFiltersUI();
-    assert.equal(fakeBtn.getAttribute('aria-pressed'), 'true');
-    assert.ok(fakeBtn.textContent.startsWith('Show'));
-  });
-});
-
-test('updateLegendRoleFiltersUI updates protocol button text to Hide when visible', () => {
-  withApp((t) => {
-    t.legendProtocolButtons.clear();
-    const fakeBtn = document.createElement('button');
-    fakeBtn.setAttribute('aria-pressed', 'true');
-    t.legendProtocolButtons.set('meshcore', fakeBtn);
-    t.hiddenProtocols.clear();
-    t.updateLegendRoleFiltersUI();
-    assert.equal(fakeBtn.getAttribute('aria-pressed'), 'false');
-    assert.ok(fakeBtn.textContent.startsWith('Hide'));
-  });
-});
-
 test('updateLegendRoleFiltersUI is safe when legendContainer is null', () => {
   withApp((t) => {
     // legendContainer starts null in tests (no map); should not throw
     assert.doesNotThrow(() => t.updateLegendRoleFiltersUI());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// adjustStatsForHiddenProtocols
+// ---------------------------------------------------------------------------
+
+test('adjustStatsForHiddenProtocols returns original stats when nothing is hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result, stats);
+  });
+});
+
+test('adjustStatsForHiddenProtocols subtracts meshcore counts when meshcore hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 80);
+    assert.equal(result.day, 40);
+    assert.equal(result.month, 160);
+    assert.equal(result.hour, 8);
+  });
+});
+
+test('adjustStatsForHiddenProtocols subtracts meshtastic counts when meshtastic hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshtastic');
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 20);
+    assert.equal(result.day, 10);
+  });
+});
+
+test('adjustStatsForHiddenProtocols subtracts both when both hidden', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    t.hiddenProtocols.add('meshtastic');
+    const stats = { hour: 10, day: 50, week: 100, month: 200, meshcore: { hour: 2, day: 10, week: 20, month: 40 }, meshtastic: { hour: 8, day: 40, week: 80, month: 160 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 0);
+    assert.equal(result.day, 0);
+  });
+});
+
+test('adjustStatsForHiddenProtocols floors at zero', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    const stats = { hour: 1, day: 5, week: 10, month: 20, meshcore: { hour: 50, day: 50, week: 50, month: 50 } };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 0);
+    assert.equal(result.day, 0);
+  });
+});
+
+test('adjustStatsForHiddenProtocols handles null stats gracefully', () => {
+  withApp((t) => {
+    t.hiddenProtocols.add('meshcore');
+    assert.equal(t.adjustStatsForHiddenProtocols(null), null);
+    assert.equal(t.adjustStatsForHiddenProtocols(undefined), undefined);
+  });
+});
+
+test('adjustStatsForHiddenProtocols handles missing protocol bucket', () => {
+  withApp((t) => {
+    t.hiddenProtocols.clear();
+    t.hiddenProtocols.add('meshcore');
+    const stats = { hour: 10, day: 50, week: 100, month: 200 };
+    const result = t.adjustStatsForHiddenProtocols(stats);
+    assert.equal(result.week, 100);
   });
 });

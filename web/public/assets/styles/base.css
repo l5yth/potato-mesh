@@ -1595,6 +1595,24 @@ button:not(.chat-tab):not(.sort-button) {
   line-height: 1;
 }
 
+.protocol-toggle-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.protocol-toggle-btn[aria-pressed="true"] {
+  background: #f0f0f0;
+}
+
+.protocol-toggle-icon {
+  display: block;
+  transition: filter 0.15s ease;
+}
+
 button:not(.chat-tab):not(.sort-button):hover {
   background: #f6f6f6;
 }
@@ -1780,12 +1798,6 @@ input[type="radio"] {
   background: rgba(58, 123, 213, 0.32);
   color: #0e3a8a;
   font-weight: 600;
-}
-
-.legend-protocol-toggle {
-  margin-top: 4px;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
-  padding-top: 5px;
 }
 
 .legend-swatch {
@@ -2083,6 +2095,19 @@ body.dark button:not(.chat-tab):not(.sort-button):hover {
   background: #444;
 }
 
+body.dark .protocol-toggle-btn {
+  background: #333;
+  border-color: #444;
+}
+
+body.dark .protocol-toggle-btn:hover {
+  background: #444;
+}
+
+body.dark .protocol-toggle-btn[aria-pressed="true"] {
+  background: #2a2a2a;
+}
+
 body.dark .sort-button {
   background: none;
   border: none;
@@ -2127,10 +2152,6 @@ body.dark .legend-item[aria-pressed="true"] {
   background: rgba(91, 155, 213, 0.48);
   color: #c8e8ff;
   font-weight: 600;
-}
-
-body.dark .legend-protocol-toggle {
-  border-top-color: rgba(255, 255, 255, 0.15);
 }
 
 body.dark .leaflet-popup-content-wrapper,

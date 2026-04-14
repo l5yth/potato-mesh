@@ -42,28 +42,28 @@ export const roleIdToName = Object.freeze({
 });
 
 /**
- * Meshtastic role colour palette — warm yellow-green to burnt-orange gradient
- * that provides higher contrast than the previous blue-tinted palette, making
- * role distinctions more legible on both light and dark map tiles.
+ * Meshtastic role colour palette — broad-spectrum blue-green-yellow-red gradient
+ * with a distinctive lavender accent for {@link LOST_AND_FOUND}.  Adopted from
+ * the meshenvy fork to keep visual consistency across instances.
  *
- * Updated from the original blue-cool palette (see PR #657) to improve
- * readability alongside the MeshCore grey-blue palette.
+ * The cool-blue low end is differentiated from the MeshCore steel-grey palette
+ * by saturation (51 %+ here vs 18 % for MeshCore) and an 8-degree hue offset.
  *
  * Firmware 2.7.10 / Android 2.7.0 roles (see issue #177).
  *
  * @type {Readonly<Record<string, string>>}
  */
 export const roleColors = Object.freeze({
-  CLIENT_HIDDEN: '#A8D8B0',
-  SENSOR: '#B2D880',
-  TRACKER: '#C8D866',
-  CLIENT_MUTE: '#DFCF52',
-  CLIENT: '#ECC044',
-  CLIENT_BASE: '#F0A834',
-  REPEATER: '#F08824',
-  ROUTER_LATE: '#E86C1C',
-  ROUTER: '#D44E14',
-  LOST_AND_FOUND: '#C0300C',
+  CLIENT_HIDDEN: '#A9CBE8',
+  SENSOR: '#A8D5BA',
+  TRACKER: '#99e67f',
+  CLIENT_MUTE: '#bcef75',
+  CLIENT: '#f3ef74',
+  CLIENT_BASE: '#fdbf79',
+  REPEATER: '#fa997b',
+  ROUTER_LATE: '#ff5061',
+  ROUTER: '#ff0019',
+  LOST_AND_FOUND: '#C3A8E8',
 });
 
 /**
