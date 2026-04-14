@@ -37,7 +37,7 @@ module PotatoMesh
         params << since_threshold
 
         if node_ref
-          clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"])
+          clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["node_num"], db: db)
           return [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)

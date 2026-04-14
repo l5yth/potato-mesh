@@ -78,7 +78,7 @@ import {
 } from './node-page-charts.js';
 import { fetchMessages, fetchTracesForNode } from './node-page-data.js';
 
-const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'no-store' });
+const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 const MESSAGE_LIMIT = 50;
 const RENDER_WAIT_INTERVAL_MS = 20;
 const RENDER_WAIT_TIMEOUT_MS = 500;

@@ -64,21 +64,41 @@ module PotatoMesh
           app.get "/api/nodes" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_nodes(limit, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            since = params["since"]
+            protocol = string_or_nil(params["protocol"])
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_nodes(limit, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:nodes:#{limit}:#{protocol}", ttl_seconds: 15) do
+                  query_nodes(limit, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/stats" do
             content_type :json
-            stats = query_active_node_stats
-            {
-              active_nodes: {
-                "hour" => stats["hour"], "day" => stats["day"],
-                "week" => stats["week"], "month" => stats["month"],
-              },
-              meshcore: stats["meshcore"],
-              meshtastic: stats["meshtastic"],
-              sampled: false,
-            }.to_json
+            json_body = PotatoMesh::App::ApiCache.fetch("api:stats", ttl_seconds: 15) do
+              stats = query_active_node_stats
+              {
+                active_nodes: {
+                  "hour" => stats["hour"], "day" => stats["day"],
+                  "week" => stats["week"], "month" => stats["month"],
+                },
+                meshcore: stats["meshcore"],
+                meshtastic: stats["meshtastic"],
+                sampled: false,
+              }.to_json
+            end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/nodes/:id" do
@@ -88,13 +108,30 @@ module PotatoMesh
             limit = [params["limit"]&.to_i || 200, 1000].min
             rows = query_nodes(limit, node_ref: node_ref, since: params["since"])
             halt 404, { error: "not found" }.to_json if rows.empty?
-            rows.first.to_json
+            json_body = rows.first.to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/ingestors" do
             content_type :json
             limit = coerce_query_limit(params["limit"])
-            query_ingestors(limit, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            protocol = string_or_nil(params["protocol"])
+            since = params["since"]
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_ingestors(limit, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:ingestors:#{limit}:#{protocol}", ttl_seconds: 30) do
+                  query_ingestors(limit, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/messages" do
@@ -103,7 +140,20 @@ module PotatoMesh
             include_encrypted = coerce_boolean(params["encrypted"]) || false
             since = coerce_integer(params["since"])
             since = 0 if since.nil? || since.negative?
-            query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: string_or_nil(params["protocol"])).to_json
+            protocol = string_or_nil(params["protocol"])
+            enc_key = include_encrypted ? "1" : "0"
+
+            json_body = if since > 0
+                query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:messages:#{limit}:#{enc_key}:#{protocol}", ttl_seconds: 10) do
+                  query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/messages/:id" do
@@ -114,19 +164,36 @@ module PotatoMesh
             include_encrypted = coerce_boolean(params["encrypted"]) || false
             since = coerce_integer(params["since"])
             since = 0 if since.nil? || since.negative?
-            query_messages(
+            json_body = query_messages(
               limit,
               node_ref: node_ref,
               include_encrypted: include_encrypted,
               since: since,
               protocol: string_or_nil(params["protocol"]),
             ).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/positions" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_positions(limit, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            since = params["since"]
+            protocol = string_or_nil(params["protocol"])
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_positions(limit, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:positions:#{limit}:#{protocol}", ttl_seconds: 15) do
+                  query_positions(limit, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/positions/:id" do
@@ -134,13 +201,30 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_positions(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            json_body = query_positions(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/neighbors" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_neighbors(limit, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            since = params["since"]
+            protocol = string_or_nil(params["protocol"])
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_neighbors(limit, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:neighbors:#{limit}:#{protocol}", ttl_seconds: 30) do
+                  query_neighbors(limit, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/neighbors/:id" do
@@ -148,13 +232,30 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_neighbors(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            json_body = query_neighbors(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/telemetry" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_telemetry(limit, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            since = params["since"]
+            protocol = string_or_nil(params["protocol"])
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_telemetry(limit, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:telemetry:#{limit}:#{protocol}", ttl_seconds: 15) do
+                  query_telemetry(limit, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/telemetry/aggregated" do
@@ -185,11 +286,21 @@ module PotatoMesh
               halt 400, { error: "bucketSeconds too small for requested window" }.to_json
             end
 
-            query_telemetry_buckets(
-              window_seconds: window_seconds,
-              bucket_seconds: bucket_seconds,
-              since: params["since"],
-            ).to_json
+            since = params["since"]
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
+              else
+                cache_key = "api:telemetry:aggregated:#{window_seconds}:#{bucket_seconds}"
+                PotatoMesh::App::ApiCache.fetch(cache_key, ttl_seconds: 60) do
+                  query_telemetry_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 30
+            json_body
           end
 
           app.get "/api/telemetry/:id" do
@@ -197,13 +308,30 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_telemetry(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            json_body = query_telemetry(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/traces" do
             content_type :json
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_traces(limit, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            since = params["since"]
+            protocol = string_or_nil(params["protocol"])
+            since_val = coerce_integer(since) || 0
+
+            json_body = if since_val > 0
+                query_traces(limit, since: since, protocol: protocol).to_json
+              else
+                PotatoMesh::App::ApiCache.fetch("api:traces:#{limit}:#{protocol}", ttl_seconds: 30) do
+                  query_traces(limit, since: since, protocol: protocol).to_json
+                end
+              end
+
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/traces/:id" do
@@ -211,7 +339,10 @@ module PotatoMesh
             node_ref = string_or_nil(params["id"])
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = [params["limit"]&.to_i || 200, 1000].min
-            query_traces(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            json_body = query_traces(limit, node_ref: node_ref, since: params["since"], protocol: string_or_nil(params["protocol"])).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            cache_control :public, :must_revalidate, max_age: 10
+            json_body
           end
 
           app.get "/api/instances" do

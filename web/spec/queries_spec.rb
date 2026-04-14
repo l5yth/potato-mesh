@@ -657,4 +657,94 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(rows.length).to be >= 1
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # batch_resolve_node_ids
+  # ---------------------------------------------------------------------------
+  describe "#batch_resolve_node_ids" do
+    before do
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, last_heard, first_heard, role) VALUES (?,?,?,?,?,?)",
+          ["!aabb0001", 0xaabb0001, "N1", now, now, "CLIENT"],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, last_heard, first_heard, role) VALUES (?,?,?,?,?,?)",
+          ["!aabb0002", 0xaabb0002, "N2", now, now, "CLIENT"],
+        )
+      end
+    end
+
+    it "resolves string node_id references" do
+      with_db do |db|
+        result = queries.batch_resolve_node_ids(db, ["!aabb0001", "!aabb0002"])
+        expect(result["!aabb0001"]).to eq("!aabb0001")
+        expect(result["!aabb0002"]).to eq("!aabb0002")
+      end
+    end
+
+    it "resolves numeric references to canonical node_id" do
+      with_db do |db|
+        num_str = 0xaabb0001.to_s
+        result = queries.batch_resolve_node_ids(db, [num_str])
+        expect(result[num_str]).to eq("!aabb0001")
+      end
+    end
+
+    it "returns an empty hash for empty input" do
+      with_db do |db|
+        expect(queries.batch_resolve_node_ids(db, [])).to eq({})
+        expect(queries.batch_resolve_node_ids(db, nil)).to eq({})
+      end
+    end
+
+    it "omits references that cannot be resolved" do
+      with_db do |db|
+        result = queries.batch_resolve_node_ids(db, ["!nonexistent"])
+        expect(result).not_to have_key("!nonexistent")
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # node_lookup_clause with db parameter
+  # ---------------------------------------------------------------------------
+  describe "#node_lookup_clause with db" do
+    before do
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, last_heard, first_heard, role) VALUES (?,?,?,?,?,?)",
+          ["!deadbeef", 0xdeadbeef, "DB", now, now, "CLIENT"],
+        )
+      end
+    end
+
+    it "folds numeric columns into string columns when db is provided" do
+      with_db do |db|
+        clause = queries.node_lookup_clause(
+          "!deadbeef",
+          string_columns: ["node_id"],
+          numeric_columns: ["node_num"],
+          db: db,
+        )
+        expect(clause).not_to be_nil
+        sql_fragment, _params = clause
+        # When db is provided and numeric values are resolved, the OR with
+        # node_num should not appear in the SQL.
+        expect(sql_fragment).not_to include("node_num")
+        expect(sql_fragment).to include("node_id")
+      end
+    end
+
+    it "falls back to OR when db is not provided" do
+      clause = queries.node_lookup_clause(
+        0xdeadbeef,
+        string_columns: ["node_id"],
+        numeric_columns: ["node_num"],
+      )
+      expect(clause).not_to be_nil
+      sql_fragment, _params = clause
+      expect(sql_fragment).to include("OR")
+    end
+  end
 end

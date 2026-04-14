@@ -179,7 +179,7 @@ export async function fetchAggregatedTelemetry({
   const bucketSecondsSafe = bucketSecondsCandidate > 0 ? bucketSecondsCandidate : TELEMETRY_BUCKET_SECONDS;
   const response = await fetchFn(
     `/api/telemetry/aggregated?windowSeconds=${windowSeconds}&bucketSeconds=${bucketSecondsSafe}`,
-    { cache: 'no-store' },
+    { cache: 'default' },
   );
   if (!response.ok) {
     throw new Error(`Failed to fetch aggregated telemetry (HTTP ${response.status})`);

@@ -70,10 +70,41 @@ module PotatoMesh
         }
       end
 
-      def node_lookup_clause(node_ref, string_columns:, numeric_columns: [])
+      # Build a WHERE clause fragment for looking up a node across one or more
+      # columns.  When +numeric_columns+ are provided together with an open +db+
+      # handle the numeric identifiers are resolved to canonical +node_id+
+      # strings up-front so the resulting SQL uses only string-column +IN+
+      # predicates.  This avoids an +OR+ across heterogeneous columns which
+      # prevents SQLite from choosing the optimal index.
+      #
+      # @param node_ref [String, Integer, nil] raw node reference from the request.
+      # @param string_columns [Array<String>] SQL column names holding string identifiers.
+      # @param numeric_columns [Array<String>] SQL column names holding numeric identifiers.
+      # @param db [SQLite3::Database, nil] open database handle used to resolve
+      #   numeric IDs to canonical strings.  When provided and +numeric_columns+
+      #   is non-empty the numeric branch is folded into the string branch.
+      # @return [Array(String, Array), nil] SQL fragment and bind parameters, or
+      #   +nil+ when no lookup can be constructed.
+      def node_lookup_clause(node_ref, string_columns:, numeric_columns: [], db: nil)
         tokens = node_reference_tokens(node_ref)
         string_values = tokens[:string_values]
         numeric_values = tokens[:numeric_values]
+
+        # When a database handle is available, resolve numeric identifiers to
+        # canonical node_id strings so the query can use a single indexed column
+        # instead of an OR across string and numeric columns.
+        if db && !numeric_columns.empty? && !numeric_values.empty?
+          numeric_values.each do |num|
+            resolved = db.get_first_value("SELECT node_id FROM nodes WHERE num = ? LIMIT 1", [num])
+            if resolved
+              string_values << resolved unless string_values.include?(resolved)
+            end
+          end
+          # All numeric values have been folded into string_values; drop the
+          # numeric branch so the generated SQL avoids an OR.
+          numeric_columns = []
+          numeric_values = []
+        end
 
         clauses = []
         params = []
@@ -117,7 +148,7 @@ module PotatoMesh
         where_clauses = []
 
         if node_ref
-          clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["num"])
+          clause = node_lookup_clause(node_ref, string_columns: ["node_id"], numeric_columns: ["num"], db: db)
           return [] unless clause
           where_clauses << clause.first
           params.concat(clause.last)

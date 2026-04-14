@@ -919,7 +919,7 @@ test('fetchMessages handles HTTP responses and uses defaults', async () => {
   };
   const messages = await fetchMessages('!node', { fetchImpl });
   assert.equal(messages.length, 1);
-  assert.equal(calls[0].options.cache, 'no-store');
+  assert.equal(calls[0].options.cache, 'default');
 });
 
 test('fetchMessages returns an empty list when the endpoint is missing', async () => {
@@ -1002,7 +1002,7 @@ test('fetchTracesForNode requests traceroutes for the node', async () => {
   const traces = await fetchTracesForNode('!abc', { fetchImpl });
   assert.equal(traces.length, 1);
   assert.equal(calls[0].url.includes('/api/traces/!abc'), true);
-  assert.equal(calls[0].options.cache, 'no-store');
+  assert.equal(calls[0].options.cache, 'default');
 });
 
 test('fetchTracesForNode returns empty when identifier is missing', async () => {
