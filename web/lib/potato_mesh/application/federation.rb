@@ -421,6 +421,13 @@ module PotatoMesh
         db&.close
       end
 
+      # Announce the local instance record to a remote federation peer,
+      # cycling through resolved IP addresses when transport-level failures
+      # occur.
+      #
+      # @param domain [String] remote peer hostname.
+      # @param payload_json [String] JSON-encoded announcement body.
+      # @return [Boolean] true when the announcement was accepted.
       def announce_instance_to_domain(domain, payload_json)
         return false unless domain && !domain.empty?
         return false if federation_shutdown_requested?
@@ -431,14 +438,7 @@ module PotatoMesh
           break false if federation_shutdown_requested?
 
           begin
-            http = build_remote_http_client(uri)
-            response = Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
-              http.start do |connection|
-                request = build_federation_http_request(Net::HTTP::Post, uri)
-                request.body = payload_json
-                connection.request(request)
-              end
-            end
+            response = perform_announce_request(uri, payload_json)
             if response.is_a?(Net::HTTPSuccess)
               debug_log(
                 "Published federation announcement",
@@ -492,6 +492,55 @@ module PotatoMesh
         published
       end
 
+      # Execute a POST announcement request against the supplied URI, cycling
+      # through resolved IP addresses on connection-level failures.
+      #
+      # @param uri [URI::Generic] target endpoint.
+      # @param payload_json [String] JSON-encoded announcement body.
+      # @return [Net::HTTPResponse] the HTTP response from the first reachable address.
+      # @raise [StandardError] when all addresses fail or a non-retryable error occurs.
+      def perform_announce_request(uri, payload_json)
+        remote_addresses = sort_addresses_for_connection(resolve_remote_ip_addresses(uri))
+        addresses = remote_addresses.empty? ? [nil] : remote_addresses
+
+        last_error = nil
+        addresses.each do |address|
+          break if federation_shutdown_requested?
+
+          begin
+            return perform_single_announce_request(uri, payload_json, ip_address: address&.to_s)
+          rescue StandardError => e
+            if connection_refused_or_unreachable?(e)
+              last_error = e
+            else
+              raise
+            end
+          end
+        end
+
+        raise(last_error || StandardError.new("all resolved addresses failed"))
+      end
+
+      # Execute a single POST announcement request, optionally pinning the
+      # connection to a specific IP address.
+      #
+      # @param uri [URI::Generic] target endpoint.
+      # @param payload_json [String] JSON-encoded announcement body.
+      # @param ip_address [String, nil] resolved IP address to pin the
+      #   connection to, or +nil+ to let {build_remote_http_client} resolve.
+      # @return [Net::HTTPResponse] the HTTP response.
+      # @raise [StandardError] when the request fails.
+      def perform_single_announce_request(uri, payload_json, ip_address: nil)
+        http = build_remote_http_client(uri, ip_address: ip_address)
+        Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
+          http.start do |connection|
+            request = build_federation_http_request(Net::HTTP::Post, uri)
+            request.body = payload_json
+            connection.request(request)
+          end
+        end
+      end
+
       # Determine whether an HTTPS announcement failure should fall back to HTTP.
       #
       # @param error [StandardError] failure raised while attempting HTTPS.
@@ -500,6 +549,34 @@ module PotatoMesh
         current = error
         while current
           return true if current.is_a?(Errno::ECONNREFUSED)
+
+          current = current.respond_to?(:cause) ? current.cause : nil
+        end
+
+        false
+      end
+
+      # Determine whether an error indicates a transport-level connection
+      # failure that may succeed on an alternative resolved address.
+      #
+      # Connection refusals, host/network unreachable errors, and TCP open
+      # timeouts signal that the selected IP address cannot be reached but
+      # do not rule out alternative addresses for the same hostname.
+      #
+      # @param error [StandardError] failure raised during the connection attempt.
+      # @return [Boolean] true when a retry with a different address is warranted.
+      def connection_refused_or_unreachable?(error)
+        retryable_classes = [
+          Errno::ECONNREFUSED,
+          Errno::EHOSTUNREACH,
+          Errno::ENETUNREACH,
+          Errno::ECONNRESET,
+          Errno::ETIMEDOUT,
+          Net::OpenTimeout,
+        ]
+        current = error
+        while current
+          return true if retryable_classes.any? { |klass| current.is_a?(klass) }
 
           current = current.respond_to?(:cause) ? current.cause : nil
         end
@@ -705,10 +782,57 @@ module PotatoMesh
         []
       end
 
+      # Execute a GET request against the supplied federation URI, cycling
+      # through resolved IP addresses when a transport-level connection
+      # failure occurs.
+      #
+      # DNS resolution is performed once and the resulting addresses are
+      # sorted with IPv4 first via {sort_addresses_for_connection}.  Each
+      # address is attempted sequentially; when a connection-level error
+      # (refused, unreachable, timeout) is raised the next address is tried.
+      # Non-connection errors (SSL failures, HTTP-level errors) are raised
+      # immediately without trying further addresses.
+      #
+      # @param uri [URI::Generic] target endpoint to request.
+      # @return [String] raw HTTP response body on success.
+      # @raise [InstanceFetchError] when all addresses are exhausted or a
+      #   non-retryable error occurs.
       def perform_instance_http_request(uri)
         raise InstanceFetchError, "federation shutdown requested" if federation_shutdown_requested?
 
-        http = build_remote_http_client(uri)
+        remote_addresses = sort_addresses_for_connection(resolve_remote_ip_addresses(uri))
+        addresses = remote_addresses.empty? ? [nil] : remote_addresses
+
+        last_error = nil
+        addresses.each do |address|
+          break if federation_shutdown_requested?
+
+          begin
+            return perform_single_http_request(uri, ip_address: address&.to_s)
+          rescue InstanceFetchError => e
+            if connection_refused_or_unreachable?(e)
+              last_error = e
+            else
+              raise
+            end
+          end
+        end
+
+        raise last_error || InstanceFetchError.new("all resolved addresses failed")
+      rescue ArgumentError => e
+        raise_instance_fetch_error(e)
+      end
+
+      # Execute a single HTTP GET request against the supplied URI, optionally
+      # pinning the connection to a specific IP address.
+      #
+      # @param uri [URI::Generic] target endpoint.
+      # @param ip_address [String, nil] resolved IP address to pin the
+      #   connection to, or +nil+ to let {build_remote_http_client} resolve.
+      # @return [String] raw HTTP response body.
+      # @raise [InstanceFetchError] when the request fails.
+      def perform_single_http_request(uri, ip_address: nil)
+        http = build_remote_http_client(uri, ip_address: ip_address)
         Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
           http.start do |connection|
             request = build_federation_http_request(Net::HTTP::Get, uri)
@@ -1246,15 +1370,41 @@ module PotatoMesh
         unrestricted_addresses
       end
 
+      # Sort resolved addresses so that IPv4 precedes IPv6.
+      #
+      # Federation peers with dual-stack DNS may publish addresses where one
+      # family is unreachable.  Placing IPv4 entries first mirrors the
+      # preference used by {discover_local_ip_address} and improves the
+      # likelihood that the first connection attempt succeeds.
+      #
+      # @param addresses [Array<IPAddr>] resolved IP address list.
+      # @return [Array<IPAddr>] addresses sorted with IPv4 entries before IPv6.
+      def sort_addresses_for_connection(addresses)
+        return addresses if addresses.nil? || addresses.length <= 1
+
+        v4, v6 = addresses.partition { |ip| !ip.ipv6? }
+        v4 + v6
+      end
+
       # Build an HTTP client configured for communication with a remote instance.
       #
+      # When +ip_address+ is supplied the client is pinned to that specific
+      # address, bypassing DNS resolution.  Callers that iterate over
+      # multiple resolved addresses should pass each candidate in turn.
+      #
       # @param uri [URI::Generic] target URI describing the remote endpoint.
+      # @param ip_address [String, nil] explicit IP address to connect to,
+      #   or +nil+ to resolve via DNS and use the first result.
       # @return [Net::HTTP] HTTP client ready to execute the request.
-      def build_remote_http_client(uri)
-        remote_addresses = resolve_remote_ip_addresses(uri)
+      def build_remote_http_client(uri, ip_address: nil)
         http = Net::HTTP.new(uri.host, uri.port)
-        if http.respond_to?(:ipaddr=) && remote_addresses.any?
-          http.ipaddr = remote_addresses.first.to_s
+        if ip_address
+          http.ipaddr = ip_address if http.respond_to?(:ipaddr=)
+        else
+          remote_addresses = resolve_remote_ip_addresses(uri)
+          if http.respond_to?(:ipaddr=) && remote_addresses.any?
+            http.ipaddr = remote_addresses.first.to_s
+          end
         end
         http.open_timeout = PotatoMesh::Config.remote_instance_http_timeout
         http.read_timeout = PotatoMesh::Config.remote_instance_read_timeout

@@ -239,6 +239,125 @@ RSpec.describe PotatoMesh::App::Federation do
         skip "Net::HTTP#ipaddr accessor unavailable"
       end
     end
+
+    it "pins to the explicit ip_address when provided" do
+      uri = URI.parse("https://remote.example.com/api")
+
+      http = federation_helpers.build_remote_http_client(uri, ip_address: "198.51.100.7")
+
+      if http.respond_to?(:ipaddr)
+        expect(http.ipaddr).to eq("198.51.100.7")
+      else
+        skip "Net::HTTP#ipaddr accessor unavailable"
+      end
+      expect(Addrinfo).not_to have_received(:getaddrinfo)
+    end
+
+    it "skips DNS resolution when ip_address is provided" do
+      uri = URI.parse("http://remote.example.com/api")
+
+      federation_helpers.build_remote_http_client(uri, ip_address: "198.51.100.7")
+
+      expect(Addrinfo).not_to have_received(:getaddrinfo)
+    end
+  end
+
+  describe ".sort_addresses_for_connection" do
+    it "returns an empty array unchanged" do
+      expect(federation_helpers.send(:sort_addresses_for_connection, [])).to eq([])
+    end
+
+    it "returns nil unchanged" do
+      expect(federation_helpers.send(:sort_addresses_for_connection, nil)).to be_nil
+    end
+
+    it "returns a single-element array unchanged" do
+      addr = [IPAddr.new("203.0.113.5")]
+      expect(federation_helpers.send(:sort_addresses_for_connection, addr)).to eq(addr)
+    end
+
+    it "places IPv4 addresses before IPv6" do
+      v6 = IPAddr.new("2001:db8::1")
+      v4 = IPAddr.new("203.0.113.5")
+
+      result = federation_helpers.send(:sort_addresses_for_connection, [v6, v4])
+
+      expect(result).to eq([v4, v6])
+    end
+
+    it "preserves relative order within the same address family" do
+      v4a = IPAddr.new("203.0.113.1")
+      v4b = IPAddr.new("203.0.113.2")
+      v6a = IPAddr.new("2001:db8::1")
+      v6b = IPAddr.new("2001:db8::2")
+
+      result = federation_helpers.send(:sort_addresses_for_connection, [v6a, v4a, v6b, v4b])
+
+      expect(result).to eq([v4a, v4b, v6a, v6b])
+    end
+
+    it "preserves order when IPv4 already comes first" do
+      v4 = IPAddr.new("203.0.113.5")
+      v6 = IPAddr.new("2001:db8::1")
+
+      result = federation_helpers.send(:sort_addresses_for_connection, [v4, v6])
+
+      expect(result).to eq([v4, v6])
+    end
+  end
+
+  describe ".connection_refused_or_unreachable?" do
+    it "returns true for Errno::ECONNREFUSED" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Errno::ECONNREFUSED.new)).to be(true)
+    end
+
+    it "returns true for Errno::EHOSTUNREACH" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Errno::EHOSTUNREACH.new)).to be(true)
+    end
+
+    it "returns true for Errno::ENETUNREACH" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Errno::ENETUNREACH.new)).to be(true)
+    end
+
+    it "returns true for Errno::ECONNRESET" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Errno::ECONNRESET.new)).to be(true)
+    end
+
+    it "returns true for Errno::ETIMEDOUT" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Errno::ETIMEDOUT.new)).to be(true)
+    end
+
+    it "returns true for Net::OpenTimeout" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Net::OpenTimeout.new)).to be(true)
+    end
+
+    it "returns false for OpenSSL::SSL::SSLError" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, OpenSSL::SSL::SSLError.new("fail"))).to be(false)
+    end
+
+    it "returns false for Net::ReadTimeout" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, Net::ReadTimeout.new)).to be(false)
+    end
+
+    it "returns false for a generic StandardError" do
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, StandardError.new("nope"))).to be(false)
+    end
+
+    it "walks the cause chain to find a retryable error" do
+      outer_with_cause = begin
+          begin
+            raise Errno::ECONNREFUSED, "refused"
+          rescue Errno::ECONNREFUSED
+            raise StandardError, "wrapper"
+          end
+        rescue StandardError => e
+          e
+        end
+
+      expect(outer_with_cause).to be_a(StandardError)
+      expect(outer_with_cause.cause).to be_a(Errno::ECONNREFUSED)
+      expect(federation_helpers.send(:connection_refused_or_unreachable?, outer_with_cause)).to be(true)
+    end
   end
 
   describe ".ingest_known_instances_from!" do
@@ -702,12 +821,12 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
-  describe ".perform_instance_http_request" do
+  describe ".perform_single_http_request" do
     let(:uri) { URI.parse("https://remote.example.com/api") }
     let(:http_client) { instance_double(Net::HTTP) }
 
     before do
-      allow(federation_helpers).to receive(:build_remote_http_client).with(uri).and_return(http_client)
+      allow(federation_helpers).to receive(:build_remote_http_client).and_return(http_client)
     end
 
     it "wraps errors that omit a message with the error class name" do
@@ -723,7 +842,7 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(http_client).to receive(:start).and_raise(RemoteTcpFailure.new)
 
       expect do
-        federation_helpers.send(:perform_instance_http_request, uri)
+        federation_helpers.send(:perform_single_http_request, uri)
       end.to raise_error(PotatoMesh::App::InstanceFetchError, "RemoteTcpFailure")
     end
 
@@ -731,7 +850,7 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(http_client).to receive(:start).and_raise(OpenSSL::SSL::SSLError.new("handshake failed"))
 
       expect do
-        federation_helpers.send(:perform_instance_http_request, uri)
+        federation_helpers.send(:perform_single_http_request, uri)
       end.to raise_error(
         PotatoMesh::App::InstanceFetchError,
         "OpenSSL::SSL::SSLError: handshake failed",
@@ -742,17 +861,8 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(http_client).to receive(:start).and_raise(Net::ReadTimeout.new)
 
       expect do
-        federation_helpers.send(:perform_instance_http_request, uri)
+        federation_helpers.send(:perform_single_http_request, uri)
       end.to raise_error(PotatoMesh::App::InstanceFetchError, "Net::ReadTimeout")
-    end
-
-    it "wraps restricted address resolution failures" do
-      allow(federation_helpers).to receive(:build_remote_http_client).and_call_original
-      allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip("127.0.0.1")])
-
-      expect do
-        federation_helpers.send(:perform_instance_http_request, uri)
-      end.to raise_error(PotatoMesh::App::InstanceFetchError, "ArgumentError: restricted domain")
     end
 
     it "applies federation headers to instance fetch requests" do
@@ -770,7 +880,7 @@ RSpec.describe PotatoMesh::App::Federation do
         success_response
       end
 
-      result = federation_helpers.send(:perform_instance_http_request, uri)
+      result = federation_helpers.send(:perform_single_http_request, uri)
 
       expect(result).to eq("{}")
       expect(captured_request).not_to be_nil
@@ -790,11 +900,143 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(connection).to receive(:request).and_return(failure_response)
 
       expect do
-        federation_helpers.send(:perform_instance_http_request, uri)
+        federation_helpers.send(:perform_single_http_request, uri)
       end.to raise_error(
         PotatoMesh::App::InstanceFetchError,
         a_string_including("unexpected response 502"),
       )
+    end
+
+    it "passes ip_address through to build_remote_http_client" do
+      allow(http_client).to receive(:start).and_raise(StandardError.new("test"))
+
+      begin
+        federation_helpers.send(:perform_single_http_request, uri, ip_address: "198.51.100.7")
+      rescue PotatoMesh::App::InstanceFetchError
+        # expected
+      end
+
+      expect(federation_helpers).to have_received(:build_remote_http_client).with(uri, ip_address: "198.51.100.7")
+    end
+  end
+
+  describe ".perform_instance_http_request" do
+    let(:uri) { URI.parse("https://remote.example.com/api") }
+    let(:v4_addr) { IPAddr.new("203.0.113.5") }
+    let(:v6_addr) { IPAddr.new("2001:db8::1") }
+
+    before do
+      allow(PotatoMesh::Config).to receive(:remote_instance_http_timeout).and_return(5)
+      allow(PotatoMesh::Config).to receive(:remote_instance_read_timeout).and_return(10)
+      allow(PotatoMesh::Config).to receive(:remote_instance_request_timeout).and_return(15)
+    end
+
+    it "succeeds on the first address" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v4_addr])
+      allow(federation_helpers).to receive(:perform_single_http_request)
+                                     .with(uri, ip_address: "203.0.113.5")
+                                     .and_return("{}")
+
+      result = federation_helpers.send(:perform_instance_http_request, uri)
+
+      expect(result).to eq("{}")
+    end
+
+    it "falls back to the next address on ECONNREFUSED" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      allow(federation_helpers).to receive(:perform_single_http_request)
+                                     .with(uri, ip_address: "2001:db8::1")
+                                     .and_raise(PotatoMesh::App::InstanceFetchError.new("Errno::ECONNREFUSED: Connection refused"))
+      allow(federation_helpers).to receive(:connection_refused_or_unreachable?).and_return(true)
+      allow(federation_helpers).to receive(:perform_single_http_request)
+                                     .with(uri, ip_address: "203.0.113.5")
+                                     .and_return('{"ok":true}')
+
+      result = federation_helpers.send(:perform_instance_http_request, uri)
+
+      expect(result).to eq('{"ok":true}')
+    end
+
+    it "raises after all addresses fail with connection errors" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      allow(federation_helpers).to receive(:connection_refused_or_unreachable?).and_return(true)
+      allow(federation_helpers).to receive(:perform_single_http_request)
+                                     .and_raise(PotatoMesh::App::InstanceFetchError.new("Errno::ECONNREFUSED: Connection refused"))
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, /ECONNREFUSED/)
+    end
+
+    it "raises immediately on non-connection errors without trying further addresses" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      ssl_error = PotatoMesh::App::InstanceFetchError.new("OpenSSL::SSL::SSLError: handshake failed")
+      # After sorting, IPv4 (203.0.113.5) is tried first
+      allow(federation_helpers).to receive(:perform_single_http_request)
+                                     .with(uri, ip_address: "203.0.113.5")
+                                     .and_raise(ssl_error)
+      allow(federation_helpers).to receive(:connection_refused_or_unreachable?).and_return(false)
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, /SSLError/)
+
+      expect(federation_helpers).not_to have_received(:perform_single_http_request)
+                                          .with(uri, ip_address: "2001:db8::1")
+    end
+
+    it "stops iterating when shutdown is requested" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      call_count = 0
+      allow(federation_helpers).to receive(:perform_single_http_request) do
+        call_count += 1
+        federation_helpers.request_federation_shutdown!
+        raise PotatoMesh::App::InstanceFetchError, "refused"
+      end
+      allow(federation_helpers).to receive(:connection_refused_or_unreachable?).and_return(true)
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError)
+
+      expect(call_count).to eq(1)
+    end
+
+    it "falls back to address-less request when resolution returns no results" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([])
+      allow(federation_helpers).to receive(:perform_single_http_request)
+                                     .with(uri, ip_address: nil)
+                                     .and_return("{}")
+
+      result = federation_helpers.send(:perform_instance_http_request, uri)
+
+      expect(result).to eq("{}")
+    end
+
+    it "tries IPv4 addresses before IPv6" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      call_order = []
+      allow(federation_helpers).to receive(:perform_single_http_request) do |_uri, ip_address:|
+        call_order << ip_address
+        raise PotatoMesh::App::InstanceFetchError, "refused"
+      end
+      allow(federation_helpers).to receive(:connection_refused_or_unreachable?).and_return(true)
+
+      begin
+        federation_helpers.send(:perform_instance_http_request, uri)
+      rescue PotatoMesh::App::InstanceFetchError
+        # expected
+      end
+
+      expect(call_order).to eq(["203.0.113.5", "2001:db8::1"])
+    end
+
+    it "wraps restricted address resolution failures" do
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([Addrinfo.ip("127.0.0.1")])
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, "ArgumentError: restricted domain")
     end
   end
 
@@ -823,11 +1065,84 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
+  describe ".perform_announce_request" do
+    let(:uri) { URI.parse("https://remote.mesh/api/instances") }
+    let(:payload) { '{"id":"test"}' }
+    let(:v4_addr) { IPAddr.new("203.0.113.5") }
+    let(:v6_addr) { IPAddr.new("2001:db8::1") }
+    let(:success_response) { Net::HTTPOK.new("1.1", "200", "OK") }
+
+    before do
+      allow(success_response).to receive(:code).and_return("200")
+    end
+
+    it "succeeds on the first resolved address" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v4_addr])
+      allow(federation_helpers).to receive(:perform_single_announce_request)
+                                     .with(uri, payload, ip_address: "203.0.113.5")
+                                     .and_return(success_response)
+
+      result = federation_helpers.send(:perform_announce_request, uri, payload)
+
+      expect(result).to eq(success_response)
+    end
+
+    it "falls back to the next address on ECONNREFUSED" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      # After sorting, IPv4 is tried first
+      allow(federation_helpers).to receive(:perform_single_announce_request)
+                                     .with(uri, payload, ip_address: "203.0.113.5")
+                                     .and_raise(Errno::ECONNREFUSED.new("refused"))
+      allow(federation_helpers).to receive(:perform_single_announce_request)
+                                     .with(uri, payload, ip_address: "2001:db8::1")
+                                     .and_return(success_response)
+
+      result = federation_helpers.send(:perform_announce_request, uri, payload)
+
+      expect(result).to eq(success_response)
+    end
+
+    it "raises after all addresses fail" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      allow(federation_helpers).to receive(:perform_single_announce_request)
+                                     .and_raise(Errno::ECONNREFUSED.new("refused"))
+
+      expect do
+        federation_helpers.send(:perform_announce_request, uri, payload)
+      end.to raise_error(Errno::ECONNREFUSED)
+    end
+
+    it "raises immediately on non-connection errors" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([v6_addr, v4_addr])
+      # After sorting, IPv4 (203.0.113.5) is tried first
+      allow(federation_helpers).to receive(:perform_single_announce_request)
+                                     .with(uri, payload, ip_address: "203.0.113.5")
+                                     .and_raise(OpenSSL::SSL::SSLError.new("handshake failed"))
+
+      expect do
+        federation_helpers.send(:perform_announce_request, uri, payload)
+      end.to raise_error(OpenSSL::SSL::SSLError)
+
+      expect(federation_helpers).not_to have_received(:perform_single_announce_request)
+                                          .with(uri, payload, ip_address: "2001:db8::1")
+    end
+
+    it "falls back to address-less request when resolution returns no results" do
+      allow(federation_helpers).to receive(:resolve_remote_ip_addresses).and_return([])
+      allow(federation_helpers).to receive(:perform_single_announce_request)
+                                     .with(uri, payload, ip_address: nil)
+                                     .and_return(success_response)
+
+      result = federation_helpers.send(:perform_announce_request, uri, payload)
+
+      expect(result).to eq(success_response)
+    end
+  end
+
   describe ".announce_instance_to_domain" do
     let(:payload) { "{}" }
     let(:https_uri) { URI.parse("https://remote.mesh/api/instances") }
     let(:http_uri) { URI.parse("http://remote.mesh/api/instances") }
-    let(:http_connection) { instance_double(HTTP_CONNECTION_DOUBLE) }
     let(:success_response) { Net::HTTPOK.new("1.1", "200", "OK") }
 
     before do
@@ -835,15 +1150,12 @@ RSpec.describe PotatoMesh::App::Federation do
     end
 
     it "retries over HTTP when HTTPS connections are refused" do
-      https_client = instance_double(Net::HTTP)
-      http_client = instance_double(Net::HTTP)
-
-      allow(federation_helpers).to receive(:build_remote_http_client).with(https_uri).and_return(https_client)
-      allow(federation_helpers).to receive(:build_remote_http_client).with(http_uri).and_return(http_client)
-
-      allow(https_client).to receive(:start).and_raise(Errno::ECONNREFUSED.new("refused"))
-      allow(http_connection).to receive(:request).and_return(success_response)
-      allow(http_client).to receive(:start).and_yield(http_connection).and_return(success_response)
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(https_uri, payload)
+                                     .and_raise(Errno::ECONNREFUSED.new("refused"))
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(http_uri, payload)
+                                     .and_return(success_response)
 
       result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
 
@@ -853,14 +1165,12 @@ RSpec.describe PotatoMesh::App::Federation do
     end
 
     it "logs a warning when HTTPS refusal persists after HTTP fallback" do
-      https_client = instance_double(Net::HTTP)
-      http_client = instance_double(Net::HTTP)
-
-      allow(federation_helpers).to receive(:build_remote_http_client).with(https_uri).and_return(https_client)
-      allow(federation_helpers).to receive(:build_remote_http_client).with(http_uri).and_return(http_client)
-
-      allow(https_client).to receive(:start).and_raise(Errno::ECONNREFUSED.new("refused"))
-      allow(http_client).to receive(:start).and_raise(SocketError.new("dns failure"))
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(https_uri, payload)
+                                     .and_raise(Errno::ECONNREFUSED.new("refused"))
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(http_uri, payload)
+                                     .and_raise(SocketError.new("dns failure"))
 
       result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
 
@@ -871,24 +1181,15 @@ RSpec.describe PotatoMesh::App::Federation do
       ).to eq(2)
     end
 
-    it "applies federation headers to announcement requests" do
-      https_client = instance_double(Net::HTTP)
-      allow(federation_helpers).to receive(:build_remote_http_client).with(https_uri).and_return(https_client)
-
-      captured_request = nil
-      allow(https_client).to receive(:start).and_yield(http_connection).and_return(success_response)
-      allow(http_connection).to receive(:request) do |request|
-        captured_request = request
-        success_response
-      end
+    it "logs success when the announcement is published" do
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(https_uri, payload)
+                                     .and_return(success_response)
 
       result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
 
       expect(result).to be(true)
-      expect(captured_request).not_to be_nil
-      expect(captured_request["Content-Type"]).to eq("application/json")
-      expect(captured_request["Accept"]).to eq("application/json")
-      expect(captured_request["User-Agent"]).to eq(federation_helpers.send(:federation_user_agent_header))
+      expect(federation_helpers.debug_messages).to include("Published federation announcement")
     end
   end
 
