@@ -147,6 +147,14 @@ module PotatoMesh
               db.execute("CREATE INDEX IF NOT EXISTS idx_nodes_long_name ON nodes(long_name)")
             end
           end
+
+          # Backfill #747: ensure_unknown_node previously omitted the protocol
+          # column and hardcoded role=CLIENT_HIDDEN, causing meshcore placeholder
+          # nodes to be stored as meshtastic/CLIENT_HIDDEN.  Fix both in one pass.
+          if node_columns.include?("protocol")
+            db.execute("UPDATE nodes SET protocol = 'meshcore' WHERE long_name LIKE 'Meshcore %' AND protocol = 'meshtastic'")
+            db.execute("UPDATE nodes SET role = 'COMPANION' WHERE protocol = 'meshcore' AND role = 'CLIENT_HIDDEN'")
+          end
         end
 
         message_table_exists = db.get_first_value(

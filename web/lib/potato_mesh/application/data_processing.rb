@@ -171,7 +171,10 @@ module PotatoMesh
         return if existing
 
         long_name = "#{protocol_display_label(protocol)} #{short_id}"
-        default_role = protocol == "meshcore" ? "COMPANION" : "CLIENT_HIDDEN"
+        default_role = case protocol
+          when "meshcore" then "COMPANION"
+          else "CLIENT_HIDDEN"
+          end
         heard_time = coerce_integer(heard_time)
         inserted = false
 
