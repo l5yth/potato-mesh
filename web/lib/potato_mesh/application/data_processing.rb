@@ -171,16 +171,20 @@ module PotatoMesh
         return if existing
 
         long_name = "#{protocol_display_label(protocol)} #{short_id}"
+        default_role = case protocol
+          when "meshcore" then "COMPANION"
+          else "CLIENT_HIDDEN"
+          end
         heard_time = coerce_integer(heard_time)
         inserted = false
 
         with_busy_retry do
           db.execute(
             <<~SQL,
-            INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role,last_heard,first_heard)
-            VALUES (?,?,?,?,?,?,?)
+            INSERT OR IGNORE INTO nodes(node_id,num,short_name,long_name,role,last_heard,first_heard,protocol)
+            VALUES (?,?,?,?,?,?,?,?)
           SQL
-            [node_id, node_num, short_id, long_name, "CLIENT_HIDDEN", heard_time, heard_time],
+            [node_id, node_num, short_id, long_name, default_role, heard_time, heard_time, protocol],
           )
           inserted = db.changes.positive?
         end

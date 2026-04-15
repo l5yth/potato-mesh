@@ -258,4 +258,53 @@ RSpec.describe PotatoMesh::App::Database do
 
     expect(column_names_for("instances")).to include("contact_link")
   end
+
+  it "backfills misclassified meshcore placeholder nodes" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute(<<~SQL)
+        CREATE TABLE nodes(
+          node_id TEXT PRIMARY KEY, num INTEGER, short_name TEXT, long_name TEXT,
+          role TEXT, last_heard INTEGER, first_heard INTEGER,
+          protocol TEXT NOT NULL DEFAULT 'meshtastic', synthetic BOOLEAN NOT NULL DEFAULT 0
+        )
+      SQL
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+
+      # Misclassified meshcore placeholder (bug #747)
+      db.execute(
+        "INSERT INTO nodes(node_id, short_name, long_name, role, protocol) VALUES (?, ?, ?, ?, ?)",
+        ["!aabb0001", "0001", "Meshcore 0001", "CLIENT_HIDDEN", "meshtastic"],
+      )
+
+      # Meshcore node where protocol self-healed but role did not
+      db.execute(
+        "INSERT INTO nodes(node_id, short_name, long_name, role, protocol) VALUES (?, ?, ?, ?, ?)",
+        ["!aabb0002", "0002", "SomeNode", "CLIENT_HIDDEN", "meshcore"],
+      )
+
+      # Meshtastic node that should remain untouched
+      db.execute(
+        "INSERT INTO nodes(node_id, short_name, long_name, role, protocol) VALUES (?, ?, ?, ?, ?)",
+        ["!aabb0003", "0003", "Meshtastic 0003", "CLIENT_HIDDEN", "meshtastic"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      db.results_as_hash = true
+
+      fixed_proto = db.get_first_row("SELECT protocol, role FROM nodes WHERE node_id = '!aabb0001'")
+      expect(fixed_proto["protocol"]).to eq("meshcore")
+      expect(fixed_proto["role"]).to eq("COMPANION")
+
+      fixed_role = db.get_first_row("SELECT protocol, role FROM nodes WHERE node_id = '!aabb0002'")
+      expect(fixed_role["protocol"]).to eq("meshcore")
+      expect(fixed_role["role"]).to eq("COMPANION")
+
+      untouched = db.get_first_row("SELECT protocol, role FROM nodes WHERE node_id = '!aabb0003'")
+      expect(untouched["protocol"]).to eq("meshtastic")
+      expect(untouched["role"]).to eq("CLIENT_HIDDEN")
+    end
+  end
 end
