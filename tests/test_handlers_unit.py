@@ -30,6 +30,7 @@ if str(REPO_ROOT) not in sys.path:
 import data.mesh_ingestor.config as config
 import data.mesh_ingestor.handlers as handlers
 import data.mesh_ingestor.handlers._state as _state_mod
+import data.mesh_ingestor.handlers.generic as generic_mod
 import data.mesh_ingestor.handlers.ignored as ignored_mod
 import data.mesh_ingestor.handlers.telemetry as telemetry_mod
 
@@ -890,4 +891,160 @@ class TestStoreRouterHeartbeatPacket:
             handlers.store_router_heartbeat_packet({})
         finally:
             q._queue_post_json = original
-        assert sent == []
+        assert sent == []  # noqa: no-heartbeat-without-from-id
+
+
+# ---------------------------------------------------------------------------
+# _coerce_emoji_codepoint
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceEmojiCodepoint:
+    """Tests for :func:`_coerce_emoji_codepoint`."""
+
+    def test_none_returns_none(self):
+        """``None`` input yields ``None``."""
+        assert generic_mod._coerce_emoji_codepoint(None) is None
+
+    def test_int_codepoint_above_127(self):
+        """Integer codepoint above 127 is converted to the character."""
+        assert generic_mod._coerce_emoji_codepoint(128077) == "\U0001f44d"
+
+    def test_string_codepoint_above_127(self):
+        """Digit string representing a codepoint above 127 is converted."""
+        assert generic_mod._coerce_emoji_codepoint("128077") == "\U0001f44d"
+
+    def test_small_int_preserved_as_string(self):
+        """Small integer (≤ 127) is kept as its string representation."""
+        assert generic_mod._coerce_emoji_codepoint(1) == "1"
+
+    def test_small_string_digit_preserved(self):
+        """Digit string ≤ 127 is kept as-is (slot marker)."""
+        assert generic_mod._coerce_emoji_codepoint("1") == "1"
+
+    def test_emoji_string_passthrough(self):
+        """An already-resolved emoji character passes through."""
+        assert generic_mod._coerce_emoji_codepoint("\U0001f44d") == "\U0001f44d"
+
+    def test_whitespace_only_returns_none(self):
+        """Whitespace-only string yields ``None``."""
+        assert generic_mod._coerce_emoji_codepoint("   ") is None
+
+    def test_empty_string_returns_none(self):
+        """Empty string yields ``None``."""
+        assert generic_mod._coerce_emoji_codepoint("") is None
+
+    def test_float_codepoint_above_127(self):
+        """Float codepoint above 127 is truncated and converted."""
+        assert generic_mod._coerce_emoji_codepoint(128077.0) == "\U0001f44d"
+
+    def test_invalid_codepoint_falls_back(self):
+        """Extremely large invalid codepoint falls back to string."""
+        result = generic_mod._coerce_emoji_codepoint(0x7FFFFFFF)
+        # chr() raises for values outside valid Unicode; fall back to str.
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# _is_reaction_placeholder_text
+# ---------------------------------------------------------------------------
+
+
+class TestIsReactionPlaceholderText:
+    """Tests for :func:`_is_reaction_placeholder_text`."""
+
+    def test_none_is_placeholder(self):
+        """``None`` is a placeholder."""
+        assert generic_mod._is_reaction_placeholder_text(None) is True
+
+    def test_empty_is_placeholder(self):
+        """Empty string is a placeholder."""
+        assert generic_mod._is_reaction_placeholder_text("") is True
+
+    def test_whitespace_is_placeholder(self):
+        """Whitespace-only string is a placeholder."""
+        assert generic_mod._is_reaction_placeholder_text("   ") is True
+
+    def test_digit_slot_marker(self):
+        """Digit strings like '1' and '3' are placeholders."""
+        assert generic_mod._is_reaction_placeholder_text("1") is True
+        assert generic_mod._is_reaction_placeholder_text("3") is True
+
+    def test_bare_emoji_is_placeholder(self):
+        """A single emoji character is a placeholder."""
+        assert generic_mod._is_reaction_placeholder_text("\U0001f44d") is True
+
+    def test_substantial_text_is_not_placeholder(self):
+        """Prose text is not a placeholder."""
+        assert generic_mod._is_reaction_placeholder_text("Hello world") is False
+
+    def test_text_with_emoji_is_not_placeholder(self):
+        """Text containing both words and emoji is not a placeholder."""
+        assert (
+            generic_mod._is_reaction_placeholder_text("Great job! \U0001f44d") is False
+        )
+
+    def test_short_ascii_word_is_not_placeholder(self):
+        """A short ASCII word is not a placeholder."""
+        assert generic_mod._is_reaction_placeholder_text("hi") is False
+
+
+# ---------------------------------------------------------------------------
+# _is_likely_reaction
+# ---------------------------------------------------------------------------
+
+
+class TestIsLikelyReaction:
+    """Tests for :func:`_is_likely_reaction`."""
+
+    def test_reaction_app_portnum_string(self):
+        """Explicit REACTION_APP portnum is always a reaction."""
+        assert (
+            generic_mod._is_likely_reaction(
+                "REACTION_APP", None, 123, "\U0001f44d", None
+            )
+            is True
+        )
+
+    def test_reply_id_emoji_no_text(self):
+        """reply_id + emoji + no text is a reaction."""
+        assert (
+            generic_mod._is_likely_reaction(
+                "TEXT_MESSAGE_APP", 1, 123, "\U0001f44d", None
+            )
+            is True
+        )
+
+    def test_reply_id_emoji_digit_text(self):
+        """reply_id + emoji + digit count text is a reaction."""
+        assert (
+            generic_mod._is_likely_reaction(
+                "TEXT_MESSAGE_APP", 1, 123, "\U0001f44d", "3"
+            )
+            is True
+        )
+
+    def test_reply_id_emoji_substantial_text_not_reaction(self):
+        """reply_id + emoji + substantial text is NOT a reaction."""
+        assert (
+            generic_mod._is_likely_reaction(
+                "TEXT_MESSAGE_APP", 1, 123, "\U0001f44d", "Great job!"
+            )
+            is False
+        )
+
+    def test_no_emoji_not_reaction(self):
+        """Missing emoji means not a reaction (even with reply_id)."""
+        assert (
+            generic_mod._is_likely_reaction("TEXT_MESSAGE_APP", 1, 123, None, None)
+            is False
+        )
+
+    def test_no_reply_id_not_reaction(self):
+        """Missing reply_id means not a reaction (non-REACTION_APP portnum)."""
+        assert (
+            generic_mod._is_likely_reaction(
+                "TEXT_MESSAGE_APP", 1, None, "\U0001f44d", None
+            )
+            is False
+        )

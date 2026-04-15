@@ -40,7 +40,10 @@ from ._state import (
     register_host_node_id,
 )
 from .generic import (
+    _coerce_emoji_codepoint,
     _is_encrypted_flag,
+    _is_likely_reaction,
+    _is_reaction_placeholder_text,
     _portnum_candidates,
     on_receive,
     store_packet_dict,
@@ -79,7 +82,10 @@ __all__ = [
     "_VALID_TELEMETRY_TYPES",
     "_apply_radio_metadata",
     "_apply_radio_metadata_to_nodes",
+    "_coerce_emoji_codepoint",
     "_is_encrypted_flag",
+    "_is_likely_reaction",
+    "_is_reaction_placeholder_text",
     "_mark_packet_seen",
     "_normalize_trace_hops",
     "_portnum_candidates",

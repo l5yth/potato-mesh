@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import {
   buildMessageBody,
   buildMessageIndex,
+  normaliseEmojiValue,
   normaliseMessageId,
   renderLiteralWithLinks,
   resolveReplyPrefix
@@ -362,4 +363,112 @@ test('buildMessageBody linkifies URLs alongside @[Name] mentions', () => {
   });
   assert.ok(body.startsWith('BADGE(Alice)'), 'mention should be rendered as badge');
   assert.ok(body.includes('<a href='), 'URL should be linkified');
+});
+
+// ---------------------------------------------------------------------------
+// normaliseEmojiValue — codepoint conversion
+// ---------------------------------------------------------------------------
+
+test('normaliseEmojiValue converts integer codepoint above 127 to emoji', () => {
+  assert.equal(normaliseEmojiValue(128077), '\u{1F44D}');
+});
+
+test('normaliseEmojiValue converts string codepoint above 127 to emoji', () => {
+  assert.equal(normaliseEmojiValue('128077'), '\u{1F44D}');
+});
+
+test('normaliseEmojiValue preserves small integer as string', () => {
+  assert.equal(normaliseEmojiValue(49), '49');
+});
+
+test('normaliseEmojiValue preserves small digit string as-is', () => {
+  assert.equal(normaliseEmojiValue('1'), '1');
+});
+
+test('normaliseEmojiValue passes through emoji character unchanged', () => {
+  assert.equal(normaliseEmojiValue('\u{1F44D}'), '\u{1F44D}');
+});
+
+test('normaliseEmojiValue returns null for null', () => {
+  assert.equal(normaliseEmojiValue(null), null);
+});
+
+test('normaliseEmojiValue returns null for empty string', () => {
+  assert.equal(normaliseEmojiValue(''), null);
+});
+
+// ---------------------------------------------------------------------------
+// isReactionMessage — tightened classification (bug #699)
+// ---------------------------------------------------------------------------
+
+test('buildMessageBody does not treat reply with emoji and substantial text as reaction', () => {
+  const message = {
+    text: 'Great job!',
+    emoji: '\u{1F44D}',
+    reply_id: 123,
+    portnum: 'TEXT_MESSAGE_APP'
+  };
+  const body = buildMessageBody({
+    message,
+    escapeHtml: v => `ESC(${v})`,
+    renderEmojiHtml: v => `EMOJI(${v})`
+  });
+  // Text should be rendered as a normal message, not suppressed into a reaction.
+  assert.ok(body.includes('ESC(Great job!)'), 'text content should be visible');
+});
+
+test('buildMessageBody treats reply with emoji and no text as reaction', () => {
+  const message = {
+    emoji: '\u{1F44D}',
+    reply_id: 123,
+  };
+  const body = buildMessageBody({
+    message,
+    escapeHtml: v => `ESC(${v})`,
+    renderEmojiHtml: v => `EMOJI(${v})`
+  });
+  assert.equal(body, 'EMOJI(\u{1F44D})');
+});
+
+test('buildMessageBody treats reply with emoji and whitespace text as reaction', () => {
+  const message = {
+    text: '   ',
+    emoji: '\u{1F44D}',
+    reply_id: 123,
+  };
+  const body = buildMessageBody({
+    message,
+    escapeHtml: v => `ESC(${v})`,
+    renderEmojiHtml: v => `EMOJI(${v})`
+  });
+  assert.equal(body, 'EMOJI(\u{1F44D})');
+});
+
+test('buildMessageBody treats reply with emoji and digit text as reaction', () => {
+  const message = {
+    text: '3',
+    emoji: '\u{2728}',
+    reply_id: 456,
+  };
+  const body = buildMessageBody({
+    message,
+    escapeHtml: v => `ESC(${v})`,
+    renderEmojiHtml: v => `EMOJI(${v})`
+  });
+  assert.equal(body, 'EMOJI(\u{2728}) ESC(\u00d73)');
+});
+
+test('buildMessageBody renders emoji from numeric codepoint in reaction', () => {
+  const message = {
+    text: '2',
+    emoji: 128077,
+    reply_id: 789,
+    portnum: 'REACTION_APP'
+  };
+  const body = buildMessageBody({
+    message,
+    escapeHtml: v => `ESC(${v})`,
+    renderEmojiHtml: v => `EMOJI(${v})`
+  });
+  assert.equal(body, 'EMOJI(\u{1F44D}) ESC(\u00d72)');
 });

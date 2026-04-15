@@ -262,21 +262,59 @@ export function resolveReplyPrefix({
 /**
  * Normalise an emoji candidate into a trimmed string.
  *
+ * Numeric values above 127 are treated as Unicode codepoints and converted to
+ * the corresponding character (e.g. ``128077`` → ``"👍"``).  Small values
+ * (≤ 127) are kept as digit strings so that slot markers like ``"1"`` pass
+ * through unchanged.
+ *
  * @param {*} value Emoji candidate.
  * @returns {?string} Emoji string when valid.
  */
-function normaliseEmojiValue(value) {
+export function normaliseEmojiValue(value) {
   if (value == null) return null;
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) {
+      const cp = Number(trimmed);
+      if (cp > 127 && Number.isFinite(cp)) {
+        try { return String.fromCodePoint(cp); } catch { /* fall through */ }
+      }
+    }
+    return trimmed;
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
+    if (value > 127) {
+      try { return String.fromCodePoint(value); } catch { /* fall through */ }
+    }
     return String(value);
   }
   const str = String(value).trim();
   return str.length > 0 ? str : null;
+}
+
+/**
+ * Return whether ``text`` looks like a reaction placeholder rather than
+ * substantive message content.
+ *
+ * Reaction packets carry either no text, a small numeric count/slot marker
+ * (e.g. ``"1"``, ``"3"``), or occasionally a bare emoji.  Anything that reads
+ * as real prose should cause the message to be classified as a regular text
+ * message, not a reaction.
+ *
+ * @param {?string} text Trimmed message text (may be ``null``).
+ * @returns {boolean} ``true`` when *text* is absent or a placeholder.
+ */
+function isReactionPlaceholderText(text) {
+  if (!text) return true;
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  if (/^\d+$/.test(trimmed)) return true;
+  // Short non-ASCII-letter text (≤ 2 Unicode codepoints, no ASCII letters)
+  // covers bare emoji including surrogate pairs and skin-tone modifiers.
+  if ([...trimmed].length <= 2 && !/[a-zA-Z]/.test(trimmed)) return true;
+  return false;
 }
 
 /**
@@ -299,7 +337,11 @@ function isReactionMessage(message) {
     return false;
   }
   const hasReplyId = message.reply_id != null || message.replyId != null;
-  return hasReplyId || !!portnum;
+  if (!hasReplyId) {
+    return false;
+  }
+  const text = toTrimmedString(message.text);
+  return isReactionPlaceholderText(text);
 }
 
 /**
