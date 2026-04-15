@@ -3022,7 +3022,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.results_as_hash = true
         row = db.get_first_row(
           <<~SQL,
-          SELECT short_name, long_name, role, last_heard, first_heard
+          SELECT short_name, long_name, role, protocol, last_heard, first_heard
           FROM nodes
           WHERE node_id = ?
         SQL
@@ -3032,8 +3032,55 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["short_name"]).to eq("ABCD")
         expect(row["long_name"]).to eq("Meshtastic ABCD")
         expect(row["role"]).to eq("CLIENT_HIDDEN")
+        expect(row["protocol"]).to eq("meshtastic")
         expect(row["last_heard"]).to eq(reference_time.to_i)
         expect(row["first_heard"]).to eq(reference_time.to_i)
+      end
+    end
+
+    it "stores meshcore protocol and COMPANION role for meshcore nodes" do
+      with_db do |db|
+        created = ensure_unknown_node(db, "!abcd1234", nil, heard_time: reference_time.to_i, protocol: "meshcore")
+        expect(created).to be_truthy
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          <<~SQL,
+          SELECT short_name, long_name, role, protocol
+          FROM nodes
+          WHERE node_id = ?
+        SQL
+          ["!abcd1234"],
+        )
+
+        expect(row["short_name"]).to eq("1234")
+        expect(row["long_name"]).to eq("Meshcore 1234")
+        expect(row["role"]).to eq("COMPANION")
+        expect(row["protocol"]).to eq("meshcore")
+      end
+    end
+
+    it "defaults to meshtastic protocol and CLIENT_HIDDEN role" do
+      with_db do |db|
+        created = ensure_unknown_node(db, "!beef0000", nil)
+        expect(created).to be_truthy
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          <<~SQL,
+          SELECT role, protocol
+          FROM nodes
+          WHERE node_id = ?
+        SQL
+          ["!beef0000"],
+        )
+
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
+        expect(row["protocol"]).to eq("meshtastic")
       end
     end
 
