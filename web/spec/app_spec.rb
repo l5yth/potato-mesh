@@ -1618,13 +1618,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    before do
+    # Stub fetch_instance_json on both the instance and class to return the
+    # supplied nodes array for /api/nodes requests.
+    def stub_remote_nodes(nodes)
       fetch_stub = lambda do |host, path|
         case path
         when "/.well-known/potato-mesh"
           [well_known_document, URI("https://#{host}#{path}")]
         when "/api/nodes"
-          [remote_nodes, URI("https://#{host}#{path}")]
+          [nodes, URI("https://#{host}#{path}")]
         else
           [nil, []]
         end
@@ -1637,6 +1639,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
         fetch_stub.call(host, path)
       end
+    end
+
+    before do
+      stub_remote_nodes(remote_nodes)
 
       allow_any_instance_of(Sinatra::Application).to receive(:enqueue_federation_crawl) do |instance, domain, per_response_limit:, overall_limit:|
         db = instance.open_database
@@ -1687,26 +1693,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "pad-#{i}", "lastHeard" => now - (60 + i), "protocol" => "meshtastic" }
       }
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [nodes_with_protocols, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
-      allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [nodes_with_protocols, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
+      stub_remote_nodes(nodes_with_protocols)
 
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -1736,26 +1723,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "pad-#{i}", "lastHeard" => now - (200 + i) }
       }
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [mixed_nodes, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
-      allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [mixed_nodes, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
+      stub_remote_nodes(mixed_nodes)
 
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -1782,26 +1750,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "pad-#{i}", "lastHeard" => now - (20 + i) }
       }
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [nodes_with_gaps, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
-      allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [nodes_with_gaps, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
+      stub_remote_nodes(nodes_with_gaps)
 
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -1827,26 +1776,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "sc-#{i}", "last_heard" => now - i }
       end
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [snake_case_nodes, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
-      allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [snake_case_nodes, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
+      stub_remote_nodes(snake_case_nodes)
 
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -1873,26 +1803,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         { "node_id" => "pad-#{i}", "lastHeard" => now - (20 + i) }
       }
 
-      allow_any_instance_of(Sinatra::Application).to receive(:fetch_instance_json) do |_instance, host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [mixed_entries, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
-      allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
-        case path
-        when "/.well-known/potato-mesh"
-          [well_known_document, URI("https://#{host}#{path}")]
-        when "/api/nodes"
-          [mixed_entries, URI("https://#{host}#{path}")]
-        else
-          [nil, []]
-        end
-      end
+      stub_remote_nodes(mixed_entries)
 
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
