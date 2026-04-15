@@ -3084,6 +3084,29 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "falls back to CLIENT_HIDDEN for an unknown protocol" do
+      with_db do |db|
+        created = ensure_unknown_node(db, "!cafe9999", nil, protocol: "reticulum")
+        expect(created).to be_truthy
+      end
+
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          <<~SQL,
+          SELECT role, protocol, long_name
+          FROM nodes
+          WHERE node_id = ?
+        SQL
+          ["!cafe9999"],
+        )
+
+        expect(row["role"]).to eq("CLIENT_HIDDEN")
+        expect(row["protocol"]).to eq("reticulum")
+        expect(row["long_name"]).to eq("Reticulum 9999")
+      end
+    end
+
     it "leaves timestamps nil when no receive time is provided" do
       with_db do |db|
         created = ensure_unknown_node(db, "!1111beef", nil)
