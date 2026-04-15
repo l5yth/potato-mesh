@@ -787,6 +787,47 @@ RSpec.describe PotatoMesh::App::Federation do
         expect(row[1]).to eq(40)
       end
     end
+
+    it "preserves nodes_count when re-upserted with nil" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 77), "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-2")
+
+        stored = db.get_first_value("SELECT nodes_count FROM instances WHERE id = ?", base_attributes[:id])
+        expect(stored).to eq(77)
+      end
+    end
+
+    it "preserves per-protocol counts when re-upserted with nil" do
+      with_db do |db|
+        attrs = base_attributes.merge(
+          meshcore_nodes_count: 20,
+          meshtastic_nodes_count: 30,
+        )
+        federation_helpers.send(:upsert_instance_record, db, attrs, "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-2")
+
+        row = db.get_first_row(
+          "SELECT meshcore_nodes_count, meshtastic_nodes_count FROM instances WHERE id = ?",
+          base_attributes[:id],
+        )
+        expect(row[0]).to eq(20)
+        expect(row[1]).to eq(30)
+      end
+    end
+
+    it "allows nodes_count to be updated to zero" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 50), "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 0), "sig-2")
+
+        stored = db.get_first_value("SELECT nodes_count FROM instances WHERE id = ?", base_attributes[:id])
+        expect(stored).to eq(0)
+      end
+    end
   end
 
   describe ".federation_user_agent_header" do

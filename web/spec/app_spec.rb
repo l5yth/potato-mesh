@@ -1675,6 +1675,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "populates nodes_count from fetched remote nodes" do
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT nodes_count FROM instances WHERE id = ?",
+          instance_attributes[:id],
+        )
+
+        expect(stored).not_to be_nil
+        expect(stored).to be_a(Integer)
+        expect(stored).to be > 0
+      end
+    end
+
     it "accepts registrations when contactLink is part of the signed payload" do
       contact_link = "https://example.test/contact"
       linked_attributes = instance_attributes.merge(contact_link: contact_link)

@@ -282,6 +282,15 @@ module PotatoMesh
               halt 400, { error: freshness_reason || "stale node data" }.to_json
             end
 
+            if remote_nodes.is_a?(Array)
+              cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+              attributes[:nodes_count] = remote_nodes.count { |n|
+                next unless n.is_a?(Hash)
+                ts = coerce_integer(n["lastHeard"] || n["last_heard"])
+                ts && ts >= cutoff
+              }
+            end
+
             db = open_database
             upsert_instance_record(db, attributes, signature)
             enqueued = enqueue_federation_crawl(

@@ -1611,9 +1611,9 @@ module PotatoMesh
             longitude=excluded.longitude,
             last_update_time=excluded.last_update_time,
             is_private=excluded.is_private,
-            nodes_count=excluded.nodes_count,
-            meshcore_nodes_count=excluded.meshcore_nodes_count,
-            meshtastic_nodes_count=excluded.meshtastic_nodes_count,
+            nodes_count=COALESCE(excluded.nodes_count, instances.nodes_count),
+            meshcore_nodes_count=COALESCE(excluded.meshcore_nodes_count, instances.meshcore_nodes_count),
+            meshtastic_nodes_count=COALESCE(excluded.meshtastic_nodes_count, instances.meshtastic_nodes_count),
             contact_link=excluded.contact_link,
             signature=excluded.signature
         SQL
