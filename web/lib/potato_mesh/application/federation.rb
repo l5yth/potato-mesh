@@ -169,6 +169,9 @@ module PotatoMesh
           "lastUpdateTime" => attributes[:last_update_time],
           "isPrivate" => attributes[:is_private],
           "contactLink" => attributes[:contact_link],
+          "nodesCount" => attributes[:nodes_count],
+          "meshcoreNodesCount" => attributes[:meshcore_nodes_count],
+          "meshtasticNodesCount" => attributes[:meshtastic_nodes_count],
           "signature" => signature,
         }
         payload.reject { |_, value| value.nil? }

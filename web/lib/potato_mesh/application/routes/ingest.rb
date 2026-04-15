@@ -141,6 +141,9 @@ module PotatoMesh
             is_private = coerce_boolean(raw_private)
             signature = string_or_nil(payload["signature"])
             contact_link = string_or_nil(payload["contactLink"])
+            nodes_count = coerce_integer(payload["nodesCount"])
+            meshcore_nodes_count = coerce_integer(payload["meshcoreNodesCount"])
+            meshtastic_nodes_count = coerce_integer(payload["meshtasticNodesCount"])
 
             attributes = {
               id: id,
@@ -155,6 +158,9 @@ module PotatoMesh
               last_update_time: last_update_time,
               is_private: is_private,
               contact_link: contact_link,
+              nodes_count: nodes_count,
+              meshcore_nodes_count: meshcore_nodes_count,
+              meshtastic_nodes_count: meshtastic_nodes_count,
             }
 
             if [attributes[:id], attributes[:domain], attributes[:pubkey], signature, attributes[:last_update_time]].any?(&:nil?)
@@ -282,13 +288,29 @@ module PotatoMesh
               halt 400, { error: freshness_reason || "stale node data" }.to_json
             end
 
+            # Recompute node counts from the fetched node list so that
+            # nodes_count, meshcore_nodes_count, and meshtastic_nodes_count
+            # stay internally consistent.  The announcement payload may carry
+            # sender-asserted counts, but those are unsigned and could diverge
+            # from the actual node data — overwriting them here is intentional.
             if remote_nodes.is_a?(Array)
               cutoff = Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
-              attributes[:nodes_count] = remote_nodes.count { |n|
+              total = 0
+              meshcore = 0
+              meshtastic = 0
+              remote_nodes.each do |n|
                 next unless n.is_a?(Hash)
                 ts = coerce_integer(n["lastHeard"] || n["last_heard"])
-                ts && ts >= cutoff
-              }
+                next unless ts && ts >= cutoff
+                total += 1
+                case (n["protocol"] || n["mesh_protocol"]).to_s.downcase
+                when "meshcore" then meshcore += 1
+                when "meshtastic" then meshtastic += 1
+                end
+              end
+              attributes[:nodes_count] = total
+              attributes[:meshcore_nodes_count] = meshcore
+              attributes[:meshtastic_nodes_count] = meshtastic
             end
 
             db = open_database

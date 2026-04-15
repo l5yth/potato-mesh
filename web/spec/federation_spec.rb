@@ -1106,6 +1106,53 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
+  describe ".instance_announcement_payload" do
+    it "includes node count fields when present" do
+      attributes = {
+        id: "test-id",
+        domain: "test.mesh",
+        pubkey: "key",
+        name: "Test",
+        version: "1.0",
+        channel: "#ch",
+        frequency: "868",
+        latitude: 50.0,
+        longitude: 10.0,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+        contact_link: nil,
+        nodes_count: 42,
+        meshcore_nodes_count: 30,
+        meshtastic_nodes_count: 12,
+      }
+      payload = federation_helpers.instance_announcement_payload(attributes, "sig")
+      expect(payload["nodesCount"]).to eq(42)
+      expect(payload["meshcoreNodesCount"]).to eq(30)
+      expect(payload["meshtasticNodesCount"]).to eq(12)
+    end
+
+    it "omits node count fields when nil" do
+      attributes = {
+        id: "test-id",
+        domain: "test.mesh",
+        pubkey: "key",
+        name: "Test",
+        version: "1.0",
+        channel: "#ch",
+        frequency: "868",
+        latitude: 50.0,
+        longitude: 10.0,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+        contact_link: nil,
+      }
+      payload = federation_helpers.instance_announcement_payload(attributes, "sig")
+      expect(payload).not_to have_key("nodesCount")
+      expect(payload).not_to have_key("meshcoreNodesCount")
+      expect(payload).not_to have_key("meshtasticNodesCount")
+    end
+  end
+
   describe ".perform_announce_request" do
     let(:uri) { URI.parse("https://remote.mesh/api/instances") }
     let(:payload) { '{"id":"test"}' }
