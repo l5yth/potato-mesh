@@ -787,6 +787,47 @@ RSpec.describe PotatoMesh::App::Federation do
         expect(row[1]).to eq(40)
       end
     end
+
+    it "preserves nodes_count when re-upserted with nil" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 77), "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-2")
+
+        stored = db.get_first_value("SELECT nodes_count FROM instances WHERE id = ?", base_attributes[:id])
+        expect(stored).to eq(77)
+      end
+    end
+
+    it "preserves per-protocol counts when re-upserted with nil" do
+      with_db do |db|
+        attrs = base_attributes.merge(
+          meshcore_nodes_count: 20,
+          meshtastic_nodes_count: 30,
+        )
+        federation_helpers.send(:upsert_instance_record, db, attrs, "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes, "sig-2")
+
+        row = db.get_first_row(
+          "SELECT meshcore_nodes_count, meshtastic_nodes_count FROM instances WHERE id = ?",
+          base_attributes[:id],
+        )
+        expect(row[0]).to eq(20)
+        expect(row[1]).to eq(30)
+      end
+    end
+
+    it "allows nodes_count to be updated to zero" do
+      with_db do |db|
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 50), "sig-1")
+
+        federation_helpers.send(:upsert_instance_record, db, base_attributes.merge(nodes_count: 0), "sig-2")
+
+        stored = db.get_first_value("SELECT nodes_count FROM instances WHERE id = ?", base_attributes[:id])
+        expect(stored).to eq(0)
+      end
+    end
   end
 
   describe ".federation_user_agent_header" do
@@ -1062,6 +1103,53 @@ RSpec.describe PotatoMesh::App::Federation do
       result = federation_helpers.federation_sleep_with_shutdown(0.01)
 
       expect(result).to be(true)
+    end
+  end
+
+  describe ".instance_announcement_payload" do
+    it "includes node count fields when present" do
+      attributes = {
+        id: "test-id",
+        domain: "test.mesh",
+        pubkey: "key",
+        name: "Test",
+        version: "1.0",
+        channel: "#ch",
+        frequency: "868",
+        latitude: 50.0,
+        longitude: 10.0,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+        contact_link: nil,
+        nodes_count: 42,
+        meshcore_nodes_count: 30,
+        meshtastic_nodes_count: 12,
+      }
+      payload = federation_helpers.instance_announcement_payload(attributes, "sig")
+      expect(payload["nodesCount"]).to eq(42)
+      expect(payload["meshcoreNodesCount"]).to eq(30)
+      expect(payload["meshtasticNodesCount"]).to eq(12)
+    end
+
+    it "omits node count fields when nil" do
+      attributes = {
+        id: "test-id",
+        domain: "test.mesh",
+        pubkey: "key",
+        name: "Test",
+        version: "1.0",
+        channel: "#ch",
+        frequency: "868",
+        latitude: 50.0,
+        longitude: 10.0,
+        last_update_time: Time.now.to_i,
+        is_private: false,
+        contact_link: nil,
+      }
+      payload = federation_helpers.instance_announcement_payload(attributes, "sig")
+      expect(payload).not_to have_key("nodesCount")
+      expect(payload).not_to have_key("meshcoreNodesCount")
+      expect(payload).not_to have_key("meshtasticNodesCount")
     end
   end
 

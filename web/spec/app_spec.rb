@@ -1618,13 +1618,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    before do
+    # Stub fetch_instance_json on both the instance and class to return the
+    # supplied nodes array for /api/nodes requests.
+    def stub_remote_nodes(nodes)
       fetch_stub = lambda do |host, path|
         case path
         when "/.well-known/potato-mesh"
           [well_known_document, URI("https://#{host}#{path}")]
         when "/api/nodes"
-          [remote_nodes, URI("https://#{host}#{path}")]
+          [nodes, URI("https://#{host}#{path}")]
         else
           [nil, []]
         end
@@ -1637,6 +1639,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       allow(PotatoMesh::Application).to receive(:fetch_instance_json) do |host, path|
         fetch_stub.call(host, path)
       end
+    end
+
+    before do
+      stub_remote_nodes(remote_nodes)
 
       allow_any_instance_of(Sinatra::Application).to receive(:enqueue_federation_crawl) do |instance, domain, per_response_limit:, overall_limit:|
         db = instance.open_database
@@ -1672,6 +1678,149 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(row["pubkey"]).to eq(pubkey)
         expect(row["signature"]).to eq(instance_signature)
         expect(row["is_private"]).to eq(0)
+      end
+    end
+
+    it "recomputes node counts from remote nodes including per-protocol breakdown" do
+      now = Time.now.to_i
+      nodes_with_protocols = [
+        { "node_id" => "mc-1", "lastHeard" => now - 10, "protocol" => "meshcore" },
+        { "node_id" => "mc-2", "lastHeard" => now - 20, "protocol" => "meshcore" },
+        { "node_id" => "mt-1", "lastHeard" => now - 30, "protocol" => "meshtastic" },
+        { "node_id" => "mt-2", "lastHeard" => now - 40, "protocol" => "meshtastic" },
+        { "node_id" => "mt-3", "lastHeard" => now - 50, "protocol" => "meshtastic" },
+      ] + Array.new([PotatoMesh::Config.remote_instance_min_node_count - 5, 0].max) { |i|
+        { "node_id" => "pad-#{i}", "lastHeard" => now - (60 + i), "protocol" => "meshtastic" }
+      }
+
+      stub_remote_nodes(nodes_with_protocols)
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row(
+          "SELECT nodes_count, meshcore_nodes_count, meshtastic_nodes_count FROM instances WHERE id = ?",
+          instance_attributes[:id],
+        )
+
+        expect(row[0]).to eq(nodes_with_protocols.length)
+        expect(row[1]).to eq(2)
+        expect(row[2]).to eq(nodes_with_protocols.length - 2)
+      end
+    end
+
+    it "excludes nodes with lastHeard older than remote_instance_max_node_age" do
+      now = Time.now.to_i
+      max_age = PotatoMesh::Config.remote_instance_max_node_age
+      mixed_nodes = [
+        { "node_id" => "fresh-1", "lastHeard" => now - 10 },
+        { "node_id" => "fresh-2", "lastHeard" => now - 100 },
+        { "node_id" => "stale-1", "lastHeard" => now - max_age - 1 },
+        { "node_id" => "stale-2", "lastHeard" => now - max_age - 3600 },
+      ] + Array.new([PotatoMesh::Config.remote_instance_min_node_count - 4, 0].max) { |i|
+        { "node_id" => "pad-#{i}", "lastHeard" => now - (200 + i) }
+      }
+
+      stub_remote_nodes(mixed_nodes)
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT nodes_count FROM instances WHERE id = ?",
+          instance_attributes[:id],
+        )
+
+        fresh_count = mixed_nodes.count { |n| n["lastHeard"] >= now - max_age }
+        expect(stored).to eq(fresh_count)
+      end
+    end
+
+    it "excludes nodes without a lastHeard timestamp" do
+      now = Time.now.to_i
+      nodes_with_gaps = [
+        { "node_id" => "has-ts", "lastHeard" => now - 10 },
+        { "node_id" => "no-ts" },
+        { "node_id" => "null-ts", "lastHeard" => nil },
+      ] + Array.new([PotatoMesh::Config.remote_instance_min_node_count - 3, 0].max) { |i|
+        { "node_id" => "pad-#{i}", "lastHeard" => now - (20 + i) }
+      }
+
+      stub_remote_nodes(nodes_with_gaps)
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT nodes_count FROM instances WHERE id = ?",
+          instance_attributes[:id],
+        )
+
+        expected = nodes_with_gaps.count { |n|
+          ts = n["lastHeard"]
+          ts.is_a?(Integer) && ts >= Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+        }
+        expect(stored).to eq(expected)
+      end
+    end
+
+    it "honors the last_heard snake_case key fallback" do
+      now = Time.now.to_i
+      snake_case_nodes = Array.new(PotatoMesh::Config.remote_instance_min_node_count) do |i|
+        { "node_id" => "sc-#{i}", "last_heard" => now - i }
+      end
+
+      stub_remote_nodes(snake_case_nodes)
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT nodes_count FROM instances WHERE id = ?",
+          instance_attributes[:id],
+        )
+
+        expect(stored).to eq(snake_case_nodes.length)
+      end
+    end
+
+    it "skips non-Hash entries in the remote nodes array" do
+      now = Time.now.to_i
+      mixed_entries = [
+        { "node_id" => "valid", "lastHeard" => now - 10 },
+        "not-a-hash",
+        42,
+        nil,
+      ] + Array.new([PotatoMesh::Config.remote_instance_min_node_count - 4, 0].max) { |i|
+        { "node_id" => "pad-#{i}", "lastHeard" => now - (20 + i) }
+      }
+
+      stub_remote_nodes(mixed_entries)
+
+      post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+
+      with_db(readonly: true) do |db|
+        stored = db.get_first_value(
+          "SELECT nodes_count FROM instances WHERE id = ?",
+          instance_attributes[:id],
+        )
+
+        hash_count = mixed_entries.count { |n|
+          next false unless n.is_a?(Hash)
+          ts = n["lastHeard"]
+          ts.is_a?(Integer) && ts >= Time.now.to_i - PotatoMesh::Config.remote_instance_max_node_age
+        }
+        expect(stored).to eq(hash_count)
       end
     end
 
