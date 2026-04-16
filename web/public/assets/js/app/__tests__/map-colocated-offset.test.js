@@ -23,6 +23,7 @@ const {
   DEFAULT_PRECISION,
   DEFAULT_BASE_RADIUS_PX,
   DEFAULT_RADIUS_GROWTH_PX,
+  MAX_PRECISION,
   coordinateKey,
   normalisePrecision,
   normalisePositive
@@ -238,6 +239,29 @@ test('normalisePrecision sanitises invalid inputs', () => {
   assert.equal(normalisePrecision(2.7), 2);
   assert.equal(normalisePrecision(-1), DEFAULT_PRECISION);
   assert.equal(normalisePrecision(Number.NaN), DEFAULT_PRECISION);
+  // Above MAX_PRECISION the value is clamped so toFixed cannot throw.
+  assert.equal(normalisePrecision(MAX_PRECISION + 50), MAX_PRECISION);
+  assert.doesNotThrow(() => (0).toFixed(normalisePrecision(1e6)));
+});
+
+test('entries sharing identical node_id fall back to input index for ordering', () => {
+  // Repeated calls with the same input must produce identical offsets even
+  // when ids tie — the secondary index tie-break makes this independent of
+  // the host engine's sort stability guarantees.
+  const entries = [
+    { node: { node_id: 'dup' }, lat: 0, lon: 0 },
+    { node: { node_id: 'dup' }, lat: 0, lon: 0 },
+    { node: { node_id: 'dup' }, lat: 0, lon: 0 }
+  ];
+  const first = computeColocatedOffsets(entries);
+  const second = computeColocatedOffsets(entries);
+  for (let i = 0; i < entries.length; i += 1) {
+    approximatelyEqual(first[i].dx, second[i].dx);
+    approximatelyEqual(first[i].dy, second[i].dy);
+  }
+  // The first entry by index should land at angle 0 (dy ≈ 0, dx > 0).
+  approximatelyEqual(first[0].dy, 0);
+  assert.ok(first[0].dx > 0);
 });
 
 test('normalisePositive sanitises invalid inputs', () => {

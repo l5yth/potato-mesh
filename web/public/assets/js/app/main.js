@@ -511,6 +511,12 @@ export function initializeApp(config) {
   let neighborLinesToggleButton = null;
   let traceLinesToggleButton = null;
   let markersLayer = null;
+  let spiderLinesLayer = null;
+  // Per-render record of the offset markers we created so a `zoomend` handler
+  // can re-project them and keep the on-screen pixel gap constant regardless
+  // of zoom level.  Each entry is `{ marker, line, lat, lon, dx, dy }` where
+  // `lat`/`lon` are the original (un-offset) coordinates.
+  let colocatedSpiderState = [];
   let tileDomObserver = null;
   const fullscreenChangeEvents = [
     'fullscreenchange',
@@ -1311,7 +1317,22 @@ export function initializeApp(config) {
 
     neighborLinesLayer = L.layerGroup().addTo(map);
     traceLinesLayer = L.layerGroup().addTo(map);
+    // Spider lines render between the connection lines and the markers so the
+    // dashed white "leader" lines are visible against neighbour/trace overlays
+    // but never sit on top of the marker glyphs themselves.
+    spiderLinesLayer = L.layerGroup().addTo(map);
     markersLayer = L.layerGroup().addTo(map);
+
+    // Pixel-space offsets are baked into a LatLng at render time, so the
+    // on-screen spread would otherwise scale with zoom — at extreme zoom-outs
+    // the offset becomes many degrees wide and the markers fly off-screen
+    // when the user later zooms in.  Recompute continuously throughout every
+    // zoom task: `zoom` fires per animation frame for smooth tracking,
+    // `zoomend` finalises the position, and `viewreset` covers projection
+    // resets such as resize / fullscreen / dateline wrap.
+    map.on('zoom', refreshColocatedSpiderState);
+    map.on('zoomend', refreshColocatedSpiderState);
+    map.on('viewreset', refreshColocatedSpiderState);
 
     if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
       activateOfflineTiles('Offline mode detected. Using placeholder basemap.');
@@ -3993,6 +4014,44 @@ export function initializeApp(config) {
   }
 
   /**
+   * Project a base coordinate to its co-located display position by adding a
+   * pixel-space offset against the live map projection.
+   *
+   * @param {number} lat Original latitude in degrees.
+   * @param {number} lon Original longitude in degrees.
+   * @param {number} dx Pixel offset along the layer-point X axis.
+   * @param {number} dy Pixel offset along the layer-point Y axis.
+   * @returns {[number, number]} Display ``[lat, lng]`` for the marker.
+   */
+  function projectColocatedOffsetLatLng(lat, lon, dx, dy) {
+    if (dx === 0 && dy === 0) return [lat, lon];
+    const basePoint = map.latLngToLayerPoint([lat, lon]);
+    const offsetPoint = L.point(basePoint.x + dx, basePoint.y + dy);
+    const projected = map.layerPointToLatLng(offsetPoint);
+    return [projected.lat, projected.lng];
+  }
+
+  /**
+   * Re-project every co-located marker (and its spider leader line) so the
+   * pixel gap between markers stays constant after the user zooms.  Wired to
+   * the map's ``zoomend`` event from {@link initializeApp}.
+   *
+   * @returns {void}
+   */
+  function refreshColocatedSpiderState() {
+    if (!map || !markersLayer) return;
+    for (const item of colocatedSpiderState) {
+      const offsetLatLng = projectColocatedOffsetLatLng(item.lat, item.lon, item.dx, item.dy);
+      if (item.marker && typeof item.marker.setLatLng === 'function') {
+        item.marker.setLatLng(offsetLatLng);
+      }
+      if (item.line && typeof item.line.setLatLngs === 'function') {
+        item.line.setLatLngs([[item.lat, item.lon], offsetLatLng]);
+      }
+    }
+  }
+
+  /**
    * Render the Leaflet map markers and neighbour connections.
    *
    * @param {Array<Object>} nodes Node payloads.
@@ -4009,6 +4068,12 @@ export function initializeApp(config) {
     if (traceLinesLayer) {
       traceLinesLayer.clearLayers();
     }
+    if (spiderLinesLayer) {
+      spiderLinesLayer.clearLayers();
+    }
+    // Drop the previous render's spider records before populating them again
+    // so the zoom handler does not try to reposition stale Leaflet objects.
+    colocatedSpiderState = [];
     markersLayer.clearLayers();
     const pts = [];
     const nodesById = new Map();
@@ -4238,20 +4303,12 @@ export function initializeApp(config) {
       const n = entry.node;
       const { lat, lon } = entry;
 
-      // Translate the pixel-space offset into a LatLng using the live map
-      // projection so the visual gap between co-located markers stays constant
-      // across zoom levels.  Singleton groups skip the projection round-trip.
-      let markerLatLng;
-      if (dx === 0 && dy === 0) {
-        markerLatLng = [lat, lon];
-      } else if (typeof map.latLngToLayerPoint === 'function' && typeof map.layerPointToLatLng === 'function') {
-        const basePoint = map.latLngToLayerPoint([lat, lon]);
-        const offsetPoint = L.point(basePoint.x + dx, basePoint.y + dy);
-        const projected = map.layerPointToLatLng(offsetPoint);
-        markerLatLng = [projected.lat, projected.lng];
-      } else {
-        markerLatLng = [lat, lon];
-      }
+      // Translate the pixel-space offset into the LatLng to render at.  The
+      // baked-in LatLng is correct for the current zoom only; the zoomend
+      // handler `refreshColocatedSpiderState` re-projects to keep the gap
+      // visually constant when the user changes zoom.
+      const markerLatLng = projectColocatedOffsetLatLng(lat, lon, dx, dy);
+      const isOffset = dx !== 0 || dy !== 0;
 
       const color = getRoleColor(n.role, n.protocol);
       const marker = L.circleMarker(markerLatLng, {
@@ -4263,9 +4320,30 @@ export function initializeApp(config) {
         opacity: 0.7
       });
 
+      // Draw a faint dotted leader line from each co-located marker back to
+      // the shared physical location so the spider hub is visually obvious.
+      // Singleton markers (no offset) get no line.
+      let spiderLine = null;
+      if (isOffset && spiderLinesLayer) {
+        spiderLine = L.polyline([[lat, lon], markerLatLng], {
+          color: '#ffffff',
+          weight: 1,
+          opacity: 0.5,
+          dashArray: '1 1',
+          interactive: false,
+          className: 'colocated-spider-line'
+        }).addTo(spiderLinesLayer);
+      }
+
       const fallbackOverlayProvider = () => mergeOverlayDetails(null, n);
       let markerToken = 0;
       marker.addTo(markersLayer);
+      // Track every offset marker so the zoomend handler can reposition the
+      // marker + leader line in lock-step.  Singletons skip the record since
+      // their position never changes between zooms.
+      if (isOffset) {
+        colocatedSpiderState.push({ marker, line: spiderLine, lat, lon, dx, dy });
+      }
       // Use the original coordinates for fitBounds so sub-pixel display
       // offsets cannot widen the auto-fit window.
       pts.push([lat, lon]);

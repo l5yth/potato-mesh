@@ -50,15 +50,22 @@ function coordinateKey(lat, lon, precision) {
 }
 
 /**
- * Normalise the precision option to a non-negative integer, falling back to
- * the module default when the caller passes an invalid value.
+ * Upper bound on coordinate precision: ``Number.prototype.toFixed`` throws a
+ * ``RangeError`` for values outside ``0..100``.
+ */
+const MAX_PRECISION = 100;
+
+/**
+ * Normalise the precision option to a non-negative integer in the range
+ * accepted by ``Number.prototype.toFixed``, falling back to the module default
+ * when the caller passes an invalid value.
  *
  * @param {number} value Caller-provided precision.
  * @returns {number} Precision used to format coordinate keys.
  */
 function normalisePrecision(value) {
   if (!Number.isFinite(value) || value < 0) return DEFAULT_PRECISION;
-  return Math.floor(value);
+  return Math.min(Math.floor(value), MAX_PRECISION);
 }
 
 /**
@@ -132,12 +139,16 @@ export function computeColocatedOffsets(entries, options = {}) {
     }
 
     // Sort within the group by node_id so the angular slot is deterministic
-    // across renders even if the caller-supplied entry order changes.
+    // across renders even if the caller-supplied entry order changes.  When
+    // two entries share an identical id (e.g. two records with empty/missing
+    // ids), fall back to the original input index so the comparator never
+    // returns 0 — making the ordering portable across sort implementations
+    // rather than relying on engine-specific stable-sort semantics.
     const ordered = bucket.slice().sort((a, b) => {
       const idA = a.entry?.node?.node_id ?? '';
       const idB = b.entry?.node?.node_id ?? '';
-      if (idA === idB) return 0;
-      return idA < idB ? -1 : 1;
+      if (idA !== idB) return idA < idB ? -1 : 1;
+      return a.index - b.index;
     });
 
     const radius = baseRadiusPx + Math.max(0, ordered.length - 2) * radiusGrowthPx;
@@ -159,6 +170,7 @@ export const __testUtils = {
   DEFAULT_PRECISION,
   DEFAULT_BASE_RADIUS_PX,
   DEFAULT_RADIUS_GROWTH_PX,
+  MAX_PRECISION,
   coordinateKey,
   normalisePrecision,
   normalisePositive
