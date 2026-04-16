@@ -56,6 +56,23 @@ Single message payload:
 - RF: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil)
 - Meta: `channel_name` (string; only when not encrypted and known), `ingestor` (canonical host id), `lora_freq`, `modem_preset`
 
+**Cross-ingestor deduplication.** The `id` field is the sole dedup key — the server collapses repeat POSTs on the `messages.id` PRIMARY KEY. Protocols that lack a firmware-assigned packet ID MUST derive a stable, sender-side fingerprint so that the same physical transmission heard by multiple ingestors produces the same `id`. The id MUST fit in 53 bits (`0 <= id <= (1 << 53) - 1`) to round-trip through the JavaScript frontend without precision loss.
+
+For MeshCore the canonical fingerprint is:
+
+```
+v1:<sender_identity>:<sender_timestamp>:<discriminator>:<text>
+```
+
+hashed with SHA-256 and truncated to 53 bits (first 7 bytes, masked). Components:
+
+- `sender_identity` — for channel messages, the lowercased+stripped sender name parsed from the leading `Name:` convention in the message text; for direct messages, the sender's `pubkey_prefix` from the MeshCore event payload. Empty string when unavailable.
+- `sender_timestamp` — Unix seconds from the sender's clock (identical across receivers).
+- `discriminator` — `c<N>` for channel messages on channel `N`, `dm` for direct messages.
+- `text` — the message text exactly as transmitted.
+
+The `v1:` prefix lets the format evolve (e.g. add a channel-secret hash) without colliding with previously-written ids.
+
 #### `POST /api/positions`
 
 Single position payload:

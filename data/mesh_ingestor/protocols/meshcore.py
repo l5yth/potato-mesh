@@ -123,27 +123,58 @@ _MESHCORE_ADV_TYPE_ROLE: dict[int, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _derive_message_id(sender_ts: int, discriminator: str, text: str) -> int:
-    """Derive a stable 32-bit message ID from available MeshCore fields.
+_MESHCORE_ID_BITS: int = 53
+"""Width of the synthetic MeshCore message ID, in bits.
 
-    MeshCore does not assign firmware-side packet IDs.  This function
-    produces a deterministic 32-bit integer so that re-delivered messages
-    resolve to the same database row via the UPSERT ON CONFLICT path, while
-    messages that differ in timestamp, channel/peer, or text content produce
-    distinct IDs.
+53 bits keeps the value within :js:data:`Number.MAX_SAFE_INTEGER`
+(``2**53 - 1``) so the JSON ID round-trips through the JavaScript frontend
+without precision loss, while giving roughly :math:`2^{26.5}` (~95 million)
+distinct messages of birthday-collision headroom.
+"""
+
+_MESHCORE_ID_MASK: int = (1 << _MESHCORE_ID_BITS) - 1
+"""Bitmask applied to the SHA-256 prefix to clamp the id to 53 bits."""
+
+
+def _derive_message_id(
+    sender_identity: str,
+    sender_ts: int,
+    discriminator: str,
+    text: str,
+) -> int:
+    """Derive a stable 53-bit message ID from sender-side MeshCore fields.
+
+    MeshCore does not assign firmware-side packet IDs.  This function produces
+    a deterministic 53-bit integer fingerprint of a physical transmission so
+    that the same packet heard by multiple ingestors collapses to a single
+    ``messages`` row via the ``messages.id`` PRIMARY KEY upsert path.  Every
+    component of the fingerprint is sender-side, ensuring two receivers with
+    different clocks or roster state still compute the same value.
 
     Parameters:
-        sender_ts: Unix timestamp from the sender's clock.
-        discriminator: Channel index (``"c<N>"`` for channel messages) or
-            pubkey prefix (for direct messages) to separate messages with
-            the same timestamp.
-        text: Message text.
+        sender_identity: Stable sender identifier shared across receivers.
+            For channel messages this is the lowercased+stripped sender name
+            parsed from the message text via :func:`_parse_sender_name`; for
+            direct messages it is the sender's MeshCore ``pubkey_prefix``.
+            Must be a string (use ``""`` when unavailable).
+        sender_ts: Unix timestamp from the sender's clock (identical across
+            receivers regardless of receiver-side clock skew).
+        discriminator: Namespace tag separating message classes that could
+            otherwise collide.  ``"c<N>"`` is reserved for channel messages
+            on channel ``N``; ``"dm"`` is reserved for direct messages.
+        text: Message text exactly as transmitted by the sender.
 
     Returns:
-        A non-negative 32-bit integer suitable for the ``id`` column.
+        A non-negative 53-bit integer suitable for the ``id`` column.  The
+        value is bounded by ``0 <= id <= (1 << 53) - 1`` so it survives the
+        JSON → JavaScript number round-trip without precision loss.
     """
-    data = f"{sender_ts}:{discriminator}:{text}".encode("utf-8", errors="replace")
-    return int.from_bytes(hashlib.sha256(data).digest()[:4], "big")
+    # The ``v1:`` prefix lets us evolve the fingerprint format (e.g. add a
+    # channel-secret hash) by bumping to ``v2:`` without colliding with
+    # existing ids written under the v1 scheme.
+    fingerprint = f"v1:{sender_identity}:{sender_ts}:{discriminator}:{text}"
+    digest = hashlib.sha256(fingerprint.encode("utf-8", errors="replace")).digest()
+    return int.from_bytes(digest[:7], "big") & _MESHCORE_ID_MASK
 
 
 def _meshcore_node_id(public_key_hex: str | None) -> str | None:
@@ -904,8 +935,18 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                     )
                     iface._synthetic_node_ids.add(mention_id)
 
+        # The dedup fingerprint uses the parsed sender name (lowercased and
+        # stripped) rather than ``from_id``: each ingestor independently
+        # resolves Alice to either her real ``!aabbccdd`` (when she is in its
+        # contact roster) or to a synthetic id derived from her name; the
+        # parsed name lives in the message text itself, so it is identical
+        # across all receivers regardless of roster state.
+        sender_identity = (sender_name or "").strip().lower()
+
         packet = {
-            "id": _derive_message_id(sender_ts, f"c{channel_idx}", text),
+            "id": _derive_message_id(
+                sender_identity, sender_ts, f"c{channel_idx}", text
+            ),
             "rxTime": rx_time,
             "rx_time": rx_time,
             "from_id": from_id,
@@ -941,8 +982,12 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         pubkey_prefix = payload.get("pubkey_prefix", "")
         from_id = iface.lookup_node_id(pubkey_prefix)
 
+        # ``pubkey_prefix`` is already a sender-side stable identifier (the
+        # first six bytes of the sender's public key); ``"dm"`` namespaces
+        # direct messages so they cannot collide with channel messages that
+        # happen to share the other components.
         packet = {
-            "id": _derive_message_id(sender_ts, pubkey_prefix or "", text),
+            "id": _derive_message_id(pubkey_prefix or "", sender_ts, "dm", text),
             "rxTime": rx_time,
             "rx_time": rx_time,
             "from_id": from_id,
