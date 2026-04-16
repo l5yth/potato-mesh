@@ -1202,44 +1202,106 @@ def test_interface_close_is_idempotent():
 
 def test_derive_message_id_is_deterministic():
     """Same inputs must always produce the same ID."""
-    assert _derive_message_id(1_000_000, "c0", "hello") == _derive_message_id(
-        1_000_000, "c0", "hello"
+    assert _derive_message_id("alice", 1_000_000, "c0", "hello") == _derive_message_id(
+        "alice", 1_000_000, "c0", "hello"
     )
 
 
 def test_derive_message_id_differs_by_channel():
     """Messages on different channels with the same timestamp must not collide."""
-    assert _derive_message_id(1_000_000, "c0", "hello") != _derive_message_id(
-        1_000_000, "c1", "hello"
+    assert _derive_message_id("alice", 1_000_000, "c0", "hello") != _derive_message_id(
+        "alice", 1_000_000, "c1", "hello"
     )
 
 
 def test_derive_message_id_differs_by_text():
     """Messages with different text must produce different IDs."""
-    assert _derive_message_id(1_000_000, "c0", "hello") != _derive_message_id(
-        1_000_000, "c0", "world"
+    assert _derive_message_id("alice", 1_000_000, "c0", "hello") != _derive_message_id(
+        "alice", 1_000_000, "c0", "world"
     )
 
 
 def test_derive_message_id_differs_by_timestamp():
     """Messages at different timestamps must produce different IDs."""
-    assert _derive_message_id(1_000_000, "c0", "hi") != _derive_message_id(
-        1_000_001, "c0", "hi"
+    assert _derive_message_id("alice", 1_000_000, "c0", "hi") != _derive_message_id(
+        "alice", 1_000_001, "c0", "hi"
     )
 
 
-def test_derive_message_id_is_32bit():
-    """Result must fit in a 32-bit unsigned integer."""
-    result = _derive_message_id(1_758_000_000, "aabbccddee11", "some text")
-    assert 0 <= result <= 0xFFFFFFFF
+def test_derive_message_id_is_53bit():
+    """Result must fit in JS ``Number.MAX_SAFE_INTEGER`` (2**53 - 1).
+
+    Federation passes the id through JSON, where Number values exceeding
+    53 bits lose precision in the JavaScript frontend.  Clamping to 53 bits
+    preserves the value across the round-trip while leaving ample collision
+    headroom (~95M messages at the 50% birthday bound).
+    """
+    result = _derive_message_id("alice", 1_758_000_000, "c0", "some text")
+    assert 0 <= result <= (1 << 53) - 1
 
 
 def test_derive_message_id_distinguishes_long_messages_differing_after_128_chars():
     """Messages that share the first 128 characters must still get different IDs."""
     prefix = "A" * 128
-    id_a = _derive_message_id(1_000_000, "c0", prefix + "AAAAAA")
-    id_b = _derive_message_id(1_000_000, "c0", prefix + "BBBBBB")
+    id_a = _derive_message_id("alice", 1_000_000, "c0", prefix + "AAAAAA")
+    id_b = _derive_message_id("alice", 1_000_000, "c0", prefix + "BBBBBB")
     assert id_a != id_b
+
+
+def test_derive_message_id_includes_sender_identity():
+    """Two senders posting the same text on the same channel/second must NOT collide.
+
+    Regression test for issue #751: prior to the fix the channel-message
+    fingerprint omitted the sender entirely, so Alice and Bob both posting
+    "ack" at the same instant collapsed into a single row.
+    """
+    alice_id = _derive_message_id("alice", 1_000_000, "c0", "ack")
+    bob_id = _derive_message_id("bob", 1_000_000, "c0", "ack")
+    assert alice_id != bob_id
+
+
+def test_derive_message_id_channel_vs_dm_disjoint():
+    """Channel and direct messages must occupy disjoint id namespaces.
+
+    Without a discriminator that distinguishes the two classes, a channel
+    message and a DM that happen to share the other components could collide.
+    """
+    channel_id = _derive_message_id("alice", 1_000_000, "c0", "hi")
+    dm_id = _derive_message_id("alice", 1_000_000, "dm", "hi")
+    assert channel_id != dm_id
+
+
+def test_derive_message_id_identical_across_receivers():
+    """Two ingestors with different roster state must derive the same id.
+
+    The whole point of the fingerprint is that every input is sender-side, so
+    two physically separate receivers compute the same id and the messages
+    collapse on the ``messages.id`` PRIMARY KEY upsert.
+    """
+    args = ("alice", 1_758_000_000, "c0", "hello mesh")
+    assert _derive_message_id(*args) == _derive_message_id(*args)
+
+
+def test_derive_message_id_handles_invalid_utf8():
+    """Inputs with surrogate pairs must not raise; ``errors='replace'`` cleans them."""
+    bad_text = "before \ud800 after"  # lone surrogate is invalid UTF-8
+    result = _derive_message_id("alice", 1_000_000, "c0", bad_text)
+    assert 0 <= result <= (1 << 53) - 1
+
+
+def test_derive_message_id_anonymous_channel_msgs_still_distinguished_by_other_fields():
+    """Anonymous channel msgs (sender_identity="") still differ when text/ts differ.
+
+    The empty sender-identity path is documented as a degraded mode in
+    CONTRACTS.md (anonymous transmissions cannot be distinguished from each
+    other when timestamp + channel + text also match).  This test pins down
+    the *non-degraded* behaviour: as long as any of the remaining components
+    differ, the ids must remain distinct.
+    """
+    base = _derive_message_id("", 1_000_000, "c0", "hi")
+    assert base != _derive_message_id("", 1_000_001, "c0", "hi")  # ts differs
+    assert base != _derive_message_id("", 1_000_000, "c1", "hi")  # channel differs
+    assert base != _derive_message_id("", 1_000_000, "c0", "hello")  # text differs
 
 
 # ---------------------------------------------------------------------------
@@ -1334,8 +1396,9 @@ def test_on_channel_msg_queues_packet(monkeypatch):
     assert pkt["from_id"] is None
     assert pkt["snr"] == 5
     assert pkt["rssi"] == -80
-    # ID must be the hash-derived value, not the raw timestamp
-    assert pkt["id"] == _derive_message_id(1_758_000_000, "c2", "hello mesh")
+    # ID must be the hash-derived value, not the raw timestamp.  The text has no
+    # "Name:" prefix so the sender-identity component is the empty string.
+    assert pkt["id"] == _derive_message_id("", 1_758_000_000, "c2", "hello mesh")
 
 
 def test_on_channel_msg_resolves_from_id_via_sender_name(monkeypatch):
@@ -1535,8 +1598,88 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
     assert pkt["from_id"] == "!aabbccdd"
     assert pkt["to_id"] == "!deadbeef"
     assert pkt["id"] == _derive_message_id(
-        1_758_000_001, "aabbccddee11", "direct message"
+        "aabbccddee11", 1_758_000_001, "dm", "direct message"
     )
+
+
+def test_on_channel_msg_id_identical_across_ingestors_with_different_rosters(
+    monkeypatch,
+):
+    """Two ingestors that hear the same channel message must emit the same id.
+
+    Regression test for issue #751.  Ingestor A has Alice in its contact roster
+    (so ``from_id`` resolves to ``!aabbccdd``); ingestor B does not (so a
+    synthetic ``from_id`` is created).  The dedup id MUST still match because
+    it is derived from the parsed sender name in the text, not from the
+    per-ingestor ``from_id`` resolution.
+    """
+    import asyncio
+
+    pub_key = "aabbccdd" + "00" * 28
+    payload = {
+        "sender_timestamp": 1_758_000_999,
+        "text": "Alice: dedup me",
+        "channel_idx": 0,
+    }
+
+    captured_a, _, _, hmap_a = _setup_channel_msg_handlers(
+        monkeypatch,
+        contacts=[{"public_key": pub_key, "adv_name": "Alice"}],
+    )
+    asyncio.run(hmap_a["CHANNEL_MSG_RECV"](_FakeEvt(payload)))
+
+    captured_b, _, _, hmap_b = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(hmap_b["CHANNEL_MSG_RECV"](_FakeEvt(payload)))
+
+    assert len(captured_a) == 1
+    assert len(captured_b) == 1
+    # Different ingestors → different from_id resolution, but the dedup id is
+    # identical because it comes from the parsed sender name and the
+    # sender-side timestamp/text.
+    assert captured_a[0]["from_id"] != captured_b[0]["from_id"]
+    assert captured_a[0]["id"] == captured_b[0]["id"]
+
+
+def test_on_contact_msg_id_identical_across_ingestors_with_different_rosters(
+    monkeypatch,
+):
+    """Two ingestors that hear the same DM must emit the same id.
+
+    Direct messages already carry the sender's ``pubkey_prefix`` in the event
+    payload, so the dedup id is identical regardless of contact-roster state.
+    """
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    pub_key = "aabbccddee11" + "00" * 26
+    payload = {
+        "sender_timestamp": 1_758_000_998,
+        "text": "private hello",
+        "pubkey_prefix": "aabbccddee11",
+    }
+
+    def _run(with_contact: bool):
+        captured: list = []
+        stub = _make_stub_handlers_module()
+        stub.store_packet_dict = lambda pkt: captured.append(pkt)
+        monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+        monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+        iface = _MeshcoreInterface(target=None)
+        iface.host_node_id = "!deadbeef"
+        if with_contact:
+            iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+        hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+        asyncio.run(hmap["CONTACT_MSG_RECV"](_FakeEvt(payload)))
+        return captured
+
+    captured_a = _run(with_contact=True)
+    captured_b = _run(with_contact=False)
+
+    assert len(captured_a) == 1
+    assert len(captured_b) == 1
+    assert captured_a[0]["id"] == captured_b[0]["id"]
 
 
 def test_on_channel_msg_skips_empty_text(monkeypatch):

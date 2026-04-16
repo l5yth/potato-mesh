@@ -56,6 +56,29 @@ Single message payload:
 - RF: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil)
 - Meta: `channel_name` (string; only when not encrypted and known), `ingestor` (canonical host id), `lora_freq`, `modem_preset`
 
+**Cross-ingestor deduplication.** The `id` field is the sole dedup key — the server collapses repeat POSTs on the `messages.id` PRIMARY KEY. Protocols that lack a firmware-assigned packet ID MUST derive a stable, sender-side fingerprint so that the same physical transmission heard by multiple ingestors produces the same `id`. The id MUST fit in 53 bits (`0 <= id <= (1 << 53) - 1`) to round-trip through the JavaScript frontend without precision loss.
+
+For MeshCore the canonical fingerprint is:
+
+```
+v1:<sender_identity>:<sender_timestamp>:<discriminator>:<text>
+```
+
+hashed with SHA-256 and truncated to 53 bits (first 7 bytes, masked). Components:
+
+- `sender_identity` — for channel messages, the lowercased+stripped sender name parsed from a leading `SenderName:` prefix in the message text (split on the first colon, surrounding whitespace stripped); for direct messages, the sender's `pubkey_prefix` from the MeshCore event payload. Empty string when unavailable — when the channel-message text lacks any `SenderName:` prefix the dedup degrades and two distinct senders sharing timestamp + channel + text collide. In practice MeshCore clients always prefix the name; the residual risk is anonymous/malformed transmissions.
+- `sender_timestamp` — Unix seconds from the sender's clock (identical across receivers).
+- `discriminator` — `c<N>` for channel messages on channel `N`, `dm` for direct messages.
+- `text` — the message text exactly as transmitted.
+
+The `v1:` prefix lets the format evolve (e.g. add a channel-secret hash) without colliding with previously-written ids.
+
+**Known limitations of the v1 fingerprint:**
+
+- *Format-string ambiguity around `:`.* Components are joined with literal colons and not length-prefixed, so a colon embedded in `sender_identity` or `text` shifts the boundary between fields. In theory two distinct triples (e.g. `sender_identity="a:b"` vs `sender_identity="a"` with a leading `b:` in `text`) can produce the same fingerprint. In practice this is vanishingly rare — MeshCore sender names rarely contain colons and even then both senders would have to land on the same timestamp/channel — but a `v2` revision should switch to a delimiter that cannot appear in any component (e.g. `\x00`) or length-prefix each field.
+- *meshcore_py text-decoding inconsistency.* The upstream `meshcore_py` reader strips trailing `\0` bytes on the real-time `CHANNEL_MSG_RECV` path but not on the sync-replay path. If the same physical message is heard once in real-time and once via sync-replay, the byte sequences differ → different fingerprints → duplicate row. Out of scope for the ingestor; track upstream.
+- *Sender-side clock reset.* MeshCore nodes without an RTC start `sender_timestamp` from `0` after reboot. Two messages from the same sender containing the same text within one second of power-on collapse into a single row. Acceptable trade-off given the alternative (no dedup at all).
+
 #### `POST /api/positions`
 
 Single position payload:
