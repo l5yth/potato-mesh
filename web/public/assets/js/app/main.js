@@ -84,6 +84,7 @@ import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
 import { parseMeshcoreSenderPrefix, findNodeByLongName } from './meshcore-chat-helpers.js';
+import { renderChatEntryContent } from './chat-entry-renderer.js';
 import {
   SNAPSHOT_WINDOW,
   aggregateNeighborSnapshots,
@@ -3089,63 +3090,19 @@ export function initializeApp(config) {
     }
 
     const nodeProtocolPrefix = protocolIconPrefixHtml(messageProtocol);
-    const replyPrefix = resolveReplyPrefix({
+
+    // Delegate reply-prefix / mention / body / encrypted rendering to the
+    // shared chat entry renderer so the dashboard and the node detail page
+    // produce identical message HTML.
+    const { html: text } = renderChatEntryContent({
       message: m,
-      messagesById,
       nodesById,
+      messagesById,
       renderShortHtml,
-      escapeHtml
+      escapeHtml,
+      renderEmojiHtml,
+      formatEncryptedMessageNotice,
     });
-
-    let messageBodyHtml = '';
-    if (m && m.encrypted) {
-      const notice = formatEncryptedMessageNotice(m);
-      if (notice && typeof notice === 'object') {
-        const content = notice.content ?? '';
-        messageBodyHtml = notice.isHtml ? content : escapeHtml(content);
-      } else {
-        messageBodyHtml = '';
-      }
-    } else {
-      // Mention rendering is active for all MeshCore messages (channel + DM):
-      // @[Name] patterns are replaced with a short-name badge when the named
-      // node is present in nodesById.
-      const isMeshcoreMsg = isMeshcoreProtocol(messageProtocol);
-      const renderMentionHtml = isMeshcoreMsg
-        ? (mentionedName) => {
-            const mentionNode = findNodeByLongName(mentionedName, nodesById);
-            if (mentionNode) {
-              return renderShortHtml(
-                mentionNode.short_name ?? mentionNode.shortName,
-                mentionNode.role,
-                mentionNode.long_name ?? mentionNode.longName,
-                mentionNode
-              );
-            }
-            // Node not found — render as escaped plain text fallback.
-            return `@[${escapeHtml(mentionedName)}]`;
-          }
-        : null;
-
-      // For channel messages, strip the "SenderName: " prefix before building
-      // the body so we can prepend a linked version of the sender name instead.
-      const bodyMsg = (isMeshcoreChannelMsg && parsedMeshcorePrefix)
-        ? { ...m, text: parsedMeshcorePrefix.bodyText }
-        : m;
-
-      messageBodyHtml = buildMessageBody({
-        message: bodyMsg || {},
-        escapeHtml,
-        renderEmojiHtml,
-        renderMentionHtml,
-      });
-
-    }
-
-    const combinedSegments = [];
-    if (replyPrefix) combinedSegments.push(replyPrefix);
-    if (messageBodyHtml) combinedSegments.push(messageBodyHtml);
-    const text = combinedSegments.length > 0 ? combinedSegments.join(' ') : '';
     const metadata = extractChatMessageMetadata(m);
     const prefix = formatChatMessagePrefix({
       timestamp: escapeHtml(ts),

@@ -22,6 +22,8 @@ import {
   formatChatMessagePrefix,
   formatChatPresetTag,
 } from './chat-format.js';
+import { buildMessageIndex } from './message-replies.js';
+import { renderChatEntryContent } from './chat-entry-renderer.js';
 import {
   fmtAlt,
   fmtHumidity,
@@ -923,7 +925,59 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
 }
 
 /**
+ * Render the emoji HTML fragment used by the chat entry renderer.
+ *
+ * Matches the markup emitted by the dashboard chat panel so that both the
+ * node detail page and the dashboard use identical emoji styling.
+ *
+ * @param {string} symbol Emoji character.
+ * @returns {string} HTML fragment wrapping the emoji in a chat-entry span.
+ */
+function renderNodeChatEmojiHtml(symbol) {
+  const trimmed = String(symbol ?? '').trim();
+  if (!trimmed) return '';
+  return `<span class="chat-entry-emoji" aria-hidden="true">${escapeHtml(trimmed)}</span>`;
+}
+
+/**
+ * Build a ``nodesById`` Map from the sender nodes attached to each message.
+ *
+ * The node detail page only has access to the messages fetched for the
+ * current node, so we seed the lookup registry from the hydrated sender
+ * nodes carried on each message plus the current page's fallback node.
+ * This covers the common cases: self-references, mentions of authors that
+ * have messages in the loaded window, and reply targets.
+ *
+ * @param {Array<Object>} messages Message records.
+ * @param {?Object} fallbackNode Current page node.
+ * @returns {Map<string, Object>} Lookup map keyed by node identifier.
+ */
+function buildNodesById(messages, fallbackNode) {
+  const map = new Map();
+  const register = (node) => {
+    if (!node || typeof node !== 'object') return;
+    const id = node.node_id ?? node.nodeId ?? null;
+    if (!id) return;
+    if (!map.has(id)) map.set(id, node);
+  };
+  if (Array.isArray(messages)) {
+    for (const message of messages) {
+      if (!message || typeof message !== 'object') continue;
+      register(message.node);
+    }
+  }
+  register(fallbackNode);
+  return map;
+}
+
+/**
  * Render a message list using structured metadata formatting.
+ *
+ * Each entry is rendered through the shared {@link renderChatEntryContent}
+ * helper so the node detail page mirrors the dashboard chat panel —
+ * mentions resolve to badges, MeshCore leading-mention replies surface as
+ * an ``[in reply to]`` prefix, emoji are wrapped in ``chat-entry-emoji``
+ * spans, and URLs are linkified.
  *
  * @param {Array<Object>} messages Message records.
  * @param {Function} renderShortHtml Badge rendering implementation.
@@ -934,13 +988,17 @@ function renderMessages(messages, renderShortHtml, node) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
 
   const fallbackNode = node && typeof node === 'object' ? node : null;
+  const nodesById = buildNodesById(messages, fallbackNode);
+  const messagesById = buildMessageIndex(messages);
 
   const items = messages
     .map(message => {
       if (!message || typeof message !== 'object') return null;
-      const text = stringOrNull(message.text) || stringOrNull(message.emoji);
-      if (!text) return null;
-      if (message.encrypted && String(text).trim() === 'GAA=') return null;
+      const hasBody = stringOrNull(message.text) || stringOrNull(message.emoji);
+      if (!hasBody) return null;
+      if (message.encrypted && stringOrNull(message.text) && String(message.text).trim() === 'GAA=') {
+        return null;
+      }
 
       const timestamp = formatMessageTimestamp(message.rx_time, message.rx_iso);
       const metadata = extractChatMessageMetadata(message);
@@ -970,18 +1028,36 @@ function renderMessages(messages, renderShortHtml, node) {
       const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
       const channelTag = formatChatChannelTag({ channelName: metadata.channelName });
 
-      const messageNode = message.node && typeof message.node === 'object' ? message.node : null;
-      const messageProtocol = stringOrNull(messageNode?.protocol ?? fallbackNode?.protocol) ?? null;
+      // Render the message body through the shared chat-entry renderer so
+      // the node page matches the dashboard in mention/reply/emoji handling.
+      const { html: bodyHtml, meshcoreSenderNode } = renderChatEntryContent({
+        message,
+        nodesById,
+        messagesById,
+        renderShortHtml,
+        escapeHtml,
+        renderEmojiHtml: renderNodeChatEmojiHtml,
+      });
+
+      // Resolve the sender badge.  When the ingestor could not hydrate
+      // ``message.node`` for a MeshCore channel message, fall back to the
+      // node resolved by the shared renderer via the sender-prefix lookup.
+      const senderNode = message.node && typeof message.node === 'object'
+        ? message.node
+        : (meshcoreSenderNode && typeof meshcoreSenderNode === 'object' ? meshcoreSenderNode : null);
+      const messageProtocol = stringOrNull(senderNode?.protocol ?? fallbackNode?.protocol) ?? null;
       const protocolIconHtml = protocolIconPrefixHtml(messageProtocol);
       const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
-        shortName: messageNode?.short_name ?? messageNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
-        longName: messageNode?.long_name ?? messageNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
-        role: messageNode?.role ?? fallbackNode?.role ?? null,
+        shortName: senderNode?.short_name ?? senderNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
+        longName: senderNode?.long_name ?? senderNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
+        role: senderNode?.role ?? fallbackNode?.role ?? null,
         identifier:
           message.node_id
             ?? message.nodeId
             ?? message.from_id
             ?? message.fromId
+            ?? senderNode?.node_id
+            ?? senderNode?.nodeId
             ?? fallbackNode?.nodeId
             ?? fallbackNode?.node_id
             ?? null,
@@ -990,13 +1066,15 @@ function renderMessages(messages, renderShortHtml, node) {
             ?? message.nodeNum
             ?? message.from_num
             ?? message.fromNum
+            ?? senderNode?.node_num
+            ?? senderNode?.nodeNum
             ?? fallbackNode?.nodeNum
             ?? fallbackNode?.node_num
             ?? null,
-        source: messageNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
+        source: senderNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<li>${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${escapeHtml(text)}</li>`;
+      return `<li>${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${bodyHtml}</li>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';

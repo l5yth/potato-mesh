@@ -443,7 +443,11 @@ function renderTextWithMentions(text, escapeHtml, renderMentionHtml) {
   // and captured mention names (odd indices): ["before", "Alice", "after", ...]
   const parts = text.split(/@\[([^\]]+)\]/);
   return parts.map((part, i) => {
-    if (i % 2 === 1) return renderMentionHtml(part);
+    // Mention names are trimmed before being passed to the callback so that
+    // captures like "@[ Timo +]" or "@[T-deck NK ]" (with stray whitespace)
+    // resolve against the registry; the callback is responsible for falling
+    // back to a plain-text rendering when the name does not match.
+    if (i % 2 === 1) return renderMentionHtml(part.trim());
     // Empty literal segments (e.g. when a mention is at the start or end) can
     // be skipped to avoid unnecessary renderLiteralWithLinks calls.
     return part ? renderLiteralWithLinks(part, escapeHtml) : '';

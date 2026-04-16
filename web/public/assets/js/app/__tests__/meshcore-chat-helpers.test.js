@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import {
   parseMeshcoreSenderPrefix,
   findNodeByLongName,
+  extractLeadingMentionAsReply,
 } from '../meshcore-chat-helpers.js';
 
 // ---------------------------------------------------------------------------

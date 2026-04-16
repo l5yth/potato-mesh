@@ -59,9 +59,63 @@ export function parseMeshcoreSenderPrefix(text) {
 export function findNodeByLongName(longName, nodesById) {
   if (!longName || typeof longName !== 'string') return null;
   if (!(nodesById instanceof Map)) return null;
+  const trimmed = longName.trim();
+  if (!trimmed) return null;
+
+  // First pass: exact match on trimmed candidate long names.
   for (const node of nodesById.values()) {
-    const candidate = node.long_name ?? node.longName;
-    if (typeof candidate === 'string' && candidate === longName) return node;
+    const raw = node.long_name ?? node.longName;
+    if (typeof raw !== 'string') continue;
+    if (raw.trim() === trimmed) return node;
   }
+
+  // Second pass: fallback match after stripping leading non-letter/non-digit
+  // characters (emoji, punctuation, spaces) from the candidate.  Handles
+  // messages that reference a node by its semantic name without the emoji
+  // prefix the node carries in the registry — e.g. @[Timo +] matching
+  // a node whose long_name is "📺 Timo +".
+  for (const node of nodesById.values()) {
+    const raw = node.long_name ?? node.longName;
+    if (typeof raw !== 'string') continue;
+    const stripped = raw.replace(/^[^\p{L}\p{N}]+/u, '').trim();
+    if (stripped && stripped === trimmed) return node;
+  }
+
   return null;
+}
+
+/**
+ * Extract a leading ``@[Name]`` mention from text if it looks like a reply.
+ *
+ * MeshCore does not carry a structured ``reply_id`` on replies; instead, the
+ * sender's client prepends ``@[Author]`` to the body when quoting a previous
+ * message.  When the body starts with exactly one mention and no other
+ * mentions appear in the text, we treat that as a reply and surface it as an
+ * ``[in reply to BADGE]`` prefix, similar to Meshtastic's reply rendering.
+ *
+ * Names captured from ``@[...]`` are trimmed so that ``@[ Timo +]`` or
+ * ``@[T-deck NK ]`` resolve correctly against the registry.
+ *
+ * @param {?string} text Message text to inspect.
+ * @returns {{ mentionName: string, remainingText: ?string }|null}
+ *   Parsed components, or ``null`` when the text does not begin with a single
+ *   mention.
+ */
+export function extractLeadingMentionAsReply(text) {
+  if (!text || typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('@[')) return null;
+
+  // Total mention count must be exactly one for the message to qualify as a
+  // single-mention reply (multiple mentions are ambiguous — treat as regular
+  // mentions instead).
+  const allMentions = trimmed.match(/@\[[^\]]+\]/g);
+  if (!allMentions || allMentions.length !== 1) return null;
+
+  const match = trimmed.match(/^@\[([^\]]+)\]\s*([\s\S]*)$/);
+  if (!match) return null;
+  const mentionName = match[1].trim();
+  if (!mentionName) return null;
+  const rest = match[2].trim();
+  return { mentionName, remainingText: rest.length > 0 ? rest : null };
 }
