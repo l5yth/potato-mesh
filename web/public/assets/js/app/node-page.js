@@ -1097,11 +1097,23 @@ function renderMessages(messages, renderShortHtml, node, globalNodesById = null)
         source: senderNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<li>${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${bodyHtml}</li>`;
+      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${bodyHtml}</div>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
-  return `<ul class="node-detail__list">${items.join('')}</ul>`;
+  // Wrap entries in the same chat-panel chrome the dashboard and chat sub
+  // pages use so this section visually matches a real chat panel rather
+  // than a plain bullet list.  ``chat-tabpanel`` provides the scrollable
+  // padded inner container; ``chat-panel--node-detail`` is a hook for any
+  // node-page-specific overrides (height, border behaviour) that we want
+  // distinct from the dashboard's 60vh default.
+  return (
+    '<div class="chat-panel chat-panel--node-detail" aria-label="Chat log">'
+    + '<div class="chat-tabpanel">'
+    + items.join('')
+    + '</div>'
+    + '</div>'
+  );
 }
 
 /**
