@@ -206,6 +206,32 @@ test('buildMessageBody with renderMentionHtml handles multiple mentions', () => 
   assert.equal(body, 'BADGE(A)ESC( and )BADGE(B)');
 });
 
+test('buildMessageBody trims mention name whitespace before callback (#727)', () => {
+  const calls = [];
+  const body = buildMessageBody({
+    message: { text: '@[ Timo +] hello' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: (name) => { calls.push(name); return `BADGE(${name})`; },
+  });
+  // The callback should receive the trimmed mention name so that whitespace
+  // typed by MeshCore users (e.g. "@[ Timo +]" or "@[T-deck NK ]") matches
+  // the canonical long name stored on the node record.
+  assert.deepEqual(calls, ['Timo +']);
+  assert.equal(body, 'BADGE(Timo +)ESC( hello)');
+});
+
+test('buildMessageBody trims trailing whitespace in mention name (#727)', () => {
+  const calls = [];
+  buildMessageBody({
+    message: { text: '@[T-deck NK ] ping' },
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+    renderMentionHtml: (name) => { calls.push(name); return `BADGE(${name})`; },
+  });
+  assert.deepEqual(calls, ['T-deck NK']);
+});
+
 test('buildMessageBody with renderMentionHtml escapes literal segments', () => {
   const body = buildMessageBody({
     message: { text: '<b> @[Alice]' },
