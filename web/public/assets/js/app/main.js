@@ -46,6 +46,7 @@ import { escapeHtml } from './utils.js';
 export { escapeHtml };
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
+import { computeColocatedOffsets } from './map-colocated-offset.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
@@ -4218,15 +4219,42 @@ export function initializeApp(config) {
       })
       .map(entry => entry.node);
 
+    // Pre-pass: parse + filter renderable entries once so co-located nodes can
+    // be spread visually before any marker is created.  Keeping the validation
+    // inline before the offset pass means nodes filtered by LIMIT_DISTANCE do
+    // not influence the per-coordinate group sizes.
+    const renderableEntries = [];
     for (const n of nodesByRenderOrder) {
       const latRaw = n.latitude, lonRaw = n.longitude;
       if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
       const lat = Number(latRaw), lon = Number(lonRaw);
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
       if (LIMIT_DISTANCE && n.distance_km != null && n.distance_km > MAX_DISTANCE_KM) continue;
+      renderableEntries.push({ node: n, lat, lon });
+    }
+
+    const offsets = computeColocatedOffsets(renderableEntries);
+    for (const { entry, dx, dy } of offsets) {
+      const n = entry.node;
+      const { lat, lon } = entry;
+
+      // Translate the pixel-space offset into a LatLng using the live map
+      // projection so the visual gap between co-located markers stays constant
+      // across zoom levels.  Singleton groups skip the projection round-trip.
+      let markerLatLng;
+      if (dx === 0 && dy === 0) {
+        markerLatLng = [lat, lon];
+      } else if (typeof map.latLngToLayerPoint === 'function' && typeof map.layerPointToLatLng === 'function') {
+        const basePoint = map.latLngToLayerPoint([lat, lon]);
+        const offsetPoint = L.point(basePoint.x + dx, basePoint.y + dy);
+        const projected = map.layerPointToLatLng(offsetPoint);
+        markerLatLng = [projected.lat, projected.lng];
+      } else {
+        markerLatLng = [lat, lon];
+      }
 
       const color = getRoleColor(n.role, n.protocol);
-      const marker = L.circleMarker([lat, lon], {
+      const marker = L.circleMarker(markerLatLng, {
         radius: 9,
         color: '#000',
         weight: 1,
@@ -4238,6 +4266,8 @@ export function initializeApp(config) {
       const fallbackOverlayProvider = () => mergeOverlayDetails(null, n);
       let markerToken = 0;
       marker.addTo(markersLayer);
+      // Use the original coordinates for fitBounds so sub-pixel display
+      // offsets cannot widen the auto-fit window.
       pts.push([lat, lon]);
 
       attachNodeInfoRefreshToMarker({
