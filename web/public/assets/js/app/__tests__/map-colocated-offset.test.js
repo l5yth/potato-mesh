@@ -17,13 +17,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeColocatedOffsets, __testUtils } from '../map-colocated-offset.js';
+import {
+  computeColocatedOffsets,
+  isOffsetSignificant,
+  refreshSpiderPositions,
+  __testUtils
+} from '../map-colocated-offset.js';
 
 const {
   DEFAULT_PRECISION,
   DEFAULT_BASE_RADIUS_PX,
   DEFAULT_RADIUS_GROWTH_PX,
   MAX_PRECISION,
+  OFFSET_EPSILON_PX,
   coordinateKey,
   normalisePrecision,
   normalisePositive
@@ -269,4 +275,84 @@ test('normalisePositive sanitises invalid inputs', () => {
   assert.equal(normalisePositive(0, 10), 0);
   assert.equal(normalisePositive(-1, 10), 10);
   assert.equal(normalisePositive(Number.NaN, 10), 10);
+});
+
+test('isOffsetSignificant reports true for real offsets and false near zero', () => {
+  // Strict equality would treat radius * sin(π) (~1.7e-15) as non-zero;
+  // the hypotenuse-based check rejects values below OFFSET_EPSILON_PX.
+  assert.equal(isOffsetSignificant(0, 0), false);
+  assert.equal(isOffsetSignificant(OFFSET_EPSILON_PX / 2, OFFSET_EPSILON_PX / 2), false);
+  assert.equal(isOffsetSignificant(14, 0), true);
+  assert.equal(isOffsetSignificant(0, -14), true);
+  assert.equal(isOffsetSignificant(14 * Math.cos(Math.PI), 14 * Math.sin(Math.PI)), true);
+});
+
+test('refreshSpiderPositions ignores empty / non-array / missing-projector input', () => {
+  // Should not throw and should not mutate anything when there is no work
+  // to do.  The marker stub asserts `setLatLng` is never invoked.
+  let setLatLngCalls = 0;
+  const stubMarker = { setLatLng() { setLatLngCalls += 1; } };
+  refreshSpiderPositions([], () => [0, 0]);
+  refreshSpiderPositions(null, () => [0, 0]);
+  refreshSpiderPositions([{ marker: stubMarker, lat: 0, lon: 0, dx: 1, dy: 1 }], null);
+  refreshSpiderPositions([{ marker: stubMarker, lat: 0, lon: 0, dx: 1, dy: 1 }], 'not-a-fn');
+  assert.equal(setLatLngCalls, 0);
+});
+
+test('refreshSpiderPositions invokes projector and updates marker + line', () => {
+  const projectorCalls = [];
+  const project = (lat, lon, dx, dy) => {
+    projectorCalls.push([lat, lon, dx, dy]);
+    return [lat + dx / 1000, lon + dy / 1000];
+  };
+  const markerCalls = [];
+  const lineCalls = [];
+  const state = [
+    {
+      marker: { setLatLng(latLng) { markerCalls.push(latLng); } },
+      line: { setLatLngs(latLngs) { lineCalls.push(latLngs); } },
+      lat: 10,
+      lon: 20,
+      dx: 5,
+      dy: -7
+    }
+  ];
+  refreshSpiderPositions(state, project);
+  assert.deepEqual(projectorCalls, [[10, 20, 5, -7]]);
+  assert.deepEqual(markerCalls, [[10.005, 19.993]]);
+  assert.deepEqual(lineCalls, [[[10, 20], [10.005, 19.993]]]);
+});
+
+test('refreshSpiderPositions tolerates missing marker / line / item', () => {
+  // The renderer may legitimately skip the spider line for some entries
+  // (e.g. when spiderLinesLayer is absent at init time).  The helper must
+  // not throw when `marker` or `line` is missing or lacks the expected
+  // setter, and must skip falsy entries entirely.
+  const sink = [];
+  const state = [
+    null,
+    { lat: 0, lon: 0, dx: 1, dy: 1 }, // no marker, no line
+    { marker: {}, line: {}, lat: 0, lon: 0, dx: 1, dy: 1 }, // wrong shape
+    {
+      marker: { setLatLng(value) { sink.push(['marker', value]); } },
+      line: null,
+      lat: 1,
+      lon: 2,
+      dx: 3,
+      dy: 4
+    },
+    {
+      marker: null,
+      line: { setLatLngs(value) { sink.push(['line', value]); } },
+      lat: 5,
+      lon: 6,
+      dx: 7,
+      dy: 8
+    }
+  ];
+  assert.doesNotThrow(() => refreshSpiderPositions(state, (lat, lon) => [lat, lon]));
+  assert.deepEqual(sink, [
+    ['marker', [1, 2]],
+    ['line', [[5, 6], [5, 6]]]
+  ]);
 });

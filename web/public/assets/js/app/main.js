@@ -46,7 +46,11 @@ import { escapeHtml } from './utils.js';
 export { escapeHtml };
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
-import { computeColocatedOffsets } from './map-colocated-offset.js';
+import {
+  computeColocatedOffsets,
+  isOffsetSignificant,
+  refreshSpiderPositions
+} from './map-colocated-offset.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
@@ -512,11 +516,16 @@ export function initializeApp(config) {
   let traceLinesToggleButton = null;
   let markersLayer = null;
   let spiderLinesLayer = null;
-  // Per-render record of the offset markers we created so a `zoomend` handler
-  // can re-project them and keep the on-screen pixel gap constant regardless
-  // of zoom level.  Each entry is `{ marker, line, lat, lon, dx, dy }` where
-  // `lat`/`lon` are the original (un-offset) coordinates.
+  // Per-render record of the offset markers we created so the zoom event
+  // handlers can re-project them and keep the on-screen pixel gap constant
+  // regardless of zoom level.  Each entry is
+  // `{ marker, line, lat, lon, dx, dy }` where `lat`/`lon` are the original
+  // (un-offset) coordinates.
   let colocatedSpiderState = [];
+  // requestAnimationFrame handle used to coalesce per-frame `zoom` events
+  // into a single refresh; reset to ``null`` once the scheduled callback
+  // runs so the next frame can schedule again.
+  let pendingSpiderRefreshHandle = null;
   let tileDomObserver = null;
   const fullscreenChangeEvents = [
     'fullscreenchange',
@@ -1327,10 +1336,12 @@ export function initializeApp(config) {
     // on-screen spread would otherwise scale with zoom — at extreme zoom-outs
     // the offset becomes many degrees wide and the markers fly off-screen
     // when the user later zooms in.  Recompute continuously throughout every
-    // zoom task: `zoom` fires per animation frame for smooth tracking,
-    // `zoomend` finalises the position, and `viewreset` covers projection
-    // resets such as resize / fullscreen / dateline wrap.
-    map.on('zoom', refreshColocatedSpiderState);
+    // zoom task: the `zoom` event fires per animation frame and is throttled
+    // through `requestAnimationFrame` to coalesce redundant updates into a
+    // single redraw per frame; `zoomend` snaps to the final position; and
+    // `viewreset` covers projection resets such as resize / fullscreen /
+    // dateline wrap.
+    map.on('zoom', scheduleColocatedSpiderRefresh);
     map.on('zoomend', refreshColocatedSpiderState);
     map.on('viewreset', refreshColocatedSpiderState);
 
@@ -4034,21 +4045,35 @@ export function initializeApp(config) {
   /**
    * Re-project every co-located marker (and its spider leader line) so the
    * pixel gap between markers stays constant after the user zooms.  Wired to
-   * the map's ``zoomend`` event from {@link initializeApp}.
+   * the map's ``zoomend`` and ``viewreset`` events from {@link initializeApp},
+   * and reached via the rAF-throttled {@link scheduleColocatedSpiderRefresh}
+   * for the per-frame ``zoom`` event.
    *
    * @returns {void}
    */
   function refreshColocatedSpiderState() {
     if (!map || !markersLayer) return;
-    for (const item of colocatedSpiderState) {
-      const offsetLatLng = projectColocatedOffsetLatLng(item.lat, item.lon, item.dx, item.dy);
-      if (item.marker && typeof item.marker.setLatLng === 'function') {
-        item.marker.setLatLng(offsetLatLng);
-      }
-      if (item.line && typeof item.line.setLatLngs === 'function') {
-        item.line.setLatLngs([[item.lat, item.lon], offsetLatLng]);
-      }
+    refreshSpiderPositions(colocatedSpiderState, projectColocatedOffsetLatLng);
+  }
+
+  /**
+   * Throttled wrapper around {@link refreshColocatedSpiderState} that
+   * coalesces multiple ``zoom`` events fired inside a single animation frame
+   * into one update.  Falls back to an immediate call when the host has no
+   * ``requestAnimationFrame`` (e.g. unit-test environments).
+   *
+   * @returns {void}
+   */
+  function scheduleColocatedSpiderRefresh() {
+    if (typeof requestAnimationFrame !== 'function') {
+      refreshColocatedSpiderState();
+      return;
     }
+    if (pendingSpiderRefreshHandle !== null) return;
+    pendingSpiderRefreshHandle = requestAnimationFrame(() => {
+      pendingSpiderRefreshHandle = null;
+      refreshColocatedSpiderState();
+    });
   }
 
   /**
@@ -4304,11 +4329,14 @@ export function initializeApp(config) {
       const { lat, lon } = entry;
 
       // Translate the pixel-space offset into the LatLng to render at.  The
-      // baked-in LatLng is correct for the current zoom only; the zoomend
-      // handler `refreshColocatedSpiderState` re-projects to keep the gap
-      // visually constant when the user changes zoom.
+      // baked-in LatLng is correct for the current zoom only; the zoom event
+      // handlers re-project on zoom/zoomend/viewreset to keep the gap
+      // visually constant when the user changes zoom.  Use the helper-level
+      // significance test (rather than strict !== 0) because trig at angles
+      // like π produces values around 1e-15 which would otherwise pass the
+      // strict check and cause us to draw zero-length spider lines.
       const markerLatLng = projectColocatedOffsetLatLng(lat, lon, dx, dy);
-      const isOffset = dx !== 0 || dy !== 0;
+      const isOffset = isOffsetSignificant(dx, dy);
 
       const color = getRoleColor(n.role, n.protocol);
       const marker = L.circleMarker(markerLatLng, {
@@ -4322,14 +4350,13 @@ export function initializeApp(config) {
 
       // Draw a faint dotted leader line from each co-located marker back to
       // the shared physical location so the spider hub is visually obvious.
-      // Singleton markers (no offset) get no line.
+      // Singleton markers (no offset) get no line.  Stroke colour, dash,
+      // weight and opacity all live in `.colocated-spider-line` so the line
+      // can pick up theme-aware tokens (var(--fg)) and stay legible on both
+      // light and dark basemaps without code changes here.
       let spiderLine = null;
       if (isOffset && spiderLinesLayer) {
         spiderLine = L.polyline([[lat, lon], markerLatLng], {
-          color: '#ffffff',
-          weight: 1,
-          opacity: 0.5,
-          dashArray: '1 1',
           interactive: false,
           className: 'colocated-spider-line'
         }).addTo(spiderLinesLayer);

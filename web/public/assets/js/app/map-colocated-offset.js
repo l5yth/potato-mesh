@@ -25,9 +25,21 @@ const DEFAULT_PRECISION = 5;
 /**
  * Default offset ring radius in pixels for a co-located group of two nodes.
  * Chosen slightly larger than the standard map marker radius so the markers
- * read as adjacent rather than overlapping.
+ * read as adjacent rather than overlapping.  Callers may pass ``0`` to
+ * intentionally collapse all members of a group back onto the shared centre
+ * — the value is honoured rather than substituted with the default so that
+ * the offset feature can be disabled without touching the call sites that
+ * still want grouping for other purposes.
  */
 const DEFAULT_BASE_RADIUS_PX = 14;
+
+/**
+ * Tolerance (in pixels) below which an offset is considered effectively zero.
+ * ``radius * Math.sin(Math.PI)`` is ~1.7e-15, not exactly ``0``, so the
+ * ``isOffsetSignificant`` check uses a small epsilon rather than strict
+ * equality to avoid producing zero-length spider lines for those slots.
+ */
+const OFFSET_EPSILON_PX = 1e-9;
 
 /**
  * Additional pixels added to the offset ring radius for every node beyond the
@@ -166,11 +178,62 @@ export function computeColocatedOffsets(entries, options = {}) {
   return results;
 }
 
+/**
+ * Test whether a ``{dx, dy}`` pixel offset is large enough to materially
+ * change a marker's on-screen position.  Used by the renderer to decide
+ * whether to draw a spider leader line and to bypass an unnecessary
+ * projection round-trip for singleton (or near-singleton) groups.
+ *
+ * @param {number} dx Pixel offset along the layer-point X axis.
+ * @param {number} dy Pixel offset along the layer-point Y axis.
+ * @returns {boolean} True when the offset magnitude exceeds ``OFFSET_EPSILON_PX``.
+ */
+export function isOffsetSignificant(dx, dy) {
+  return Math.hypot(dx, dy) > OFFSET_EPSILON_PX;
+}
+
+/**
+ * Re-position every entry in a previously-recorded spider state by re-running
+ * the supplied projector and pushing the result back onto the marker / leader
+ * line.  Pulled out of the renderer so it can be unit-tested without a live
+ * Leaflet map: the caller injects whatever projector + Leaflet-marker shapes
+ * make sense for the current host.
+ *
+ * Each ``state`` entry is expected to look like
+ * ``{ marker, line, lat, lon, dx, dy }`` where ``lat``/``lon`` are the
+ * original (un-offset) coordinates and ``marker``/``line`` may be ``null``.
+ * Markers / lines that do not expose ``setLatLng`` / ``setLatLngs`` methods
+ * are silently skipped so the helper is tolerant of stub objects supplied
+ * by tests and of Leaflet objects whose API surface evolves over time.
+ *
+ * @param {Array<{marker: ?Object, line: ?Object, lat: number, lon: number, dx: number, dy: number}>} state
+ *   Per-render record produced by the renderer when it places offset markers.
+ * @param {(lat: number, lon: number, dx: number, dy: number) => [number, number]} project
+ *   Function that converts an original coordinate plus a pixel offset into
+ *   the corresponding display ``[lat, lng]`` for the current map projection.
+ * @returns {void}
+ */
+export function refreshSpiderPositions(state, project) {
+  if (!Array.isArray(state) || state.length === 0) return;
+  if (typeof project !== 'function') return;
+  for (const item of state) {
+    if (!item) continue;
+    const offsetLatLng = project(item.lat, item.lon, item.dx, item.dy);
+    if (item.marker && typeof item.marker.setLatLng === 'function') {
+      item.marker.setLatLng(offsetLatLng);
+    }
+    if (item.line && typeof item.line.setLatLngs === 'function') {
+      item.line.setLatLngs([[item.lat, item.lon], offsetLatLng]);
+    }
+  }
+}
+
 export const __testUtils = {
   DEFAULT_PRECISION,
   DEFAULT_BASE_RADIUS_PX,
   DEFAULT_RADIUS_GROWTH_PX,
   MAX_PRECISION,
+  OFFSET_EPSILON_PX,
   coordinateKey,
   normalisePrecision,
   normalisePositive

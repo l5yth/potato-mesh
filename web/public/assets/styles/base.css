@@ -128,6 +128,23 @@ tbody tr:nth-child(even) td {
   stroke-dasharray: 6 6;
 }
 
+/*
+ * Spider leader line drawn from each co-located marker back to its shared
+ * coordinate.  Stroke uses the foreground token so the line stays visible
+ * against both light and dark basemaps; opacity keeps it subdued enough to
+ * read as a hint rather than a primary connection.  `pointer-events: none`
+ * matches the `interactive: false` Leaflet option so the line never
+ * intercepts clicks intended for the marker beneath it.
+ */
+.colocated-spider-line {
+  stroke: var(--fg);
+  stroke-width: 1;
+  stroke-opacity: 0.5;
+  stroke-dasharray: 1 1;
+  fill: none;
+  pointer-events: none;
+}
+
 .leaflet-tooltip.trace-tooltip {
   background: var(--bg2);
   color: var(--fg);
