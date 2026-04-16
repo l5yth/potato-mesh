@@ -756,6 +756,68 @@ test('renderMessages shows no protocol icon when node protocol is absent', () =>
   assert.ok(!html.includes('meshcore.svg'), 'absent node protocol chat entry should show no meshcore icon');
 });
 
+test('renderMessages: channel name fallback uses message.channel_label when metadata is empty (#727 coverage)', () => {
+  // Exercises the ``fallbackChannel`` branch in renderMessages: when
+  // extractChatMessageMetadata does not return a channelName (because the
+  // message has neither ``channel_name`` nor ``channelName``) but does
+  // carry a legacy ``channel_label`` field, that string is promoted into
+  // the metadata object so the channel tag still renders.
+  const renderShortHtml = (short) => `<span class="short-name">${short}</span>`;
+  const html = renderMessages(
+    [{ text: 'hi', rx_time: 1_700_000_000, channel_label: 'legacy-label' }],
+    renderShortHtml,
+    { node_id: '!self', short_name: 'NODE', long_name: 'Node', role: 'CLIENT' },
+  );
+  assert.ok(html.includes('[legacy-label]'), 'channel_label fallback should appear in tag');
+});
+
+test('renderMessages: channel name fallback uses numeric message.channel when no string label exists (#727 coverage)', () => {
+  // Exercises the ``numberOrNull(message.channel)`` branch: a numeric
+  // channel index without an associated channel_name is stringified into
+  // the channel tag.
+  const renderShortHtml = (short) => `<span class="short-name">${short}</span>`;
+  const html = renderMessages(
+    [{ text: 'hi', rx_time: 1_700_000_000, channel: 7 }],
+    renderShortHtml,
+    { node_id: '!self', short_name: 'NODE', long_name: 'Node', role: 'CLIENT' },
+  );
+  assert.ok(html.includes('[7]'), 'numeric channel fallback should appear in tag');
+});
+
+test('renderMessages: channel name fallback uses string message.channel when neither label nor number is present (#727 coverage)', () => {
+  // Exercises the final ``stringOrNull(message.channel)`` branch.  This
+  // covers the path where ``channel`` is a non-numeric string label that
+  // ``numberOrNull`` rejects but ``stringOrNull`` accepts.
+  const renderShortHtml = (short) => `<span class="short-name">${short}</span>`;
+  const html = renderMessages(
+    [{ text: 'hi', rx_time: 1_700_000_000, channel: 'alpha' }],
+    renderShortHtml,
+    { node_id: '!self', short_name: 'NODE', long_name: 'Node', role: 'CLIENT' },
+  );
+  assert.ok(html.includes('[alpha]'), 'string channel fallback should appear in tag');
+});
+
+test('renderMessages: skips invalid entries in the global node registry (#727 coverage)', () => {
+  // Covers the ``if (id && node && typeof node === 'object')`` guard inside
+  // buildNodesById.  Bad entries (null values, non-id keys) must be ignored
+  // without breaking the registry build.
+  const renderShortHtml = (short) => `<span class="short-name">${short}</span>`;
+  const globalNodesById = new Map([
+    ['', { node_id: '', short_name: 'EMPTY' }],   // empty-id entry — skipped
+    ['!ok', { node_id: '!ok', short_name: 'OK', long_name: 'OK Node' }],
+    ['!bad', null],                                // null value — skipped
+  ]);
+  const html = renderMessages(
+    [{ text: '@[OK Node] hi', rx_time: 1_700_000_000, protocol: 'meshcore', to_id: '^all' }],
+    renderShortHtml,
+    { node_id: '!self', short_name: 'NODE', long_name: 'Node', role: 'CLIENT' },
+    globalNodesById,
+  );
+  // The mention should resolve via the surviving entry, demonstrating the
+  // registry build skipped the bad ones without throwing.
+  assert.ok(html.includes('OK'), 'valid registry entry should still resolve mention');
+});
+
 test('renderMessages omits meshtastic icon for meshcore node protocol', () => {
   const nodeContext = {
     shortName: 'MC',

@@ -372,3 +372,14 @@ test('renderChatEntryContent: throws when renderShortHtml is not a function', ()
     renderEmojiHtml: emoji,
   }), TypeError);
 });
+
+test('renderChatEntryContent: throws when renderEmojiHtml is not a function', () => {
+  assert.throws(() => renderChatEntryContent({
+    message: { text: 'hi' },
+    nodesById: new Map(),
+    messagesById: new Map(),
+    renderShortHtml,
+    escapeHtml: esc,
+    renderEmojiHtml: null,
+  }), TypeError);
+});

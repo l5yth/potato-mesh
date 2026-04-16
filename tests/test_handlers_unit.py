@@ -1051,3 +1051,38 @@ class TestIsLikelyReaction:
             )
             is False
         )
+
+    def test_portnum_int_matches_reaction_candidate(self, monkeypatch):
+        """An unknown portnum string is still classified as a reaction when
+        ``portnum_int`` matches one of the firmware-resolved REACTION_APP
+        candidates.  Different Meshtastic firmware versions assign different
+        integer values to the REACTION_APP enum, so the integer fallback is
+        the authoritative path."""
+        monkeypatch.setattr(generic_mod, "_portnum_candidates", lambda name: {77})
+        assert (
+            generic_mod._is_likely_reaction("UNKNOWN_PORT", 77, None, None, None)
+            is True
+        )
+
+
+# ---------------------------------------------------------------------------
+# _coerce_emoji_codepoint — string conversion failure path
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceEmojiStringFailure:
+    """Cover the ``except Exception`` branch in :func:`_coerce_emoji_codepoint`.
+
+    The string-conversion ``try`` is defensive against pathological values
+    (objects whose ``__str__`` raises).  We exercise it directly so the
+    fallback ``return None`` line is covered.
+    """
+
+    def test_object_str_raises(self):
+        """A value whose ``__str__`` raises yields ``None``."""
+
+        class Boom:
+            def __str__(self):  # noqa: D401 - pytest-style helper
+                raise RuntimeError("boom")
+
+        assert generic_mod._coerce_emoji_codepoint(Boom()) is None
