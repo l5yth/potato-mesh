@@ -1289,6 +1289,21 @@ def test_derive_message_id_handles_invalid_utf8():
     assert 0 <= result <= (1 << 53) - 1
 
 
+def test_derive_message_id_anonymous_channel_msgs_still_distinguished_by_other_fields():
+    """Anonymous channel msgs (sender_identity="") still differ when text/ts differ.
+
+    The empty sender-identity path is documented as a degraded mode in
+    CONTRACTS.md (anonymous transmissions cannot be distinguished from each
+    other when timestamp + channel + text also match).  This test pins down
+    the *non-degraded* behaviour: as long as any of the remaining components
+    differ, the ids must remain distinct.
+    """
+    base = _derive_message_id("", 1_000_000, "c0", "hi")
+    assert base != _derive_message_id("", 1_000_001, "c0", "hi")  # ts differs
+    assert base != _derive_message_id("", 1_000_000, "c1", "hi")  # channel differs
+    assert base != _derive_message_id("", 1_000_000, "c0", "hello")  # text differs
+
+
 # ---------------------------------------------------------------------------
 # _make_event_handlers — async callbacks
 # ---------------------------------------------------------------------------
