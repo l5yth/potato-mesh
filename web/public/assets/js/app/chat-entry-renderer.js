@@ -190,13 +190,21 @@ export function renderChatEntryContent({
     const leading = extractLeadingMentionAsReply(effectiveBodyText);
     if (leading) {
       const replyNode = findNodeByLongName(leading.mentionName, nodesById);
+      let badgeHtml = '';
       if (replyNode) {
-        const badgeHtml = renderNodeBadge(renderShortHtml, replyNode);
-        if (typeof badgeHtml === 'string' && badgeHtml.length > 0) {
-          meshcoreReplyPrefix = formatReplyPrefixHtml('in reply to', badgeHtml, escapeHtml);
-          effectiveBodyText = leading.remainingText ?? '';
-        }
+        badgeHtml = renderNodeBadge(renderShortHtml, replyNode);
       }
+      // Graceful degradation: when the registry doesn't contain the
+      // mention target (common on large deployments where ``/api/nodes``
+      // caps at 1000 entries by recency), still surface the leading
+      // mention as a reply prefix using the raw name.  Without this
+      // fallback the body would render as bare ``@[Name] body...`` which
+      // looks like an unresolved mention link to the user.
+      if (typeof badgeHtml !== 'string' || badgeHtml.length === 0) {
+        badgeHtml = `<span class="short-name">${escapeHtml(leading.mentionName)}</span>`;
+      }
+      meshcoreReplyPrefix = formatReplyPrefixHtml('in reply to', badgeHtml, escapeHtml);
+      effectiveBodyText = leading.remainingText ?? '';
     }
   }
 

@@ -119,10 +119,15 @@ test('renderChatEntryContent: MeshCore multi-mention body does NOT emit reply pr
   assert.ok(html.includes('SHORT(BO|CLIENT|Bob)'));
 });
 
-test('renderChatEntryContent: MeshCore leading mention without resolvable node is left inline', () => {
+test('renderChatEntryContent: leading mention with unresolved node still surfaces a reply prefix using the raw name (#727)', () => {
+  // Production deployments cap ``/api/nodes`` at 1000 entries, so the global
+  // registry can be missing nodes that recent messages reference.  In that
+  // case the leading-mention-as-reply detection must still emit a reply
+  // prefix using the bare mention name, otherwise the body would render as
+  // ``@[Name] body...`` and look like an unresolved mention link.
   const nodesById = new Map();
   const message = {
-    text: 'X: @[Unknown] hello',
+    text: 'X: @[DA6ML/p] ja, klingt sehr gut',
     protocol: 'meshcore',
     to_id: '^all',
   };
@@ -136,8 +141,35 @@ test('renderChatEntryContent: MeshCore leading mention without resolvable node i
     renderEmojiHtml: emoji,
   });
 
-  assert.ok(!html.includes('chat-entry-reply'), 'unresolved mention must not become reply prefix');
-  assert.ok(html.includes('@[ESC(Unknown)]'), 'unresolved mention should fall back to escaped literal');
+  assert.ok(html.includes('chat-entry-reply'), 'should include a reply prefix even without a node match');
+  assert.ok(html.includes('ESC(in reply to)'), 'reply prefix label is escaped');
+  assert.ok(html.includes('ESC(DA6ML/p)'), 'mention name is shown verbatim (escaped)');
+  assert.ok(html.includes('ESC(ja, klingt sehr gut)'), 'remaining text rendered after the prefix');
+  // The bare ``@[Name]`` form must NOT survive into the body.
+  assert.ok(!html.includes('@[ESC('), 'unresolved mention should not leak into the body');
+});
+
+test('renderChatEntryContent: inline (non-leading) mentions still render as escaped literals when unresolved', () => {
+  // Mentions that are NOT at the start are left as escaped literals — the
+  // reply-prefix fallback only applies to leading-mention-as-reply.
+  const nodesById = new Map();
+  const message = {
+    text: 'X: hello @[Unknown] there',
+    protocol: 'meshcore',
+    to_id: '^all',
+  };
+
+  const { html } = renderChatEntryContent({
+    message,
+    nodesById,
+    messagesById: new Map(),
+    renderShortHtml,
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+  });
+
+  assert.ok(!html.includes('chat-entry-reply'), 'mid-text mention must not become reply prefix');
+  assert.ok(html.includes('@[ESC(Unknown)]'), 'unresolved inline mention falls back to escaped literal');
 });
 
 test('renderChatEntryContent: MeshCore DM leading mention also becomes reply prefix', () => {
