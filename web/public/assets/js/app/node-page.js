@@ -78,7 +78,7 @@ import {
   renderXAxis,
   renderTelemetryChart,
 } from './node-page-charts.js';
-import { fetchMessages, fetchTracesForNode } from './node-page-data.js';
+import { fetchMessages, fetchNodesById, fetchTracesForNode } from './node-page-data.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 const MESSAGE_LIMIT = 50;
@@ -940,20 +940,36 @@ function renderNodeChatEmojiHtml(symbol) {
 }
 
 /**
- * Build a ``nodesById`` Map from the sender nodes attached to each message.
+ * Build a ``nodesById`` Map for chat-entry rendering.
  *
- * The node detail page only has access to the messages fetched for the
- * current node, so we seed the lookup registry from the hydrated sender
- * nodes carried on each message plus the current page's fallback node.
- * This covers the common cases: self-references, mentions of authors that
- * have messages in the loaded window, and reply targets.
+ * Layered sources, in priority order:
+ *
+ *   1. The global node registry fetched via ``fetchNodesById`` (the same
+ *      data the dashboard uses).  This is what allows MeshCore mentions
+ *      like ``@[Some Other Node]`` to resolve to a badge instead of
+ *      degrading to plain ``@[Name]`` text on the node detail page.
+ *   2. Hydrated ``message.node`` objects on the loaded messages — used as
+ *      a fallback for senders that may not be in the global registry.
+ *   3. The current page's own node, ensuring self-references and the
+ *      sender badge resolve even when neither of the above contains it.
+ *
+ * Known tradeoff: reply targets whose source message lies outside the
+ * loaded message window will not resolve via {@link resolveReplyPrefix},
+ * so the rendered ``[in reply to ...]`` prefix silently degrades to the
+ * empty string for those rows.
  *
  * @param {Array<Object>} messages Message records.
  * @param {?Object} fallbackNode Current page node.
+ * @param {?Map<string, Object>} globalNodesById Global node registry.
  * @returns {Map<string, Object>} Lookup map keyed by node identifier.
  */
-function buildNodesById(messages, fallbackNode) {
+function buildNodesById(messages, fallbackNode, globalNodesById) {
   const map = new Map();
+  if (globalNodesById instanceof Map) {
+    for (const [id, node] of globalNodesById.entries()) {
+      if (id && node && typeof node === 'object') map.set(id, node);
+    }
+  }
   const register = (node) => {
     if (!node || typeof node !== 'object') return;
     const id = node.node_id ?? node.nodeId ?? null;
@@ -982,13 +998,16 @@ function buildNodesById(messages, fallbackNode) {
  * @param {Array<Object>} messages Message records.
  * @param {Function} renderShortHtml Badge rendering implementation.
  * @param {Object} node Node context used when message metadata is incomplete.
+ * @param {?Map<string, Object>} [globalNodesById] Optional global node
+ *   registry used for mention/reply resolution; falls back to message-derived
+ *   sender nodes when omitted.
  * @returns {string} HTML string for the messages section.
  */
-function renderMessages(messages, renderShortHtml, node) {
+function renderMessages(messages, renderShortHtml, node, globalNodesById = null) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
 
   const fallbackNode = node && typeof node === 'object' ? node : null;
-  const nodesById = buildNodesById(messages, fallbackNode);
+  const nodesById = buildNodesById(messages, fallbackNode, globalNodesById);
   const messagesById = buildMessageIndex(messages);
 
   const items = messages
@@ -996,7 +1015,11 @@ function renderMessages(messages, renderShortHtml, node) {
       if (!message || typeof message !== 'object') return null;
       const hasBody = stringOrNull(message.text) || stringOrNull(message.emoji);
       if (!hasBody) return null;
-      if (message.encrypted && stringOrNull(message.text) && String(message.text).trim() === 'GAA=') {
+      // Filter out the canonical empty-payload encrypted marker.  This keeps
+      // the original semantics of falling back to ``message.emoji`` when the
+      // text field is null (some encrypted packets carry the marker only in
+      // the emoji slot).
+      if (message.encrypted && String(hasBody).trim() === 'GAA=') {
         return null;
       }
 
@@ -1273,6 +1296,7 @@ function renderNodeDetailHtml(node, {
   renderShortHtml,
   roleIndex = null,
   chartNowMs = Date.now(),
+  nodesById = null,
 } = {}) {
   const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
     shortName: node.shortName ?? node.short_name,
@@ -1289,7 +1313,7 @@ function renderNodeDetailHtml(node, {
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
   const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
-  const messagesHtml = renderMessages(messages, renderShortHtml, node);
+  const messagesHtml = renderMessages(messages, renderShortHtml, node, nodesById);
 
   const sections = [];
   if (neighborsHtml) {
@@ -1408,12 +1432,19 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     normalized.nodeId ??
     stringOrNull(node.nodeId ?? node.node_id) ??
     (normalized.nodeNum != null ? normalized.nodeNum : null);
-  const [messages, traces] = await Promise.all([
+  // Fetch messages, traces, and the global node registry in parallel.  The
+  // registry is used by the chat-entry renderer to resolve MeshCore
+  // ``@[Name]`` mentions and reply targets that reference nodes other than
+  // the page's own node — without it, mention badges silently degrade to
+  // plain ``@[Name]`` text and leading-mention replies don't surface as
+  // ``[in reply to ...]`` prefixes.
+  const [messages, traces, nodesById] = await Promise.all([
     fetchMessages(messageIdentifier, {
       fetchImpl: options.fetchImpl,
       privateMode: options.privateMode === true,
     }),
     fetchTracesForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
+    fetchNodesById({ fetchImpl: options.fetchImpl }),
   ]);
   const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
   return renderNodeDetailHtml(node, {
@@ -1422,6 +1453,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     traces,
     renderShortHtml,
     roleIndex,
+    nodesById,
   });
 }
 

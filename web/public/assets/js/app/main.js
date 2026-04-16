@@ -82,8 +82,7 @@ import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './ch
 import { renderChatTabs } from './chat-tabs.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
-import { buildMessageBody, buildMessageIndex, resolveReplyPrefix } from './message-replies.js';
-import { parseMeshcoreSenderPrefix, findNodeByLongName } from './meshcore-chat-helpers.js';
+import { buildMessageIndex } from './message-replies.js';
 import { renderChatEntryContent } from './chat-entry-renderer.js';
 import {
   SNAPSHOT_WINDOW,
@@ -3057,28 +3056,28 @@ export function initializeApp(config) {
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const messageProtocol = pickFirstProperty([m, m?.node], ['protocol']);
 
-    // MeshCore channel messages use "SenderName: body" text format.  The
-    // ingestor tries to resolve from_id via the contacts roster; when it
-    // succeeds m.node is hydrated normally.  When it fails (contact not yet
-    // known), m.node is null and we fall back to a name-based lookup here.
-    // Detection: channel messages always have to_id "^all".
-    const toId = m.to_id ?? m.toId;
-    const isMeshcoreChannelMsg = isMeshcoreProtocol(messageProtocol) && toId === '^all';
+    const nodeProtocolPrefix = protocolIconPrefixHtml(messageProtocol);
 
-    let meshcoreSenderNode = null;
-    let parsedMeshcorePrefix = null;
-    if (isMeshcoreChannelMsg && m?.text) {
-      parsedMeshcorePrefix = parseMeshcoreSenderPrefix(String(m.text));
-      // Only attempt the name lookup when the ingestor couldn't resolve the
-      // sender (m.node is null).  If it's already hydrated, m.node is used.
-      if (parsedMeshcorePrefix && !m.node) {
-        meshcoreSenderNode = findNodeByLongName(parsedMeshcorePrefix.senderName, nodesById);
-      }
-    }
+    // Delegate reply-prefix / mention / body / encrypted rendering to the
+    // shared chat entry renderer so the dashboard and the node detail page
+    // produce identical message HTML.  The renderer also returns the parsed
+    // MeshCore sender prefix and any name-resolved sender node so we can
+    // reuse them for the badge below without duplicating the lookup.
+    const { html: text, meshcoreSenderNode } = renderChatEntryContent({
+      message: m,
+      nodesById,
+      messagesById,
+      renderShortHtml,
+      escapeHtml,
+      renderEmojiHtml,
+      formatEncryptedMessageNotice,
+    });
 
+    // Sender badge: prefer the ingestor-hydrated node; fall back to the
+    // MeshCore name-based lookup performed inside the shared renderer for
+    // channel messages whose sender wasn't yet known to the contacts roster.
     let short;
-    if (isMeshcoreChannelMsg && !m.node && meshcoreSenderNode) {
-      // Fallback: ingestor couldn't resolve sender, but JS found the node by name.
+    if (!m.node && meshcoreSenderNode) {
       short = renderShortHtml(
         meshcoreSenderNode.short_name ?? meshcoreSenderNode.shortName,
         meshcoreSenderNode.role,
@@ -3088,21 +3087,6 @@ export function initializeApp(config) {
     } else {
       short = renderShortHtml(m.node?.short_name, m.node?.role, m.node?.long_name, m.node);
     }
-
-    const nodeProtocolPrefix = protocolIconPrefixHtml(messageProtocol);
-
-    // Delegate reply-prefix / mention / body / encrypted rendering to the
-    // shared chat entry renderer so the dashboard and the node detail page
-    // produce identical message HTML.
-    const { html: text } = renderChatEntryContent({
-      message: m,
-      nodesById,
-      messagesById,
-      renderShortHtml,
-      escapeHtml,
-      renderEmojiHtml,
-      formatEncryptedMessageNotice,
-    });
     const metadata = extractChatMessageMetadata(m);
     const prefix = formatChatMessagePrefix({
       timestamp: escapeHtml(ts),

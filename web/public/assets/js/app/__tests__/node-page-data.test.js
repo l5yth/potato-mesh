@@ -17,7 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchMessages, fetchTracesForNode } from '../node-page-data.js';
+import { fetchMessages, fetchNodesById, fetchTracesForNode } from '../node-page-data.js';
 
 // ---------------------------------------------------------------------------
 // fetchMessages
@@ -173,4 +173,98 @@ test('fetchTracesForNode accepts numeric identifier', async () => {
   };
   await fetchTracesForNode(12345, { fetchImpl });
   assert.ok(calls[0].includes('12345'), 'numeric identifier should appear in URL');
+});
+
+// ---------------------------------------------------------------------------
+// fetchNodesById
+// ---------------------------------------------------------------------------
+
+test('fetchNodesById returns Map keyed by node_id on success', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return [
+        { node_id: '!11111111', short_name: 'A1', long_name: 'Alpha' },
+        { node_id: '!22222222', short_name: 'B2', long_name: 'Bravo' },
+      ];
+    },
+  });
+  const result = await fetchNodesById({ fetchImpl });
+  assert.ok(result instanceof Map);
+  assert.equal(result.size, 2);
+  assert.equal(result.get('!11111111').short_name, 'A1');
+  assert.equal(result.get('!22222222').long_name, 'Bravo');
+});
+
+test('fetchNodesById accepts camelCase nodeId fallback', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async json() { return [{ nodeId: '!33333333', short_name: 'C3' }]; },
+  });
+  const result = await fetchNodesById({ fetchImpl });
+  assert.equal(result.get('!33333333').short_name, 'C3');
+});
+
+test('fetchNodesById returns empty Map when response is not OK', async () => {
+  const fetchImpl = async () => ({ ok: false, status: 500, async json() { return []; } });
+  const result = await fetchNodesById({ fetchImpl });
+  assert.ok(result instanceof Map);
+  assert.equal(result.size, 0);
+});
+
+test('fetchNodesById returns empty Map when payload is not an array', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, async json() { return { nodes: [] }; } });
+  const result = await fetchNodesById({ fetchImpl });
+  assert.ok(result instanceof Map);
+  assert.equal(result.size, 0);
+});
+
+test('fetchNodesById skips entries lacking an identifier', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return [
+        { short_name: 'X', long_name: 'no id' },
+        { node_id: '!aabbccdd', short_name: 'AB' },
+        null,
+        'not-an-object',
+      ];
+    },
+  });
+  const result = await fetchNodesById({ fetchImpl });
+  assert.equal(result.size, 1);
+  assert.equal(result.get('!aabbccdd').short_name, 'AB');
+});
+
+test('fetchNodesById returns empty Map when fetch throws', async () => {
+  const fetchImpl = async () => { throw new Error('network down'); };
+  const result = await fetchNodesById({ fetchImpl });
+  assert.ok(result instanceof Map);
+  assert.equal(result.size, 0);
+});
+
+test('fetchNodesById returns empty Map when fetch implementation is unavailable', async () => {
+  const savedFetch = globalThis.fetch;
+  try {
+    delete globalThis.fetch;
+    const result = await fetchNodesById();
+    assert.ok(result instanceof Map);
+    assert.equal(result.size, 0);
+  } finally {
+    if (savedFetch !== undefined) globalThis.fetch = savedFetch;
+  }
+});
+
+test('fetchNodesById issues a request with the configured limit', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, async json() { return []; } };
+  };
+  await fetchNodesById({ fetchImpl });
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].startsWith('/api/nodes?limit='), 'should call /api/nodes with a limit query');
 });

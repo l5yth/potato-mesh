@@ -33,6 +33,46 @@ const MESSAGE_LIMIT = 50;
 /** Maximum number of traceroute records to request from the traces API. */
 const TRACE_LIMIT = 200;
 
+/** Maximum number of nodes to request from the nodes API for the registry. */
+const NODES_LIMIT = 1000;
+
+/**
+ * Fetch the global node registry and return it as a Map keyed by node id.
+ *
+ * The node detail page uses this registry to resolve MeshCore mentions
+ * (``@[Name]``) and reply targets that appear in messages but reference
+ * nodes other than the page's own node.  The result is consumed by the
+ * shared chat-entry renderer, mirroring the dashboard's behaviour.
+ *
+ * Returns an empty Map on any failure so the page still renders messages
+ * without crashing — mentions and reply badges simply degrade to plain
+ * fallback text in that case.
+ *
+ * @param {{ fetchImpl?: Function }} [options] Fetch options.
+ * @returns {Promise<Map<string, Object>>} Lookup map keyed by node id.
+ */
+export async function fetchNodesById({ fetchImpl } = {}) {
+  const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
+  if (typeof fetchFn !== 'function') return new Map();
+  try {
+    const response = await fetchFn(`/api/nodes?limit=${NODES_LIMIT}`, DEFAULT_FETCH_OPTIONS);
+    if (!response.ok) return new Map();
+    const payload = await response.json();
+    if (!Array.isArray(payload)) return new Map();
+    const map = new Map();
+    for (const node of payload) {
+      if (!node || typeof node !== 'object') continue;
+      const id = node.node_id ?? node.nodeId ?? null;
+      if (id) map.set(id, node);
+    }
+    return map;
+  } catch (error) {
+    // Network/JSON failures degrade gracefully — the page still renders.
+    console.warn('Failed to load nodes registry for chat rendering', error);
+    return new Map();
+  }
+}
+
 /**
  * Fetch recent messages for a node.
  *

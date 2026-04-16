@@ -62,6 +62,11 @@ export function findNodeByLongName(longName, nodesById) {
   const trimmed = longName.trim();
   if (!trimmed) return null;
 
+  // Two-pass scan: O(2N) worst case (no match found).  Fine for typical
+  // mesh sizes (hundreds of nodes); if registries grow into the thousands
+  // and lookup becomes hot, consider building a normalised long-name index
+  // alongside the id-keyed map at hydration time.
+
   // First pass: exact match on trimmed candidate long names.
   for (const node of nodesById.values()) {
     const raw = node.long_name ?? node.longName;

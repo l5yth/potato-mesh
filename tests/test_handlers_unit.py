@@ -891,7 +891,7 @@ class TestStoreRouterHeartbeatPacket:
             handlers.store_router_heartbeat_packet({})
         finally:
             q._queue_post_json = original
-        assert sent == []  # noqa: no-heartbeat-without-from-id
+        assert sent == []
 
 
 # ---------------------------------------------------------------------------
@@ -938,11 +938,14 @@ class TestCoerceEmojiCodepoint:
         """Float codepoint above 127 is truncated and converted."""
         assert generic_mod._coerce_emoji_codepoint(128077.0) == "\U0001f44d"
 
-    def test_invalid_codepoint_falls_back(self):
-        """Extremely large invalid codepoint falls back to string."""
-        result = generic_mod._coerce_emoji_codepoint(0x7FFFFFFF)
-        # chr() raises for values outside valid Unicode; fall back to str.
-        assert result is not None
+    def test_invalid_codepoint_returns_none(self):
+        """Out-of-range numeric codepoint returns ``None`` rather than the
+        decimal form (which would render as garbage in the chat log)."""
+        assert generic_mod._coerce_emoji_codepoint(0x7FFFFFFF) is None
+
+    def test_invalid_string_codepoint_returns_none(self):
+        """Out-of-range numeric string also returns ``None``."""
+        assert generic_mod._coerce_emoji_codepoint(str(0x7FFFFFFF)) is None
 
 
 # ---------------------------------------------------------------------------

@@ -854,6 +854,73 @@ def test_store_packet_dict_posts_reaction_message(mesh_module, monkeypatch):
     assert priority == mesh._MESSAGE_POST_PRIORITY
 
 
+def test_store_packet_dict_text_with_reply_and_emoji_is_not_reaction(
+    mesh_module, monkeypatch
+):
+    """Regression test for #699: a TEXT_MESSAGE_APP packet that carries both
+    a ``reply_id`` and an ``emoji`` AND substantial body text must be ingested
+    as a regular text message — not silently reclassified as a reaction.
+
+    This pins the end-to-end ingest contract: the helper's classification
+    (``_is_likely_reaction``), the captured POST payload, and the preserved
+    text/emoji/reply_id fields must all agree that this is text, not a
+    reaction.
+    """
+
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 4242,
+        "rxTime": 1_700_200_000,
+        "fromId": "!sender",
+        "toId": "^all",
+        "channel": 1,  # non-primary channel: bypass DM filter regardless
+        "decoded": {
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Great job! \U0001f44d",
+            "data": {
+                "reply_id": "7029",
+                "emoji": "\U0001f44d",
+            },
+        },
+    }
+
+    mesh.store_packet_dict(packet)
+
+    # 1. The packet was posted (not dropped) ---------------------------------
+    assert captured, "Expected POST for text message with reply_id+emoji"
+    path, payload, _ = captured[0]
+    assert path == "/api/messages"
+
+    # 2. Substantial text is preserved verbatim ------------------------------
+    assert payload["text"] == "Great job! \U0001f44d"
+    assert payload["emoji"] == "\U0001f44d"
+    assert payload["reply_id"] == 7029
+    assert payload["portnum"] == "TEXT_MESSAGE_APP"
+
+    # 3. The classification helper agrees this is NOT a reaction -------------
+    # (Pinning helper + ingest pipeline together prevents future drift where
+    # one layer changes its mind without the other.)
+    from data.mesh_ingestor.handlers.generic import _is_likely_reaction
+
+    assert (
+        _is_likely_reaction(
+            "TEXT_MESSAGE_APP",
+            1,
+            7029,
+            "\U0001f44d",
+            "Great job! \U0001f44d",
+        )
+        is False
+    )
+
+
 def test_store_packet_dict_posts_position(mesh_module, monkeypatch):
     mesh = mesh_module
     captured = []

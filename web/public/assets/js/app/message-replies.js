@@ -295,6 +295,25 @@ export function normaliseEmojiValue(value) {
 }
 
 /**
+ * Maximum Unicode codepoint length for text that may still qualify as a
+ * reaction placeholder.  A bare emoji (single grapheme) is at most 2
+ * codepoints — base character plus an optional variation selector
+ * (U+FE0F).  Multi-codepoint ZWJ families (👨‍👩‍👧, 🏳️‍🌈) are intentionally
+ * NOT accepted here: matching them would also let through short CJK
+ * messages like "你好世界吗" (5 codepoints, no ASCII letters), causing real
+ * prose to be misclassified as a reaction.
+ *
+ * MUST stay aligned with the Python ingestor's
+ * ``_REACTION_PLACEHOLDER_MAX_CODEPOINTS`` (``handlers/generic.py``);
+ * changing one side without the other re-introduces ingest/render
+ * disagreement (a packet stored as a reaction but rendered as text, or
+ * vice versa).
+ *
+ * @type {number}
+ */
+const REACTION_PLACEHOLDER_MAX_CODEPOINTS = 2;
+
+/**
  * Return whether ``text`` looks like a reaction placeholder rather than
  * substantive message content.
  *
@@ -311,9 +330,10 @@ function isReactionPlaceholderText(text) {
   const trimmed = text.trim();
   if (!trimmed) return true;
   if (/^\d+$/.test(trimmed)) return true;
-  // Short non-ASCII-letter text (≤ 2 Unicode codepoints, no ASCII letters)
-  // covers bare emoji including surrogate pairs and skin-tone modifiers.
-  if ([...trimmed].length <= 2 && !/[a-zA-Z]/.test(trimmed)) return true;
+  // Bare emoji heuristic — see REACTION_PLACEHOLDER_MAX_CODEPOINTS.
+  if ([...trimmed].length <= REACTION_PLACEHOLDER_MAX_CODEPOINTS && !/[a-zA-Z]/.test(trimmed)) {
+    return true;
+  }
   return false;
 }
 

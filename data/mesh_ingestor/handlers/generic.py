@@ -91,6 +91,12 @@ def _coerce_emoji_codepoint(raw: object) -> str | None:
     small values (≤ 127) are preserved as strings so that slot markers such as
     ``"1"`` pass through unchanged.
 
+    When a numeric value claims to be a codepoint but lies outside the valid
+    Unicode range (``> 0x10FFFF``), ``None`` is returned rather than the
+    decimal string form — storing a multi-digit integer as the emoji would
+    leak garbage into the rendered chat (numeric strings of length > 1 are
+    not valid slot markers either).
+
     Parameters:
         raw: Raw emoji value from a decoded packet field.
 
@@ -108,7 +114,9 @@ def _coerce_emoji_codepoint(raw: object) -> str | None:
             try:
                 return chr(n)
             except (ValueError, OverflowError):
-                pass
+                # Value claimed to be a codepoint but is out of Unicode range;
+                # do NOT preserve the decimal form (would render as garbage).
+                return None
         text = str(raw).strip()
         return text or None
 
@@ -125,8 +133,23 @@ def _coerce_emoji_codepoint(raw: object) -> str | None:
             try:
                 return chr(n)
             except (ValueError, OverflowError):
-                pass
+                # See comment above — multi-digit numeric strings outside the
+                # Unicode range are not valid emoji nor slot markers.
+                return None
     return text
+
+
+#: Maximum Unicode codepoint length for text that may still qualify as a
+#: reaction placeholder.  A bare emoji (single grapheme) is at most 2
+#: codepoints — for example a base character plus a single variation
+#: selector (U+FE0F).  Multi-codepoint ZWJ families (👨‍👩‍👧, 🏳️‍🌈) are
+#: NOT accepted as placeholder text intentionally: matching them would
+#: also let through short CJK messages like ``"你好世界吗"`` (5 codepoints,
+#: no ASCII letters), causing real prose to be misclassified as a reaction.
+#: This constant must stay aligned with the JS frontend's
+#: ``isReactionPlaceholderText`` (``message-replies.js``); changing one
+#: side without the other re-introduces ingest/render disagreement.
+_REACTION_PLACEHOLDER_MAX_CODEPOINTS = 2
 
 
 def _is_reaction_placeholder_text(text: str | None) -> bool:
@@ -152,9 +175,10 @@ def _is_reaction_placeholder_text(text: str | None) -> bool:
         return True
     if stripped.isdigit():
         return True
-    # Short non-ASCII-letter text (≤ 8 codepoints, no ASCII letters) covers
-    # bare emoji including ZWJ sequences and skin-tone modifiers.
-    if len(stripped) <= 8 and not any(c.isascii() and c.isalpha() for c in stripped):
+    # Bare emoji heuristic — see _REACTION_PLACEHOLDER_MAX_CODEPOINTS.
+    if len(stripped) <= _REACTION_PLACEHOLDER_MAX_CODEPOINTS and not any(
+        c.isascii() and c.isalpha() for c in stripped
+    ):
         return True
     return False
 
