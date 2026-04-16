@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import {
   parseMeshcoreSenderPrefix,
   findNodeByLongName,
+  extractLeadingMentionAsReply,
 } from '../meshcore-chat-helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -165,4 +166,121 @@ test('findNodeByLongName: node with null long_name is skipped', () => {
   const node = { node_id: '!aabbccdd', long_name: null };
   const map = new Map([['!aabbccdd', node]]);
   assert.equal(findNodeByLongName('Alice', map), null);
+});
+
+// ---------------------------------------------------------------------------
+// findNodeByLongName — whitespace trimming and emoji-prefix fallback (#727)
+// ---------------------------------------------------------------------------
+
+test('findNodeByLongName: trims trailing whitespace in input', () => {
+  const node = { node_id: '!deadbeef', long_name: 'T-deck NK' };
+  const map = new Map([['!deadbeef', node]]);
+  assert.equal(findNodeByLongName('T-deck NK ', map), node);
+});
+
+test('findNodeByLongName: trims leading whitespace in input', () => {
+  const node = { node_id: '!deadbeef', long_name: 'Alice' };
+  const map = new Map([['!deadbeef', node]]);
+  assert.equal(findNodeByLongName(' Alice', map), node);
+});
+
+test('findNodeByLongName: trims whitespace from candidate long_name', () => {
+  const node = { node_id: '!deadbeef', long_name: '  T-deck NK  ' };
+  const map = new Map([['!deadbeef', node]]);
+  assert.equal(findNodeByLongName('T-deck NK', map), node);
+});
+
+test('findNodeByLongName: matches when candidate has leading emoji prefix', () => {
+  const node = { node_id: '!6aee769f', long_name: '\u{1F4FA} Timo +' };
+  const map = new Map([['!6aee769f', node]]);
+  // "Timo +" (from @[Timo +]) should match "\u{1F4FA} Timo +" via the
+  // leading-non-letter-stripping fallback pass.
+  assert.equal(findNodeByLongName('Timo +', map), node);
+});
+
+test('findNodeByLongName: emoji-prefix fallback combined with trimming', () => {
+  const node = { node_id: '!6aee769f', long_name: '\u{1F4FA} Timo +' };
+  const map = new Map([['!6aee769f', node]]);
+  assert.equal(findNodeByLongName(' Timo +', map), node);
+});
+
+test('findNodeByLongName: emoji-prefix fallback preserves exact-match precedence', () => {
+  // When both a prefixed and non-prefixed node match, the exact match wins.
+  const prefixed = { node_id: '!11111111', long_name: '\u{1F4FA} Alice' };
+  const exact = { node_id: '!22222222', long_name: 'Alice' };
+  const map = new Map([['!11111111', prefixed], ['!22222222', exact]]);
+  assert.equal(findNodeByLongName('Alice', map), exact);
+});
+
+test('findNodeByLongName: whitespace-only input returns null', () => {
+  const { map } = makeAliceMap();
+  assert.equal(findNodeByLongName('   ', map), null);
+});
+
+// ---------------------------------------------------------------------------
+// extractLeadingMentionAsReply — MeshCore leading-mention detection (#727)
+// ---------------------------------------------------------------------------
+
+test('extractLeadingMentionAsReply: single leading mention with body', () => {
+  assert.deepEqual(
+    extractLeadingMentionAsReply('@[Alice] hello world'),
+    { mentionName: 'Alice', remainingText: 'hello world' },
+  );
+});
+
+test('extractLeadingMentionAsReply: single leading mention with no body', () => {
+  assert.deepEqual(
+    extractLeadingMentionAsReply('@[Alice]'),
+    { mentionName: 'Alice', remainingText: null },
+  );
+});
+
+test('extractLeadingMentionAsReply: trims mention name whitespace', () => {
+  assert.deepEqual(
+    extractLeadingMentionAsReply('@[ Timo +] hello'),
+    { mentionName: 'Timo +', remainingText: 'hello' },
+  );
+});
+
+test('extractLeadingMentionAsReply: trims trailing whitespace in mention name', () => {
+  assert.deepEqual(
+    extractLeadingMentionAsReply('@[T-deck NK ] some text'),
+    { mentionName: 'T-deck NK', remainingText: 'some text' },
+  );
+});
+
+test('extractLeadingMentionAsReply: mention not at start returns null', () => {
+  assert.equal(extractLeadingMentionAsReply('hello @[Alice]'), null);
+});
+
+test('extractLeadingMentionAsReply: multiple mentions returns null', () => {
+  assert.equal(extractLeadingMentionAsReply('@[Alice] hi @[Bob]'), null);
+});
+
+test('extractLeadingMentionAsReply: empty string returns null', () => {
+  assert.equal(extractLeadingMentionAsReply(''), null);
+});
+
+test('extractLeadingMentionAsReply: null input returns null', () => {
+  assert.equal(extractLeadingMentionAsReply(null), null);
+});
+
+test('extractLeadingMentionAsReply: non-string input returns null', () => {
+  assert.equal(extractLeadingMentionAsReply(42), null);
+  assert.equal(extractLeadingMentionAsReply({}), null);
+});
+
+test('extractLeadingMentionAsReply: plain text returns null', () => {
+  assert.equal(extractLeadingMentionAsReply('just a plain message'), null);
+});
+
+test('extractLeadingMentionAsReply: empty mention name returns null', () => {
+  assert.equal(extractLeadingMentionAsReply('@[  ] body'), null);
+});
+
+test('extractLeadingMentionAsReply: leading whitespace before mention is allowed', () => {
+  assert.deepEqual(
+    extractLeadingMentionAsReply('   @[Alice] hello'),
+    { mentionName: 'Alice', remainingText: 'hello' },
+  );
 });

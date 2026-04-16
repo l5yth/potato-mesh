@@ -22,6 +22,8 @@ import {
   formatChatMessagePrefix,
   formatChatPresetTag,
 } from './chat-format.js';
+import { buildMessageIndex } from './message-replies.js';
+import { renderChatEntryContent } from './chat-entry-renderer.js';
 import {
   fmtAlt,
   fmtHumidity,
@@ -76,7 +78,7 @@ import {
   renderXAxis,
   renderTelemetryChart,
 } from './node-page-charts.js';
-import { fetchMessages, fetchTracesForNode } from './node-page-data.js';
+import { fetchMessages, fetchNodesById, fetchTracesForNode } from './node-page-data.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 const MESSAGE_LIMIT = 50;
@@ -923,24 +925,103 @@ function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.no
 }
 
 /**
+ * Render the emoji HTML fragment used by the chat entry renderer.
+ *
+ * Matches the markup emitted by the dashboard chat panel so that both the
+ * node detail page and the dashboard use identical emoji styling.
+ *
+ * @param {string} symbol Emoji character.
+ * @returns {string} HTML fragment wrapping the emoji in a chat-entry span.
+ */
+function renderNodeChatEmojiHtml(symbol) {
+  const trimmed = String(symbol ?? '').trim();
+  if (!trimmed) return '';
+  return `<span class="chat-entry-emoji" aria-hidden="true">${escapeHtml(trimmed)}</span>`;
+}
+
+/**
+ * Build a ``nodesById`` Map for chat-entry rendering.
+ *
+ * Layered sources, in priority order:
+ *
+ *   1. The global node registry fetched via ``fetchNodesById`` (the same
+ *      data the dashboard uses).  This is what allows MeshCore mentions
+ *      like ``@[Some Other Node]`` to resolve to a badge instead of
+ *      degrading to plain ``@[Name]`` text on the node detail page.
+ *   2. Hydrated ``message.node`` objects on the loaded messages — used as
+ *      a fallback for senders that may not be in the global registry.
+ *   3. The current page's own node, ensuring self-references and the
+ *      sender badge resolve even when neither of the above contains it.
+ *
+ * Known tradeoff: reply targets whose source message lies outside the
+ * loaded message window will not resolve via {@link resolveReplyPrefix},
+ * so the rendered ``[in reply to ...]`` prefix silently degrades to the
+ * empty string for those rows.
+ *
+ * @param {Array<Object>} messages Message records.
+ * @param {?Object} fallbackNode Current page node.
+ * @param {?Map<string, Object>} globalNodesById Global node registry.
+ * @returns {Map<string, Object>} Lookup map keyed by node identifier.
+ */
+function buildNodesById(messages, fallbackNode, globalNodesById) {
+  const map = new Map();
+  if (globalNodesById instanceof Map) {
+    for (const [id, node] of globalNodesById.entries()) {
+      if (id && node && typeof node === 'object') map.set(id, node);
+    }
+  }
+  const register = (node) => {
+    if (!node || typeof node !== 'object') return;
+    const id = node.node_id ?? node.nodeId ?? null;
+    if (!id) return;
+    if (!map.has(id)) map.set(id, node);
+  };
+  if (Array.isArray(messages)) {
+    for (const message of messages) {
+      if (!message || typeof message !== 'object') continue;
+      register(message.node);
+    }
+  }
+  register(fallbackNode);
+  return map;
+}
+
+/**
  * Render a message list using structured metadata formatting.
+ *
+ * Each entry is rendered through the shared {@link renderChatEntryContent}
+ * helper so the node detail page mirrors the dashboard chat panel —
+ * mentions resolve to badges, MeshCore leading-mention replies surface as
+ * an ``[in reply to]`` prefix, emoji are wrapped in ``chat-entry-emoji``
+ * spans, and URLs are linkified.
  *
  * @param {Array<Object>} messages Message records.
  * @param {Function} renderShortHtml Badge rendering implementation.
  * @param {Object} node Node context used when message metadata is incomplete.
+ * @param {?Map<string, Object>} [globalNodesById] Optional global node
+ *   registry used for mention/reply resolution; falls back to message-derived
+ *   sender nodes when omitted.
  * @returns {string} HTML string for the messages section.
  */
-function renderMessages(messages, renderShortHtml, node) {
+function renderMessages(messages, renderShortHtml, node, globalNodesById = null) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
 
   const fallbackNode = node && typeof node === 'object' ? node : null;
+  const nodesById = buildNodesById(messages, fallbackNode, globalNodesById);
+  const messagesById = buildMessageIndex(messages);
 
   const items = messages
     .map(message => {
       if (!message || typeof message !== 'object') return null;
-      const text = stringOrNull(message.text) || stringOrNull(message.emoji);
-      if (!text) return null;
-      if (message.encrypted && String(text).trim() === 'GAA=') return null;
+      const hasBody = stringOrNull(message.text) || stringOrNull(message.emoji);
+      if (!hasBody) return null;
+      // Filter out the canonical empty-payload encrypted marker.  This keeps
+      // the original semantics of falling back to ``message.emoji`` when the
+      // text field is null (some encrypted packets carry the marker only in
+      // the emoji slot).
+      if (message.encrypted && String(hasBody).trim() === 'GAA=') {
+        return null;
+      }
 
       const timestamp = formatMessageTimestamp(message.rx_time, message.rx_iso);
       const metadata = extractChatMessageMetadata(message);
@@ -970,18 +1051,36 @@ function renderMessages(messages, renderShortHtml, node) {
       const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
       const channelTag = formatChatChannelTag({ channelName: metadata.channelName });
 
-      const messageNode = message.node && typeof message.node === 'object' ? message.node : null;
-      const messageProtocol = stringOrNull(messageNode?.protocol ?? fallbackNode?.protocol) ?? null;
+      // Render the message body through the shared chat-entry renderer so
+      // the node page matches the dashboard in mention/reply/emoji handling.
+      const { html: bodyHtml, meshcoreSenderNode } = renderChatEntryContent({
+        message,
+        nodesById,
+        messagesById,
+        renderShortHtml,
+        escapeHtml,
+        renderEmojiHtml: renderNodeChatEmojiHtml,
+      });
+
+      // Resolve the sender badge.  When the ingestor could not hydrate
+      // ``message.node`` for a MeshCore channel message, fall back to the
+      // node resolved by the shared renderer via the sender-prefix lookup.
+      const senderNode = message.node && typeof message.node === 'object'
+        ? message.node
+        : (meshcoreSenderNode && typeof meshcoreSenderNode === 'object' ? meshcoreSenderNode : null);
+      const messageProtocol = stringOrNull(senderNode?.protocol ?? fallbackNode?.protocol) ?? null;
       const protocolIconHtml = protocolIconPrefixHtml(messageProtocol);
       const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
-        shortName: messageNode?.short_name ?? messageNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
-        longName: messageNode?.long_name ?? messageNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
-        role: messageNode?.role ?? fallbackNode?.role ?? null,
+        shortName: senderNode?.short_name ?? senderNode?.shortName ?? fallbackNode?.shortName ?? fallbackNode?.short_name,
+        longName: senderNode?.long_name ?? senderNode?.longName ?? fallbackNode?.longName ?? fallbackNode?.long_name,
+        role: senderNode?.role ?? fallbackNode?.role ?? null,
         identifier:
           message.node_id
             ?? message.nodeId
             ?? message.from_id
             ?? message.fromId
+            ?? senderNode?.node_id
+            ?? senderNode?.nodeId
             ?? fallbackNode?.nodeId
             ?? fallbackNode?.node_id
             ?? null,
@@ -990,17 +1089,31 @@ function renderMessages(messages, renderShortHtml, node) {
             ?? message.nodeNum
             ?? message.from_num
             ?? message.fromNum
+            ?? senderNode?.node_num
+            ?? senderNode?.nodeNum
             ?? fallbackNode?.nodeNum
             ?? fallbackNode?.node_num
             ?? null,
-        source: messageNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
+        source: senderNode ?? fallbackNode?.rawSources?.node ?? fallbackNode,
       });
 
-      return `<li>${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${escapeHtml(text)}</li>`;
+      return `<div class="chat-entry-msg">${prefix}${presetTag}${channelTag} ${protocolIconHtml}${badgeHtml} ${bodyHtml}</div>`;
     })
     .filter(item => item != null);
   if (items.length === 0) return '';
-  return `<ul class="node-detail__list">${items.join('')}</ul>`;
+  // Wrap entries in the same chat-panel chrome the dashboard and chat sub
+  // pages use so this section visually matches a real chat panel rather
+  // than a plain bullet list.  ``chat-tabpanel`` provides the scrollable
+  // padded inner container; ``chat-panel--node-detail`` is a hook for any
+  // node-page-specific overrides (height, border behaviour) that we want
+  // distinct from the dashboard's 60vh default.
+  return (
+    '<div class="chat-panel chat-panel--node-detail" aria-label="Chat log">'
+    + '<div class="chat-tabpanel">'
+    + items.join('')
+    + '</div>'
+    + '</div>'
+  );
 }
 
 /**
@@ -1195,6 +1308,7 @@ function renderNodeDetailHtml(node, {
   renderShortHtml,
   roleIndex = null,
   chartNowMs = Date.now(),
+  nodesById = null,
 } = {}) {
   const roleAwareBadge = renderRoleAwareBadge(renderShortHtml, {
     shortName: node.shortName ?? node.short_name,
@@ -1211,7 +1325,7 @@ function renderNodeDetailHtml(node, {
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
   const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
-  const messagesHtml = renderMessages(messages, renderShortHtml, node);
+  const messagesHtml = renderMessages(messages, renderShortHtml, node, nodesById);
 
   const sections = [];
   if (neighborsHtml) {
@@ -1330,12 +1444,19 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     normalized.nodeId ??
     stringOrNull(node.nodeId ?? node.node_id) ??
     (normalized.nodeNum != null ? normalized.nodeNum : null);
-  const [messages, traces] = await Promise.all([
+  // Fetch messages, traces, and the global node registry in parallel.  The
+  // registry is used by the chat-entry renderer to resolve MeshCore
+  // ``@[Name]`` mentions and reply targets that reference nodes other than
+  // the page's own node — without it, mention badges silently degrade to
+  // plain ``@[Name]`` text and leading-mention replies don't surface as
+  // ``[in reply to ...]`` prefixes.
+  const [messages, traces, nodesById] = await Promise.all([
     fetchMessages(messageIdentifier, {
       fetchImpl: options.fetchImpl,
       privateMode: options.privateMode === true,
     }),
     fetchTracesForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
+    fetchNodesById({ fetchImpl: options.fetchImpl }),
   ]);
   const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
   return renderNodeDetailHtml(node, {
@@ -1344,6 +1465,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     traces,
     renderShortHtml,
     roleIndex,
+    nodesById,
   });
 }
 

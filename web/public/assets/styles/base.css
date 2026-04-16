@@ -936,6 +936,19 @@ body.view-chat .page-shell {
   min-height: 0;
 }
 
+/* Variant used inside the node detail page Messages section: full width,
+   bounded height so the surrounding section does not turn into a single
+   massive scroll.  The 60vh default of ``.chat-panel`` works for the
+   dashboard sidebar but is too tall when stacked under telemetry charts. */
+.chat-panel.chat-panel--node-detail {
+  flex: 1 1 auto;
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+  min-height: 0;
+}
+
 /* Wrapper spans the full width and owns the bottom border so the arrow
    buttons are visually part of the tab bar. */
 .chat-tablist-wrapper {

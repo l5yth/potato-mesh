@@ -262,21 +262,79 @@ export function resolveReplyPrefix({
 /**
  * Normalise an emoji candidate into a trimmed string.
  *
+ * Numeric values above 127 are treated as Unicode codepoints and converted to
+ * the corresponding character (e.g. ``128077`` → ``"👍"``).  Small values
+ * (≤ 127) are kept as digit strings so that slot markers like ``"1"`` pass
+ * through unchanged.
+ *
  * @param {*} value Emoji candidate.
  * @returns {?string} Emoji string when valid.
  */
-function normaliseEmojiValue(value) {
+export function normaliseEmojiValue(value) {
   if (value == null) return null;
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) {
+      const cp = Number(trimmed);
+      if (cp > 127 && Number.isFinite(cp)) {
+        try { return String.fromCodePoint(cp); } catch { /* fall through */ }
+      }
+    }
+    return trimmed;
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
+    if (value > 127) {
+      try { return String.fromCodePoint(value); } catch { /* fall through */ }
+    }
     return String(value);
   }
   const str = String(value).trim();
   return str.length > 0 ? str : null;
+}
+
+/**
+ * Maximum Unicode codepoint length for text that may still qualify as a
+ * reaction placeholder.  A bare emoji (single grapheme) is at most 2
+ * codepoints — base character plus an optional variation selector
+ * (U+FE0F).  Multi-codepoint ZWJ families (👨‍👩‍👧, 🏳️‍🌈) are intentionally
+ * NOT accepted here: matching them would also let through short CJK
+ * messages like "你好世界吗" (5 codepoints, no ASCII letters), causing real
+ * prose to be misclassified as a reaction.
+ *
+ * MUST stay aligned with the Python ingestor's
+ * ``_REACTION_PLACEHOLDER_MAX_CODEPOINTS`` (``handlers/generic.py``);
+ * changing one side without the other re-introduces ingest/render
+ * disagreement (a packet stored as a reaction but rendered as text, or
+ * vice versa).
+ *
+ * @type {number}
+ */
+const REACTION_PLACEHOLDER_MAX_CODEPOINTS = 2;
+
+/**
+ * Return whether ``text`` looks like a reaction placeholder rather than
+ * substantive message content.
+ *
+ * Reaction packets carry either no text, a small numeric count/slot marker
+ * (e.g. ``"1"``, ``"3"``), or occasionally a bare emoji.  Anything that reads
+ * as real prose should cause the message to be classified as a regular text
+ * message, not a reaction.
+ *
+ * @param {?string} text Trimmed message text (may be ``null``).
+ * @returns {boolean} ``true`` when *text* is absent or a placeholder.
+ */
+function isReactionPlaceholderText(text) {
+  if (!text) return true;
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  if (/^\d+$/.test(trimmed)) return true;
+  // Bare emoji heuristic — see REACTION_PLACEHOLDER_MAX_CODEPOINTS.
+  if ([...trimmed].length <= REACTION_PLACEHOLDER_MAX_CODEPOINTS && !/[a-zA-Z]/.test(trimmed)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -299,7 +357,11 @@ function isReactionMessage(message) {
     return false;
   }
   const hasReplyId = message.reply_id != null || message.replyId != null;
-  return hasReplyId || !!portnum;
+  if (!hasReplyId) {
+    return false;
+  }
+  const text = toTrimmedString(message.text);
+  return isReactionPlaceholderText(text);
 }
 
 /**
@@ -401,7 +463,11 @@ function renderTextWithMentions(text, escapeHtml, renderMentionHtml) {
   // and captured mention names (odd indices): ["before", "Alice", "after", ...]
   const parts = text.split(/@\[([^\]]+)\]/);
   return parts.map((part, i) => {
-    if (i % 2 === 1) return renderMentionHtml(part);
+    // Mention names are trimmed before being passed to the callback so that
+    // captures like "@[ Timo +]" or "@[T-deck NK ]" (with stray whitespace)
+    // resolve against the registry; the callback is responsible for falling
+    // back to a plain-text rendering when the name does not match.
+    if (i % 2 === 1) return renderMentionHtml(part.trim());
     // Empty literal segments (e.g. when a mention is at the start or end) can
     // be skipped to avoid unnecessary renderLiteralWithLinks calls.
     return part ? renderLiteralWithLinks(part, escapeHtml) : '';

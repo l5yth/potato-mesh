@@ -82,6 +82,141 @@ def _portnum_candidates(name: str) -> set[int]:
     return candidates
 
 
+def _coerce_emoji_codepoint(raw: object) -> str | None:
+    """Normalise an emoji candidate, converting numeric codepoints to characters.
+
+    Meshtastic firmware may transmit reaction emoji as a Unicode codepoint
+    integer (e.g. ``128077`` for 👍) rather than as the character itself.
+    Values above 127 are treated as codepoints and converted via :func:`chr`;
+    small values (≤ 127) are preserved as strings so that slot markers such as
+    ``"1"`` pass through unchanged.
+
+    When a numeric value claims to be a codepoint but lies outside the valid
+    Unicode range (``> 0x10FFFF``), ``None`` is returned rather than the
+    decimal string form — storing a multi-digit integer as the emoji would
+    leak garbage into the rendered chat (numeric strings of length > 1 are
+    not valid slot markers either).
+
+    Parameters:
+        raw: Raw emoji value from a decoded packet field.
+
+    Returns:
+        Normalised emoji string, or ``None`` when *raw* is empty or invalid.
+    """
+
+    if raw is None:
+        return None
+
+    # Numeric value (int / float) -------------------------------------------
+    if isinstance(raw, (int, float)):
+        n = int(raw)
+        if n > 127:
+            try:
+                return chr(n)
+            except (ValueError, OverflowError):
+                # Value claimed to be a codepoint but is out of Unicode range;
+                # do NOT preserve the decimal form (would render as garbage).
+                return None
+        text = str(raw).strip()
+        return text or None
+
+    # String (possibly a digit-encoded codepoint) ---------------------------
+    try:
+        text = str(raw).strip()
+    except Exception:
+        return None
+    if not text:
+        return None
+    if text.isdigit():
+        n = int(text)
+        if n > 127:
+            try:
+                return chr(n)
+            except (ValueError, OverflowError):
+                # See comment above — multi-digit numeric strings outside the
+                # Unicode range are not valid emoji nor slot markers.
+                return None
+    return text
+
+
+#: Maximum Unicode codepoint length for text that may still qualify as a
+#: reaction placeholder.  A bare emoji (single grapheme) is at most 2
+#: codepoints — for example a base character plus a single variation
+#: selector (U+FE0F).  Multi-codepoint ZWJ families (👨‍👩‍👧, 🏳️‍🌈) are
+#: NOT accepted as placeholder text intentionally: matching them would
+#: also let through short CJK messages like ``"你好世界吗"`` (5 codepoints,
+#: no ASCII letters), causing real prose to be misclassified as a reaction.
+#: This constant must stay aligned with the JS frontend's
+#: ``isReactionPlaceholderText`` (``message-replies.js``); changing one
+#: side without the other re-introduces ingest/render disagreement.
+_REACTION_PLACEHOLDER_MAX_CODEPOINTS = 2
+
+
+def _is_reaction_placeholder_text(text: str | None) -> bool:
+    """Return ``True`` when *text* looks like a reaction slot or count marker.
+
+    Reaction packets carry either no text at all, a small numeric count (e.g.
+    ``"1"``, ``"3"``), or occasionally a bare emoji character.  Anything that
+    looks like substantive prose should cause the packet to be classified as a
+    regular text message instead of a reaction.
+
+    Parameters:
+        text: Message text to inspect (may be ``None``).
+
+    Returns:
+        ``True`` when *text* is absent, blank, a digit string, or a short
+        non-ASCII-letter sequence (bare emoji).
+    """
+
+    if not text:
+        return True
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.isdigit():
+        return True
+    # Bare emoji heuristic — see _REACTION_PLACEHOLDER_MAX_CODEPOINTS.
+    if len(stripped) <= _REACTION_PLACEHOLDER_MAX_CODEPOINTS and not any(
+        c.isascii() and c.isalpha() for c in stripped
+    ):
+        return True
+    return False
+
+
+def _is_likely_reaction(
+    portnum: str | None,
+    portnum_int: int | None,
+    reply_id: int | None,
+    emoji: str | None,
+    text: str | None,
+) -> bool:
+    """Determine whether a packet should be classified as a reaction.
+
+    A packet is a reaction when it carries the ``REACTION_APP`` portnum
+    explicitly, **or** when it has both a ``reply_id`` and an ``emoji`` and its
+    text content is absent or a mere placeholder (digit slot / bare emoji).
+
+    Parameters:
+        portnum:     String portnum label from the packet.
+        portnum_int: Integer portnum, if available.
+        reply_id:    Reply-to message identifier.
+        emoji:       Normalised emoji string (after codepoint coercion).
+        text:        Message text extracted from the packet.
+
+    Returns:
+        ``True`` when the packet should be treated as a reaction.
+    """
+
+    if portnum == "REACTION_APP":
+        return True
+    reaction_port_candidates = _portnum_candidates("REACTION_APP")
+    if portnum_int is not None and portnum_int in reaction_port_candidates:
+        return True
+    if reply_id is not None and emoji is not None:
+        return _is_reaction_placeholder_text(text)
+    return False
+
+
 def _is_encrypted_flag(value: object) -> bool:
     """Return ``True`` when ``value`` represents an encrypted payload.
 
@@ -244,16 +379,7 @@ def store_packet_dict(packet: Mapping) -> None:
         "emoji",
         default=None,
     )
-    emoji = None
-    if emoji_raw is not None:
-        try:
-            emoji_text = str(emoji_raw)
-        except Exception:
-            emoji_text = None
-        else:
-            emoji_text = emoji_text.strip()
-            if emoji_text:
-                emoji = emoji_text
+    emoji = _coerce_emoji_codepoint(emoji_raw)
 
     routing_section = decoded.get("routing") if isinstance(decoded, Mapping) else None
     routing_port_candidates = _portnum_candidates("ROUTING_APP")
@@ -292,8 +418,8 @@ def store_packet_dict(packet: Mapping) -> None:
         allowed_port_ints.add(portnum_int)
         allowed_port_values.add(str(portnum_int))
 
-    is_reaction_packet = portnum == "REACTION_APP" or (
-        reply_id is not None and emoji is not None
+    is_reaction_packet = _is_likely_reaction(
+        portnum, portnum_int, reply_id, emoji, text
     )
     if is_reaction_packet and portnum_int is not None:
         allowed_port_ints.add(portnum_int)
