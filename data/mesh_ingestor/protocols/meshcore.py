@@ -123,7 +123,7 @@ _MESHCORE_ADV_TYPE_ROLE: dict[int, str] = {
 # ---------------------------------------------------------------------------
 
 
-_MESHCORE_ID_BITS: int = 53
+_MESHCORE_ID_BITS = 53
 """Width of the synthetic MeshCore message ID, in bits.
 
 53 bits keeps the value within :js:data:`Number.MAX_SAFE_INTEGER`
@@ -132,7 +132,7 @@ without precision loss, while giving roughly :math:`2^{26.5}` (~95 million)
 distinct messages of birthday-collision headroom.
 """
 
-_MESHCORE_ID_MASK: int = (1 << _MESHCORE_ID_BITS) - 1
+_MESHCORE_ID_MASK = (1 << _MESHCORE_ID_BITS) - 1
 """Bitmask applied to the SHA-256 prefix to clamp the id to 53 bits."""
 
 

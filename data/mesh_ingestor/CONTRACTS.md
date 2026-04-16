@@ -66,7 +66,7 @@ v1:<sender_identity>:<sender_timestamp>:<discriminator>:<text>
 
 hashed with SHA-256 and truncated to 53 bits (first 7 bytes, masked). Components:
 
-- `sender_identity` — for channel messages, the lowercased+stripped sender name parsed from the leading `Name:` convention in the message text; for direct messages, the sender's `pubkey_prefix` from the MeshCore event payload. Empty string when unavailable.
+- `sender_identity` — for channel messages, the lowercased+stripped sender name parsed from a leading `SenderName:` prefix in the message text (split on the first colon, surrounding whitespace stripped); for direct messages, the sender's `pubkey_prefix` from the MeshCore event payload. Empty string when unavailable — when the channel-message text lacks any `SenderName:` prefix the dedup degrades and two distinct senders sharing timestamp + channel + text collide. In practice MeshCore clients always prefix the name; the residual risk is anonymous/malformed transmissions.
 - `sender_timestamp` — Unix seconds from the sender's clock (identical across receivers).
 - `discriminator` — `c<N>` for channel messages on channel `N`, `dm` for direct messages.
 - `text` — the message text exactly as transmitted.
