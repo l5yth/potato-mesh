@@ -46,6 +46,12 @@ import { escapeHtml } from './utils.js';
 export { escapeHtml };
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
+import {
+  buildRenderableEntries,
+  computeColocatedOffsets,
+  isOffsetSignificant,
+  refreshSpiderPositions
+} from './map-colocated-offset.js';
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
@@ -510,6 +516,17 @@ export function initializeApp(config) {
   let neighborLinesToggleButton = null;
   let traceLinesToggleButton = null;
   let markersLayer = null;
+  let spiderLinesLayer = null;
+  // Per-render record of the offset markers we created so the zoom event
+  // handlers can re-project them and keep the on-screen pixel gap constant
+  // regardless of zoom level.  Each entry is
+  // `{ marker, line, lat, lon, dx, dy }` where `lat`/`lon` are the original
+  // (un-offset) coordinates.
+  let colocatedSpiderState = [];
+  // requestAnimationFrame handle used to coalesce per-frame `zoom` events
+  // into a single refresh; reset to ``null`` once the scheduled callback
+  // runs so the next frame can schedule again.
+  let pendingSpiderRefreshHandle = null;
   let tileDomObserver = null;
   const fullscreenChangeEvents = [
     'fullscreenchange',
@@ -1310,7 +1327,24 @@ export function initializeApp(config) {
 
     neighborLinesLayer = L.layerGroup().addTo(map);
     traceLinesLayer = L.layerGroup().addTo(map);
+    // Spider lines render between the connection lines and the markers so the
+    // dashed white "leader" lines are visible against neighbour/trace overlays
+    // but never sit on top of the marker glyphs themselves.
+    spiderLinesLayer = L.layerGroup().addTo(map);
     markersLayer = L.layerGroup().addTo(map);
+
+    // Pixel-space offsets are baked into a LatLng at render time, so the
+    // on-screen spread would otherwise scale with zoom — at extreme zoom-outs
+    // the offset becomes many degrees wide and the markers fly off-screen
+    // when the user later zooms in.  Recompute continuously throughout every
+    // zoom task: the `zoom` event fires per animation frame and is throttled
+    // through `requestAnimationFrame` to coalesce redundant updates into a
+    // single redraw per frame; `zoomend` snaps to the final position; and
+    // `viewreset` covers projection resets such as resize / fullscreen /
+    // dateline wrap.
+    map.on('zoom', scheduleColocatedSpiderRefresh);
+    map.on('zoomend', refreshColocatedSpiderState);
+    map.on('viewreset', refreshColocatedSpiderState);
 
     if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
       activateOfflineTiles('Offline mode detected. Using placeholder basemap.');
@@ -3992,6 +4026,58 @@ export function initializeApp(config) {
   }
 
   /**
+   * Project a base coordinate to its co-located display position by adding a
+   * pixel-space offset against the live map projection.
+   *
+   * @param {number} lat Original latitude in degrees.
+   * @param {number} lon Original longitude in degrees.
+   * @param {number} dx Pixel offset along the layer-point X axis.
+   * @param {number} dy Pixel offset along the layer-point Y axis.
+   * @returns {[number, number]} Display ``[lat, lng]`` for the marker.
+   */
+  function projectColocatedOffsetLatLng(lat, lon, dx, dy) {
+    if (dx === 0 && dy === 0) return [lat, lon];
+    const basePoint = map.latLngToLayerPoint([lat, lon]);
+    const offsetPoint = L.point(basePoint.x + dx, basePoint.y + dy);
+    const projected = map.layerPointToLatLng(offsetPoint);
+    return [projected.lat, projected.lng];
+  }
+
+  /**
+   * Re-project every co-located marker (and its spider leader line) so the
+   * pixel gap between markers stays constant after the user zooms.  Wired to
+   * the map's ``zoomend`` and ``viewreset`` events from {@link initializeApp},
+   * and reached via the rAF-throttled {@link scheduleColocatedSpiderRefresh}
+   * for the per-frame ``zoom`` event.
+   *
+   * @returns {void}
+   */
+  function refreshColocatedSpiderState() {
+    if (!map) return;
+    refreshSpiderPositions(colocatedSpiderState, projectColocatedOffsetLatLng);
+  }
+
+  /**
+   * Throttled wrapper around {@link refreshColocatedSpiderState} that
+   * coalesces multiple ``zoom`` events fired inside a single animation frame
+   * into one update.  Falls back to an immediate call when the host has no
+   * ``requestAnimationFrame`` (e.g. unit-test environments).
+   *
+   * @returns {void}
+   */
+  function scheduleColocatedSpiderRefresh() {
+    if (typeof requestAnimationFrame !== 'function') {
+      refreshColocatedSpiderState();
+      return;
+    }
+    if (pendingSpiderRefreshHandle !== null) return;
+    pendingSpiderRefreshHandle = requestAnimationFrame(() => {
+      pendingSpiderRefreshHandle = null;
+      refreshColocatedSpiderState();
+    });
+  }
+
+  /**
    * Render the Leaflet map markers and neighbour connections.
    *
    * @param {Array<Object>} nodes Node payloads.
@@ -4008,6 +4094,12 @@ export function initializeApp(config) {
     if (traceLinesLayer) {
       traceLinesLayer.clearLayers();
     }
+    if (spiderLinesLayer) {
+      spiderLinesLayer.clearLayers();
+    }
+    // Drop the previous render's spider records before populating them again
+    // so the zoom handler does not try to reposition stale Leaflet objects.
+    colocatedSpiderState = [];
     markersLayer.clearLayers();
     const pts = [];
     const nodesById = new Map();
@@ -4218,15 +4310,32 @@ export function initializeApp(config) {
       })
       .map(entry => entry.node);
 
-    for (const n of nodesByRenderOrder) {
-      const latRaw = n.latitude, lonRaw = n.longitude;
-      if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
-      const lat = Number(latRaw), lon = Number(lonRaw);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      if (LIMIT_DISTANCE && n.distance_km != null && n.distance_km > MAX_DISTANCE_KM) continue;
+    // Pre-pass: parse + filter renderable entries once so co-located nodes can
+    // be spread visually before any marker is created.  Resolving entries up
+    // front (via the helper module so the parsing rules stay unit-testable)
+    // means LIMIT_DISTANCE-filtered nodes do not influence per-coordinate
+    // group sizes.
+    const renderableEntries = buildRenderableEntries(nodesByRenderOrder, {
+      maxDistanceKm: LIMIT_DISTANCE ? MAX_DISTANCE_KM : null
+    });
+
+    const offsets = computeColocatedOffsets(renderableEntries);
+    for (const { entry, dx, dy } of offsets) {
+      const n = entry.node;
+      const { lat, lon } = entry;
+
+      // Translate the pixel-space offset into the LatLng to render at.  The
+      // baked-in LatLng is correct for the current zoom only; the zoom event
+      // handlers re-project on zoom/zoomend/viewreset to keep the gap
+      // visually constant when the user changes zoom.  Use the helper-level
+      // significance test (rather than strict !== 0) because trig at angles
+      // like π produces values around 1e-15 which would otherwise pass the
+      // strict check and cause us to draw zero-length spider lines.
+      const markerLatLng = projectColocatedOffsetLatLng(lat, lon, dx, dy);
+      const isOffset = isOffsetSignificant(dx, dy);
 
       const color = getRoleColor(n.role, n.protocol);
-      const marker = L.circleMarker([lat, lon], {
+      const marker = L.circleMarker(markerLatLng, {
         radius: 9,
         color: '#000',
         weight: 1,
@@ -4235,9 +4344,31 @@ export function initializeApp(config) {
         opacity: 0.7
       });
 
+      // Draw a faint dotted leader line from each co-located marker back to
+      // the shared physical location so the spider hub is visually obvious.
+      // Singleton markers (no offset) get no line.  Stroke colour, dash,
+      // weight and opacity all live in `.colocated-spider-line` so the line
+      // can pick up theme-aware tokens (var(--fg)) and stay legible on both
+      // light and dark basemaps without code changes here.
+      let spiderLine = null;
+      if (isOffset && spiderLinesLayer) {
+        spiderLine = L.polyline([[lat, lon], markerLatLng], {
+          interactive: false,
+          className: 'colocated-spider-line'
+        }).addTo(spiderLinesLayer);
+      }
+
       const fallbackOverlayProvider = () => mergeOverlayDetails(null, n);
       let markerToken = 0;
       marker.addTo(markersLayer);
+      // Track every offset marker so the zoomend handler can reposition the
+      // marker + leader line in lock-step.  Singletons skip the record since
+      // their position never changes between zooms.
+      if (isOffset) {
+        colocatedSpiderState.push({ marker, line: spiderLine, lat, lon, dx, dy });
+      }
+      // Use the original coordinates for fitBounds so sub-pixel display
+      // offsets cannot widen the auto-fit window.
       pts.push([lat, lon]);
 
       attachNodeInfoRefreshToMarker({
@@ -4773,6 +4904,28 @@ export function initializeApp(config) {
       },
       /** Trigger a manual refresh cycle (test use only). */
       refresh,
+      /** Project an original lat/lon + pixel offset into a display LatLng. */
+      projectColocatedOffsetLatLng,
+      /** Re-project every recorded co-located marker (no-op without a map). */
+      refreshColocatedSpiderState,
+      /** rAF-throttled wrapper around the spider refresh. */
+      scheduleColocatedSpiderRefresh,
+      /** Replace the recorded spider state for tests; returns the previous value. */
+      _setColocatedSpiderStateForTests(next) {
+        const previous = colocatedSpiderState;
+        colocatedSpiderState = Array.isArray(next) ? next : [];
+        return previous;
+      },
+      /** Inspect the recorded spider state (test use only). */
+      _getColocatedSpiderStateForTests() {
+        return colocatedSpiderState;
+      },
+      /** Inject a stub Leaflet map for tests that need to drive the projection. */
+      _setMapForTests(stub) {
+        const previous = map;
+        map = stub;
+        return previous;
+      },
     },
   };
 }
