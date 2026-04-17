@@ -94,6 +94,48 @@ function normalisePositive(value, fallback) {
 }
 
 /**
+ * Filter and parse a list of node payloads down to the entries that should
+ * actually be rendered as map markers.  The parsing rules mirror the legacy
+ * inline loop in ``renderMap`` so behaviour stays identical:
+ *
+ * - ``null`` / ``undefined`` / empty-string lat or lon → skipped.
+ * - lat or lon that does not parse as a finite number → skipped.
+ * - When a positive ``maxDistanceKm`` is supplied, nodes whose ``distance_km``
+ *   is finite and exceeds the limit are skipped.  Nodes with no ``distance_km``
+ *   value are always kept regardless of the limit, matching the renderer's
+ *   "show by default if we don't know" behaviour.
+ *
+ * The function lives in the helper module so it can be unit-tested without
+ * spinning up Leaflet or the DOM environment used by the renderer.
+ *
+ * @param {Iterable<Object>} nodes Iterable of node payloads.
+ * @param {Object} [options] Optional limits.
+ * @param {number} [options.maxDistanceKm] When finite and positive, drop nodes
+ *   whose ``distance_km`` field exceeds this value.
+ * @returns {Array<{node: Object, lat: number, lon: number}>} Renderable
+ *   entries in input order.
+ */
+export function buildRenderableEntries(nodes, options = {}) {
+  if (!nodes || typeof nodes[Symbol.iterator] !== 'function') return [];
+  const limit = Number.isFinite(options.maxDistanceKm) && options.maxDistanceKm > 0
+    ? options.maxDistanceKm
+    : null;
+  const entries = [];
+  for (const node of nodes) {
+    if (!node) continue;
+    const latRaw = node.latitude;
+    const lonRaw = node.longitude;
+    if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
+    const lat = Number(latRaw);
+    const lon = Number(lonRaw);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    if (limit !== null && node.distance_km != null && node.distance_km > limit) continue;
+    entries.push({ node, lat, lon });
+  }
+  return entries;
+}
+
+/**
  * Compute pixel-space offsets that spread co-located map markers around their
  * shared coordinate so each node remains individually visible and clickable.
  *

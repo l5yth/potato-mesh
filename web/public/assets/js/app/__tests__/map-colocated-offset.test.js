@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildRenderableEntries,
   computeColocatedOffsets,
   isOffsetSignificant,
   refreshSpiderPositions,
@@ -275,6 +276,54 @@ test('normalisePositive sanitises invalid inputs', () => {
   assert.equal(normalisePositive(0, 10), 0);
   assert.equal(normalisePositive(-1, 10), 10);
   assert.equal(normalisePositive(Number.NaN, 10), 10);
+});
+
+test('buildRenderableEntries returns empty for null/undefined/non-iterable input', () => {
+  assert.deepEqual(buildRenderableEntries(null), []);
+  assert.deepEqual(buildRenderableEntries(undefined), []);
+  assert.deepEqual(buildRenderableEntries(42), []);
+  assert.deepEqual(buildRenderableEntries('string'), []);
+});
+
+test('buildRenderableEntries parses lat/lon and skips invalid nodes', () => {
+  const nodes = [
+    { latitude: '10', longitude: '20' },
+    null,
+    { latitude: null, longitude: '5' },
+    { latitude: '', longitude: '' },
+    { latitude: 'NaN', longitude: '3' },
+    { latitude: 30, longitude: 40 }
+  ];
+  const result = buildRenderableEntries(nodes);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].lat, 10);
+  assert.equal(result[0].lon, 20);
+  assert.equal(result[0].node, nodes[0]);
+  assert.equal(result[1].lat, 30);
+  assert.equal(result[1].lon, 40);
+  assert.equal(result[1].node, nodes[5]);
+});
+
+test('buildRenderableEntries respects maxDistanceKm', () => {
+  const nodes = [
+    { latitude: 1, longitude: 2, distance_km: 5 },
+    { latitude: 3, longitude: 4, distance_km: 15 },
+    { latitude: 5, longitude: 6 } // no distance → always included
+  ];
+  const result = buildRenderableEntries(nodes, { maxDistanceKm: 10 });
+  assert.equal(result.length, 2);
+  assert.equal(result[0].lat, 1);
+  assert.equal(result[1].lat, 5);
+});
+
+test('buildRenderableEntries ignores maxDistanceKm when zero/negative/non-finite', () => {
+  const nodes = [
+    { latitude: 1, longitude: 2, distance_km: 1000 }
+  ];
+  assert.equal(buildRenderableEntries(nodes, { maxDistanceKm: 0 }).length, 1);
+  assert.equal(buildRenderableEntries(nodes, { maxDistanceKm: -5 }).length, 1);
+  assert.equal(buildRenderableEntries(nodes, { maxDistanceKm: NaN }).length, 1);
+  assert.equal(buildRenderableEntries(nodes).length, 1);
 });
 
 test('isOffsetSignificant reports true for real offsets and false near zero', () => {

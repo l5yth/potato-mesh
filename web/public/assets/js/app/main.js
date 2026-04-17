@@ -47,6 +47,7 @@ export { escapeHtml };
 
 import { computeBoundingBox, computeBoundsForPoints, haversineDistanceKm } from './map-bounds.js';
 import {
+  buildRenderableEntries,
   computeColocatedOffsets,
   isOffsetSignificant,
   refreshSpiderPositions
@@ -4052,7 +4053,7 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function refreshColocatedSpiderState() {
-    if (!map || !markersLayer) return;
+    if (!map) return;
     refreshSpiderPositions(colocatedSpiderState, projectColocatedOffsetLatLng);
   }
 
@@ -4310,18 +4311,13 @@ export function initializeApp(config) {
       .map(entry => entry.node);
 
     // Pre-pass: parse + filter renderable entries once so co-located nodes can
-    // be spread visually before any marker is created.  Keeping the validation
-    // inline before the offset pass means nodes filtered by LIMIT_DISTANCE do
-    // not influence the per-coordinate group sizes.
-    const renderableEntries = [];
-    for (const n of nodesByRenderOrder) {
-      const latRaw = n.latitude, lonRaw = n.longitude;
-      if (latRaw == null || latRaw === '' || lonRaw == null || lonRaw === '') continue;
-      const lat = Number(latRaw), lon = Number(lonRaw);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      if (LIMIT_DISTANCE && n.distance_km != null && n.distance_km > MAX_DISTANCE_KM) continue;
-      renderableEntries.push({ node: n, lat, lon });
-    }
+    // be spread visually before any marker is created.  Resolving entries up
+    // front (via the helper module so the parsing rules stay unit-testable)
+    // means LIMIT_DISTANCE-filtered nodes do not influence per-coordinate
+    // group sizes.
+    const renderableEntries = buildRenderableEntries(nodesByRenderOrder, {
+      maxDistanceKm: LIMIT_DISTANCE ? MAX_DISTANCE_KM : null
+    });
 
     const offsets = computeColocatedOffsets(renderableEntries);
     for (const { entry, dx, dy } of offsets) {
@@ -4908,6 +4904,28 @@ export function initializeApp(config) {
       },
       /** Trigger a manual refresh cycle (test use only). */
       refresh,
+      /** Project an original lat/lon + pixel offset into a display LatLng. */
+      projectColocatedOffsetLatLng,
+      /** Re-project every recorded co-located marker (no-op without a map). */
+      refreshColocatedSpiderState,
+      /** rAF-throttled wrapper around the spider refresh. */
+      scheduleColocatedSpiderRefresh,
+      /** Replace the recorded spider state for tests; returns the previous value. */
+      _setColocatedSpiderStateForTests(next) {
+        const previous = colocatedSpiderState;
+        colocatedSpiderState = Array.isArray(next) ? next : [];
+        return previous;
+      },
+      /** Inspect the recorded spider state (test use only). */
+      _getColocatedSpiderStateForTests() {
+        return colocatedSpiderState;
+      },
+      /** Inject a stub Leaflet map for tests that need to drive the projection. */
+      _setMapForTests(stub) {
+        const previous = map;
+        map = stub;
+        return previous;
+      },
     },
   };
 }
