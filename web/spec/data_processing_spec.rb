@@ -523,6 +523,73 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(remaining).to be_empty
       db.close
     end
+
+    # Regression tests for issue #755: synthetic arrives after the real node
+    # was already stored (e.g. by a co-operating ingestor that saw the contact
+    # advertisement first).  The reverse merge must fire at synthetic-upsert
+    # time so duplicates never persist.
+    it "collapses a synthetic upsert when a real meshcore node with the same long_name already exists" do
+      db = open_db
+      real_id = "!real8888"
+      synth_id = "!synth888"
+      dp.upsert_node(db, real_id, {
+        "lastHeard" => now - 100,
+        "user" => { "longName" => "Heidi", "shortName" => "  H ", "role" => "COMPANION", "publicKey" => "88" * 32 },
+      }, protocol: "meshcore")
+      # Pre-existing message with synthetic id (simulates a chat message that
+      # was stored before the ingestor learned about the real contact).
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [71, now - 50, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      dp.upsert_node(db, synth_id, {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Heidi", "shortName" => "", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      # Synthetic must not linger as a second row.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      # Real node still there.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_id]).first).not_to be_nil
+      # Pre-existing message redirected.
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 71").first[0]).to eq(real_id)
+      db.close
+    end
+
+    it "leaves a synthetic in place when no real meshcore peer exists yet" do
+      db = open_db
+      synth_id = "!synth999"
+      dp.upsert_node(db, synth_id, {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Ivan", "shortName" => "", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      row = db.execute("SELECT synthetic FROM nodes WHERE node_id = ?", [synth_id]).first
+      expect(row).not_to be_nil
+      expect(row[0]).to eq(1)
+      db.close
+    end
+
+    it "does not merge across protocols — a synthetic meshtastic peer is not treated as a match" do
+      db = open_db
+      real_meshtastic = "!realmtA1"
+      synth_meshcore = "!synthmcA"
+      # Real meshtastic node sharing the same long_name must not be mistaken
+      # for a reverse-merge target when a meshcore synthetic is upserted.
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_meshtastic, "Judy", "meshtastic", 0, now - 100, now - 100],
+      )
+      dp.upsert_node(db, synth_meshcore, {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Judy", "shortName" => "", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      # Both rows must coexist.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_meshtastic]).first).not_to be_nil
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_meshcore]).first).not_to be_nil
+      db.close
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -567,6 +634,73 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       msg_from = db.execute("SELECT from_id FROM messages WHERE id = 61").first[0]
       expect(msg_from).to eq(synth_id)
       db.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # merge_into_real_node — reverse of merge_synthetic_nodes (issue #755).
+  # ---------------------------------------------------------------------------
+  describe "#merge_into_real_node" do
+    include_context "with isolated db"
+
+    let(:now) { Time.now.to_i }
+
+    it "is a no-op when no real meshcore node shares the long_name" do
+      db = open_db
+      synth_id = "!synthAAA"
+      dp.upsert_node(db, synth_id, {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Mallory", "shortName" => "", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      dp.merge_into_real_node(db, synth_id, "Mallory")
+      # Synthetic remains because there is no real peer.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
+    ensure
+      db&.close
+    end
+
+    it "migrates messages and drops the synthetic when a real meshcore peer exists" do
+      db = open_db
+      real_id = "!realBBBB"
+      synth_id = "!synthBBB"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_id, "Niaj", "meshcore", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Niaj", "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [81, now, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      dp.merge_into_real_node(db, synth_id, "Niaj")
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 81").first[0]).to eq(real_id)
+    ensure
+      db&.close
+    end
+
+    it "does not match a real meshtastic node as the reverse-merge target" do
+      db = open_db
+      real_meshtastic = "!realCCCC"
+      synth_meshcore = "!synthCCC"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_meshtastic, "Oscar", "meshtastic", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_meshcore, "Oscar", "meshcore", 1, now, now],
+      )
+      dp.merge_into_real_node(db, synth_meshcore, "Oscar")
+      # Cross-protocol row must be left alone; synthetic survives.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_meshcore]).first).not_to be_nil
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_meshtastic]).first).not_to be_nil
+    ensure
+      db&.close
     end
   end
 end

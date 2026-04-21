@@ -467,12 +467,17 @@ module PotatoMesh
                 AND NOT (COALESCE(nodes.synthetic,0) = 0 AND excluded.synthetic = 1)
             SQL
 
-            # When a real (non-synthetic) node is upserted with a known long
-            # name, migrate any synthetic placeholder rows that share that name.
-            # This fires when the MeshCore device finally receives the sender's
-            # contact advertisement, resolving the placeholder to a real node ID.
-            if synthetic == 0 && long_name && !long_name.empty?
-              merge_synthetic_nodes(db, node_id, long_name)
+            # Reconcile synthetic placeholder rows with their real counterparts
+            # whenever a MeshCore node is upserted.  Both directions must fire —
+            # the arrival order of chat messages vs contact advertisements is
+            # not guaranteed and may differ across co-operating ingestors that
+            # share this database.  See issue #755.
+            if protocol == "meshcore" && long_name && !long_name.empty?
+              if synthetic == 0
+                merge_synthetic_nodes(db, node_id, long_name)
+              else
+                merge_into_real_node(db, node_id, long_name)
+              end
             end
           end
         end
@@ -509,6 +514,42 @@ module PotatoMesh
             [synthetic_id],
           )
         end
+      end
+
+      # Reverse of +merge_synthetic_nodes+: when a synthetic placeholder is
+      # upserted for a MeshCore sender whose real contact advertisement has
+      # already been stored (e.g. by a co-operating ingestor that saw the
+      # advertisement first), migrate any messages from the synthetic id to the
+      # real id and drop the synthetic row.
+      #
+      # Fixes duplication bug #755 where a chat-derived synthetic node and a
+      # pubkey-derived real node coexisted because the forward merge only fired
+      # on real-node upserts and never back-filled late-arriving synthetics.
+      #
+      # @param db [SQLite3::Database] open database connection.
+      # @param synthetic_node_id [String] canonical node ID of the synthetic placeholder being upserted.
+      # @param long_name [String] long name to match against existing real rows.
+      # @return [void]
+      def merge_into_real_node(db, synthetic_node_id, long_name)
+        # Index by [0] rather than the hash key so this works whether the db
+        # handle was opened with results_as_hash = true or not.
+        row = db.execute(
+          "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 0 AND protocol = 'meshcore' AND node_id != ? LIMIT 1",
+          [long_name, synthetic_node_id],
+        ).first
+        return unless row
+
+        real_node_id = row[0]
+        return unless real_node_id
+
+        db.execute(
+          "UPDATE messages SET from_id = ? WHERE from_id = ?",
+          [real_node_id, synthetic_node_id],
+        )
+        db.execute(
+          "DELETE FROM nodes WHERE node_id = ? AND synthetic = 1",
+          [synthetic_node_id],
+        )
       end
 
       def require_token!
