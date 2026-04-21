@@ -499,6 +499,17 @@ module PotatoMesh
       # @param long_name [String] long name to match against synthetic rows.
       # @return [void]
       def merge_synthetic_nodes(db, real_node_id, long_name)
+        # long_name is user-editable and not unique across pubkeys — two real
+        # meshcore devices can legitimately share the same display name.  When
+        # that happens we cannot tell which real node a given chat-derived
+        # synthetic was acting as placeholder for, so any merge would risk
+        # mis-attributing messages.  Bail out and leave the synthetic intact.
+        other_real = db.execute(
+          "SELECT 1 FROM nodes WHERE long_name = ? AND synthetic = 0 AND protocol = 'meshcore' AND node_id != ? LIMIT 1",
+          [long_name, real_node_id],
+        ).first
+        return if other_real
+
         synthetic_ids = db.execute(
           "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 1 AND protocol = 'meshcore' AND node_id != ?",
           [long_name, real_node_id],
@@ -533,10 +544,18 @@ module PotatoMesh
       def merge_into_real_node(db, synthetic_node_id, long_name)
         # Index by [0] rather than the hash key so this works whether the db
         # handle was opened with results_as_hash = true or not.
-        row = db.execute(
-          "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 0 AND protocol = 'meshcore' AND node_id != ? LIMIT 1",
+        real_rows = db.execute(
+          "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 0 AND protocol = 'meshcore' AND node_id != ? LIMIT 2",
           [long_name, synthetic_node_id],
-        ).first
+        )
+        # Ambiguous name: two distinct real meshcore devices share this
+        # long_name.  The synthetic placeholder could legitimately represent
+        # either, so we cannot pick one without risking mis-attribution.  Leave
+        # the synthetic in place; an operator can resolve the duplicate
+        # manually.
+        return if real_rows.length > 1
+
+        row = real_rows.first
         return unless row
 
         real_node_id = row[0]

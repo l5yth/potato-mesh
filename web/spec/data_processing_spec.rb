@@ -590,6 +590,77 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_meshcore]).first).not_to be_nil
       db.close
     end
+
+    # Two real meshcore radios can legitimately advertise the same long_name
+    # (it is user-editable and has no uniqueness constraint).  In that case we
+    # cannot tell which real device a synthetic placeholder stood in for, so
+    # neither direction of the merge is allowed to fire.
+    it "skips the reverse merge when two real meshcore nodes share the same long_name" do
+      db = open_db
+      real_a = "!realambA"
+      real_b = "!realambB"
+      synth_id = "!synthamb"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard,public_key) VALUES (?,?,?,?,?,?,?)",
+        [real_a, "Karl", "meshcore", 0, now - 200, now - 200, "aa" * 32],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard,public_key) VALUES (?,?,?,?,?,?,?)",
+        [real_b, "Karl", "meshcore", 0, now - 100, now - 100, "bb" * 32],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [91, now - 10, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      dp.upsert_node(db, synth_id, {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Karl", "shortName" => "", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      # Synthetic must NOT be merged — keep it as a visible placeholder so an
+      # operator can resolve the ambiguity manually.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
+      # Message untouched.
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 91").first[0]).to eq(synth_id)
+      # Both real rows still present.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_a]).first).not_to be_nil
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_b]).first).not_to be_nil
+      db.close
+    end
+
+    it "skips the forward merge when another real meshcore node already owns the long_name" do
+      db = open_db
+      real_a = "!realfwdA"
+      real_b = "!realfwdB"
+      synth_id = "!synthfwd"
+      # Pre-existing real meshcore "Liam" (simulates another device that
+      # advertised before) and a synthetic "Liam" placeholder.
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard,public_key) VALUES (?,?,?,?,?,?,?)",
+        [real_a, "Liam", "meshcore", 0, now - 200, now - 200, "cc" * 32],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Liam", "meshcore", 1, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [92, now - 50, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      # Now a second real meshcore "Liam" is upserted.  Because the name is
+      # ambiguous, the forward merge must NOT claim the synthetic on behalf
+      # of this node — that would randomly attribute the pre-existing message
+      # to whichever real was upserted first.
+      dp.upsert_node(db, real_b, {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Liam", "shortName" => "L", "role" => "COMPANION", "publicKey" => "dd" * 32 },
+      }, protocol: "meshcore")
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 92").first[0]).to eq(synth_id)
+    ensure
+      db&.close
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -699,6 +770,36 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # Cross-protocol row must be left alone; synthetic survives.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_meshcore]).first).not_to be_nil
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_meshtastic]).first).not_to be_nil
+    ensure
+      db&.close
+    end
+
+    it "refuses to merge when two real meshcore nodes share the long_name" do
+      db = open_db
+      real_a = "!realDDDA"
+      real_b = "!realDDDB"
+      synth_id = "!synthDDD"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_a, "Paul", "meshcore", 0, now - 200, now - 200],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_b, "Paul", "meshcore", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Paul", "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [82, now, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      dp.merge_into_real_node(db, synth_id, "Paul")
+      # Neither real should take the synthetic's messages because we cannot
+      # tell which Paul actually sent the chat.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 82").first[0]).to eq(synth_id)
     ensure
       db&.close
     end

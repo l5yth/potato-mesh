@@ -165,6 +165,10 @@ module PotatoMesh
           # synthetic rows.  Idempotent — the EXISTS guards make repeated runs
           # a no-op.
           if node_columns.include?("protocol") && node_columns.include?("synthetic")
+            # Only collapse synthetics whose long_name resolves to *exactly*
+            # one real meshcore node.  When two real devices share a
+            # long_name, the placeholder is ambiguous — merging would risk
+            # mis-attributing historical chat messages to the wrong radio.
             db.execute(<<~SQL)
               UPDATE messages
                  SET from_id = (
@@ -177,20 +181,23 @@ module PotatoMesh
                  )
                WHERE from_id IN (
                  SELECT synth.node_id FROM nodes synth
-                 JOIN nodes real ON real.long_name = synth.long_name
                  WHERE synth.synthetic = 1 AND synth.protocol = 'meshcore'
-                   AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                   AND (
+                     SELECT COUNT(*) FROM nodes real
+                     WHERE real.long_name = synth.long_name
+                       AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                   ) = 1
                )
             SQL
             db.execute(<<~SQL)
               DELETE FROM nodes
                WHERE synthetic = 1 AND protocol = 'meshcore'
-                 AND EXISTS (
-                   SELECT 1 FROM nodes real
+                 AND (
+                   SELECT COUNT(*) FROM nodes real
                    WHERE real.long_name = nodes.long_name
                      AND real.synthetic = 0 AND real.protocol = 'meshcore'
                      AND real.node_id != nodes.node_id
-                 )
+                 ) = 1
             SQL
           end
         end

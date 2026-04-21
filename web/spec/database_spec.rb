@@ -380,4 +380,57 @@ RSpec.describe PotatoMesh::App::Database do
       expect(db.get_first_row("SELECT node_id FROM nodes WHERE node_id = '!realmtX1'")).not_to be_nil
     end
   end
+
+  it "leaves synthetic placeholders alone when two real meshcore nodes share the long_name" do
+    # Long-name is user-editable and not unique across meshcore pubkeys.  If
+    # two real devices happen to advertise the same name, the backfill cannot
+    # safely attribute the synthetic placeholder's history to either — leave
+    # all three rows in place for manual resolution.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute(<<~SQL)
+        CREATE TABLE nodes(
+          node_id TEXT PRIMARY KEY, num INTEGER, short_name TEXT, long_name TEXT,
+          role TEXT, last_heard INTEGER, first_heard INTEGER,
+          protocol TEXT NOT NULL DEFAULT 'meshtastic', synthetic BOOLEAN NOT NULL DEFAULT 0
+        )
+      SQL
+      db.execute(<<~SQL)
+        CREATE TABLE messages(
+          id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT,
+          from_id TEXT, to_id TEXT, protocol TEXT NOT NULL DEFAULT 'meshtastic'
+        )
+      SQL
+
+      db.execute(
+        "INSERT INTO nodes(node_id, long_name, role, protocol, synthetic) VALUES (?, ?, ?, ?, ?)",
+        ["!realambA", "Quinn", "COMPANION", "meshcore", 0],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id, long_name, role, protocol, synthetic) VALUES (?, ?, ?, ?, ?)",
+        ["!realambB", "Quinn", "COMPANION", "meshcore", 0],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id, long_name, role, protocol, synthetic) VALUES (?, ?, ?, ?, ?)",
+        ["!synthamb", "Quinn", "COMPANION", "meshcore", 1],
+      )
+      db.execute(
+        "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, protocol) VALUES (?, ?, ?, ?, ?, ?)",
+        [902, 1, "2025-01-01T00:00:00Z", "!synthamb", "^all", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      db.results_as_hash = true
+      # All three rows survive.
+      expect(db.get_first_row("SELECT node_id FROM nodes WHERE node_id = '!realambA'")).not_to be_nil
+      expect(db.get_first_row("SELECT node_id FROM nodes WHERE node_id = '!realambB'")).not_to be_nil
+      expect(db.get_first_row("SELECT node_id FROM nodes WHERE node_id = '!synthamb'")).not_to be_nil
+      # Message stays attributed to the synthetic placeholder — better an
+      # obvious unresolved pointer than a silent mis-attribution.
+      msg = db.get_first_row("SELECT from_id FROM messages WHERE id = 902")
+      expect(msg["from_id"]).to eq("!synthamb")
+    end
+  end
 end
