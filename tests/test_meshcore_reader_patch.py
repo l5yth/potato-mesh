@@ -59,7 +59,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_apply_is_idempotent(monkeypatch):
+def test_apply_is_idempotent():
     """``apply()`` wrapping twice must not double-wrap the target method."""
 
     class Target:
