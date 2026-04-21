@@ -1914,6 +1914,44 @@ module PotatoMesh
         ]
 
         with_busy_retry do
+          # Meshcore-only content-level dedup (issue #756).  The deterministic
+          # message id (``_derive_message_id`` in the Python ingestor) hashes
+          # ``sender_timestamp`` among other fields, but the MeshCore library
+          # has been observed delivering the same physical packet twice with
+          # a rewritten ``sender_timestamp`` (relay/retransmit behaviour).
+          # The PK path below cannot catch that — two copies compute two
+          # different ids — so we add a narrow content+window pre-check here.
+          # Scoped to meshcore so Meshtastic's firmware packet-id dedup is
+          # untouched; requires from_id + channel + text so we never collapse
+          # unrelated encrypted/broadcast traffic.
+          if protocol == "meshcore" && from_id && channel_index && text && !text.to_s.empty?
+            duplicate_id = db.get_first_value(
+              <<~SQL,
+                SELECT id FROM messages
+                  WHERE protocol = 'meshcore'
+                    AND from_id = ?
+                    AND to_id IS ?
+                    AND channel IS ?
+                    AND text = ?
+                    AND rx_time BETWEEN ? AND ?
+                    AND id != ?
+                  LIMIT 1
+              SQL
+              [from_id, to_id, channel_index, text, rx_time - 120, rx_time + 120, msg_id],
+            )
+            if duplicate_id
+              debug_log(
+                "Skipped meshcore message duplicate",
+                context: "data_processing.insert_message",
+                new_id: msg_id,
+                existing_id: duplicate_id,
+                from_id: from_id,
+                channel: channel_index,
+              )
+              return
+            end
+          end
+
           existing = db.get_first_row(
             "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol FROM messages WHERE id = ?",
             [msg_id],

@@ -251,6 +251,47 @@ module PotatoMesh
           unless reply_index_exists
             db.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_id ON messages(reply_id)")
           end
+
+          # #756 — partial index backing the meshcore content-dedup lookup in
+          # insert_message.  Scoped to meshcore so the index stays small even
+          # on meshtastic-heavy deployments.  Skipped on minimal legacy
+          # schemas that do not yet carry the needed columns — the next
+          # migration pass will fill them in before this index is needed.
+          meshcore_dedup_columns = %w[from_id to_id channel text rx_time protocol]
+          if meshcore_dedup_columns.all? { |column| message_columns.include?(column) }
+            db.execute(<<~SQL)
+              CREATE INDEX IF NOT EXISTS idx_messages_meshcore_content
+                ON messages(from_id, channel, rx_time)
+                WHERE protocol = 'meshcore'
+            SQL
+
+            # #756 backfill — collapse meshcore duplicate groups that pre-date
+            # the content-dedup guard.  Keep the earliest (min rx_time, min
+            # id) copy in each (from_id, to_id, channel, text) cluster where
+            # any two rows are within 120 s of each other.  Idempotent: once
+            # only the keeper remains, no row has a strictly-earlier peer in
+            # the window, so subsequent runs delete nothing.
+            db.transaction do
+              db.execute(<<~SQL)
+                DELETE FROM messages
+                 WHERE protocol = 'meshcore'
+                   AND text IS NOT NULL AND text != ''
+                   AND from_id IS NOT NULL
+                   AND EXISTS (
+                     SELECT 1 FROM messages AS earlier
+                      WHERE earlier.protocol = 'meshcore'
+                        AND earlier.from_id = messages.from_id
+                        AND earlier.to_id IS messages.to_id
+                        AND earlier.channel IS messages.channel
+                        AND earlier.text = messages.text
+                        AND messages.rx_time - earlier.rx_time >= 0
+                        AND messages.rx_time - earlier.rx_time <= 120
+                        AND (earlier.rx_time < messages.rx_time
+                             OR earlier.id < messages.id)
+                   )
+              SQL
+            end
+          end
         end
 
         tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='instances'").flatten

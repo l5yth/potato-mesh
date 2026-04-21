@@ -804,4 +804,197 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # insert_message — meshcore content dedup (issue #756).
+  # ---------------------------------------------------------------------------
+  describe "#insert_message — meshcore content dedup" do
+    include_context "with isolated db"
+
+    let(:now) { Time.now.to_i }
+
+    # Harness that routes every incoming message to the meshcore protocol so
+    # we exercise the new dedup branch without touching the ingestors table.
+    let(:meshcore_harness) do
+      Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(message, **); end
+
+        def warn_log(message, **); end
+
+        def with_busy_retry
+          yield
+        end
+
+        def update_prometheus_metrics(*); end
+
+        def prom_report_ids
+          []
+        end
+
+        def private_mode?
+          false
+        end
+
+        def normalize_node_id(_db, node_ref)
+          parts = canonical_node_parts(node_ref)
+          parts ? parts[0] : nil
+        end
+
+        # Always report meshcore so insert_message exercises the content-dedup
+        # pre-check; ingestor rows are irrelevant for these specs.
+        def resolve_protocol(_db, _ingestor, cache: nil)
+          "meshcore"
+        end
+
+        def touch_node_last_seen(*); end
+
+        def ensure_unknown_node(*); end
+      end.new
+    end
+
+    let(:base_message) do
+      {
+        "rx_time" => now,
+        "from_id" => "!aabbccdd",
+        "to_id" => "^all",
+        "channel" => 5,
+        "text" => "hello from alice",
+        "portnum" => "TEXT_MESSAGE_APP",
+        "ingestor" => "!ingest01",
+      }
+    end
+
+    def message_count(db)
+      db.get_first_value("SELECT COUNT(*) FROM messages").to_i
+    end
+
+    it "skips a second meshcore message with identical content within the 120s window" do
+      db = open_db
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_001))
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_002, "rx_time" => now + 10),
+      )
+      expect(message_count(db)).to eq(1)
+      expect(db.get_first_value("SELECT id FROM messages").to_i).to eq(1_000_001)
+    ensure
+      db&.close
+    end
+
+    it "inserts both copies when rx_time delta exceeds the window" do
+      db = open_db
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_003))
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_004, "rx_time" => now + 300),
+      )
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "does not collapse two meshcore messages on different channels" do
+      db = open_db
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_005, "channel" => 5))
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_006, "channel" => 6))
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "does not collapse two meshcore messages with different text" do
+      db = open_db
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_007, "text" => "first"))
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_008, "text" => "second"))
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "does not collapse two meshcore DMs to different recipients sharing text" do
+      db = open_db
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_009, "to_id" => "!bbbbbbbb"),
+      )
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_010, "to_id" => "!cccccccc", "rx_time" => now + 5),
+      )
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "does not collapse when the incoming message has no text" do
+      db = open_db
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_011, "text" => "blob"),
+      )
+      # Second payload has no text — the content-dedup branch must not fire,
+      # so this falls through to the normal id-PK path and inserts.
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_012, "text" => nil, "rx_time" => now + 5),
+      )
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "leaves meshtastic traffic untouched" do
+      db = open_db
+      meshtastic_harness = Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(message, **); end
+        def warn_log(message, **); end
+        def with_busy_retry; yield; end
+        def update_prometheus_metrics(*); end
+        def prom_report_ids; []; end
+        def private_mode?; false; end
+        def normalize_node_id(_db, node_ref)
+          parts = canonical_node_parts(node_ref)
+          parts ? parts[0] : nil
+        end
+        def resolve_protocol(_db, _ingestor, cache: nil); "meshtastic"; end
+        def touch_node_last_seen(*); end
+        def ensure_unknown_node(*); end
+      end.new
+      # Two meshtastic packets with the same logical content but distinct
+      # firmware-assigned packet ids must both land — the new guard is
+      # scoped to meshcore by design.
+      meshtastic_harness.insert_message(db, base_message.merge("id" => 1_000_013))
+      meshtastic_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_014, "rx_time" => now + 5),
+      )
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "still merges on the id-PK path when sender_timestamps collide on the wire" do
+      db = open_db
+      # Same id, same content — the existing update-on-match code path should
+      # patch the stored row rather than insert a duplicate.  This proves the
+      # new dedup guard does not short-circuit the id-match merge behaviour.
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_015, "ingestor" => nil))
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_015, "ingestor" => "!ingest99"),
+      )
+      expect(message_count(db)).to eq(1)
+      expect(
+        db.get_first_value("SELECT ingestor FROM messages WHERE id = 1000015"),
+      ).to eq("!ingest99")
+    ensure
+      db&.close
+    end
+  end
 end

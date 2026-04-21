@@ -480,4 +480,132 @@ RSpec.describe PotatoMesh::App::Database do
       expect(msg["from_id"]).to eq("!realidmp")
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # #756 backfill — collapse pre-existing meshcore duplicate message groups.
+  # ---------------------------------------------------------------------------
+
+  # Build the minimal messages + nodes schema we need for the backfill specs,
+  # matching the subset of columns the migration inspects.
+  def seed_meshcore_message_tables(db)
+    db.execute(<<~SQL)
+      CREATE TABLE nodes(
+        node_id TEXT PRIMARY KEY, long_name TEXT,
+        protocol TEXT NOT NULL DEFAULT 'meshtastic',
+        synthetic BOOLEAN NOT NULL DEFAULT 0
+      )
+    SQL
+    db.execute(<<~SQL)
+      CREATE TABLE messages(
+        id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT,
+        from_id TEXT, to_id TEXT, channel INTEGER, text TEXT,
+        protocol TEXT NOT NULL DEFAULT 'meshtastic'
+      )
+    SQL
+  end
+
+  it "collapses a meshcore duplicate pair within the 120s window" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      # Observed shape from local DB: same from_id/channel/text, rx_time 9s
+      # apart, ids differ because sender_timestamp was rewritten on relay.
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [3_436_613_256_067_934, 1_776_750_469, "2026-04-20T00:00:00Z", "!e81e448a", "^all", 20, "mirkosw: hi", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [4_439_171_486_877_153, 1_776_750_478, "2026-04-20T00:00:09Z", "!e81e448a", "^all", 20, "mirkosw: hi", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      ids = db.execute("SELECT id FROM messages ORDER BY id").flatten
+      expect(ids).to eq([3_436_613_256_067_934])
+    end
+  end
+
+  it "preserves both copies when rx_time delta exceeds the window" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [501, 1_000_000, "2026-04-20T00:00:00Z", "!aabbccdd", "^all", 0, "ping", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [502, 1_000_600, "2026-04-20T00:10:00Z", "!aabbccdd", "^all", 0, "ping", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      expect(db.execute("SELECT id FROM messages ORDER BY id").flatten).to eq([501, 502])
+    end
+  end
+
+  it "leaves meshtastic duplicates alone even when the content matches" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [601, 1_000_000, "2026-04-20T00:00:00Z", "!aabbccdd", "^all", 0, "pong", "meshtastic"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [602, 1_000_010, "2026-04-20T00:00:10Z", "!aabbccdd", "^all", 0, "pong", "meshtastic"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      expect(db.execute("SELECT id FROM messages ORDER BY id").flatten).to eq([601, 602])
+    end
+  end
+
+  it "makes the #756 backfill idempotent across successive boots" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [701, 2_000_000, "2026-04-21T00:00:00Z", "!aabbccdd", "^all", 3, "dup", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [702, 2_000_005, "2026-04-21T00:00:05Z", "!aabbccdd", "^all", 3, "dup", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [703, 2_000_010, "2026-04-21T00:00:10Z", "!aabbccdd", "^all", 3, "dup", "meshcore"],
+      )
+    end
+
+    2.times { harness_class.ensure_schema_upgrades }
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      expect(db.execute("SELECT id FROM messages ORDER BY id").flatten).to eq([701])
+    end
+  end
+
+  it "creates the partial index backing the runtime content-dedup lookup" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      index = db.get_first_value(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_messages_meshcore_content'",
+      )
+      expect(index).to include("meshcore")
+      expect(index).to include("from_id")
+      expect(index).to include("channel")
+      expect(index).to include("rx_time")
+    end
+  end
 end
