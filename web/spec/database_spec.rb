@@ -433,4 +433,51 @@ RSpec.describe PotatoMesh::App::Database do
       expect(msg["from_id"]).to eq("!synthamb")
     end
   end
+
+  it "makes the #755 duplicate backfill idempotent across successive boots" do
+    # ensure_schema_upgrades runs on every startup, so the backfill must be a
+    # no-op the second time around — otherwise a later upsert that re-creates
+    # the synthetic could be undone by an unrelated migration re-run.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute(<<~SQL)
+        CREATE TABLE nodes(
+          node_id TEXT PRIMARY KEY, num INTEGER, short_name TEXT, long_name TEXT,
+          role TEXT, last_heard INTEGER, first_heard INTEGER,
+          protocol TEXT NOT NULL DEFAULT 'meshtastic', synthetic BOOLEAN NOT NULL DEFAULT 0
+        )
+      SQL
+      db.execute(<<~SQL)
+        CREATE TABLE messages(
+          id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT,
+          from_id TEXT, to_id TEXT, protocol TEXT NOT NULL DEFAULT 'meshtastic'
+        )
+      SQL
+
+      db.execute(
+        "INSERT INTO nodes(node_id, long_name, role, protocol, synthetic) VALUES (?, ?, ?, ?, ?)",
+        ["!realidmp", "Sybil", "COMPANION", "meshcore", 0],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id, long_name, role, protocol, synthetic) VALUES (?, ?, ?, ?, ?)",
+        ["!syntidmp", "Sybil", "COMPANION", "meshcore", 1],
+      )
+      db.execute(
+        "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, protocol) VALUES (?, ?, ?, ?, ?, ?)",
+        [903, 1, "2025-01-01T00:00:00Z", "!syntidmp", "^all", "meshcore"],
+      )
+    end
+
+    2.times { harness_class.ensure_schema_upgrades }
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      db.results_as_hash = true
+      # Real still there, synthetic gone, message redirected — same as the
+      # single-run case.  The second pass must not re-introduce or corrupt
+      # any state.
+      expect(db.get_first_row("SELECT node_id FROM nodes WHERE node_id = '!realidmp'")).not_to be_nil
+      expect(db.get_first_row("SELECT node_id FROM nodes WHERE node_id = '!syntidmp'")).to be_nil
+      msg = db.get_first_row("SELECT from_id FROM messages WHERE id = 903")
+      expect(msg["from_id"]).to eq("!realidmp")
+    end
+  end
 end

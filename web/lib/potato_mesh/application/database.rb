@@ -169,36 +169,41 @@ module PotatoMesh
             # one real meshcore node.  When two real devices share a
             # long_name, the placeholder is ambiguous — merging would risk
             # mis-attributing historical chat messages to the wrong radio.
-            db.execute(<<~SQL)
-              UPDATE messages
-                 SET from_id = (
-                   SELECT real.node_id FROM nodes real
-                   JOIN nodes synth ON synth.long_name = real.long_name
-                   WHERE synth.node_id = messages.from_id
-                     AND synth.synthetic = 1 AND synth.protocol = 'meshcore'
-                     AND real.synthetic = 0 AND real.protocol = 'meshcore'
-                   LIMIT 1
+            # Wrapped in a single transaction so that a crash between the
+            # UPDATE and DELETE cannot leave messages redirected without the
+            # corresponding synthetic row cleared.
+            db.transaction do
+              db.execute(<<~SQL)
+                UPDATE messages
+                   SET from_id = (
+                     SELECT real.node_id FROM nodes real
+                     JOIN nodes synth ON synth.long_name = real.long_name
+                     WHERE synth.node_id = messages.from_id
+                       AND synth.synthetic = 1 AND synth.protocol = 'meshcore'
+                       AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                     LIMIT 1
+                   )
+                 WHERE from_id IN (
+                   SELECT synth.node_id FROM nodes synth
+                   WHERE synth.synthetic = 1 AND synth.protocol = 'meshcore'
+                     AND (
+                       SELECT COUNT(*) FROM nodes real
+                       WHERE real.long_name = synth.long_name
+                         AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                     ) = 1
                  )
-               WHERE from_id IN (
-                 SELECT synth.node_id FROM nodes synth
-                 WHERE synth.synthetic = 1 AND synth.protocol = 'meshcore'
+              SQL
+              db.execute(<<~SQL)
+                DELETE FROM nodes
+                 WHERE synthetic = 1 AND protocol = 'meshcore'
                    AND (
                      SELECT COUNT(*) FROM nodes real
-                     WHERE real.long_name = synth.long_name
+                     WHERE real.long_name = nodes.long_name
                        AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                       AND real.node_id != nodes.node_id
                    ) = 1
-               )
-            SQL
-            db.execute(<<~SQL)
-              DELETE FROM nodes
-               WHERE synthetic = 1 AND protocol = 'meshcore'
-                 AND (
-                   SELECT COUNT(*) FROM nodes real
-                   WHERE real.long_name = nodes.long_name
-                     AND real.synthetic = 0 AND real.protocol = 'meshcore'
-                     AND real.node_id != nodes.node_id
-                 ) = 1
-            SQL
+              SQL
+            end
           end
         end
 
