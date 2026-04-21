@@ -3,6 +3,46 @@
 
 # CHANGELOG
 
+## v0.6.2
+
+This is a service release of the radio mesh app-suite `potato-mesh` v0.6.2, focused on Meshcore-related fixes, federation accuracy, and bridge coverage. The Matrix bridge now understands Meshcore traffic, and several duplication and classification issues in the web app and ingestor have been tightened up.
+
+Demo: <https://potatomesh.net/>
+
+### Features
+* Matrix: enable meshcore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/761>
+* Web: show colocated nodes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/753>
+
+### Fixes
+* Web: fix emoji pattern render in short names by @l5yth in <https://github.com/l5yth/potato-mesh/pull/760>
+* Data: catch packet handler errors by @l5yth in <https://github.com/l5yth/potato-mesh/pull/759>
+* Web: fix meshcore message duplication with 120s dupe protection by @l5yth in <https://github.com/l5yth/potato-mesh/pull/758>
+* Web: fix node duplication through message synthetization by @l5yth in <https://github.com/l5yth/potato-mesh/pull/757>
+* Ingestor: deduplicate meshcore messages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/752>
+* Fix reaction handling and classification by @l5yth in <https://github.com/l5yth/potato-mesh/pull/750>
+* Web: fix federation node counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/749>
+
+## v0.6.1
+
+This is a service release of the radio mesh app-suite `potato-mesh` v0.6.1, focused on Meshcore polish, federation resilience, and ingestor stability in the wake of the v0.6.0 multi-protocol release.
+
+Demo: <https://potatomesh.net/>
+
+### Features
+* Web: per protocol active node counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/735>
+* Web: optimize caching by @l5yth in <https://github.com/l5yth/potato-mesh/pull/744>
+* Data: better lora frequency handling for meshtastic by @l5yth in <https://github.com/l5yth/potato-mesh/pull/733>
+
+### Fixes
+* Web: fix meshcore node misclassification by @l5yth in <https://github.com/l5yth/potato-mesh/pull/748>
+* Web: fix federation resolver issue with multi addresses by @l5yth in <https://github.com/l5yth/potato-mesh/pull/743>
+* Web: restore refresh and protocol buttons by @l5yth in <https://github.com/l5yth/potato-mesh/pull/742>
+* Ingestor: fix serial connection failures by @l5yth in <https://github.com/l5yth/potato-mesh/pull/736>
+
+### Chores
+* Chore: bump version to 0.6.1 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/726>
+* Build(deps): bump rand from 0.9.2 to 0.9.4 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/741>
+
 ## v0.6.0
 
 This is a service release of the radio mesh app-suite `potato-mesh` v0.6.0 which introduces new features and overhauls the user interface. The primary notable change is added support for multi-protocol along with an implementation of **Meshcore** in ingestor, web app, and frontend.
