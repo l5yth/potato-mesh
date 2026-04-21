@@ -813,12 +813,18 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
     let(:now) { Time.now.to_i }
 
-    # Harness that routes every incoming message to the meshcore protocol so
-    # we exercise the new dedup branch without touching the ingestors table.
-    let(:meshcore_harness) do
+    # Shared builder for a minimal ``insert_message`` harness parameterised
+    # by the protocol it advertises for every POST.  Keeping this in one
+    # place (rather than duplicating per-describe) matches CLAUDE.md's
+    # modularity guidance and makes it trivial to add a third protocol.
+    def self.build_protocol_harness(protocol_name)
       Class.new do
         include PotatoMesh::App::DataProcessing
         include PotatoMesh::App::Helpers
+
+        define_method(:resolve_protocol) do |_db, _ingestor, cache: nil|
+          protocol_name
+        end
 
         def debug_log(message, **); end
 
@@ -843,22 +849,20 @@ RSpec.describe PotatoMesh::App::DataProcessing do
           parts ? parts[0] : nil
         end
 
-        # Always report meshcore so insert_message exercises the content-dedup
-        # pre-check; ingestor rows are irrelevant for these specs.
-        def resolve_protocol(_db, _ingestor, cache: nil)
-          "meshcore"
-        end
-
         def touch_node_last_seen(*); end
 
         def ensure_unknown_node(*); end
       end.new
     end
 
+    let(:meshcore_harness) { self.class.build_protocol_harness("meshcore") }
+    let(:meshtastic_harness) { self.class.build_protocol_harness("meshtastic") }
+
     # rx_time sits in the past so we can shift later copies forward (up to
     # ``now``) without tripping the ``rx_time > now`` clamp in
     # ``insert_message``.
     let(:base_rx_time) { now - 1_000 }
+    let(:dedup_window) { PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS }
 
     let(:base_message) do
       {
@@ -876,12 +880,12 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db.get_first_value("SELECT COUNT(*) FROM messages").to_i
     end
 
-    it "skips a second meshcore message with identical content within the 120s window" do
+    it "skips a second meshcore message with identical content within the dedup window" do
       db = open_db
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_001))
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_002, "rx_time" => base_rx_time + 10),
+        base_message.merge("id" => 1_000_002, "rx_time" => base_rx_time + (dedup_window - 1)),
       )
       expect(message_count(db)).to eq(1)
       expect(db.get_first_value("SELECT id FROM messages").to_i).to eq(1_000_001)
@@ -889,12 +893,12 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
 
-    it "inserts both copies when rx_time delta exceeds the window" do
+    it "inserts both copies when rx_time delta exceeds the dedup window" do
       db = open_db
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_003))
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_004, "rx_time" => base_rx_time + 300),
+        base_message.merge("id" => 1_000_004, "rx_time" => base_rx_time + (dedup_window * 3)),
       )
       expect(message_count(db)).to eq(2)
     ensure
@@ -953,24 +957,6 @@ RSpec.describe PotatoMesh::App::DataProcessing do
 
     it "leaves meshtastic traffic untouched" do
       db = open_db
-      meshtastic_harness = Class.new do
-        include PotatoMesh::App::DataProcessing
-        include PotatoMesh::App::Helpers
-
-        def debug_log(message, **); end
-        def warn_log(message, **); end
-        def with_busy_retry; yield; end
-        def update_prometheus_metrics(*); end
-        def prom_report_ids; []; end
-        def private_mode?; false; end
-        def normalize_node_id(_db, node_ref)
-          parts = canonical_node_parts(node_ref)
-          parts ? parts[0] : nil
-        end
-        def resolve_protocol(_db, _ingestor, cache: nil); "meshtastic"; end
-        def touch_node_last_seen(*); end
-        def ensure_unknown_node(*); end
-      end.new
       # Two meshtastic packets with the same logical content but distinct
       # firmware-assigned packet ids must both land — the new guard is
       # scoped to meshcore by design.
@@ -980,6 +966,24 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         base_message.merge("id" => 1_000_014, "rx_time" => base_rx_time + 5),
       )
       expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "never issues the content-dedup SELECT for non-meshcore traffic" do
+      # Pins the performance contract: meshtastic traffic must skip the
+      # partial-index lookup entirely so any future regression that makes
+      # the pre-check unconditional surfaces as a failing test.
+      db = open_db
+      content_select_pattern = /SELECT\s+id\s+FROM\s+messages\s+WHERE\s+protocol\s*=\s*'meshcore'/im
+      captured_sql = []
+      wrapped = db.method(:get_first_value)
+      allow(db).to receive(:get_first_value) do |sql, *rest|
+        captured_sql << sql
+        wrapped.call(sql, *rest)
+      end
+      meshtastic_harness.insert_message(db, base_message.merge("id" => 1_000_020))
+      expect(captured_sql.any? { |s| s =~ content_select_pattern }).to be(false)
     ensure
       db&.close
     end

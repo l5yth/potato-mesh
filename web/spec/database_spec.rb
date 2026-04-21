@@ -505,7 +505,7 @@ RSpec.describe PotatoMesh::App::Database do
     SQL
   end
 
-  it "collapses a meshcore duplicate pair within the 120s window" do
+  it "collapses a meshcore duplicate pair within the content-dedup window" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       seed_meshcore_message_tables(db)
       # Observed shape from local DB: same from_id/channel/text, rx_time 9s
@@ -589,6 +589,51 @@ RSpec.describe PotatoMesh::App::Database do
 
     SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
       expect(db.execute("SELECT id FROM messages ORDER BY id").flatten).to eq([701])
+      expect(db.get_first_value("PRAGMA user_version").to_i).to eq(
+        PotatoMesh::App::Database::MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION,
+      )
+    end
+  end
+
+  it "gates the #756 backfill behind PRAGMA user_version and does not re-sweep later data" do
+    # First boot seeds the backfill target; migration collapses the pair and
+    # sets user_version.  Second boot seeds NEW duplicates post-bump — the
+    # gated migration must leave them alone so we are not paying for a
+    # self-join on every single startup.  The runtime guard in
+    # insert_message is what keeps new duplicates from piling up in prod.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [801, 3_000_000, "2026-04-22T00:00:00Z", "!aabbccdd", "^all", 1, "hi", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [802, 3_000_005, "2026-04-22T00:00:05Z", "!aabbccdd", "^all", 1, "hi", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      expect(db.execute("SELECT id FROM messages WHERE id IN (801,802)").flatten).to eq([801])
+      # Inject brand new duplicates AFTER the one-shot sweep has run.
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [803, 3_100_000, "2026-04-22T00:01:00Z", "!aabbccdd", "^all", 1, "bye", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [804, 3_100_003, "2026-04-22T00:01:03Z", "!aabbccdd", "^all", 1, "bye", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      # Second pass must have been gated out by user_version — both new rows
+      # survive even though they would otherwise match the backfill predicate.
+      expect(db.execute("SELECT id FROM messages WHERE id IN (803,804) ORDER BY id").flatten).to eq([803, 804])
     end
   end
 
