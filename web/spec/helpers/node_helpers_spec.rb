@@ -244,8 +244,20 @@ RSpec.describe PotatoMesh::App::Helpers do
       ).to eq(" #{rainbow} ")
     end
 
-    it "picks the first emoji cluster when a flag is followed by a plain emoji" do
-      name = "\u{1F1E9}\u{1F1EA} then \u{1F600}"
+    it "picks the first emoji cluster when a flag is followed back-to-back by a plain emoji" do
+      # No separator between clusters — proves ``find`` stops at the flag's
+      # grapheme cluster rather than splitting on a subsequent codepoint that
+      # also falls in the pattern range.
+      name = "\u{1F1E9}\u{1F1EA}\u{1F600}"
+      expect(
+        helper.meshcore_companion_display_short_name(name),
+      ).to eq(" \u{1F1E9}\u{1F1EA} ")
+    end
+
+    it "returns the cluster when the long name is only an emoji and nothing else" do
+      # Exercises the branch where the first cluster at index 0 matches and
+      # there is no surrounding ASCII to drive the initials fallback.
+      name = "\u{1F1E9}\u{1F1EA}"
       expect(
         helper.meshcore_companion_display_short_name(name),
       ).to eq(" \u{1F1E9}\u{1F1EA} ")
