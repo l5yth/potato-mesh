@@ -26,6 +26,12 @@ module PotatoMesh
       # clock skew across co-operating ingestors still collapses, while
       # rapid legitimate re-sends ("ack", "ok", "test") ≥30 s apart remain
       # distinct rows.  See issue #756 and ``CONTRACTS.md`` for rationale.
+      #
+      # IMPORTANT: widening this value only takes effect at runtime — the
+      # one-shot backfill in +PotatoMesh::App::Database+ is frozen at
+      # +MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION+.  To re-sweep pre-existing
+      # rows that newly fall within an expanded window, bump the backfill
+      # version so the migration re-runs on the next deploy.
       MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS = 30
 
       # Coerce a Ruby boolean into a SQLite integer (1/0) while passing through

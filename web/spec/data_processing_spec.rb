@@ -893,6 +893,26 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
 
+    it "treats the dedup window as inclusive on the upper boundary" do
+      # Pins the ``BETWEEN`` inclusivity: a row exactly ``dedup_window`` seconds
+      # later still collapses.  One-second-past-the-window inserts below prove
+      # the other side of the boundary.
+      db = open_db
+      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_021))
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_022, "rx_time" => base_rx_time + dedup_window),
+      )
+      expect(message_count(db)).to eq(1)
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge("id" => 1_000_023, "rx_time" => base_rx_time + dedup_window + 1),
+      )
+      expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
     it "inserts both copies when rx_time delta exceeds the dedup window" do
       db = open_db
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_003))

@@ -287,7 +287,13 @@ module PotatoMesh
             if current_version < MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION
               window = PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS
               db.transaction do
-                db.execute(<<~SQL)
+                # Window bound via ``?`` to match the rest of the codebase's
+                # parameter-binding style; the value is a Ruby integer constant
+                # so SQL-injection was never at risk here — the switch is
+                # purely for consistency.  ``PRAGMA user_version`` cannot
+                # accept bind params, so it keeps literal interpolation of
+                # an internal constant.
+                db.execute(<<~SQL, [window])
                   DELETE FROM messages
                    WHERE protocol = 'meshcore'
                      AND text IS NOT NULL AND text != ''
@@ -300,7 +306,7 @@ module PotatoMesh
                           AND earlier.channel IS messages.channel
                           AND earlier.text = messages.text
                           AND messages.rx_time - earlier.rx_time >= 0
-                          AND messages.rx_time - earlier.rx_time <= #{window.to_i}
+                          AND messages.rx_time - earlier.rx_time <= ?
                           AND (earlier.rx_time < messages.rx_time
                                OR earlier.id < messages.id)
                      )
