@@ -19,11 +19,6 @@ use tokio::sync::RwLock;
 
 use crate::config::PotatomeshConfig;
 
-/// Protocol identifier sent as a query parameter to restrict API results to
-/// Meshtastic data only. Other protocols (e.g. MeshCore) are excluded until
-/// the clients are updated to support them.
-const PROTOCOL_FILTER: &str = "meshtastic";
-
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct PotatoMessage {
@@ -48,6 +43,10 @@ pub struct PotatoMessage {
     #[serde(default)]
     pub reply_id: Option<u64>,
     pub node_id: String,
+    /// Mesh backend that produced this message, e.g. "meshtastic" or
+    /// "meshcore". Optional because historical payloads predate the field.
+    #[serde(default)]
+    pub protocol: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -136,10 +135,7 @@ impl PotatoClient {
     }
 
     pub async fn fetch_messages(&self, params: FetchParams) -> anyhow::Result<Vec<PotatoMessage>> {
-        let mut req = self
-            .http
-            .get(self.messages_url())
-            .query(&[("protocol", PROTOCOL_FILTER)]);
+        let mut req = self.http.get(self.messages_url());
         if let Some(limit) = params.limit {
             req = req.query(&[("limit", limit)]);
         }
@@ -243,6 +239,34 @@ mod tests {
         assert!(m.rssi.is_none());
         assert!(m.hop_limit.is_none());
         assert!(m.snr.is_none());
+        assert!(m.protocol.is_none());
+    }
+
+    #[test]
+    fn deserialize_message_with_meshcore_protocol() {
+        let json = r#"
+        [
+          {
+            "id": 42,
+            "rx_time": 1764241436,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!da6556d4",
+            "to_id": "^all",
+            "channel": 0,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Hi from meshcore",
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "General",
+            "node_id": "!da6556d4",
+            "protocol": "meshcore"
+          }
+        ]
+        "#;
+
+        let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].protocol.as_deref(), Some("meshcore"));
     }
 
     #[test]
@@ -344,10 +368,6 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query(mockito::Matcher::UrlEncoded(
-                "protocol".into(),
-                "meshtastic".into(),
-            ))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -438,10 +458,6 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/api/messages")
-            .match_query(mockito::Matcher::UrlEncoded(
-                "protocol".into(),
-                PROTOCOL_FILTER.into(),
-            ))
             .with_status(500)
             .create();
 
@@ -463,7 +479,6 @@ mod tests {
         let mock = server
             .mock("GET", "/api/messages")
             .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded("protocol".into(), PROTOCOL_FILTER.into()),
                 mockito::Matcher::UrlEncoded("limit".into(), "10".into()),
                 mockito::Matcher::UrlEncoded("since".into(), "123".into()),
             ]))

@@ -257,8 +257,9 @@ async fn handle_message(
 
     // Format the bridged message
     let preset_short = modem_preset_short(&msg.modem_preset);
+    let tag = protocol_tag(msg.protocol.as_deref());
     let prefix = format!(
-        "[{freq}][{preset_short}][{channel}]",
+        "{tag}[{freq}][{preset_short}][{channel}]",
         freq = msg.lora_freq,
         preset_short = preset_short,
         channel = msg.channel_name,
@@ -273,6 +274,20 @@ async fn handle_message(
     state.update_with(msg);
     log_state_update(state);
     Ok(())
+}
+
+/// Short tag prepended to the message prefix so readers can tell the source
+/// mesh protocol apart at a glance. `"[MT]"` identifies Meshtastic (also the
+/// default when the protocol field is missing, since the full stack treats a
+/// missing protocol as Meshtastic) and `"[MC]"` identifies MeshCore. Any other
+/// value renders as `"[??]"` so unknown protocols surface visibly instead of
+/// being silently relabeled as Meshtastic.
+fn protocol_tag(protocol: Option<&str>) -> &'static str {
+    match protocol {
+        Some("meshcore") => "[MC]",
+        Some("meshtastic") | None => "[MT]",
+        Some(_) => "[??]",
+    }
 }
 
 /// Build a compact modem preset label like "LF" for "LongFast".
@@ -349,6 +364,7 @@ mod tests {
             snr: Some(0.0),
             reply_id: None,
             node_id: "!abcd1234".to_string(),
+            protocol: Some("meshtastic".to_string()),
         }
     }
 
@@ -378,6 +394,17 @@ mod tests {
         let (body, formatted) = format_message_bodies("[868][LF]", "Hello <&>");
         assert_eq!(body, "`[868][LF]` Hello <&>");
         assert_eq!(formatted, "<code>[868][LF]</code> Hello &lt;&amp;&gt;");
+    }
+
+    #[test]
+    fn protocol_tag_returns_expected_label() {
+        assert_eq!(protocol_tag(Some("meshcore")), "[MC]");
+        assert_eq!(protocol_tag(Some("meshtastic")), "[MT]");
+        // Missing protocol keeps the Meshtastic default for legacy payloads.
+        assert_eq!(protocol_tag(None), "[MT]");
+        // Unknown protocols surface as "[??]" rather than silently claiming Meshtastic.
+        assert_eq!(protocol_tag(Some("reticulum")), "[??]");
+        assert_eq!(protocol_tag(Some("")), "[??]");
     }
 
     #[test]
@@ -728,8 +755,10 @@ mod tests {
         assert_eq!(loaded.last_rx_time_ids, vec![1]);
     }
 
-    #[tokio::test]
-    async fn test_handle_message() {
+    /// Drive `handle_message` end-to-end against a mocked Matrix homeserver
+    /// and PotatoMesh API, asserting that the bridged message body carries
+    /// the expected protocol tag. Shared by the per-protocol test cases below.
+    async fn assert_handle_message_emits_tag(protocol: Option<&str>, expected_tag: &str) {
         let mut server = mockito::Server::new_async().await;
 
         let potatomesh_cfg = PotatomeshConfig {
@@ -793,6 +822,9 @@ mod tests {
             .txn_counter
             .load(std::sync::atomic::Ordering::SeqCst);
 
+        let expected_body = format!("`{expected_tag}[868][MF][TEST]` Ping");
+        let expected_formatted = format!("<code>{expected_tag}[868][MF][TEST]</code> Ping");
+
         let mock_send = server
             .mock(
                 "PUT",
@@ -806,16 +838,19 @@ mod tests {
             .match_header("authorization", "Bearer AS_TOKEN")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "msgtype": "m.text",
-                "body": "`[868][MF][TEST]` Ping",
+                "body": expected_body,
                 "format": "org.matrix.custom.html",
-                "formatted_body": "<code>[868][MF][TEST]</code> Ping",
+                "formatted_body": expected_formatted,
             })))
             .with_status(200)
             .create();
 
         let potato_client = PotatoClient::new(http_client.clone(), potatomesh_cfg);
         let mut state = BridgeState::default();
-        let msg = sample_msg(100);
+        let msg = PotatoMessage {
+            protocol: protocol.map(str::to_string),
+            ..sample_msg(100)
+        };
 
         let result = handle_message(&potato_client, &matrix_client, &mut state, &msg).await;
 
@@ -827,5 +862,25 @@ mod tests {
         mock_send.assert();
 
         assert_eq!(state.last_message_id, Some(100));
+    }
+
+    #[tokio::test]
+    async fn handle_message_tags_meshtastic_in_body() {
+        assert_handle_message_emits_tag(Some("meshtastic"), "[MT]").await;
+    }
+
+    #[tokio::test]
+    async fn handle_message_defaults_missing_protocol_to_meshtastic_tag() {
+        assert_handle_message_emits_tag(None, "[MT]").await;
+    }
+
+    #[tokio::test]
+    async fn handle_message_tags_meshcore_in_body() {
+        assert_handle_message_emits_tag(Some("meshcore"), "[MC]").await;
+    }
+
+    #[tokio::test]
+    async fn handle_message_tags_unknown_protocol_as_placeholder() {
+        assert_handle_message_emits_tag(Some("reticulum"), "[??]").await;
     }
 }
