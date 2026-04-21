@@ -56,6 +56,15 @@ def apply() -> bool:
 
     Safe to call multiple times; each patch is individually idempotent.
 
+    Implicit contract with upstream: every patch here rebinds a method on
+    the target *class*.  This only affects call sites that perform an
+    attribute lookup at call time (``reader.handle_rx(data)``) — not call
+    sites that captured an unbound reference before :func:`apply` ran
+    (``_rx = reader.handle_rx``).  As of ``meshcore-py`` 2.3.6 the library
+    always uses attribute-lookup-at-call, so this is fine; if a future
+    release flips that, the patch silently no-ops and the original bug
+    resurfaces.  Spot-check after every upstream bump.
+
     Returns:
         ``True`` when at least one patch was installed during this call,
         ``False`` when every patch had already been applied (or when the

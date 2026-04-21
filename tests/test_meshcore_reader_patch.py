@@ -23,8 +23,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -101,7 +99,7 @@ def test_apply_returns_false_when_already_patched(monkeypatch):
         monkeypatch.setattr(reader_module, "MessageReader", original_cls)
 
 
-def test_index_error_swallowed_and_logged(monkeypatch, capsys):
+def test_index_error_swallowed_and_logged(monkeypatch):
     """The exact failure mode reported in #754: ``IndexError`` on a malformed
     frame must not propagate and must emit one structured warning."""
 
@@ -245,3 +243,86 @@ def test_run_loop_exception_handler_routes_to_debug_log(monkeypatch):
     assert kwargs["severity"] == "error"
     assert kwargs["error_class"] == "RuntimeError"
     assert kwargs["error_message"] == "boom"
+
+
+def test_wrap_returns_false_when_class_has_no_handle_rx():
+    """If a future upstream release renames ``handle_rx`` or we point the
+    patch at the wrong class, ``_wrap_handle_rx`` must report the no-op
+    rather than silently install nothing on a random attribute."""
+
+    class Bare:
+        pass
+
+    assert _meshcore_patches._wrap_handle_rx(Bare) is False
+    assert not hasattr(Bare, "_orig_handle_rx")
+
+
+def test_loop_handler_defaults_when_context_minimal(monkeypatch):
+    """Covers the fallback branches of ``_log_unhandled_loop_exception`` —
+    missing ``message`` (defaults to a fixed string) and missing
+    ``exception`` (``error_class``/``error_message`` come through as ``None``).
+    Both are real asyncio code paths: task-cancellation and unhandled-future
+    warnings arrive with one-or-the-other key unset."""
+
+    from data.mesh_ingestor import config
+    from data.mesh_ingestor.protocols import meshcore
+
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture_log(message, **kwargs):
+        emitted.append((message, kwargs))
+
+    monkeypatch.setattr(config, "_debug_log", _capture_log)
+
+    loop = asyncio.new_event_loop()
+    try:
+        # Empty context exercises both fallbacks at once.
+        meshcore._log_unhandled_loop_exception(loop, {})
+    finally:
+        loop.close()
+
+    assert emitted, "loop handler should still emit something for a bare context"
+    message, kwargs = emitted[-1]
+    assert message == "Unhandled asyncio task exception"
+    assert kwargs["context"] == "asyncio.unhandled"
+    assert kwargs["severity"] == "error"
+    assert kwargs["error_class"] is None
+    assert kwargs["error_message"] is None
+
+
+def test_loop_handler_logs_task_name_when_present(monkeypatch):
+    """Asyncio includes the failing ``task`` object in its context dict when
+    the exception comes from ``create_task(...)``.  The handler extracts the
+    task's name so operators can correlate log lines with the frame that
+    blew up when several readers share a loop."""
+
+    from data.mesh_ingestor import config
+    from data.mesh_ingestor.protocols import meshcore
+
+    emitted: list[dict] = []
+
+    def _capture_log(message, **kwargs):
+        emitted.append(kwargs)
+
+    monkeypatch.setattr(config, "_debug_log", _capture_log)
+
+    async def _dummy():
+        return None
+
+    loop = asyncio.new_event_loop()
+    try:
+        task = loop.create_task(_dummy(), name="meshcore-reader-42")
+        # Let the task finish so we don't leak a pending future.
+        loop.run_until_complete(task)
+        meshcore._log_unhandled_loop_exception(
+            loop,
+            {
+                "message": "synthetic",
+                "exception": ValueError("bad frame"),
+                "task": task,
+            },
+        )
+    finally:
+        loop.close()
+
+    assert emitted[-1]["task"] == "meshcore-reader-42"

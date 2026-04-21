@@ -77,6 +77,12 @@ from . import _meshcore_patches
 # task before our handler can observe it.  See
 # :mod:`data.mesh_ingestor.protocols._meshcore_patches` for the specific
 # upstream bugs covered.
+#
+# This mutates the upstream class at import time.  The blast radius is
+# narrow because ``protocols/__init__.py`` exposes this module only through
+# a lazy ``__getattr__`` and the daemon resolves it only when
+# ``PROTOCOL=meshcore`` is active.  Any future diagnostic CLI that imports
+# this module will inherit the shim.
 _meshcore_patches.apply()
 
 from .. import config, ingestors as _ingestors, queue as _queue
@@ -1091,6 +1097,13 @@ def _log_unhandled_loop_exception(
     """
     del loop
     exception = context.get("exception")
+    task = context.get("task")
+    task_name = None
+    if task is not None:
+        # Prefer the friendly ``get_name()``; fall back to ``repr`` for any
+        # future Task-like object that does not implement it.
+        get_name = getattr(task, "get_name", None)
+        task_name = get_name() if callable(get_name) else repr(task)
     config._debug_log(
         context.get("message") or "Unhandled asyncio task exception",
         context="asyncio.unhandled",
@@ -1098,6 +1111,7 @@ def _log_unhandled_loop_exception(
         always=True,
         error_class=type(exception).__name__ if exception else None,
         error_message=str(exception) if exception else None,
+        task=task_name,
     )
 
 
