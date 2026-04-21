@@ -155,6 +155,56 @@ module PotatoMesh
             db.execute("UPDATE nodes SET protocol = 'meshcore' WHERE long_name LIKE 'Meshcore %' AND protocol = 'meshtastic'")
             db.execute("UPDATE nodes SET role = 'COMPANION' WHERE protocol = 'meshcore' AND role = 'CLIENT_HIDDEN'")
           end
+
+          # Backfill #755: reconcile meshcore synthetic placeholder rows that
+          # share a long_name with a real (pubkey-derived) meshcore node.
+          # Earlier releases only merged synthetics at real-node upsert time;
+          # if a synthetic arrived after the real was already stored (common
+          # with co-operating ingestors that share this DB), the duplicate
+          # persisted.  Migrate messages to the real id, then drop the stray
+          # synthetic rows.  Idempotent — the EXISTS guards make repeated runs
+          # a no-op.
+          if node_columns.include?("protocol") && node_columns.include?("synthetic")
+            # Only collapse synthetics whose long_name resolves to *exactly*
+            # one real meshcore node.  When two real devices share a
+            # long_name, the placeholder is ambiguous — merging would risk
+            # mis-attributing historical chat messages to the wrong radio.
+            # Wrapped in a single transaction so that a crash between the
+            # UPDATE and DELETE cannot leave messages redirected without the
+            # corresponding synthetic row cleared.
+            db.transaction do
+              db.execute(<<~SQL)
+                UPDATE messages
+                   SET from_id = (
+                     SELECT real.node_id FROM nodes real
+                     JOIN nodes synth ON synth.long_name = real.long_name
+                     WHERE synth.node_id = messages.from_id
+                       AND synth.synthetic = 1 AND synth.protocol = 'meshcore'
+                       AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                     LIMIT 1
+                   )
+                 WHERE from_id IN (
+                   SELECT synth.node_id FROM nodes synth
+                   WHERE synth.synthetic = 1 AND synth.protocol = 'meshcore'
+                     AND (
+                       SELECT COUNT(*) FROM nodes real
+                       WHERE real.long_name = synth.long_name
+                         AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                     ) = 1
+                 )
+              SQL
+              db.execute(<<~SQL)
+                DELETE FROM nodes
+                 WHERE synthetic = 1 AND protocol = 'meshcore'
+                   AND (
+                     SELECT COUNT(*) FROM nodes real
+                     WHERE real.long_name = nodes.long_name
+                       AND real.synthetic = 0 AND real.protocol = 'meshcore'
+                       AND real.node_id != nodes.node_id
+                   ) = 1
+              SQL
+            end
+          end
         end
 
         message_table_exists = db.get_first_value(
