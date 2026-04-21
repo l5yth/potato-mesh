@@ -260,7 +260,6 @@ async fn handle_message(
     let tag = protocol_tag(msg.protocol.as_deref());
     let prefix = format!(
         "{tag}[{freq}][{preset_short}][{channel}]",
-        tag = tag,
         freq = msg.lora_freq,
         preset_short = preset_short,
         channel = msg.channel_name,
@@ -280,12 +279,14 @@ async fn handle_message(
 /// Short tag prepended to the message prefix so readers can tell the source
 /// mesh protocol apart at a glance. `"[MT]"` identifies Meshtastic (also the
 /// default when the protocol field is missing, since the full stack treats a
-/// missing protocol as Meshtastic) and `"[MC]"` identifies MeshCore. Unknown
-/// future protocols fall back to the Meshtastic tag to keep output parseable.
+/// missing protocol as Meshtastic) and `"[MC]"` identifies MeshCore. Any other
+/// value renders as `"[??]"` so unknown protocols surface visibly instead of
+/// being silently relabeled as Meshtastic.
 fn protocol_tag(protocol: Option<&str>) -> &'static str {
     match protocol {
         Some("meshcore") => "[MC]",
-        _ => "[MT]",
+        Some("meshtastic") | None => "[MT]",
+        Some(_) => "[??]",
     }
 }
 
@@ -399,9 +400,11 @@ mod tests {
     fn protocol_tag_returns_expected_label() {
         assert_eq!(protocol_tag(Some("meshcore")), "[MC]");
         assert_eq!(protocol_tag(Some("meshtastic")), "[MT]");
-        // Unknown protocols fall back to the Meshtastic tag.
-        assert_eq!(protocol_tag(Some("reticulum")), "[MT]");
+        // Missing protocol keeps the Meshtastic default for legacy payloads.
         assert_eq!(protocol_tag(None), "[MT]");
+        // Unknown protocols surface as "[??]" rather than silently claiming Meshtastic.
+        assert_eq!(protocol_tag(Some("reticulum")), "[??]");
+        assert_eq!(protocol_tag(Some("")), "[??]");
     }
 
     #[test]
@@ -752,8 +755,10 @@ mod tests {
         assert_eq!(loaded.last_rx_time_ids, vec![1]);
     }
 
-    #[tokio::test]
-    async fn test_handle_message() {
+    /// Drive `handle_message` end-to-end against a mocked Matrix homeserver
+    /// and PotatoMesh API, asserting that the bridged message body carries
+    /// the expected protocol tag. Shared by the per-protocol test cases below.
+    async fn assert_handle_message_emits_tag(protocol: Option<&str>, expected_tag: &str) {
         let mut server = mockito::Server::new_async().await;
 
         let potatomesh_cfg = PotatomeshConfig {
@@ -817,6 +822,9 @@ mod tests {
             .txn_counter
             .load(std::sync::atomic::Ordering::SeqCst);
 
+        let expected_body = format!("`{expected_tag}[868][MF][TEST]` Ping");
+        let expected_formatted = format!("<code>{expected_tag}[868][MF][TEST]</code> Ping");
+
         let mock_send = server
             .mock(
                 "PUT",
@@ -830,16 +838,19 @@ mod tests {
             .match_header("authorization", "Bearer AS_TOKEN")
             .match_body(mockito::Matcher::PartialJson(serde_json::json!({
                 "msgtype": "m.text",
-                "body": "`[MT][868][MF][TEST]` Ping",
+                "body": expected_body,
                 "format": "org.matrix.custom.html",
-                "formatted_body": "<code>[MT][868][MF][TEST]</code> Ping",
+                "formatted_body": expected_formatted,
             })))
             .with_status(200)
             .create();
 
         let potato_client = PotatoClient::new(http_client.clone(), potatomesh_cfg);
         let mut state = BridgeState::default();
-        let msg = sample_msg(100);
+        let msg = PotatoMessage {
+            protocol: protocol.map(str::to_string),
+            ..sample_msg(100)
+        };
 
         let result = handle_message(&potato_client, &matrix_client, &mut state, &msg).await;
 
@@ -854,106 +865,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_message_tags_meshtastic_in_body() {
+        assert_handle_message_emits_tag(Some("meshtastic"), "[MT]").await;
+    }
+
+    #[tokio::test]
+    async fn handle_message_defaults_missing_protocol_to_meshtastic_tag() {
+        assert_handle_message_emits_tag(None, "[MT]").await;
+    }
+
+    #[tokio::test]
     async fn handle_message_tags_meshcore_in_body() {
-        let mut server = mockito::Server::new_async().await;
+        assert_handle_message_emits_tag(Some("meshcore"), "[MC]").await;
+    }
 
-        let potatomesh_cfg = PotatomeshConfig {
-            base_url: server.url(),
-            poll_interval_secs: 1,
-        };
-        let matrix_cfg = MatrixConfig {
-            homeserver: server.url(),
-            as_token: "AS_TOKEN".to_string(),
-            hs_token: "HS_TOKEN".to_string(),
-            server_name: "example.org".to_string(),
-            room_id: "!roomid:example.org".to_string(),
-        };
-
-        let node_id = "abcd1234";
-        let user_id = format!("@potato_{}:{}", node_id, matrix_cfg.server_name);
-        let encoded_user = urlencoding::encode(&user_id);
-        let room_id = matrix_cfg.room_id.clone();
-        let encoded_room = urlencoding::encode(&room_id);
-
-        let mock_get_node = server
-            .mock("GET", "/api/nodes/abcd1234")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"node_id": "!abcd1234", "long_name": "Test Node", "short_name": "TN"}"#)
-            .create();
-
-        let mock_register = server
-            .mock("POST", "/_matrix/client/v3/register")
-            .match_query("kind=user")
-            .match_header("authorization", "Bearer AS_TOKEN")
-            .with_status(200)
-            .create();
-
-        let mock_join = server
-            .mock(
-                "POST",
-                format!("/_matrix/client/v3/rooms/{}/join", encoded_room).as_str(),
-            )
-            .match_query(format!("user_id={}", encoded_user).as_str())
-            .match_header("authorization", "Bearer AS_TOKEN")
-            .with_status(200)
-            .create();
-
-        let mock_display_name = server
-            .mock(
-                "PUT",
-                format!("/_matrix/client/v3/profile/{}/displayname", encoded_user).as_str(),
-            )
-            .match_query(format!("user_id={}", encoded_user).as_str())
-            .match_header("authorization", "Bearer AS_TOKEN")
-            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
-                "displayname": "Test Node (TN)"
-            })))
-            .with_status(200)
-            .create();
-
-        let http_client = reqwest::Client::new();
-        let matrix_client = MatrixAppserviceClient::new(http_client.clone(), matrix_cfg);
-        let txn_id = matrix_client
-            .txn_counter
-            .load(std::sync::atomic::Ordering::SeqCst);
-
-        let mock_send = server
-            .mock(
-                "PUT",
-                format!(
-                    "/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
-                    encoded_room, txn_id
-                )
-                .as_str(),
-            )
-            .match_query(format!("user_id={}", encoded_user).as_str())
-            .match_header("authorization", "Bearer AS_TOKEN")
-            .match_body(mockito::Matcher::PartialJson(serde_json::json!({
-                "msgtype": "m.text",
-                "body": "`[MC][868][MF][TEST]` Ping",
-                "format": "org.matrix.custom.html",
-                "formatted_body": "<code>[MC][868][MF][TEST]</code> Ping",
-            })))
-            .with_status(200)
-            .create();
-
-        let potato_client = PotatoClient::new(http_client.clone(), potatomesh_cfg);
-        let mut state = BridgeState::default();
-        let msg = PotatoMessage {
-            protocol: Some("meshcore".to_string()),
-            ..sample_msg(200)
-        };
-
-        let result = handle_message(&potato_client, &matrix_client, &mut state, &msg).await;
-
-        assert!(result.is_ok());
-        mock_get_node.assert();
-        mock_register.assert();
-        mock_join.assert();
-        mock_display_name.assert();
-        mock_send.assert();
-
-        assert_eq!(state.last_message_id, Some(200));
+    #[tokio::test]
+    async fn handle_message_tags_unknown_protocol_as_placeholder() {
+        assert_handle_message_emits_tag(Some("reticulum"), "[??]").await;
     }
 }
