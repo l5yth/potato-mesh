@@ -70,6 +70,15 @@ from meshcore import (
     TCPConnection,
 )
 
+from . import _meshcore_patches
+
+# Apply upstream-library patches before any ``MeshCore`` instance is built,
+# otherwise the first malformed advertisement dies inside a detached asyncio
+# task before our handler can observe it.  See
+# :mod:`data.mesh_ingestor.protocols._meshcore_patches` for the specific
+# upstream bugs covered.
+_meshcore_patches.apply()
+
 from .. import config, ingestors as _ingestors, queue as _queue
 from ..connection import default_serial_targets, parse_ble_target, parse_tcp_target
 from ..serialization import _iso, _node_num_from_id
@@ -1060,6 +1069,38 @@ def _make_connection(target: str, baudrate: int) -> object:
     return SerialConnection(target, baudrate)
 
 
+def _log_unhandled_loop_exception(
+    loop: asyncio.AbstractEventLoop, context: dict
+) -> None:
+    """Route asyncio's "unhandled task exception" warnings through our logger.
+
+    The upstream ``meshcore`` library spawns detached
+    ``asyncio.create_task`` tasks for every inbound radio frame.  When one
+    of those tasks raises and nobody awaits the future, asyncio's default
+    handler writes ``Task exception was never retrieved`` to stderr.  That
+    bypasses our structured log pipeline and clutters container logs.
+    This handler preserves the same information under
+    ``context=asyncio.unhandled`` so operators grep for one place.
+
+    Parameters:
+        loop: Event loop that surfaced the exception (unused but required
+            by the asyncio handler signature).
+        context: Asyncio exception-context dictionary.  Fields we care
+            about: ``message`` (human summary) and ``exception`` (the raw
+            exception object, when available).
+    """
+    del loop
+    exception = context.get("exception")
+    config._debug_log(
+        context.get("message") or "Unhandled asyncio task exception",
+        context="asyncio.unhandled",
+        severity="error",
+        always=True,
+        error_class=type(exception).__name__ if exception else None,
+        error_message=str(exception) if exception else None,
+    )
+
+
 async def _run_meshcore(
     iface: _MeshcoreInterface,
     target: str,
@@ -1254,6 +1295,12 @@ class MeshcoreProvider:
         def _run_loop() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            # Second line of defence around issue #754: if a detached task
+            # inside the upstream ``meshcore`` library ever raises an
+            # exception we do not anticipate in ``_meshcore_patches``, funnel
+            # it through our logger instead of the default handler (which
+            # only writes ``Task exception was never retrieved`` to stderr).
+            loop.set_exception_handler(_log_unhandled_loop_exception)
             iface._loop = loop
             try:
                 loop.run_until_complete(
