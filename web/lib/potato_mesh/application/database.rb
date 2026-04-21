@@ -17,6 +17,12 @@
 module PotatoMesh
   module App
     module Database
+      # Schema-version marker that gates the one-shot #756 meshcore message
+      # content-dedup backfill.  Stored in SQLite's ``PRAGMA user_version``;
+      # bump this constant when a new one-shot migration is appended and
+      # check the previous value below to decide whether to skip.
+      MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION = 1
+
       # Column definitions required for environment telemetry support. Each
       # entry pairs the column name with the SQL type used when backfilling
       # legacy databases that pre-date the extended telemetry schema.
@@ -250,6 +256,64 @@ module PotatoMesh
             ).to_i > 0
           unless reply_index_exists
             db.execute("CREATE INDEX IF NOT EXISTS idx_messages_reply_id ON messages(reply_id)")
+          end
+
+          # #756 — partial index backing the meshcore content-dedup lookup in
+          # insert_message.  Scoped to meshcore so the index stays small even
+          # on meshtastic-heavy deployments.  ``CREATE … IF NOT EXISTS`` is
+          # cheap enough to run on every boot; the one-shot backfill below
+          # is gated separately via ``PRAGMA user_version`` so it does not
+          # repeat after the first successful pass.
+          meshcore_dedup_columns = %w[from_id to_id channel text rx_time protocol]
+          if meshcore_dedup_columns.all? { |column| message_columns.include?(column) }
+            db.execute(<<~SQL)
+              CREATE INDEX IF NOT EXISTS idx_messages_meshcore_content
+                ON messages(from_id, channel, rx_time)
+                WHERE protocol = 'meshcore'
+            SQL
+
+            # #756 backfill — collapse pre-existing meshcore duplicate groups.
+            # Keep the earliest (min rx_time, min id) copy in each
+            # (from_id, to_id, channel, text) cluster where any two rows are
+            # within #{PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS} s
+            # of each other.  Window matches the runtime guard so runtime and
+            # backfill behave identically.
+            #
+            # Gated via ``PRAGMA user_version`` so this expensive self-join
+            # runs exactly once after deploy.  Post-fix the runtime guard
+            # prevents new duplicates from accumulating, so re-running on
+            # every boot would scan ``messages`` for no reason.
+            current_version = db.get_first_value("PRAGMA user_version").to_i
+            if current_version < MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION
+              window = PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS
+              db.transaction do
+                # Window bound via ``?`` to match the rest of the codebase's
+                # parameter-binding style; the value is a Ruby integer constant
+                # so SQL-injection was never at risk here — the switch is
+                # purely for consistency.  ``PRAGMA user_version`` cannot
+                # accept bind params, so it keeps literal interpolation of
+                # an internal constant.
+                db.execute(<<~SQL, [window])
+                  DELETE FROM messages
+                   WHERE protocol = 'meshcore'
+                     AND text IS NOT NULL AND text != ''
+                     AND from_id IS NOT NULL
+                     AND EXISTS (
+                       SELECT 1 FROM messages AS earlier
+                        WHERE earlier.protocol = 'meshcore'
+                          AND earlier.from_id = messages.from_id
+                          AND earlier.to_id IS messages.to_id
+                          AND earlier.channel IS messages.channel
+                          AND earlier.text = messages.text
+                          AND messages.rx_time - earlier.rx_time >= 0
+                          AND messages.rx_time - earlier.rx_time <= ?
+                          AND (earlier.rx_time < messages.rx_time
+                               OR earlier.id < messages.id)
+                     )
+                SQL
+                db.execute("PRAGMA user_version = #{MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION}")
+              end
+            end
           end
         end
 

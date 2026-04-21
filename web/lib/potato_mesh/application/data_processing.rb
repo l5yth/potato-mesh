@@ -20,6 +20,20 @@ module PotatoMesh
       # Allowed values for the +telemetry_type+ discriminator column.
       VALID_TELEMETRY_TYPES = %w[device environment power air_quality].freeze
 
+      # Half-window (seconds) for the meshcore content-level message dedup
+      # in +insert_message+ and the matching one-shot backfill.  Set to
+      # roughly 3× the observed relay-retransmit delta (~10 s) so genuine
+      # clock skew across co-operating ingestors still collapses, while
+      # rapid legitimate re-sends ("ack", "ok", "test") ≥30 s apart remain
+      # distinct rows.  See issue #756 and ``CONTRACTS.md`` for rationale.
+      #
+      # IMPORTANT: widening this value only takes effect at runtime — the
+      # one-shot backfill in +PotatoMesh::App::Database+ is frozen at
+      # +MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION+.  To re-sweep pre-existing
+      # rows that newly fall within an expanded window, bump the backfill
+      # version so the migration re-runs on the next deploy.
+      MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS = 30
+
       # Coerce a Ruby boolean into a SQLite integer (1/0) while passing through
       # any other value unchanged. Used when writing boolean node fields.
       #
@@ -1914,6 +1928,59 @@ module PotatoMesh
         ]
 
         with_busy_retry do
+          # Meshcore-only content-level dedup (issue #756).  The deterministic
+          # message id (``_derive_message_id`` in the Python ingestor) hashes
+          # ``sender_timestamp`` among other fields, but the MeshCore library
+          # has been observed delivering the same physical packet twice with
+          # a rewritten ``sender_timestamp`` (relay/retransmit behaviour).
+          # The PK path below cannot catch that — two copies compute two
+          # different ids — so we add a narrow content+window pre-check here.
+          #
+          # Ruby integer ``0`` is truthy, so the ``channel_index`` guard
+          # passes for the broadcast channel intentionally; we only skip when
+          # the channel is absent/nil.  ``from_id`` + non-empty ``text`` keep
+          # encrypted or anonymous traffic on the id-PK path.
+          #
+          # Known race: the SELECT and the downstream INSERT do not share a
+          # transaction, so two Puma threads carrying the same content with
+          # different ids can both pass the pre-check and both insert.  The
+          # deploy-time backfill sweeps the survivors; wrapping the pair in
+          # ``db.transaction(:immediate)`` is a future tightening if the race
+          # is ever observed in production.
+          if protocol == "meshcore" && from_id && channel_index && text && !text.to_s.empty?
+            # ``channel = ?`` matches the ``channel_index`` bind cleanly
+            # because the guard above rejects nil; ``to_id`` may legitimately
+            # be nil (rare meshcore fallback), so it keeps ``IS ?`` for a
+            # NULL-safe compare.
+            duplicate_id = db.get_first_value(
+              <<~SQL,
+              SELECT id FROM messages
+                WHERE protocol = 'meshcore'
+                  AND from_id = ?
+                  AND to_id IS ?
+                  AND channel = ?
+                  AND text = ?
+                  AND rx_time BETWEEN ? AND ?
+                  AND id != ?
+                LIMIT 1
+            SQL
+              [from_id, to_id, channel_index, text,
+               rx_time - MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS,
+               rx_time + MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS, msg_id],
+            )
+            if duplicate_id
+              debug_log(
+                "Skipped meshcore message duplicate",
+                context: "data_processing.insert_message",
+                new_id: msg_id,
+                existing_id: duplicate_id,
+                from_id: from_id,
+                channel: channel_index,
+              )
+              return
+            end
+          end
+
           existing = db.get_first_row(
             "SELECT from_id, to_id, text, encrypted, lora_freq, modem_preset, channel_name, reply_id, emoji, portnum, ingestor, protocol FROM messages WHERE id = ?",
             [msg_id],
