@@ -486,11 +486,12 @@ RSpec.describe PotatoMesh::App::Database do
   # ---------------------------------------------------------------------------
 
   # Build the minimal messages + nodes schema we need for the backfill specs,
-  # matching the subset of columns the migration inspects.
+  # matching the subset of columns the migration inspects.  ``role`` and
+  # ``long_name`` are included because #747's backfill touches them.
   def seed_meshcore_message_tables(db)
     db.execute(<<~SQL)
       CREATE TABLE nodes(
-        node_id TEXT PRIMARY KEY, long_name TEXT,
+        node_id TEXT PRIMARY KEY, long_name TEXT, role TEXT,
         protocol TEXT NOT NULL DEFAULT 'meshtastic',
         synthetic BOOLEAN NOT NULL DEFAULT 0
       )
@@ -599,13 +600,15 @@ RSpec.describe PotatoMesh::App::Database do
     harness_class.ensure_schema_upgrades
 
     SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
-      index = db.get_first_value(
+      row = db.get_first_row(
         "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_messages_meshcore_content'",
       )
-      expect(index).to include("meshcore")
-      expect(index).to include("from_id")
-      expect(index).to include("channel")
-      expect(index).to include("rx_time")
+      expect(row).not_to be_nil
+      index_sql = row.first
+      expect(index_sql).to include("meshcore")
+      expect(index_sql).to include("from_id")
+      expect(index_sql).to include("channel")
+      expect(index_sql).to include("rx_time")
     end
   end
 end

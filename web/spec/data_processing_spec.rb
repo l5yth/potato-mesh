@@ -855,9 +855,14 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       end.new
     end
 
+    # rx_time sits in the past so we can shift later copies forward (up to
+    # ``now``) without tripping the ``rx_time > now`` clamp in
+    # ``insert_message``.
+    let(:base_rx_time) { now - 1_000 }
+
     let(:base_message) do
       {
-        "rx_time" => now,
+        "rx_time" => base_rx_time,
         "from_id" => "!aabbccdd",
         "to_id" => "^all",
         "channel" => 5,
@@ -876,7 +881,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_001))
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_002, "rx_time" => now + 10),
+        base_message.merge("id" => 1_000_002, "rx_time" => base_rx_time + 10),
       )
       expect(message_count(db)).to eq(1)
       expect(db.get_first_value("SELECT id FROM messages").to_i).to eq(1_000_001)
@@ -889,7 +894,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_003))
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_004, "rx_time" => now + 300),
+        base_message.merge("id" => 1_000_004, "rx_time" => base_rx_time + 300),
       )
       expect(message_count(db)).to eq(2)
     ensure
@@ -922,7 +927,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       )
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_010, "to_id" => "!cccccccc", "rx_time" => now + 5),
+        base_message.merge("id" => 1_000_010, "to_id" => "!cccccccc", "rx_time" => base_rx_time + 5),
       )
       expect(message_count(db)).to eq(2)
     ensure
@@ -939,7 +944,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # so this falls through to the normal id-PK path and inserts.
       meshcore_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_012, "text" => nil, "rx_time" => now + 5),
+        base_message.merge("id" => 1_000_012, "text" => nil, "rx_time" => base_rx_time + 5),
       )
       expect(message_count(db)).to eq(2)
     ensure
@@ -972,7 +977,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       meshtastic_harness.insert_message(db, base_message.merge("id" => 1_000_013))
       meshtastic_harness.insert_message(
         db,
-        base_message.merge("id" => 1_000_014, "rx_time" => now + 5),
+        base_message.merge("id" => 1_000_014, "rx_time" => base_rx_time + 5),
       )
       expect(message_count(db)).to eq(2)
     ensure
