@@ -145,6 +145,37 @@ tbody tr:nth-child(even) td {
   pointer-events: none;
 }
 
+/*
+ * Asterisk + count badge that represents a collapsed (or expanded-but-still-
+ * present) co-located node group.  The Leaflet ``L.divIcon`` host element
+ * receives the ``.colocated-spider-hub`` class; the inner ``__glyph`` span
+ * carries the visible circle so the cursor can still flip back to the
+ * default state outside the badge.  Theming is delegated to the existing
+ * ``--fg`` / ``--bg`` tokens so the badge blends with both light and dark
+ * basemaps.
+ */
+.colocated-spider-hub {
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.colocated-spider-hub__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--fg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+}
+
 .leaflet-tooltip.trace-tooltip {
   background: var(--bg2);
   color: var(--fg);
