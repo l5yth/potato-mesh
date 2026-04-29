@@ -274,16 +274,29 @@ module PotatoMesh
       end
 
       # Emit a debug entry describing how the instance domain was derived.
+      # When +INSTANCE_DOMAIN+ is unset in production, also surface a
+      # warning because canonical URLs, sitemap entries, and JSON-LD
+      # metadata fall back to whatever +Host+ header the request arrived
+      # with — which can be cache-poisoned by a misconfigured proxy.
       #
       # @return [void]
       def log_instance_domain_resolution
         source = app_constant(:INSTANCE_DOMAIN_SOURCE) || :unknown
+        domain = app_constant(:INSTANCE_DOMAIN)
         debug_log(
           "Resolved instance domain",
           context: "identity.domain",
           source: source,
-          domain: app_constant(:INSTANCE_DOMAIN),
+          domain: domain,
         )
+        if production_environment? && (domain.nil? || domain.to_s.strip.empty?)
+          warn_log(
+            "INSTANCE_DOMAIN is unset; canonical URLs and sitemap entries " \
+            "will be derived from the inbound Host header",
+            context: "identity.domain",
+            source: source,
+          )
+        end
       end
     end
   end

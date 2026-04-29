@@ -1,3 +1,10 @@
+---
+title: About
+description: Community dashboard for the local mesh — what it is, how to join, and where to read more.
+# image: https://example.com/your-page-preview.png
+# noindex: true
+---
+
 # About This Mesh
 
 Welcome to this [PotatoMesh](https://github.com/l5yth/potato-mesh) instance - a community dashboard for off-grid mesh networks. This is an example page, please modify it before deploying.
@@ -38,6 +45,25 @@ supports narrow-band presets optimised for long range in dense environments.
 Instance operators can add, edit, or remove pages by placing Markdown files in
 the `pages/` directory (mounted as a Docker volume at `/app/pages`). Each file
 becomes a new entry in the navigation bar.
+
+### Optional Frontmatter
+
+Each page may begin with a YAML frontmatter block to override the default
+nav label and SEO meta tags. All keys are optional:
+
+```
+---
+title: About
+description: Short summary shown to search engines and link previews.
+image: https://example.com/about-preview.png
+noindex: true
+---
+```
+
+- `title` — overrides the slug-derived nav label and the document title.
+- `description` — replaces the global meta description for this page only.
+- `image` — absolute URL to a per-page social preview image (1200×630 recommended).
+- `noindex` — when truthy, emits `<meta name="robots" content="noindex,nofollow">` and removes the page from `/sitemap.xml`. Useful for legal pages such as Impressum that should remain reachable but not indexed.
 
 ### Filename Convention
 

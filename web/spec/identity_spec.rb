@@ -114,6 +114,58 @@ RSpec.describe PotatoMesh::App::Identity do
     end
   end
 
+  describe ".log_instance_domain_resolution" do
+    let(:logger) { instance_double(Logger, debug: nil, warn: nil) }
+
+    before do
+      allow(PotatoMesh::Logging).to receive(:logger_for).and_return(logger)
+    end
+
+    around do |example|
+      original_app_env = ENV["APP_ENV"]
+      original_rack_env = ENV["RACK_ENV"]
+      example.run
+    ensure
+      if original_app_env
+        ENV["APP_ENV"] = original_app_env
+      else
+        ENV.delete("APP_ENV")
+      end
+      ENV["RACK_ENV"] = original_rack_env if original_rack_env
+    end
+
+    it "warns in production when the instance domain is unset" do
+      ENV["APP_ENV"] = "production"
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil)
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :unconfigured)
+
+      PotatoMesh::Application.log_instance_domain_resolution
+
+      expect(logger).to have_received(:warn).with(/INSTANCE_DOMAIN is unset/)
+    end
+
+    it "stays quiet when the instance domain is configured" do
+      ENV["APP_ENV"] = "production"
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "example.com")
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :env)
+
+      PotatoMesh::Application.log_instance_domain_resolution
+
+      expect(logger).not_to have_received(:warn)
+    end
+
+    it "stays quiet outside production even when the domain is unset" do
+      ENV["APP_ENV"] = "test"
+      ENV["RACK_ENV"] = "test"
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil)
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :unconfigured)
+
+      PotatoMesh::Application.log_instance_domain_resolution
+
+      expect(logger).not_to have_received(:warn)
+    end
+  end
+
   describe ".refresh_well_known_document_if_stale" do
     let(:storage_dir) { Dir.mktmpdir }
     let(:well_known_path) do

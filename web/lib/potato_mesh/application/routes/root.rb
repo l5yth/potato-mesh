@@ -19,6 +19,18 @@ module PotatoMesh
     module Routes
       module Root
         module Helpers
+          # Map of XML predefined entities used by {#xml_escape}.
+          XML_ESCAPE_REPLACEMENTS = {
+            "&" => "&amp;",
+            "<" => "&lt;",
+            ">" => "&gt;",
+            '"' => "&quot;",
+            "'" => "&apos;",
+          }.freeze
+
+          # Pattern matching any XML metacharacter that requires escaping.
+          XML_ESCAPE_PATTERN = Regexp.union(XML_ESCAPE_REPLACEMENTS.keys).freeze
+
           # Return the fixed dark theme identifier. Light mode is no longer
           # supported; theme selection and cookie persistence have been removed.
           #
@@ -31,19 +43,28 @@ module PotatoMesh
           #
           # @param template [Symbol] identifier for the ERB template.
           # @param view_mode [Symbol, String] logical view identifier for CSS hooks.
+          # @param view_meta [Symbol, String, nil] meta-tag selector. Defaults to
+          #   +view_mode+ so most callers can omit it; pass an explicit value
+          #   when the layout view differs from the meta archetype (e.g. the
+          #   dynamic +/pages/:slug+ routes whose view_mode is per-slug).
+          # @param meta_overrides [Hash, nil] explicit replacements for
+          #   individual meta values (title, description, image, noindex).
           # @param extra_locals [Hash] additional locals merged into the rendering context.
           # @return [String] rendered ERB output.
-          def render_root_view(template, view_mode: :dashboard, extra_locals: {})
-            meta = meta_configuration
+          def render_root_view(template, view_mode: :dashboard, view_meta: nil, meta_overrides: nil, extra_locals: {})
+            view_mode_sym = view_mode.respond_to?(:to_sym) ? view_mode.to_sym : view_mode
+            view_meta_sym = view_meta.nil? ? view_mode_sym : (view_meta.respond_to?(:to_sym) ? view_meta.to_sym : view_meta)
+            meta = meta_configuration(view: view_meta_sym, overrides: meta_overrides)
             config = frontend_app_config
             theme = resolve_initial_theme
-            view_mode_sym = view_mode.respond_to?(:to_sym) ? view_mode.to_sym : view_mode
 
             base_locals = {
               site_name: meta[:name],
               meta_title: meta[:title],
               meta_name: meta[:name],
               meta_description: meta[:description],
+              meta_image_url: meta[:image],
+              meta_noindex: meta[:noindex] == true,
               channel: sanitized_channel,
               frequency: sanitized_frequency,
               map_center_lat: PotatoMesh::Config.map_center_lat,
@@ -135,6 +156,203 @@ module PotatoMesh
               "position" => position,
             }
           end
+
+          # Resolve the canonical absolute base URL for the running request.
+          # Prefers an operator-supplied override (+INSTANCE_DOMAIN+) so
+          # generated absolute URLs match the public-facing hostname, falling
+          # back to the request's own +base_url+ for development.
+          #
+          # @return [String] base URL (scheme + authority) without trailing slash.
+          def public_base_url
+            domain = string_or_nil(app_constant(:INSTANCE_DOMAIN))
+            return request.base_url unless domain
+
+            scheme = request.scheme || "https"
+            "#{scheme}://#{domain}"
+          end
+
+          # Construct the OG image URL referenced from the layout. Operators
+          # may provide an explicit override via +OG_IMAGE_URL+; otherwise
+          # the runtime-generated +/og-image.png+ URL is returned.
+          #
+          # The override is rejected unless it carries an +http(s)+ scheme.
+          # +data:+ and +javascript:+ URIs do not render in any social
+          # platform's link preview and would only serve as a content
+          # security foot-gun, so they are silently dropped in favour of
+          # the runtime URL.
+          #
+          # @return [String] absolute URL to the social preview image.
+          def og_image_url
+            override = string_or_nil(PotatoMesh::Config.og_image_url)
+            return override if override && override.match?(%r{\Ahttps?://}i)
+
+            "#{public_base_url}/og-image.png"
+          end
+
+          # Build the title segment for the node detail view from the data
+          # already resolved by {build_node_detail_reference}.
+          #
+          # @param short_name [String, nil] sanitized short identifier.
+          # @param long_name [String, nil] sanitized long name.
+          # @param canonical_id [String, nil] canonical "!hex" identifier.
+          # @return [String] human-friendly node label.
+          def node_detail_title_label(short_name:, long_name:, canonical_id:)
+            short = string_or_nil(short_name)
+            long = string_or_nil(long_name)
+            return "#{short} (#{long})" if short && long
+            return short if short
+            return long if long
+            return "Node #{canonical_id}" if canonical_id
+
+            "Node detail"
+          end
+
+          # Compose meta overrides for the +/nodes/:id+ view.
+          #
+          # @param short_name [String, nil] sanitized short identifier.
+          # @param long_name [String, nil] sanitized long name.
+          # @param canonical_id [String, nil] canonical "!hex" identifier.
+          # @return [Hash] override hash for {meta_configuration}.
+          def node_detail_meta_overrides(short_name:, long_name:, canonical_id:)
+            site = sanitized_site_name
+            label = node_detail_title_label(
+              short_name: short_name,
+              long_name: long_name,
+              canonical_id: canonical_id,
+            )
+            description_subject = string_or_nil(short_name) || string_or_nil(long_name) ||
+                                  canonical_id || "this node"
+
+            {
+              title: site && !site.empty? ? "#{label} · #{site}" : label,
+              description: "Telemetry, position history, and live status for node #{description_subject} on #{site}.",
+            }
+          end
+
+          # Compose meta overrides for the +/pages/:slug+ view from a static
+          # page entry plus any frontmatter the operator defined.
+          #
+          # Only keys that carry meaningful values are included so the
+          # downstream {meta_configuration} call is not asked to filter
+          # +nil+ values out of an otherwise sparse hash.
+          #
+          # @param page [PotatoMesh::App::Pages::PageEntry] resolved page entry.
+          # @return [Hash] override hash for {meta_configuration}.
+          def static_page_meta_overrides(page)
+            site = sanitized_site_name
+            title_segment = string_or_nil(page&.title) || ""
+            composed_title = if !title_segment.empty? && site && !site.empty?
+                "#{title_segment} · #{site}"
+              elsif !title_segment.empty?
+                title_segment
+              else
+                site
+              end
+
+            overrides = { title: composed_title }
+            description = string_or_nil(page&.description)
+            overrides[:description] = description if description
+            image = string_or_nil(page&.image)
+            overrides[:image] = image if image
+            overrides[:noindex] = true if page&.noindex == true
+            overrides
+          end
+
+          # Render the +robots.txt+ body honoring private-mode preferences.
+          # Private deployments emit a blanket disallow; public deployments
+          # whitelist the dashboard while disallowing instrumentation paths.
+          #
+          # @param sitemap_url [String] absolute URL of the public sitemap.
+          # @return [String] +robots.txt+ payload, terminated with a newline.
+          def build_robots_txt(sitemap_url)
+            if private_mode?
+              "User-agent: *\nDisallow: /\n"
+            else
+              <<~TXT
+                User-agent: *
+                Disallow: /metrics
+                Disallow: /api/
+
+                Sitemap: #{sitemap_url}
+              TXT
+            end
+          end
+
+          # Build the URL list emitted by +/sitemap.xml+ for a public
+          # deployment. Each entry is a hash with +:loc+ and an optional
+          # +:lastmod+ / +:changefreq+ pair.
+          #
+          # +lastmod+ is intentionally omitted for top-level dashboard
+          # routes. The data behind those views changes continuously, so
+          # advertising +Time.now+ on every crawl trains crawlers to ignore
+          # the field (Google explicitly discourages noisy +lastmod+
+          # values). Static pages keep a meaningful +lastmod+ derived from
+          # +File.mtime+.
+          #
+          # The handler at +/sitemap.xml+ already 404s in private mode, so
+          # this method does not need to filter chat — it is unreachable
+          # otherwise.
+          #
+          # @param base_url [String] absolute base URL prefix.
+          # @return [Array<Hash>] ordered list of sitemap entries.
+          def build_sitemap_entries(base_url)
+            entries = []
+            entries << { loc: "#{base_url}/", changefreq: "daily" }
+            entries << { loc: "#{base_url}/map", changefreq: "daily" }
+            entries << { loc: "#{base_url}/chat", changefreq: "daily" }
+            entries << { loc: "#{base_url}/charts", changefreq: "daily" }
+            entries << { loc: "#{base_url}/nodes", changefreq: "daily" }
+            entries << { loc: "#{base_url}/federation", changefreq: "weekly" } if federation_enabled?
+
+            PotatoMesh::App::Pages.static_pages.each do |page|
+              next if page.noindex
+              next unless page.path
+
+              lastmod = begin
+                  File.mtime(page.path).utc.strftime("%Y-%m-%d")
+                rescue SystemCallError
+                  nil
+                end
+              entry = { loc: "#{base_url}/pages/#{page.slug}", changefreq: "weekly" }
+              entry[:lastmod] = lastmod if lastmod
+              entries << entry
+            end
+
+            entries
+          end
+
+          # Escape a string for inclusion as XML character data.
+          #
+          # Replaces the five XML predefined entities in a single pass.
+          # Used by the sitemap renderer instead of
+          # {Rack::Utils.escape_html} so apostrophes become the canonical
+          # +&apos;+ entity rather than an HTML-style numeric character
+          # reference.
+          #
+          # @param value [Object] input fragment; coerced to a string.
+          # @return [String] XML-safe representation.
+          def xml_escape(value)
+            value.to_s.gsub(XML_ESCAPE_PATTERN, XML_ESCAPE_REPLACEMENTS)
+          end
+
+          # Render a sitemap entry list as +urlset+ XML.
+          #
+          # @param entries [Array<Hash>] entries produced by
+          #   {build_sitemap_entries}.
+          # @return [String] XML document body.
+          def render_sitemap_xml(entries)
+            lines = [%(<?xml version="1.0" encoding="UTF-8"?>),
+                     %(<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">)]
+            entries.each do |entry|
+              lines << "  <url>"
+              lines << "    <loc>#{xml_escape(entry[:loc])}</loc>"
+              lines << "    <lastmod>#{xml_escape(entry[:lastmod])}</lastmod>" if entry[:lastmod]
+              lines << "    <changefreq>#{xml_escape(entry[:changefreq])}</changefreq>" if entry[:changefreq]
+              lines << "  </url>"
+            end
+            lines << "</urlset>"
+            lines.join("\n") + "\n"
+          end
         end
 
         def self.registered(app)
@@ -158,6 +376,36 @@ module PotatoMesh
             last_modified File.mtime(path)
             cache_control :public, max_age: 3600
             send_file path
+          end
+
+          app.get "/robots.txt" do
+            content_type "text/plain"
+            cache_control :public, max_age: 3600
+            build_robots_txt("#{public_base_url}/sitemap.xml")
+          end
+
+          app.get "/sitemap.xml" do
+            halt 404, "Not Found" if private_mode?
+
+            content_type "application/xml"
+            cache_control :public, max_age: 3600
+            render_sitemap_xml(build_sitemap_entries(public_base_url))
+          end
+
+          app.get "/og-image.png" do
+            override = string_or_nil(PotatoMesh::Config.og_image_url)
+            redirect override, 302 if override && override.match?(%r{\Ahttps?://}i)
+
+            begin
+              payload = PotatoMesh::OgImage.serve(base_url: public_base_url)
+            rescue PotatoMesh::OgImage::CaptureError
+              halt 503, "Preview unavailable"
+            end
+
+            content_type "image/png"
+            cache_control :public, max_age: payload[:max_age]
+            last_modified payload[:last_modified] if payload[:last_modified]
+            payload[:bytes]
           end
 
           app.get "/" do
@@ -194,6 +442,7 @@ module PotatoMesh
             render_root_view(
               :page,
               view_mode: :"page_#{slug}",
+              meta_overrides: static_page_meta_overrides(page),
               extra_locals: {
                 page_title: page.title,
                 page_content_html: page_html,
@@ -215,6 +464,11 @@ module PotatoMesh
             render_root_view(
               :node_detail,
               view_mode: :node_detail,
+              meta_overrides: node_detail_meta_overrides(
+                short_name: short_name,
+                long_name: long_name,
+                canonical_id: canonical_id,
+              ),
               extra_locals: {
                 node_reference_json: JSON.generate(reject_nil_values(reference_payload)),
                 node_page_short_name: short_name,

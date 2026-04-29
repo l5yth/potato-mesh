@@ -47,6 +47,12 @@ module PotatoMesh
     DEFAULT_FEDERATION_CRAWL_COOLDOWN_SECONDS = 300
     DEFAULT_INITIAL_FEDERATION_DELAY_SECONDS = 2
     DEFAULT_FEDERATION_SEED_DOMAINS = %w[potatomesh.net potatomesh.jmrp.io mesh.qrp.ro].freeze
+    DEFAULT_OG_IMAGE_TTL_SECONDS = 3_600
+    DEFAULT_OG_IMAGE_VIEWPORT_WIDTH = 1_200
+    DEFAULT_OG_IMAGE_VIEWPORT_HEIGHT = 630
+    DEFAULT_OG_IMAGE_NAVIGATION_TIMEOUT = 15
+    DEFAULT_OG_IMAGE_NETWORK_IDLE_DURATION = 1.5
+    DEFAULT_OG_IMAGE_NETWORK_IDLE_TIMEOUT = 8
 
     # Retrieve the configured API token used for authenticated requests.
     #
@@ -591,6 +597,85 @@ module PotatoMesh
     # @return [String] serial device, TCP endpoint, or Bluetooth target.
     def connection_target
       fetch_string("CONNECTION", "/dev/ttyACM0")
+    end
+
+    # Optional absolute URL to use for the social share preview image.
+    #
+    # When set, the layout uses this URL verbatim for +og:image+ and
+    # +twitter:image+ and the runtime capture pipeline is skipped. Operators
+    # who do not want to ship Chromium in their container, or who prefer to
+    # host their own preview image on a CDN, can point at any reachable
+    # +https://+ URL.
+    #
+    # @return [String, nil] override URL or +nil+ when unset.
+    def og_image_url
+      fetch_string("OG_IMAGE_URL", nil)
+    end
+
+    # Cache lifetime for runtime-generated +/og-image.png+ responses, in
+    # seconds. Successful captures are stored on disk and reused until the
+    # TTL elapses; the next request after expiry refreshes the cache
+    # synchronously while holding a process-wide mutex so concurrent
+    # requesters serialise rather than spawning multiple browsers.
+    #
+    # @return [Integer] positive cache duration in seconds.
+    def og_image_ttl_seconds
+      fetch_positive_integer("OG_IMAGE_TTL_SECONDS", DEFAULT_OG_IMAGE_TTL_SECONDS)
+    end
+
+    # Viewport width used for the headless browser preview capture.
+    #
+    # @return [Integer] viewport width in CSS pixels.
+    def og_image_viewport_width
+      DEFAULT_OG_IMAGE_VIEWPORT_WIDTH
+    end
+
+    # Viewport height used for the headless browser preview capture.
+    #
+    # @return [Integer] viewport height in CSS pixels.
+    def og_image_viewport_height
+      DEFAULT_OG_IMAGE_VIEWPORT_HEIGHT
+    end
+
+    # Maximum time the headless browser may spend navigating to the
+    # capture target before the request is abandoned.
+    #
+    # @return [Integer] navigation timeout in seconds.
+    def og_image_navigation_timeout
+      DEFAULT_OG_IMAGE_NAVIGATION_TIMEOUT
+    end
+
+    # Continuous duration of network silence required before the screenshot
+    # is taken. Acts as a heuristic for "page settled".
+    #
+    # @return [Float] idle window duration in seconds.
+    def og_image_network_idle_duration
+      DEFAULT_OG_IMAGE_NETWORK_IDLE_DURATION
+    end
+
+    # Maximum time spent waiting for {og_image_network_idle_duration} of
+    # silence before the capture proceeds anyway.
+    #
+    # @return [Integer] idle wait ceiling in seconds.
+    def og_image_network_idle_timeout
+      DEFAULT_OG_IMAGE_NETWORK_IDLE_TIMEOUT
+    end
+
+    # Filesystem path used to cache the most recent runtime-generated
+    # preview image. The directory is created lazily on first capture.
+    #
+    # @return [String] absolute cache file path.
+    def og_image_cache_path
+      File.join(data_directory, "og-image.png")
+    end
+
+    # Filesystem path of the bundled fallback preview image served when no
+    # cached capture is available and the runtime generator is unable to
+    # produce one (e.g. Chromium missing, transient navigation failure).
+    #
+    # @return [String] absolute path to the packaged default PNG.
+    def og_image_default_path
+      File.join(web_root, "public", "og-image-default.png")
     end
 
     # Determine the best URL to represent the configured contact link.

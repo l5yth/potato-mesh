@@ -382,6 +382,241 @@ RSpec.describe PotatoMesh::App::Pages do
     end
   end
 
+  # ── parse_frontmatter ───────────────────────────────────────
+
+  describe ".parse_frontmatter" do
+    it "returns an empty hash when there is no frontmatter" do
+      expect(described_class.parse_frontmatter("# Just markdown")).to eq({})
+    end
+
+    it "returns an empty hash for non-string input" do
+      expect(described_class.parse_frontmatter(nil)).to eq({})
+    end
+
+    it "extracts whitelisted keys" do
+      doc = "---\ntitle: Example\ndescription: A short summary.\nimage: https://e.com/p.png\nnoindex: true\n---\nbody"
+
+      result = described_class.parse_frontmatter(doc)
+
+      expect(result["title"]).to eq("Example")
+      expect(result["description"]).to eq("A short summary.")
+      expect(result["image"]).to eq("https://e.com/p.png")
+      expect(result["noindex"]).to be(true)
+    end
+
+    it "ignores keys outside the whitelist" do
+      doc = "---\ntitle: Example\nrandom: malicious\n---\nbody"
+
+      result = described_class.parse_frontmatter(doc)
+
+      expect(result).to have_key("title")
+      expect(result).not_to have_key("random")
+    end
+
+    it "treats malformed YAML as having no frontmatter" do
+      doc = "---\ntitle: : :\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)).to eq({})
+    end
+
+    it "ignores frontmatter that does not parse into a Hash" do
+      doc = "---\n- one\n- two\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)).to eq({})
+    end
+
+    it "coerces non-string scalars into strings for text fields" do
+      doc = "---\ntitle: 42\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["title"]).to eq("42")
+    end
+
+    it "drops blank string values" do
+      doc = "---\ntitle: ' '\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["title"]).to be_nil
+    end
+
+    it "accepts an https image URL" do
+      doc = "---\nimage: https://e.com/p.png\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to eq("https://e.com/p.png")
+    end
+
+    it "rejects javascript: image URLs" do
+      doc = "---\nimage: 'javascript:alert(1)'\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to be_nil
+    end
+
+    it "rejects data: image URLs" do
+      doc = "---\nimage: 'data:image/png;base64,iVBORw0KGgo='\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to be_nil
+    end
+
+    it "rejects relative image paths" do
+      doc = "---\nimage: /assets/p.png\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to be_nil
+    end
+  end
+
+  # ── strip_frontmatter ───────────────────────────────────────
+
+  describe ".strip_frontmatter" do
+    it "removes the leading frontmatter block" do
+      input = "---\ntitle: A\n---\n# Body\n"
+      expect(described_class.strip_frontmatter(input)).to eq("# Body\n")
+    end
+
+    it "passes through content without frontmatter unchanged" do
+      input = "# Body\n"
+      expect(described_class.strip_frontmatter(input)).to eq(input)
+    end
+
+    it "passes non-string input through" do
+      expect(described_class.strip_frontmatter(nil)).to be_nil
+    end
+  end
+
+  # ── truthy_frontmatter? ─────────────────────────────────────
+
+  describe ".truthy_frontmatter?" do
+    it "passes booleans through" do
+      expect(described_class.truthy_frontmatter?(true)).to be(true)
+      expect(described_class.truthy_frontmatter?(false)).to be(false)
+    end
+
+    it "matches common truthy strings" do
+      %w[true Yes 1 ON].each do |literal|
+        expect(described_class.truthy_frontmatter?(literal)).to be(true)
+      end
+    end
+
+    it "returns false for unknown values" do
+      expect(described_class.truthy_frontmatter?("nope")).to be(false)
+    end
+  end
+
+  # ── read_frontmatter_probe ──────────────────────────────────
+
+  describe ".read_frontmatter_probe" do
+    let(:dir) { File.join(SPEC_TMPDIR, "probe-#{SecureRandom.hex(4)}") }
+
+    before { FileUtils.mkdir_p(dir) }
+    after { FileUtils.rm_rf(dir) }
+
+    it "returns an empty string for a missing file" do
+      expect(described_class.read_frontmatter_probe(File.join(dir, "missing.md"))).to eq("")
+    end
+
+    it "reads the first FRONTMATTER_PROBE_BYTES bytes of the file" do
+      path = File.join(dir, "long.md")
+      File.write(path, "x" * (PotatoMesh::App::Pages::FRONTMATTER_PROBE_BYTES + 10))
+
+      probe = described_class.read_frontmatter_probe(path)
+
+      expect(probe.length).to eq(PotatoMesh::App::Pages::FRONTMATTER_PROBE_BYTES)
+    end
+
+    it "returns an empty string on filesystem errors" do
+      path = File.join(dir, "err.md")
+      File.write(path, "data")
+      allow(File).to receive(:open).with(path, "r:UTF-8").and_raise(Errno::EIO)
+
+      expect(described_class.read_frontmatter_probe(path)).to eq("")
+    end
+  end
+
+  # ── apply_frontmatter ───────────────────────────────────────
+
+  describe ".apply_frontmatter" do
+    it "returns the original entry when nothing is supplied" do
+      base = PotatoMesh::App::Pages::PageEntry.new(slug: "x", title: "X")
+
+      result = described_class.apply_frontmatter(base, {})
+
+      expect(result.title).to eq("X")
+      expect(result.description).to be_nil
+      expect(result.image).to be_nil
+      expect(result.noindex).to be(false)
+    end
+
+    it "returns nil when the base entry is nil" do
+      expect(described_class.apply_frontmatter(nil, {})).to be_nil
+    end
+
+    it "overrides title when frontmatter provides one" do
+      base = PotatoMesh::App::Pages::PageEntry.new(slug: "x", title: "X")
+
+      result = described_class.apply_frontmatter(base, "title" => "Custom")
+
+      expect(result.title).to eq("Custom")
+    end
+
+    it "keeps the filename-derived title when frontmatter omits one" do
+      base = PotatoMesh::App::Pages::PageEntry.new(slug: "x", title: "X")
+
+      result = described_class.apply_frontmatter(base, "description" => "Note")
+
+      expect(result.title).to eq("X")
+    end
+
+    it "captures noindex flag" do
+      base = PotatoMesh::App::Pages::PageEntry.new(slug: "x", title: "X")
+
+      result = described_class.apply_frontmatter(base, "noindex" => true)
+
+      expect(result.noindex).to be(true)
+    end
+
+    it "captures image and description fields" do
+      base = PotatoMesh::App::Pages::PageEntry.new(slug: "x", title: "X")
+
+      result = described_class.apply_frontmatter(
+        base,
+        "description" => "A summary.",
+        "image" => "https://e.com/p.png",
+      )
+
+      expect(result.description).to eq("A summary.")
+      expect(result.image).to eq("https://e.com/p.png")
+    end
+  end
+
+  # ── load_static_pages with frontmatter ──────────────────────
+
+  describe ".load_static_pages with frontmatter" do
+    it "applies frontmatter values during directory scans" do
+      File.write(
+        File.join(pages_dir, "1-about.md"),
+        "---\ntitle: About Page\ndescription: A summary.\nnoindex: true\n---\n# Body\n",
+      )
+
+      result = described_class.load_static_pages(pages_dir)
+
+      expect(result.first.title).to eq("About Page")
+      expect(result.first.description).to eq("A summary.")
+      expect(result.first.noindex).to be(true)
+    end
+  end
+
+  describe ".render_page_content with frontmatter" do
+    it "strips frontmatter before rendering" do
+      path = File.join(pages_dir, "1-test.md")
+      File.write(path, "---\ntitle: Doc\n---\n# Body Heading\n")
+      entry = PotatoMesh::App::Pages::PageEntry.new(
+        sort_key: "1-test", slug: "test", title: "Test", path: path,
+      )
+
+      html = described_class.render_page_content(entry)
+
+      expect(html).to include("Body Heading")
+      expect(html).not_to include("title: Doc")
+    end
+  end
+
   # ── production_environment? ─────────────────────────────────
 
   describe ".production_environment?" do

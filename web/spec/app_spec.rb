@@ -1356,7 +1356,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include(%(meta name="description" content="#{expected_description}" />))
       expect(last_response.body).to include('<meta property="og:title" content="Spec Mesh Title" />')
       expect(last_response.body).to include('<meta property="og:site_name" content="Spec Mesh Title" />')
-      expect(last_response.body).to include('<meta name="twitter:image" content="http://example.org/potatomesh-logo.svg" />')
+      expect(last_response.body).to include('<meta name="twitter:card" content="summary_large_image" />')
+      expect(last_response.body).to include('<meta name="twitter:image" content="http://spec.mesh.test/og-image.png" />')
+      expect(last_response.body).to include('<meta property="og:image:width" content="1200" />')
+      expect(last_response.body).to include('<meta property="og:image:height" content="630" />')
     end
 
     it "does not include the removed auto-fit checkbox regardless of map zoom override" do
