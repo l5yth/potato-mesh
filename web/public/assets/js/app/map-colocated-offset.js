@@ -24,14 +24,15 @@ const DEFAULT_PRECISION = 5;
 
 /**
  * Default offset ring radius in pixels for a co-located group of two nodes.
- * Chosen slightly larger than the standard map marker radius so the markers
- * read as adjacent rather than overlapping.  Callers may pass ``0`` to
- * intentionally collapse all members of a group back onto the shared centre
- * — the value is honoured rather than substituted with the default so that
- * the offset feature can be disabled without touching the call sites that
- * still want grouping for other purposes.
+ * Sized so the ring sits inside the standard 9px-radius marker glyph rather
+ * than around it: the spider should read as a tight cluster rather than a
+ * fan that visually competes with the marker layer.  Callers may pass ``0``
+ * to intentionally collapse all members of a group back onto the shared
+ * centre — the value is honoured rather than substituted with the default
+ * so that the offset feature can be disabled without touching the call sites
+ * that still want grouping for other purposes.
  */
-const DEFAULT_BASE_RADIUS_PX = 14;
+const DEFAULT_BASE_RADIUS_PX = 7;
 
 /**
  * Tolerance (in pixels) below which an offset is considered effectively zero.
@@ -46,7 +47,7 @@ const OFFSET_EPSILON_PX = 1e-9;
  * second.  Keeps groups of five or more visually legible without growing
  * unbounded for any single pair.
  */
-const DEFAULT_RADIUS_GROWTH_PX = 4;
+const DEFAULT_RADIUS_GROWTH_PX = 2;
 
 /**
  * Build a string key used to bucket entries that share the same coordinate at
@@ -156,13 +157,16 @@ export function buildRenderableEntries(nodes, options = {}) {
  * @param {Object} [options] Optional tuning parameters.
  * @param {number} [options.precision=5] Decimal places used to bucket nearby
  *   coordinates into the same group.
- * @param {number} [options.baseRadiusPx=14] Pixel radius applied to a group
+ * @param {number} [options.baseRadiusPx=7] Pixel radius applied to a group
  *   of two nodes.
- * @param {number} [options.radiusGrowthPx=4] Pixel radius added per extra
+ * @param {number} [options.radiusGrowthPx=2] Pixel radius added per extra
  *   node beyond the second.
- * @returns {Array<{entry: {node: Object, lat: number, lon: number}, dx: number, dy: number}>}
+ * @returns {Array<{entry: {node: Object, lat: number, lon: number}, dx: number, dy: number, groupKey: string, groupSize: number}>}
  *   One result per input entry, in the original input order.  Singleton
- *   groups receive ``{dx: 0, dy: 0}``.
+ *   groups receive ``{dx: 0, dy: 0, groupSize: 1}``.  ``groupKey`` is the
+ *   stable bucket identifier returned by {@link coordinateKey} so callers
+ *   can correlate slots that belong to the same co-located group across
+ *   renders without re-running the bucketing themselves.
  */
 export function computeColocatedOffsets(entries, options = {}) {
   if (!Array.isArray(entries) || entries.length === 0) return [];
@@ -185,10 +189,11 @@ export function computeColocatedOffsets(entries, options = {}) {
   });
 
   const results = new Array(entries.length);
-  for (const bucket of groups.values()) {
-    if (bucket.length === 1) {
+  for (const [key, bucket] of groups.entries()) {
+    const groupSize = bucket.length;
+    if (groupSize === 1) {
       const { entry, index } = bucket[0];
-      results[index] = { entry, dx: 0, dy: 0 };
+      results[index] = { entry, dx: 0, dy: 0, groupKey: key, groupSize: 1 };
       continue;
     }
 
@@ -212,7 +217,9 @@ export function computeColocatedOffsets(entries, options = {}) {
       results[member.index] = {
         entry: member.entry,
         dx: radius * Math.cos(theta),
-        dy: radius * Math.sin(theta)
+        dy: radius * Math.sin(theta),
+        groupKey: key,
+        groupSize
       };
     });
   }

@@ -509,6 +509,15 @@ export function initializeApp(config) {
   const INITIAL_VIEW_PADDING_PX = 12;
   const AUTO_FIT_PADDING_PX = 12;
   const MAX_INITIAL_ZOOM = 13;
+  // Below this zoom level the co-located spider feature is disabled
+  // entirely: markers stack at their shared coordinate (no fan, no leader
+  // lines, no hub badge).  At or above it, multi-node groups collapse into
+  // a single hub badge that the user can click to expand into the spider.
+  // Intentionally aligned with ``MAX_INITIAL_ZOOM`` above so the auto-fit
+  // initial view (which clamps at zoom 13) lands directly on the bucket
+  // boundary and users see the hub representation as soon as the map is
+  // ready rather than after their first zoom-in interaction.
+  const COLOCATED_HUB_MIN_ZOOM = 13;
   let neighborLinesLayer = null;
   let traceLinesLayer = null;
   let neighborLinesVisible = true;
@@ -527,6 +536,27 @@ export function initializeApp(config) {
   // into a single refresh; reset to ``null`` once the scheduled callback
   // runs so the next frame can schedule again.
   let pendingSpiderRefreshHandle = null;
+  // Leaflet layer that holds the small "asterisk + count" hub badges that
+  // collapse co-located groups at zoom levels at or above
+  // ``COLOCATED_HUB_MIN_ZOOM``.  Initialised alongside the other map layers
+  // and cleared on every render before being re-populated.
+  let colocatedHubsLayer = null;
+  // Bucket keys (as returned by ``computeColocatedOffsets``) for groups the
+  // user has explicitly clicked open.  Hubs whose key is in the set render
+  // their members fanned out + leader lines; absent keys render the hub
+  // alone.  Cleared whenever the map crosses the zoom threshold so the
+  // collapsed default is restored when the visual context changes.
+  let expandedColocatedKeys = new Set();
+  // Tracks whether the most recent render was below or at/above the zoom
+  // threshold so the ``zoomend`` handler can detect threshold crossings and
+  // trigger a re-render that swaps the hub representation in or out.
+  let lastRenderedZoomBucket = null;
+  // Cache of divIcon instances keyed by group size.  Building an icon for
+  // every multi-node group on every render is expensive at scale (hundreds
+  // of nodes can produce dozens of hubs); since the icon's html only varies
+  // by groupSize we share a single instance across same-size groups and
+  // across renders.  See ``getColocatedHubIcon`` for the lookup.
+  const colocatedHubIconCache = new Map();
   let tileDomObserver = null;
   const fullscreenChangeEvents = [
     'fullscreenchange',
@@ -1332,6 +1362,10 @@ export function initializeApp(config) {
     // but never sit on top of the marker glyphs themselves.
     spiderLinesLayer = L.layerGroup().addTo(map);
     markersLayer = L.layerGroup().addTo(map);
+    // Hub badges render on top of the marker glyphs so the click target is
+    // always reachable, even when a stale marker happens to share the exact
+    // pixel coordinate of the hub centre.
+    colocatedHubsLayer = L.layerGroup().addTo(map);
 
     // Pixel-space offsets are baked into a LatLng at render time, so the
     // on-screen spread would otherwise scale with zoom — at extreme zoom-outs
@@ -1341,9 +1375,11 @@ export function initializeApp(config) {
     // through `requestAnimationFrame` to coalesce redundant updates into a
     // single redraw per frame; `zoomend` snaps to the final position; and
     // `viewreset` covers projection resets such as resize / fullscreen /
-    // dateline wrap.
+    // dateline wrap.  ``zoomend`` additionally watches for crossings of
+    // ``COLOCATED_HUB_MIN_ZOOM`` and re-runs ``applyFilter`` so the marker
+    // representation switches between flat / hub modes.
     map.on('zoom', scheduleColocatedSpiderRefresh);
-    map.on('zoomend', refreshColocatedSpiderState);
+    map.on('zoomend', handleZoomEndForColocatedHubs);
     map.on('viewreset', refreshColocatedSpiderState);
 
     if (typeof navigator !== 'undefined' && navigator && navigator.onLine === false) {
@@ -4078,6 +4114,138 @@ export function initializeApp(config) {
   }
 
   /**
+   * Classify the current zoom level relative to ``COLOCATED_HUB_MIN_ZOOM``.
+   *
+   * Returns ``'low'`` when the user is zoomed out far enough that the
+   * collapsed-hub representation should not be drawn (markers stack at the
+   * shared coordinate instead) and ``'high'`` otherwise.  Defaults to
+   * ``'high'`` when the map is missing or its ``getZoom`` returns a
+   * non-finite value, which preserves the pre-feature behaviour during
+   * early init / tests where the projection is not yet available.
+   *
+   * @returns {'low'|'high'} Bucket name for the current zoom level.
+   */
+  function currentZoomBucket() {
+    if (!map || typeof map.getZoom !== 'function') return 'high';
+    const zoom = map.getZoom();
+    if (!Number.isFinite(zoom)) return 'high';
+    return zoom < COLOCATED_HUB_MIN_ZOOM ? 'low' : 'high';
+  }
+
+  /**
+   * Wired to the map's ``zoomend`` event in addition to the spider
+   * re-projection.  When the user crosses the
+   * ``COLOCATED_HUB_MIN_ZOOM`` threshold in either direction we forget the
+   * previously-expanded hub state and trigger a full re-render through
+   * {@link applyFilter}, since the marker representation switches between
+   * "flat overlap" and "hub badge" modes.
+   *
+   * @returns {void}
+   */
+  function handleZoomEndForColocatedHubs() {
+    refreshColocatedSpiderState();
+    const bucket = currentZoomBucket();
+    if (bucket !== lastRenderedZoomBucket) {
+      expandedColocatedKeys.clear();
+      // Bucket flips only swap the marker representation; the node table,
+      // chat log, and active-stats counts are unaffected, so we re-render
+      // just the map rather than running the full applyFilter pipeline.
+      rerenderMapForFiltering();
+    }
+  }
+
+  /**
+   * Build the small "asterisk + count" hub badge that represents a collapsed
+   * (or expanded-but-still-visible) co-located group.  The badge is a
+   * Leaflet ``L.marker`` backed by an ``L.divIcon`` so the visual is HTML/CSS
+   * (themable via ``var(--fg)`` / ``var(--bg)``) rather than the SVG
+   * ``L.circleMarker`` used for node points.
+   *
+   * Clicking the hub toggles ``expandedColocatedKeys`` for ``groupKey`` and
+   * triggers a full re-render via {@link applyFilter}.  The hub deliberately
+   * does NOT participate in the node-info overlay — it is a control rather
+   * than a node anchor — so the click handler stops propagation to keep the
+   * ``overlayStack`` close path from also firing.
+   *
+   * @param {string} groupKey Bucket key from {@link computeColocatedOffsets}.
+   * @param {number} groupSize Number of (visible) nodes in the group.
+   * @param {number} lat Latitude of the shared centre.
+   * @param {number} lon Longitude of the shared centre.
+   * @returns {Object} The created Leaflet marker, already added to the layer.
+   */
+  function createColocatedHubMarker(groupKey, groupSize, lat, lon) {
+    // ``bubblingMouseEvents: false`` keeps Leaflet's internal event system
+    // from forwarding the click to the map and any registered map-level
+    // ``click`` handlers (e.g. overlay close).  ``riseOnHover`` is omitted
+    // intentionally — it is documented for the default raster icon's
+    // z-index handling and behaves inconsistently with ``divIcon`` across
+    // Leaflet versions; layer ordering (``colocatedHubsLayer`` is added
+    // *after* ``markersLayer``) keeps the hub on top reliably.
+    const marker = L.marker([lat, lon], {
+      icon: getColocatedHubIcon(groupSize),
+      keyboard: false,
+      bubblingMouseEvents: false
+    });
+    marker.on('click', event => {
+      // Stop the Leaflet event from bubbling to the map's own click handlers
+      // and stop the raw DOM event so the ``overlayStack`` close path does
+      // not also fire.  We use the Leaflet helper rather than only the raw
+      // DOM stopPropagation because Leaflet routes events through its own
+      // pipeline before the browser does.
+      if (event && L && L.DomEvent && typeof L.DomEvent.stopPropagation === 'function') {
+        L.DomEvent.stopPropagation(event);
+      }
+      if (event && event.originalEvent && typeof event.originalEvent.stopPropagation === 'function') {
+        event.originalEvent.stopPropagation();
+      }
+      if (expandedColocatedKeys.has(groupKey)) {
+        expandedColocatedKeys.delete(groupKey);
+      } else {
+        expandedColocatedKeys.add(groupKey);
+      }
+      // Surgical re-render: only the map's marker representation changed.
+      // The table, chat log, and active-stats counts stay valid, so we skip
+      // the full applyFilter pipeline (and its ``/api/stats`` fetch) — that
+      // saves a round-trip per click and keeps rapid expand/collapse cheap.
+      rerenderMapForFiltering();
+    });
+    marker.addTo(colocatedHubsLayer);
+    return marker;
+  }
+
+  /**
+   * Lookup or lazily create the divIcon used to render a hub badge for a
+   * group of ``groupSize`` co-located nodes.  Icons are cached because
+   * Leaflet allows the same icon instance to be shared across markers, the
+   * underlying DOM element is cloned per marker, and ``L.divIcon`` itself
+   * is non-trivially expensive at the volumes this feature can produce
+   * (every render creates one icon per multi-node group).  The cache is
+   * keyed by ``groupSize`` because the html string is the only thing that
+   * varies between groups; it is bounded in practice (typical group sizes
+   * are small single digits) so it never grows large enough to warrant
+   * eviction.
+   *
+   * Theme changes do not invalidate the cache: the icon's html only carries
+   * the static text label and class hooks; all colour / border styling
+   * comes from CSS variables that resolve at paint time.
+   *
+   * @param {number} groupSize Number of visible nodes in the group.
+   * @returns {Object} Cached or freshly-created Leaflet divIcon.
+   */
+  function getColocatedHubIcon(groupSize) {
+    const cached = colocatedHubIconCache.get(groupSize);
+    if (cached) return cached;
+    const icon = L.divIcon({
+      html: '<span class="colocated-spider-hub__glyph">*' + groupSize + '</span>',
+      className: 'colocated-spider-hub',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    });
+    colocatedHubIconCache.set(groupSize, icon);
+    return icon;
+  }
+
+  /**
    * Render the Leaflet map markers and neighbour connections.
    *
    * @param {Array<Object>} nodes Node payloads.
@@ -4097,9 +4265,15 @@ export function initializeApp(config) {
     if (spiderLinesLayer) {
       spiderLinesLayer.clearLayers();
     }
+    if (colocatedHubsLayer) {
+      colocatedHubsLayer.clearLayers();
+    }
     // Drop the previous render's spider records before populating them again
     // so the zoom handler does not try to reposition stale Leaflet objects.
     colocatedSpiderState = [];
+    // Capture the zoom bucket the upcoming render targets so the zoomend
+    // handler can detect threshold crossings on the next zoom event.
+    lastRenderedZoomBucket = currentZoomBucket();
     markersLayer.clearLayers();
     const pts = [];
     const nodesById = new Map();
@@ -4320,19 +4494,73 @@ export function initializeApp(config) {
     });
 
     const offsets = computeColocatedOffsets(renderableEntries);
-    for (const { entry, dx, dy } of offsets) {
+
+    // Build the set of bucket keys that currently host more than one visible
+    // node so we can drop stale entries from ``expandedColocatedKeys`` (a
+    // group that lost members to the distance filter, an upstream delete,
+    // etc.).  Keys whose group has shrunk to a singleton are pruned here so
+    // the remaining slot renders as a normal marker rather than carrying an
+    // orphaned "expanded" flag.
+    const visibleMultiGroupKeys = new Set();
+    for (const slot of offsets) {
+      if (slot && slot.groupSize >= 2) visibleMultiGroupKeys.add(slot.groupKey);
+    }
+    // Snapshot the keys before mutating the live set: ``Set`` iteration
+    // during ``delete`` is technically safe per spec, but copying first
+    // makes the intent explicit and keeps the loop body straightforward
+    // for future maintainers.
+    for (const key of Array.from(expandedColocatedKeys)) {
+      if (!visibleMultiGroupKeys.has(key)) expandedColocatedKeys.delete(key);
+    }
+
+    const zoomBucket = currentZoomBucket();
+    // Each multi-node group emits a single hub badge.  Track which keys we
+    // have already drawn so we create the hub once even though the offsets
+    // array yields one slot per member.
+    const renderedHubKeys = new Set();
+
+    for (const slot of offsets) {
+      const { entry, dx, dy, groupKey, groupSize } = slot;
       const n = entry.node;
       const { lat, lon } = entry;
+
+      const isMulti = groupSize >= 2;
+      const lowZoom = zoomBucket === 'low';
+      const isExpanded = isMulti && !lowZoom && expandedColocatedKeys.has(groupKey);
+      // Hub badges represent multi-node groups at zoom levels where the
+      // collapsed control is meaningful; below the threshold they would just
+      // sit in a sea of overlapping markers without conveying useful info.
+      const showHub = isMulti && !lowZoom;
+      // Singletons always render their marker; multi-node groups render
+      // member markers only when the user has expanded the hub (or when the
+      // zoom is below the threshold and we fall back to flat overlap).
+      const showMarker = !isMulti || lowZoom || isExpanded;
+      // Use the helper-level significance test (rather than strict !== 0)
+      // because trig at angles like π produces values around 1e-15 which
+      // would otherwise pass the strict check and cause us to draw
+      // zero-length spider lines.
+      const useOffset = isExpanded && isOffsetSignificant(dx, dy);
+
+      if (showHub && !renderedHubKeys.has(groupKey)) {
+        createColocatedHubMarker(groupKey, groupSize, lat, lon);
+        renderedHubKeys.add(groupKey);
+      }
+
+      // Auto-fit bounds always use the original coordinate so the
+      // collapse/expand state cannot widen or narrow the fit window.  Push
+      // here even when the underlying marker is suppressed so a fully
+      // collapsed group still contributes to the bounds.
+      pts.push([lat, lon]);
+
+      if (!showMarker) {
+        continue;
+      }
 
       // Translate the pixel-space offset into the LatLng to render at.  The
       // baked-in LatLng is correct for the current zoom only; the zoom event
       // handlers re-project on zoom/zoomend/viewreset to keep the gap
-      // visually constant when the user changes zoom.  Use the helper-level
-      // significance test (rather than strict !== 0) because trig at angles
-      // like π produces values around 1e-15 which would otherwise pass the
-      // strict check and cause us to draw zero-length spider lines.
-      const markerLatLng = projectColocatedOffsetLatLng(lat, lon, dx, dy);
-      const isOffset = isOffsetSignificant(dx, dy);
+      // visually constant when the user changes zoom.
+      const markerLatLng = useOffset ? projectColocatedOffsetLatLng(lat, lon, dx, dy) : [lat, lon];
 
       const color = getRoleColor(n.role, n.protocol);
       const marker = L.circleMarker(markerLatLng, {
@@ -4344,14 +4572,14 @@ export function initializeApp(config) {
         opacity: 0.7
       });
 
-      // Draw a faint dotted leader line from each co-located marker back to
+      // Draw a faint dotted leader line from each fanned-out marker back to
       // the shared physical location so the spider hub is visually obvious.
-      // Singleton markers (no offset) get no line.  Stroke colour, dash,
-      // weight and opacity all live in `.colocated-spider-line` so the line
-      // can pick up theme-aware tokens (var(--fg)) and stay legible on both
-      // light and dark basemaps without code changes here.
+      // Singleton / collapsed / low-zoom markers get no line.  Stroke
+      // colour, dash, weight and opacity all live in `.colocated-spider-line`
+      // so the line can pick up theme-aware tokens (var(--fg)) and stay
+      // legible on both light and dark basemaps without code changes here.
       let spiderLine = null;
-      if (isOffset && spiderLinesLayer) {
+      if (useOffset && spiderLinesLayer) {
         spiderLine = L.polyline([[lat, lon], markerLatLng], {
           interactive: false,
           className: 'colocated-spider-line'
@@ -4362,14 +4590,12 @@ export function initializeApp(config) {
       let markerToken = 0;
       marker.addTo(markersLayer);
       // Track every offset marker so the zoomend handler can reposition the
-      // marker + leader line in lock-step.  Singletons skip the record since
-      // their position never changes between zooms.
-      if (isOffset) {
+      // marker + leader line in lock-step.  Markers rendered at the shared
+      // centre (singletons / low-zoom overlap / collapsed-group fallback)
+      // skip the record since their position never changes between zooms.
+      if (useOffset) {
         colocatedSpiderState.push({ marker, line: spiderLine, lat, lon, dx, dy });
       }
-      // Use the original coordinates for fitBounds so sub-pixel display
-      // offsets cannot widen the auto-fit window.
-      pts.push([lat, lon]);
 
       attachNodeInfoRefreshToMarker({
         marker,
@@ -4506,6 +4732,37 @@ export function initializeApp(config) {
   }
 
   /**
+   * Re-run the active text/role/protocol filter pipeline over ``allNodes``
+   * and return the nodes that should currently render on the map and table.
+   * Pulled out of {@link applyFilter} so the colocated-hub click handler and
+   * the zoom-bucket-crossing handler can call it without paying for the
+   * table re-render, chat-log re-render, or stats fetch — none of which are
+   * affected by either of those events.
+   *
+   * @returns {Array<Object>} Filtered + sorted node list.
+   */
+  function getFilteredSortedNodes() {
+    const filterQuery = filterInput ? filterInput.value : '';
+    const q = normaliseChatFilterQuery(filterQuery);
+    const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n) && matchesProtocolFilter(n));
+    return sortNodes(filteredNodes);
+  }
+
+  /**
+   * Re-render only the map markers (hub badges, member markers, leader
+   * lines) without touching the node table, chat log, page title, or the
+   * ``/api/stats`` fetch.  Used for events that only affect the marker
+   * representation — currently the colocated-hub expand/collapse click and
+   * the zoom-bucket threshold crossing — so we avoid the full
+   * {@link applyFilter} pipeline that those events would otherwise trigger.
+   *
+   * @returns {void}
+   */
+  function rerenderMapForFiltering() {
+    renderMap(getFilteredSortedNodes(), Date.now() / 1000);
+  }
+
+  /**
    * Apply text and role filters to the node list and re-render outputs.
    *
    * @returns {void}
@@ -4513,14 +4770,10 @@ export function initializeApp(config) {
   function applyFilter() {
     updateFilterClearVisibility();
     const filterQuery = filterInput ? filterInput.value : '';
-    // Normalise query so empty strings and whitespace-only input are treated
-    // identically and comparisons are case-insensitive.
-    const q = normaliseChatFilterQuery(filterQuery);
     // Text and role filters apply only to the node table and map; the chat log
     // always receives the full node collection so reply-thread lookups succeed
     // even for nodes that are currently hidden by the active filter.
-    const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n) && matchesProtocolFilter(n));
-    const sortedNodes = sortNodes(filteredNodes);
+    const sortedNodes = getFilteredSortedNodes();
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
@@ -4910,6 +5163,22 @@ export function initializeApp(config) {
       refreshColocatedSpiderState,
       /** rAF-throttled wrapper around the spider refresh. */
       scheduleColocatedSpiderRefresh,
+      /** ``zoomend`` handler that also detects co-located zoom-bucket crossings. */
+      handleZoomEndForColocatedHubs,
+      /** Build the asterisk + count hub badge for a co-located group. */
+      createColocatedHubMarker,
+      /** Lazily look up or create the divIcon for a hub of a given size. */
+      getColocatedHubIcon,
+      /** Render the map (test use only). */
+      renderMap,
+      /** Re-render only the map (skips the table / chat log / stats pipeline). */
+      rerenderMapForFiltering,
+      /** Classify the current zoom level as ``'low'`` or ``'high'``. */
+      _currentZoomBucketForTests: currentZoomBucket,
+      /** Inspect the live divIcon cache (test use only). */
+      _getColocatedHubIconCacheForTests() {
+        return colocatedHubIconCache;
+      },
       /** Replace the recorded spider state for tests; returns the previous value. */
       _setColocatedSpiderStateForTests(next) {
         const previous = colocatedSpiderState;
@@ -4919,6 +5188,35 @@ export function initializeApp(config) {
       /** Inspect the recorded spider state (test use only). */
       _getColocatedSpiderStateForTests() {
         return colocatedSpiderState;
+      },
+      /** Replace the expanded-group key set for tests; returns the previous value. */
+      _setExpandedColocatedKeysForTests(next) {
+        const previous = expandedColocatedKeys;
+        expandedColocatedKeys = next instanceof Set ? next : new Set();
+        return previous;
+      },
+      /** Inspect the live expanded-group key set (test use only). */
+      _getExpandedColocatedKeysForTests() {
+        return expandedColocatedKeys;
+      },
+      /** Inject a stub hub layer for tests; returns the previous value. */
+      _setColocatedHubsLayerForTests(next) {
+        const previous = colocatedHubsLayer;
+        colocatedHubsLayer = next;
+        return previous;
+      },
+      /** Inspect the hub layer (test use only). */
+      _getColocatedHubsLayerForTests() {
+        return colocatedHubsLayer;
+      },
+      /** Read or override the cached zoom bucket from the previous render. */
+      _setLastRenderedZoomBucketForTests(next) {
+        const previous = lastRenderedZoomBucket;
+        lastRenderedZoomBucket = next;
+        return previous;
+      },
+      _getLastRenderedZoomBucketForTests() {
+        return lastRenderedZoomBucket;
       },
       /** Inject a stub Leaflet map for tests that need to drive the projection. */
       _setMapForTests(stub) {

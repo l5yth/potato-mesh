@@ -235,6 +235,35 @@ test('entries without node_id still receive deterministic slots', () => {
   }
 });
 
+test('grouped slots expose groupKey and groupSize', () => {
+  // Three colocated entries → every slot reports the same coordinate-derived
+  // bucket key (matching coordinateKey at the default precision) and the full
+  // membership count.  This is what the renderer keys expand/collapse state
+  // off of, so a regression here would silently desync the hub interaction.
+  const entries = [
+    makeEntry('a', 10, 20),
+    makeEntry('b', 10, 20),
+    makeEntry('c', 10, 20)
+  ];
+  const result = computeColocatedOffsets(entries);
+  const expectedKey = coordinateKey(10, 20, DEFAULT_PRECISION);
+  for (const slot of result) {
+    assert.equal(slot.groupKey, expectedKey);
+    assert.equal(slot.groupSize, 3);
+  }
+});
+
+test('singleton slots still report a stable groupKey and groupSize of 1', () => {
+  // Singletons need a groupKey too: the renderer treats every result row
+  // uniformly when pruning expand/collapse state, so even non-grouped points
+  // must carry a non-empty key matching their rounded coordinate.
+  const entries = [makeEntry('solo', 12.34567, 89.01234)];
+  const result = computeColocatedOffsets(entries);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].groupSize, 1);
+  assert.equal(result[0].groupKey, coordinateKey(12.34567, 89.01234, DEFAULT_PRECISION));
+});
+
 test('coordinateKey formats lat/lon at requested precision', () => {
   assert.equal(coordinateKey(1.234567, 7.654321, 3), '1.235,7.654');
   assert.equal(coordinateKey(0, 0, DEFAULT_PRECISION), '0.00000,0.00000');
