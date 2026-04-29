@@ -159,18 +159,23 @@ fn is_valid_number_token(s: &str) -> bool {
 
 /// Parse a single `SF{n}`, `BW{n}`, or `CR{n}` token (case-insensitive).
 fn parse_token(part: &str) -> Option<(PresetKey, f64)> {
+    // Both length and char-boundary checks are needed: `len() >= 3` rules
+    // out short tokens, but a multi-byte first codepoint (e.g. `é12`) has
+    // `len() == 3` while byte index 2 lands mid-codepoint — so
+    // `is_char_boundary(2)` is what actually keeps `split_at(2)` from
+    // panicking on non-ASCII input.
     if part.len() < 3 || !part.is_char_boundary(2) {
         return None;
     }
     let (prefix, rest) = part.split_at(2);
-    if !prefix.is_ascii() {
+    let key = if prefix.eq_ignore_ascii_case("SF") {
+        PresetKey::Sf
+    } else if prefix.eq_ignore_ascii_case("BW") {
+        PresetKey::Bw
+    } else if prefix.eq_ignore_ascii_case("CR") {
+        PresetKey::Cr
+    } else {
         return None;
-    }
-    let key = match prefix.to_ascii_lowercase().as_str() {
-        "sf" => PresetKey::Sf,
-        "bw" => PresetKey::Bw,
-        "cr" => PresetKey::Cr,
-        _ => return None,
     };
     if !is_valid_number_token(rest) {
         return None;
@@ -231,6 +236,11 @@ fn parse_meshcore_preset_tokens(preset: &str) -> Option<MeshcoreTokens> {
 /// Mirrors `bwToShortCode` in `node-modem-metadata.js:132-138` — `62` and
 /// `62.5` collapse to `Na`, `125` to `St`, `250` to `Wi`. Any other value
 /// returns `None`.
+///
+/// The `f64 ==` comparisons rely on each literal having an exact double
+/// representation; `62`, `62.5`, `125`, and `250` all do, and tokens
+/// reach this function via `f64::from_str` of plain decimal strings, so
+/// no rounding is introduced upstream.
 fn bw_to_short_code(bw: f64) -> Option<&'static str> {
     if bw == 62.0 || bw == 62.5 {
         Some("Na")
@@ -539,8 +549,14 @@ mod tests {
 
     #[test]
     fn format_number_drops_decimal_for_integers() {
+        assert_eq!(format_number(0.0), "0");
         assert_eq!(format_number(62.0), "62");
         assert_eq!(format_number(125.0), "125");
+    }
+
+    #[test]
+    fn format_number_keeps_decimal_for_fractions() {
+        assert_eq!(format_number(0.5), "0.5");
         assert_eq!(format_number(62.5), "62.5");
     }
 
@@ -689,6 +705,13 @@ mod tests {
         assert_eq!(abbreviate_preset("long-fast", None).as_deref(), Some("LF"));
         assert_eq!(
             abbreviate_preset("Medium_Fast", None).as_deref(),
+            Some("MF")
+        );
+        // Whitespace is stripped along with other non-alphabetic chars,
+        // so a human-typed `"Medium Fast"` resolves the same as the
+        // CamelCase form.
+        assert_eq!(
+            abbreviate_preset("Medium Fast", None).as_deref(),
             Some("MF")
         );
     }
