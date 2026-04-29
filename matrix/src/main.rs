@@ -17,6 +17,7 @@ mod config;
 mod matrix;
 mod matrix_server;
 mod potatomesh;
+mod preset;
 
 use std::{fs, net::SocketAddr, path::Path};
 
@@ -256,7 +257,8 @@ async fn handle_message(
     matrix.set_display_name(&user_id, &display_name).await?;
 
     // Format the bridged message
-    let preset_short = modem_preset_short(&msg.modem_preset);
+    let abbr = preset::abbreviate_preset(&msg.modem_preset, Some(msg.lora_freq as f32));
+    let preset_short = preset::normalize_preset_slot(abbr.as_deref());
     let tag = protocol_tag(msg.protocol.as_deref());
     let prefix = format!(
         "{tag}[{freq}][{preset_short}][{channel}]",
@@ -287,19 +289,6 @@ fn protocol_tag(protocol: Option<&str>) -> &'static str {
         Some("meshcore") => "[MC]",
         Some("meshtastic") | None => "[MT]",
         Some(_) => "[??]",
-    }
-}
-
-/// Build a compact modem preset label like "LF" for "LongFast".
-fn modem_preset_short(preset: &str) -> String {
-    let letters: String = preset
-        .chars()
-        .filter(|ch| ch.is_ascii_uppercase())
-        .collect();
-    if letters.is_empty() {
-        preset.chars().take(2).collect()
-    } else {
-        letters
     }
 }
 
@@ -381,12 +370,6 @@ mod tests {
             longitude: None,
             altitude: None,
         }
-    }
-
-    #[test]
-    fn modem_preset_short_handles_camelcase() {
-        assert_eq!(modem_preset_short("LongFast"), "LF");
-        assert_eq!(modem_preset_short("MediumFast"), "MF");
     }
 
     #[test]
@@ -757,8 +740,14 @@ mod tests {
 
     /// Drive `handle_message` end-to-end against a mocked Matrix homeserver
     /// and PotatoMesh API, asserting that the bridged message body carries
-    /// the expected protocol tag. Shared by the per-protocol test cases below.
-    async fn assert_handle_message_emits_tag(protocol: Option<&str>, expected_tag: &str) {
+    /// the expected protocol tag and preset abbreviation. Shared by the
+    /// per-protocol test cases below.
+    async fn assert_handle_message_emits_tag(
+        protocol: Option<&str>,
+        expected_tag: &str,
+        modem_preset: &str,
+        expected_preset_slot: &str,
+    ) {
         let mut server = mockito::Server::new_async().await;
 
         let potatomesh_cfg = PotatomeshConfig {
@@ -822,8 +811,10 @@ mod tests {
             .txn_counter
             .load(std::sync::atomic::Ordering::SeqCst);
 
-        let expected_body = format!("`{expected_tag}[868][MF][TEST]` Ping");
-        let expected_formatted = format!("<code>{expected_tag}[868][MF][TEST]</code> Ping");
+        let expected_body =
+            format!("`{expected_tag}[868][{expected_preset_slot}][TEST]` Ping");
+        let expected_formatted =
+            format!("<code>{expected_tag}[868][{expected_preset_slot}][TEST]</code> Ping");
 
         let mock_send = server
             .mock(
@@ -849,6 +840,7 @@ mod tests {
         let mut state = BridgeState::default();
         let msg = PotatoMessage {
             protocol: protocol.map(str::to_string),
+            modem_preset: modem_preset.to_string(),
             ..sample_msg(100)
         };
 
@@ -866,21 +858,23 @@ mod tests {
 
     #[tokio::test]
     async fn handle_message_tags_meshtastic_in_body() {
-        assert_handle_message_emits_tag(Some("meshtastic"), "[MT]").await;
+        assert_handle_message_emits_tag(Some("meshtastic"), "[MT]", "MediumFast", "MF").await;
     }
 
     #[tokio::test]
     async fn handle_message_defaults_missing_protocol_to_meshtastic_tag() {
-        assert_handle_message_emits_tag(None, "[MT]").await;
+        assert_handle_message_emits_tag(None, "[MT]", "MediumFast", "MF").await;
     }
 
     #[tokio::test]
     async fn handle_message_tags_meshcore_in_body() {
-        assert_handle_message_emits_tag(Some("meshcore"), "[MC]").await;
+        // SF8/BW62/CR8 is EU/UK Narrow → bandwidth-driven short code "Na"
+        // → uppercased "NA" in the bracket slot. Exercises the bug fix.
+        assert_handle_message_emits_tag(Some("meshcore"), "[MC]", "SF8/BW62/CR8", "NA").await;
     }
 
     #[tokio::test]
     async fn handle_message_tags_unknown_protocol_as_placeholder() {
-        assert_handle_message_emits_tag(Some("reticulum"), "[??]").await;
+        assert_handle_message_emits_tag(Some("reticulum"), "[??]", "MediumFast", "MF").await;
     }
 }
