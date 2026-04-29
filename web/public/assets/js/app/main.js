@@ -118,6 +118,36 @@ import {
   protocolIconPrefixHtml,
 } from './protocol-helpers.js';
 
+// Pure helpers extracted into focused submodules under ``./main/``.  They
+// remain locally callable inside ``initializeApp`` because module-level
+// bindings are visible in every nested scope.
+import {
+  cssEscape,
+  fmtCoords,
+  fmtHw,
+  formatDate,
+  formatSnrDisplay,
+  formatTime,
+  pad,
+  parseNodeNumericRef,
+  resolveTimestampSeconds,
+  timeAgo,
+  timeHum,
+  toFiniteNumber,
+} from './main/format-utils.js';
+import {
+  applyNodeNameFallback,
+  extractIdentifierFromHref,
+  getNodeDisplayNameForOverlay,
+  getNodeIdentifierFromLink,
+  shouldHandleNodeLongLink,
+} from './main/long-link-router.js';
+import {
+  buildTelemetryIndex,
+  mergePositionsIntoNodes,
+  mergeTelemetryIntoNodes,
+} from './main/data-merge.js';
+
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
  * initializes the map, and triggers the first data refresh cycle.
@@ -1984,47 +2014,6 @@ export function initializeApp(config) {
    * @param {string} value Raw selector fragment.
    * @returns {string} Escaped selector fragment safe for interpolation.
    */
-  function cssEscape(value) {
-    if (typeof value !== 'string' || value.length === 0) {
-      return '';
-    }
-    if (typeof window !== 'undefined' && window.CSS && typeof window.CSS.escape === 'function') {
-      return window.CSS.escape(value);
-    }
-    return value.replace(/[^a-zA-Z0-9_-]/g, chr => `\\${chr}`);
-  }
-
-  /**
-   * Parse a node identifier or numeric reference into a finite number.
-   *
-   * @param {*} ref Identifier or numeric reference.
-   * @returns {number|null} Parsed number or ``null``.
-   */
-  function parseNodeNumericRef(ref) {
-    if (ref == null) return null;
-    if (typeof ref === 'number') {
-      return Number.isFinite(ref) ? ref : null;
-    }
-    if (typeof ref === 'string') {
-      const trimmed = ref.trim();
-      if (!trimmed) return null;
-      if (trimmed.startsWith('!')) {
-        const hex = trimmed.slice(1);
-        if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
-        const parsedHex = Number.parseInt(hex, 16);
-        return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
-      }
-      if (/^0[xX][0-9A-Fa-f]+$/.test(trimmed)) {
-        const parsedHex = Number.parseInt(trimmed, 16);
-        return Number.isFinite(parsedHex) ? parsedHex >>> 0 : null;
-      }
-      const parsed = Number(trimmed);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    const parsed = Number(ref);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
   /**
    * Populate the ``nodesById`` index for quick lookups.
    *
@@ -3399,208 +3388,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Pad a numeric value with leading zeros.
-   *
-   * @param {number} n Numeric value.
-   * @returns {string} Padded string.
-   */
-  function pad(n) { return String(n).padStart(2, "0"); }
-
-  /**
-   * Format a ``Date`` object as ``HH:MM``.
-   *
-   * @param {Date} d Date instance.
-   * @returns {string} Time string.
-   */
-  function formatTime(d) {
-    return pad(d.getHours()) + ":" +
-          pad(d.getMinutes()) + ":" +
-          pad(d.getSeconds());
-  }
-
-  /**
-   * Format a ``Date`` object as ``YYYY-MM-DD``.
-   *
-   * @param {Date} d Date instance.
-   * @returns {string} Date string.
-   */
-  function formatDate(d) {
-    return d.getFullYear() + "-" +
-          pad(d.getMonth() + 1) + "-" +
-          pad(d.getDate());
-  }
-
-  /**
-   * Format hardware model strings for display.
-   *
-   * @param {*} v Raw hardware model value.
-   * @returns {string} Sanitised string.
-   */
-  function fmtHw(v) {
-    return v && v !== "UNSET" ? String(v) : "";
-  }
-
-  /**
-   * Format coordinate values with a configurable precision.
-   *
-   * @param {*} v Raw coordinate value.
-   * @param {number} [d=5] Decimal precision.
-   * @returns {string} Formatted coordinate string.
-   */
-  function fmtCoords(v, d = 5) {
-    if (v == null || v === '') return "";
-    const n = Number(v);
-    return Number.isFinite(n) ? n.toFixed(d) : "";
-  }
-
-  /**
-   * Format SNR readings with a ``dB`` suffix.
-   *
-   * @param {*} value Raw SNR value.
-   * @returns {string} Formatted SNR string.
-   */
-  function formatSnrDisplay(value) {
-    if (value == null || value === '') return '';
-    const n = Number(value);
-    if (!Number.isFinite(n)) return '';
-    return `${n.toFixed(1)} dB`;
-  }
-
-  /**
-   * Determine whether a long name link should trigger the overlay behaviour.
-   *
-   * @param {?Element} link Anchor element.
-   * @returns {boolean} ``true`` when the link participates in overlays.
-   */
-  function shouldHandleNodeLongLink(link) {
-    if (!link || !link.dataset) return false;
-    if ('nodeDetailLink' in link.dataset && link.dataset.nodeDetailLink === 'false') {
-      return false;
-    }
-    return true;
-  }
-
-  /**
-   * Extract the canonical node identifier from the provided link element.
-   *
-   * @param {?Element} link Anchor element.
-   * @returns {string} Canonical node identifier or ``''`` when unavailable.
-   */
-  function getNodeIdentifierFromLink(link) {
-    if (!link) return '';
-    const datasetIdentifier = link.dataset && typeof link.dataset.nodeId === 'string'
-      ? canonicalNodeIdentifier(link.dataset.nodeId)
-      : null;
-    if (datasetIdentifier) {
-      return datasetIdentifier;
-    }
-    if (typeof link.getAttribute === 'function') {
-      const attrHref = link.getAttribute('href');
-      const canonicalFromAttr = extractIdentifierFromHref(attrHref);
-      if (canonicalFromAttr) {
-        return canonicalFromAttr;
-      }
-    }
-    if (typeof link.href === 'string') {
-      const canonicalFromProperty = extractIdentifierFromHref(link.href);
-      if (canonicalFromProperty) {
-        return canonicalFromProperty;
-      }
-    }
-    return '';
-  }
-
-  /**
-   * Extract the canonical identifier from a node detail hyperlink.
-   *
-   * @param {string} href Link href attribute.
-   * @returns {string} Canonical identifier or ``''``.
-   */
-  function extractIdentifierFromHref(href) {
-    if (typeof href !== 'string' || href.length === 0) {
-      return '';
-    }
-    const match = href.match(/\/nodes\/(![^/?#]+)/i);
-    if (!match || !match[1]) {
-      return '';
-    }
-    try {
-      const decoded = decodeURIComponent(match[1]);
-      return canonicalNodeIdentifier(decoded) ?? '';
-    } catch {
-      return canonicalNodeIdentifier(match[1]) ?? '';
-    }
-  }
-
-  /**
-   * Determine the preferred display name for overlay content.
-   *
-   * @param {Object} node Node payload.
-   * @returns {string} Friendly display name.
-   */
-  function getNodeDisplayNameForOverlay(node) {
-    if (!node || typeof node !== 'object') return '';
-    return (
-      normalizeNodeNameValue(node.long_name ?? node.longName) ||
-      normalizeNodeNameValue(node.short_name ?? node.shortName) ||
-      (typeof node.node_id === 'string' ? node.node_id : '')
-    );
-  }
-
-  /**
-   * Populate missing node name fields with sensible defaults.
-   *
-   * @param {Object} node Node payload.
-   * @returns {Object} Updated node reference.
-   */
-  function applyNodeNameFallback(node) {
-    if (!node || typeof node !== 'object') return;
-    const short = normalizeNodeNameValue(node.short_name ?? node.shortName);
-    const long = normalizeNodeNameValue(node.long_name ?? node.longName);
-    if (short || long) return;
-    const nodeId = normalizeNodeNameValue(node.node_id ?? node.nodeId);
-    if (!nodeId) return;
-    const fallbackShort = nodeId.slice(-4);
-    const fallbackLong = `Meshtastic ${nodeId}`;
-    node.short_name = fallbackShort;
-    node.long_name = fallbackLong;
-    if ('shortName' in node) node.shortName = fallbackShort;
-    if ('longName' in node) node.longName = fallbackLong;
-  }
-
-  /**
-   * Convert a duration in seconds into a human readable string.
-   *
-   * @param {number} unixSec Duration in seconds.
-   * @returns {string} Human readable representation.
-   */
-  function timeHum(unixSec) {
-    if (!unixSec) return "";
-    if (unixSec < 0) return "0s";
-    if (unixSec < 60) return `${unixSec}s`;
-    if (unixSec < 3600) return `${Math.floor(unixSec/60)}m ${Math.floor((unixSec%60))}s`;
-    if (unixSec < 86400) return `${Math.floor(unixSec/3600)}h ${Math.floor((unixSec%3600)/60)}m`;
-    return `${Math.floor(unixSec/86400)}d ${Math.floor((unixSec%86400)/3600)}h`;
-  }
-
-  /**
-   * Return a relative time string describing how long ago an event occurred.
-   *
-   * @param {number} unixSec Timestamp in seconds.
-   * @param {number} [nowSec] Reference timestamp.
-   * @returns {string} Human readable relative time.
-   */
-  function timeAgo(unixSec, nowSec = Date.now()/1000) {
-    if (!unixSec) return "";
-    const diff = Math.floor(nowSec - Number(unixSec));
-    if (diff < 0) return "0s";
-    if (diff < 60) return `${diff}s`;
-    if (diff < 3600) return `${Math.floor(diff/60)}m ${Math.floor((diff%60))}s`;
-    if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m`;
-    return `${Math.floor(diff/86400)}d ${Math.floor((diff%86400)/3600)}h`;
-  }
-
-  /**
    * Determine how many snapshots should be requested from the API to build a
    * richer aggregate.
    *
@@ -3739,38 +3526,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Convert arbitrary values to finite numbers when possible.
-   *
-   * @param {*} value Raw value.
-   * @returns {number|null} Finite number or null when conversion fails.
-   */
-  function toFiniteNumber(value) {
-    if (value == null || value === '') return null;
-    const num = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(num) ? num : null;
-  }
-
-
-  /**
-   * Determine the best-effort timestamp in seconds from numeric or ISO values.
-   *
-   * @param {*} numeric Numeric timestamp.
-   * @param {*} isoString ISO formatted timestamp.
-   * @returns {number|null} Timestamp in seconds.
-   */
-  function resolveTimestampSeconds(numeric, isoString) {
-    const parsedNumeric = toFiniteNumber(numeric);
-    if (parsedNumeric != null) return parsedNumeric;
-    if (typeof isoString === 'string' && isoString.length) {
-      const parsedIso = Date.parse(isoString);
-      if (Number.isFinite(parsedIso)) {
-        return parsedIso / 1000;
-      }
-    }
-    return null;
-  }
-
-  /**
    * Filter trace entries to discard packets older than the configured window.
    *
    * @param {Array<Object>} traces Trace payloads.
@@ -3790,154 +3545,6 @@ export function initializeApp(config) {
       const rxTime = resolveTimestampSeconds(trace?.rx_time ?? trace?.rxTime, trace?.rx_iso ?? trace?.rxIso);
       return rxTime != null && rxTime >= cutoff;
     });
-  }
-
-  /**
-   * Merge recent position packets into the node list.
-   *
-   * @param {Array<Object>} nodes Node payloads.
-   * @param {Array<Object>} positions Position entries.
-   * @returns {Array<Object>} Updated node collection.
-   */
-  function mergePositionsIntoNodes(nodes, positions) {
-    if (!Array.isArray(nodes) || !Array.isArray(positions) || nodes.length === 0) return;
-
-    const nodesById = new Map();
-    for (const node of nodes) {
-      if (!node || typeof node !== 'object') continue;
-      const key = typeof node.node_id === 'string' ? node.node_id : null;
-      if (key) nodesById.set(key, node);
-    }
-
-    if (nodesById.size === 0) return;
-
-    const updated = new Set();
-    for (const pos of positions) {
-      if (!pos || typeof pos !== 'object') continue;
-      const nodeId = typeof pos.node_id === 'string' ? pos.node_id : null;
-      if (!nodeId || updated.has(nodeId)) continue;
-      const node = nodesById.get(nodeId);
-      if (!node) continue;
-
-      const lat = toFiniteNumber(pos.latitude);
-      const lon = toFiniteNumber(pos.longitude);
-      if (lat == null || lon == null) continue;
-
-      const currentTimestamp = resolveTimestampSeconds(node.position_time, node.pos_time_iso);
-      const incomingTimestamp = resolveTimestampSeconds(pos.position_time, pos.position_time_iso);
-      if (currentTimestamp != null) {
-        if (incomingTimestamp == null || incomingTimestamp <= currentTimestamp) {
-          continue;
-        }
-      }
-
-      updated.add(nodeId);
-      node.latitude = lat;
-      node.longitude = lon;
-
-      const alt = toFiniteNumber(pos.altitude);
-      if (alt != null) node.altitude = alt;
-
-      const posTime = toFiniteNumber(pos.position_time);
-      if (posTime != null) {
-        node.position_time = posTime;
-        node.pos_time_iso = typeof pos.position_time_iso === 'string' && pos.position_time_iso.length
-          ? pos.position_time_iso
-          : new Date(posTime * 1000).toISOString();
-      } else if (typeof pos.position_time_iso === 'string' && pos.position_time_iso.length) {
-        node.pos_time_iso = pos.position_time_iso;
-      }
-
-      if (pos.location_source != null && pos.location_source !== '') {
-        node.location_source = pos.location_source;
-      }
-
-      const precision = toFiniteNumber(pos.precision_bits);
-      if (precision != null) node.precision_bits = precision;
-    }
-  }
-
-  /**
-   * Build a lookup table of telemetry entries keyed by node identifier.
-   *
-   * @param {Array<Object>} entries Telemetry payloads.
-   * @returns {Map<string, Object>} Indexed telemetry data.
-   */
-  function buildTelemetryIndex(entries) {
-    const byNodeId = new Map();
-    const byNodeNum = new Map();
-    if (!Array.isArray(entries)) {
-      return { byNodeId, byNodeNum };
-    }
-    for (const entry of entries) {
-      if (!entry || typeof entry !== 'object') continue;
-      const nodeId = typeof entry.node_id === 'string' ? entry.node_id : (typeof entry.nodeId === 'string' ? entry.nodeId : null);
-      const nodeNumRaw = entry.node_num ?? entry.nodeNum;
-      const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
-      const rxTime = toFiniteNumber(entry.rx_time ?? entry.rxTime);
-      const telemetryTime = toFiniteNumber(entry.telemetry_time ?? entry.telemetryTime);
-      const timestamp = rxTime != null ? rxTime : telemetryTime != null ? telemetryTime : Number.NEGATIVE_INFINITY;
-      if (nodeId) {
-        const existing = byNodeId.get(nodeId);
-        if (!existing || timestamp > existing.timestamp) {
-          byNodeId.set(nodeId, { entry, timestamp });
-        }
-      }
-      if (Number.isFinite(nodeNum)) {
-        const existing = byNodeNum.get(nodeNum);
-        if (!existing || timestamp > existing.timestamp) {
-          byNodeNum.set(nodeNum, { entry, timestamp });
-        }
-      }
-    }
-    return { byNodeId, byNodeNum };
-  }
-
-  /**
-   * Merge telemetry metrics into the node list.
-   *
-   * @param {Array<Object>} nodes Node payloads.
-   * @param {Array<Object>} telemetryEntries Telemetry data.
-   * @returns {Array<Object>} Updated node collection.
-   */
-  function mergeTelemetryIntoNodes(nodes, telemetryEntries) {
-    if (!Array.isArray(nodes) || !nodes.length) return;
-    const { byNodeId, byNodeNum } = buildTelemetryIndex(telemetryEntries);
-    for (const node of nodes) {
-      if (!node || typeof node !== 'object') continue;
-      const nodeId = typeof node.node_id === 'string' ? node.node_id : (typeof node.nodeId === 'string' ? node.nodeId : null);
-      const nodeNumRaw = node.num ?? node.node_num ?? node.nodeNum;
-      const nodeNum = typeof nodeNumRaw === 'number' ? nodeNumRaw : Number(nodeNumRaw);
-      let telemetryEntry = null;
-      if (nodeId && byNodeId.has(nodeId)) {
-        telemetryEntry = byNodeId.get(nodeId).entry;
-      } else if (Number.isFinite(nodeNum) && byNodeNum.has(nodeNum)) {
-        telemetryEntry = byNodeNum.get(nodeNum).entry;
-      }
-      if (!telemetryEntry || typeof telemetryEntry !== 'object') continue;
-      const metrics = {
-        battery_level: toFiniteNumber(telemetryEntry.battery_level ?? telemetryEntry.batteryLevel),
-        voltage: toFiniteNumber(telemetryEntry.voltage),
-        uptime_seconds: toFiniteNumber(telemetryEntry.uptime_seconds ?? telemetryEntry.uptimeSeconds),
-        channel_utilization: toFiniteNumber(telemetryEntry.channel_utilization ?? telemetryEntry.channelUtilization),
-        air_util_tx: toFiniteNumber(telemetryEntry.air_util_tx ?? telemetryEntry.airUtilTx),
-        temperature: toFiniteNumber(telemetryEntry.temperature),
-        relative_humidity: toFiniteNumber(telemetryEntry.relative_humidity ?? telemetryEntry.relativeHumidity),
-        barometric_pressure: toFiniteNumber(telemetryEntry.barometric_pressure ?? telemetryEntry.barometricPressure),
-      };
-      for (const [key, value] of Object.entries(metrics)) {
-        if (value == null) continue;
-        node[key] = value;
-      }
-      const telemetryTime = toFiniteNumber(telemetryEntry.telemetry_time ?? telemetryEntry.telemetryTime);
-      if (telemetryTime != null) {
-        node.telemetry_time = telemetryTime;
-      }
-      const rxTime = toFiniteNumber(telemetryEntry.rx_time ?? telemetryEntry.rxTime);
-      if (rxTime != null) {
-        node.telemetry_rx_time = rxTime;
-      }
-    }
   }
 
   /**
