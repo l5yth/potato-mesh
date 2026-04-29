@@ -513,6 +513,10 @@ export function initializeApp(config) {
   // entirely: markers stack at their shared coordinate (no fan, no leader
   // lines, no hub badge).  At or above it, multi-node groups collapse into
   // a single hub badge that the user can click to expand into the spider.
+  // Intentionally aligned with ``MAX_INITIAL_ZOOM`` above so the auto-fit
+  // initial view (which clamps at zoom 13) lands directly on the bucket
+  // boundary and users see the hub representation as soon as the map is
+  // ready rather than after their first zoom-in interaction.
   const COLOCATED_HUB_MIN_ZOOM = 13;
   let neighborLinesLayer = null;
   let traceLinesLayer = null;
@@ -4168,10 +4172,27 @@ export function initializeApp(config) {
       iconSize: [16, 16],
       iconAnchor: [8, 8]
     });
-    const marker = L.marker([lat, lon], { icon, keyboard: false, riseOnHover: true });
+    // ``bubblingMouseEvents: false`` keeps Leaflet's internal event system
+    // from forwarding the click to the map and any registered map-level
+    // ``click`` handlers (e.g. overlay close).  ``riseOnHover`` is omitted
+    // intentionally — it is documented for the default raster icon's
+    // z-index handling and behaves inconsistently with ``divIcon`` across
+    // Leaflet versions; layer ordering (``colocatedHubsLayer`` is added
+    // *after* ``markersLayer``) keeps the hub on top reliably.
+    const marker = L.marker([lat, lon], {
+      icon,
+      keyboard: false,
+      bubblingMouseEvents: false
+    });
     marker.on('click', event => {
-      // Block Leaflet's default click-through so the underlying overlayStack
-      // does not also receive the synthesised DOM event.
+      // Stop the Leaflet event from bubbling to the map's own click handlers
+      // and stop the raw DOM event so the ``overlayStack`` close path does
+      // not also fire.  We use the Leaflet helper rather than only the raw
+      // DOM stopPropagation because Leaflet routes events through its own
+      // pipeline before the browser does.
+      if (event && L && L.DomEvent && typeof L.DomEvent.stopPropagation === 'function') {
+        L.DomEvent.stopPropagation(event);
+      }
       if (event && event.originalEvent && typeof event.originalEvent.stopPropagation === 'function') {
         event.originalEvent.stopPropagation();
       }

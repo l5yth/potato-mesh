@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { withApp } from './main-app-test-helpers.js';
+import { withAppAndLeaflet } from './main-app-leaflet-stub.js';
 
 /**
  * Build a stub Leaflet ``L`` that implements ``point({x, y})``.  The renderer
@@ -362,78 +363,94 @@ test('handleZoomEndForColocatedHubs handles zooming back up through the threshol
 test('createColocatedHubMarker emits "*<count>" html and toggles expansion on click', () => {
   const restoreFetch = stubFetchForApplyFilter();
   try {
-  withApp((t) => {
-    const previousL = globalThis.L;
-    const created = [];
-    let lastClickHandler = null;
-    globalThis.L = {
-      divIcon(opts) {
-        return { _kind: 'divIcon', options: opts };
-      },
-      marker(latLng, opts) {
-        const marker = {
-          latLng,
-          options: opts,
-          _addedTo: null,
-          on(event, handler) {
-            if (event === 'click') lastClickHandler = handler;
-            return marker;
-          },
-          addTo(layer) {
-            marker._addedTo = layer;
-            layer._children.push(marker);
-            return marker;
+    withApp((t) => {
+      const previousL = globalThis.L;
+      const created = [];
+      let domEventStopCalls = 0;
+      let lastClickHandler = null;
+      globalThis.L = {
+        divIcon(opts) {
+          return { _kind: 'divIcon', options: opts };
+        },
+        marker(latLng, opts) {
+          const marker = {
+            latLng,
+            options: opts,
+            _addedTo: null,
+            on(event, handler) {
+              if (event === 'click') lastClickHandler = handler;
+              return marker;
+            },
+            addTo(layer) {
+              marker._addedTo = layer;
+              layer._children.push(marker);
+              return marker;
+            }
+          };
+          created.push(marker);
+          return marker;
+        },
+        DomEvent: {
+          stopPropagation() {
+            domEventStopCalls += 1;
           }
-        };
-        created.push(marker);
-        return marker;
+        }
+      };
+      const stubLayer = { _children: [] };
+      t._setColocatedHubsLayerForTests(stubLayer);
+      try {
+        const result = t.createColocatedHubMarker('5.12345,6.54321', 4, 5.12345, 6.54321);
+        assert.equal(created.length, 1);
+        assert.equal(result, created[0]);
+        assert.deepEqual(result.latLng, [5.12345, 6.54321]);
+        // The divIcon receives the asterisk + count html and the spider hub
+        // class so the CSS rules in base.css can style it as a clickable badge.
+        const iconOptions = result.options.icon.options;
+        assert.equal(iconOptions.className, 'colocated-spider-hub');
+        assert.ok(/\*4</.test(iconOptions.html), `html ${iconOptions.html} should contain *4`);
+        assert.deepEqual(iconOptions.iconSize, [16, 16]);
+        assert.deepEqual(iconOptions.iconAnchor, [8, 8]);
+        // ``bubblingMouseEvents: false`` keeps Leaflet's internal event
+        // routing from forwarding the click to map-level handlers.  The
+        // ``riseOnHover`` option is intentionally absent because divIcon
+        // markers handle z-index inconsistently across Leaflet versions.
+        assert.equal(result.options.bubblingMouseEvents, false);
+        assert.equal(result.options.riseOnHover, undefined);
+        // Marker was added to the injected hub layer rather than the global
+        // markers layer; this keeps hub badges in their own clearable group.
+        assert.equal(result._addedTo, stubLayer);
+        assert.equal(stubLayer._children.length, 1);
+
+        // Click → expandedColocatedKeys flips, both Leaflet's DomEvent
+        // helper and the raw DOM stopPropagation are invoked so the click
+        // is contained at every layer of the event pipeline.
+        let stopPropagationCalls = 0;
+        assert.ok(lastClickHandler);
+        lastClickHandler({
+          originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
+        });
+        assert.equal(stopPropagationCalls, 1);
+        assert.equal(domEventStopCalls, 1);
+        assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
+        // Second click toggles back off.
+        lastClickHandler({
+          originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
+        });
+        assert.equal(stopPropagationCalls, 2);
+        assert.equal(domEventStopCalls, 2);
+        assert.equal(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'), false);
+
+        // A click without an originalEvent (or without stopPropagation) must
+        // still toggle without throwing — covers the defensive guard branch.
+        assert.doesNotThrow(() => lastClickHandler(undefined));
+        assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
+        assert.doesNotThrow(() => lastClickHandler({ originalEvent: {} }));
+      } finally {
+        t._setColocatedHubsLayerForTests(null);
+        t._setExpandedColocatedKeysForTests(new Set());
+        globalThis.L = previousL;
       }
-    };
-    const stubLayer = { _children: [] };
-    t._setColocatedHubsLayerForTests(stubLayer);
-    try {
-      const result = t.createColocatedHubMarker('5.12345,6.54321', 4, 5.12345, 6.54321);
-      assert.equal(created.length, 1);
-      assert.equal(result, created[0]);
-      assert.deepEqual(result.latLng, [5.12345, 6.54321]);
-      // The divIcon receives the asterisk + count html and the spider hub
-      // class so the CSS rules in base.css can style it as a clickable badge.
-      const iconOptions = result.options.icon.options;
-      assert.equal(iconOptions.className, 'colocated-spider-hub');
-      assert.ok(/\*4</.test(iconOptions.html), `html ${iconOptions.html} should contain *4`);
-      assert.deepEqual(iconOptions.iconSize, [16, 16]);
-      assert.deepEqual(iconOptions.iconAnchor, [8, 8]);
-      // Marker was added to the injected hub layer rather than the global
-      // markers layer; this keeps hub badges in their own clearable group.
-      assert.equal(result._addedTo, stubLayer);
-      assert.equal(stubLayer._children.length, 1);
-
-      // Click → expandedColocatedKeys flips, originalEvent.stopPropagation runs.
-      let stopPropagationCalls = 0;
-      assert.ok(lastClickHandler);
-      lastClickHandler({
-        originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
-      });
-      assert.equal(stopPropagationCalls, 1);
-      assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
-      // Second click toggles back off.
-      lastClickHandler({
-        originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
-      });
-      assert.equal(stopPropagationCalls, 2);
-      assert.equal(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'), false);
-
-      // A click without an originalEvent (or without stopPropagation) must
-      // still toggle without throwing — covers the defensive guard branch.
-      assert.doesNotThrow(() => lastClickHandler(undefined));
-      assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
-      assert.doesNotThrow(() => lastClickHandler({ originalEvent: {} }));
-    } finally {
-      t._setColocatedHubsLayerForTests(null);
-      t._setExpandedColocatedKeysForTests(new Set());
-      globalThis.L = previousL;
-    }
-  });
+    });
   } finally {
     restoreFetch();
   }
@@ -476,5 +493,257 @@ test('_setLastRenderedZoomBucketForTests round-trips the bucket marker', () => {
     const previous = t._setLastRenderedZoomBucketForTests('low');
     assert.equal(previous, 'high');
     assert.equal(t._getLastRenderedZoomBucketForTests(), 'low');
+  });
+});
+
+/**
+ * Build a list of nodes that share an identical coordinate so the renderer
+ * can group them.  Each node carries a unique ``node_id`` to satisfy the
+ * deterministic-slot ordering inside ``computeColocatedOffsets``.
+ *
+ * @param {number} count Number of nodes to generate.
+ * @param {number} [lat=50] Shared latitude.
+ * @param {number} [lon=10] Shared longitude.
+ * @param {Object} [extra] Optional extra fields merged into each node.
+ * @returns {Array<Object>} Nodes ready to feed into ``renderMap``.
+ */
+function makeColocatedNodes(count, lat = 50, lon = 10, extra = {}) {
+  const nodes = [];
+  for (let i = 0; i < count; i += 1) {
+    nodes.push({
+      node_id: `node-${i}`,
+      latitude: lat,
+      longitude: lon,
+      role: 'CLIENT',
+      protocol: 'meshtastic',
+      ...extra
+    });
+  }
+  return nodes;
+}
+
+/**
+ * Count how many drawn objects in ``recorded`` ended up inside a particular
+ * layer group.  ``recorded`` is the running history of every Leaflet object
+ * the stub created during the test, while ``layer._layers`` reflects only
+ * the ones still mounted (after ``clearLayers``).  Filtering by both keeps
+ * the assertions stable across re-renders.
+ *
+ * @param {Array<Object>} recorded Array such as ``leaflet._recorded.circleMarkers``.
+ * @param {Object} layer Layer group whose ``_layers`` array tracks current mounts.
+ * @returns {number} Count of recorded items currently mounted on the layer.
+ */
+function countLayerMembers(recorded, layer) {
+  if (!layer || !Array.isArray(layer._layers)) return 0;
+  return recorded.filter(item => layer._layers.includes(item)).length;
+}
+
+test('renderMap renders flat overlap at zoom < COLOCATED_HUB_MIN_ZOOM', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(12);
+    leaflet._recorded.circleMarkers.length = 0;
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.polylines.length = 0;
+    const nodes = makeColocatedNodes(3);
+    testUtils.renderMap(nodes, 0);
+    const hubLayer = testUtils._getColocatedHubsLayerForTests();
+    // Below the threshold every node renders as a normal circleMarker at
+    // its original coordinate; no hub badge is created and no leader lines
+    // are drawn.  This is the "spider disabled" mode that the user asked
+    // for when the map is fully zoomed out.
+    assert.equal(hubLayer._layers.length, 0);
+    assert.equal(leaflet._recorded.markers.length, 0);
+    assert.equal(leaflet._recorded.circleMarkers.length, 3);
+    assert.equal(leaflet._recorded.polylines.length, 0);
+    // Markers stack at exactly the original coords (no projection round-trip).
+    for (const marker of leaflet._recorded.circleMarkers) {
+      assert.deepEqual(marker._latLng, [50, 10]);
+    }
+    // The cached zoom-bucket reflects what the render targeted, so the
+    // zoomend handler can detect a future bucket flip.
+    assert.equal(testUtils._getLastRenderedZoomBucketForTests(), 'low');
+  });
+});
+
+test('renderMap renders a collapsed hub at zoom ≥ COLOCATED_HUB_MIN_ZOOM', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.circleMarkers.length = 0;
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.polylines.length = 0;
+    const nodes = makeColocatedNodes(3);
+    testUtils.renderMap(nodes, 0);
+    const hubLayer = testUtils._getColocatedHubsLayerForTests();
+    // Default state at high zoom is collapsed: a single hub badge replaces
+    // the three member markers, no leader lines are drawn, and the badge
+    // html carries the asterisk + count so the user can read the group
+    // size at a glance.
+    assert.equal(hubLayer._layers.length, 1);
+    assert.equal(leaflet._recorded.markers.length, 1);
+    assert.equal(leaflet._recorded.circleMarkers.length, 0);
+    assert.equal(leaflet._recorded.polylines.length, 0);
+    const hub = leaflet._recorded.markers[0];
+    assert.deepEqual(hub._latLng, [50, 10]);
+    assert.ok(/\*3</.test(hub.options.icon.options.html));
+    assert.equal(testUtils._getLastRenderedZoomBucketForTests(), 'high');
+  });
+});
+
+test('renderMap dedups the hub badge across the slots in a single group', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.markers.length = 0;
+    // Five colocated nodes would yield five offset slots; the renderer must
+    // still create exactly one hub for the group rather than emitting one
+    // per slot.  This exercises the ``renderedHubKeys`` dedup guard.
+    const nodes = makeColocatedNodes(5);
+    testUtils.renderMap(nodes, 0);
+    const hubLayer = testUtils._getColocatedHubsLayerForTests();
+    assert.equal(hubLayer._layers.length, 1);
+    assert.equal(leaflet._recorded.markers.length, 1);
+    assert.ok(/\*5</.test(leaflet._recorded.markers[0].options.icon.options.html));
+  });
+});
+
+test('renderMap renders a singleton as a normal marker (no hub) at any zoom', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.circleMarkers.length = 0;
+    leaflet._recorded.markers.length = 0;
+    const nodes = makeColocatedNodes(1, 1, 2);
+    testUtils.renderMap(nodes, 0);
+    const hubLayer = testUtils._getColocatedHubsLayerForTests();
+    assert.equal(hubLayer._layers.length, 0);
+    assert.equal(leaflet._recorded.markers.length, 0);
+    assert.equal(leaflet._recorded.circleMarkers.length, 1);
+    assert.deepEqual(leaflet._recorded.circleMarkers[0]._latLng, [1, 2]);
+  });
+});
+
+test('renderMap fans out members and draws leader lines when a group is expanded', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.circleMarkers.length = 0;
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.polylines.length = 0;
+    // Pre-stage the group as expanded so the renderer takes the (c) branch
+    // — the user already clicked the hub.  The key matches the format
+    // ``computeColocatedOffsets`` produces at the default precision.
+    testUtils._setExpandedColocatedKeysForTests(new Set(['50.00000,10.00000']));
+    const nodes = makeColocatedNodes(3);
+    testUtils.renderMap(nodes, 0);
+    const hubLayer = testUtils._getColocatedHubsLayerForTests();
+    // Expanded mode: 1 hub still visible (the click affordance) + 3 member
+    // markers fanned out + 3 leader polylines.
+    assert.equal(hubLayer._layers.length, 1);
+    assert.equal(leaflet._recorded.markers.length, 1);
+    assert.equal(leaflet._recorded.circleMarkers.length, 3);
+    assert.equal(leaflet._recorded.polylines.length, 3);
+    // The spider state has one entry per fanned member so the zoomend hook
+    // can re-project them when the user keeps zooming.
+    assert.equal(testUtils._getColocatedSpiderStateForTests().length, 3);
+  });
+});
+
+test('renderMap prunes expandedColocatedKeys whose group has shrunk below 2', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    // Pre-stage a stale expansion key whose group will not exist in this
+    // render.  After the render the key must be evicted so subsequent
+    // clicks at the same coordinate start collapsed.
+    testUtils._setExpandedColocatedKeysForTests(new Set(['99.00000,99.00000', '50.00000,10.00000']));
+    const nodes = makeColocatedNodes(1);
+    testUtils.renderMap(nodes, 0);
+    const live = testUtils._getExpandedColocatedKeysForTests();
+    assert.equal(live.has('99.00000,99.00000'), false, 'vanished group key was not pruned');
+    assert.equal(live.has('50.00000,10.00000'), false, 'shrunken group key was not pruned');
+  });
+});
+
+test('renderMap distance-filter regression: hub html reflects visible count', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.markers.length = 0;
+    const nodes = makeColocatedNodes(4);
+    nodes[0].distance_km = 9999;
+    testUtils.renderMap(nodes, 0);
+    assert.equal(leaflet._recorded.markers.length, 1);
+    assert.ok(/\*3</.test(leaflet._recorded.markers[0].options.icon.options.html));
+  }, { configOverrides: { maxDistanceKm: 100 } });
+});
+
+test('renderMap re-renders preserve expansion across data refreshes', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    testUtils._setExpandedColocatedKeysForTests(new Set(['50.00000,10.00000']));
+    const nodes = makeColocatedNodes(3);
+    testUtils.renderMap(nodes, 0);
+    // First render produced 3 fanned markers; a second render with the
+    // same data must keep the expansion (i.e. re-emit 3 fanned markers
+    // rather than collapsing back to a hub-only state).
+    leaflet._recorded.circleMarkers.length = 0;
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.polylines.length = 0;
+    testUtils.renderMap(nodes, 0);
+    assert.equal(leaflet._recorded.circleMarkers.length, 3);
+    assert.equal(leaflet._recorded.markers.length, 1);
+    assert.equal(leaflet._recorded.polylines.length, 3);
+    assert.ok(testUtils._getExpandedColocatedKeysForTests().has('50.00000,10.00000'));
+  });
+});
+
+test('hub click invokes Leaflet stopPropagation through the live harness', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    const nodes = makeColocatedNodes(2);
+    testUtils.renderMap(nodes, 0);
+    // The hub badge created during renderMap is a regular Leaflet marker;
+    // its click handler should stop the event at both the Leaflet and DOM
+    // layers.  Firing the registered click handler directly emulates a
+    // user click without needing a real DOM event.
+    const hub = leaflet._recorded.markers[0];
+    const handlers = hub._eventHandlers.get('click') || [];
+    assert.equal(handlers.length, 1);
+    const baselineDomEventCount = leaflet._recorded.domEventStopPropagation;
+    let stopPropagationCalls = 0;
+    handlers[0]({
+      originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
+    });
+    // The click handler must contain the event at both pipeline layers so
+    // the underlying overlayStack / map ``click`` handlers are not also
+    // notified.  ``applyFilter`` then triggers a second renderMap cycle
+    // that re-evaluates the dispatch — but with the harness's empty
+    // ``allNodes`` the new render produces zero offsets, so the pruning
+    // step sees no surviving multi-node groups.  We assert on the
+    // stopPropagation side effects rather than the post-applyFilter
+    // expansion state because the latter is correctly cleaned up by the
+    // pruning logic.
+    assert.equal(stopPropagationCalls, 1);
+    assert.equal(leaflet._recorded.domEventStopPropagation, baselineDomEventCount + 1);
+  });
+});
+
+test('renderMap places fanned markers around the shared centre when expanded', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    testUtils._setExpandedColocatedKeysForTests(new Set(['50.00000,10.00000']));
+    leaflet._recorded.circleMarkers.length = 0;
+    const nodes = makeColocatedNodes(2);
+    testUtils.renderMap(nodes, 0);
+    // The two fanned slots sit on opposite sides of the original centre at
+    // the configured base radius.  The stub uses an identity projection
+    // ([lat, lon] → {x: lon, y: lat}), so the offset markers' coordinates
+    // differ from the centre by exactly ``baseRadiusPx`` (after the recent
+    // halving: 7px) along the X axis for the first slot.
+    assert.equal(leaflet._recorded.circleMarkers.length, 2);
+    // ``projectColocatedOffsetLatLng`` returns a ``[lat, lng]`` array, so
+    // each ``_latLng`` here is a tuple rather than a Leaflet LatLng object.
+    const offsets = leaflet._recorded.circleMarkers.map(m =>
+      Math.hypot(m._latLng[1] - 10, m._latLng[0] - 50)
+    );
+    for (const distance of offsets) {
+      assert.ok(distance > 0, `offset distance ${distance} should be > 0`);
+      assert.ok(Math.abs(distance - 7) < 1e-9, `offset distance ${distance} should match the halved base radius`);
+    }
   });
 });
