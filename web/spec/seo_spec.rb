@@ -111,15 +111,17 @@ RSpec.describe "SEO surface" do
       expect(locs).to include("http://spec.mesh.test/pages/about")
     end
 
-    it "skips chat and federation when those features are disabled" do
+    it "omits the federation entry when federation is disabled" do
       allow(PotatoMesh::Config).to receive(:private_mode_enabled?).and_return(false)
       allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(false)
 
-      # Toggle chat off via private mode is a side-effect free way to drop
-      # the entry without touching unrelated config.
       get "/sitemap.xml"
 
-      expect(last_response.body).not_to include("/federation")
+      doc = REXML::Document.new(last_response.body)
+      locs = REXML::XPath.match(doc, "//xmlns:loc", "xmlns" => "http://www.sitemaps.org/schemas/sitemap/0.9")
+        .map(&:text)
+      expect(locs).to include("http://spec.mesh.test/chat")
+      expect(locs).not_to include("http://spec.mesh.test/federation")
     end
 
     it "omits pages flagged with noindex frontmatter" do
@@ -127,6 +129,24 @@ RSpec.describe "SEO surface" do
 
       expect(last_response.body).to include("/pages/about")
       expect(last_response.body).not_to include("/pages/impressum")
+    end
+
+    it "omits lastmod for top-level routes but keeps it on pages" do
+      get "/sitemap.xml"
+
+      doc = REXML::Document.new(last_response.body)
+      ns = { "xmlns" => "http://www.sitemaps.org/schemas/sitemap/0.9" }
+      url_nodes = REXML::XPath.match(doc, "//xmlns:url", ns)
+
+      page_entry = url_nodes.find do |node|
+        REXML::XPath.first(node, "xmlns:loc", ns)&.text == "http://spec.mesh.test/pages/about"
+      end
+      dashboard_entry = url_nodes.find do |node|
+        REXML::XPath.first(node, "xmlns:loc", ns)&.text == "http://spec.mesh.test/"
+      end
+
+      expect(REXML::XPath.first(page_entry, "xmlns:lastmod", ns)).not_to be_nil
+      expect(REXML::XPath.first(dashboard_entry, "xmlns:lastmod", ns)).to be_nil
     end
 
     it "returns 404 in private mode" do
@@ -196,6 +216,22 @@ RSpec.describe "SEO surface" do
 
       get "/map"
       expect(last_response.body).not_to include('<script type="application/ld+json">')
+    end
+
+    it "emits og:image dimensions only when serving the runtime PNG" do
+      get "/"
+      expect(last_response.body).to include('<meta property="og:image:width" content="1200" />')
+      expect(last_response.body).to include('<meta property="og:image:height" content="630" />')
+      expect(last_response.body).to include('<meta property="og:image:type" content="image/png" />')
+    end
+
+    it "omits og:image dimensions when OG_IMAGE_URL points at an external image" do
+      allow(PotatoMesh::Config).to receive(:og_image_url).and_return("https://cdn.example.org/og.svg")
+      get "/"
+      expect(last_response.body).to include('<meta property="og:image" content="https://cdn.example.org/og.svg" />')
+      expect(last_response.body).not_to include("og:image:width")
+      expect(last_response.body).not_to include("og:image:height")
+      expect(last_response.body).not_to include("og:image:type")
     end
   end
 

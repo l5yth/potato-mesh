@@ -105,10 +105,24 @@ The web app can be configured with environment variables (defaults shown):
 | `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
+| `OG_IMAGE_URL` | _unset_ | Optional absolute URL for the social preview image. When set, replaces the runtime-generated `/og-image.png` so deployments without Chromium (or with size-conscious images) can point at a CDN. |
+| `OG_IMAGE_TTL_SECONDS` | `3600` | Cache lifetime for the runtime-generated dashboard screenshot served at `/og-image.png`. |
+| `FERRUM_BROWSER_PATH` | `/usr/bin/chromium` (Docker) | Path to the headless Chromium binary used by the Open Graph preview generator. |
 
 The application derives SEO-friendly document titles, descriptions, and social
-preview tags from these existing configuration values and reuses the bundled
-logo for Open Graph and Twitter cards.
+preview tags from these existing configuration values. `/robots.txt` and
+`/sitemap.xml` are generated automatically and respect `PRIVATE`/`FEDERATION`
+toggles; markdown files in `pages/` may declare optional YAML frontmatter
+(`title`, `description`, `image`, `noindex`) for per-page overrides.
+
+#### Open Graph preview image
+
+The web container ships with Chromium so `/og-image.png` returns a fresh
+screenshot of the live dashboard, cached on disk for `OG_IMAGE_TTL_SECONDS`.
+Operators on size-constrained hosts can build a slim image by passing
+`--build-arg WITH_OG_IMAGE=0` to `docker build`; the route then falls back to
+the bundled `public/og-image-default.png`. Set `OG_IMAGE_URL` to an external
+PNG/JPG (e.g. on a CDN) to avoid runtime capture entirely.
 
 Example:
 

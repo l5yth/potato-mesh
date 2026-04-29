@@ -214,6 +214,10 @@ module PotatoMesh
           # Compose meta overrides for the +/pages/:slug+ view from a static
           # page entry plus any frontmatter the operator defined.
           #
+          # Only keys that carry meaningful values are included so the
+          # downstream {meta_configuration} call is not asked to filter
+          # +nil+ values out of an otherwise sparse hash.
+          #
           # @param page [PotatoMesh::App::Pages::PageEntry] resolved page entry.
           # @return [Hash] override hash for {meta_configuration}.
           def static_page_meta_overrides(page)
@@ -227,12 +231,13 @@ module PotatoMesh
                 site
               end
 
-            {
-              title: composed_title,
-              description: string_or_nil(page&.description),
-              image: string_or_nil(page&.image),
-              noindex: page&.noindex == true,
-            }
+            overrides = { title: composed_title }
+            description = string_or_nil(page&.description)
+            overrides[:description] = description if description
+            image = string_or_nil(page&.image)
+            overrides[:image] = image if image
+            overrides[:noindex] = true if page&.noindex == true
+            overrides
           end
 
           # Render the +robots.txt+ body honoring private-mode preferences.
@@ -256,20 +261,30 @@ module PotatoMesh
           end
 
           # Build the URL list emitted by +/sitemap.xml+ for a public
-          # deployment. Each entry is a hash with +:loc+, +:lastmod+, and
-          # +:changefreq+ keys.
+          # deployment. Each entry is a hash with +:loc+ and an optional
+          # +:lastmod+ / +:changefreq+ pair.
+          #
+          # +lastmod+ is intentionally omitted for top-level dashboard
+          # routes. The data behind those views changes continuously, so
+          # advertising +Time.now+ on every crawl trains crawlers to ignore
+          # the field (Google explicitly discourages noisy +lastmod+
+          # values). Static pages keep a meaningful +lastmod+ derived from
+          # +File.mtime+.
+          #
+          # The handler at +/sitemap.xml+ already 404s in private mode, so
+          # this method does not need to filter chat — it is unreachable
+          # otherwise.
           #
           # @param base_url [String] absolute base URL prefix.
           # @return [Array<Hash>] ordered list of sitemap entries.
           def build_sitemap_entries(base_url)
-            now_date = Time.now.utc.strftime("%Y-%m-%d")
             entries = []
-            entries << { loc: "#{base_url}/", lastmod: now_date, changefreq: "daily" }
-            entries << { loc: "#{base_url}/map", lastmod: now_date, changefreq: "daily" }
-            entries << { loc: "#{base_url}/chat", lastmod: now_date, changefreq: "daily" } unless private_mode?
-            entries << { loc: "#{base_url}/charts", lastmod: now_date, changefreq: "daily" }
-            entries << { loc: "#{base_url}/nodes", lastmod: now_date, changefreq: "daily" }
-            entries << { loc: "#{base_url}/federation", lastmod: now_date, changefreq: "weekly" } if federation_enabled?
+            entries << { loc: "#{base_url}/", changefreq: "daily" }
+            entries << { loc: "#{base_url}/map", changefreq: "daily" }
+            entries << { loc: "#{base_url}/chat", changefreq: "daily" }
+            entries << { loc: "#{base_url}/charts", changefreq: "daily" }
+            entries << { loc: "#{base_url}/nodes", changefreq: "daily" }
+            entries << { loc: "#{base_url}/federation", changefreq: "weekly" } if federation_enabled?
 
             PotatoMesh::App::Pages.static_pages.each do |page|
               next if page.noindex
@@ -278,16 +293,32 @@ module PotatoMesh
               lastmod = begin
                   File.mtime(page.path).utc.strftime("%Y-%m-%d")
                 rescue SystemCallError
-                  now_date
+                  nil
                 end
-              entries << {
-                loc: "#{base_url}/pages/#{page.slug}",
-                lastmod: lastmod,
-                changefreq: "weekly",
-              }
+              entry = { loc: "#{base_url}/pages/#{page.slug}", changefreq: "weekly" }
+              entry[:lastmod] = lastmod if lastmod
+              entries << entry
             end
 
             entries
+          end
+
+          # Escape a string for inclusion as XML character data.
+          #
+          # Replaces the five XML predefined entities. Used by the sitemap
+          # renderer instead of {Rack::Utils.escape_html} so apostrophes
+          # become the canonical +&apos;+ entity rather than an HTML-style
+          # numeric character reference.
+          #
+          # @param value [Object] input fragment; coerced to a string.
+          # @return [String] XML-safe representation.
+          def xml_escape(value)
+            value.to_s
+              .gsub("&", "&amp;")
+              .gsub("<", "&lt;")
+              .gsub(">", "&gt;")
+              .gsub('"', "&quot;")
+              .gsub("'", "&apos;")
           end
 
           # Render a sitemap entry list as +urlset+ XML.
@@ -300,9 +331,9 @@ module PotatoMesh
                      %(<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">)]
             entries.each do |entry|
               lines << "  <url>"
-              lines << "    <loc>#{Rack::Utils.escape_html(entry[:loc])}</loc>"
-              lines << "    <lastmod>#{Rack::Utils.escape_html(entry[:lastmod])}</lastmod>" if entry[:lastmod]
-              lines << "    <changefreq>#{Rack::Utils.escape_html(entry[:changefreq])}</changefreq>" if entry[:changefreq]
+              lines << "    <loc>#{xml_escape(entry[:loc])}</loc>"
+              lines << "    <lastmod>#{xml_escape(entry[:lastmod])}</lastmod>" if entry[:lastmod]
+              lines << "    <changefreq>#{xml_escape(entry[:changefreq])}</changefreq>" if entry[:changefreq]
               lines << "  </url>"
             end
             lines << "</urlset>"
