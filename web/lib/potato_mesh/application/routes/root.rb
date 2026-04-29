@@ -19,6 +19,18 @@ module PotatoMesh
     module Routes
       module Root
         module Helpers
+          # Map of XML predefined entities used by {#xml_escape}.
+          XML_ESCAPE_REPLACEMENTS = {
+            "&" => "&amp;",
+            "<" => "&lt;",
+            ">" => "&gt;",
+            '"' => "&quot;",
+            "'" => "&apos;",
+          }.freeze
+
+          # Pattern matching any XML metacharacter that requires escaping.
+          XML_ESCAPE_PATTERN = Regexp.union(XML_ESCAPE_REPLACEMENTS.keys).freeze
+
           # Return the fixed dark theme identifier. Light mode is no longer
           # supported; theme selection and cookie persistence have been removed.
           #
@@ -163,10 +175,16 @@ module PotatoMesh
           # may provide an explicit override via +OG_IMAGE_URL+; otherwise
           # the runtime-generated +/og-image.png+ URL is returned.
           #
+          # The override is rejected unless it carries an +http(s)+ scheme.
+          # +data:+ and +javascript:+ URIs do not render in any social
+          # platform's link preview and would only serve as a content
+          # security foot-gun, so they are silently dropped in favour of
+          # the runtime URL.
+          #
           # @return [String] absolute URL to the social preview image.
           def og_image_url
             override = string_or_nil(PotatoMesh::Config.og_image_url)
-            return override if override
+            return override if override && override.match?(%r{\Ahttps?://}i)
 
             "#{public_base_url}/og-image.png"
           end
@@ -305,20 +323,16 @@ module PotatoMesh
 
           # Escape a string for inclusion as XML character data.
           #
-          # Replaces the five XML predefined entities. Used by the sitemap
-          # renderer instead of {Rack::Utils.escape_html} so apostrophes
-          # become the canonical +&apos;+ entity rather than an HTML-style
-          # numeric character reference.
+          # Replaces the five XML predefined entities in a single pass.
+          # Used by the sitemap renderer instead of
+          # {Rack::Utils.escape_html} so apostrophes become the canonical
+          # +&apos;+ entity rather than an HTML-style numeric character
+          # reference.
           #
           # @param value [Object] input fragment; coerced to a string.
           # @return [String] XML-safe representation.
           def xml_escape(value)
-            value.to_s
-              .gsub("&", "&amp;")
-              .gsub("<", "&lt;")
-              .gsub(">", "&gt;")
-              .gsub('"', "&quot;")
-              .gsub("'", "&apos;")
+            value.to_s.gsub(XML_ESCAPE_PATTERN, XML_ESCAPE_REPLACEMENTS)
           end
 
           # Render a sitemap entry list as +urlset+ XML.
@@ -380,7 +394,7 @@ module PotatoMesh
 
           app.get "/og-image.png" do
             override = string_or_nil(PotatoMesh::Config.og_image_url)
-            redirect override, 302 if override
+            redirect override, 302 if override && override.match?(%r{\Ahttps?://}i)
 
             begin
               payload = PotatoMesh::OgImage.serve(base_url: public_base_url)

@@ -203,6 +203,33 @@ RSpec.describe "SEO surface" do
       expect(last_response.body).to include('content="Custom about description for SEO."')
     end
 
+    it "uses the page-level image: frontmatter for og:image and twitter:image" do
+      File.write(
+        File.join(pages_dir, "3-press.md"),
+        "---\ntitle: Press\nimage: https://cdn.example.org/press.png\n---\n\n# Press kit\n",
+      )
+      PotatoMesh::App::Pages.clear_pages_cache!
+
+      get "/pages/press"
+
+      expect(last_response.body).to include('<meta property="og:image" content="https://cdn.example.org/press.png" />')
+      expect(last_response.body).to include('<meta name="twitter:image" content="https://cdn.example.org/press.png" />')
+      expect(last_response.body).not_to include("og:image:width")
+    end
+
+    it "drops non-https image: frontmatter values" do
+      File.write(
+        File.join(pages_dir, "4-evil.md"),
+        "---\ntitle: Bad\nimage: javascript:alert(1)\n---\n\n# nope\n",
+      )
+      PotatoMesh::App::Pages.clear_pages_cache!
+
+      get "/pages/evil"
+
+      expect(last_response.body).not_to include("javascript:alert(1)")
+      expect(last_response.body).to include('<meta property="og:image" content="http://spec.mesh.test/og-image.png" />')
+    end
+
     it "emits noindex meta when frontmatter requests it" do
       get "/pages/impressum"
 
@@ -253,6 +280,15 @@ RSpec.describe "SEO surface" do
 
       expect(last_response.status).to eq(302)
       expect(last_response.headers["Location"]).to eq("https://cdn.example.org/og.png")
+    end
+
+    it "ignores OG_IMAGE_URL overrides that are not http(s)" do
+      allow(PotatoMesh::Config).to receive(:og_image_url).and_return("javascript:alert(1)")
+
+      get "/og-image.png"
+
+      expect(last_response).to be_ok
+      expect(last_response.headers["Content-Type"]).to eq("image/png")
     end
 
     it "falls back to the default PNG when capture fails and no cache exists" do

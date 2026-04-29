@@ -141,6 +141,54 @@ RSpec.describe PotatoMesh::OgImage do
       expect(result).to be_nil
       expect(PotatoMesh::Logging).to have_received(:logger_for).at_least(:once)
     end
+
+    it "skips capture while the failure backoff window is active" do
+      described_class.instance_variable_set(:@last_failure_at, Time.now)
+      sentinel = ->(_) { raise "capture should not run during backoff" }
+      described_class.capture_strategy = sentinel
+
+      expect(described_class.attempt_refresh("http://localhost")).to be_nil
+    end
+
+    it "retries capture once the failure backoff window has elapsed" do
+      backoff = PotatoMesh::OgImage::CAPTURE_FAILURE_BACKOFF_SECONDS + 1
+      described_class.instance_variable_set(:@last_failure_at, Time.now - backoff)
+      described_class.capture_strategy = ->(_) { "RECOVERED" }
+
+      result = described_class.attempt_refresh("http://localhost")
+
+      expect(result).not_to be_nil
+      expect(result.first).to eq("RECOVERED")
+      expect(described_class.instance_variable_get(:@last_failure_at)).to be_nil
+    end
+
+    it "records a failure timestamp when the disk write fails" do
+      described_class.capture_strategy = ->(_) { "BYTES" }
+      allow(File).to receive(:binwrite).and_raise(Errno::ENOSPC)
+
+      result = described_class.attempt_refresh("http://localhost")
+
+      expect(result).not_to be_nil
+      expect(described_class.instance_variable_get(:@last_failure_at)).to be_a(Time)
+    end
+  end
+
+  describe ".in_failure_backoff?" do
+    it "is false when no failure has been recorded" do
+      described_class.instance_variable_set(:@last_failure_at, nil)
+      expect(described_class.in_failure_backoff?).to be(false)
+    end
+
+    it "is true while inside the backoff window" do
+      described_class.instance_variable_set(:@last_failure_at, Time.now)
+      expect(described_class.in_failure_backoff?).to be(true)
+    end
+
+    it "is false once the backoff window has elapsed" do
+      backoff = PotatoMesh::OgImage::CAPTURE_FAILURE_BACKOFF_SECONDS + 1
+      described_class.instance_variable_set(:@last_failure_at, Time.now - backoff)
+      expect(described_class.in_failure_backoff?).to be(false)
+    end
   end
 
   describe ".invoke_capture" do
@@ -167,6 +215,22 @@ RSpec.describe PotatoMesh::OgImage do
         PotatoMesh::Config.og_image_viewport_height,
       ])
       expect(options[:headless]).to be true
+    end
+
+    # `--no-sandbox` is required for non-root Alpine containers; removing
+    # it would silently break Chromium launches in production. The
+    # corresponding assertion lives in security review (see comment in
+    # OgImage.browser_options).
+    it "passes the --no-sandbox flag" do
+      options = described_class.browser_options
+
+      expect(options[:browser_options]).to have_key(:"no-sandbox")
+    end
+
+    it "passes the --disable-dev-shm-usage flag" do
+      options = described_class.browser_options
+
+      expect(options[:browser_options]).to have_key(:"disable-dev-shm-usage")
     end
 
     it "passes the FERRUM_BROWSER_PATH env when present" do
@@ -297,33 +361,32 @@ RSpec.describe PotatoMesh::OgImage do
   end
 
   describe ".write_cache" do
-    it "ignores empty input" do
-      described_class.write_cache("")
+    it "returns false for empty input" do
+      expect(described_class.write_cache("")).to be(false)
       expect(File.exist?(cache_path)).to be(false)
     end
 
-    it "ignores non-string input" do
-      described_class.write_cache(nil)
+    it "returns false for non-string input" do
+      expect(described_class.write_cache(nil)).to be(false)
       expect(File.exist?(cache_path)).to be(false)
     end
 
-    it "creates the cache directory when missing" do
+    it "creates the cache directory when missing and returns true" do
       nested_path = File.join(SPEC_TMPDIR, "og-nested-#{SecureRandom.hex(4)}", "img.png")
       allow(PotatoMesh::Config).to receive(:og_image_cache_path).and_return(nested_path)
 
-      described_class.write_cache("PAYLOAD")
-
+      expect(described_class.write_cache("PAYLOAD")).to be(true)
       expect(File.binread(nested_path)).to eq("PAYLOAD")
     ensure
       FileUtils.rm_rf(File.dirname(nested_path)) if nested_path
     end
 
-    it "logs and swallows filesystem errors" do
+    it "returns false and logs when the disk write fails" do
       logger = instance_double(Logger, warn: nil)
       allow(PotatoMesh::Logging).to receive(:logger_for).and_return(logger)
       allow(File).to receive(:binwrite).and_raise(Errno::EIO)
 
-      expect { described_class.write_cache("DATA") }.not_to raise_error
+      expect(described_class.write_cache("DATA")).to be(false)
     end
   end
 

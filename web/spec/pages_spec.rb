@@ -436,6 +436,30 @@ RSpec.describe PotatoMesh::App::Pages do
 
       expect(described_class.parse_frontmatter(doc)["title"]).to be_nil
     end
+
+    it "accepts an https image URL" do
+      doc = "---\nimage: https://e.com/p.png\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to eq("https://e.com/p.png")
+    end
+
+    it "rejects javascript: image URLs" do
+      doc = "---\nimage: 'javascript:alert(1)'\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to be_nil
+    end
+
+    it "rejects data: image URLs" do
+      doc = "---\nimage: 'data:image/png;base64,iVBORw0KGgo='\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to be_nil
+    end
+
+    it "rejects relative image paths" do
+      doc = "---\nimage: /assets/p.png\n---\nbody"
+
+      expect(described_class.parse_frontmatter(doc)["image"]).to be_nil
+    end
   end
 
   # ── strip_frontmatter ───────────────────────────────────────
@@ -531,10 +555,10 @@ RSpec.describe PotatoMesh::App::Pages do
       expect(result.title).to eq("Custom")
     end
 
-    it "ignores blank title overrides" do
+    it "keeps the filename-derived title when frontmatter omits one" do
       base = PotatoMesh::App::Pages::PageEntry.new(slug: "x", title: "X")
 
-      result = described_class.apply_frontmatter(base, "title" => "")
+      result = described_class.apply_frontmatter(base, "description" => "Note")
 
       expect(result.title).to eq("X")
     end

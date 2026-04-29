@@ -178,8 +178,11 @@ module PotatoMesh
 
       # Coerce frontmatter values into the canonical type expected for each
       # supported key. String fields are trimmed; +noindex+ is forced into a
-      # strict boolean. Unrecognised values fall through to +nil+/+false+ so
-      # the rest of the pipeline can rely on simple checks.
+      # strict boolean; +image+ additionally enforces an +http(s)+ scheme
+      # so an operator who pastes a +data:+, +javascript:+, or relative
+      # URI does not silently leak it into the +og:image+ tag. Unrecognised
+      # values fall through to +nil+/+false+ so the rest of the pipeline
+      # can rely on simple checks.
       #
       # @param key [String] supported frontmatter key.
       # @param value [Object] raw parsed value from {YAML.safe_load}.
@@ -188,11 +191,30 @@ module PotatoMesh
         case key
         when "noindex"
           truthy_frontmatter?(value)
+        when "image"
+          normalise_image_url(value)
         else
           string = value.is_a?(String) ? value : value.to_s
           stripped = string.strip
           stripped.empty? ? nil : stripped
         end
+      end
+
+      # Validate an operator-supplied image URL. Only +http(s)+ schemes are
+      # accepted — +data:+, +javascript:+, relative paths, and other
+      # exotic forms are dropped silently because they would either fail
+      # to render in social-media link previews or open a content-security
+      # foot-gun.
+      #
+      # @param value [Object] raw frontmatter value.
+      # @return [String, nil] absolute URL or +nil+ when invalid/blank.
+      def normalise_image_url(value)
+        string = value.is_a?(String) ? value : value.to_s
+        stripped = string.strip
+        return nil if stripped.empty?
+        return nil unless stripped.match?(%r{\Ahttps?://}i)
+
+        stripped
       end
 
       # Decide whether a frontmatter scalar should be treated as truthy.
@@ -215,12 +237,19 @@ module PotatoMesh
       # string for unreadable or oversized inputs so the caller can treat
       # them as having no frontmatter.
       #
+      # The result is force-encoded to UTF-8 because YAML parsers refuse
+      # input declared as binary; for files that are already UTF-8 this
+      # is a no-op, and for files in another encoding it surfaces a
+      # decoding error to the YAML parser instead of silently producing
+      # gibberish that happens to match the frontmatter delimiters.
+      #
       # @param path [String] absolute path to the markdown source.
       # @return [String] candidate frontmatter prefix.
       def read_frontmatter_probe(path)
         return "" unless File.file?(path) && File.readable?(path)
 
-        File.open(path, "r:UTF-8") { |file| file.read(FRONTMATTER_PROBE_BYTES) || "" }
+        raw = File.open(path, "r:UTF-8") { |file| file.read(FRONTMATTER_PROBE_BYTES) || "" }
+        raw.force_encoding(Encoding::UTF_8)
       rescue SystemCallError
         ""
       end
@@ -229,25 +258,24 @@ module PotatoMesh
       # struct that preserves filename-derived defaults whenever a key is
       # absent or blank.
       #
+      # {parse_frontmatter} has already dropped blank string values for
+      # +title+/+description+/+image+, so this method can rely on truthy
+      # checks rather than re-validating each key.
+      #
       # @param entry [PageEntry] base entry parsed from the filename.
       # @param frontmatter [Hash] permitted frontmatter values.
       # @return [PageEntry] enriched entry.
       def apply_frontmatter(entry, frontmatter)
         return entry unless entry
 
-        title_override = frontmatter["title"]
-        description = frontmatter["description"]
-        image = frontmatter["image"]
-        noindex = frontmatter["noindex"] == true
-
         PageEntry.new(
           sort_key: entry.sort_key,
           slug: entry.slug,
-          title: title_override.is_a?(String) && !title_override.empty? ? title_override : entry.title,
+          title: frontmatter["title"] || entry.title,
           path: entry.path,
-          description: description.is_a?(String) && !description.empty? ? description : nil,
-          image: image.is_a?(String) && !image.empty? ? image : nil,
-          noindex: noindex,
+          description: frontmatter["description"],
+          image: frontmatter["image"],
+          noindex: frontmatter["noindex"] == true,
         )
       end
 

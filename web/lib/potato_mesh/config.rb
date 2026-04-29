@@ -614,8 +614,9 @@ module PotatoMesh
 
     # Cache lifetime for runtime-generated +/og-image.png+ responses, in
     # seconds. Successful captures are stored on disk and reused until the
-    # TTL elapses, at which point the next request triggers a background
-    # regeneration.
+    # TTL elapses; the next request after expiry refreshes the cache
+    # synchronously while holding a process-wide mutex so concurrent
+    # requesters serialise rather than spawning multiple browsers.
     #
     # @return [Integer] positive cache duration in seconds.
     def og_image_ttl_seconds

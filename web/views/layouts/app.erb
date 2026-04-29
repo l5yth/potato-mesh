@@ -26,7 +26,6 @@
   <% canonical_base = (defined?(public_base_url) ? public_base_url : request.base_url) %>
   <% canonical_url = "#{canonical_base}#{request_path}" %>
   <% canonical_html = Rack::Utils.escape_html(canonical_url) %>
-  <% canonical_base_html = Rack::Utils.escape_html(canonical_base) %>
   <% default_meta_image_url = "#{canonical_base}/og-image.png" %>
   <% page_meta_image_url = (defined?(meta_image_url) && meta_image_url && !meta_image_url.empty?) ? meta_image_url : (defined?(og_image_url) ? og_image_url : default_meta_image_url) %>
   <% page_meta_image_runtime = (page_meta_image_url == default_meta_image_url) %>
