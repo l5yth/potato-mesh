@@ -172,6 +172,85 @@ export function cssEscape(value) {
 }
 
 /**
+ * Format uptime values for the short-info overlay.
+ *
+ * @param {*} value Raw uptime value.
+ * @returns {string} Human readable uptime string.
+ */
+export function formatShortInfoUptime(value) {
+  if (value == null || value === '') return '';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  return num === 0 ? '0s' : timeHum(num);
+}
+
+/**
+ * Format overlay values with an em dash fallback when blank.
+ *
+ * @param {*} value Candidate value.
+ * @returns {string} Formatted value or em dash.
+ */
+export function shortInfoValueOrDash(value) {
+  return value != null && value !== '' ? String(value) : '—';
+}
+
+/**
+ * Retrieve the first present property value from a collection of objects.
+ *
+ * @param {Array<Object>} sources Candidate objects.
+ * @param {Array<string>} keys Ordered property names to inspect.
+ * @returns {*} First present non-blank value or ``null`` when absent.
+ */
+export function pickFirstProperty(sources, keys) {
+  if (!Array.isArray(sources) || !Array.isArray(keys)) {
+    return null;
+  }
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const value = source[key];
+      if (value == null) continue;
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed.length === 0) {
+          continue;
+        }
+        return trimmed;
+      }
+      return value;
+    }
+  }
+  return null;
+}
+
+/**
+ * Retrieve the first finite numeric property from candidate objects.
+ *
+ * @param {Array<Object>} sources Candidate objects.
+ * @param {Array<string>} keys Ordered property names to inspect.
+ * @returns {?number} First finite number when available.
+ */
+export function pickNumericProperty(sources, keys) {
+  if (!Array.isArray(sources) || !Array.isArray(keys)) {
+    return null;
+  }
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+      const raw = source[key];
+      if (raw == null || raw === '') continue;
+      const num = typeof raw === 'number' ? raw : Number(raw);
+      if (Number.isFinite(num)) {
+        return num;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Parse a node identifier or numeric reference into a finite number.
  *
  * @param {*} ref Identifier or numeric reference.

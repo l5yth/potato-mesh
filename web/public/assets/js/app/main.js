@@ -147,6 +147,46 @@ import {
   mergePositionsIntoNodes,
   mergeTelemetryIntoNodes,
 } from './main/data-merge.js';
+import { renderShortHtml } from './main/short-html-renderer.js';
+import {
+  NODE_LIMIT,
+  SNAPSHOT_LIMIT,
+  TRACE_LIMIT,
+  TRACE_MAX_AGE_SECONDS,
+} from './main/constants.js';
+import {
+  fetchNeighbors,
+  fetchNodeById,
+  fetchNodes,
+  fetchPositions,
+  fetchTelemetry,
+  fetchTraces,
+  filterRecentTraces,
+  resolveSnapshotLimit,
+  fetchMessages as fetchMessagesImpl,
+} from './main/data-fetchers.js';
+import {
+  compareNumber,
+  compareString,
+  hasNumberValue,
+  hasStringValue,
+} from './main/sort-comparators.js';
+import {
+  formatShortInfoUptime,
+  pickFirstProperty,
+  pickNumericProperty,
+  shortInfoValueOrDash,
+} from './main/format-utils.js';
+import { makeRoleFilterKey, normalizeFilterProtocol } from './main/filter-helpers.js';
+import { tileToLat, tileToLon } from './main/tile-coords.js';
+import {
+  buildMeshcoreIconImg,
+  buildMeshtasticIconImg,
+  buildProtocolIconImg,
+} from './main/protocol-icons.js';
+import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-html.js';
+import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
+import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -278,10 +318,10 @@ export function initializeApp(config) {
   /** Whether the very first full fetch has completed. */
   let initialFetchDone = false;
 
-  const NODE_LIMIT = 1000;
-  const TRACE_LIMIT = 200;
-  const TRACE_MAX_AGE_SECONDS = 28 * 24 * 60 * 60;
-  const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
+  // NODE_LIMIT, TRACE_LIMIT, TRACE_MAX_AGE_SECONDS, and SNAPSHOT_LIMIT are
+  // imported from ``./main/constants.js`` so the helpers extracted into
+  // ``./main/data-fetchers.js`` and ``./main/data-merge.js`` share the same
+  // values without re-declaring them here.
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   const REFRESH_MS = config.refreshMs;
@@ -348,68 +388,6 @@ export function initializeApp(config) {
     if (panel && typeof panel.scrollHeight === 'number' && typeof panel.scrollTop === 'number') {
       panel.scrollTop = panel.scrollHeight;
     }
-  }
-
-  /**
-   * Determine whether the provided value contains a non-empty string.
-   *
-   * @param {*} value Candidate value extracted from a node record.
-   * @returns {boolean} True when the value is a non-empty string.
-   */
-  function hasStringValue(value) {
-    if (value == null) return false;
-    return String(value).trim().length > 0;
-  }
-
-  /**
-   * Determine whether the provided value can be interpreted as a finite number.
-   *
-   * @param {*} value Candidate value extracted from a node record.
-   * @returns {boolean} True when the value parses to a finite number.
-   */
-  function hasNumberValue(value) {
-    if (value == null || value === '') return false;
-    const num = typeof value === 'number' ? value : Number(value);
-    return Number.isFinite(num);
-  }
-
-  /**
-   * Locale-aware comparator for string table values.
-   *
-   * @param {*} a First value.
-   * @param {*} b Second value.
-   * @returns {number} Comparator result compatible with ``Array.prototype.sort``.
-   */
-  function compareString(a, b) {
-    const strA = (a == null ? '' : String(a)).trim();
-    const strB = (b == null ? '' : String(b)).trim();
-    const hasA = strA.length > 0;
-    const hasB = strB.length > 0;
-    if (!hasA && !hasB) return 0;
-    if (!hasA) return 1;
-    if (!hasB) return -1;
-    return strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' });
-  }
-
-  /**
-   * Comparator for numeric table values that tolerates string inputs.
-   *
-   * @param {*} a First value.
-   * @param {*} b Second value.
-   * @returns {number} Comparator result for ``Array.prototype.sort``.
-   */
-  function compareNumber(a, b) {
-    const numA = typeof a === 'number' ? a : Number(a);
-    const numB = typeof b === 'number' ? b : Number(b);
-    const validA = Number.isFinite(numA);
-    const validB = Number.isFinite(numB);
-    if (validA && validB) {
-      if (numA === numB) return 0;
-      return numA < numB ? -1 : 1;
-    }
-    if (validA) return -1;
-    if (validB) return 1;
-    return 0;
   }
 
   /**
@@ -676,21 +654,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Resolve the element currently being displayed in fullscreen mode.
-   *
-   * @returns {Element|null} Active fullscreen element if any.
-   */
-  function getActiveFullscreenElement() {
-    if (typeof document === 'undefined') return null;
-    return (
-      document.fullscreenElement ||
-      document.webkitFullscreenElement ||
-      document.msFullscreenElement ||
-      null
-    );
-  }
-
-  /**
    * Determine whether the map container is currently in fullscreen mode.
    *
    * @returns {boolean} True when the map container owns fullscreen state.
@@ -886,13 +849,6 @@ export function initializeApp(config) {
    * @param {function(Event): void} fn Handler body.
    * @returns {function(Event): void} Full click listener.
    */
-  function legendClickHandler(fn) {
-    return (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      fn(event);
-    };
-  }
 
   /**
    * Canonical protocol token for use in compound filter keys.
@@ -903,28 +859,6 @@ export function initializeApp(config) {
    * @param {string|null|undefined} protocol Raw protocol value.
    * @returns {'meshtastic'|'meshcore'} Normalised protocol token.
    */
-  function normalizeFilterProtocol(protocol) {
-    return isMeshcoreProtocol(protocol) ? 'meshcore' : 'meshtastic';
-  }
-
-  /**
-   * Build a compound filter key that encodes both protocol and role.
-   *
-   * Using compound keys avoids collisions between role names that appear in
-   * both Meshtastic and MeshCore (e.g. ``SENSOR``, ``REPEATER``).  The filter
-   * set stores these keys so that clicking the MeshCore SENSOR button only
-   * includes MeshCore SENSOR nodes, not Meshtastic ones.
-   *
-   * @param {*} role Raw role value from the API.
-   * @param {string|null|undefined} protocol Protocol string from the API.
-   * @returns {string} Compound key in the form ``"<protocol>:<roleKey>"``.
-   */
-  function makeRoleFilterKey(role, protocol) {
-    return `${normalizeFilterProtocol(protocol)}:${getRoleKey(role)}`;
-  }
-
-
-
   /**
    * Lazily create the floating map status element used for progress messages.
    *
@@ -1086,132 +1020,20 @@ export function initializeApp(config) {
   }
 
   /**
-   * Convert a tile X coordinate to longitude degrees.
-   *
-   * @param {number} x Tile X index.
-   * @param {number} z Zoom level.
-   * @returns {number} Longitude in degrees.
-   */
-  function tileToLon(x, z) {
-    return (x / Math.pow(2, z)) * 360 - 180;
-  }
-
-  /**
-   * Convert a tile Y coordinate to latitude degrees.
-   *
-   * @param {number} y Tile Y index.
-   * @param {number} z Zoom level.
-   * @returns {number} Latitude in degrees.
-   */
-  function tileToLat(y, z) {
-    const n = Math.PI - (2 * Math.PI * y) / Math.pow(2, z);
-    return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-  }
-
-  /**
    * Create a minimal Leaflet tile layer that renders offline tiles from cache.
    *
    * @returns {L.GridLayer} Configured tile layer instance.
    */
+  /**
+   * Closure-bound bridge to ``createOfflineTileLayerImpl`` that injects the
+   * Leaflet global only when available.  Returns ``null`` when Leaflet is
+   * absent to preserve the original semantics.
+   *
+   * @returns {Object|null} Configured Leaflet ``GridLayer`` or ``null``.
+   */
   function createOfflineTileLayer() {
     if (!hasLeaflet) return null;
-    const offlineLayer = L.gridLayer({ className: 'map-tiles map-tiles-offline' });
-    /** @type {HTMLElement|null} */
-    let cachedOfflineFallbackTile = null;
-
-    /**
-     * Provide a minimal placeholder tile when canvas rendering is not available.
-     *
-     * @param {number} size Pixel width and height of the tile.
-     * @returns {HTMLElement} Cloned fallback element ready for Leaflet consumption.
-     */
-    function getOfflineFallbackTile(size) {
-      if (!cachedOfflineFallbackTile) {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'offline-tile-fallback';
-        placeholder.style.width = `${size}px`;
-        placeholder.style.height = `${size}px`;
-        placeholder.style.backgroundColor = 'rgba(33, 66, 110, 0.92)';
-        placeholder.style.display = 'flex';
-        placeholder.style.alignItems = 'center';
-        placeholder.style.justifyContent = 'center';
-        placeholder.style.color = 'rgba(255, 255, 255, 0.6)';
-        placeholder.style.font = 'bold 14px system-ui, sans-serif';
-        placeholder.style.textTransform = 'uppercase';
-        placeholder.textContent = 'Offline tile';
-        cachedOfflineFallbackTile = placeholder;
-      }
-      return /** @type {HTMLElement} */ (cachedOfflineFallbackTile.cloneNode(true));
-    }
-
-    /**
-     * Render a placeholder tile for offline map usage.
-     *
-     * @param {{x: number, y: number, z: number}} coords Tile coordinates supplied by Leaflet.
-     * @returns {HTMLElement} Tile node containing placeholder artwork.
-     */
-    offlineLayer.createTile = coords => {
-      const size = 256;
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        console.warn('Canvas 2D context unavailable for offline tile rendering. Using fallback placeholder.');
-        return getOfflineFallbackTile(size);
-      }
-      try {
-        const gradient = ctx.createLinearGradient(0, 0, size, size);
-        gradient.addColorStop(0, 'rgba(33, 66, 110, 0.92)');
-        gradient.addColorStop(1, 'rgba(64, 98, 144, 0.92)');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, size, size);
-
-        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-        ctx.lineWidth = 1;
-        const steps = 4;
-        for (let i = 1; i < steps; i++) {
-          const pos = (size / steps) * i;
-          ctx.beginPath();
-          ctx.moveTo(pos, 0);
-          ctx.lineTo(pos, size);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(0, pos);
-          ctx.lineTo(size, pos);
-          ctx.stroke();
-        }
-
-        const west = tileToLon(coords.x, coords.z);
-        const east = tileToLon(coords.x + 1, coords.z);
-        const north = tileToLat(coords.y, coords.z);
-        const south = tileToLat(coords.y + 1, coords.z);
-
-        ctx.fillStyle = 'rgba(255,255,255,0.7)';
-        ctx.font = '12px system-ui, sans-serif';
-        ctx.textBaseline = 'top';
-        ctx.fillText(`${west.toFixed(1)}°`, 8, 8);
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(`${east.toFixed(1)}°`, 8, size - 8);
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        ctx.fillText(`${north.toFixed(1)}°`, size - 8, 8);
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(`${south.toFixed(1)}°`, size - 8, size - 8);
-
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        ctx.font = 'bold 22px system-ui, sans-serif';
-        ctx.fillText('PotatoMesh offline basemap', size / 2, size / 2);
-
-        return canvas;
-      } catch (error) {
-        console.error('Failed to render offline tile. Falling back to placeholder element.', error);
-        return getOfflineFallbackTile(size);
-      }
-    };
-    return offlineLayer;
+    return createOfflineTileLayerImpl(L);
   }
 
   /**
@@ -1491,29 +1313,6 @@ export function initializeApp(config) {
    * @param {string} variantClass BEM modifier class, e.g. ``protocol-icon--meshtastic``.
    * @returns {HTMLImageElement} Icon element ready to append.
    */
-  function buildProtocolIconImg(src, variantClass) {
-    const img = document.createElement('img');
-    img.setAttribute('src', src);
-    img.setAttribute('alt', '');
-    img.setAttribute('width', '12');
-    img.setAttribute('height', '12');
-    img.setAttribute('aria-hidden', 'true');
-    img.setAttribute('loading', 'lazy');
-    img.setAttribute('decoding', 'async');
-    img.className = `protocol-icon ${variantClass}`;
-    return img;
-  }
-
-  /** @returns {HTMLImageElement} Meshtastic protocol icon element. */
-  function buildMeshtasticIconImg() {
-    return buildProtocolIconImg(MESHTASTIC_ICON_SRC, 'protocol-icon--meshtastic');
-  }
-
-  /** @returns {HTMLImageElement} MeshCore protocol icon element. */
-  function buildMeshcoreIconImg() {
-    return buildProtocolIconImg(MESHCORE_ICON_SRC, 'protocol-icon--meshcore');
-  }
-
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
@@ -1939,67 +1738,8 @@ export function initializeApp(config) {
   });
 
   // --- Helpers ---
-  /**
-   * Render a short name badge with role-based styling.
-   *
-   * @param {string} short Short node identifier.
-   * @param {string} role Node role string.
-   * @param {string} longName Full node name.
-   * @param {?Object} nodeData Optional node metadata attached to the badge.
-   * @returns {string} HTML snippet describing the badge.
-   */
-  function renderShortHtml(short, role, longName, nodeData = null) {
-    const safeTitle = longName ? escapeHtml(String(longName)) : '';
-    const titleAttr = safeTitle ? ` title="${safeTitle}"` : '';
-    const roleValue = normalizeRole(role != null && role !== '' ? role : (nodeData && nodeData.role));
-    let infoAttr = '';
-      if (nodeData && typeof nodeData === 'object') {
-        const info = {
-          nodeId: nodeData.node_id ?? nodeData.nodeId ?? '',
-          nodeNum: nodeData.num ?? nodeData.node_num ?? nodeData.nodeNum ?? null,
-          shortName: short != null ? String(short) : (nodeData.short_name ?? ''),
-          longName: nodeData.long_name ?? longName ?? '',
-          role: roleValue,
-          hwModel: nodeData.hw_model ?? nodeData.hwModel ?? '',
-          telemetryTime: nodeData.telemetry_time ?? nodeData.telemetryTime ?? null,
-        };
-        Object.assign(info, collectTelemetryMetrics(nodeData));
-      const attrParts = [` data-node-info="${escapeHtml(JSON.stringify(info))}"`];
-      const attrNodeIdRaw = info.nodeId != null ? String(info.nodeId).trim() : '';
-      if (attrNodeIdRaw) {
-        attrParts.push(` data-node-id="${escapeHtml(attrNodeIdRaw)}"`);
-      }
-      const attrNodeNum = Number(info.nodeNum);
-      if (Number.isFinite(attrNodeNum)) {
-        attrParts.push(` data-node-num="${escapeHtml(String(attrNodeNum))}"`);
-      }
-      infoAttr = attrParts.join('');
-    }
-    if (!short) {
-      return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
-    }
-    // Pad the label for the badge.  For plain-ASCII names that are already
-    // 4 characters (meshtastic always stores exactly 4) no padding is added.
-    // Shorter names or names containing emoji/non-ASCII get a single space
-    // on each side — grapheme width varies too much for character-count
-    // centering to work reliably.
-    const raw = String(short);
-    const graphemeCount = typeof Intl !== 'undefined' && Intl.Segmenter
-      ? [...new Intl.Segmenter().segment(raw)].length
-      : raw.length;
-    let centred;
-    if (graphemeCount >= 4) {
-      centred = raw;
-    } else {
-      centred = ` ${raw} `;
-    }
-    const padded = escapeHtml(centred).replace(/ /g, '&nbsp;');
-    const protocol = nodeData?.protocol ?? null;
-    const color = getRoleColor(roleValue, protocol);
-    const textColor = getRoleTextColor(roleValue, protocol);
-    const styleAttr = textColor ? `background:${color};color:${textColor}` : `background:${color}`;
-    return `<span class="short-name" style="${styleAttr}"${titleAttr}${infoAttr}>${padded}</span>`;
-  }
+  // ``renderShortHtml`` is imported from ``./main/short-html-renderer.js`` —
+  // see the module-level imports near the top of this file.
 
   const potatoMeshNamespace = globalThis.PotatoMesh || (globalThis.PotatoMesh = {});
   potatoMeshNamespace.renderShortHtml = renderShortHtml;
@@ -2188,29 +1928,6 @@ export function initializeApp(config) {
     }
 
     return lines.join('<br/>');
-  }
-
-  /**
-   * Format uptime values for the short-info overlay.
-   *
-   * @param {*} value Raw uptime value.
-   * @returns {string} Human readable uptime string.
-   */
-  function formatShortInfoUptime(value) {
-    if (value == null || value === '') return '';
-    const num = Number(value);
-    if (!Number.isFinite(num)) return '';
-    return num === 0 ? '0s' : timeHum(num);
-  }
-
-  /**
-   * Format overlay values with an em dash fallback when blank.
-   *
-   * @param {*} value Candidate value.
-   * @returns {string} Formatted value or em dash.
-   */
-  function shortInfoValueOrDash(value) {
-    return value != null && value !== '' ? String(value) : '—';
   }
 
   /**
@@ -2764,60 +2481,6 @@ export function initializeApp(config) {
   }
 
   /**
-   * Build tooltip HTML showing styled short-name badges for a trace path.
-   *
-   * @param {Array<Object>} pathNodes Ordered node payloads along the trace.
-   * @returns {string} HTML fragment or ``''`` when unavailable.
-   */
-  function buildTraceTooltipHtml(pathNodes) {
-    if (!Array.isArray(pathNodes) || pathNodes.length < 2) {
-      return '';
-    }
-    const parts = pathNodes
-      .map(node => {
-        if (!node || typeof node !== 'object') {
-          return null;
-        }
-        const short = normalizeNodeNameValue(node.short_name ?? node.shortName) || (typeof node.node_id === 'string' ? node.node_id : '');
-        const long = normalizeNodeNameValue(node.long_name ?? node.longName) || '';
-        return renderShortHtml(short, node.role, long, node);
-      })
-      .filter(Boolean);
-    if (!parts.length) return '';
-    const arrow = '<span class="trace-tooltip__arrow" aria-hidden="true">→</span>';
-    return `<div class="trace-tooltip__content">${parts.join(arrow)}</div>`;
-  }
-
-  /**
-   * Build tooltip HTML for a neighbor segment showing styled short-name badges.
-   *
-   * @param {{sourceNode?: Object, targetNode?: Object, sourceShortName?: string, targetShortName?: string, sourceRole?: string, targetRole?: string}} segment Neighbor segment descriptor.
-   * @returns {string} HTML fragment or ``''`` when unavailable.
-   */
-  function buildNeighborTooltipHtml(segment) {
-    if (!segment) return '';
-    const sourceNode = segment.sourceNode || null;
-    const targetNode = segment.targetNode || null;
-    const sourceShort = normalizeNodeNameValue(
-      segment.sourceShortName ||
-      (sourceNode ? sourceNode.short_name ?? sourceNode.shortName : null) ||
-      (sourceNode && typeof sourceNode.node_id === 'string' ? sourceNode.node_id : '')
-    );
-    const targetShort = normalizeNodeNameValue(
-      segment.targetShortName ||
-      (targetNode ? targetNode.short_name ?? targetNode.shortName : null) ||
-      (targetNode && typeof targetNode.node_id === 'string' ? targetNode.node_id : '')
-    );
-    if (!sourceShort || !targetShort) return '';
-    const sourceLong = normalizeNodeNameValue(sourceNode?.long_name ?? sourceNode?.longName) || '';
-    const targetLong = normalizeNodeNameValue(targetNode?.long_name ?? targetNode?.longName) || '';
-    const sourceHtml = renderShortHtml(sourceShort, segment.sourceRole, sourceLong, sourceNode || {});
-    const targetHtml = renderShortHtml(targetShort, segment.targetRole, targetLong, targetNode || {});
-    const arrow = '<span class="trace-tooltip__arrow" aria-hidden="true">→</span>';
-    return `<div class="trace-tooltip__content">${sourceHtml}${arrow}${targetHtml}</div>`;
-  }
-
-  /**
    * Resolve a node reference for a trace hop using cached node indices.
    *
    * @param {{id?: string, num?: number}|null} hop Trace hop descriptor.
@@ -2939,62 +2602,6 @@ export function initializeApp(config) {
     for (const num of numCandidates) {
       if (Number.isFinite(num) && nodesByNum.has(num)) {
         return nodesByNum.get(num);
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Retrieve the first present property value from a collection of objects.
-   *
-   * @param {Array<Object>} sources Candidate objects.
-   * @param {Array<string>} keys Ordered property names to inspect.
-   * @returns {*} First present non-blank value or ``null`` when absent.
-   */
-  function pickFirstProperty(sources, keys) {
-    if (!Array.isArray(sources) || !Array.isArray(keys)) {
-      return null;
-    }
-    for (const source of sources) {
-      if (!source || typeof source !== 'object') continue;
-      for (const key of keys) {
-        if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-        const value = source[key];
-        if (value == null) continue;
-        if (typeof value === 'string') {
-          const trimmed = value.trim();
-          if (trimmed.length === 0) {
-            continue;
-          }
-          return trimmed;
-        }
-        return value;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Retrieve the first finite numeric property from candidate objects.
-   *
-   * @param {Array<Object>} sources Candidate objects.
-   * @param {Array<string>} keys Ordered property names to inspect.
-   * @returns {?number} First finite number when available.
-   */
-  function pickNumericProperty(sources, keys) {
-    if (!Array.isArray(sources) || !Array.isArray(keys)) {
-      return null;
-    }
-    for (const source of sources) {
-      if (!source || typeof source !== 'object') continue;
-      for (const key of keys) {
-        if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-        const raw = source[key];
-        if (raw == null || raw === '') continue;
-        const num = typeof raw === 'number' ? raw : Number(raw);
-        if (Number.isFinite(num)) {
-          return num;
-        }
       }
     }
     return null;
@@ -3388,162 +2995,18 @@ export function initializeApp(config) {
   }
 
   /**
-   * Determine how many snapshots should be requested from the API to build a
-   * richer aggregate.
+   * Closure-bound bridge to ``fetchMessagesImpl`` that injects the dashboard's
+   * chat-enabled flag and message-limit normaliser.
    *
-   * @param {number} requestedLimit Desired number of unique entities.
-   * @param {number} [maxLimit=NODE_LIMIT] Maximum rows accepted by the API.
-   * @returns {number} Effective request limit honouring {@link SNAPSHOT_LIMIT}.
-   */
-  function resolveSnapshotLimit(requestedLimit, maxLimit = NODE_LIMIT) {
-    const base = Number.isFinite(requestedLimit) && requestedLimit > 0
-      ? Math.floor(requestedLimit)
-      : maxLimit;
-    const expanded = base * SNAPSHOT_LIMIT;
-    const candidate = expanded > base ? expanded : base;
-    return Math.min(candidate, maxLimit);
-  }
-
-  /**
-   * Fetch the latest nodes from the JSON API.
-   *
-   * @param {number} [limit=NODE_LIMIT] Maximum number of records.
-   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
-   * @returns {Promise<Array<Object>>} Parsed node payloads.
-   */
-  async function fetchNodes(limit = NODE_LIMIT, since = 0) {
-    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    let url = `/api/nodes?limit=${effectiveLimit}`;
-    if (since > 0) url += `&since=${since}`;
-    const r = await fetch(url, { cache: 'default' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }
-
-  /**
-   * Retrieve a single node record by identifier from the API.
-   *
-   * @param {string} nodeId Canonical node identifier.
-   * @returns {Promise<Object|null>} Parsed node payload or null when absent.
-   */
-  async function fetchNodeById(nodeId) {
-    if (typeof nodeId !== 'string') return null;
-    const trimmed = nodeId.trim();
-    if (trimmed.length === 0) return null;
-    const r = await fetch(`/api/nodes/${encodeURIComponent(trimmed)}`, { cache: 'default' });
-    if (r.status === 404) return null;
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }
-
-  /**
-   * Fetch recent messages from the JSON API.
-   *
-   * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+   * @param {number} [limit=MESSAGE_LIMIT] Requested limit.
    * @param {{ encrypted?: boolean, since?: number }} [options] Optional retrieval flags.
-   * @returns {Promise<Array<Object>>} Parsed message payloads.
+   * @returns {Promise<Array<Object>>} Message payloads.
    */
-  async function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
-    if (!CHAT_ENABLED) return [];
-    const safeLimit = normaliseMessageLimit(limit);
-    const params = new URLSearchParams({ limit: String(safeLimit) });
-    if (options && options.encrypted) {
-      params.set('encrypted', 'true');
-    }
-    if (options && options.since > 0) {
-      params.set('since', String(options.since));
-    }
-    const query = params.toString();
-    const r = await fetch(`/api/messages?${query}`, { cache: 'default' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }
-
-  /**
-   * Fetch neighbour information from the JSON API.
-   *
-   * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
-   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
-   * @returns {Promise<Array<Object>>} Parsed neighbour payloads.
-   */
-  async function fetchNeighbors(limit = NODE_LIMIT, since = 0) {
-    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    let url = `/api/neighbors?limit=${effectiveLimit}`;
-    if (since > 0) url += `&since=${since}`;
-    const r = await fetch(url, { cache: 'default' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }
-
-  /**
-   * Fetch traceroute observations from the JSON API.
-   *
-   * @param {number} [limit=TRACE_LIMIT] Maximum number of records.
-   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
-   * @returns {Promise<Array<Object>>} Parsed trace payloads.
-   */
-  async function fetchTraces(limit = TRACE_LIMIT, since = 0) {
-    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
-    const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
-    let url = `/api/traces?limit=${effectiveLimit}`;
-    if (since > 0) url += `&since=${since}`;
-    const r = await fetch(url, { cache: 'default' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const traces = await r.json();
-    return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
-  }
-
-  /**
-   * Fetch telemetry entries from the JSON API.
-   *
-   * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
-   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
-   * @returns {Promise<Array<Object>>} Parsed telemetry payloads.
-   */
-  async function fetchTelemetry(limit = NODE_LIMIT, since = 0) {
-    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    let url = `/api/telemetry?limit=${effectiveLimit}`;
-    if (since > 0) url += `&since=${since}`;
-    const r = await fetch(url, { cache: 'default' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }
-
-  /**
-   * Fetch position packets from the JSON API.
-   *
-   * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
-   * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
-   * @returns {Promise<Array<Object>>} Parsed position payloads.
-   */
-  async function fetchPositions(limit = NODE_LIMIT, since = 0) {
-    const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
-    let url = `/api/positions?limit=${effectiveLimit}`;
-    if (since > 0) url += `&since=${since}`;
-    const r = await fetch(url, { cache: 'default' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }
-
-  /**
-   * Filter trace entries to discard packets older than the configured window.
-   *
-   * @param {Array<Object>} traces Trace payloads.
-   * @param {number} [maxAgeSeconds=TRACE_MAX_AGE_SECONDS] Maximum allowed age in seconds.
-   * @returns {Array<Object>} Recent trace entries.
-   */
-  function filterRecentTraces(traces, maxAgeSeconds = TRACE_MAX_AGE_SECONDS) {
-    if (!Array.isArray(traces)) {
-      return [];
-    }
-    if (!Number.isFinite(maxAgeSeconds) || maxAgeSeconds <= 0) {
-      return [...traces];
-    }
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const cutoff = nowSeconds - maxAgeSeconds;
-    return traces.filter(trace => {
-      const rxTime = resolveTimestampSeconds(trace?.rx_time ?? trace?.rxTime, trace?.rx_iso ?? trace?.rxIso);
-      return rxTime != null && rxTime >= cutoff;
+  function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
+    return fetchMessagesImpl(limit, {
+      ...options,
+      chatEnabled: CHAT_ENABLED,
+      normaliseMessageLimit,
     });
   }
 
