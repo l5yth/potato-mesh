@@ -322,9 +322,9 @@ docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-arm64:latest
 docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-armv7:latest
 
 # version-pinned examples
-docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:v0.6.2
-docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:v0.6.2
-docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-amd64:v0.6.2
+docker pull ghcr.io/l5yth/potato-mesh-web-linux-amd64:v0.6.3
+docker pull ghcr.io/l5yth/potato-mesh-ingestor-linux-amd64:v0.6.3
+docker pull ghcr.io/l5yth/potato-mesh-matrix-bridge-linux-amd64:v0.6.3
 ```
 
 Note: `latest` is only published for non-prerelease versions. Pre-release tags
