@@ -250,29 +250,6 @@ function makeStubMapAtZoom(zoom) {
   return base;
 }
 
-/**
- * Replace ``globalThis.fetch`` with a stub that returns a never-resolving
- * promise.  Several tests below indirectly invoke ``applyFilter`` (via the
- * threshold-cross handler or the hub click), which kicks off
- * ``fetchActiveNodeStats``; without a stub the real ``fetch`` would try to
- * reach ``/api/nodes`` and the rejection (or even a successful response)
- * would trip ``.then(...)`` callbacks that touch DOM elements after the
- * harness has already cleaned them up, producing an ``unhandledRejection``
- * after the test ended.  Pinning the response to ``new Promise(() => {})``
- * means the chain never advances past the await, keeping the assertions
- * synchronous.  Returns a restore function the caller invokes from a
- * ``finally`` block.
- *
- * @returns {function(): void} Restore handle.
- */
-function stubFetchForApplyFilter() {
-  const previous = globalThis.fetch;
-  globalThis.fetch = () => new Promise(() => {});
-  return () => {
-    globalThis.fetch = previous;
-  };
-}
-
 test('currentZoomBucket returns "low" below the threshold and "high" at/above', () => {
   withApp((t) => {
     // No map injected → defensive default keeps the feature visible so the
@@ -304,25 +281,22 @@ test('currentZoomBucket returns "low" below the threshold and "high" at/above', 
 });
 
 test('handleZoomEndForColocatedHubs clears expanded keys when crossing the threshold', () => {
-  const restoreFetch = stubFetchForApplyFilter();
-  try {
-    withApp((t) => {
-      // Pre-stage state as if the previous render was at high zoom with one
-      // group expanded; a zoomend that drops us below the threshold should
-      // erase that state.
-      t._setLastRenderedZoomBucketForTests('high');
-      const seeded = new Set(['10.00000,20.00000']);
-      t._setExpandedColocatedKeysForTests(seeded);
-      t._setMapForTests(makeStubMapAtZoom(12));
+  withApp((t) => {
+    // Pre-stage state as if the previous render was at high zoom with one
+    // group expanded; a zoomend that drops us below the threshold should
+    // erase that state.  No fetch wrapper is needed because the new
+    // ``rerenderMapForFiltering`` helper called by the threshold-cross
+    // handler does not run the stats-fetch pipeline.
+    t._setLastRenderedZoomBucketForTests('high');
+    const seeded = new Set(['10.00000,20.00000']);
+    t._setExpandedColocatedKeysForTests(seeded);
+    t._setMapForTests(makeStubMapAtZoom(12));
 
-      t.handleZoomEndForColocatedHubs();
+    t.handleZoomEndForColocatedHubs();
 
-      assert.equal(t._getExpandedColocatedKeysForTests().size, 0);
-      t._setMapForTests(null);
-    });
-  } finally {
-    restoreFetch();
-  }
+    assert.equal(t._getExpandedColocatedKeysForTests().size, 0);
+    t._setMapForTests(null);
+  });
 });
 
 test('handleZoomEndForColocatedHubs leaves expanded keys alone when bucket is unchanged', () => {
@@ -342,118 +316,112 @@ test('handleZoomEndForColocatedHubs leaves expanded keys alone when bucket is un
 });
 
 test('handleZoomEndForColocatedHubs handles zooming back up through the threshold', () => {
-  const restoreFetch = stubFetchForApplyFilter();
-  try {
-    withApp((t) => {
-      // Previous render was low; zoom back up to high → expanded keys are
-      // (already) empty per the prior crossing, but the bucket flip must
-      // still register so subsequent clicks behave correctly.
-      t._setLastRenderedZoomBucketForTests('low');
-      t._setExpandedColocatedKeysForTests(new Set());
-      t._setMapForTests(makeStubMapAtZoom(14));
+  withApp((t) => {
+    // Previous render was low; zoom back up to high → expanded keys are
+    // (already) empty per the prior crossing, but the bucket flip must
+    // still register so subsequent clicks behave correctly.
+    t._setLastRenderedZoomBucketForTests('low');
+    t._setExpandedColocatedKeysForTests(new Set());
+    t._setMapForTests(makeStubMapAtZoom(14));
 
-      assert.doesNotThrow(() => t.handleZoomEndForColocatedHubs());
-      t._setMapForTests(null);
-    });
-  } finally {
-    restoreFetch();
-  }
+    assert.doesNotThrow(() => t.handleZoomEndForColocatedHubs());
+    t._setMapForTests(null);
+  });
 });
 
 test('createColocatedHubMarker emits "*<count>" html and toggles expansion on click', () => {
-  const restoreFetch = stubFetchForApplyFilter();
-  try {
-    withApp((t) => {
-      const previousL = globalThis.L;
-      const created = [];
-      let domEventStopCalls = 0;
-      let lastClickHandler = null;
-      globalThis.L = {
-        divIcon(opts) {
-          return { _kind: 'divIcon', options: opts };
-        },
-        marker(latLng, opts) {
-          const marker = {
-            latLng,
-            options: opts,
-            _addedTo: null,
-            on(event, handler) {
-              if (event === 'click') lastClickHandler = handler;
-              return marker;
-            },
-            addTo(layer) {
-              marker._addedTo = layer;
-              layer._children.push(marker);
-              return marker;
-            }
-          };
-          created.push(marker);
-          return marker;
-        },
-        DomEvent: {
-          stopPropagation() {
-            domEventStopCalls += 1;
+  withApp((t) => {
+    const previousL = globalThis.L;
+    const created = [];
+    let domEventStopCalls = 0;
+    let lastClickHandler = null;
+    globalThis.L = {
+      divIcon(opts) {
+        return { _kind: 'divIcon', options: opts };
+      },
+      marker(latLng, opts) {
+        const marker = {
+          latLng,
+          options: opts,
+          _addedTo: null,
+          on(event, handler) {
+            if (event === 'click') lastClickHandler = handler;
+            return marker;
+          },
+          addTo(layer) {
+            marker._addedTo = layer;
+            layer._children.push(marker);
+            return marker;
           }
+        };
+        created.push(marker);
+        return marker;
+      },
+      DomEvent: {
+        stopPropagation() {
+          domEventStopCalls += 1;
         }
-      };
-      const stubLayer = { _children: [] };
-      t._setColocatedHubsLayerForTests(stubLayer);
-      try {
-        const result = t.createColocatedHubMarker('5.12345,6.54321', 4, 5.12345, 6.54321);
-        assert.equal(created.length, 1);
-        assert.equal(result, created[0]);
-        assert.deepEqual(result.latLng, [5.12345, 6.54321]);
-        // The divIcon receives the asterisk + count html and the spider hub
-        // class so the CSS rules in base.css can style it as a clickable badge.
-        const iconOptions = result.options.icon.options;
-        assert.equal(iconOptions.className, 'colocated-spider-hub');
-        assert.ok(/\*4</.test(iconOptions.html), `html ${iconOptions.html} should contain *4`);
-        assert.deepEqual(iconOptions.iconSize, [16, 16]);
-        assert.deepEqual(iconOptions.iconAnchor, [8, 8]);
-        // ``bubblingMouseEvents: false`` keeps Leaflet's internal event
-        // routing from forwarding the click to map-level handlers.  The
-        // ``riseOnHover`` option is intentionally absent because divIcon
-        // markers handle z-index inconsistently across Leaflet versions.
-        assert.equal(result.options.bubblingMouseEvents, false);
-        assert.equal(result.options.riseOnHover, undefined);
-        // Marker was added to the injected hub layer rather than the global
-        // markers layer; this keeps hub badges in their own clearable group.
-        assert.equal(result._addedTo, stubLayer);
-        assert.equal(stubLayer._children.length, 1);
-
-        // Click → expandedColocatedKeys flips, both Leaflet's DomEvent
-        // helper and the raw DOM stopPropagation are invoked so the click
-        // is contained at every layer of the event pipeline.
-        let stopPropagationCalls = 0;
-        assert.ok(lastClickHandler);
-        lastClickHandler({
-          originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
-        });
-        assert.equal(stopPropagationCalls, 1);
-        assert.equal(domEventStopCalls, 1);
-        assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
-        // Second click toggles back off.
-        lastClickHandler({
-          originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
-        });
-        assert.equal(stopPropagationCalls, 2);
-        assert.equal(domEventStopCalls, 2);
-        assert.equal(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'), false);
-
-        // A click without an originalEvent (or without stopPropagation) must
-        // still toggle without throwing — covers the defensive guard branch.
-        assert.doesNotThrow(() => lastClickHandler(undefined));
-        assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
-        assert.doesNotThrow(() => lastClickHandler({ originalEvent: {} }));
-      } finally {
-        t._setColocatedHubsLayerForTests(null);
-        t._setExpandedColocatedKeysForTests(new Set());
-        globalThis.L = previousL;
       }
-    });
-  } finally {
-    restoreFetch();
-  }
+    };
+    const stubLayer = { _children: [] };
+    t._setColocatedHubsLayerForTests(stubLayer);
+    try {
+      // Reset the icon cache so this test's stub L is the source of every
+      // divIcon rather than a previous run's plain-object icon.
+      t._getColocatedHubIconCacheForTests().clear();
+      const result = t.createColocatedHubMarker('5.12345,6.54321', 4, 5.12345, 6.54321);
+      assert.equal(created.length, 1);
+      assert.equal(result, created[0]);
+      assert.deepEqual(result.latLng, [5.12345, 6.54321]);
+      // The divIcon receives the asterisk + count html and the spider hub
+      // class so the CSS rules in base.css can style it as a clickable badge.
+      const iconOptions = result.options.icon.options;
+      assert.equal(iconOptions.className, 'colocated-spider-hub');
+      assert.ok(/\*4</.test(iconOptions.html), `html ${iconOptions.html} should contain *4`);
+      assert.deepEqual(iconOptions.iconSize, [16, 16]);
+      assert.deepEqual(iconOptions.iconAnchor, [8, 8]);
+      // ``bubblingMouseEvents: false`` keeps Leaflet's internal event
+      // routing from forwarding the click to map-level handlers.  The
+      // ``riseOnHover`` option is intentionally absent because divIcon
+      // markers handle z-index inconsistently across Leaflet versions.
+      assert.equal(result.options.bubblingMouseEvents, false);
+      assert.equal(result.options.riseOnHover, undefined);
+      // Marker was added to the injected hub layer rather than the global
+      // markers layer; this keeps hub badges in their own clearable group.
+      assert.equal(result._addedTo, stubLayer);
+      assert.equal(stubLayer._children.length, 1);
+
+      // Click → expandedColocatedKeys flips, both Leaflet's DomEvent
+      // helper and the raw DOM stopPropagation are invoked so the click
+      // is contained at every layer of the event pipeline.
+      let stopPropagationCalls = 0;
+      assert.ok(lastClickHandler);
+      lastClickHandler({
+        originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
+      });
+      assert.equal(stopPropagationCalls, 1);
+      assert.equal(domEventStopCalls, 1);
+      assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
+      // Second click toggles back off.
+      lastClickHandler({
+        originalEvent: { stopPropagation() { stopPropagationCalls += 1; } }
+      });
+      assert.equal(stopPropagationCalls, 2);
+      assert.equal(domEventStopCalls, 2);
+      assert.equal(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'), false);
+
+      // A click without an originalEvent (or without stopPropagation) must
+      // still toggle without throwing — covers the defensive guard branch.
+      assert.doesNotThrow(() => lastClickHandler(undefined));
+      assert.ok(t._getExpandedColocatedKeysForTests().has('5.12345,6.54321'));
+      assert.doesNotThrow(() => lastClickHandler({ originalEvent: {} }));
+    } finally {
+      t._setColocatedHubsLayerForTests(null);
+      t._setExpandedColocatedKeysForTests(new Set());
+      t._getColocatedHubIconCacheForTests().clear();
+      globalThis.L = previousL;
+    }
+  });
 });
 
 test('_setExpandedColocatedKeysForTests round-trips and rejects non-Set input', () => {
@@ -711,15 +679,131 @@ test('hub click invokes Leaflet stopPropagation through the live harness', () =>
     });
     // The click handler must contain the event at both pipeline layers so
     // the underlying overlayStack / map ``click`` handlers are not also
-    // notified.  ``applyFilter`` then triggers a second renderMap cycle
-    // that re-evaluates the dispatch — but with the harness's empty
-    // ``allNodes`` the new render produces zero offsets, so the pruning
-    // step sees no surviving multi-node groups.  We assert on the
-    // stopPropagation side effects rather than the post-applyFilter
+    // notified.  ``rerenderMapForFiltering`` then triggers a second
+    // renderMap cycle that re-evaluates the dispatch — but with the
+    // harness's empty ``allNodes`` the new render produces zero offsets,
+    // so the pruning step sees no surviving multi-node groups.  We assert
+    // on the stopPropagation side effects rather than the post-render
     // expansion state because the latter is correctly cleaned up by the
     // pruning logic.
     assert.equal(stopPropagationCalls, 1);
     assert.equal(leaflet._recorded.domEventStopPropagation, baselineDomEventCount + 1);
+  });
+});
+
+test('hub click does not trigger an /api/stats fetch (surgical re-render)', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    const nodes = makeColocatedNodes(2);
+    testUtils.renderMap(nodes, 0);
+    // Replace the harness's never-resolving fetch with a counter so we can
+    // observe whether the click handler accidentally invokes it via the
+    // old ``applyFilter`` path.  Capture the previous reference so the
+    // ``cleanup`` from withAppAndLeaflet can still restore it.
+    let fetchCalls = 0;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = () => {
+      fetchCalls += 1;
+      return new Promise(() => {});
+    };
+    try {
+      const hub = leaflet._recorded.markers[0];
+      const handler = (hub._eventHandlers.get('click') || [])[0];
+      assert.ok(handler);
+      handler({ originalEvent: { stopPropagation() {} } });
+      // ``rerenderMapForFiltering`` only calls renderMap; the stats fetch
+      // that ``applyFilter`` used to issue should not have been triggered.
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+test('renderMap reuses a single divIcon instance across same-size groups', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.divIcons.length = 0;
+    testUtils._getColocatedHubIconCacheForTests().clear();
+    // Two distinct groups of size 3 at different coordinates.  The dispatch
+    // emits one hub per group, so this exercises the icon cache *within*
+    // a single render: the second hub should pick up the cached icon
+    // rather than allocating a new ``L.divIcon``.
+    const nodes = [
+      ...makeColocatedNodes(3, 50, 10),
+      ...makeColocatedNodes(3, 51, 11)
+    ].map((n, i) => ({ ...n, node_id: `dup-${i}` }));
+    testUtils.renderMap(nodes, 0);
+    assert.equal(leaflet._recorded.markers.length, 2, 'expected one hub per group');
+    assert.equal(leaflet._recorded.divIcons.length, 1, 'expected exactly one divIcon allocation across both hubs');
+    assert.equal(
+      leaflet._recorded.markers[0].options.icon,
+      leaflet._recorded.markers[1].options.icon,
+      'both hubs should share the cached icon instance'
+    );
+    const cache = testUtils._getColocatedHubIconCacheForTests();
+    assert.equal(cache.size, 1);
+    assert.ok(cache.has(3));
+  });
+});
+
+test('renderMap reuses divIcons across re-renders', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    testUtils._getColocatedHubIconCacheForTests().clear();
+    const nodes = makeColocatedNodes(4);
+    testUtils.renderMap(nodes, 0);
+    const firstIcon = leaflet._recorded.markers[0].options.icon;
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.divIcons.length = 0;
+    testUtils.renderMap(nodes, 0);
+    // Second render reuses the cached size-4 icon — no new divIcon
+    // allocation, and the new hub points at the same instance as before.
+    assert.equal(leaflet._recorded.divIcons.length, 0);
+    assert.equal(leaflet._recorded.markers[0].options.icon, firstIcon);
+  });
+});
+
+test('rerenderMapForFiltering refreshes the map without the applyFilter side effects', () => {
+  withAppAndLeaflet(({ testUtils, leaflet }) => {
+    leaflet._map._setZoom(14);
+    leaflet._recorded.markers.length = 0;
+    leaflet._recorded.divIcons.length = 0;
+    let fetchCalls = 0;
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = () => {
+      fetchCalls += 1;
+      return new Promise(() => {});
+    };
+    try {
+      // ``rerenderMapForFiltering`` reads ``allNodes`` directly; the test
+      // harness leaves it empty (no /api/nodes resolution), so the call
+      // exercises the early-return branches inside renderMap rather than
+      // a full render.  The point of this test is the *absence* of side
+      // effects: no stats fetch, no thrown errors.
+      assert.doesNotThrow(() => testUtils.rerenderMapForFiltering());
+      assert.equal(fetchCalls, 0);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+test('_getColocatedHubIconCacheForTests exposes the live cache', () => {
+  // Use the Leaflet-aware harness so ``L.divIcon`` exists when the helper
+  // is invoked; the bare ``withApp`` harness leaves L undefined.
+  withAppAndLeaflet(({ testUtils }) => {
+    const cache = testUtils._getColocatedHubIconCacheForTests();
+    assert.ok(cache instanceof Map);
+    cache.clear();
+    assert.equal(cache.size, 0);
+    // Populating via ``getColocatedHubIcon`` proves the seam returns the
+    // same Map instance the production helper writes to.
+    const icon = testUtils.getColocatedHubIcon(7);
+    assert.equal(cache.get(7), icon);
+    assert.equal(testUtils.getColocatedHubIcon(7), icon, 'second lookup must hit the cache');
+    cache.clear();
   });
 });
 

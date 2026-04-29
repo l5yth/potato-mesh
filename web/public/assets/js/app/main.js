@@ -551,6 +551,12 @@ export function initializeApp(config) {
   // threshold so the ``zoomend`` handler can detect threshold crossings and
   // trigger a re-render that swaps the hub representation in or out.
   let lastRenderedZoomBucket = null;
+  // Cache of divIcon instances keyed by group size.  Building an icon for
+  // every multi-node group on every render is expensive at scale (hundreds
+  // of nodes can produce dozens of hubs); since the icon's html only varies
+  // by groupSize we share a single instance across same-size groups and
+  // across renders.  See ``getColocatedHubIcon`` for the lookup.
+  const colocatedHubIconCache = new Map();
   let tileDomObserver = null;
   const fullscreenChangeEvents = [
     'fullscreenchange',
@@ -4141,7 +4147,10 @@ export function initializeApp(config) {
     const bucket = currentZoomBucket();
     if (bucket !== lastRenderedZoomBucket) {
       expandedColocatedKeys.clear();
-      applyFilter();
+      // Bucket flips only swap the marker representation; the node table,
+      // chat log, and active-stats counts are unaffected, so we re-render
+      // just the map rather than running the full applyFilter pipeline.
+      rerenderMapForFiltering();
     }
   }
 
@@ -4165,13 +4174,6 @@ export function initializeApp(config) {
    * @returns {Object} The created Leaflet marker, already added to the layer.
    */
   function createColocatedHubMarker(groupKey, groupSize, lat, lon) {
-    const html = '<span class="colocated-spider-hub__glyph">*' + groupSize + '</span>';
-    const icon = L.divIcon({
-      html,
-      className: 'colocated-spider-hub',
-      iconSize: [16, 16],
-      iconAnchor: [8, 8]
-    });
     // ``bubblingMouseEvents: false`` keeps Leaflet's internal event system
     // from forwarding the click to the map and any registered map-level
     // ``click`` handlers (e.g. overlay close).  ``riseOnHover`` is omitted
@@ -4180,7 +4182,7 @@ export function initializeApp(config) {
     // Leaflet versions; layer ordering (``colocatedHubsLayer`` is added
     // *after* ``markersLayer``) keeps the hub on top reliably.
     const marker = L.marker([lat, lon], {
-      icon,
+      icon: getColocatedHubIcon(groupSize),
       keyboard: false,
       bubblingMouseEvents: false
     });
@@ -4201,14 +4203,46 @@ export function initializeApp(config) {
       } else {
         expandedColocatedKeys.add(groupKey);
       }
-      // Re-running applyFilter is simpler than a surgical group update and
-      // avoids needing a separate code path for redrawing one group: the
-      // hub's screen position never moves, so the only visible change is the
-      // members appearing/disappearing.
-      applyFilter();
+      // Surgical re-render: only the map's marker representation changed.
+      // The table, chat log, and active-stats counts stay valid, so we skip
+      // the full applyFilter pipeline (and its ``/api/stats`` fetch) — that
+      // saves a round-trip per click and keeps rapid expand/collapse cheap.
+      rerenderMapForFiltering();
     });
     marker.addTo(colocatedHubsLayer);
     return marker;
+  }
+
+  /**
+   * Lookup or lazily create the divIcon used to render a hub badge for a
+   * group of ``groupSize`` co-located nodes.  Icons are cached because
+   * Leaflet allows the same icon instance to be shared across markers, the
+   * underlying DOM element is cloned per marker, and ``L.divIcon`` itself
+   * is non-trivially expensive at the volumes this feature can produce
+   * (every render creates one icon per multi-node group).  The cache is
+   * keyed by ``groupSize`` because the html string is the only thing that
+   * varies between groups; it is bounded in practice (typical group sizes
+   * are small single digits) so it never grows large enough to warrant
+   * eviction.
+   *
+   * Theme changes do not invalidate the cache: the icon's html only carries
+   * the static text label and class hooks; all colour / border styling
+   * comes from CSS variables that resolve at paint time.
+   *
+   * @param {number} groupSize Number of visible nodes in the group.
+   * @returns {Object} Cached or freshly-created Leaflet divIcon.
+   */
+  function getColocatedHubIcon(groupSize) {
+    const cached = colocatedHubIconCache.get(groupSize);
+    if (cached) return cached;
+    const icon = L.divIcon({
+      html: '<span class="colocated-spider-hub__glyph">*' + groupSize + '</span>',
+      className: 'colocated-spider-hub',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    });
+    colocatedHubIconCache.set(groupSize, icon);
+    return icon;
   }
 
   /**
@@ -4471,7 +4505,11 @@ export function initializeApp(config) {
     for (const slot of offsets) {
       if (slot && slot.groupSize >= 2) visibleMultiGroupKeys.add(slot.groupKey);
     }
-    for (const key of expandedColocatedKeys) {
+    // Snapshot the keys before mutating the live set: ``Set`` iteration
+    // during ``delete`` is technically safe per spec, but copying first
+    // makes the intent explicit and keeps the loop body straightforward
+    // for future maintainers.
+    for (const key of Array.from(expandedColocatedKeys)) {
       if (!visibleMultiGroupKeys.has(key)) expandedColocatedKeys.delete(key);
     }
 
@@ -4694,6 +4732,37 @@ export function initializeApp(config) {
   }
 
   /**
+   * Re-run the active text/role/protocol filter pipeline over ``allNodes``
+   * and return the nodes that should currently render on the map and table.
+   * Pulled out of {@link applyFilter} so the colocated-hub click handler and
+   * the zoom-bucket-crossing handler can call it without paying for the
+   * table re-render, chat-log re-render, or stats fetch — none of which are
+   * affected by either of those events.
+   *
+   * @returns {Array<Object>} Filtered + sorted node list.
+   */
+  function getFilteredSortedNodes() {
+    const filterQuery = filterInput ? filterInput.value : '';
+    const q = normaliseChatFilterQuery(filterQuery);
+    const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n) && matchesProtocolFilter(n));
+    return sortNodes(filteredNodes);
+  }
+
+  /**
+   * Re-render only the map markers (hub badges, member markers, leader
+   * lines) without touching the node table, chat log, page title, or the
+   * ``/api/stats`` fetch.  Used for events that only affect the marker
+   * representation — currently the colocated-hub expand/collapse click and
+   * the zoom-bucket threshold crossing — so we avoid the full
+   * {@link applyFilter} pipeline that those events would otherwise trigger.
+   *
+   * @returns {void}
+   */
+  function rerenderMapForFiltering() {
+    renderMap(getFilteredSortedNodes(), Date.now() / 1000);
+  }
+
+  /**
    * Apply text and role filters to the node list and re-render outputs.
    *
    * @returns {void}
@@ -4701,14 +4770,10 @@ export function initializeApp(config) {
   function applyFilter() {
     updateFilterClearVisibility();
     const filterQuery = filterInput ? filterInput.value : '';
-    // Normalise query so empty strings and whitespace-only input are treated
-    // identically and comparisons are case-insensitive.
-    const q = normaliseChatFilterQuery(filterQuery);
     // Text and role filters apply only to the node table and map; the chat log
     // always receives the full node collection so reply-thread lookups succeed
     // even for nodes that are currently hidden by the active filter.
-    const filteredNodes = allNodes.filter(n => matchesTextFilter(n, q) && matchesRoleFilter(n) && matchesProtocolFilter(n));
-    const sortedNodes = sortNodes(filteredNodes);
+    const sortedNodes = getFilteredSortedNodes();
     const nowSec = Date.now()/1000;
     renderTable(sortedNodes, nowSec);
     renderMap(sortedNodes, nowSec);
@@ -5102,10 +5167,18 @@ export function initializeApp(config) {
       handleZoomEndForColocatedHubs,
       /** Build the asterisk + count hub badge for a co-located group. */
       createColocatedHubMarker,
+      /** Lazily look up or create the divIcon for a hub of a given size. */
+      getColocatedHubIcon,
       /** Render the map (test use only). */
       renderMap,
+      /** Re-render only the map (skips the table / chat log / stats pipeline). */
+      rerenderMapForFiltering,
       /** Classify the current zoom level as ``'low'`` or ``'high'``. */
       _currentZoomBucketForTests: currentZoomBucket,
+      /** Inspect the live divIcon cache (test use only). */
+      _getColocatedHubIconCacheForTests() {
+        return colocatedHubIconCache;
+      },
       /** Replace the recorded spider state for tests; returns the previous value. */
       _setColocatedSpiderStateForTests(next) {
         const previous = colocatedSpiderState;
