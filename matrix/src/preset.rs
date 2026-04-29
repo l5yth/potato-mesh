@@ -119,11 +119,15 @@ enum PresetKey {
 }
 
 /// Parsed numeric values extracted from an SF/BW/CR preset string.
+///
+/// JS uses double-precision floats throughout; mirroring with `f64` avoids
+/// surprises for any future fractional MHz value even though the values
+/// in play today (62, 62.5, 125, 250, ~868–915) are exact in `f32`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 struct MeshcoreTokens {
-    sf: f32,
-    bw: f32,
-    cr: f32,
+    sf: f64,
+    bw: f64,
+    cr: f64,
 }
 
 /// Validate that `s` matches the JS regex `\d+(?:\.\d+)?`.
@@ -154,7 +158,7 @@ fn is_valid_number_token(s: &str) -> bool {
 }
 
 /// Parse a single `SF{n}`, `BW{n}`, or `CR{n}` token (case-insensitive).
-fn parse_token(part: &str) -> Option<(PresetKey, f32)> {
+fn parse_token(part: &str) -> Option<(PresetKey, f64)> {
     if part.len() < 3 || !part.is_char_boundary(2) {
         return None;
     }
@@ -171,7 +175,7 @@ fn parse_token(part: &str) -> Option<(PresetKey, f32)> {
     if !is_valid_number_token(rest) {
         return None;
     }
-    let value: f32 = rest.parse().ok()?;
+    let value: f64 = rest.parse().ok()?;
     Some((key, value))
 }
 
@@ -189,9 +193,9 @@ fn parse_meshcore_preset_tokens(preset: &str) -> Option<MeshcoreTokens> {
     if parts.len() != 3 {
         return None;
     }
-    let mut sf: Option<f32> = None;
-    let mut bw: Option<f32> = None;
-    let mut cr: Option<f32> = None;
+    let mut sf: Option<f64> = None;
+    let mut bw: Option<f64> = None;
+    let mut cr: Option<f64> = None;
     for part in parts {
         let (key, value) = parse_token(part)?;
         match key {
@@ -227,7 +231,7 @@ fn parse_meshcore_preset_tokens(preset: &str) -> Option<MeshcoreTokens> {
 /// Mirrors `bwToShortCode` in `node-modem-metadata.js:132-138` — `62` and
 /// `62.5` collapse to `Na`, `125` to `St`, `250` to `Wi`. Any other value
 /// returns `None`.
-fn bw_to_short_code(bw: f32) -> Option<&'static str> {
+fn bw_to_short_code(bw: f64) -> Option<&'static str> {
     if bw == 62.0 || bw == 62.5 {
         Some("Na")
     } else if bw == 125.0 {
@@ -242,7 +246,7 @@ fn bw_to_short_code(bw: f32) -> Option<&'static str> {
 /// Format a numeric token for display string construction.
 ///
 /// Mirrors JS coercion: `62` renders as `"62"`, `62.5` as `"62.5"`.
-fn format_number(n: f32) -> String {
+fn format_number(n: f64) -> String {
     if n.fract() == 0.0 {
         format!("{}", n as i64)
     } else {
@@ -251,16 +255,24 @@ fn format_number(n: f32) -> String {
 }
 
 /// Display metadata returned by [`resolve_meshcore_preset_display`].
+///
+/// `long_name` and `display_string` are not consumed by the Matrix bridge
+/// today — only `short_code` feeds the bracket render. They are retained
+/// (with `#[allow(dead_code)]`) so the port stays line-for-line auditable
+/// against the JS source and so a future caller (e.g. a tooltip surface)
+/// can read them without touching the parsing path again.
 #[derive(Clone, PartialEq, Debug)]
 struct MeshcoreDisplay {
     /// Long human-readable name (e.g. "EU/UK Wide") when the SF/BW/CR
     /// triple matches a named preset, else `None`.
+    #[allow(dead_code)]
     long_name: Option<&'static str>,
     /// 2-character short code derived from BW alone (e.g. "Na", "St",
     /// "Wi"), or `None` when the BW is unrecognized.
     short_code: Option<&'static str>,
     /// Human-readable display string — the long name when matched, else
     /// `BW{bw}/SF{sf}/CR{cr}`.
+    #[allow(dead_code)]
     display_string: String,
 }
 
@@ -268,29 +280,29 @@ struct MeshcoreDisplay {
 /// when the input is not an SF/BW/CR string.
 ///
 /// Mirrors `resolveMeshcorePresetDisplay` in `node-modem-metadata.js:161-190`.
-fn resolve_meshcore_preset_display(preset: &str, freq_mhz: Option<f32>) -> Option<MeshcoreDisplay> {
+fn resolve_meshcore_preset_display(preset: &str, freq_mhz: Option<f64>) -> Option<MeshcoreDisplay> {
     let tokens = parse_meshcore_preset_tokens(preset)?;
     let short_code = bw_to_short_code(tokens.bw);
 
     let matched = MESHCORE_NAMED_PRESETS.iter().find(|entry| {
-        if (entry.sf as f32) != tokens.sf {
+        if (entry.sf as f64) != tokens.sf {
             return false;
         }
-        if (entry.bw as f32) != tokens.bw {
+        if (entry.bw as f64) != tokens.bw {
             return false;
         }
-        if (entry.cr as f32) != tokens.cr {
+        if (entry.cr as f64) != tokens.cr {
             return false;
         }
         if let Some(max) = entry.max_freq_mhz {
             match freq_mhz {
-                Some(f) if f < max as f32 => {}
+                Some(f) if f < max as f64 => {}
                 _ => return false,
             }
         }
         if let Some(min) = entry.min_freq_mhz {
             match freq_mhz {
-                Some(f) if f >= min as f32 => {}
+                Some(f) if f >= min as f64 => {}
                 _ => return false,
             }
         }
@@ -367,15 +379,14 @@ fn derive_preset_initials(preset: &str) -> Option<String> {
     }
 
     if tokens.len() == 1 {
+        // Tokens are non-empty after the alphabetic-only filter, so
+        // `upper` always has ≥ 1 character. The branch reduces to "≥ 2
+        // → first two chars" vs. "exactly 1 → `X?`" — no zero-length arm.
         let upper = tokens[0].to_ascii_uppercase();
-        let len = upper.chars().count();
-        if len >= 2 {
+        if upper.chars().count() >= 2 {
             return Some(upper.chars().take(2).collect());
         }
-        if len == 1 {
-            return Some(format!("{}?", upper));
-        }
-        return None;
+        return Some(format!("{}?", upper));
     }
 
     let first = tokens[0].chars().next()?.to_ascii_uppercase();
@@ -394,7 +405,7 @@ fn derive_preset_initials(preset: &str) -> Option<String> {
 /// 1+ character abbreviation.
 ///
 /// Mirrors `abbreviatePreset` in `chat-format.js:287-301`.
-pub fn abbreviate_preset(preset: &str, freq_mhz: Option<f32>) -> Option<String> {
+pub fn abbreviate_preset(preset: &str, freq_mhz: Option<f64>) -> Option<String> {
     let trimmed = preset.trim();
     if trimmed.is_empty() {
         return None;
@@ -730,7 +741,10 @@ mod tests {
         assert_eq!(derive_preset_initials("___"), None);
         assert_eq!(derive_preset_initials("Foo"), Some("FO".to_string()));
         assert_eq!(derive_preset_initials("X"), Some("X?".to_string()));
-        assert_eq!(derive_preset_initials("CustomPreset"), Some("CP".to_string()));
+        assert_eq!(
+            derive_preset_initials("CustomPreset"),
+            Some("CP".to_string())
+        );
         assert_eq!(
             derive_preset_initials("Three Word Name"),
             Some("TW".to_string())
