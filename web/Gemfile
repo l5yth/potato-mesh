@@ -22,6 +22,7 @@ gem "puma", "~> 7.0"
 gem "prometheus-client"
 gem "kramdown", "~> 2.4"
 gem "kramdown-parser-gfm", "~> 1.1"
+gem "ferrum", "~> 0.17"
 
 group :test do
   gem "rspec", "~> 3.12"

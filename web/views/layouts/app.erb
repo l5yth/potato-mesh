@@ -23,31 +23,51 @@
   <% meta_name_html = Rack::Utils.escape_html(meta_name) %>
   <% meta_description_html = Rack::Utils.escape_html(meta_description) %>
   <% request_path = request.path.to_s.empty? ? "/" : request.path %>
-  <% canonical_url = "#{request.base_url}#{request_path}" %>
+  <% canonical_base = (defined?(public_base_url) ? public_base_url : request.base_url) %>
+  <% canonical_url = "#{canonical_base}#{request_path}" %>
   <% canonical_html = Rack::Utils.escape_html(canonical_url) %>
-  <% logo_url = "#{request.base_url}/potatomesh-logo.svg" %>
-  <% logo_url_html = Rack::Utils.escape_html(logo_url) %>
-  <% logo_alt_html = Rack::Utils.escape_html("#{meta_name} logo") %>
+  <% canonical_base_html = Rack::Utils.escape_html(canonical_base) %>
+  <% page_meta_image_url = (defined?(meta_image_url) && meta_image_url && !meta_image_url.empty?) ? meta_image_url : (defined?(og_image_url) ? og_image_url : "#{canonical_base}/og-image.png") %>
+  <% page_meta_image_html = Rack::Utils.escape_html(page_meta_image_url) %>
+  <% page_meta_image_alt_html = Rack::Utils.escape_html("#{meta_name} preview") %>
+  <% page_meta_noindex = defined?(meta_noindex) && meta_noindex %>
   <title><%= meta_title_html %></title>
   <meta name="application-name" content="<%= meta_name_html %>" />
   <meta name="apple-mobile-web-app-title" content="<%= meta_name_html %>" />
   <meta name="description" content="<%= meta_description_html %>" />
+  <% if page_meta_noindex %>
+  <meta name="robots" content="noindex,nofollow" />
+  <% end %>
   <link rel="canonical" href="<%= canonical_html %>" />
   <meta property="og:title" content="<%= meta_title_html %>" />
   <meta property="og:site_name" content="<%= meta_name_html %>" />
   <meta property="og:description" content="<%= meta_description_html %>" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="<%= canonical_html %>" />
-  <meta property="og:image" content="<%= logo_url_html %>" />
-  <meta property="og:image:alt" content="<%= logo_alt_html %>" />
-  <meta name="twitter:card" content="summary" />
+  <meta property="og:image" content="<%= page_meta_image_html %>" />
+  <meta property="og:image:alt" content="<%= page_meta_image_alt_html %>" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:type" content="image/png" />
+  <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="<%= meta_title_html %>" />
   <meta name="twitter:description" content="<%= meta_description_html %>" />
-  <meta name="twitter:image" content="<%= logo_url_html %>" />
-  <meta name="twitter:image:alt" content="<%= logo_alt_html %>" />
+  <meta name="twitter:image" content="<%= page_meta_image_html %>" />
+  <meta name="twitter:image:alt" content="<%= page_meta_image_alt_html %>" />
   <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" />
   <link rel="icon" type="image/svg+xml" sizes="any" href="/potatomesh-logo.svg" />
   <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+  <% if (defined?(current_view_mode) ? current_view_mode : nil).to_s == "dashboard" %>
+  <script type="application/ld+json">
+    <%= JSON.generate({
+          "@context" => "https://schema.org",
+          "@type" => "WebSite",
+          "name" => meta_name,
+          "url" => canonical_base,
+          "description" => meta_description,
+        }) %>
+  </script>
+  <% end %>
   <link rel="stylesheet" href="/assets/styles/base.css" />
   <script src="/assets/js/theme.js" defer></script>
   <script src="/assets/js/background.js" defer></script>

@@ -74,9 +74,18 @@ module PotatoMesh
 
       # Generate the structured meta configuration for the UI.
       #
+      # @param view [Symbol, String, nil] logical view identifier used to
+      #   tailor the title and description for non-dashboard pages.
+      # @param overrides [Hash, nil] explicit replacements for individual
+      #   meta fields. See {PotatoMesh::Meta.configuration} for accepted
+      #   keys.
       # @return [Hash] frozen configuration metadata.
-      def meta_configuration
-        PotatoMesh::Meta.configuration(private_mode: private_mode?)
+      def meta_configuration(view: nil, overrides: nil)
+        PotatoMesh::Meta.configuration(
+          private_mode: private_mode?,
+          view: view,
+          overrides: overrides,
+        )
       end
 
       # Indicate whether private mode has been requested.

@@ -48,12 +48,19 @@ RUN python3 -m venv /opt/meshtastic-venv && \
 # Production stage
 FROM ruby:3.3-alpine AS production
 
-# Install runtime dependencies
+# Install runtime dependencies. Chromium powers the runtime Open Graph
+# preview generator; the accompanying font and library packages are the
+# minimum set required to render the dashboard headlessly on Alpine.
 RUN apk add --no-cache \
     python3 \
     sqlite \
     tzdata \
-    curl
+    curl \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont
 
 # Create non-root user
 RUN addgroup -g 1000 -S potatomesh && \
@@ -107,6 +114,7 @@ ENV RACK_ENV=production \
     MAP_ZOOM="" \
     MAX_DISTANCE=42 \
     CONTACT_LINK="#potatomesh:dod.ngo" \
+    FERRUM_BROWSER_PATH=/usr/bin/chromium \
     DEBUG=0
 
 # Start the application
