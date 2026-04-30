@@ -166,8 +166,6 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
                     node_id=node_id,
                     allowed_channs=channels.allowed_channel_names(),
                     hidden_channs=channels.hidden_channel_names(),
-                    allowed_lenght=len(channels.allowed_channel_names()),
-                    hidden_lenght=len(channels.hidden_channel_names()),
                 )
             return
 
