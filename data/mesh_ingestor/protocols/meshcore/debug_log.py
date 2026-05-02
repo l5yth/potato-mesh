@@ -25,10 +25,12 @@ from pathlib import Path
 
 from ... import config
 
-# ``parents[3]`` walks: meshcore/ → protocols/ → mesh_ingestor/ → data/.
-# Three ``..`` ascents from this file's parent reach the same point as
-# ``parents[3]`` from the original meshcore.py, so the destination path is
-# unchanged after the package split.
+# This file lives one level deeper than the pre-split ``meshcore.py``
+# (``data/mesh_ingestor/protocols/meshcore/debug_log.py`` vs.
+# ``data/mesh_ingestor/protocols/meshcore.py``), so ``parents[4]`` here
+# (meshcore/ → protocols/ → mesh_ingestor/ → data/ → repo root) lands at
+# the same repo-root destination as ``parents[3]`` did in the original
+# module.  The on-disk log path is therefore unchanged after the split.
 _IGNORED_MESSAGE_LOG_PATH = Path(__file__).resolve().parents[4] / "ignored-meshcore.txt"
 """Filesystem path that stores raw MeshCore messages when ``DEBUG=1``."""
 
