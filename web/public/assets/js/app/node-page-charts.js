@@ -40,21 +40,24 @@ export {
   formatCompactDate,
   formatGasResistance,
   formatSeriesPointValue,
-  formatFrequency,
-  formatBattery,
-  formatVoltage,
-  formatUptime,
   formatTimestamp,
-  formatMessageTimestamp,
-  formatHardwareModel,
-  formatCoordinate,
-  formatRelativeSeconds,
-  formatDurationSeconds,
   formatSnr,
   toTimestampMs,
   resolveSnapshotTimestamp,
   formatAxisTick,
 } from './node-page-charts/format-utils.js';
+
+export {
+  formatFrequency,
+  formatBattery,
+  formatVoltage,
+  formatUptime,
+  formatMessageTimestamp,
+  formatHardwareModel,
+  formatCoordinate,
+  formatRelativeSeconds,
+  formatDurationSeconds,
+} from './node-page-charts/display-formatters.js';
 
 export {
   buildMidnightTicks,

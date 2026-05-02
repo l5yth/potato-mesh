@@ -20,8 +20,25 @@
  * @module node-page-charts/specs
  */
 
-import { fmtCurrent } from '../short-info-telemetry.js';
+import { numberOrNull } from '../value-helpers.js';
 import { formatGasResistance } from './format-utils.js';
+
+/**
+ * Format an electrical current reading using ``mA`` for sub-amp magnitudes
+ * and ``A`` otherwise.  Inlined here so the chart specs do not depend on
+ * the unrelated ``short-info-telemetry`` module.
+ *
+ * @param {*} value Raw current value.
+ * @returns {string} Formatted current string, or empty string when invalid.
+ */
+function fmtCurrent(value) {
+  const numeric = numberOrNull(value);
+  if (numeric == null) return '';
+  if (Math.abs(numeric) < 1) {
+    return `${(numeric * 1000).toFixed(1)} mA`;
+  }
+  return `${numeric.toFixed(2)} A`;
+}
 
 /**
  * Telemetry chart definitions describing axes and series metadata.
