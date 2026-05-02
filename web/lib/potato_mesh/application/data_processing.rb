@@ -14,6 +14,14 @@
 
 # frozen_string_literal: true
 
+# The submodules below all reopen +PotatoMesh::App::DataProcessing+ to
+# contribute methods.  They are required in dependency order rather than
+# alphabetically: +coercions+ and +identity+ define the canonical-id helpers
+# that every higher-level submodule (messages, neighbors, telemetry, etc.)
+# calls into, so they must load first.  Reordering the requires
+# alphabetically would still load — Ruby resolves module method lookups at
+# call time — but the explicit dependency order documents what each layer
+# depends on without grepping.
 require_relative "data_processing/coercions"
 require_relative "data_processing/identity"
 require_relative "data_processing/request_helpers"

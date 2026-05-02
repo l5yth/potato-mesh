@@ -54,8 +54,6 @@ module PotatoMesh
         return nil unless hex.match?(/\A[0-9A-Fa-f]+\z/)
 
         Integer(hex, 16)
-      rescue ArgumentError
-        nil
       end
 
       # Derive the canonical triplet for a node reference.

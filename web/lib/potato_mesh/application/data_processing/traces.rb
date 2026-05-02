@@ -40,8 +40,6 @@ module PotatoMesh
         end
 
         nil
-      rescue ArgumentError
-        nil
       end
 
       # Extract hop identifiers from a traceroute payload preserving order.

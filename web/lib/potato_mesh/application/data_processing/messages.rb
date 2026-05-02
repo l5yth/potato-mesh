@@ -149,7 +149,6 @@ module PotatoMesh
         encrypted = string_or_nil(message["encrypted"])
         text = message["text"]
         portnum = message["portnum"]
-        clear_encrypted = false
         channel_index = coerce_integer(message["channel"] || message["channel_index"] || message["channelIndex"])
 
         decrypted_payload = nil
@@ -273,7 +272,7 @@ module PotatoMesh
             return if !sender_present && (existing_from_str.nil? || existing_from_str.strip.empty?)
             existing_encrypted = existing.is_a?(Hash) ? existing["encrypted"] : existing[3]
             existing_encrypted_str = existing_encrypted&.to_s
-            decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
+            decrypted_precedence = text && existing_encrypted_str && !existing_encrypted_str.strip.empty?
 
             if from_id
               should_update = existing_from_str.nil? || existing_from_str.strip.empty?
@@ -289,7 +288,7 @@ module PotatoMesh
               updates["to_id"] = to_id if should_update
             end
 
-            if clear_encrypted || (decrypted_precedence && existing_encrypted_str && !existing_encrypted_str.strip.empty?)
+            if decrypted_precedence && existing_encrypted_str && !existing_encrypted_str.strip.empty?
               updates["encrypted"] = nil if existing_encrypted
             elsif encrypted && !existing_has_text
               should_update = existing_encrypted_str.nil? || existing_encrypted_str.strip.empty?
@@ -396,14 +395,13 @@ module PotatoMesh
               # Guard against cross-protocol contamination in the constraint fallback path,
               # mirroring the same guard applied in the primary update path above.
               return if existing_fallback_protocol && existing_fallback_protocol != "meshtastic" && existing_fallback_protocol != protocol
-              decrypted_precedence = text && (clear_encrypted || (existing_encrypted_str && !existing_encrypted_str.strip.empty?))
+              decrypted_precedence = text && existing_encrypted_str && !existing_encrypted_str.strip.empty?
 
               fallback_updates = {}
               fallback_updates["from_id"] = from_id if from_id
               fallback_updates["to_id"] = to_id if to_id
               fallback_updates["text"] = text if text
               fallback_updates["encrypted"] = encrypted if encrypted && allow_encrypted_update
-              fallback_updates["encrypted"] = nil if clear_encrypted
               fallback_updates["portnum"] = portnum if portnum
               if decrypted_precedence
                 fallback_updates["channel"] = message["channel"] if message.key?("channel")
@@ -431,17 +429,6 @@ module PotatoMesh
               end
             end
           end
-        end
-
-        if clear_encrypted && text
-          debug_log(
-            "Stored decrypted text message",
-            context: "data_processing.insert_message",
-            message_id: msg_id,
-            channel: message["channel"],
-            channel_name: message["channel_name"],
-            portnum: portnum,
-          )
         end
 
         stored_decrypted = nil
