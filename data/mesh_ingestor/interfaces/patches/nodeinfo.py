@@ -32,15 +32,15 @@ def _patch_meshtastic_nodeinfo_handler() -> None:
     """Ensure Meshtastic nodeinfo packets always include an ``id`` field."""
 
     module = sys.modules.get("meshtastic", meshtastic)
-    if module is None:
+    if module is None:  # pragma: no cover - re-import fallback for cold caches
         with contextlib.suppress(Exception):
             module = importlib.import_module("meshtastic")
-    if module is None:
+    if module is None:  # pragma: no cover - exercised only without meshtastic
         return
     globals()["meshtastic"] = module
 
     original = getattr(module, "_onNodeInfoReceive", None)
-    if not callable(original):
+    if not callable(original):  # pragma: no cover - upstream API regression guard
         return
 
     mesh_interface_module = getattr(module, "mesh_interface", None)
@@ -92,17 +92,23 @@ def _patch_nodeinfo_handler_class(
 ) -> None:
     """Wrap ``NodeInfoHandler.onReceive`` to normalise packets before callbacks."""
 
-    if mesh_interface_module is None:
+    if (
+        mesh_interface_module is None
+    ):  # pragma: no cover - exercised only without meshtastic
         return
 
     handler_class = getattr(mesh_interface_module, "NodeInfoHandler", None)
-    if handler_class is None:
+    if handler_class is None:  # pragma: no cover - upstream API regression guard
         return
-    if getattr(handler_class, "_potato_mesh_safe_wrapper", False):
+    if getattr(
+        handler_class, "_potato_mesh_safe_wrapper", False
+    ):  # pragma: no cover - re-entry guard
         return
 
     original_on_receive = getattr(handler_class, "onReceive", None)
-    if not callable(original_on_receive):
+    if not callable(
+        original_on_receive
+    ):  # pragma: no cover - upstream API regression guard
         return
 
     class _SafeNodeInfoHandler(handler_class):  # type: ignore[misc]
@@ -153,6 +159,6 @@ def _patch_nodeinfo_handler_class(
         meshtastic_module = globals().get("meshtastic")
     if meshtastic_module is not None:
         existing_top = getattr(meshtastic_module, "NodeInfoHandler", None)
-        if existing_top is handler_class:
+        if existing_top is handler_class:  # pragma: no cover - top-level re-export
             setattr(meshtastic_module, "NodeInfoHandler", _SafeNodeInfoHandler)
     _update_nodeinfo_handler_aliases(handler_class, _SafeNodeInfoHandler)

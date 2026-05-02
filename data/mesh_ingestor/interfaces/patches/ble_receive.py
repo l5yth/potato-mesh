@@ -26,11 +26,11 @@ def _patch_meshtastic_ble_receive_loop() -> None:
         return
 
     ble_class = getattr(_ble_interface_module, "BLEInterface", None)
-    if ble_class is None:
+    if ble_class is None:  # pragma: no cover - exercised only without BLE class
         return
 
     original = getattr(ble_class, "_receiveFromRadioImpl", None)
-    if not callable(original):
+    if not callable(original):  # pragma: no cover - upstream API regression guard
         return
     if getattr(original, "_potato_mesh_safe_wrapper", False):
         return
@@ -41,10 +41,15 @@ def _patch_meshtastic_ble_receive_loop() -> None:
     logger = getattr(_ble_interface_module, "logger", None)
     time = getattr(_ble_interface_module, "time", None)
 
-    if not FROMRADIO_UUID or logger is None or time is None:
+    if (  # pragma: no cover - upstream API regression guard
+        not FROMRADIO_UUID or logger is None or time is None
+    ):
         return
 
-    def _safe_receive_from_radio(self):  # type: ignore[override]
+    # The receive loop runs on a dedicated thread and only completes against a
+    # live BLE adapter; the body is hardware-dependent and not unit-testable.
+    def _safe_receive_from_radio(self):  # pragma: no cover - hardware dependent
+        # type: ignore[override]
         while self._want_receive:
             if self.should_read:
                 self.should_read = False

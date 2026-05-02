@@ -41,15 +41,33 @@ from ._aliases import (  # noqa: E402 - keep grouped with sibling re-exports.
 )
 from .channels_meta import _ensure_channel_metadata  # noqa: E402
 from .factory import (  # noqa: E402
-    BLEInterface,
     NoAvailableMeshInterface,
-    SerialInterface,
-    TCPInterface,
     _DummySerialInterface,
     _create_default_interface,
     _create_serial_interface,
     _load_ble_interface,
 )
+
+# Resolve the meshtastic interface classes at package-load time so that
+# repeated imports (e.g. tests that pop ``data.mesh_ingestor.interfaces`` from
+# ``sys.modules`` and re-import after swapping ``meshtastic.*`` submodules)
+# pick up the freshly registered classes rather than whatever a cached
+# ``factory.py`` first resolved.  ``factory.py`` no longer keeps duplicate
+# module-level globals; lookups go through the package surface only.
+BLEInterface = None
+"""Resolved on demand by :func:`_load_ble_interface` to keep BLE optional."""
+
+try:  # pragma: no cover - optional dependency may be unavailable
+    from meshtastic.serial_interface import (
+        SerialInterface,
+    )  # noqa: E402  # type: ignore
+except Exception:  # pragma: no cover - optional dependency may be unavailable
+    SerialInterface = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional dependency may be unavailable
+    from meshtastic.tcp_interface import TCPInterface  # noqa: E402  # type: ignore
+except Exception:  # pragma: no cover - optional dependency may be unavailable
+    TCPInterface = None  # type: ignore[assignment]
 from .identity import (  # noqa: E402
     _candidate_node_id,
     _ensure_mapping,

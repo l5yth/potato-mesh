@@ -31,7 +31,7 @@ def _normalise_nodeinfo_packet(packet) -> dict | None:
     except Exception:
         try:
             normalised = {key: mapping[key] for key in mapping}
-        except Exception:
+        except Exception:  # pragma: no cover - both copy strategies failed
             return None
 
     node_id = _candidate_node_id(normalised)

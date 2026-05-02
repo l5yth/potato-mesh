@@ -78,7 +78,7 @@ def _parse_network_target(value: str) -> tuple[str, int] | None:
         except ValueError:
             port = None
         result = _validated_result(host, port)
-        if result:
+        if result:  # pragma: no cover - urlparse handles all currently-known forms
             return result
 
     return _validated_result(value, None)

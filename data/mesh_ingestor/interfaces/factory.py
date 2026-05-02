@@ -27,22 +27,14 @@ if TYPE_CHECKING:  # pragma: no cover - import only used for type checking
     from meshtastic.ble_interface import BLEInterface as _BLEInterface
 
 
-# Resolved on demand by ``_load_ble_interface`` so that the BLE dependency
-# stays optional.  The package's ``__init__.py`` re-exports this binding so
-# callers and tests can monkey-patch ``data.mesh_ingestor.interfaces.BLEInterface``
-# directly.
-BLEInterface = None
-
-
-try:  # pragma: no cover - optional dependency may be unavailable
-    from meshtastic.serial_interface import SerialInterface  # type: ignore
-except Exception:  # pragma: no cover - optional dependency may be unavailable
-    SerialInterface = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - optional dependency may be unavailable
-    from meshtastic.tcp_interface import TCPInterface  # type: ignore
-except Exception:  # pragma: no cover - optional dependency may be unavailable
-    TCPInterface = None  # type: ignore[assignment]
+# All cached interface classes live on the parent package
+# (``data.mesh_ingestor.interfaces``).  Tests set them via
+# ``monkeypatch.setattr(mesh, "BLEInterface", ...)`` and the package proxy
+# routes those writes through to ``interfaces``; keeping a duplicate global on
+# this submodule would cache the wrong value across tests because
+# ``monkeypatch`` only restores attributes it set.  The ``__init__.py``
+# re-resolves ``SerialInterface``/``TCPInterface`` from ``meshtastic.*`` at
+# package-load time and assigns them to package-level attributes.
 
 
 class _DummySerialInterface:
@@ -70,16 +62,10 @@ def _load_ble_interface():
         RuntimeError: If the BLE dependencies are not installed.
     """
 
-    global BLEInterface
     pkg = sys.modules.get("data.mesh_ingestor.interfaces")
     pkg_ble = getattr(pkg, "BLEInterface", None) if pkg is not None else None
     if pkg_ble is not None:
-        BLEInterface = pkg_ble
         return pkg_ble
-    if BLEInterface is not None:
-        if pkg is not None:
-            setattr(pkg, "BLEInterface", BLEInterface)
-        return BLEInterface
 
     try:
         from meshtastic.ble_interface import BLEInterface as _resolved_interface
@@ -88,7 +74,6 @@ def _load_ble_interface():
             "BLE interface requested but the Meshtastic BLE dependencies are not installed. "
             "Install the 'meshtastic[ble]' extra to enable BLE support."
         ) from exc
-    BLEInterface = _resolved_interface
     if pkg is not None:
         setattr(pkg, "BLEInterface", _resolved_interface)
     for module_name in ("data.mesh_ingestor", "data.mesh"):
@@ -141,7 +126,7 @@ def _create_serial_interface(port: str) -> tuple[object, str]:
         # Resolve via the package so test fakes installed via ``sys.modules``
         # patches at ``meshtastic.tcp_interface`` propagate when interfaces
         # was imported earlier.
-        tcp_cls = getattr(pkg, "TCPInterface", TCPInterface)
+        tcp_cls = getattr(pkg, "TCPInterface", None)
         return (
             tcp_cls(hostname=host, portNumber=tcp_port),
             f"tcp://{host}:{tcp_port}",
@@ -151,7 +136,7 @@ def _create_serial_interface(port: str) -> tuple[object, str]:
         context="interfaces.serial",
         port=port_value,
     )
-    serial_cls = getattr(pkg, "SerialInterface", SerialInterface)
+    serial_cls = getattr(pkg, "SerialInterface", None)
     return serial_cls(devPath=port_value), port_value
 
 
@@ -201,4 +186,6 @@ def _create_default_interface() -> tuple[object, str]:
         raise NoAvailableMeshInterface(
             f"no mesh interface available ({summary})"
         ) from errors[-1][1]
-    raise NoAvailableMeshInterface("no mesh interface available")
+    raise NoAvailableMeshInterface(  # pragma: no cover - defensive only
+        "no mesh interface available"
+    )

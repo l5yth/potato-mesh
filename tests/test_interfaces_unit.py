@@ -191,6 +191,15 @@ class TestCandidateNodeId:
         result = ifaces._candidate_node_id({"items": [{"fromId": "!aabbccdd"}]})
         assert result == "!aabbccdd"
 
+    def test_unknown_section_value_scanned(self):
+        """Mapping values under arbitrary keys are recursively scanned.
+
+        Exercises the ``else`` branch of the values-loop (non-list/tuple value)
+        when the parent key is not one of the recognised section names.
+        """
+        result = ifaces._candidate_node_id({"misc_section": {"fromId": "!aabbccdd"}})
+        assert result == "!aabbccdd"
+
 
 # ---------------------------------------------------------------------------
 # _has_field
@@ -448,6 +457,61 @@ class TestRegionFrequency:
         )
         assert ifaces._region_frequency(msg) == 999
 
+    def test_enum_name_without_any_digits_returns_name(self):
+        """Enum name with no extractable digits is returned as-is."""
+        enum_val = SimpleNamespace(name="UNSET")
+        enum_type = SimpleNamespace(values_by_number={0: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"region": field_desc})
+        msg = SimpleNamespace(DESCRIPTOR=desc, override_frequency=None, region=0)
+        assert ifaces._region_frequency(msg) == "UNSET"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_lora_message
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLoraMessage:
+    """Tests for :func:`interfaces._resolve_lora_message`."""
+
+    def test_none_returns_none(self):
+        """A ``None`` ``local_config`` short-circuits."""
+        assert ifaces._resolve_lora_message(None) is None
+
+    def test_radio_section_lora_via_has_field(self):
+        """Resolves ``radio.lora`` when exposed via ``HasField``."""
+        radio_section = SimpleNamespace(
+            HasField=lambda name: name == "lora", lora="radio_lora"
+        )
+        local_config = SimpleNamespace(HasField=lambda name: False, radio=radio_section)
+        assert ifaces._resolve_lora_message(local_config) == "radio_lora"
+
+    def test_radio_section_lora_via_hasattr(self):
+        """Resolves ``radio.lora`` via ``hasattr`` when ``HasField`` is silent.
+
+        The ``radio_section`` exposes ``HasField`` returning ``False`` so
+        ``_has_field`` produces ``False`` for ``"lora"``, forcing the
+        ``hasattr`` fallback path to be taken before returning the value.
+        """
+        radio_section = SimpleNamespace(
+            HasField=lambda name: False, lora="radio_lora_attr"
+        )
+        local_config = SimpleNamespace(HasField=lambda name: False, radio=radio_section)
+        assert ifaces._resolve_lora_message(local_config) == "radio_lora_attr"
+
+    def test_local_config_lora_via_hasattr_only(self):
+        """Resolves ``local_config.lora`` via ``hasattr`` when no ``HasField`` match."""
+        local_config = SimpleNamespace(
+            HasField=lambda name: False, lora="bare_lora", radio=None
+        )
+        assert ifaces._resolve_lora_message(local_config) == "bare_lora"
+
+    def test_no_lora_anywhere_returns_none(self):
+        """No ``lora`` attribute on either section returns ``None``."""
+        local_config = SimpleNamespace(HasField=lambda name: False, radio=None)
+        assert ifaces._resolve_lora_message(local_config) is None
+
 
 # ---------------------------------------------------------------------------
 # _camelcase_enum_name
@@ -476,6 +540,10 @@ class TestCamelcaseEnumName:
     def test_with_digits(self):
         """Digits in the name are preserved."""
         assert ifaces._camelcase_enum_name("BAND_915") == "Band915"
+
+    def test_only_separators_returns_none(self):
+        """A string consisting only of separators yields no usable parts."""
+        assert ifaces._camelcase_enum_name("___") is None
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +591,30 @@ class TestModemPreset:
         msg = SimpleNamespace(DESCRIPTOR=desc, preset=1)
         assert ifaces._modem_preset(msg) == "ShortFast"
 
+    def test_attr_preset_fallback_when_no_modem_preset(self):
+        """Falls back to ``preset`` attribute when ``modem_preset`` is absent.
+
+        Exercises the ``hasattr(lora_message, 'preset')`` branch when the
+        descriptor lacks both fields and the object only exposes ``preset``.
+        """
+
+        class _PresetOnly:
+            DESCRIPTOR = None
+            preset = "LONG_FAST"
+
+        assert ifaces._modem_preset(_PresetOnly()) == "LongFast"
+
+    def test_unparseable_preset_value_returns_none(self):
+        """A non-string, non-enum-resolvable preset value returns None."""
+        # Field present in descriptor but enum_type lookup yields a non-string
+        # (e.g., a numeric mapping with no name).  ``preset_value`` is also a
+        # plain int (not a string), so neither name nor string fallback applies.
+        enum_type = SimpleNamespace(values_by_number={})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"modem_preset": field_desc})
+        msg = SimpleNamespace(DESCRIPTOR=desc, modem_preset=99)
+        assert ifaces._modem_preset(msg) is None
+
 
 # ---------------------------------------------------------------------------
 # _ensure_radio_metadata caching
@@ -539,6 +631,18 @@ class TestEnsureRadioMetadata:
         ifaces._ensure_radio_metadata(None)
         assert config.LORA_FREQ == original_freq
         assert config.MODEM_PRESET == original_preset
+
+    def test_unresolvable_lora_message_returns_without_writing(self, monkeypatch):
+        """When ``_resolve_lora_message`` returns ``None``, config is left alone."""
+        monkeypatch.setattr(config, "LORA_FREQ", None)
+        monkeypatch.setattr(config, "MODEM_PRESET", None)
+        # ``localConfig`` exists but has no lora/radio, so resolve returns None.
+        local_config = SimpleNamespace(HasField=lambda name: False, radio=None)
+        local_node = SimpleNamespace(localConfig=local_config)
+        iface = SimpleNamespace(localNode=local_node, waitForConfig=lambda: None)
+        ifaces._ensure_radio_metadata(iface)
+        assert config.LORA_FREQ is None
+        assert config.MODEM_PRESET is None
 
     def test_sets_lora_freq_when_not_cached(self, monkeypatch):
         """Populates LORA_FREQ from interface when not yet configured."""
@@ -577,3 +681,110 @@ class TestEnsureRadioMetadata:
 
         ifaces._ensure_radio_metadata(iface)
         assert config.LORA_FREQ == 433
+
+
+# ---------------------------------------------------------------------------
+# _extract_host_node_id
+# ---------------------------------------------------------------------------
+
+
+class TestExtractHostNodeId:
+    """Tests for :func:`interfaces._extract_host_node_id`."""
+
+    def test_none_iface_returns_none(self):
+        """A ``None`` interface short-circuits without any attribute access."""
+        assert ifaces._extract_host_node_id(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _ensure_channel_metadata
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureChannelMetadata:
+    """Tests for :func:`interfaces._ensure_channel_metadata`."""
+
+    def test_none_iface_is_noop(self, monkeypatch):
+        """A ``None`` interface short-circuits without invoking ``capture_from_interface``."""
+        import data.mesh_ingestor.channels as _channels
+
+        called: list = []
+        monkeypatch.setattr(
+            _channels, "capture_from_interface", lambda iface: called.append(iface)
+        )
+        ifaces._ensure_channel_metadata(None)
+        assert called == []
+
+    def test_calls_capture_from_interface(self, monkeypatch):
+        """A non-None interface delegates to ``channels.capture_from_interface``."""
+        import data.mesh_ingestor.channels as _channels
+
+        seen: list = []
+        monkeypatch.setattr(
+            _channels, "capture_from_interface", lambda iface: seen.append(iface)
+        )
+        sentinel = SimpleNamespace(myInfo={})
+        ifaces._ensure_channel_metadata(sentinel)
+        assert seen == [sentinel]
+
+
+# ---------------------------------------------------------------------------
+# _normalise_nodeinfo_packet
+# ---------------------------------------------------------------------------
+
+
+class TestNormaliseNodeinfoPacket:
+    """Tests for :func:`interfaces._normalise_nodeinfo_packet`."""
+
+    def test_non_mapping_returns_none(self):
+        """Inputs that ``_ensure_mapping`` cannot coerce return ``None``."""
+        # int/float values are explicitly rejected by ``_ensure_mapping``.
+        assert ifaces._normalise_nodeinfo_packet(42) is None
+
+    def test_mapping_with_node_id_injects_id_field(self):
+        """A valid mapping has the canonical id injected when inferable."""
+        result = ifaces._normalise_nodeinfo_packet({"fromId": "!aabbccdd"})
+        assert result is not None
+        assert result["id"] == "!aabbccdd"
+
+    def test_mapping_keeps_existing_id_when_consistent(self):
+        """A pre-existing matching ``id`` is left untouched."""
+        result = ifaces._normalise_nodeinfo_packet(
+            {"id": "!aabbccdd", "fromId": "!aabbccdd"}
+        )
+        assert result == {"id": "!aabbccdd", "fromId": "!aabbccdd"}
+
+    def test_dict_conversion_fallback(self):
+        """Mapping whose ``dict(...)`` raises falls back to comprehension copy.
+
+        Exercises the inner ``except`` branch that copies via
+        ``{key: mapping[key] for key in mapping}`` when ``dict(mapping)`` fails.
+        Uses a Mapping subclass whose first ``__iter__`` call raises so the
+        ``dict()`` constructor errors but the subsequent comprehension reads
+        via the same iterator and succeeds.
+        """
+        from collections.abc import Mapping as _Mapping
+
+        class _RaisingDictMapping(_Mapping):
+            def __init__(self, payload: dict) -> None:
+                self._payload = payload
+                self._first_iter_done = False
+
+            def __iter__(self):
+                if not self._first_iter_done:
+                    self._first_iter_done = True
+                    raise RuntimeError("simulated iteration failure")
+                yield from self._payload
+
+            def __getitem__(self, key):
+                return self._payload[key]
+
+            def __len__(self):
+                return len(self._payload)
+
+        result = ifaces._normalise_nodeinfo_packet(
+            _RaisingDictMapping({"fromId": "!aabbccdd"})
+        )
+        assert result is not None
+        assert result["fromId"] == "!aabbccdd"
+        assert result["id"] == "!aabbccdd"
