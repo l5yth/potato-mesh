@@ -14,12 +14,22 @@
 
 # frozen_string_literal: true
 
+# Federation manifest: declare the namespace explicitly so that loading a
+# single shard out of order cannot silently create the module via reopen
+# semantics, and so the parent constant is owned by this file.
+module PotatoMesh
+  module App
+    module Federation
+    end
+  end
+end
+
 require_relative "federation/lifecycle"
 require_relative "federation/instance_metrics"
 require_relative "federation/signature"
 require_relative "federation/peers"
 require_relative "federation/http_client"
-require_relative "federation/http_client_get"
+require_relative "federation/instance_fetcher"
 require_relative "federation/validation"
 require_relative "federation/instance_records"
 require_relative "federation/self_instance"
