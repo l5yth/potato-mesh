@@ -126,11 +126,15 @@ import {
   fmtCoords,
   fmtHw,
   formatDate,
+  formatShortInfoUptime,
   formatSnrDisplay,
   formatTime,
   pad,
   parseNodeNumericRef,
+  pickFirstProperty,
+  pickNumericProperty,
   resolveTimestampSeconds,
+  shortInfoValueOrDash,
   timeAgo,
   timeHum,
   toFiniteNumber,
@@ -171,12 +175,6 @@ import {
   hasNumberValue,
   hasStringValue,
 } from './main/sort-comparators.js';
-import {
-  formatShortInfoUptime,
-  pickFirstProperty,
-  pickNumericProperty,
-  shortInfoValueOrDash,
-} from './main/format-utils.js';
 import { makeRoleFilterKey, normalizeFilterProtocol } from './main/filter-helpers.js';
 import { tileToLat, tileToLon } from './main/tile-coords.js';
 import {
@@ -1020,14 +1018,15 @@ export function initializeApp(config) {
   }
 
   /**
-   * Create a minimal Leaflet tile layer that renders offline tiles from cache.
+   * Closure-bound dependency-injection bridge to
+   * ``createOfflineTileLayerImpl``.  The implementation in
+   * ``./main/offline-tile-layer.js`` is dependency-free so it can be unit
+   * tested standalone; this shim feeds it the Leaflet global from
+   * ``initializeApp``'s closure.  **Do not inline** — keeping the wrapper
+   * preserves Leaflet-as-parameter so tests can pass a fake.
    *
-   * @returns {L.GridLayer} Configured tile layer instance.
-   */
-  /**
-   * Closure-bound bridge to ``createOfflineTileLayerImpl`` that injects the
-   * Leaflet global only when available.  Returns ``null`` when Leaflet is
-   * absent to preserve the original semantics.
+   * Returns ``null`` when Leaflet is absent to preserve the original
+   * semantics.
    *
    * @returns {Object|null} Configured Leaflet ``GridLayer`` or ``null``.
    */
@@ -2995,8 +2994,13 @@ export function initializeApp(config) {
   }
 
   /**
-   * Closure-bound bridge to ``fetchMessagesImpl`` that injects the dashboard's
-   * chat-enabled flag and message-limit normaliser.
+   * Closure-bound dependency-injection bridge to ``fetchMessagesImpl``.  The
+   * implementation in ``./main/data-fetchers.js`` is dependency-free so it
+   * can be unit tested standalone; this shim feeds it the dashboard's
+   * ``CHAT_ENABLED`` flag and ``normaliseMessageLimit`` from
+   * ``initializeApp``'s closure.  **Do not inline** — keeping the wrapper
+   * preserves the chat-enabled and limit-normalisation flags as injected
+   * dependencies so the underlying fetcher remains pure.
    *
    * @param {number} [limit=MESSAGE_LIMIT] Requested limit.
    * @param {{ encrypted?: boolean, since?: number }} [options] Optional retrieval flags.
