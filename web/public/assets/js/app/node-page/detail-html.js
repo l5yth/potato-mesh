@@ -23,7 +23,8 @@
 import { escapeHtml } from '../utils.js';
 import { protocolIconPrefixHtml } from '../protocol-helpers.js';
 import { stringOrNull } from '../value-helpers.js';
-import { renderRoleAwareBadge, renderNeighborGroups } from './neighbor-rendering.js';
+import { renderRoleAwareBadge } from './badge.js';
+import { renderNeighborGroups } from './neighbor-rendering.js';
 import { renderSingleNodeTable } from './single-node-table.js';
 import { renderTelemetryCharts } from './telemetry-charts.js';
 import { renderMessages } from './messages.js';

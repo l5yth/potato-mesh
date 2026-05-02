@@ -46,6 +46,7 @@ import {
 import {
   buildNeighborRoleIndex,
   cloneRoleIndex,
+  fetchNodeDetailsIntoIndex,
   lookupNeighborDetails,
   lookupRole,
   normalizeNodeId,
@@ -54,8 +55,11 @@ import {
 } from './node-page/role-index.js';
 import {
   categoriseNeighbors,
+  renderNeighborBadge,
+  renderNeighborGroup,
   renderNeighborGroups,
 } from './node-page/neighbor-rendering.js';
+import { renderRoleAwareBadge } from './node-page/badge.js';
 import { renderSingleNodeTable } from './node-page/single-node-table.js';
 import { renderTelemetryCharts } from './node-page/telemetry-charts.js';
 import { renderMessages } from './node-page/messages.js';
@@ -110,10 +114,14 @@ export const __testUtils = {
   lookupNeighborDetails,
   seedNeighborRoleIndex,
   buildNeighborRoleIndex,
+  fetchNodeDetailsIntoIndex,
   collectTraceNodeFetchMap,
   buildTraceRoleIndex,
   categoriseNeighbors,
+  renderNeighborBadge,
+  renderNeighborGroup,
   renderNeighborGroups,
+  renderRoleAwareBadge,
   renderSingleNodeTable,
   classifySnapshot,
   renderTelemetryCharts,

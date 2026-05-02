@@ -24,6 +24,7 @@ import { escapeHtml } from '../utils.js';
 import { formatSnr } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { lookupNeighborDetails, lookupRole } from './role-index.js';
+import { renderRoleAwareBadge } from './badge.js';
 
 /**
  * Determine whether a neighbour record references the current node.
@@ -79,67 +80,6 @@ export function categoriseNeighbors(node, neighbors) {
     }
   });
   return { heardBy, weHear };
-}
-
-/**
- * Render a short-name badge with consistent role-aware styling.
- *
- * @param {Function} renderShortHtml Badge rendering implementation.
- * @param {{
- *   shortName?: string|null,
- *   longName?: string|null,
- *   role?: string|null,
- *   identifier?: string|null,
- *   numericId?: number|null,
- *   source?: Object|null,
- * }} payload Badge rendering payload.
- * @returns {string} HTML snippet describing the badge.
- */
-export function renderRoleAwareBadge(renderShortHtml, {
-  shortName = null,
-  longName = null,
-  role = null,
-  identifier = null,
-  numericId = null,
-  source = null,
-} = {}) {
-  const resolvedIdentifier = stringOrNull(identifier);
-  let resolvedShort = stringOrNull(shortName);
-  const resolvedLong = stringOrNull(longName);
-  const resolvedRole = stringOrNull(role) ?? 'CLIENT';
-  const resolvedNumericId = numberOrNull(numericId);
-  let fallbackShort = resolvedShort;
-  if (!fallbackShort && resolvedIdentifier) {
-    const trimmed = resolvedIdentifier.replace(/^!+/, '');
-    fallbackShort = trimmed.slice(-4).toUpperCase();
-  }
-  if (!fallbackShort) {
-    fallbackShort = '?';
-  }
-
-  const badgeSource = source && typeof source === 'object' ? { ...source } : {};
-  if (resolvedIdentifier) {
-    if (!badgeSource.node_id) badgeSource.node_id = resolvedIdentifier;
-    if (!badgeSource.nodeId) badgeSource.nodeId = resolvedIdentifier;
-  }
-  if (resolvedNumericId != null) {
-    if (!badgeSource.node_num) badgeSource.node_num = resolvedNumericId;
-    if (!badgeSource.nodeNum) badgeSource.nodeNum = resolvedNumericId;
-  }
-  if (resolvedShort) {
-    if (!badgeSource.short_name) badgeSource.short_name = resolvedShort;
-    if (!badgeSource.shortName) badgeSource.shortName = resolvedShort;
-  }
-  if (resolvedLong) {
-    if (!badgeSource.long_name) badgeSource.long_name = resolvedLong;
-    if (!badgeSource.longName) badgeSource.longName = resolvedLong;
-  }
-  badgeSource.role = badgeSource.role ?? resolvedRole;
-
-  if (typeof renderShortHtml === 'function') {
-    return renderShortHtml(resolvedShort ?? fallbackShort, resolvedRole, resolvedLong, badgeSource);
-  }
-  return `<span class="short-name">${escapeHtml(resolvedShort ?? fallbackShort)}</span>`;
 }
 
 /**

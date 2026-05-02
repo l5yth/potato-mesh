@@ -28,7 +28,7 @@ import {
   normalizeNodeId,
   registerRoleCandidate,
 } from './role-index.js';
-import { renderRoleAwareBadge } from './neighbor-rendering.js';
+import { renderRoleAwareBadge } from './badge.js';
 
 /**
  * Normalise a trace node reference into identifier and numeric forms.

@@ -88,9 +88,8 @@ export function registerRoleCandidate(
   }
 
   const applyDetails = (existing, keyType) => {
-    const current = existing instanceof Map && (keyType === 'id' ? idKey : numKey) != null
-      ? existing.get(keyType === 'id' ? idKey : numKey)
-      : null;
+    const key = keyType === 'id' ? idKey : numKey;
+    const current = key != null ? existing.get(key) : null;
     const merged = current && typeof current === 'object' ? { ...current } : {};
     if (resolvedRole && !merged.role) merged.role = resolvedRole;
     if (resolvedShort && !merged.shortName) merged.shortName = resolvedShort;
@@ -290,6 +289,11 @@ export function seedNeighborRoleIndex(index, neighbors) {
 /**
  * Fetch node metadata for the supplied identifiers and merge it into the role index.
  *
+ * Concurrency is bounded by {@link NEIGHBOR_ROLE_FETCH_CONCURRENCY}: a fixed
+ * pool of worker promises iterates a shared queue, and each worker only starts
+ * its next request once the previous one settles.  This keeps at most N
+ * requests in flight even when ``fetchIdMap`` contains hundreds of entries.
+ *
  * @param {{byId: Map<string, string>, byNum: Map<number, string>, detailsById: Map<string, Object>, detailsByNum: Map<number, Object>}} index Role index maps.
  * @param {Map<string, *>} fetchIdMap Mapping of normalized identifiers to raw fetch identifiers.
  * @param {Function} fetchImpl Fetch implementation.
@@ -304,44 +308,45 @@ export async function fetchNodeDetailsIntoIndex(index, fetchIdMap, fetchImpl, co
   if (typeof fetchFn !== 'function') {
     return;
   }
-  const tasks = [];
-  for (const [, raw] of fetchIdMap.entries()) {
-    const task = (async () => {
-      try {
-        const response = await fetchFn(`/api/nodes/${encodeURIComponent(raw)}`, DEFAULT_FETCH_OPTIONS);
-        if (response.status === 404) {
-          return;
-        }
-        if (!response.ok) {
-          throw new Error(`Failed to load node information for ${raw} (HTTP ${response.status})`);
-        }
-        const payload = await response.json();
-        registerRoleCandidate(index, {
-          identifier:
-            payload?.node_id
-            ?? payload?.nodeId
-            ?? payload?.id
-            ?? raw,
-          numericId: payload?.node_num ?? payload?.nodeNum ?? payload?.num ?? null,
-          role: payload?.role ?? payload?.node_role ?? payload?.nodeRole ?? null,
-          shortName: payload?.short_name ?? payload?.shortName ?? null,
-          longName: payload?.long_name ?? payload?.longName ?? null,
-        });
-      } catch (error) {
-        console.warn(`Failed to resolve ${contextLabel}`, error);
+  const queue = Array.from(fetchIdMap.values());
+  if (queue.length === 0) return;
+
+  const fetchOne = async raw => {
+    try {
+      const response = await fetchFn(`/api/nodes/${encodeURIComponent(raw)}`, DEFAULT_FETCH_OPTIONS);
+      if (response.status === 404) {
+        return;
       }
-    })();
-    tasks.push(task);
-  }
-  if (tasks.length === 0) return;
-  const batches = [];
-  for (let i = 0; i < tasks.length; i += NEIGHBOR_ROLE_FETCH_CONCURRENCY) {
-    batches.push(tasks.slice(i, i + NEIGHBOR_ROLE_FETCH_CONCURRENCY));
-  }
-  for (const batch of batches) {
-    // eslint-disable-next-line no-await-in-loop
-    await Promise.all(batch);
-  }
+      if (!response.ok) {
+        throw new Error(`Failed to load node information for ${raw} (HTTP ${response.status})`);
+      }
+      const payload = await response.json();
+      registerRoleCandidate(index, {
+        identifier:
+          payload?.node_id
+          ?? payload?.nodeId
+          ?? payload?.id
+          ?? raw,
+        numericId: payload?.node_num ?? payload?.nodeNum ?? payload?.num ?? null,
+        role: payload?.role ?? payload?.node_role ?? payload?.nodeRole ?? null,
+        shortName: payload?.short_name ?? payload?.shortName ?? null,
+        longName: payload?.long_name ?? payload?.longName ?? null,
+      });
+    } catch (error) {
+      console.warn(`Failed to resolve ${contextLabel}`, error);
+    }
+  };
+
+  const workerCount = Math.min(NEIGHBOR_ROLE_FETCH_CONCURRENCY, queue.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (queue.length > 0) {
+      const raw = queue.shift();
+      if (raw === undefined) return;
+      // eslint-disable-next-line no-await-in-loop
+      await fetchOne(raw);
+    }
+  });
+  await Promise.all(workers);
 }
 
 /**

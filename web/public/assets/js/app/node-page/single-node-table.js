@@ -38,7 +38,7 @@ import {
   formatVoltage,
 } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
-import { renderRoleAwareBadge } from './neighbor-rendering.js';
+import { renderRoleAwareBadge } from './badge.js';
 
 /**
  * Render a condensed node table containing a single entry.

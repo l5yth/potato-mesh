@@ -32,7 +32,7 @@ import { buildMessageIndex } from '../message-replies.js';
 import { renderChatEntryContent } from '../chat-entry-renderer.js';
 import { formatMessageTimestamp } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
-import { renderRoleAwareBadge } from './neighbor-rendering.js';
+import { renderRoleAwareBadge } from './badge.js';
 
 /**
  * Render the emoji HTML fragment used by the chat entry renderer.
