@@ -79,6 +79,7 @@ import {
   renderTelemetryChart,
 } from './node-page-charts.js';
 import { fetchMessages, fetchNodesById, fetchTracesForNode } from './node-page-data.js';
+import { numberOrNull, stringOrNull } from './value-helpers.js';
 
 const DEFAULT_FETCH_OPTIONS = Object.freeze({ cache: 'default' });
 const MESSAGE_LIMIT = 50;
@@ -89,33 +90,6 @@ const RENDER_WAIT_TIMEOUT_MS = 500;
  *  overwhelming the server with bursts of concurrent requests. */
 const NEIGHBOR_ROLE_FETCH_CONCURRENCY = 4;
 const TRACE_LIMIT = 200;
-
-/**
- * Convert a candidate value into a trimmed string.
- *
- * @param {*} value Raw value.
- * @returns {string|null} Trimmed string or ``null``.
- */
-function stringOrNull(value) {
-  if (value == null) return null;
-  const str = String(value).trim();
-  return str.length === 0 ? null : str;
-}
-
-/**
- * Attempt to coerce a value into a finite number.
- *
- * @param {*} value Raw value.
- * @returns {number|null} Finite number or ``null``.
- */
-function numberOrNull(value) {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (value == null || value === '') return null;
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
 
 /**
  * Render the telemetry charts for the supplied node when telemetry snapshots
