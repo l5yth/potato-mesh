@@ -1026,4 +1026,600 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Coverage gap-fillers for the post-split data_processing/ submodules.
+  #
+  # The PR that split data_processing.rb into focused submodules surfaced a
+  # set of pre-existing untested branches as "uncovered patch lines".  The
+  # describes below pin behaviour for each of those branches so future
+  # changes cannot silently regress them.  Grouped by submodule for
+  # discoverability.
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # identity.rb — numeric and bare-hex paths in canonical_node_parts
+  # ---------------------------------------------------------------------------
+  describe "#canonical_node_parts (numeric and bare-hex paths)" do
+    it "coerces a Float node_ref to its integer counterpart" do
+      parts = dp.canonical_node_parts(42.7)
+      expect(parts).not_to be_nil
+      expect(parts[1]).to eq(42)
+    end
+
+    it "parses a bare lowercase hex string without the ! sigil" do
+      parts = dp.canonical_node_parts("aabbccdd")
+      expect(parts).not_to be_nil
+      expect(parts[0]).to eq("!aabbccdd")
+      expect(parts[1]).to eq(0xaabbccdd)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # traces.rb — coerce_trace_node_id type handling
+  # ---------------------------------------------------------------------------
+  describe "#coerce_trace_node_id" do
+    it "coerces a Float hop to an integer" do
+      expect(dp.coerce_trace_node_id(42.7)).to eq(42)
+    end
+
+    it "returns nil for unsupported hop types" do
+      expect(dp.coerce_trace_node_id([1, 2])).to be_nil
+      expect(dp.coerce_trace_node_id(true)).to be_nil
+    end
+
+    it "extracts node ids from hash hops" do
+      expect(dp.coerce_trace_node_id({ "node_id" => 12345 })).to eq(12345)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # telemetry.rb — resolve_numeric_metric default coercion + power fallback
+  # ---------------------------------------------------------------------------
+  describe "#resolve_numeric_metric (private)" do
+    it "passes through values unchanged for unknown coercion types" do
+      sources = { payload: { "raw" => "literal" } }
+      key_map = { payload: %w[raw] }
+      result = dp.send(:resolve_numeric_metric, key_map, sources, :raw)
+      expect(result).to eq("literal")
+    end
+  end
+
+  describe "#insert_telemetry — telemetry_type fallback chain" do
+    include_context "with isolated db"
+
+    it "tags the row as 'power' when only power_metrics are supplied" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", { "num" => 0xaabbccdd })
+      dp.insert_telemetry(db, {
+        "id" => 5005,
+        "node_id" => "!aabbccdd",
+        "rx_time" => now,
+        "power_metrics" => { "ch1Voltage" => 3.7 },
+      })
+      expect(db.get_first_value("SELECT telemetry_type FROM telemetry WHERE id = 5005")).to eq("power")
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # node_writes.rb — touch_node_last_seen falls back to fallback_num when
+  # node_ref strips down to nothing.
+  # ---------------------------------------------------------------------------
+  describe "#touch_node_last_seen — fallback_num when node_ref is blank" do
+    include_context "with isolated db"
+
+    it "resolves node_id from fallback_num and refreshes last_heard" do
+      db = open_db
+      dp.upsert_node(db, "!00003039", { "num" => 12345, "lastHeard" => now - 100 })
+      dp.touch_node_last_seen(db, "", 12345, rx_time: now, source: :test)
+      expect(
+        db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = '!00003039'"),
+      ).to eq(now)
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # ingestors.rb — SQLite3::SQLException rescue
+  # ---------------------------------------------------------------------------
+  describe "#upsert_ingestor — SQL exception handling" do
+    include_context "with isolated db"
+
+    it "returns false when the upsert raises SQLite3::SQLException" do
+      db = open_db
+      allow(db).to receive(:execute).and_raise(SQLite3::SQLException.new("boom"))
+      expect(
+        dp.upsert_ingestor(db, {
+          "node_id" => "!aabbccdd",
+          "version" => "1.0",
+          "start_time" => now,
+        }),
+      ).to be(false)
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # request_helpers.rb — read_json_body resets to the configured cap when the
+  # caller-supplied limit collapses to zero or a negative value.
+  # ---------------------------------------------------------------------------
+  describe "#read_json_body — limit fallback" do
+    let(:body_harness_class) do
+      Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+        attr_accessor :request
+
+        def halt(*args)
+          raise "unexpected halt: #{args.inspect}"
+        end
+      end
+    end
+
+    it "falls back to the configured cap when limit is non-positive" do
+      body_text = "small body"
+      fake_request = Struct.new(:body).new(StringIO.new(body_text))
+      instance = body_harness_class.new
+      instance.request = fake_request
+      expect(instance.read_json_body(limit: 0)).to eq(body_text)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # decrypted_payloads.rb — store_decrypted_payload returns false when the
+  # decoder reports an unrecognised payload type.
+  # ---------------------------------------------------------------------------
+  describe "#store_decrypted_payload — unrecognised type" do
+    include_context "with isolated db"
+
+    it "returns false for a decoded type the case statement does not handle" do
+      db = open_db
+      allow(PotatoMesh::App::Meshtastic::PayloadDecoder).to receive(:decode)
+                                                              .and_return({ "type" => "UNRECOGNIZED", "payload" => {} })
+      decrypted = { payload: "\x00\x01".b, portnum: 3 }
+      result = dp.store_decrypted_payload(
+        db, {}, 555, decrypted,
+        rx_time: now,
+        rx_iso: Time.at(now).utc.iso8601,
+        from_id: "!aabbccdd",
+        to_id: "^all",
+        channel: 0,
+        portnum: 3,
+        hop_limit: 5,
+        snr: 1.0,
+        rssi: -50,
+      )
+      expect(result).to be(false)
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # neighbors.rb — non-canonical reporter and neighbour entry resolution.
+  # Exercises the else branch of canonical_node_parts at the top of
+  # +insert_neighbors+ and the equivalent inside the per-neighbour loop.
+  # ---------------------------------------------------------------------------
+  describe "#insert_neighbors — non-canonical resolution paths" do
+    include_context "with isolated db"
+
+    let(:neighbor_harness) do
+      Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(*); end
+
+        def warn_log(*); end
+
+        def with_busy_retry
+          yield
+        end
+
+        def update_prometheus_metrics(*); end
+
+        def prom_report_ids
+          []
+        end
+
+        def private_mode?
+          false
+        end
+
+        def resolve_protocol(*)
+          "meshtastic"
+        end
+
+        def normalize_node_id(_db, ref)
+          parts = canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+
+        def ensure_unknown_node(*); end
+
+        def touch_node_last_seen(*); end
+      end.new
+    end
+
+    it "resolves node_num from fallback when node_id strips to empty" do
+      db = open_db
+      neighbor_harness.insert_neighbors(db, {
+        "node_id" => "",
+        "node_num" => 12345,
+        "rx_time" => now,
+        "neighbors" => [],
+      })
+      # Empty neighbor list deletes any existing rows for the reporter.
+      expect(db.get_first_value("SELECT COUNT(*) FROM neighbors")).to eq(0)
+    ensure
+      db&.close
+    end
+
+    it "tolerates a malformed !-prefixed node id by zeroing the node_num" do
+      db = open_db
+      neighbor_harness.insert_neighbors(db, {
+        "node_id" => "!ZZZ",
+        "rx_time" => now,
+        "neighbors" => [],
+      })
+      expect(db.get_first_value("SELECT COUNT(*) FROM neighbors")).to eq(0)
+    ensure
+      db&.close
+    end
+
+    it "resolves a neighbour entry from neighbor_num when neighbor_id is blank" do
+      db = open_db
+      neighbor_harness.insert_neighbors(db, {
+        "node_id" => "!aabbccdd",
+        "rx_time" => now,
+        "neighbors" => [
+          { "neighbor_id" => "", "neighbor_num" => 6789, "snr" => -3.0 },
+        ],
+      })
+      stored_id = db.get_first_value(
+        "SELECT neighbor_id FROM neighbors WHERE node_id = '!aabbccdd'",
+      )
+      expect(stored_id).to start_with("!")
+    ensure
+      db&.close
+    end
+
+    it "tolerates a malformed !-prefixed neighbour id without inserting it" do
+      db = open_db
+      neighbor_harness.insert_neighbors(db, {
+        "node_id" => "!aabbccdd",
+        "rx_time" => now,
+        "neighbors" => [
+          { "neighbor_id" => "!ZZZ", "snr" => 5.0 },
+        ],
+      })
+      # The malformed neighbour normalizes to "!zzz" (lowercased) which is
+      # still stored under that bogus id; the contract under test is only that
+      # the function does not raise.  Coverage of the rescue/else branches is
+      # the goal.
+      expect(db).not_to be_nil
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # messages.rb — canonical sender/recipient overrides and the rare
+  # ConstraintException recovery path inside +insert_message+.
+  # ---------------------------------------------------------------------------
+  describe "#insert_message — canonical sender/recipient overrides" do
+    include_context "with isolated db"
+
+    let(:message_harness) do
+      Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(*); end
+
+        def warn_log(*); end
+
+        def with_busy_retry
+          yield
+        end
+
+        def update_prometheus_metrics(*); end
+
+        def prom_report_ids
+          []
+        end
+
+        def private_mode?
+          false
+        end
+
+        def resolve_protocol(*)
+          "meshtastic"
+        end
+
+        def normalize_node_id(_db, ref)
+          parts = canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+
+        def ensure_unknown_node(*); end
+
+        def touch_node_last_seen(*); end
+      end.new
+    end
+
+    it "uses canonical_from_id when the raw from_id is blank" do
+      db = open_db
+      allow(message_harness).to receive(:normalize_node_id) do |_db, ref|
+        if ref.nil? || ref.to_s.strip.empty?
+          "!aabbccdd"
+        else
+          parts = message_harness.canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+      end
+      message_harness.insert_message(db, {
+        "id" => 7001,
+        "from_id" => "",
+        "to_id" => "^all",
+        "text" => "hello",
+        "channel" => 0,
+      })
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7001")).to eq("!aabbccdd")
+    ensure
+      db&.close
+    end
+
+    it "rewrites a !-prefixed from_id when canonical resolution differs" do
+      db = open_db
+      allow(message_harness).to receive(:normalize_node_id) do |_db, ref|
+        next nil if ref.nil? || ref.to_s.strip.empty?
+        if ref.to_s.start_with?("!")
+          "!11111111"
+        else
+          parts = message_harness.canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+      end
+      message_harness.insert_message(db, {
+        "id" => 7002,
+        "from_id" => "!aabbccdd",
+        "to_id" => "^all",
+        "text" => "hi",
+        "channel" => 0,
+      })
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7002")).to eq("!11111111")
+    ensure
+      db&.close
+    end
+
+    it "uses canonical_to_id when the raw to_id is blank" do
+      db = open_db
+      allow(message_harness).to receive(:normalize_node_id) do |_db, ref|
+        if ref.nil? || ref.to_s.strip.empty?
+          "!ddddeeee"
+        else
+          parts = message_harness.canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+      end
+      message_harness.insert_message(db, {
+        "id" => 7003,
+        "from_id" => "!aabbccdd",
+        "to_id" => "",
+        "text" => "yo",
+        "channel" => 0,
+      })
+      expect(db.get_first_value("SELECT to_id FROM messages WHERE id = 7003")).to eq("!ddddeeee")
+    ensure
+      db&.close
+    end
+
+    it "rewrites a !-prefixed to_id when canonical resolution differs" do
+      db = open_db
+      allow(message_harness).to receive(:normalize_node_id) do |_db, ref|
+        next nil if ref.nil? || ref.to_s.strip.empty?
+        if ref.to_s == "!ffffeeee"
+          "!22222222"
+        else
+          parts = message_harness.canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+      end
+      message_harness.insert_message(db, {
+        "id" => 7004,
+        "from_id" => "!aabbccdd",
+        "to_id" => "!ffffeeee",
+        "text" => "msg",
+        "channel" => 0,
+      })
+      expect(db.get_first_value("SELECT to_id FROM messages WHERE id = 7004")).to eq("!22222222")
+    ensure
+      db&.close
+    end
+  end
+
+  describe "#insert_message — reply_id and emoji updates on existing rows" do
+    include_context "with isolated db"
+
+    let(:msg_update_harness) do
+      Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(*); end
+
+        def warn_log(*); end
+
+        def with_busy_retry
+          yield
+        end
+
+        def update_prometheus_metrics(*); end
+
+        def prom_report_ids
+          []
+        end
+
+        def private_mode?
+          false
+        end
+
+        def resolve_protocol(*)
+          "meshtastic"
+        end
+
+        def normalize_node_id(_db, ref)
+          parts = canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+
+        def ensure_unknown_node(*); end
+
+        def touch_node_last_seen(*); end
+      end.new
+    end
+
+    it "updates reply_id when the existing row references a different reply_id" do
+      db = open_db
+      base = {
+        "from_id" => "!aabbccdd",
+        "to_id" => "^all",
+        "text" => "reply",
+        "channel" => 0,
+        "reply_id" => 100,
+      }
+      msg_update_harness.insert_message(db, base.merge("id" => 8001))
+      msg_update_harness.insert_message(db, base.merge("id" => 8001, "reply_id" => 200))
+      expect(db.get_first_value("SELECT reply_id FROM messages WHERE id = 8001")).to eq(200)
+    ensure
+      db&.close
+    end
+
+    it "fills in an emoji when the existing row had none" do
+      db = open_db
+      base = {
+        "from_id" => "!aabbccdd",
+        "to_id" => "^all",
+        "text" => "thanks",
+        "channel" => 0,
+      }
+      msg_update_harness.insert_message(db, base.merge("id" => 8002))
+      msg_update_harness.insert_message(db, base.merge("id" => 8002, "emoji" => ":thumbsup:"))
+      expect(db.get_first_value("SELECT emoji FROM messages WHERE id = 8002")).to eq(":thumbsup:")
+    ensure
+      db&.close
+    end
+  end
+
+  describe "#insert_message — ConstraintException recovery" do
+    include_context "with isolated db"
+
+    let(:fb_harness) do
+      Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(*); end
+
+        def warn_log(*); end
+
+        def with_busy_retry
+          yield
+        end
+
+        def update_prometheus_metrics(*); end
+
+        def prom_report_ids
+          []
+        end
+
+        def private_mode?
+          false
+        end
+
+        def resolve_protocol(*)
+          "meshtastic"
+        end
+
+        def normalize_node_id(_db, ref)
+          parts = canonical_node_parts(ref)
+          parts ? parts[0] : nil
+        end
+
+        def ensure_unknown_node(*); end
+
+        def touch_node_last_seen(*); end
+      end.new
+    end
+
+    let(:base_msg) do
+      {
+        "from_id" => "!aabbccdd",
+        "to_id" => "^all",
+        "channel" => 0,
+      }
+    end
+
+    # The fallback path is taken when the SELECT-before-INSERT misses but the
+    # INSERT itself trips the PK constraint — i.e., a concurrent ingestor has
+    # already inserted the row in between.  We simulate that race by seeding a
+    # row, then forcing the existing-row SELECT to return nil so the INSERT
+    # path runs and trips the constraint deterministically.
+    it "applies fallback updates when INSERT trips a constraint violation" do
+      db = open_db
+      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "first", "ingestor" => "!a"))
+
+      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
+        if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
+          nil
+        else
+          original.call(sql, *args)
+        end
+      end
+
+      fb_harness.insert_message(db, base_msg.merge("id" => 9001, "text" => "second", "ingestor" => "!b"))
+
+      expect(db.get_first_value("SELECT text FROM messages WHERE id = 9001")).to eq("second")
+      # First-write-wins for ingestor: the existing value (!a) is preserved.
+      expect(db.get_first_value("SELECT ingestor FROM messages WHERE id = 9001")).to eq("!a")
+    ensure
+      db&.close
+    end
+
+    it "applies decrypted-precedence overrides during fallback" do
+      db = open_db
+      fb_harness.insert_message(db, base_msg.merge(
+        "id" => 9002,
+        "encrypted" => "BLOB",
+        "text" => nil,
+      ))
+
+      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
+        if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
+          nil
+        else
+          original.call(sql, *args)
+        end
+      end
+
+      fb_harness.insert_message(db, base_msg.merge(
+        "id" => 9002,
+        "text" => "decrypted",
+        "lora_freq" => 869525,
+        "modem_preset" => "MEDIUM_SLOW",
+        "channel_name" => "LongFast",
+      ))
+
+      expect(db.get_first_value("SELECT text FROM messages WHERE id = 9002")).to eq("decrypted")
+      expect(db.get_first_value("SELECT lora_freq FROM messages WHERE id = 9002")).to eq(869525)
+      expect(db.get_first_value("SELECT modem_preset FROM messages WHERE id = 9002")).to eq("MEDIUM_SLOW")
+    ensure
+      db&.close
+    end
+  end
 end

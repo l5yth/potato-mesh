@@ -42,9 +42,13 @@ const {
   lookupNeighborDetails,
   seedNeighborRoleIndex,
   buildNeighborRoleIndex,
+  fetchNodeDetailsIntoIndex,
+  renderRoleAwareBadge,
   collectTraceNodeFetchMap,
   buildTraceRoleIndex,
   categoriseNeighbors,
+  renderNeighborBadge,
+  renderNeighborGroup,
   renderNeighborGroups,
   renderSingleNodeTable,
   classifySnapshot,
@@ -1256,4 +1260,246 @@ test('initializeNodeDetailPage handles missing reference payloads', async () => 
   const result = await initializeNodeDetailPage({ document: documentStub, renderShortHtml });
   assert.equal(result, false);
   assert.equal(element.innerHTML.includes('Node reference unavailable'), true);
+});
+
+test('parseReferencePayload returns null for blank or unparseable input', () => {
+  assert.equal(parseReferencePayload(null), null);
+  assert.equal(parseReferencePayload('   '), null);
+  assert.equal(parseReferencePayload('not-json'), null);
+  assert.equal(parseReferencePayload(JSON.stringify(42)), null);
+  assert.deepEqual(parseReferencePayload(JSON.stringify({ nodeId: '!a' })), { nodeId: '!a' });
+});
+
+test('initializeNodeDetailPage rejects invalid documents and missing identifiers', async () => {
+  await assert.rejects(
+    () => initializeNodeDetailPage({ document: null, fetchImpl: async () => ({}) }),
+    /document with querySelector/,
+  );
+
+  const root = { dataset: { nodeReference: JSON.stringify({}) }, innerHTML: '' };
+  const documentStub = {
+    querySelector: selector => (selector === '#nodeDetail' ? root : null),
+  };
+  const result = await initializeNodeDetailPage({
+    document: documentStub,
+    fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+    renderShortHtml: short => `<span>${short}</span>`,
+  });
+  assert.equal(result, false);
+  assert.equal(root.innerHTML.includes('Node identifier missing'), true);
+});
+
+test('renderRoleAwareBadge falls back when both shortName and identifier are absent', () => {
+  const html = renderRoleAwareBadge((short, role) => `<b data-role="${role}">${short}</b>`, {});
+  assert.equal(html, '<b data-role="CLIENT">?</b>');
+});
+
+test('renderRoleAwareBadge invokes default span renderer when renderShortHtml is missing', () => {
+  const html = renderRoleAwareBadge(null, { shortName: 'AB&CD' });
+  assert.equal(html.includes('class="short-name"'), true);
+  assert.equal(html.includes('AB&amp;CD'), true);
+});
+
+test('seedNeighborRoleIndex tolerates non-array and non-object entries', () => {
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+  assert.equal(seedNeighborRoleIndex(index, null).size, 0);
+  assert.equal(seedNeighborRoleIndex(index, 'not-an-array').size, 0);
+  assert.equal(seedNeighborRoleIndex(index, [null, 7, 'string']).size, 0);
+});
+
+test('seedNeighborRoleIndex hydrates roles from nested neighbor and node objects', () => {
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+  seedNeighborRoleIndex(index, [
+    {
+      neighbor: { node_id: '!ally', node_num: 11, role: 'ROUTER', short_name: 'ALLY', long_name: 'Ally Long' },
+      node: { node_id: '!self', node_num: 22, role: 'CLIENT', short_name: 'SELF', long_name: 'Self Long' },
+    },
+  ]);
+  assert.equal(index.byId.get('!ally'), 'ROUTER');
+  assert.equal(index.byId.get('!self'), 'CLIENT');
+  assert.equal(index.byNum.get(11), 'ROUTER');
+  assert.equal(index.byNum.get(22), 'CLIENT');
+  const allyDetails = lookupNeighborDetails(index, { identifier: '!ally' });
+  assert.equal(allyDetails.shortName, 'ALLY');
+  assert.equal(allyDetails.longName, 'Ally Long');
+});
+
+test('fetchNodeDetailsIntoIndex skips work when no fetch is reachable', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = undefined;
+  try {
+    const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+    await fetchNodeDetailsIntoIndex(index, new Map([['x', 'x']]), undefined);
+    assert.equal(index.byId.size, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('fetchNodeDetailsIntoIndex returns immediately for empty or non-Map inputs', async () => {
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; return { ok: true, json: async () => ({}) }; };
+  await fetchNodeDetailsIntoIndex(index, null, fetchImpl);
+  await fetchNodeDetailsIntoIndex(index, new Map(), fetchImpl);
+  assert.equal(calls, 0);
+});
+
+test('fetchNodeDetailsIntoIndex silently ignores 404 responses without registering', async () => {
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+  const fetchImpl = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  await fetchNodeDetailsIntoIndex(index, new Map([['gone', 'gone']]), fetchImpl);
+  assert.equal(index.byId.size, 0);
+});
+
+test('renderSingleNodeTable returns empty string for invalid inputs', () => {
+  assert.equal(renderSingleNodeTable(null, () => ''), '');
+  assert.equal(renderSingleNodeTable({ nodeId: '!a' }, null), '');
+  assert.equal(renderSingleNodeTable('string-not-object', () => ''), '');
+});
+
+test('renderTelemetryCharts returns empty string when no entries fall in the window', () => {
+  const out = renderTelemetryCharts(makeAggregatedNode([
+    { timestamp: '1970-01-01T00:00:00Z' },
+  ]), { now: () => Date.UTC(2026, 0, 1) });
+  assert.equal(out, '');
+});
+
+test('renderTelemetryCharts returns empty string when chart specs produce no markup', () => {
+  // Aggregated snapshot with valid timestamp but no telemetry fields any chart
+  // can plot — every chart spec filters its empty series and returns ''.
+  const node = makeAggregatedNode([
+    { rx_time: CHART_NOW_SECONDS - 60, telemetry_type: 'device' },
+  ]);
+  const out = renderTelemetryCharts(node, { nowMs: CHART_NOW_MS });
+  assert.equal(out, '');
+});
+
+test('renderTracePath returns empty string when fewer than two badges render', () => {
+  const renderShortHtml = short => `<span>${short}</span>`;
+  // Single-element path → items.length < 2 → empty result.
+  assert.equal(renderTracePath(['!only'], renderShortHtml), '');
+  // Two refs but the renderer yields blanks → filter strips them → items.length < 2.
+  assert.equal(renderTracePath([{ identifier: '!a' }, { identifier: '!b' }], () => ''), '');
+});
+
+test('renderNeighborBadge returns empty string for invalid inputs', () => {
+  assert.equal(renderNeighborBadge(null, 'heardBy', () => ''), '');
+  assert.equal(renderNeighborBadge({ neighbor_id: '!a' }, 'weHear', null), '');
+  // Entry without any identifier in keys → returns ''
+  assert.equal(renderNeighborBadge({ snr: 5 }, 'weHear', () => ''), '');
+});
+
+test('renderNeighborBadge merges role-index metadata into the source object', () => {
+  const source = {};
+  const entry = { neighbor_id: '!ally', neighbor: source };
+  const roleIndex = {
+    byId: new Map([['!ally', 'ROUTER']]),
+    byNum: new Map(),
+    detailsById: new Map([
+      ['!ally', { shortName: 'ALLY', longName: 'Ally Long', role: 'ROUTER' }],
+    ]),
+    detailsByNum: new Map(),
+  };
+  const renderShortHtml = (short, role, long, badgeSource) =>
+    `<b data-role="${role}" data-long="${long}" data-source-role="${badgeSource.role}">${short}</b>`;
+  const html = renderNeighborBadge(entry, 'weHear', renderShortHtml, roleIndex);
+  assert.match(html, /ALLY/);
+  assert.equal(source.short_name, 'ALLY');
+  assert.equal(source.long_name, 'Ally Long');
+  assert.equal(source.role, 'ROUTER');
+});
+
+test('renderNeighborBadge derives short name from identifier when no metadata is available', () => {
+  const html = renderNeighborBadge(
+    { neighbor_id: '!abcdef12' },
+    'weHear',
+    short => `<span>${short}</span>`,
+  );
+  // Last four hex chars of identifier, uppercased.
+  assert.equal(html, '<span>EF12</span>');
+});
+
+test('renderNeighborGroup skips entries that fail to render and returns empty when none survive', () => {
+  const renderShortHtml = (short, role) => `<span data-role="${role}">${short}</span>`;
+  // Two entries; only one yields a valid badge.
+  const html = renderNeighborGroup(
+    'Heard by',
+    [
+      { node_id: '!peer', node_short_name: 'PEER' },
+      { snr: 5 }, // no identifier → renderNeighborBadge returns '' → filtered out.
+    ],
+    'heardBy',
+    renderShortHtml,
+  );
+  assert.equal(html.includes('PEER'), true);
+  assert.equal(html.match(/<li>/g).length, 1);
+
+  // All entries fail → returns ''.
+  const empty = renderNeighborGroup('Heard by', [{ snr: 1 }, { snr: 2 }], 'heardBy', renderShortHtml);
+  assert.equal(empty, '');
+});
+
+test('renderTraceroutes returns empty string when no trace path renders content', () => {
+  const renderShortHtml = short => `<span>${short}</span>`;
+  // Each trace yields a single-hop path which renderTracePath rejects → no items remain.
+  assert.equal(renderTraceroutes([{ src: '!a', hops: [], dest: null }], renderShortHtml), '');
+});
+
+test('fetchNodeDetailHtml rejects non-object references', async () => {
+  await assert.rejects(() => fetchNodeDetailHtml(null), TypeError);
+  await assert.rejects(() => fetchNodeDetailHtml('not-an-object'), TypeError);
+});
+
+test('normalizeNodeReference returns null for non-object inputs and references missing both ids', () => {
+  const { normalizeNodeReference } = __testUtils;
+  assert.equal(normalizeNodeReference(null), null);
+  assert.equal(normalizeNodeReference('not-an-object'), null);
+  assert.equal(normalizeNodeReference({}), null);
+  assert.deepEqual(normalizeNodeReference({ nodeId: '!a' }), { nodeId: '!a', nodeNum: null });
+});
+
+test('fetchNodeDetailsIntoIndex warns and continues when a non-404 response fails', async () => {
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+  const fetchImpl = async () => ({ ok: false, status: 503, json: async () => ({}) });
+  const originalWarn = console.warn;
+  const messages = [];
+  console.warn = (...args) => messages.push(args[0]);
+  try {
+    await fetchNodeDetailsIntoIndex(index, new Map([['ouch', 'ouch']]), fetchImpl, 'unit-test');
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(index.byId.size, 0);
+  assert.equal(messages.some(msg => typeof msg === 'string' && msg.includes('unit-test')), true);
+});
+
+test('fetchNodeDetailsIntoIndex caps in-flight requests at NEIGHBOR_ROLE_FETCH_CONCURRENCY', async () => {
+  // Eight identifiers, four-wide pool: at most four fetches should be in flight.
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  const fetchIdMap = new Map(ids.map(id => [id, id]));
+  let inFlight = 0;
+  let peak = 0;
+  const release = [];
+  const fetchImpl = () => {
+    inFlight += 1;
+    if (inFlight > peak) peak = inFlight;
+    return new Promise(resolve => {
+      release.push(() => {
+        inFlight -= 1;
+        resolve({ ok: true, status: 200, json: async () => ({ node_id: '!stub', role: 'CLIENT' }) });
+      });
+    });
+  };
+  const index = { byId: new Map(), byNum: new Map(), detailsById: new Map(), detailsByNum: new Map() };
+  const work = fetchNodeDetailsIntoIndex(index, fetchIdMap, fetchImpl);
+  // Yield so the four workers reach their first await.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(peak, 4, `expected concurrency cap of 4, observed peak ${peak}`);
+  // Drain in two waves; the second wave only starts once the first releases.
+  release.splice(0, 4).forEach(fn => fn());
+  await new Promise(resolve => setImmediate(resolve));
+  release.splice(0).forEach(fn => fn());
+  await work;
+  assert.equal(peak, 4);
 });

@@ -1195,6 +1195,40 @@ def test_interface_close_is_idempotent():
     iface.close()  # must not raise
 
 
+def test_interface_close_swallows_runtime_error_from_loop():
+    """close() must swallow RuntimeError from loop.call_soon_threadsafe.
+
+    A race between the ``loop.is_closed()`` guard and the ``call_soon_threadsafe``
+    invocation can leave the loop closed by the time we schedule the stop, in
+    which case asyncio raises ``RuntimeError("Event loop is closed")``.  ``close()``
+    must absorb that error so callers can treat shutdown as best-effort.
+    """
+    iface = _MeshcoreInterface(target=None)
+
+    class _RacingLoop:
+        def is_closed(self):
+            return False
+
+        def call_soon_threadsafe(self, *_a, **_k):
+            raise RuntimeError("Event loop is closed")
+
+        def stop(self):  # accessed as ``loop.stop`` arg in the no-stop_event branch
+            return None
+
+    iface._loop = _RacingLoop()
+    iface._stop_event = types.SimpleNamespace(set=lambda: None)
+
+    iface.close()  # must not raise
+    assert iface.isConnected is False
+
+    # Same code path with stop_event=None exercises the loop.stop() branch.
+    iface2 = _MeshcoreInterface(target=None)
+    iface2._loop = _RacingLoop()
+    iface2._stop_event = None
+    iface2.close()  # must not raise
+    assert iface2.isConnected is False
+
+
 # ---------------------------------------------------------------------------
 # _derive_message_id
 # ---------------------------------------------------------------------------
@@ -1707,6 +1741,33 @@ def test_on_channel_msg_skips_empty_text(monkeypatch):
     assert captured == []
 
 
+def test_on_contact_msg_skips_when_text_or_sender_ts_missing(monkeypatch):
+    """on_contact_msg must early-return when text is empty or sender_ts is None.
+
+    Mirrors :func:`test_on_channel_msg_skips_empty_text` for direct messages so
+    that a malformed CONTACT_MSG_RECV event cannot enqueue an empty packet.
+    """
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    iface = _MeshcoreInterface(target=None)
+    iface.host_node_id = "!deadbeef"
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+
+    asyncio.run(hmap["CONTACT_MSG_RECV"](_FakeEvt({"sender_timestamp": 1, "text": ""})))
+    asyncio.run(hmap["CONTACT_MSG_RECV"](_FakeEvt({"text": "hi"})))  # missing ts
+    asyncio.run(hmap["CONTACT_MSG_RECV"](_FakeEvt({})))  # both missing
+
+    assert captured == []
+
+
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_connect_raises_on_timeout(monkeypatch):
     """connect() raises ConnectionError when connected_event is never signalled.
@@ -2047,6 +2108,68 @@ def test_process_self_info_queues_ingestor_heartbeat_before_upsert(monkeypatch):
         "heartbeat",
         "upsert",
     ], "Ingestor heartbeat must be queued before node upsert"
+
+
+def test_process_self_info_queues_position_when_advertised(monkeypatch):
+    """_process_self_info must POST to /api/positions when adv_lat/adv_lon are set.
+
+    Covers the host-node position branch: when the connected radio reports a
+    GPS-fixed advertisement in its SELF_INFO, the host's own position must be
+    forwarded to the web backend exactly once per heartbeat.
+    """
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        _mod._ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    stub = _make_stub_handlers_module()
+    stub.host_node_id = lambda: "!ingestor1"
+
+    payload = {
+        "public_key": "aabbccdd" + "00" * 28,
+        "name": "Host",
+        "adv_lat": 51.5,
+        "adv_lon": -0.1,
+    }
+    _process_self_info(payload, _MeshcoreInterface(target=None), stub)
+
+    position_posts = [p for r, p in posted if r == "/api/positions"]
+    assert len(position_posts) == 1
+    assert position_posts[0]["node_id"] == "!aabbccdd"
+    assert position_posts[0]["latitude"] == pytest.approx(51.5)
+    assert position_posts[0]["longitude"] == pytest.approx(-0.1)
+    assert position_posts[0]["ingestor"] == "!ingestor1"
+
+
+def test_process_self_info_skips_position_when_latlon_absent(monkeypatch):
+    """_process_self_info must not POST to /api/positions when lat/lon are absent."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        _mod._ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(route),
+    )
+
+    payload = {"public_key": "aabbccdd" + "00" * 28, "name": "Host"}
+    _process_self_info(
+        payload, _MeshcoreInterface(target=None), _make_stub_handlers_module()
+    )
+
+    assert "/api/positions" not in posted
 
 
 # ---------------------------------------------------------------------------
@@ -2974,6 +3097,47 @@ def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
         lambda *_a, severity=None, **_k: logged.append(severity),
     )
     fake_mod = _make_fake_meshcore_mod(fail_ensure_contacts=True)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+
+    connected_event, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+
+    assert connected_event.is_set()
+    assert error_holder[0] is None
+    assert "warning" in logged
+
+
+def test_run_meshcore_ensure_channel_names_failure_continues(monkeypatch):
+    """_ensure_channel_names raising must log a warning but not abort the connection.
+
+    The channel-name probe is best-effort: even when its internal try/except is
+    bypassed (e.g. a programming error inside ``_ensure_channel_names`` itself
+    or an exception from a deferred import), the outer ``_run_meshcore`` loop
+    must catch it so the connection stays alive.
+    """
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+    import data.mesh_ingestor.protocols.meshcore.runner as _runner_mod
+
+    logged: list = []
+
+    def _capture(*_a, severity=None, **_k):
+        logged.append(severity)
+
+    monkeypatch.setattr(_mod.config, "_debug_log", _capture)
+
+    async def _boom(_mc):
+        raise RuntimeError("synthetic channel probe failure")
+
+    # Patch the binding inside runner.py — the module-level ``from .channels
+    # import _ensure_channel_names`` resolves the name at import time, so
+    # patching the package attribute alone would not reach the runner.
+    monkeypatch.setattr(_runner_mod, "_ensure_channel_names", _boom)
+
+    fake_mod = _make_fake_meshcore_mod()
     _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
     iface = _MeshcoreInterface(target=None)

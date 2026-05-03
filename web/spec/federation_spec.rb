@@ -1897,5 +1897,586 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers).to have_received(:ensure_federation_shutdown_hook!)
       expect(federation_helpers).to have_received(:federation_sleep_with_shutdown)
     end
+
+    it "logs and continues when announce raises in the loop" do
+      thread_double = instance_double(Thread)
+      captured = nil
+      sleep_results = [true, false]
+
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:clear_federation_shutdown_request!)
+      allow(federation_helpers).to receive(:ensure_federation_shutdown_hook!)
+      allow(federation_helpers).to receive(:federation_sleep_with_shutdown) { sleep_results.shift }
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains).and_raise(RuntimeError, "boom")
+      allow(Thread).to receive(:new) do |&block|
+        captured = block
+        thread_double
+      end
+      allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
+      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
+      allow(federation_helpers).to receive(:set)
+
+      federation_helpers.start_federation_announcer!
+      captured.call
+
+      expect(federation_helpers).to have_received(:announce_instance_to_all_domains).once
+      expect(federation_helpers.warn_messages.last).to include("Federation announcement loop error")
+    end
+  end
+
+  describe ".start_initial_federation_announcement!" do
+    it "does nothing when federation is disabled" do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(false)
+
+      expect(federation_helpers.start_initial_federation_announcement!).to be_nil
+    end
+
+    it "returns the existing thread when one is alive" do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:clear_federation_shutdown_request!)
+      allow(federation_helpers).to receive(:ensure_federation_shutdown_hook!)
+      existing = instance_double(Thread, alive?: true)
+      federation_helpers.set(:initial_federation_thread, existing)
+
+      expect(federation_helpers.start_initial_federation_announcement!).to equal(existing)
+    end
+
+    it "logs and clears the slot when the announcement raises" do
+      thread_double = instance_double(Thread)
+      captured = nil
+
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:clear_federation_shutdown_request!)
+      allow(federation_helpers).to receive(:ensure_federation_shutdown_hook!)
+      allow(PotatoMesh::Config).to receive(:initial_federation_delay_seconds).and_return(0)
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains).and_raise(RuntimeError, "boom")
+      allow(Thread).to receive(:new) do |&block|
+        captured = block
+        thread_double
+      end
+      allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
+      allow(thread_double).to receive(:respond_to?).with(:report_on_exception=).and_return(false)
+      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
+
+      federation_helpers.start_initial_federation_announcement!
+      captured.call
+
+      expect(federation_helpers.warn_messages.last).to include("Initial federation announcement failed")
+      expect(federation_helpers.send(:settings).initial_federation_thread).to be_nil
+    end
+
+    it "skips the announcement when shutdown is requested during the initial delay" do
+      thread_double = instance_double(Thread)
+      captured = nil
+
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:clear_federation_shutdown_request!)
+      allow(federation_helpers).to receive(:ensure_federation_shutdown_hook!)
+      allow(PotatoMesh::Config).to receive(:initial_federation_delay_seconds).and_return(0.01)
+      allow(federation_helpers).to receive(:federation_sleep_with_shutdown).and_return(false)
+      allow(federation_helpers).to receive(:announce_instance_to_all_domains)
+      allow(Thread).to receive(:new) do |&block|
+        captured = block
+        thread_double
+      end
+      allow(thread_double).to receive(:respond_to?).with(:name=).and_return(false)
+      allow(thread_double).to receive(:respond_to?).with(:report_on_exception=).and_return(false)
+      allow(thread_double).to receive(:respond_to?).with(:daemon=).and_return(false)
+
+      federation_helpers.start_initial_federation_announcement!
+      captured.call
+
+      expect(federation_helpers).not_to have_received(:announce_instance_to_all_domains)
+    end
+  end
+
+  describe ".announce_instance_to_domain (non-success branch)" do
+    it "logs the failure when the response is not a success" do
+      payload = "{}"
+      https_uri = URI.parse("https://remote.mesh/api/instances")
+      response = Net::HTTPInternalServerError.new("1.1", "500", "Server Error")
+      allow(response).to receive(:code).and_return("500")
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(https_uri, payload)
+                                     .and_return(response)
+      allow(federation_helpers).to receive(:perform_announce_request)
+                                     .with(URI.parse("http://remote.mesh/api/instances"), payload)
+                                     .and_return(response)
+
+      result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
+
+      expect(result).to be(false)
+      expect(federation_helpers.debug_messages).to include("Federation announcement failed")
+    end
+  end
+
+  describe ".perform_single_announce_request" do
+    let(:uri) { URI.parse("https://remote.mesh/api/instances") }
+    let(:payload) { '{"id":"x"}' }
+    let(:http_client) { instance_double(Net::HTTP) }
+
+    before do
+      allow(PotatoMesh::Config).to receive(:remote_instance_request_timeout).and_return(5)
+      allow(federation_helpers).to receive(:build_remote_http_client).and_return(http_client)
+    end
+
+    it "issues a POST through the connection block" do
+      connection = instance_double(HTTP_CONNECTION_DOUBLE)
+      response = Net::HTTPOK.new("1.1", "200", "OK")
+      allow(response).to receive(:code).and_return("200")
+      captured_request = nil
+
+      allow(http_client).to receive(:start) { |&block| block.call(connection) }
+      allow(connection).to receive(:request) do |request|
+        captured_request = request
+        response
+      end
+
+      result = federation_helpers.send(:perform_single_announce_request, uri, payload, ip_address: "203.0.113.5")
+
+      expect(result).to eq(response)
+      expect(captured_request).to be_a(Net::HTTP::Post)
+      expect(captured_request.body).to eq(payload)
+      expect(federation_helpers).to have_received(:build_remote_http_client).with(uri, ip_address: "203.0.113.5")
+    end
+  end
+
+  describe ".announce_instance_to_all_domains (extra branches)" do
+    let(:pool) { instance_double(PotatoMesh::App::WorkerPool) }
+
+    before do
+      allow(federation_helpers).to receive(:federation_enabled?).and_return(true)
+      allow(federation_helpers).to receive(:ensure_self_instance_record!).and_return([
+        { domain: "self.mesh" },
+        "signature",
+      ])
+      allow(federation_helpers).to receive(:instance_announcement_payload).and_return({})
+      allow(JSON).to receive(:generate).and_return("payload-json")
+      allow(federation_helpers).to receive(:federation_target_domains).and_return(%w[alpha.mesh beta.mesh])
+      allow(federation_helpers).to receive(:wait_for_federation_tasks)
+    end
+
+    it "executes the scheduled task block to announce on the pool" do
+      task = instance_double(PotatoMesh::App::WorkerPool::Task)
+      captured_blocks = []
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule) do |&block|
+        captured_blocks << block
+        task
+      end
+      allow(federation_helpers).to receive(:announce_instance_to_domain)
+
+      federation_helpers.announce_instance_to_all_domains
+      captured_blocks.each(&:call)
+
+      expect(federation_helpers).to have_received(:announce_instance_to_domain).with("alpha.mesh", "payload-json")
+      expect(federation_helpers).to have_received(:announce_instance_to_domain).with("beta.mesh", "payload-json")
+    end
+
+    it "falls back to synchronous announcements when the pool is shutting down" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(pool)
+      allow(pool).to receive(:schedule).and_raise(PotatoMesh::App::WorkerPool::ShutdownError, "closed")
+      allow(federation_helpers).to receive(:announce_instance_to_domain)
+
+      federation_helpers.announce_instance_to_all_domains
+
+      expect(federation_helpers).to have_received(:announce_instance_to_domain).with("alpha.mesh", "payload-json")
+      expect(federation_helpers).to have_received(:announce_instance_to_domain).with("beta.mesh", "payload-json")
+      expect(federation_helpers.warn_messages).to include(a_string_including("Worker pool unavailable"))
+    end
+  end
+
+  describe ".remote_active_node_count_from_stats" do
+    let(:active) { { "hour" => 1, "day" => 2, "week" => 3, "month" => 4 } }
+
+    it "returns the day count for sub-day windows" do
+      payload = { "active_nodes" => active }
+      expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: 7_200)).to eq(2)
+    end
+
+    it "returns the week count for sub-week windows" do
+      payload = { "active_nodes" => active }
+      expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: 90_000)).to eq(3)
+    end
+
+    it "returns the month count for windows beyond a week" do
+      payload = { "active_nodes" => active }
+      window = PotatoMesh::Config.week_seconds + 60
+      expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: window)).to eq(4)
+    end
+  end
+
+  describe ".remote_instance_attributes_from_payload (extra branches)" do
+    let(:application_class) { PotatoMesh::Application }
+
+    it "honors the legacy is_private key when isPrivate is absent" do
+      payload = {
+        "id" => "remote-id",
+        "domain" => "remote.mesh",
+        "pubkey" => application_class::INSTANCE_PUBLIC_KEY_PEM,
+        "signature" => "sig",
+        "is_private" => true,
+      }
+
+      attributes, signature, reason = application_class.remote_instance_attributes_from_payload(payload)
+
+      expect(reason).to be_nil
+      expect(signature).to eq("sig")
+      expect(attributes[:is_private]).to be(true)
+    end
+
+    it "treats numeric is_private values as truthy when non-zero" do
+      payload = {
+        "id" => "remote-id",
+        "domain" => "remote.mesh",
+        "pubkey" => application_class::INSTANCE_PUBLIC_KEY_PEM,
+        "signature" => "sig",
+        "isPrivate" => 1,
+      }
+
+      attributes, _signature, _reason = application_class.remote_instance_attributes_from_payload(payload)
+
+      expect(attributes[:is_private]).to be(true)
+    end
+
+    it "wraps unexpected exceptions raised during parsing" do
+      payload = {
+        "id" => "remote-id",
+        "domain" => "remote.mesh",
+        "pubkey" => application_class::INSTANCE_PUBLIC_KEY_PEM,
+        "signature" => "sig",
+      }
+      allow(application_class).to receive(:coerce_float).and_raise(StandardError, "exploded")
+
+      attributes, signature, reason = application_class.remote_instance_attributes_from_payload(payload)
+
+      expect(attributes).to be_nil
+      expect(signature).to be_nil
+      expect(reason).to eq("exploded")
+    end
+  end
+
+  describe ".ingest_known_instances_from! (overall_limit short-circuit)" do
+    it "returns immediately when visited already meets the overall limit" do
+      visited = Set.new(%w[seed.mesh other.mesh])
+      result = federation_helpers.ingest_known_instances_from!(
+        :db,
+        "seed.mesh",
+        visited: visited,
+        per_response_limit: 5,
+        overall_limit: 2,
+      )
+
+      expect(result).to equal(visited)
+      expect(federation_helpers.debug_messages).to include(a_string_including("crawl limit"))
+    end
+  end
+
+  describe ".https_connection_refused? (extra branches)" do
+    it "returns false when no link in the cause chain is ECONNREFUSED" do
+      outer = begin
+          begin
+            raise StandardError, "inner"
+          rescue StandardError
+            raise StandardError, "outer"
+          end
+        rescue StandardError => e
+          e
+        end
+
+      expect(federation_helpers.send(:https_connection_refused?, outer)).to be(false)
+    end
+
+    it "walks the cause chain to find ECONNREFUSED" do
+      outer = begin
+          begin
+            raise Errno::ECONNREFUSED, "refused"
+          rescue Errno::ECONNREFUSED
+            raise StandardError, "wrapper"
+          end
+        rescue StandardError => e
+          e
+        end
+
+      expect(federation_helpers.send(:https_connection_refused?, outer)).to be(true)
+    end
+  end
+
+  describe ".instance_uri_candidates" do
+    it "returns an empty array when URI parsing fails" do
+      allow(URI).to receive(:parse).and_raise(URI::InvalidURIError, "bad")
+
+      expect(federation_helpers.send(:instance_uri_candidates, "remote.mesh", "/api/x")).to eq([])
+    end
+  end
+
+  describe ".resolve_remote_ip_addresses (invalid address skipping)" do
+    it "skips addrinfo entries that cannot be parsed as IPAddr" do
+      bogus = instance_double(Addrinfo, ip_address: "not-an-ip")
+      good = Addrinfo.ip("203.0.113.5")
+      allow(Addrinfo).to receive(:getaddrinfo).and_return([bogus, good])
+
+      uri = URI.parse("https://remote.mesh/api")
+      result = federation_helpers.send(:resolve_remote_ip_addresses, uri)
+
+      expect(result.map(&:to_s)).to eq(["203.0.113.5"])
+    end
+  end
+
+  describe ".remote_instance_verify_callback (failure path)" do
+    it "logs and clears the cached callback when creation raises" do
+      federation_helpers.instance_variable_set(:@remote_instance_verify_callback, nil)
+      allow(federation_helpers).to receive(:lambda).and_raise(StandardError, "boom")
+
+      expect(federation_helpers.remote_instance_verify_callback).to be_nil
+      expect(federation_helpers.debug_messages.last).to include("verify callback")
+    end
+  end
+
+  describe ".active_node_count_since (rescue path)" do
+    it "logs and returns nil when the database query raises" do
+      handle = instance_double(SQLite3::Database)
+      allow(handle).to receive(:close)
+      allow(federation_helpers).to receive(:open_database).and_return(handle)
+      allow(federation_helpers).to receive(:with_busy_retry).and_raise(SQLite3::Exception, "boom")
+
+      expect(federation_helpers.active_node_count_since(100)).to be_nil
+      expect(federation_helpers.warn_messages.last).to include("Failed to count active nodes")
+      expect(handle).to have_received(:close)
+    end
+  end
+
+  describe ".active_node_count_since_for_protocol (rescue path)" do
+    it "logs and returns nil when the database query raises" do
+      handle = instance_double(SQLite3::Database)
+      allow(handle).to receive(:close)
+      allow(federation_helpers).to receive(:open_database).and_return(handle)
+      allow(federation_helpers).to receive(:with_busy_retry).and_raise(ArgumentError, "bad value")
+
+      expect(federation_helpers.active_node_count_since_for_protocol(100, "meshcore")).to be_nil
+      expect(federation_helpers.warn_messages.last).to include("Failed to count active nodes for protocol")
+      expect(handle).to have_received(:close)
+    end
+  end
+
+  describe ".federation_worker_pool" do
+    it "delegates to ensure_federation_worker_pool!" do
+      sentinel = Object.new
+      allow(federation_helpers).to receive(:ensure_federation_worker_pool!).and_return(sentinel)
+
+      expect(federation_helpers.federation_worker_pool).to equal(sentinel)
+    end
+  end
+
+  describe ".self_instance_domain" do
+    let(:application_class) { PotatoMesh::Application }
+
+    it "returns the sanitized INSTANCE_DOMAIN when present" do
+      allow(application_class).to receive(:app_constant).with(:INSTANCE_DOMAIN).and_return("Example.Mesh")
+
+      expect(application_class.self_instance_domain).to eq("example.mesh")
+    end
+
+    it "logs and returns nil outside production when the domain is missing" do
+      allow(application_class).to receive(:app_constant).with(:INSTANCE_DOMAIN).and_return(nil)
+      allow(application_class).to receive(:app_constant).with(:INSTANCE_DOMAIN_SOURCE).and_return(:default)
+      allow(application_class).to receive(:production_environment?).and_return(false)
+      allow(application_class).to receive(:debug_log)
+
+      expect(application_class.self_instance_domain).to be_nil
+      expect(application_class).to have_received(:debug_log).with(
+        a_string_including("INSTANCE_DOMAIN unavailable"),
+        hash_including(context: "federation.instances"),
+      )
+    end
+
+    it "raises in production when the domain cannot be determined" do
+      allow(application_class).to receive(:app_constant).with(:INSTANCE_DOMAIN).and_return(nil)
+      allow(application_class).to receive(:app_constant).with(:INSTANCE_DOMAIN_SOURCE).and_return(:environment)
+      allow(application_class).to receive(:production_environment?).and_return(true)
+
+      expect { application_class.self_instance_domain }.to raise_error(RuntimeError, /INSTANCE_DOMAIN/)
+    end
+  end
+
+  describe ".self_instance_registration_decision" do
+    let(:application_class) { PotatoMesh::Application }
+
+    it "rejects domains that resolve to restricted IP addresses" do
+      allow(application_class).to receive(:app_constant).with(:INSTANCE_DOMAIN_SOURCE).and_return(:environment)
+      allow(application_class).to receive(:ip_from_domain).and_return(IPAddr.new("127.0.0.1"))
+      allow(application_class).to receive(:restricted_ip_address?).and_return(true)
+
+      allowed, reason = application_class.self_instance_registration_decision("loopback.mesh")
+
+      expect(allowed).to be(false)
+      expect(reason).to eq("INSTANCE_DOMAIN resolves to restricted IP")
+    end
+  end
+
+  describe ".ensure_self_instance_record! (skip branch)" do
+    let(:application_class) { PotatoMesh::Application }
+
+    it "logs without writing when registration is not allowed" do
+      attributes = { id: "self", domain: "self.mesh" }
+      allow(application_class).to receive(:self_instance_attributes).and_return(attributes)
+      allow(application_class).to receive(:sign_instance_attributes).and_return("sig")
+      allow(application_class).to receive(:self_instance_registration_decision).and_return([false, "blocked"])
+      allow(application_class).to receive(:open_database)
+      allow(application_class).to receive(:upsert_instance_record)
+      allow(application_class).to receive(:debug_log)
+
+      result_attrs, result_sig = application_class.ensure_self_instance_record!
+
+      expect(result_attrs).to eq(attributes)
+      expect(result_sig).to eq("sig")
+      expect(application_class).not_to have_received(:open_database)
+      expect(application_class).not_to have_received(:upsert_instance_record)
+      expect(application_class).to have_received(:debug_log).with(
+        "Skipped self instance registration",
+        hash_including(reason: "blocked"),
+      )
+    end
+  end
+
+  describe ".verify_instance_signature (failure path)" do
+    let(:application_class) { PotatoMesh::Application }
+    let(:attributes) { { id: "x", domain: "x.mesh" } }
+
+    it "returns false when the signature is not valid base64" do
+      result = application_class.verify_instance_signature(
+        attributes,
+        "not base64 !!!",
+        application_class::INSTANCE_PUBLIC_KEY_PEM,
+      )
+
+      expect(result).to be(false)
+    end
+
+    it "returns false when the public key is malformed" do
+      result = application_class.verify_instance_signature(
+        attributes,
+        Base64.strict_encode64("anything"),
+        "-----BEGIN PUBLIC KEY-----\nnope\n-----END PUBLIC KEY-----\n",
+      )
+
+      expect(result).to be(false)
+    end
+  end
+
+  describe ".validate_well_known_document" do
+    let(:application_class) { PotatoMesh::Application }
+    let(:domain) { "remote.mesh" }
+    let(:keypair) { OpenSSL::PKey::RSA.new(2048) }
+    let(:pubkey_pem) { keypair.public_key.to_pem }
+
+    def signed_payload_for(domain_value, pubkey_value)
+      payload = JSON.generate({ "domain" => domain_value, "publicKey" => pubkey_value })
+      signature = keypair.sign(OpenSSL::Digest::SHA256.new, payload)
+      [Base64.strict_encode64(payload), Base64.strict_encode64(signature)]
+    end
+
+    it "rejects non-Hash documents" do
+      ok, reason = application_class.validate_well_known_document([], domain, pubkey_pem)
+
+      expect(ok).to be(false)
+      expect(reason).to eq("document is not an object")
+    end
+
+    it "rejects unsupported signature algorithms" do
+      document = {
+        "publicKey" => pubkey_pem,
+        "domain" => domain,
+        "signatureAlgorithm" => "ed25519",
+      }
+
+      ok, reason = application_class.validate_well_known_document(document, domain, pubkey_pem)
+
+      expect(ok).to be(false)
+      expect(reason).to eq("unsupported signature algorithm")
+    end
+
+    it "rejects documents whose signature does not verify against the public key" do
+      signed_b64, _ = signed_payload_for(domain, pubkey_pem)
+      bogus_signature = Base64.strict_encode64("not a valid signature")
+      document = {
+        "publicKey" => pubkey_pem,
+        "domain" => domain,
+        "signatureAlgorithm" => PotatoMesh::Config.instance_signature_algorithm,
+        "signedPayload" => signed_b64,
+        "signature" => bogus_signature,
+      }
+
+      ok, reason = application_class.validate_well_known_document(document, domain, pubkey_pem)
+
+      expect(ok).to be(false)
+      expect(reason).to eq("invalid well-known signature")
+    end
+
+    it "rejects documents whose signed payload is not an object" do
+      payload = JSON.generate(["not", "an", "object"])
+      signature = keypair.sign(OpenSSL::Digest::SHA256.new, payload)
+      document = {
+        "publicKey" => pubkey_pem,
+        "domain" => domain,
+        "signatureAlgorithm" => PotatoMesh::Config.instance_signature_algorithm,
+        "signedPayload" => Base64.strict_encode64(payload),
+        "signature" => Base64.strict_encode64(signature),
+      }
+
+      ok, reason = application_class.validate_well_known_document(document, domain, pubkey_pem)
+
+      expect(ok).to be(false)
+      expect(reason).to eq("signed payload is not an object")
+    end
+
+    it "wraps ArgumentError raised from base64 decoding" do
+      document = {
+        "publicKey" => pubkey_pem,
+        "domain" => domain,
+        "signatureAlgorithm" => PotatoMesh::Config.instance_signature_algorithm,
+        "signedPayload" => "not!base64!",
+        "signature" => "still!not!base64!",
+      }
+
+      ok, reason = application_class.validate_well_known_document(document, domain, pubkey_pem)
+
+      expect(ok).to be(false)
+      expect(reason).to be_a(String)
+    end
+
+    it "wraps JSON::ParserError when the signed payload is not valid JSON" do
+      payload = "not valid json"
+      signature = keypair.sign(OpenSSL::Digest::SHA256.new, payload)
+      document = {
+        "publicKey" => pubkey_pem,
+        "domain" => domain,
+        "signatureAlgorithm" => PotatoMesh::Config.instance_signature_algorithm,
+        "signedPayload" => Base64.strict_encode64(payload),
+        "signature" => Base64.strict_encode64(signature),
+      }
+
+      ok, reason = application_class.validate_well_known_document(document, domain, pubkey_pem)
+
+      expect(ok).to be(false)
+      expect(reason).to include("signed payload JSON error")
+    end
+  end
+
+  describe ".validate_remote_nodes (rejection paths)" do
+    it "rejects payloads that are not arrays" do
+      ok, reason = federation_helpers.validate_remote_nodes("not an array")
+
+      expect(ok).to be(false)
+      expect(reason).to eq("node response is not an array")
+    end
+
+    it "rejects payloads with too few nodes" do
+      allow(PotatoMesh::Config).to receive(:remote_instance_min_node_count).and_return(5)
+      ok, reason = federation_helpers.validate_remote_nodes([{ "last_heard" => Time.now.to_i }])
+
+      expect(ok).to be(false)
+      expect(reason).to eq("insufficient nodes")
+    end
   end
 end
