@@ -315,6 +315,10 @@ module PotatoMesh
 
             db = open_database
             upsert_instance_record(db, attributes, signature)
+            # Drop the cached /api/instances payload so the new peer becomes
+            # visible on the next dashboard refresh instead of after the TTL
+            # naturally expires.
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:instances:")
             enqueued = enqueue_federation_crawl(
               attributes[:domain],
               per_response_limit: PotatoMesh::Config.federation_max_instances_per_response,

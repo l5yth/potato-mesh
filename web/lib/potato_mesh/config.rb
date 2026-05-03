@@ -181,7 +181,14 @@ module PotatoMesh
       DEFAULT_DB_BUSY_RETRY_DELAY
     end
 
-    # Convenience constant describing the number of seconds in a week.
+    # Default rolling retention window in seconds.
+    #
+    # Used as the freshness floor for every "general" bulk read endpoint —
+    # nodes, messages, positions, telemetry, and the federation instance
+    # catalog — and as the freshness floor for federation/dashboard activity
+    # counters.  Exceptions (sparse data) live on
+    # {#four_weeks_seconds}; per-id lookups also widen to the extended
+    # window so callers can backfill historical context for a single node.
     #
     # @return [Integer] seconds in seven days.
     def week_seconds

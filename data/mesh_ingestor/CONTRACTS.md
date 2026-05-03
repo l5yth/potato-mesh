@@ -145,3 +145,25 @@ Heartbeat payload:
 
 All collection GET endpoints (`/api/nodes`, `/api/messages`, `/api/positions`, `/api/telemetry`, `/api/traces`, `/api/neighbors`, `/api/ingestors`) accept an optional `?protocol=<value>` query parameter. When present, only records whose `protocol` column matches the given value are returned. The `protocol` field is included in all GET responses.
 
+### GET endpoint time windows
+
+Every read endpoint enforces a server-side rolling-window floor on the data it returns. The window is fixed per route and **cannot be widened by the caller** — explicit `?since=<unix_seconds>` is treated as `MAX(since, floor)`, so a `since` older than the floor is silently clamped to the floor. Pass a `since` newer than the floor when you want to be more restrictive (incremental refresh).
+
+| Route | Floor (default) | Notes |
+| --- | --- | --- |
+| `GET /api/nodes` | 7 days | filtered by `nodes.last_heard` |
+| `GET /api/messages` | 7 days | filtered by `messages.rx_time` |
+| `GET /api/positions` | 7 days | filtered by `COALESCE(rx_time, position_time)` |
+| `GET /api/telemetry` | 7 days | filtered by `COALESCE(rx_time, telemetry_time)` |
+| `GET /api/instances` | 7 days | filtered by `instances.last_update_time` |
+| `GET /api/neighbors` | **28 days** | sparse data; widened to keep slow scrapes visible |
+| `GET /api/traces` | **28 days** | sparse data; same rationale |
+| `GET /api/ingestors` | **28 days** | sparse heartbeats; same rationale |
+| `GET /api/.../:id` (per-id lookup) | **28 days** | every per-id route uses the extended window so callers can backfill historical context for a specific node/conversation that has dropped out of the bulk view. The `since` clamp still applies. |
+| `GET /api/telemetry/aggregated` | caller-controlled | `?windowSeconds=<N>` is mandatory; defaults to 86 400 (1 day). Bounded by `MAX_QUERY_LIMIT` on bucket count, not by a hard floor. |
+| `GET /api/stats` | n/a | reports counts at fixed `hour`/`day`/`week`/`month` activity buckets. |
+
+Federation peers should not assume an unbounded historical window: a peer that requests `/api/messages?since=0` from a partner expecting "everything" will only ever receive the last seven days. To pull older state, request the per-id endpoint (28 days) for the relevant nodes.
+
+The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_weeks_seconds`).
+

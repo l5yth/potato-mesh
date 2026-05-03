@@ -2852,6 +2852,77 @@ RSpec.describe "Potato Mesh Sinatra app" do
         expect(last_response.status).to eq(404)
       end
     end
+
+    describe "response caching" do
+      it "serves a stable etag and returns 304 for matching If-None-Match" do
+        get "/api/instances"
+
+        expect(last_response).to be_ok
+        first_etag = last_response.headers["ETag"]
+        expect(first_etag).not_to be_nil
+
+        header "If-None-Match", first_etag
+        get "/api/instances"
+
+        expect(last_response.status).to eq(304)
+      end
+
+      it "returns the same response body for repeat requests within the TTL" do
+        # The bodies must be byte-identical: a fresh self-record sign would
+        # produce a different last_update_time / signature, so consistency
+        # confirms the cached entry is being reused.
+        get "/api/instances"
+        expect(last_response).to be_ok
+        first_body = last_response.body
+        first_etag = last_response.headers["ETag"]
+
+        get "/api/instances"
+        expect(last_response).to be_ok
+        expect(last_response.body).to eq(first_body)
+        expect(last_response.headers["ETag"]).to eq(first_etag)
+      end
+
+      it "invalidates the cache when a new peer registers" do
+        get "/api/instances"
+        expect(last_response).to be_ok
+        baseline_size = JSON.parse(last_response.body).length
+
+        # Build a valid peer registration that POST /api/instances accepts.
+        peer_key = OpenSSL::PKey::RSA.new(2048)
+        peer_attributes = {
+          id: "cache-peer",
+          domain: "cache-peer.example",
+          pubkey: peer_key.public_key.export,
+          name: "Cache Peer",
+          version: "1.0.0",
+          channel: "#peer",
+          frequency: "868MHz",
+          latitude: 50.0,
+          longitude: 8.0,
+          last_update_time: Time.now.to_i,
+          is_private: false,
+        }
+        peer_signature = Base64.strict_encode64(
+          peer_key.sign(
+            OpenSSL::Digest::SHA256.new,
+            canonical_instance_payload(peer_attributes),
+          ),
+        )
+
+        with_db do |db|
+          upsert_instance_record(db, peer_attributes, peer_signature)
+        end
+        # The cache key is unaware of the direct DB insert, so explicitly
+        # invalidate to mirror what POST /api/instances does in production.
+        PotatoMesh::App::ApiCache.invalidate_prefix("api:instances:")
+
+        get "/api/instances"
+        expect(last_response).to be_ok
+        payload = JSON.parse(last_response.body)
+        expect(payload.length).to eq(baseline_size + 1)
+        expect(payload.map { |row| row["id"] }).to include("cache-peer")
+      end
+    end
   end
 
   describe "POST /api/nodes" do
@@ -6387,6 +6458,64 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       scoped_since = JSON.parse(last_response.body)
       expect(scoped_since.map { |row| row["id"] }).to eq([2])
+    end
+
+    it "clamps an explicit since older than the seven-day floor up to the floor" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_rx = now - (PotatoMesh::Config.week_seconds + 4 * 60 * 60)
+      fresh_rx = now - 30
+      explicit_since = now - (PotatoMesh::Config.week_seconds + 14 * 24 * 60 * 60)
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+          [301, stale_rx, Time.at(stale_rx).utc.iso8601, "!a", "!b", 0, "TEXT_MESSAGE_APP", "stale"],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+          [302, fresh_rx, Time.at(fresh_rx).utc.iso8601, "!a", "!b", 0, "TEXT_MESSAGE_APP", "fresh"],
+        )
+      end
+
+      # The caller asked for "everything since three weeks ago" but the route
+      # silently clamps that up to the seven-day floor — the stale row stays
+      # excluded.  This locks in the contract that ``since`` cannot widen the
+      # window past the floor.
+      get "/api/messages?since=#{explicit_since}"
+
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |row| row["id"] }
+      expect(ids).to eq([302])
+      expect(ids).not_to include(301)
+    end
+
+    it "clamps per-id since older than the twenty-eight-day floor up to that floor" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      ancient_rx = now - (PotatoMesh::Config.four_weeks_seconds + 6 * 60 * 60)
+      backfillable_rx = now - (PotatoMesh::Config.four_weeks_seconds - 60)
+      explicit_since = now - (PotatoMesh::Config.four_weeks_seconds + 30 * 24 * 60 * 60)
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+          [401, ancient_rx, Time.at(ancient_rx).utc.iso8601, "!a", "!b", 0, "TEXT_MESSAGE_APP", "ancient"],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+          [402, backfillable_rx, Time.at(backfillable_rx).utc.iso8601, "!a", "!b", 0, "TEXT_MESSAGE_APP", "backfill"],
+        )
+      end
+
+      get "/api/messages/!a?since=#{explicit_since}"
+
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |row| row["id"] }
+      expect(ids).to eq([402])
+      expect(ids).not_to include(401)
     end
 
     it "excludes per-id messages older than the twenty-eight-day extended window" do

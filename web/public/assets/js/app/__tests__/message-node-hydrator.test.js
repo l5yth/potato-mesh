@@ -124,6 +124,66 @@ test('hydrate fetches missing nodes once and caches the result', async () => {
   assert.strictEqual(result[1].node, nodesById.get('!fetch'));
 });
 
+test('hydrate caches 404 results so subsequent calls do not refetch dead ids', async () => {
+  let fetchCalls = 0;
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: async () => {
+      fetchCalls += 1;
+      return null;
+    },
+    applyNodeFallback: () => {},
+  });
+  const messages = [{ from_id: '!gone', text: 'first' }];
+  const nodesById = new Map();
+
+  await hydrator.hydrate(messages, nodesById);
+  await hydrator.hydrate([{ from_id: '!gone', text: 'second' }], nodesById);
+  await hydrator.hydrate([{ from_id: '!gone', text: 'third' }], nodesById);
+
+  assert.equal(fetchCalls, 1);
+});
+
+test('cached missing entry is overridden when nodesById later resolves the id', async () => {
+  let fetchCalls = 0;
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: async () => {
+      fetchCalls += 1;
+      return null;
+    },
+    applyNodeFallback: () => {},
+  });
+  const nodesById = new Map();
+
+  await hydrator.hydrate([{ from_id: '!late', text: 'first' }], nodesById);
+  assert.equal(fetchCalls, 1);
+
+  // Bulk /api/nodes refresh resolves the id afterwards.
+  const lateNode = { node_id: '!late', short_name: 'Late' };
+  nodesById.set('!late', lateNode);
+
+  const result = await hydrator.hydrate([{ from_id: '!late', text: 'second' }], nodesById);
+  assert.equal(fetchCalls, 1);
+  assert.strictEqual(result[0].node, lateNode);
+});
+
+test('hydrate caches lookup failures alongside 404s', async () => {
+  let fetchCalls = 0;
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: async () => {
+      fetchCalls += 1;
+      throw new Error('network down');
+    },
+    applyNodeFallback: () => {},
+    logger: { warn() {} },
+  });
+  const nodesById = new Map();
+
+  await hydrator.hydrate([{ from_id: '!flaky', text: 'a' }], nodesById);
+  await hydrator.hydrate([{ from_id: '!flaky', text: 'b' }], nodesById);
+
+  assert.equal(fetchCalls, 1);
+});
+
 test('hydrate falls back to placeholders when lookups fail', async () => {
   const logger = new LoggerStub();
   let fallbackCalls = 0;
@@ -270,8 +330,14 @@ test('hydrate dedupes duplicate senders without exceeding the cap', async () => 
     applyNodeFallback: () => {},
     concurrency: 2,
   });
-  // Twenty messages but only four unique senders — inflight dedupe should
-  // keep total fetch count at four, and the cap still bounds parallelism.
+  // Twenty messages but only four unique senders.  After the first lookup
+  // for a given sender resolves, ``resolveNode`` writes the result into the
+  // shared ``nodesById`` cache; every later message with the same id is
+  // bound synchronously from that cache before it ever reaches the worker
+  // pool, so the total fetch count collapses to the four unique senders.
+  // (The inflight-promise map only matters when two workers happen to race
+  // on the same id, which barely happens at concurrency=2 — the
+  // ``nodesById`` short-circuit is the dominant mechanism here.)
   const senders = ['!aaa', '!bbb', '!ccc', '!ddd'];
   const messages = Array.from({ length: 20 }, (_, index) => ({
     from_id: senders[index % senders.length],

@@ -60,6 +60,17 @@ export function createMessageNodeHydrator({
   /** @type {Map<string, Promise<object|null>>} */
   const inflightLookups = new Map();
 
+  // Negative-result cache shared across all ``hydrate()`` invocations on
+  // this hydrator instance.  Without it, every refresh tick would re-issue
+  // ``/api/nodes/:id`` for senders that the server has already returned
+  // 404 for once — turning a single dead participant in a busy chat into a
+  // perpetual per-minute fetch.  The set is consulted *after* the fresh
+  // ``nodesById`` lookup, so a node that registers later (and therefore
+  // appears in the bulk /api/nodes refresh) immediately wins over a stale
+  // missing entry without any explicit invalidation.
+  /** @type {Set<string>} */
+  const missingNodeIds = new Set();
+
   /**
    * Normalise potential node identifiers into canonical strings.
    *
@@ -86,6 +97,9 @@ export function createMessageNodeHydrator({
     if (nodesById instanceof Map && nodesById.has(id)) {
       return nodesById.get(id);
     }
+    if (missingNodeIds.has(id)) {
+      return null;
+    }
     if (inflightLookups.has(id)) {
       return inflightLookups.get(id);
     }
@@ -100,12 +114,14 @@ export function createMessageNodeHydrator({
           }
           return node;
         }
+        missingNodeIds.add(id);
         return null;
       })
       .catch(error => {
         if (logger && typeof logger.warn === 'function') {
           logger.warn('message node lookup failed', { nodeId: id, error });
         }
+        missingNodeIds.add(id);
         return null;
       })
       .finally(() => {
@@ -164,11 +180,16 @@ export function createMessageNodeHydrator({
       return messages;
     }
 
+    // Workers share a monotonically advancing index instead of mutating the
+    // queue with ``shift()`` — ``Array#shift`` is O(n) and would turn a
+    // large hydration burst into O(n²).  Single-threaded JS makes the
+    // post-increment atomic with respect to other workers, so no lock or
+    // existence check is needed.
+    let cursor = 0;
     const workerCount = Math.min(workerCap, queue.length);
     const workers = Array.from({ length: workerCount }, async () => {
-      while (queue.length > 0) {
-        const entry = queue.shift();
-        if (!entry) return;
+      while (cursor < queue.length) {
+        const entry = queue[cursor++];
         // eslint-disable-next-line no-await-in-loop
         const node = await resolveNode(entry.targetId, nodesById);
         if (node) {
