@@ -2317,6 +2317,10 @@ RSpec.describe PotatoMesh::App::Federation do
   describe ".ensure_self_instance_record! (skip branch)" do
     let(:application_class) { PotatoMesh::Application }
 
+    before do
+      PotatoMesh::App::Federation.reset_self_registration_log_state!
+    end
+
     it "logs without writing when registration is not allowed" do
       attributes = { id: "self", domain: "self.mesh" }
       allow(application_class).to receive(:self_instance_attributes).and_return(attributes)
@@ -2336,6 +2340,52 @@ RSpec.describe PotatoMesh::App::Federation do
         "Skipped self instance registration",
         hash_including(reason: "blocked"),
       )
+    end
+
+    it "deduplicates the skip log when the decision does not change" do
+      attributes = { id: "self", domain: "self.mesh" }
+      allow(application_class).to receive(:self_instance_attributes).and_return(attributes)
+      allow(application_class).to receive(:sign_instance_attributes).and_return("sig")
+      allow(application_class).to receive(:self_instance_registration_decision).and_return([false, "blocked"])
+      allow(application_class).to receive(:debug_log)
+
+      3.times { application_class.ensure_self_instance_record! }
+
+      expect(application_class).to have_received(:debug_log).with(
+        "Skipped self instance registration",
+        hash_including(reason: "blocked"),
+      ).once
+    end
+
+    it "re-emits the log when the decision flips between calls" do
+      attributes = { id: "self", domain: "self.mesh" }
+      allow(application_class).to receive(:self_instance_attributes).and_return(attributes)
+      allow(application_class).to receive(:sign_instance_attributes).and_return("sig")
+      allow(application_class).to receive(:open_database)
+      allow(application_class).to receive(:upsert_instance_record)
+      allow(application_class).to receive(:debug_log)
+
+      decisions = [
+        [false, "blocked"],
+        [false, "blocked"],
+        [true, nil],
+        [true, nil],
+        [false, "blocked"],
+      ]
+      allow(application_class).to receive(:self_instance_registration_decision) do
+        decisions.shift
+      end
+
+      5.times { application_class.ensure_self_instance_record! }
+
+      expect(application_class).to have_received(:debug_log).with(
+        "Skipped self instance registration",
+        hash_including(reason: "blocked"),
+      ).twice
+      expect(application_class).to have_received(:debug_log).with(
+        "Registered self instance record",
+        hash_including(domain: "self.mesh"),
+      ).once
     end
   end
 

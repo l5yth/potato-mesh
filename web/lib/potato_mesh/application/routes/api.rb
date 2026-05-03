@@ -390,9 +390,21 @@ module PotatoMesh
             halt 404 unless federation_enabled?
 
             content_type :json
-            ensure_self_instance_record!
-            payload = load_instances_for_api
-            JSON.generate(payload)
+            # The federation banner is rendered on every page navigation, which
+            # caused this endpoint to fire ~7 times in a few seconds while the
+            # user clicked through the site.  Cache the response (including the
+            # self-record refresh) for a short window so navigation feels free
+            # without delaying signature/peer updates by more than a few
+            # seconds.  The dedicated announcer thread keeps the underlying
+            # record fresh on its own cadence regardless of cache hits.
+            priv = private_mode? ? 1 : 0
+            cached = PotatoMesh::App::ApiCache.fetch("api:instances:#{priv}", ttl_seconds: 30) do
+              ensure_self_instance_record!
+              JSON.generate(load_instances_for_api)
+            end
+            etag cached[:etag], kind: :weak
+            api_cache_control
+            cached[:value]
           end
         end
       end

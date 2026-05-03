@@ -128,16 +128,24 @@ RSpec.describe "Ingestor endpoints" do
   end
 
   describe "GET /api/ingestors" do
-    it "returns recent ingestors and omits stale rows" do
+    it "returns recent ingestors and omits rows older than the twenty-eight-day window" do
       now = Time.now.to_i
       with_db do |db|
         db.execute(
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
           ["!fresh000", now - 100, now - 10, "0.5.12"],
         )
+        # Eight-day-old heartbeats now stay visible: ingestors are sparse and
+        # the bulk endpoint widens to four weeks so slow-tick nodes do not
+        # disappear between scrapes.
         db.execute(
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
-          ["!stale000", now - (9 * 24 * 60 * 60), now - (9 * 24 * 60 * 60), "0.5.6"],
+          ["!sparse00", now - (9 * 24 * 60 * 60), now - (8 * 24 * 60 * 60), "0.5.6"],
+        )
+        # Beyond the four-week floor — must be excluded.
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
+          ["!stale000", now - (30 * 24 * 60 * 60), now - (30 * 24 * 60 * 60), "0.5.0"],
         )
         db.execute(
           "INSERT INTO ingestors(node_id, start_time, last_seen_time, version, lora_freq, modem_preset) VALUES(?,?,?,?,?,?)",
@@ -151,7 +159,7 @@ RSpec.describe "Ingestor endpoints" do
       payload = JSON.parse(last_response.body)
       expect(payload).to all(include("node_id", "start_time", "last_seen_time", "version"))
       node_ids = payload.map { |entry| entry["node_id"] }
-      expect(node_ids).to include("!fresh000")
+      expect(node_ids).to include("!fresh000", "!sparse00")
       expect(node_ids).not_to include("!stale000")
       rich = payload.find { |row| row["node_id"] == "!rich000" }
       expect(rich["lora_freq"]).to eq(915)

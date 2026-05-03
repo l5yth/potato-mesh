@@ -17,6 +17,29 @@
 module PotatoMesh
   module App
     module Federation
+      # Process-wide memo for the most recently emitted self-registration
+      # decision.  Sinatra spins up a fresh app instance per request so a
+      # plain instance variable would not survive across calls; storing the
+      # state on the module itself keeps the dedupe stable for the lifetime
+      # of the worker process.
+      @self_registration_log_state = { mutex: Mutex.new, last: nil }
+
+      # Accessor for the dedupe state used by {#ensure_self_instance_record!}.
+      #
+      # @return [Hash{Symbol => Object}] mutable state hash holding +:mutex+ and +:last+.
+      def self.self_registration_log_state
+        @self_registration_log_state
+      end
+
+      # Reset the dedupe memo.  Intended for tests; production code never
+      # needs to clear the state because each process starts fresh.
+      #
+      # @return [void]
+      def self.reset_self_registration_log_state!
+        state = @self_registration_log_state
+        state[:mutex].synchronize { state[:last] = nil }
+      end
+
       # Resolve the canonical domain for the running instance.
       #
       # @return [String, nil] sanitized instance domain or nil outside production.
@@ -137,16 +160,30 @@ module PotatoMesh
         signature = sign_instance_attributes(attributes)
         db = nil
         allowed, reason = self_instance_registration_decision(attributes[:domain])
+        # Decisions are stable per process while INSTANCE_DOMAIN_SOURCE
+        # remains the same — without dedupe, the federation banner on every
+        # page navigation produced one log line apiece.  Only emit when the
+        # tuple changes so operators still see the first decision (and any
+        # later flip) without the spam.
+        sentinel = [allowed, reason, attributes[:domain]]
+        state = PotatoMesh::App::Federation.self_registration_log_state
+        should_log = state[:mutex].synchronize do
+          changed = state[:last] != sentinel
+          state[:last] = sentinel if changed
+          changed
+        end
         if allowed
           db = open_database
           upsert_instance_record(db, attributes, signature)
-          debug_log(
-            "Registered self instance record",
-            context: "federation.instances",
-            domain: attributes[:domain],
-            instance_id: attributes[:id],
-          )
-        else
+          if should_log
+            debug_log(
+              "Registered self instance record",
+              context: "federation.instances",
+              domain: attributes[:domain],
+              instance_id: attributes[:id],
+            )
+          end
+        elsif should_log
           debug_log(
             "Skipped self instance registration",
             context: "federation.instances",

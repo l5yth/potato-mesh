@@ -72,7 +72,7 @@ RSpec.describe PotatoMesh::App::Prometheus do
         allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
         allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
         allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-        allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
+        allow(PotatoMesh::Config).to receive(:four_weeks_seconds).and_return(604_800)
         allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
         db_helper = Object.new.extend(PotatoMesh::App::Database)
         db_helper.init_db

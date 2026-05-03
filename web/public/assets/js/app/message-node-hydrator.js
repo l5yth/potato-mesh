@@ -15,27 +15,61 @@
  */
 
 /**
+ * Default upper bound for in-flight ``/api/nodes/:id`` lookups while the
+ * hydrator backfills sender metadata.  Matches the worker-pool size used by
+ * ``node-page/role-index.js`` so a thundering herd of cold-load lookups
+ * cannot overwhelm the server.
+ */
+export const MESSAGE_HYDRATION_CONCURRENCY = 4;
+
+/**
  * Build a hydrator capable of attaching node metadata to chat messages.
  *
  * @param {{
  *   fetchNodeById: (nodeId: string) => Promise<object|null>,
  *   applyNodeFallback: (node: object) => void,
- *   logger?: { warn?: (message?: any, ...optionalParams: any[]) => void }
- * }} options Factory configuration.
+ *   logger?: { warn?: (message?: any, ...optionalParams: any[]) => void },
+ *   concurrency?: number
+ * }} options Factory configuration.  ``concurrency`` overrides the default
+ *   worker-pool size and is primarily intended for unit tests; callers
+ *   should leave it unset in production.
  * @returns {{
  *   hydrate: (messages: Array<object>|null|undefined, nodesById: Map<string, object>) => Promise<Array<object>>
  * }} Hydrator API.
  */
-export function createMessageNodeHydrator({ fetchNodeById, applyNodeFallback, logger = console }) {
+export function createMessageNodeHydrator({
+  fetchNodeById,
+  applyNodeFallback,
+  logger = console,
+  concurrency = MESSAGE_HYDRATION_CONCURRENCY,
+}) {
   if (typeof fetchNodeById !== 'function') {
     throw new TypeError('fetchNodeById must be a function');
   }
   if (typeof applyNodeFallback !== 'function') {
     throw new TypeError('applyNodeFallback must be a function');
   }
+  // Treat any non-positive or non-finite value as "fall back to default".  This
+  // keeps the hydrator robust against accidental misconfiguration without
+  // degrading to unbounded parallelism.
+  const workerCap =
+    Number.isFinite(concurrency) && concurrency > 0
+      ? Math.floor(concurrency)
+      : MESSAGE_HYDRATION_CONCURRENCY;
 
   /** @type {Map<string, Promise<object|null>>} */
   const inflightLookups = new Map();
+
+  // Negative-result cache shared across all ``hydrate()`` invocations on
+  // this hydrator instance.  Without it, every refresh tick would re-issue
+  // ``/api/nodes/:id`` for senders that the server has already returned
+  // 404 for once — turning a single dead participant in a busy chat into a
+  // perpetual per-minute fetch.  The set is consulted *after* the fresh
+  // ``nodesById`` lookup, so a node that registers later (and therefore
+  // appears in the bulk /api/nodes refresh) immediately wins over a stale
+  // missing entry without any explicit invalidation.
+  /** @type {Set<string>} */
+  const missingNodeIds = new Set();
 
   /**
    * Normalise potential node identifiers into canonical strings.
@@ -63,6 +97,9 @@ export function createMessageNodeHydrator({ fetchNodeById, applyNodeFallback, lo
     if (nodesById instanceof Map && nodesById.has(id)) {
       return nodesById.get(id);
     }
+    if (missingNodeIds.has(id)) {
+      return null;
+    }
     if (inflightLookups.has(id)) {
       return inflightLookups.get(id);
     }
@@ -77,12 +114,14 @@ export function createMessageNodeHydrator({ fetchNodeById, applyNodeFallback, lo
           }
           return node;
         }
+        missingNodeIds.add(id);
         return null;
       })
       .catch(error => {
         if (logger && typeof logger.warn === 'function') {
           logger.warn('message node lookup failed', { nodeId: id, error });
         }
+        missingNodeIds.add(id);
         return null;
       })
       .finally(() => {
@@ -96,6 +135,13 @@ export function createMessageNodeHydrator({ fetchNodeById, applyNodeFallback, lo
   /**
    * Attach node information to the provided message collection.
    *
+   * Messages whose sender is already in ``nodesById`` are bound synchronously
+   * and incur no network traffic.  Misses are pushed onto a shared queue and
+   * drained by a fixed worker pool so the number of in-flight
+   * ``/api/nodes/:id`` requests never exceeds {@link workerCap}.  This caps
+   * the cold-load thundering-herd that would otherwise issue one request per
+   * unique sender in parallel.
+   *
    * @param {Array<object>|null|undefined} messages Message payloads from the API.
    * @param {Map<string, object>} nodesById Lookup table of known nodes.
    * @returns {Promise<Array<object>>} Hydrated message entries.
@@ -105,7 +151,7 @@ export function createMessageNodeHydrator({ fetchNodeById, applyNodeFallback, lo
       return Array.isArray(messages) ? messages : [];
     }
 
-    const tasks = [];
+    const queue = [];
     for (const message of messages) {
       if (!message || typeof message !== 'object') {
         continue;
@@ -127,21 +173,35 @@ export function createMessageNodeHydrator({ fetchNodeById, applyNodeFallback, lo
         continue;
       }
 
-      const task = resolveNode(targetId, nodesById).then(node => {
-        if (node) {
-          message.node = node;
-        } else {
-          const placeholder = { node_id: targetId };
-          applyNodeFallback(placeholder);
-          message.node = placeholder;
-        }
-      });
-      tasks.push(task);
+      queue.push({ message, targetId });
     }
 
-    if (tasks.length > 0) {
-      await Promise.all(tasks);
+    if (queue.length === 0) {
+      return messages;
     }
+
+    // Workers share a monotonically advancing index instead of mutating the
+    // queue with ``shift()`` — ``Array#shift`` is O(n) and would turn a
+    // large hydration burst into O(n²).  Single-threaded JS makes the
+    // post-increment atomic with respect to other workers, so no lock or
+    // existence check is needed.
+    let cursor = 0;
+    const workerCount = Math.min(workerCap, queue.length);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (cursor < queue.length) {
+        const entry = queue[cursor++];
+        // eslint-disable-next-line no-await-in-loop
+        const node = await resolveNode(entry.targetId, nodesById);
+        if (node) {
+          entry.message.node = node;
+        } else {
+          const placeholder = { node_id: entry.targetId };
+          applyNodeFallback(placeholder);
+          entry.message.node = placeholder;
+        }
+      }
+    });
+    await Promise.all(workers);
 
     return messages;
   }
