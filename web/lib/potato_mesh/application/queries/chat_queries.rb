@@ -26,7 +26,12 @@ module PotatoMesh
       # @return [Array<Hash>] compacted message rows safe for API responses.
       def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0, protocol: nil)
         limit = coerce_query_limit(limit)
-        since_threshold = normalize_since_threshold(since, floor: 0)
+        now = Time.now.to_i
+        # Default the chat feed to the same seven-day window the dashboard uses
+        # for the node table; per-id lookups widen to twenty-eight days so
+        # historical conversation context remains reachable on demand.
+        since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
+        since_threshold = normalize_since_threshold(since, floor: since_floor)
         db = open_database(readonly: true)
         db.results_as_hash = true
         params = []

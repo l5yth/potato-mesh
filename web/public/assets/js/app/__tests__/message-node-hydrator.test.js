@@ -17,7 +17,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createMessageNodeHydrator } from '../message-node-hydrator.js';
+import { createMessageNodeHydrator, MESSAGE_HYDRATION_CONCURRENCY } from '../message-node-hydrator.js';
+
+/**
+ * Build a fetch double that records the maximum number of simultaneously
+ * pending lookups so tests can assert the worker-pool cap is honoured.
+ *
+ * @param {number} settleDelayMs Milliseconds to keep each lookup pending
+ *   before resolving, giving sibling workers a chance to start.
+ * @returns {{
+ *   fetchNodeById: (id: string) => Promise<object|null>,
+ *   maxInFlight: () => number,
+ *   totalCalls: () => number,
+ * }} Helper API exposing the recorded peak concurrency.
+ */
+function makeConcurrencyProbe(settleDelayMs = 10) {
+  let inFlight = 0;
+  let peak = 0;
+  let total = 0;
+  return {
+    async fetchNodeById(id) {
+      inFlight += 1;
+      total += 1;
+      peak = Math.max(peak, inFlight);
+      try {
+        await new Promise(resolve => setTimeout(resolve, settleDelayMs));
+        return { node_id: id, short_name: id.slice(1, 5) };
+      } finally {
+        inFlight -= 1;
+      }
+    },
+    maxInFlight: () => peak,
+    totalCalls: () => total,
+  };
+}
+
+/**
+ * Build N messages with unique sender identifiers for concurrency tests.
+ *
+ * @param {number} count Number of messages to produce.
+ * @returns {Array<object>} Synthetic message payloads.
+ */
+function makeUniqueSenderMessages(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    from_id: `!sender${index.toString().padStart(4, '0')}`,
+    text: `m${index}`,
+  }));
+}
 
 /**
  * Capture warning invocations produced during a test run.
@@ -120,4 +166,120 @@ test('hydrate records warning when fetch rejects', async () => {
   assert.equal(result[0].node.node_id, '!warn');
   assert.ok(logger.messages.length >= 1);
   assert.equal(nodesById.has('!warn'), false);
+});
+
+test('hydrate caps in-flight lookups at the default concurrency', async () => {
+  const probe = makeConcurrencyProbe();
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: probe.fetchNodeById,
+    applyNodeFallback: () => {},
+  });
+  const messages = makeUniqueSenderMessages(MESSAGE_HYDRATION_CONCURRENCY * 3);
+
+  await hydrator.hydrate(messages, new Map());
+
+  assert.equal(probe.totalCalls(), messages.length);
+  assert.ok(
+    probe.maxInFlight() <= MESSAGE_HYDRATION_CONCURRENCY,
+    `expected <= ${MESSAGE_HYDRATION_CONCURRENCY} concurrent fetches, observed ${probe.maxInFlight()}`,
+  );
+});
+
+test('hydrate honours a custom concurrency override', async () => {
+  const probe = makeConcurrencyProbe();
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: probe.fetchNodeById,
+    applyNodeFallback: () => {},
+    concurrency: 2,
+  });
+  const messages = makeUniqueSenderMessages(8);
+
+  await hydrator.hydrate(messages, new Map());
+
+  assert.equal(probe.totalCalls(), 8);
+  assert.equal(probe.maxInFlight(), 2);
+});
+
+test('hydrate serialises lookups when concurrency is one', async () => {
+  const probe = makeConcurrencyProbe();
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: probe.fetchNodeById,
+    applyNodeFallback: () => {},
+    concurrency: 1,
+  });
+  const messages = makeUniqueSenderMessages(4);
+
+  await hydrator.hydrate(messages, new Map());
+
+  assert.equal(probe.maxInFlight(), 1);
+});
+
+test('hydrate falls back to the default cap for invalid concurrency values', async () => {
+  for (const invalid of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, 'four']) {
+    const probe = makeConcurrencyProbe();
+    const hydrator = createMessageNodeHydrator({
+      fetchNodeById: probe.fetchNodeById,
+      applyNodeFallback: () => {},
+      concurrency: invalid,
+    });
+    const messages = makeUniqueSenderMessages(MESSAGE_HYDRATION_CONCURRENCY * 2);
+
+    await hydrator.hydrate(messages, new Map());
+
+    assert.ok(
+      probe.maxInFlight() <= MESSAGE_HYDRATION_CONCURRENCY,
+      `concurrency=${String(invalid)} should fall back to default; observed peak ${probe.maxInFlight()}`,
+    );
+  }
+});
+
+test('factory rejects missing fetch and fallback dependencies', () => {
+  assert.throws(
+    () => createMessageNodeHydrator({ applyNodeFallback: () => {} }),
+    TypeError,
+  );
+  assert.throws(
+    () => createMessageNodeHydrator({ fetchNodeById: async () => null }),
+    TypeError,
+  );
+});
+
+test('hydrate skips non-object entries and senderless messages', async () => {
+  let fetchCalls = 0;
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: async () => {
+      fetchCalls += 1;
+      return null;
+    },
+    applyNodeFallback: () => {},
+  });
+  const senderless = { text: 'no sender' };
+  const messages = [null, 'not-an-object', senderless];
+
+  const result = await hydrator.hydrate(messages, new Map());
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(result.length, 3);
+  assert.strictEqual(senderless.node, null);
+});
+
+test('hydrate dedupes duplicate senders without exceeding the cap', async () => {
+  const probe = makeConcurrencyProbe();
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: probe.fetchNodeById,
+    applyNodeFallback: () => {},
+    concurrency: 2,
+  });
+  // Twenty messages but only four unique senders — inflight dedupe should
+  // keep total fetch count at four, and the cap still bounds parallelism.
+  const senders = ['!aaa', '!bbb', '!ccc', '!ddd'];
+  const messages = Array.from({ length: 20 }, (_, index) => ({
+    from_id: senders[index % senders.length],
+    text: `dup${index}`,
+  }));
+
+  await hydrator.hydrate(messages, new Map());
+
+  assert.equal(probe.totalCalls(), senders.length);
+  assert.ok(probe.maxInFlight() <= 2);
 });

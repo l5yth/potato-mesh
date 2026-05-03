@@ -6329,11 +6329,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
-    it "filters messages by the since parameter while defaulting to the full history" do
+    it "excludes messages older than seven days from collection queries while honouring since" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
       stale_rx = now - (PotatoMesh::Config.week_seconds + 120)
+      backfillable_rx = now - (PotatoMesh::Config.week_seconds + 3 * 24 * 60 * 60)
       fresh_rx = now - 15
 
       with_db do |db|
@@ -6349,15 +6350,32 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
           [2, fresh_rx, Time.at(fresh_rx).utc.iso8601, "!fresh", "!old", 0, "TEXT_MESSAGE_APP", "fresh", 2.0, -60, 3],
         )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text, snr, rssi, hop_limit) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+          [3, backfillable_rx, Time.at(backfillable_rx).utc.iso8601, "!old", "!fresh", 0, "TEXT_MESSAGE_APP", "backfill", 1.0, -75, 3],
+        )
       end
 
+      # Bulk feed defaults to the seven-day window so stale conversations stop
+      # spamming the dashboard hydrator with backfill lookups.
       get "/api/messages"
 
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
       ids = payload.map { |row| row["id"] }
-      expect(ids).to eq([2, 1])
+      expect(ids).to eq([2])
 
+      # Per-id lookups widen to twenty-eight days so callers can still backfill
+      # historical context for a specific conversation participant.  The route
+      # matches messages where either ``from_id`` or ``to_id`` references the
+      # supplied identifier, so the fresh exchange to ``!old`` shows up too.
+      get "/api/messages/!old"
+
+      expect(last_response).to be_ok
+      scoped = JSON.parse(last_response.body)
+      expect(scoped.map { |row| row["id"] }).to contain_exactly(1, 2, 3)
+
+      # The since parameter overrides the floor when it is more restrictive.
       get "/api/messages?since=#{fresh_rx}"
 
       expect(last_response).to be_ok
@@ -6367,8 +6385,33 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/api/messages/!old?since=#{fresh_rx}"
 
       expect(last_response).to be_ok
-      scoped = JSON.parse(last_response.body)
-      expect(scoped.map { |row| row["id"] }).to eq([2])
+      scoped_since = JSON.parse(last_response.body)
+      expect(scoped_since.map { |row| row["id"] }).to eq([2])
+    end
+
+    it "excludes per-id messages older than the twenty-eight-day extended window" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      ancient_rx = now - (PotatoMesh::Config.four_weeks_seconds + 60)
+      backfillable_rx = now - (PotatoMesh::Config.four_weeks_seconds - 60)
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+          [10, ancient_rx, Time.at(ancient_rx).utc.iso8601, "!old", "!fresh", 0, "TEXT_MESSAGE_APP", "ancient"],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+          [11, backfillable_rx, Time.at(backfillable_rx).utc.iso8601, "!old", "!fresh", 0, "TEXT_MESSAGE_APP", "backfill"],
+        )
+      end
+
+      get "/api/messages/!old"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      expect(payload.map { |row| row["id"] }).to eq([11])
     end
   end
 
@@ -6580,11 +6623,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/neighbors" do
-    it "excludes neighbor records older than twenty-eight days from collection queries" do
+    it "excludes neighbor records older than twenty-eight days from both bulk and per-id queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
       now = reference_time.to_i
-      stale_rx = now - (PotatoMesh::Config.trace_neighbor_window_seconds + 45)
+      stale_rx = now - (PotatoMesh::Config.four_weeks_seconds + 45)
+      backfillable_rx = now - (PotatoMesh::Config.four_weeks_seconds - 60)
       fresh_rx = now - 10
 
       with_db do |db|
@@ -6598,6 +6642,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
         )
         db.execute(
           "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!neighbor-mid", "midn", "Neighbor Mid", "TBEAM", "CLIENT", 0.0, fresh_rx, fresh_rx],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
           ["!neighbor-new", "newn", "Neighbor New", "TBEAM", "CLIENT", 0.0, fresh_rx, fresh_rx],
         )
         db.execute(
@@ -6606,24 +6654,28 @@ RSpec.describe "Potato Mesh Sinatra app" do
         )
         db.execute(
           "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
+          ["!root", "!neighbor-mid", 4.0, backfillable_rx],
+        )
+        db.execute(
+          "INSERT INTO neighbors(node_id, neighbor_id, snr, rx_time) VALUES(?,?,?,?)",
           ["!root", "!neighbor-new", 8.0, fresh_rx],
         )
       end
 
+      # Both bulk and per-id queries share the twenty-eight-day extended
+      # window — neighbours are reported sporadically and would otherwise be
+      # lost between scrapes.
       get "/api/neighbors"
 
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
-      expect(payload.length).to eq(1)
-      expect(payload.first["neighbor_id"]).to eq("!neighbor-new")
-      expect(payload.first["rx_time"]).to eq(fresh_rx)
+      expect(payload.map { |row| row["neighbor_id"] }).to eq(["!neighbor-new", "!neighbor-mid"])
 
       get "/api/neighbors/!root"
 
       expect(last_response).to be_ok
       filtered = JSON.parse(last_response.body)
-      expect(filtered.length).to eq(2)
-      expect(filtered.map { |row| row["neighbor_id"] }).to eq(["!neighbor-new", "!neighbor-old"])
+      expect(filtered.map { |row| row["neighbor_id"] }).to eq(["!neighbor-new", "!neighbor-mid"])
     end
 
     it "honours the since parameter for neighbor queries" do
@@ -7172,8 +7224,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "excludes traces older than twenty-eight days" do
       clear_database
       now = Time.now.to_i
-      recent_rx = now - (PotatoMesh::Config.trace_neighbor_window_seconds / 2)
-      stale_rx = now - (PotatoMesh::Config.trace_neighbor_window_seconds + 60)
+      recent_rx = now - (PotatoMesh::Config.four_weeks_seconds / 2)
+      stale_rx = now - (PotatoMesh::Config.four_weeks_seconds + 60)
       payload = [
         { "id" => 50_001, "src" => 1, "dest" => 2, "rx_time" => recent_rx, "metrics" => {} },
         { "id" => 50_002, "src" => 3, "dest" => 4, "rx_time" => stale_rx, "metrics" => {} },
@@ -7218,6 +7270,41 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       scoped = JSON.parse(last_response.body)
       expect(scoped.map { |row| row["id"] }).to eq([60_002])
+    end
+  end
+
+  describe "GET /api/ingestors" do
+    it "uses the twenty-eight-day extended window so slow-tick ingestors stay visible" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_seen = now - (PotatoMesh::Config.four_weeks_seconds + 30)
+      backfillable_seen = now - (PotatoMesh::Config.week_seconds + 24 * 60 * 60)
+      fresh_seen = now - 60
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version, protocol) VALUES(?,?,?,?,?)",
+          ["!stale-ing", stale_seen - 60, stale_seen, "0.6.3", "meshtastic"],
+        )
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version, protocol) VALUES(?,?,?,?,?)",
+          ["!slow-ing", backfillable_seen - 60, backfillable_seen, "0.6.3", "meshtastic"],
+        )
+        db.execute(
+          "INSERT INTO ingestors(node_id, start_time, last_seen_time, version, protocol) VALUES(?,?,?,?,?)",
+          ["!fresh-ing", fresh_seen - 60, fresh_seen, "0.6.3", "meshtastic"],
+        )
+      end
+
+      get "/api/ingestors"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      ids = payload.map { |row| row["node_id"] }
+      # The eight-day-old ingestor is included (was excluded under the seven-day
+      # default) while the twenty-eight-day-old one stays out.
+      expect(ids).to contain_exactly("!fresh-ing", "!slow-ing")
     end
   end
 

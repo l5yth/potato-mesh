@@ -358,7 +358,7 @@ RSpec.describe PotatoMesh::App::Queries do
         allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
         allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
         allow(PotatoMesh::Config).to receive(:week_seconds).and_return(604_800)
-        allow(PotatoMesh::Config).to receive(:trace_neighbor_window_seconds).and_return(604_800)
+        allow(PotatoMesh::Config).to receive(:four_weeks_seconds).and_return(604_800)
         allow(PotatoMesh::Config).to receive(:debug?).and_return(false)
 
         # Initialise schema so query methods can execute real SQL.
@@ -564,6 +564,36 @@ RSpec.describe PotatoMesh::App::Queries do
       texts = rows.map { |r| r["text"] }
       expect(texts).to include("hello")
       expect(texts).not_to include("other message")
+    end
+
+    it "applies a seven-day floor for bulk queries and twenty-eight days for per-id" do
+      # Re-stub the windows with their real ratio so the bulk-vs-per-id
+      # distinction is observable from a single test.
+      allow(PotatoMesh::Config).to receive(:week_seconds).and_return(7 * 24 * 60 * 60)
+      allow(PotatoMesh::Config).to receive(:four_weeks_seconds).and_return(28 * 24 * 60 * 60)
+
+      stale_rx = now - (7 * 24 * 60 * 60 + 60)
+      backfillable_rx = now - (28 * 24 * 60 * 60 - 60)
+
+      with_db do |db|
+        rx_iso = Time.at(stale_rx).utc.iso8601
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES (?,?,?,?,?,?,?)",
+          [101, stale_rx, rx_iso, "!aabbccdd", "!ffffffff", 0, "stale"],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES (?,?,?,?,?,?,?)",
+          [102, backfillable_rx, Time.at(backfillable_rx).utc.iso8601, "!aabbccdd", "!ffffffff", 0, "backfill"],
+        )
+      end
+
+      bulk_ids = queries.query_messages(50).map { |r| r["id"] }
+      expect(bulk_ids).not_to include(101)
+      expect(bulk_ids).not_to include(102)
+
+      scoped_ids = queries.query_messages(50, node_ref: "!aabbccdd").map { |r| r["id"] }
+      expect(scoped_ids).to include(101)
+      expect(scoped_ids).to include(102)
     end
   end
 

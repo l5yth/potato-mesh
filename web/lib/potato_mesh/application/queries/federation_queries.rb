@@ -30,8 +30,9 @@ module PotatoMesh
         params = []
         where_clauses = []
         now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.week_seconds
-        since_floor = node_ref ? 0 : min_rx_time
+        # Bulk positions follow the seven-day default; per-id lookups widen
+        # to twenty-eight days for backfill of historical track data.
+        since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: since_floor)
         where_clauses << "COALESCE(rx_time, position_time, 0) >= ?"
         params << since_threshold
@@ -91,9 +92,11 @@ module PotatoMesh
         params = []
         where_clauses = []
         now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.week_seconds
-        since_floor = node_ref ? 0 : min_rx_time
-        since_threshold = normalize_since_threshold(since, floor: since_floor)
+        # Neighbor relationships are reported sporadically and are easy to
+        # lose between scrapes, so use the twenty-eight-day extended window
+        # for both bulk and per-id queries.
+        min_rx_time = now - PotatoMesh::Config.four_weeks_seconds
+        since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
         params << since_threshold
 
@@ -141,7 +144,7 @@ module PotatoMesh
         params = []
         where_clauses = []
         now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.trace_neighbor_window_seconds
+        min_rx_time = now - PotatoMesh::Config.four_weeks_seconds
         since_threshold = normalize_since_threshold(since, floor: min_rx_time)
         where_clauses << "COALESCE(rx_time, 0) >= ?"
         params << since_threshold

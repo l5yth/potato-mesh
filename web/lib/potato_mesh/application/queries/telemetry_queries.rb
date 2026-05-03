@@ -30,8 +30,9 @@ module PotatoMesh
         params = []
         where_clauses = []
         now = Time.now.to_i
-        min_rx_time = now - PotatoMesh::Config.week_seconds
-        since_floor = node_ref ? 0 : min_rx_time
+        # Bulk telemetry follows the seven-day default; per-id lookups widen
+        # to twenty-eight days so historical chart data remains reachable.
+        since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: since_floor)
         where_clauses << "COALESCE(rx_time, telemetry_time, 0) >= ?"
         params << since_threshold

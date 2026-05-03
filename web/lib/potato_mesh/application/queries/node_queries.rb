@@ -141,8 +141,10 @@ module PotatoMesh
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
-        min_last_heard = now - PotatoMesh::Config.week_seconds
-        since_floor = node_ref ? 0 : min_last_heard
+        # Bulk listings stay on the seven-day window so the dashboard does not
+        # render stale nodes; per-id lookups widen to twenty-eight days so
+        # callers can backfill older records that fall outside the bulk floor.
+        since_floor = node_ref ? now - PotatoMesh::Config.four_weeks_seconds : now - PotatoMesh::Config.week_seconds
         since_threshold = normalize_since_threshold(since, floor: since_floor)
         params = []
         where_clauses = []
@@ -227,7 +229,10 @@ module PotatoMesh
         db = open_database(readonly: true)
         db.results_as_hash = true
         now = Time.now.to_i
-        cutoff = now - PotatoMesh::Config.week_seconds
+        # Ingestor heartbeats are sparse (one per ingestor per cycle) so widen
+        # the rolling window to twenty-eight days to keep slow-tick ingestors
+        # visible in the federation overview.
+        cutoff = now - PotatoMesh::Config.four_weeks_seconds
         since_threshold = normalize_since_threshold(since, floor: cutoff)
         where_clauses = ["last_seen_time >= ?"]
         params = [since_threshold]

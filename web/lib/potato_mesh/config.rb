@@ -188,10 +188,16 @@ module PotatoMesh
       7 * 24 * 60 * 60
     end
 
-    # Rolling retention window in seconds for trace and neighbor API queries.
+    # Extended rolling retention window in seconds.
+    #
+    # Used as the default freshness floor for endpoints whose data is more
+    # fragile (traces, neighbors, ingestors) and as the floor for every
+    # +/api/.../:id+ lookup so callers can backfill historical records that
+    # would otherwise fall outside the seven-day default applied to bulk
+    # endpoints.
     #
     # @return [Integer] seconds in twenty-eight days.
-    def trace_neighbor_window_seconds
+    def four_weeks_seconds
       28 * 24 * 60 * 60
     end
 
