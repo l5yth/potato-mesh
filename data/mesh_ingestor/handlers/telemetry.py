@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 
-from .. import config, queue
+from .. import config, queue, channels
 from ..serialization import (
     _canonical_node_id,
     _coerce_float,
@@ -29,7 +29,7 @@ from ..serialization import (
     _iso,
     _node_num_from_id,
 )
-from . import _state
+from . import _state, ignored as _ignored_mod
 from .position import base64_payload
 from .radio import _apply_radio_metadata, _apply_radio_metadata_to_nodes
 
@@ -150,6 +150,24 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         channel = _coerce_int(_first(packet, "channel", default=None))
     if channel is None:
         channel = 0
+
+    if len(channels.allowed_channel_names()) > 0 or len(channels.hidden_channel_names()) > 0:
+        channel_name = channels.channel_name(channel)
+        if not channels.is_allowed_channel(channel_name) or channels.is_hidden_channel(channel_name):
+            _ignored_mod._record_ignored_packet(
+                    packet, reason="Suppressed telemetry (disallowed-channel/hidden-channel)"
+            )
+            if config.DEBUG:
+                config._debug_log(
+                    "Suppressed telemetry (disallowed-channel/hidden-channel)",
+                    context="handlers.store_telemetry",
+                    channel_name=channel_name,
+                    channel_id=channel,
+                    node_id=node_id,
+                    allowed_channs=channels.allowed_channel_names(),
+                    hidden_channs=channels.hidden_channel_names(),
+                )
+            return
 
     portnum = _first(decoded, "portnum", default=None)
     portnum = str(portnum) if portnum not in {None, ""} else None
