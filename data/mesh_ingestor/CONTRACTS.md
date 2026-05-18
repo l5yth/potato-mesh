@@ -46,6 +46,16 @@ Node entry fields are “Meshtastic-ish” (camelCase) and may include:
 - `position` (mapping; `latitude`, `longitude`, `altitude`, `time`, `locationSource`, `precisionBits`, optional nested `raw`)
 - Optional radio metadata: `lora_freq`, `modem_preset`
 
+**Sentinel handling (issue #782).** Meshtastic firmware emits `(latitude=0, longitude=0)` and `time=0` whenever the GPS module has not produced a fresh fix. Ingestors MUST normalise these sentinels before POSTing:
+
+- `position.time <= 0` → omit the key entirely.
+- `position.latitude == 0 AND position.longitude == 0` (within ±1e-9°) → omit `latitude`, `longitude`, `altitude`, and `locationSource` together; the remaining `precisionBits` / nested `raw` may still ride along.
+- Single-axis zeros (`latitude == 0` *or* `longitude == 0` but not both) are legitimate equator / prime-meridian fixes and MUST be preserved.
+
+The web application applies the same normalisation as a safety net so legacy ingestors and replayed payloads cannot reintroduce the sentinels, but new ingestors should strip them at the source so the cross-network contract stays clean.
+
+**Wire-format note for federation peers (issue #782).** GET responses (`/api/nodes`, `/api/positions`) compact sentinel rows by **omitting** the `position_time` and `pos_time_iso` / `position_time_iso` keys rather than emitting them as `0` or `"1970-01-01T00:00:00Z"`. Federation peers consuming this API and any third-party clients SHOULD treat an *absent* `position_time` as "no GPS lock recorded" and not synthesise a zero or epoch value when re-serialising. Older peers that key on `position_time == 0` may need a small adjustment.
+
 #### `POST /api/messages`
 
 Single message payload:
@@ -93,6 +103,13 @@ Single position payload:
 - Quality: `location_source` (string|nil), `precision_bits` (int|nil), `sats_in_view` (int|nil), `pdop` (float|nil)
 - Motion: `ground_speed` (float|nil), `ground_track` (float|nil)
 - RF/meta: `snr`, `rssi`, `hop_limit`, `bitfield`, `payload_b64` (string|nil), `raw` (mapping|nil), `ingestor`, `lora_freq`, `modem_preset`
+
+**Sentinel handling (issue #782).** The same rules as `POST /api/nodes` apply here:
+
+- `position_time <= 0` → set to `nil`.
+- `latitude == 0 AND longitude == 0` (within ±1e-9°) → set `latitude`, `longitude`, `altitude`, and `location_source` all to `nil`. Equator / prime-meridian fixes with one non-zero axis survive.
+
+MeshCore providers that obtain a contact advertisement with `(0, 0)` SHOULD drop the entire advertisement rather than queue a coordinate-less position row.
 
 #### `POST /api/telemetry`
 

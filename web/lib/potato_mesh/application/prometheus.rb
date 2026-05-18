@@ -159,12 +159,19 @@ module PotatoMesh
         end
 
         if pos && pos.is_a?(Hash)
-          if pos["latitude"]
-            NODE_LATITUDE.set(pos["latitude"], labels: { node: node_id })
-          end
-
-          if pos["longitude"]
-            NODE_LONGITUDE.set(pos["longitude"], labels: { node: node_id })
+          lat = pos["latitude"]
+          lon = pos["longitude"]
+          # Issue #782: paired ``(0, 0)`` is the Meshtastic "no GPS lock"
+          # sentinel.  In Ruby ``0.0`` is truthy, so the previous
+          # ``if pos["latitude"]`` guard let the gauge be clobbered to 0
+          # on every sentinel nodeinfo.  Skip both gauges when the pair is
+          # sentinel so each retains its last real value.  Single-axis
+          # zero — a legitimate equator / prime-meridian fix — survives.
+          is_null_island = lat.is_a?(Numeric) && lon.is_a?(Numeric) &&
+                           lat.abs < 1e-9 && lon.abs < 1e-9
+          unless is_null_island
+            NODE_LATITUDE.set(lat, labels: { node: node_id }) if lat
+            NODE_LONGITUDE.set(lon, labels: { node: node_id }) if lon
           end
 
           if pos["altitude"]

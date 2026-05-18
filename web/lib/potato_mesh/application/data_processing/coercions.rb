@@ -46,6 +46,59 @@ module PotatoMesh
         else value
         end
       end
+
+      # Pair-zero tolerance used when classifying a +(lat, lon)+ tuple as the
+      # Meshtastic "no GPS lock" sentinel.  See +normalize_lat_lon+ and
+      # issue #782 for rationale.
+      NULL_ISLAND_EPSILON = 1e-9
+
+      # Collapse a Meshtastic +position.time+ candidate to +nil+ whenever it
+      # represents the firmware "no GPS lock" sentinel.  Meshtastic emits
+      # +time = 0+ until a fresh GPS fix is acquired, and SQLite happily stores
+      # the zero — but downstream readers and the map renderer treat that as
+      # a real epoch timestamp.  Routing every +position.time+ through this
+      # helper at the write boundary ensures we persist +NULL+ instead.
+      #
+      # Future-dated values (e.g. clock-skew from misconfigured radios) are
+      # also dropped so they cannot anchor the 7-day freshness filter beyond
+      # the present moment.
+      #
+      # @param value [Object] raw +position.time+ value.
+      # @param now [Integer] reference upper bound (seconds since the epoch).
+      # @return [Integer, nil] positive coerced integer, or +nil+ when the
+      #   value is missing, non-positive, non-integer-coercible, or future.
+      def normalize_position_time(value, now:)
+        coerced = coerce_integer(value)
+        return nil if coerced.nil? || coerced <= 0
+        return nil if now && coerced > now
+
+        coerced
+      end
+
+      # Collapse a +(lat, lon)+ pair to +[nil, nil]+ when it represents the
+      # Meshtastic "no GPS lock" sentinel — i.e. *both* axes are within
+      # +NULL_ISLAND_EPSILON+ of zero.  Single-axis zeros are preserved so a
+      # node legitimately at the equator (+lat = 0+) or the prime meridian
+      # (+lon = 0+) survives.
+      #
+      # Non-finite or non-numeric axes are returned as +nil+ on their own
+      # axis; the caller can then decide whether the surviving axis is enough
+      # to keep the row.
+      #
+      # @param lat [Object] raw latitude candidate.
+      # @param lon [Object] raw longitude candidate.
+      # @return [Array(Float, Float)] +[lat_f, lon_f]+ as floats, with +nil+
+      #   substituted on either axis when sentinel/invalid.
+      def normalize_lat_lon(lat, lon)
+        lat_f = coerce_float(lat)
+        lon_f = coerce_float(lon)
+        return [lat_f, lon_f] if lat_f.nil? || lon_f.nil?
+        if lat_f.abs < NULL_ISLAND_EPSILON && lon_f.abs < NULL_ISLAND_EPSILON
+          return [nil, nil]
+        end
+
+        [lat_f, lon_f]
+      end
     end
   end
 end

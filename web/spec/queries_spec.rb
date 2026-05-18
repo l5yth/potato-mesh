@@ -151,6 +151,53 @@ RSpec.describe PotatoMesh::App::Queries do
   end
 
   # ---------------------------------------------------------------------------
+  # coerce_positive_or_nil — read-side guard against truthy-zero ISO emission
+  # (issue #782).  Every branch is exercised: nil, non-positive, future-clamped,
+  # numeric-string, non-numeric, and the happy path.
+  # ---------------------------------------------------------------------------
+  describe "#coerce_positive_or_nil" do
+    it "returns nil when value is nil" do
+      expect(queries.coerce_positive_or_nil(nil)).to be_nil
+    end
+
+    it "returns nil for zero (the truthy-zero case)" do
+      expect(queries.coerce_positive_or_nil(0)).to be_nil
+    end
+
+    it "returns nil for negative integers" do
+      expect(queries.coerce_positive_or_nil(-1)).to be_nil
+    end
+
+    it "returns the integer for positive integers" do
+      expect(queries.coerce_positive_or_nil(42)).to eq(42)
+    end
+
+    it "coerces numeric strings to integers" do
+      expect(queries.coerce_positive_or_nil("123")).to eq(123)
+    end
+
+    it "returns nil for the literal string '0'" do
+      expect(queries.coerce_positive_or_nil("0")).to be_nil
+    end
+
+    it "returns nil for non-numeric strings" do
+      expect(queries.coerce_positive_or_nil("not-a-number")).to be_nil
+    end
+
+    it "returns nil for values exceeding the ceiling" do
+      expect(queries.coerce_positive_or_nil(100, ceiling: 50)).to be_nil
+    end
+
+    it "returns the value when equal to the ceiling (inclusive)" do
+      expect(queries.coerce_positive_or_nil(50, ceiling: 50)).to eq(50)
+    end
+
+    it "ignores the ceiling when nil" do
+      expect(queries.coerce_positive_or_nil(1_000_000)).to eq(1_000_000)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # append_protocol_filter
   # ---------------------------------------------------------------------------
   describe "#append_protocol_filter" do
@@ -419,6 +466,41 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(rows).to be_empty
     end
 
+    # Regression for issue #782: a stored `position_time = 0` historically
+    # bypassed the `if pt` ISO guard because Ruby treats `0` as truthy, leaking
+    # "1970-01-01T00:00:00Z" into API responses.  `coerce_positive_or_nil`
+    # normalises the value to nil so neither the column nor its ISO sibling
+    # surface in the row.
+    it "strips position_time = 0 sentinels and emits no epoch ISO" do
+      with_db do |db|
+        db.execute(
+          "UPDATE nodes SET position_time = ?, latitude = ?, longitude = ? WHERE node_id = ?",
+          [0, 0.0, 0.0, "!aabbccdd"],
+        )
+      end
+      rows = queries.query_nodes(10, node_ref: "!aabbccdd")
+      row = rows.find { |r| r["node_id"] == "!aabbccdd" }
+      expect(row).not_to be_nil
+      expect(row).not_to have_key("position_time")
+      expect(row).not_to have_key("pos_time_iso")
+      expect(row.values).not_to include("1970-01-01T00:00:00Z")
+    end
+
+    it "strips last_heard = 0 sentinels and emits no epoch ISO" do
+      with_db do |db|
+        db.execute(
+          "UPDATE nodes SET last_heard = ? WHERE node_id = ?",
+          [0, "!aabbccdd"],
+        )
+      end
+      rows = queries.query_nodes(10, node_ref: "!aabbccdd")
+      row = rows.find { |r| r["node_id"] == "!aabbccdd" }
+      expect(row).not_to be_nil
+      expect(row).not_to have_key("last_heard")
+      expect(row).not_to have_key("last_seen_iso")
+      expect(row.values).not_to include("1970-01-01T00:00:00Z")
+    end
+
     context "COMPANION short name enrichment" do
       it "derives a two-initial short name for a COMPANION node with a two-word long name" do
         with_db do |db|
@@ -640,6 +722,25 @@ RSpec.describe PotatoMesh::App::Queries do
     it "filters by node_ref" do
       rows = queries.query_positions(10, node_ref: "!aabbccdd")
       expect(rows.length).to be >= 1
+    end
+
+    # Regression for issue #782: legacy rows seeded with `position_time = 0`
+    # must not surface "1970-01-01T00:00:00Z" via the `position_time_iso`
+    # output.  See `coerce_positive_or_nil` in queries/common.rb.
+    it "strips position_time = 0 sentinels from position rows" do
+      with_db do |db|
+        rx_iso = Time.at(now).utc.iso8601
+        db.execute(
+          "INSERT INTO positions(id, rx_time, rx_iso, node_id, latitude, longitude, position_time) " \
+          "VALUES (?,?,?,?,?,?,?)",
+          [2, now, rx_iso, "!aabbccdd", 52.0, 13.0, 0],
+        )
+      end
+      row = queries.query_positions(10).find { |r| r["id"] == 2 }
+      expect(row).not_to be_nil
+      expect(row).not_to have_key("position_time")
+      expect(row).not_to have_key("position_time_iso")
+      expect(row.values).not_to include("1970-01-01T00:00:00Z")
     end
   end
 

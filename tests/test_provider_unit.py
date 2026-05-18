@@ -1169,6 +1169,67 @@ def test_store_meshcore_position_falls_back_to_rx_time_when_no_position_time(
     assert before <= payload["position_time"] <= after
 
 
+# Issue #782: MeshCore contact advertisements that report ``(0, 0)`` are the
+# "no GPS lock" sentinel and must be dropped wholesale rather than persisted
+# at the Gulf of Guinea.
+def test_store_meshcore_position_drops_paired_zero_sentinel(monkeypatch):
+    """``(lat=0, lon=0)`` advertisements are never queued."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    _store_meshcore_position("!aabbccdd", 0.0, 0.0, 1700001234, "!ingestor1")
+
+    assert posted == []
+
+
+def test_store_meshcore_position_collapses_zero_position_time(monkeypatch):
+    """``position_time = 0`` falls back to rx_time via the normalizer."""
+    import time as _time
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(payload),
+    )
+
+    before = int(_time.time())
+    _store_meshcore_position("!aabbccdd", 51.5, -0.1, 0, None)
+    after = int(_time.time())
+
+    assert (
+        posted
+    ), "expected the post to land — zero pt is a normaliser miss, not a drop"
+    payload = posted[0]
+    assert before <= payload["position_time"] <= after
+
+
+def test_store_meshcore_position_equator_fix_preserved(monkeypatch):
+    """A real ``(0, lon != 0)`` equator advertisement survives."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(payload),
+    )
+
+    _store_meshcore_position("!aabbccdd", 0.0, 13.5, 1700001234, None)
+
+    assert len(posted) == 1
+    payload = posted[0]
+    assert payload["latitude"] == 0.0
+    assert payload["longitude"] == pytest.approx(13.5)
+
+
 # ---------------------------------------------------------------------------
 # _MeshcoreInterface contact management
 # ---------------------------------------------------------------------------

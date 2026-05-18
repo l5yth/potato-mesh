@@ -537,6 +537,101 @@ class TestStorePositionPacket:
         assert abs(payload["latitude"] - 37.5) < 1e-4
         assert abs(payload["longitude"] - -122.1) < 1e-4
 
+    # Issue #782: paired ``(lat, lon) = (0, 0)`` is the Meshtastic "no GPS
+    # lock" sentinel and must collapse to ``None``; the altitude and location
+    # source siblings ride along because they are meaningless without a fix.
+    def test_paired_zero_lat_lon_collapses(self):
+        """Sentinel coords emit ``latitude`` / ``longitude`` / ``altitude`` as None."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_position_packet(
+                {"id": 100, "rxTime": 100, "fromId": "!aabbccdd"},
+                {
+                    "position": {
+                        "latitude": 0.0,
+                        "longitude": 0.0,
+                        "altitude": 0,
+                        "locationSource": "LOC_MANUAL",
+                    },
+                },
+            )
+        finally:
+            q._queue_post_json = original
+        assert len(sent) == 1
+        payload = sent[0][1]
+        assert payload["latitude"] is None
+        assert payload["longitude"] is None
+        assert payload["altitude"] is None
+        assert payload["location_source"] is None
+
+    def test_paired_zero_latitude_i_collapses(self):
+        """Integer-scaled ``(latitudeI=0, longitudeI=0)`` also collapses."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_position_packet(
+                {"id": 101, "rxTime": 100, "fromId": "!aabbccdd"},
+                {"position": {"latitudeI": 0, "longitudeI": 0}},
+            )
+        finally:
+            q._queue_post_json = original
+        assert len(sent) == 1
+        payload = sent[0][1]
+        assert payload["latitude"] is None
+        assert payload["longitude"] is None
+
+    def test_equator_fix_preserved(self):
+        """``(lat=0, lon=13.5)`` is a real equator fix and must survive."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_position_packet(
+                {"id": 102, "rxTime": 100, "fromId": "!aabbccdd"},
+                {"position": {"latitude": 0.0, "longitude": 13.5}},
+            )
+        finally:
+            q._queue_post_json = original
+        assert len(sent) == 1
+        payload = sent[0][1]
+        assert payload["latitude"] == 0.0
+        assert abs(payload["longitude"] - 13.5) < 1e-9
+
+    def test_zero_position_time_stripped(self):
+        """``position.time = 0`` is the firmware "no GPS lock" sentinel."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_position_packet(
+                {"id": 103, "rxTime": 100, "fromId": "!aabbccdd"},
+                {"position": {"latitude": 37.5, "longitude": -122.1, "time": 0}},
+            )
+        finally:
+            q._queue_post_json = original
+        assert len(sent) == 1
+        payload = sent[0][1]
+        assert payload["position_time"] is None
+
 
 # ---------------------------------------------------------------------------
 # store_telemetry_packet
@@ -802,6 +897,111 @@ class TestStoreNodeinfoPacket:
         finally:
             q._queue_post_json = original
         assert "/api/nodes" in sent
+
+    # Issue #782: a nodeinfo packet whose merged position dict carries the
+    # Meshtastic ``(0, 0)`` Null Island sentinel must have the coords stripped
+    # from the queued ``POST /api/nodes`` body — alongside ``altitude`` /
+    # ``locationSource``, which are meaningless without a fix.
+    def test_nodeinfo_paired_zero_position_stripped(self):
+        """Sentinel ``(0, 0)`` position drops latitude/longitude/altitude."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 5, "rxTime": 500, "fromId": "!11223399"},
+                {
+                    "user": {
+                        "id": "!11223399",
+                        "shortName": "ZZ",
+                        "longName": "Zero Zero",
+                    },
+                    "position": {
+                        "latitude": 0.0,
+                        "longitude": 0.0,
+                        "altitude": 0,
+                        "locationSource": "LOC_MANUAL",
+                    },
+                },
+            )
+        finally:
+            q._queue_post_json = original
+        assert sent, "expected at least one queued POST"
+        body = sent[-1][1]
+        position = body["!11223399"].get("position")
+        # All four sentinel keys are stripped; the position dict may either be
+        # absent entirely or present-but-empty depending on other merged keys.
+        if position is not None:
+            for key in ("latitude", "longitude", "altitude", "locationSource"):
+                assert key not in position
+
+    def test_nodeinfo_zero_position_time_stripped(self):
+        """``position.time = 0`` collapses out of the nodeinfo POST body."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 6, "rxTime": 600, "fromId": "!11223388"},
+                {
+                    "user": {
+                        "id": "!11223388",
+                        "shortName": "ZT",
+                        "longName": "Zero Time",
+                    },
+                    "position": {
+                        "latitude": 52.5,
+                        "longitude": 13.4,
+                        "time": 0,
+                    },
+                },
+            )
+        finally:
+            q._queue_post_json = original
+        assert sent
+        body = sent[-1][1]
+        position = body["!11223388"].get("position")
+        assert position is not None
+        assert "time" not in position
+        assert position["latitude"] == 52.5
+        assert position["longitude"] == 13.4
+
+    def test_nodeinfo_equator_fix_preserved(self):
+        """``(lat=0, lon=13.4)`` is a real equator fix and survives."""
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_nodeinfo_packet(
+                {"id": 7, "rxTime": 700, "fromId": "!11223377"},
+                {
+                    "user": {
+                        "id": "!11223377",
+                        "shortName": "EQ",
+                        "longName": "Equator",
+                    },
+                    "position": {"latitude": 0.0, "longitude": 13.4},
+                },
+            )
+        finally:
+            q._queue_post_json = original
+        assert sent
+        body = sent[-1][1]
+        position = body["!11223377"].get("position")
+        assert position["latitude"] == 0.0
+        assert position["longitude"] == 13.4
 
 
 # ---------------------------------------------------------------------------

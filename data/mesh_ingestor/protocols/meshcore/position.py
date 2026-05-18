@@ -20,7 +20,12 @@ import hashlib
 import time
 
 from ... import queue as _queue
-from ...serialization import _iso, _node_num_from_id
+from ...serialization import (
+    _iso,
+    _node_num_from_id,
+    _normalize_lat_lon,
+    _normalize_position_time,
+)
 
 
 def _store_meshcore_position(
@@ -38,6 +43,10 @@ def _store_meshcore_position(
     position are idempotently de-duplicated by the web app's ``ON CONFLICT``
     clause.
 
+    Sentinel ``(lat, lon) = (0, 0)`` advertisements indicate the radio has not
+    yet acquired a GPS lock and are dropped wholesale rather than queued — per
+    issue #782 those packets must never reach the web app.
+
     Parameters:
         node_id: Canonical ``!xxxxxxxx`` node identifier.
         lat: Latitude in decimal degrees.
@@ -47,7 +56,13 @@ def _store_meshcore_position(
         ingestor: Canonical node ID of the host ingestor, or ``None``.
     """
     rx_time = int(time.time())
-    pt = position_time or rx_time
+    normalized_lat, normalized_lon = _normalize_lat_lon(lat, lon)
+    if normalized_lat is None and normalized_lon is None:
+        # Both axes collapsed to the sentinel zero; abandon the advertisement
+        # entirely because a position row with no coordinates is meaningless.
+        return
+    normalized_pt = _normalize_position_time(position_time)
+    pt = normalized_pt if normalized_pt is not None else rx_time
     # Stable 63-bit pseudo-ID unique to (node, position_time) so that the web
     # app ON CONFLICT clause de-duplicates repeated advertisements of the same
     # position without collisions between different nodes.
@@ -61,8 +76,8 @@ def _store_meshcore_position(
         "node_id": node_id,
         "node_num": node_num,
         "from_id": node_id,
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": normalized_lat,
+        "longitude": normalized_lon,
         "position_time": pt,
         "ingestor": ingestor,
     }

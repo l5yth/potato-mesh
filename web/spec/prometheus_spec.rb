@@ -176,6 +176,52 @@ RSpec.describe PotatoMesh::App::Prometheus do
       expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).to have_received(:set).with(52.0, labels: { node: "!aabb1234" })
       expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(13.0, labels: { node: "!aabb1234" })
     end
+
+    # Issue #782: a Meshtastic node without a GPS lock emits ``(0, 0)`` on
+    # every nodeinfo.  The previous truthy-zero guard clobbered NODE_LATITUDE
+    # and NODE_LONGITUDE to 0 on each update; after the fix the gauges retain
+    # their last real value and the sentinel is silently ignored.
+    it "skips the lat/lon gauges for the (0, 0) Null Island sentinel" do
+      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
+      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
+      prom_obj.update_prometheus_metrics(
+        "!aabb1234",
+        nil,
+        "",
+        nil,
+        { "latitude" => 0.0, "longitude" => 0.0 },
+      )
+      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).not_to have_received(:set)
+      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).not_to have_received(:set)
+    end
+
+    it "preserves an equator fix (lat=0, lon!=0)" do
+      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
+      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
+      prom_obj.update_prometheus_metrics(
+        "!aabb1234",
+        nil,
+        "",
+        nil,
+        { "latitude" => 0.0, "longitude" => 13.4 },
+      )
+      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).to have_received(:set).with(0.0, labels: { node: "!aabb1234" })
+      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(13.4, labels: { node: "!aabb1234" })
+    end
+
+    it "preserves a prime-meridian fix (lat!=0, lon=0)" do
+      allow(PotatoMesh::App::Prometheus::NODE_LATITUDE).to receive(:set)
+      allow(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to receive(:set)
+      prom_obj.update_prometheus_metrics(
+        "!aabb1234",
+        nil,
+        "",
+        nil,
+        { "latitude" => 52.5, "longitude" => 0.0 },
+      )
+      expect(PotatoMesh::App::Prometheus::NODE_LATITUDE).to have_received(:set).with(52.5, labels: { node: "!aabb1234" })
+      expect(PotatoMesh::App::Prometheus::NODE_LONGITUDE).to have_received(:set).with(0.0, labels: { node: "!aabb1234" })
+    end
   end
 
   # ---------------------------------------------------------------------------

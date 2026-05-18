@@ -32,6 +32,8 @@ from ..serialization import (
     _nodeinfo_metrics_dict,
     _nodeinfo_position_dict,
     _nodeinfo_user_dict,
+    _normalize_lat_lon,
+    _normalize_position_time,
 )
 from . import _state
 from .radio import _apply_radio_metadata_to_nodes
@@ -199,7 +201,35 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
     if isinstance(decoded_position, Mapping):
         position = _merge_mappings(position, _node_to_dict(decoded_position))
     if position:
-        node_payload["position"] = position
+        # Strip Meshtastic "no GPS lock" sentinels before the nodeinfo POST
+        # leaves the ingestor.  ``position.time = 0`` is dropped wholesale; a
+        # paired ``(latitude = 0, longitude = 0)`` collapses to ``None`` on both
+        # axes, which also frees us to drop the meaningless ``altitude`` /
+        # ``locationSource`` siblings.  Equator / prime-meridian fixes with one
+        # non-zero axis are preserved.  See issue #782.
+        normalized_time = _normalize_position_time(position.get("time"))
+        if normalized_time is None:
+            position.pop("time", None)
+        else:
+            position["time"] = normalized_time
+        if "latitude" in position or "longitude" in position:
+            lat_n, lon_n = _normalize_lat_lon(
+                position.get("latitude"), position.get("longitude")
+            )
+            if lat_n is None and lon_n is None:
+                for key in ("latitude", "longitude", "altitude", "locationSource"):
+                    position.pop(key, None)
+            else:
+                if lat_n is None:
+                    position.pop("latitude", None)
+                else:
+                    position["latitude"] = lat_n
+                if lon_n is None:
+                    position.pop("longitude", None)
+                else:
+                    position["longitude"] = lon_n
+        if position:
+            node_payload["position"] = position
 
     hop_limit = _first(packet, "hopLimit", "hop_limit", default=None)
     if hop_limit is not None and "hopLimit" not in node_payload:
