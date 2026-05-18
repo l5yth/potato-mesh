@@ -2826,6 +2826,7 @@ def _make_fake_meshcore_mod(
     fail_ensure_contacts: bool = False,
     disconnect_raises: bool = False,
     connect_stall_event=None,
+    on_ensure_contacts=None,
 ):
     """Build a minimal fake ``meshcore`` module for testing :func:`_run_meshcore`.
 
@@ -2838,6 +2839,10 @@ def _make_fake_meshcore_mod(
             the ``finally`` exception-suppression path.
         connect_stall_event: Optional :class:`asyncio.Event`; when set,
             ``connect()`` awaits it (never completes unless the event is set).
+        on_ensure_contacts: Optional zero-argument callable invoked inside
+            ``mc.ensure_contacts()`` (after the ``fail_ensure_contacts`` check)
+            so tests can populate ``iface._contacts`` mid-startup.  Used to
+            assert the startup ordering required by issue #788.
     """
     import enum
 
@@ -2892,6 +2897,16 @@ def _make_fake_meshcore_mod(
         async def ensure_contacts(self):
             if fail_ensure_contacts:
                 raise RuntimeError("contacts unavailable")
+            if on_ensure_contacts is not None:
+                # Yield once before populating so tests observing
+                # ``connected_event`` mid-startup can race the populate the
+                # same way the real meshcore library does — its
+                # ``ensure_contacts`` awaits multiple serial round-trips
+                # before contacts land in ``iface._contacts``.
+                import asyncio as _aio
+
+                await _aio.sleep(0)
+                on_ensure_contacts()
 
         async def start_auto_message_fetching(self):
             pass
@@ -3108,6 +3123,70 @@ def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
     assert connected_event.is_set()
     assert error_holder[0] is None
     assert "warning" in logged
+
+
+def test_run_meshcore_signals_connected_only_after_ensure_contacts(monkeypatch):
+    """Regression for issue #788: contacts must be populated before connected_event fires.
+
+    The MeshCore initial snapshot in :func:`daemon._try_send_snapshot` runs as
+    soon as :func:`MeshcoreProvider.connect` returns, which itself returns as
+    soon as ``connected_event`` is set.  If ``connected_event`` is signalled
+    before ``ensure_contacts()`` finishes populating ``iface._contacts``, the
+    first snapshot is empty and ``state.initial_snapshot_sent`` is never set
+    to ``True`` (daemon.py:428), so known contacts never get upserted.
+
+    This test drives :func:`_run_meshcore` with a fake ``ensure_contacts``
+    that injects a contact into the interface, then records the contact
+    snapshot at the precise moment ``connected_event`` is observed.  The
+    snapshot must already contain the contact.
+    """
+    import asyncio
+    import threading
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+
+    def _populate_contacts() -> None:
+        iface._update_contact(
+            {"public_key": pub_key, "adv_name": "Repeater", "last_advert": 1000}
+        )
+
+    fake_mod = _make_fake_meshcore_mod(on_ensure_contacts=_populate_contacts)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
+
+    snapshot_at_signal: list = []
+
+    async def _runner() -> None:
+        connected_event = threading.Event()
+        error_holder: list = [None]
+        task = asyncio.create_task(
+            _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+        )
+        # Spin until the runner signals readiness, then immediately capture
+        # the contact snapshot — this is the exact moment the daemon would
+        # call _try_send_snapshot() in production.
+        for _ in range(500):
+            await asyncio.sleep(0)
+            if connected_event.is_set():
+                snapshot_at_signal.extend(iface.contacts_snapshot())
+                break
+        assert iface._stop_event is not None
+        iface._stop_event.set()
+        await task
+        assert error_holder[0] is None
+        assert connected_event.is_set()
+
+    asyncio.run(_runner())
+
+    assert snapshot_at_signal, (
+        "connected_event must not fire before ensure_contacts() populates "
+        "iface._contacts (issue #788)"
+    )
+    node_ids = {nid for nid, _ in snapshot_at_signal}
+    assert "!aabbccdd" in node_ids
 
 
 def test_run_meshcore_ensure_channel_names_failure_continues(monkeypatch):
