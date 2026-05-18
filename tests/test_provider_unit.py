@@ -15,12 +15,33 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
+import time
 import types
 from contextlib import suppress
 from pathlib import Path
 
 import pytest
+
+
+async def _wait_for_threading_event(evt: threading.Event, *, timeout: float) -> bool:
+    """Yield to the asyncio loop until *evt* is set or *timeout* elapses.
+
+    Uses :func:`asyncio.sleep` so the background ``_run_meshcore`` task running
+    on the same event loop gets scheduling opportunities while the test waits.
+    Returns ``True`` when the event was set in time, ``False`` on timeout —
+    callers can assert on the return value to surface a clear failure rather
+    than a hand-tuned spin count.
+    """
+    deadline = time.monotonic() + timeout
+    while not evt.is_set():
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0)
+    return True
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -3101,28 +3122,62 @@ def test_run_meshcore_connect_returns_none_raises(monkeypatch):
 
 
 def test_run_meshcore_ensure_contacts_failure_continues(monkeypatch):
-    """ensure_contacts() raising must log a warning but not abort the connection."""
-    import asyncio
+    """ensure_contacts() raising must log a warning but not abort the connection.
+
+    Also pins down the ordering established by issue #788: the
+    ``connected_event`` must still be signalled *after* the
+    ``ensure_contacts`` warning is logged, even on the failure path.  A
+    regression that moves ``connected_event.set()`` back inside the
+    ``try:`` block (so it fires before the ``await mc.ensure_contacts()``)
+    must fail here.
+    """
     import data.mesh_ingestor.protocols.meshcore as _mod
 
-    logged: list = []
-    monkeypatch.setattr(
-        _mod.config,
-        "_debug_log",
-        lambda *_a, severity=None, **_k: logged.append(severity),
-    )
+    logged_severities: list = []
+    warning_observed_event_state: list = []
+
+    # Build the holder upfront so the closure below can inspect it the
+    # moment the warning is logged — which happens *inside* the inner
+    # ``ensure_contacts`` except block in runner.py, before
+    # ``connected_event.set()``.
+    iface = _MeshcoreInterface(target=None)
+    connected_event = threading.Event()
+    error_holder: list = [None]
+
+    def _record_log(*args, severity=None, **_kwargs):
+        logged_severities.append(severity)
+        if (
+            severity == "warning"
+            and args
+            and "Failed to fetch initial contacts" in str(args[0])
+        ):
+            warning_observed_event_state.append(connected_event.is_set())
+
+    monkeypatch.setattr(_mod.config, "_debug_log", _record_log)
     fake_mod = _make_fake_meshcore_mod(fail_ensure_contacts=True)
     _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
-    iface = _MeshcoreInterface(target=None)
+    async def _runner() -> None:
+        task = asyncio.create_task(
+            _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
+        )
+        assert await _wait_for_threading_event(
+            connected_event, timeout=2.0
+        ), "connected_event must be signalled even when ensure_contacts fails"
+        assert iface._stop_event is not None
+        iface._stop_event.set()
+        await task
 
-    connected_event, error_holder = asyncio.run(
-        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
-    )
+    asyncio.run(_runner())
 
     assert connected_event.is_set()
     assert error_holder[0] is None
-    assert "warning" in logged
+    assert "warning" in logged_severities
+    assert warning_observed_event_state == [False], (
+        "ensure_contacts warning must be logged before connected_event is "
+        "set (issue #788); observed states: "
+        f"{warning_observed_event_state!r}"
+    )
 
 
 def test_run_meshcore_signals_connected_only_after_ensure_contacts(monkeypatch):
@@ -3130,18 +3185,21 @@ def test_run_meshcore_signals_connected_only_after_ensure_contacts(monkeypatch):
 
     The MeshCore initial snapshot in :func:`daemon._try_send_snapshot` runs as
     soon as :func:`MeshcoreProvider.connect` returns, which itself returns as
-    soon as ``connected_event`` is set.  If ``connected_event`` is signalled
-    before ``ensure_contacts()`` finishes populating ``iface._contacts``, the
-    first snapshot is empty and ``state.initial_snapshot_sent`` is never set
-    to ``True`` (daemon.py:428), so known contacts never get upserted.
+    soon as ``connected_event`` is set.  If ``connected_event`` fires before
+    ``ensure_contacts()`` finishes populating ``iface._contacts``, the
+    daemon's first snapshot is empty, ``processed_any`` stays ``False``, and
+    ``state.initial_snapshot_sent`` is not flipped (daemon.py:428).  The
+    snapshot is retried on the next ``_loop_iteration`` pass, so the impact
+    is a ``SNAPSHOT_SECS`` delay before known contacts appear rather than a
+    permanent failure — but the dashboard is empty in the meantime, which
+    is what issue #788 reports.
 
     This test drives :func:`_run_meshcore` with a fake ``ensure_contacts``
-    that injects a contact into the interface, then records the contact
-    snapshot at the precise moment ``connected_event`` is observed.  The
-    snapshot must already contain the contact.
+    that injects a contact into the interface, then exercises
+    :meth:`MeshcoreProvider.node_snapshot_items` — the call the daemon
+    actually makes — at the precise moment ``connected_event`` is observed.
+    The snapshot must already contain the contact.
     """
-    import asyncio
-    import threading
     import data.mesh_ingestor.protocols.meshcore as _mod
 
     monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
@@ -3157,30 +3215,29 @@ def test_run_meshcore_signals_connected_only_after_ensure_contacts(monkeypatch):
     fake_mod = _make_fake_meshcore_mod(on_ensure_contacts=_populate_contacts)
     _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
 
+    connected_event = threading.Event()
+    error_holder: list = [None]
     snapshot_at_signal: list = []
 
     async def _runner() -> None:
-        connected_event = threading.Event()
-        error_holder: list = [None]
         task = asyncio.create_task(
             _mod._run_meshcore(iface, "/dev/ttyUSB0", connected_event, error_holder)
         )
-        # Spin until the runner signals readiness, then immediately capture
-        # the contact snapshot — this is the exact moment the daemon would
-        # call _try_send_snapshot() in production.
-        for _ in range(500):
-            await asyncio.sleep(0)
-            if connected_event.is_set():
-                snapshot_at_signal.extend(iface.contacts_snapshot())
-                break
+        assert await _wait_for_threading_event(connected_event, timeout=2.0), (
+            "connected_event was not signalled within the timeout — runner "
+            "may be deadlocked"
+        )
+        # Go through the full provider helper, not iface.contacts_snapshot()
+        # directly, so a future regression that drops contacts from
+        # node_snapshot_items() is also caught.
+        snapshot_at_signal.extend(MeshcoreProvider().node_snapshot_items(iface))
         assert iface._stop_event is not None
         iface._stop_event.set()
         await task
-        assert error_holder[0] is None
-        assert connected_event.is_set()
 
     asyncio.run(_runner())
 
+    assert error_holder[0] is None
     assert snapshot_at_signal, (
         "connected_event must not fire before ensure_contacts() populates "
         "iface._contacts (issue #788)"

@@ -79,7 +79,13 @@ class MeshcoreProvider:
 
         Raises:
             ConnectionError: When the node does not complete the handshake
-                within :data:`_CONNECT_TIMEOUT_SECS` seconds.
+                **and** the initial contact fetch
+                (``mc.ensure_contacts()``) within
+                :data:`_CONNECT_TIMEOUT_SECS` seconds.  Since issue #788, the
+                readiness signal is deferred until contacts have been fetched
+                so the daemon's first snapshot sees a populated contact list;
+                the timeout therefore bounds both steps rather than just the
+                appstart handshake.
         """
         target: str | None = active_candidate or config.CONNECTION
 
