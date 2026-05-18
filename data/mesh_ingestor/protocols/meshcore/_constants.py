@@ -23,7 +23,17 @@ from __future__ import annotations
 import re
 
 _CONNECT_TIMEOUT_SECS: float = 30.0
-"""Seconds to wait for the MeshCore node to respond to the appstart handshake."""
+"""Seconds to wait for :class:`MeshcoreProvider.connect` to return.
+
+Bounds the whole startup sequence inside
+:func:`~data.mesh_ingestor.protocols.meshcore.runner._run_meshcore` up to and
+including the initial contact roster fetch: the appstart handshake
+(``mc.connect()``) **plus** the multiple serial round-trips performed by
+``mc.ensure_contacts()``.  The signal that unblocks the caller is intentionally
+deferred until contacts have been fetched so that the daemon's first
+``_try_send_snapshot()`` sees a populated ``iface._contacts`` dict
+(issue #788).
+"""
 
 _DEFAULT_BAUDRATE: int = 115200
 """Default baud rate for MeshCore serial connections."""

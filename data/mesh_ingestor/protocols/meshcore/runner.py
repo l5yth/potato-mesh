@@ -113,7 +113,6 @@ async def _run_meshcore(
             )
 
         iface.isConnected = True
-        connected_event.set()
 
         try:
             await mc.ensure_contacts()
@@ -125,6 +124,11 @@ async def _run_meshcore(
                 always=True,
                 error=str(exc),
             )
+
+        # Signal readiness only after the initial contact roster has been
+        # fetched so the daemon's first ``_try_send_snapshot()`` observes a
+        # populated ``_contacts`` dict instead of an empty one (issue #788).
+        connected_event.set()
 
         try:
             await _ensure_channel_names(mc)
