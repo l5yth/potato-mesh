@@ -260,6 +260,23 @@ def upsert_node(node_id: object, node: object) -> None:
 
     payload = _apply_radio_metadata_to_nodes(upsert_payload(node_id, node))
     payload["ingestor"] = _state.host_node_id()
+
+    if len(channels.allowed_channel_names()) > 0 or len(channels.hidden_channel_names()) > 0:
+        if "channel" in payload[node_id]:
+            channel_name = channels.channel_name(payload[node_id]["channel"])
+            if not channels.is_allowed_channel(channel_name) or channels.is_hidden_channel(channel_name):
+                if config.DEBUG:
+                    config._debug_log(
+                        "Suppressed Queued node upsert payload (disallowed-channel/hidden-channel)",
+                        context="handlers.upsert_node",
+                        node_id=payload[node_id],
+                        channel_id=payload[node_id]["channel"],
+                        channel_name=channel_name,
+                    )
+                return
+        else:
+            return
+    
     queue._queue_post_json("/api/nodes", payload, priority=queue._NODE_POST_PRIORITY)
 
     if config.DEBUG:
