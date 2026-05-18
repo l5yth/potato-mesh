@@ -526,6 +526,56 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(row["altitude"]).to be_nil
       expect(row["position_time"]).to be_nil
     end
+
+    # Pre-#782 behaviour relied on `COALESCE(excluded.position_time, 0) >=
+    # COALESCE(nodes.position_time, 0)` evaluating `0 >= 0` to TRUE when both
+    # sides were NULL, which accepted a coords-only update.  After the
+    # `IS NOT NULL` tightening that comparison rejects the row, so the writer
+    # falls back to +rx_time+ as the freshness anchor when usable coordinates
+    # arrive without a position_time — mirroring the MeshCore handler
+    # (`protocols/meshcore/position.py:65`).  This test pins both halves of
+    # that contract: the coords land, and the synthesised anchor is
+    # +rx_time+, not NULL.
+    it "uses rx_time as a freshness anchor when coords arrive without a position_time" do
+      db = open_db
+      dp.update_node_from_position(
+        db,
+        "!aabbccdd", 0xaabbccdd,
+        now,    # rx_time
+        nil,    # position_time missing — caller has no anchor of its own
+        "LOC_INTERNAL", 32,
+        52.5, 13.4, 100.0,
+        4.2,
+      )
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to eq(52.5)
+      expect(row["longitude"]).to eq(13.4)
+      expect(row["altitude"]).to eq(100.0)
+      expect(row["position_time"]).to eq(now)
+      expect(row["location_source"]).to eq("LOC_INTERNAL")
+      expect(row["precision_bits"]).to eq(32)
+    end
+
+    it "does not synthesise a rx_time anchor for a no-op update without coords" do
+      db = open_db
+      dp.update_node_from_position(
+        db,
+        "!aabbccdd", 0xaabbccdd,
+        now,
+        nil, # position_time missing
+        nil, nil, # location/precision
+        nil, nil, nil, # coords missing entirely
+        nil,
+      )
+      row = read_node(db)
+      db.close
+      # No coordinates → no synthetic anchor; position_time stays NULL so the
+      # row remains transparent to anyone querying for real fixes.
+      expect(row["position_time"]).to be_nil
+      expect(row["latitude"]).to be_nil
+      expect(row["longitude"]).to be_nil
+    end
   end
 
   # ---------------------------------------------------------------------------

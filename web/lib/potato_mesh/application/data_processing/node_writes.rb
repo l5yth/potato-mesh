@@ -444,12 +444,23 @@ module PotatoMesh
           "altitude" => alt,
         })
 
+        # When a position packet carries real coordinates but no usable
+        # `position_time` (either omitted or collapsed by the sentinel guard
+        # above), the `excluded.position_time IS NOT NULL` clauses below would
+        # otherwise reject the entire update.  Mirror the MeshCore handler
+        # (`protocols/meshcore/position.py:65`) and substitute the receive
+        # time so the new fix still wins the freshness tie-break.  We only
+        # do this when there *are* coordinates to write — otherwise the
+        # bound timestamp would persist a synthetic anchor on a no-op row.
+        bound_pos_time = pos_time
+        bound_pos_time = rx if pos_time.nil? && (!lat.nil? || !lon.nil?)
+
         row = [
           id,
           num,
           last_heard,
           last_heard,
-          pos_time,
+          bound_pos_time,
           loc,
           precision,
           lat,

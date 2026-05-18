@@ -54,6 +54,8 @@ Node entry fields are “Meshtastic-ish” (camelCase) and may include:
 
 The web application applies the same normalisation as a safety net so legacy ingestors and replayed payloads cannot reintroduce the sentinels, but new ingestors should strip them at the source so the cross-network contract stays clean.
 
+**Wire-format note for federation peers (issue #782).** GET responses (`/api/nodes`, `/api/positions`) compact sentinel rows by **omitting** the `position_time` and `pos_time_iso` / `position_time_iso` keys rather than emitting them as `0` or `"1970-01-01T00:00:00Z"`. Federation peers consuming this API and any third-party clients SHOULD treat an *absent* `position_time` as "no GPS lock recorded" and not synthesise a zero or epoch value when re-serialising. Older peers that key on `position_time == 0` may need a small adjustment.
+
 #### `POST /api/messages`
 
 Single message payload:
