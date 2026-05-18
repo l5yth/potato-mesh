@@ -96,6 +96,36 @@ module PotatoMesh
         value
       end
 
+      # Coerce a candidate unix-epoch value to a strictly positive integer,
+      # returning +nil+ for any value that should be treated as absent.  Ruby
+      # treats +0+ as truthy, so naive guards such as +Time.at(value).iso8601 if
+      # value+ silently emit +"1970-01-01T00:00:00Z"+ for stored sentinel zeros
+      # (see issue #782).  Routing timestamp columns through this helper before
+      # any +if value+ check eliminates that class of bug at the read boundary.
+      #
+      # @param value [Object] raw value to coerce.
+      # @param ceiling [Integer, nil] optional upper bound (inclusive); values
+      #   exceeding the ceiling collapse to +nil+ so future-dated timestamps do
+      #   not leak through.
+      # @return [Integer, nil] coerced positive integer, or +nil+ when the input
+      #   is nil, non-integer-coercible, non-positive, or beyond the ceiling.
+      def coerce_positive_or_nil(value, ceiling: nil)
+        coerced = begin
+            if value.is_a?(Integer)
+              value
+            else
+              Integer(value, 10)
+            end
+          rescue ArgumentError, TypeError
+            nil
+          end
+
+        return nil if coerced.nil? || coerced <= 0
+        return nil if ceiling && coerced > ceiling
+
+        coerced
+      end
+
       # Append a protocol equality clause to an existing WHERE clause list when a
       # protocol filter is specified. Mutates +where_clauses+ and +params+ in place.
       #

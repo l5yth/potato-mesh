@@ -163,9 +163,12 @@ module PotatoMesh
         # the stored role rather than overwriting with a default.
         role = user["role"]
         lh = coerce_integer(n["lastHeard"])
-        pt = coerce_integer(pos["time"])
         now = Time.now.to_i
-        pt = nil if pt && pt > now
+        # Issue #782: drop Meshtastic "no GPS lock" sentinels at the write
+        # boundary so neither the nodes row nor downstream readers ever see
+        # a `position_time = 0` epoch leak.  +normalize_position_time+ also
+        # absorbs future-dated clock-skew values.
+        pt = normalize_position_time(pos["time"], now: now)
         lh = now if lh && lh > now
         # 0 is truthy in Ruby — `lh ||= now` won't replace it, leaving the
         # 7-day list filter to evaluate `0 >= now-7days` → false (node hidden).
@@ -174,8 +177,24 @@ module PotatoMesh
         # (would re-introduce the same zero-timestamp exclusion bug for lh).
         lh = pt if pt && pt > 0 && (!lh || lh < pt)
         lh ||= now
+        # Issue #782: paired `(lat=0, lon=0)` is the firmware Null Island
+        # sentinel; collapse to NULL on both axes (and drop altitude /
+        # locationSource which would otherwise be meaningless).  Single-axis
+        # zero on the equator / prime meridian is preserved.
+        lat, lon = normalize_lat_lon(pos["latitude"], pos["longitude"])
+        if lat.nil? && lon.nil?
+          alt = nil
+          loc_source = nil
+        else
+          alt = pos["altitude"]
+          loc_source = pos["locationSource"]
+        end
         node_num = resolve_node_num(node_id, n)
 
+        # The prometheus helper still receives the raw `pos` so that gauges
+        # not affected by sentinel handling (e.g. precision_bits) keep
+        # updating; the latitude/longitude guards inside +update_prometheus_metrics+
+        # are responsible for skipping sentinel coordinates.
         update_prometheus_metrics(node_id, user, role, met, pos)
 
         lora_freq = coerce_integer(n["lora_freq"] || n["loraFrequency"])
@@ -223,15 +242,15 @@ module PotatoMesh
           met["airUtilTx"],
           met["uptimeSeconds"],
           pt,
-          pos["locationSource"],
+          loc_source,
           coerce_integer(
             pos["precisionBits"] ||
               pos["precision_bits"] ||
               pos.dig("raw", "precision_bits"),
           ),
-          pos["latitude"],
-          pos["longitude"],
-          pos["altitude"],
+          lat,
+          lon,
+          alt,
           lora_freq,
           modem_preset,
           protocol,
@@ -400,15 +419,22 @@ module PotatoMesh
         now = Time.now.to_i
         rx = coerce_integer(rx_time) || now
         rx = now if rx && rx > now
-        pos_time = coerce_integer(position_time)
-        pos_time = nil if pos_time && pos_time > now
+        # Issue #782: drop Meshtastic "no GPS lock" sentinels at the write
+        # boundary so a sentinel position update can never overwrite a real
+        # fix via the position-time tie-break below.
+        pos_time = normalize_position_time(position_time, now: now)
         last_heard = [rx, pos_time].compact.max || rx
         last_heard = now if last_heard && last_heard > now
 
         loc = string_or_nil(location_source)
-        lat = coerce_float(latitude)
-        lon = coerce_float(longitude)
-        alt = coerce_float(altitude)
+        lat, lon = normalize_lat_lon(latitude, longitude)
+        # Drop altitude when the coordinate pair collapsed; altitude alone
+        # without coordinates is meaningless and would otherwise carry a
+        # sentinel `0.0` past this gate.
+        alt = (lat.nil? && lon.nil?) ? nil : coerce_float(altitude)
+        # Likewise, an upsert with no coordinates should not refresh the
+        # location source — keep whatever the row already had.
+        loc = nil if lat.nil? && lon.nil?
         precision = coerce_integer(precision_bits)
         snr_val = coerce_float(snr)
 
@@ -431,6 +457,13 @@ module PotatoMesh
           alt,
           snr_val,
         ]
+        # The CASE guards below previously read
+        # `COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)`,
+        # which let a sentinel `0` excluded value win the comparison whenever
+        # the stored value was also `NULL` (coalesces to `0`).  After
+        # normalisation, sentinel inputs collapse to `NULL`, so we require an
+        # explicit `IS NOT NULL` to authorise the overwrite — a normalised-nil
+        # excluded value is never preferred over real stored data.  See #782.
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO nodes(node_id,num,last_heard,first_heard,position_time,location_source,precision_bits,latitude,longitude,altitude,snr)
@@ -441,36 +474,42 @@ module PotatoMesh
                          last_heard=MAX(COALESCE(nodes.last_heard,0),COALESCE(excluded.last_heard,0)),
                          first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                          position_time=CASE
-                           WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                           WHEN excluded.position_time IS NOT NULL
+                                AND excluded.position_time >= COALESCE(nodes.position_time,0)
                              THEN excluded.position_time
                            ELSE nodes.position_time
                          END,
                          location_source=CASE
-                           WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                           WHEN excluded.position_time IS NOT NULL
+                                AND excluded.position_time >= COALESCE(nodes.position_time,0)
                                 AND excluded.location_source IS NOT NULL
                              THEN excluded.location_source
                            ELSE nodes.location_source
                          END,
                          precision_bits=CASE
-                           WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                           WHEN excluded.position_time IS NOT NULL
+                                AND excluded.position_time >= COALESCE(nodes.position_time,0)
                                 AND excluded.precision_bits IS NOT NULL
                              THEN excluded.precision_bits
                            ELSE nodes.precision_bits
                          END,
                          latitude=CASE
-                           WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                           WHEN excluded.position_time IS NOT NULL
+                                AND excluded.position_time >= COALESCE(nodes.position_time,0)
                                 AND excluded.latitude IS NOT NULL
                              THEN excluded.latitude
                            ELSE nodes.latitude
                          END,
                          longitude=CASE
-                           WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                           WHEN excluded.position_time IS NOT NULL
+                                AND excluded.position_time >= COALESCE(nodes.position_time,0)
                                 AND excluded.longitude IS NOT NULL
                              THEN excluded.longitude
                            ELSE nodes.longitude
                          END,
                          altitude=CASE
-                           WHEN COALESCE(excluded.position_time,0) >= COALESCE(nodes.position_time,0)
+                           WHEN excluded.position_time IS NOT NULL
+                                AND excluded.position_time >= COALESCE(nodes.position_time,0)
                                 AND excluded.altitude IS NOT NULL
                              THEN excluded.altitude
                            ELSE nodes.altitude

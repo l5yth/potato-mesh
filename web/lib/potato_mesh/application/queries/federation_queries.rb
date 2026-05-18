@@ -64,8 +64,7 @@ module PotatoMesh
           node_num = coerce_integer(r["node_num"])
           r["node_num"] = node_num if node_num
 
-          position_time = coerce_integer(r["position_time"])
-          position_time = nil if position_time && position_time > now
+          position_time = coerce_positive_or_nil(r["position_time"], ceiling: now)
           r["position_time"] = position_time
           r["position_time_iso"] = Time.at(position_time).utc.iso8601 if position_time
 

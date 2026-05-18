@@ -181,10 +181,22 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
   # Assemble the expected row persisted in the nodes table.
   #
+  # `position_time = 0` is a Meshtastic "no GPS lock" sentinel; the write
+  # boundary (`upsert_node`) normalises it to SQL `NULL` per issue #782, so
+  # the canonical expectation here mirrors that behaviour by collapsing zero
+  # to nil.  Lat/lon are intentionally left untouched here because the
+  # fixture never contains the paired `(0, 0)` Null Island sentinel.
+  #
   # @param node [Hash] node attributes from the fixture dataset.
   # @return [Hash] expected database row for assertions.
   def expected_node_row(node)
     final_last = expected_last_heard(node)
+    raw_position_time = node["position_time"]
+    canonical_position_time = if raw_position_time.is_a?(Numeric) && raw_position_time <= 0
+        nil
+      else
+        raw_position_time
+      end
     {
       "node_id" => node["node_id"],
       "short_name" => node["short_name"],
@@ -199,7 +211,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "uptime_seconds" => node["uptime_seconds"],
       "channel_utilization" => node["channel_utilization"],
       "air_util_tx" => node["air_util_tx"],
-      "position_time" => node["position_time"],
+      "position_time" => canonical_position_time,
       "location_source" => node["location_source"],
       "precision_bits" => node["precision_bits"],
       "latitude" => node["latitude"],
@@ -208,6 +220,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
       "lora_freq" => node["lora_freq"],
       "modem_preset" => node["modem_preset"],
     }
+  end
+
+  # Canonical API view of a node fixture.  Identical to +expected_node_row+
+  # now that the write boundary applies the same sentinel normalisation; the
+  # alias is preserved so future divergence (e.g. API-only field omission via
+  # +compact_api_row+) has a natural home.
+  #
+  # @param node [Hash] node attributes from the fixture dataset.
+  # @return [Hash] expected API response row for assertions.
+  def expected_api_node_row(node)
+    expected_node_row(node)
   end
 
   # Assert equality while supporting tolerance for floating point comparisons.
@@ -6051,7 +6074,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
 
       nodes_fixture.each do |node|
-        expected = expected_node_row(node)
+        expected = expected_api_node_row(node)
         actual_row = actual_by_id.fetch(node["node_id"])
 
         expected.each do |key, value|
@@ -6065,10 +6088,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
           expect(actual_row).not_to have_key("last_seen_iso")
         end
 
-        if node["position_time"]
-          expected_pos_iso = Time.at(node["position_time"]).utc.iso8601
+        raw_position_time = node["position_time"]
+        if raw_position_time.is_a?(Numeric) && raw_position_time > 0
+          expected_pos_iso = Time.at(raw_position_time).utc.iso8601
           expect(actual_row["pos_time_iso"]).to eq(expected_pos_iso)
         else
+          # Sentinel `position_time = 0` must not emit "1970-01-01T00:00:00Z";
+          # see `coerce_positive_or_nil` in queries/common.rb (issue #782).
           expect(actual_row).not_to have_key("pos_time_iso")
         end
       end
@@ -6199,6 +6225,36 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload["node_id"]).to eq("!blank")
       expect(payload).not_to have_key("short_name")
       expect(payload).not_to have_key("hw_model")
+    end
+
+    # Regression for issue #782: when a legacy row stores `position_time = 0`
+    # (the Meshtastic "no GPS lock" sentinel), the API used to leak the field
+    # back as `"1970-01-01T00:00:00Z"` because Ruby treated `0` as truthy in
+    # the guard around `Time.at(pt).iso8601`.  After routing the column through
+    # `coerce_positive_or_nil`, neither `position_time` nor `pos_time_iso` may
+    # appear in the JSON response.
+    it "never leaks 1970-01-01 ISO strings for sentinel position_time = 0" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, role, last_heard, first_heard, position_time, latitude, longitude) " \
+          "VALUES(?,?,?,?,?,?,?,?,?)",
+          ["!sentinel", 0x5e_57_1e_71, "snt", "CLIENT", now, now, 0, 0.0, 0.0],
+        )
+      end
+
+      get "/api/nodes"
+
+      expect(last_response).to be_ok
+      body = last_response.body
+      expect(body).not_to include("1970-01-01")
+      entry = JSON.parse(body).find { |row| row["node_id"] == "!sentinel" }
+      expect(entry).not_to be_nil
+      expect(entry).not_to have_key("pos_time_iso")
+      expect(entry).not_to have_key("position_time")
     end
   end
 

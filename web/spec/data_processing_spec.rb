@@ -75,6 +75,88 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   end
 
   # ---------------------------------------------------------------------------
+  # normalize_position_time — issue #782 write-side guard against sentinel 0
+  # ---------------------------------------------------------------------------
+  describe "#normalize_position_time" do
+    let(:now) { 1_700_000_000 }
+
+    it "returns nil for zero" do
+      expect(dp.normalize_position_time(0, now: now)).to be_nil
+    end
+
+    it "returns nil for negative values" do
+      expect(dp.normalize_position_time(-1, now: now)).to be_nil
+    end
+
+    it "returns nil for nil" do
+      expect(dp.normalize_position_time(nil, now: now)).to be_nil
+    end
+
+    it "returns nil for non-numeric input" do
+      expect(dp.normalize_position_time("not-a-time", now: now)).to be_nil
+    end
+
+    it "returns nil for future values beyond the ceiling" do
+      expect(dp.normalize_position_time(now + 1, now: now)).to be_nil
+    end
+
+    it "preserves a valid integer timestamp" do
+      expect(dp.normalize_position_time(now - 10, now: now)).to eq(now - 10)
+    end
+
+    it "coerces numeric strings" do
+      expect(dp.normalize_position_time("#{now - 5}", now: now)).to eq(now - 5)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # normalize_lat_lon — issue #782 paired-zero "Null Island" guard
+  # ---------------------------------------------------------------------------
+  describe "#normalize_lat_lon" do
+    it "collapses paired exact zeros to nil on both axes" do
+      expect(dp.normalize_lat_lon(0.0, 0.0)).to eq([nil, nil])
+    end
+
+    it "collapses paired integer zeros to nil on both axes" do
+      expect(dp.normalize_lat_lon(0, 0)).to eq([nil, nil])
+    end
+
+    it "preserves a legitimate equator fix (lat=0, lon!=0)" do
+      lat, lon = dp.normalize_lat_lon(0.0, 13.5)
+      expect(lat).to eq(0.0)
+      expect(lon).to be_within(1e-9).of(13.5)
+    end
+
+    it "preserves a legitimate prime-meridian fix (lat!=0, lon=0)" do
+      lat, lon = dp.normalize_lat_lon(52.5, 0.0)
+      expect(lat).to be_within(1e-9).of(52.5)
+      expect(lon).to eq(0.0)
+    end
+
+    it "passes through a real pair as floats" do
+      lat, lon = dp.normalize_lat_lon("52.5", "13.4")
+      expect(lat).to be_within(1e-9).of(52.5)
+      expect(lon).to be_within(1e-9).of(13.4)
+    end
+
+    it "returns nil on the axis that fails coercion" do
+      lat, lon = dp.normalize_lat_lon("garbage", 13.0)
+      expect(lat).to be_nil
+      expect(lon).to be_within(1e-9).of(13.0)
+    end
+
+    it "collapses a near-zero pair within epsilon" do
+      expect(dp.normalize_lat_lon(1e-12, -1e-12)).to eq([nil, nil])
+    end
+
+    it "preserves a pair just outside epsilon" do
+      lat, lon = dp.normalize_lat_lon(1e-6, 1e-6)
+      expect(lat).to be_within(1e-12).of(1e-6)
+      expect(lon).to be_within(1e-12).of(1e-6)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # resolve_node_num
   # ---------------------------------------------------------------------------
   describe "#resolve_node_num" do
@@ -275,6 +357,245 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db.close
       # query_nodes applies a 7-day floor; the node must appear
       expect(dp.query_nodes(100).map { |n| n["node_id"] }).to include("!aabbccdd")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # upsert_node — issue #782: position sentinel handling
+  #
+  # Meshtastic firmware emits `(lat=0, lon=0)` and `position.time=0` whenever
+  # no GPS fix has been acquired.  Persisting those values as if they were a
+  # real fix drops a marker at Null Island and lets the read boundary leak
+  # `1970-01-01T00:00:00Z` ISO strings.  The write boundary normalises both
+  # forms to SQL `NULL` so neither downstream consumer sees the sentinel.
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — position sentinel handling" do
+    include_context "with isolated db"
+
+    it "stores position_time = 0 as SQL NULL" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "position" => { "time" => 0, "latitude" => 52.5, "longitude" => 13.4 },
+      })
+      row = read_node(db)
+      db.close
+      expect(row["position_time"]).to be_nil
+      expect(row["latitude"]).to eq(52.5)
+      expect(row["longitude"]).to eq(13.4)
+    end
+
+    it "stores paired (lat=0, lon=0) as SQL NULL on both axes" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "position" => {
+          "time" => now - 60,
+          "latitude" => 0.0,
+          "longitude" => 0.0,
+          "altitude" => 0,
+          "locationSource" => "LOC_MANUAL",
+        },
+      })
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to be_nil
+      expect(row["longitude"]).to be_nil
+      expect(row["altitude"]).to be_nil
+      expect(row["location_source"]).to be_nil
+      # position_time is still real and survives.
+      expect(row["position_time"]).to eq(now - 60)
+    end
+
+    it "preserves an equator fix (lat=0, lon!=0)" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "position" => {
+          "time" => now - 30,
+          "latitude" => 0.0,
+          "longitude" => 13.4,
+        },
+      })
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to eq(0.0)
+      expect(row["longitude"]).to eq(13.4)
+    end
+
+    it "preserves a prime-meridian fix (lat!=0, lon=0)" do
+      db = open_db
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now,
+        "num" => 0xaabbccdd,
+        "position" => {
+          "time" => now - 30,
+          "latitude" => 52.5,
+          "longitude" => 0.0,
+        },
+      })
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to eq(52.5)
+      expect(row["longitude"]).to eq(0.0)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # update_node_from_position — issue #782: COALESCE-zero race fix
+  #
+  # The previous tie-break used `COALESCE(excluded.position_time, 0) >=
+  # COALESCE(nodes.position_time, 0)`, which evaluated `0 >= 0` as true and
+  # allowed a sentinel position to clobber a real fix.  After normalisation
+  # the excluded position_time collapses to `NULL` and the comparison now
+  # explicitly requires `excluded.position_time IS NOT NULL`, so a sentinel
+  # update never wins.
+  # ---------------------------------------------------------------------------
+  describe "#update_node_from_position — sentinel race fix" do
+    include_context "with isolated db"
+
+    it "does not overwrite a real position with a sentinel payload" do
+      db = open_db
+      # Seed a real fix via the upsert path so the row carries genuine data.
+      dp.upsert_node(db, "!aabbccdd", {
+        "lastHeard" => now - 100,
+        "num" => 0xaabbccdd,
+        "position" => {
+          "time" => now - 100,
+          "latitude" => 52.5,
+          "longitude" => 13.4,
+          "altitude" => 100.0,
+          "locationSource" => "LOC_MANUAL",
+        },
+      })
+      # Replay a sentinel position update — should be a no-op for lat/lon.
+      dp.update_node_from_position(
+        db,
+        "!aabbccdd", 0xaabbccdd,
+        now, # rx_time
+        0,   # position_time sentinel
+        nil, nil, # location_source, precision_bits
+        0.0, 0.0, 0.0, # lat/lon/alt sentinel
+        nil,
+      )
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to eq(52.5)
+      expect(row["longitude"]).to eq(13.4)
+      expect(row["altitude"]).to eq(100.0)
+      expect(row["position_time"]).to eq(now - 100)
+    end
+
+    it "stores a real position from update_node_from_position on a fresh node" do
+      db = open_db
+      dp.update_node_from_position(
+        db,
+        "!aabbccdd", 0xaabbccdd,
+        now,
+        now - 10,
+        "LOC_MANUAL", 16,
+        52.5, 13.4, 100.0,
+        4.2,
+      )
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to eq(52.5)
+      expect(row["longitude"]).to eq(13.4)
+      expect(row["altitude"]).to eq(100.0)
+      expect(row["position_time"]).to eq(now - 10)
+    end
+
+    it "drops sentinel coordinates on insert without crashing" do
+      db = open_db
+      dp.update_node_from_position(
+        db,
+        "!aabbccdd", 0xaabbccdd,
+        now,
+        nil,
+        nil, nil,
+        0.0, 0.0, 0.0,
+        nil,
+      )
+      row = read_node(db)
+      db.close
+      expect(row["latitude"]).to be_nil
+      expect(row["longitude"]).to be_nil
+      expect(row["altitude"]).to be_nil
+      expect(row["position_time"]).to be_nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # insert_position — issue #782: sentinel handling on the positions table
+  # ---------------------------------------------------------------------------
+  describe "#insert_position — sentinel handling" do
+    include_context "with isolated db"
+
+    def read_position(db, id)
+      db.execute("SELECT * FROM positions WHERE id = ?", [id]).first
+    end
+
+    it "stores paired (lat=0, lon=0) as SQL NULL on both axes" do
+      db = open_db
+      dp.insert_position(db, {
+        "id" => 9001,
+        "rx_time" => now,
+        "rx_iso" => Time.at(now).utc.iso8601,
+        "node_id" => "!aabbccdd",
+        "node_num" => 0xaabbccdd,
+        "latitude" => 0.0,
+        "longitude" => 0.0,
+        "altitude" => 0,
+        "position_time" => now - 30,
+        "location_source" => "LOC_MANUAL",
+      })
+      row = read_position(db, 9001)
+      db.close
+      expect(row["latitude"]).to be_nil
+      expect(row["longitude"]).to be_nil
+      expect(row["altitude"]).to be_nil
+      expect(row["location_source"]).to be_nil
+      expect(row["position_time"]).to eq(now - 30)
+    end
+
+    it "stores position_time = 0 as SQL NULL" do
+      db = open_db
+      dp.insert_position(db, {
+        "id" => 9002,
+        "rx_time" => now,
+        "rx_iso" => Time.at(now).utc.iso8601,
+        "node_id" => "!aabbccdd",
+        "node_num" => 0xaabbccdd,
+        "latitude" => 52.5,
+        "longitude" => 13.4,
+        "position_time" => 0,
+      })
+      row = read_position(db, 9002)
+      db.close
+      expect(row["position_time"]).to be_nil
+      expect(row["latitude"]).to eq(52.5)
+      expect(row["longitude"]).to eq(13.4)
+    end
+
+    it "preserves an equator fix" do
+      db = open_db
+      dp.insert_position(db, {
+        "id" => 9003,
+        "rx_time" => now,
+        "rx_iso" => Time.at(now).utc.iso8601,
+        "node_id" => "!aabbccdd",
+        "node_num" => 0xaabbccdd,
+        "latitude" => 0.0,
+        "longitude" => 13.4,
+        "position_time" => now - 10,
+      })
+      row = read_position(db, 9003)
+      db.close
+      expect(row["latitude"]).to eq(0.0)
+      expect(row["longitude"]).to eq(13.4)
     end
   end
 

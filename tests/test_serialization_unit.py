@@ -487,6 +487,126 @@ class TestCoerceFloat:
 
 
 # ---------------------------------------------------------------------------
+# _normalize_position_time — issue #782 ingest-boundary sentinel guard
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizePositionTime:
+    """Tests for :func:`serialization._normalize_position_time`."""
+
+    def test_zero_returns_none(self):
+        """``time = 0`` is the firmware "no GPS lock" sentinel."""
+        assert serialization._normalize_position_time(0) is None
+
+    def test_negative_returns_none(self):
+        """Negative timestamps are nonsensical and collapse to None."""
+        assert serialization._normalize_position_time(-1) is None
+
+    def test_positive_integer_preserved(self):
+        """A real epoch timestamp passes through unchanged."""
+        assert serialization._normalize_position_time(1764108200) == 1764108200
+
+    def test_numeric_string_coerced(self):
+        """String-encoded epoch timestamps are parsed."""
+        assert serialization._normalize_position_time("1764108200") == 1764108200
+
+    def test_zero_string_returns_none(self):
+        """The literal string ``"0"`` collapses to None."""
+        assert serialization._normalize_position_time("0") is None
+
+    def test_none_returns_none(self):
+        """None is passed through unchanged."""
+        assert serialization._normalize_position_time(None) is None
+
+    def test_garbage_string_returns_none(self):
+        """Non-numeric input collapses to None."""
+        assert serialization._normalize_position_time("not-a-time") is None
+
+    def test_float_truncated(self):
+        """Float input is truncated like _coerce_int does."""
+        assert serialization._normalize_position_time(3.9) == 3
+
+
+# ---------------------------------------------------------------------------
+# _normalize_lat_lon — issue #782 paired-zero "Null Island" guard
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeLatLon:
+    """Tests for :func:`serialization._normalize_lat_lon`."""
+
+    def test_paired_zero_collapses(self):
+        """The ``(0, 0)`` Null Island sentinel collapses on both axes."""
+        assert serialization._normalize_lat_lon(0, 0) == (None, None)
+
+    def test_paired_float_zero_collapses(self):
+        """Float ``(0.0, 0.0)`` also collapses."""
+        assert serialization._normalize_lat_lon(0.0, 0.0) == (None, None)
+
+    def test_equator_preserved(self):
+        """Latitude exactly 0 with a real longitude is a legitimate equator fix."""
+        lat, lon = serialization._normalize_lat_lon(0.0, 13.5)
+        assert lat == 0.0
+        assert lon == pytest.approx(13.5)
+
+    def test_prime_meridian_preserved(self):
+        """Longitude exactly 0 with a real latitude survives."""
+        lat, lon = serialization._normalize_lat_lon(52.5, 0.0)
+        assert lat == pytest.approx(52.5)
+        assert lon == 0.0
+
+    def test_real_pair_preserved(self):
+        """A real ``(lat, lon)`` pair is passed through as floats."""
+        lat, lon = serialization._normalize_lat_lon("52.5", "13.4")
+        assert lat == pytest.approx(52.5)
+        assert lon == pytest.approx(13.4)
+
+    def test_nan_lat_returns_none(self):
+        """NaN latitude collapses via _coerce_float and yields (None, real-lon)."""
+        import math
+
+        lat, lon = serialization._normalize_lat_lon(math.nan, 13.0)
+        assert lat is None
+        assert lon == pytest.approx(13.0)
+
+    def test_nan_lon_returns_none(self):
+        """NaN longitude similarly collapses to None."""
+        import math
+
+        lat, lon = serialization._normalize_lat_lon(52.0, math.nan)
+        assert lat == pytest.approx(52.0)
+        assert lon is None
+
+    def test_inf_collapses_to_none(self):
+        """Infinite coordinates collapse to None on the affected axis."""
+        import math
+
+        lat, lon = serialization._normalize_lat_lon(math.inf, math.inf)
+        assert lat is None
+        assert lon is None
+
+    def test_near_zero_within_epsilon_collapses(self):
+        """A pair within 1e-9° on both axes counts as the sentinel."""
+        lat, lon = serialization._normalize_lat_lon(1e-12, -1e-12)
+        assert lat is None
+        assert lon is None
+
+    def test_near_zero_outside_epsilon_preserved(self):
+        """Just outside the epsilon a fix is retained verbatim."""
+        lat, lon = serialization._normalize_lat_lon(1e-6, 1e-6)
+        assert lat == pytest.approx(1e-6)
+        assert lon == pytest.approx(1e-6)
+
+    def test_none_inputs_passthrough(self):
+        """``None`` inputs are forwarded without collapsing to the sentinel."""
+        assert serialization._normalize_lat_lon(None, None) == (None, None)
+        assert serialization._normalize_lat_lon(None, 13.0) == (
+            None,
+            pytest.approx(13.0),
+        )
+
+
+# ---------------------------------------------------------------------------
 # _first dot-notation
 # ---------------------------------------------------------------------------
 

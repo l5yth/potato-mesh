@@ -101,6 +101,12 @@ function normalisePositive(value, fallback) {
  *
  * - ``null`` / ``undefined`` / empty-string lat or lon → skipped.
  * - lat or lon that does not parse as a finite number → skipped.
+ * - Paired ``(lat=0, lon=0)`` → skipped.  Meshtastic firmware emits the Null
+ *   Island sentinel whenever the GPS module has not yet produced a fix; this
+ *   filter is a defensive net for legacy rows already in the database and
+ *   for federation peers running older code that has not yet adopted the
+ *   write-side normalisation introduced in issue #782.  Single-axis zeros
+ *   (equator or prime meridian) are preserved.
  * - When a positive ``maxDistanceKm`` is supplied, nodes whose ``distance_km``
  *   is finite and exceeds the limit are skipped.  Nodes with no ``distance_km``
  *   value are always kept regardless of the limit, matching the renderer's
@@ -130,6 +136,10 @@ export function buildRenderableEntries(nodes, options = {}) {
     const lat = Number(latRaw);
     const lon = Number(lonRaw);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    // Drop the Null Island sentinel only when *both* axes are exactly zero —
+    // legitimate equator (lat=0, lon!=0) or prime-meridian (lat!=0, lon=0)
+    // fixes survive.
+    if (lat === 0 && lon === 0) continue;
     if (limit !== null && node.distance_km != null && node.distance_km > limit) continue;
     entries.push({ node, lat, lon });
   }

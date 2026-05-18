@@ -407,6 +407,70 @@ def _coerce_float(value):
     return result if math.isfinite(result) else None
 
 
+# Pair-zero tolerance used when classifying a ``(lat, lon)`` tuple as the
+# Meshtastic "no GPS lock" sentinel.  The radio reports exact ``0.0`` for both
+# axes when the receiver has never been able to compute a fix; legitimate
+# equatorial / prime-meridian fixes will always carry residual sub-degree
+# precision, so anything within 1e-9° of zero on *both* axes is treated as the
+# sentinel.  See issue #782 and ``CONTRACTS.md``.
+_NULL_ISLAND_EPSILON = 1e-9
+
+
+def _normalize_position_time(value):
+    """Collapse a Meshtastic ``position.time`` value to ``None`` when sentinel.
+
+    Meshtastic firmware emits ``time = 0`` whenever the GPS module has not yet
+    produced a fresh fix.  The downstream Ruby read paths used to leak that
+    sentinel back as ``"1970-01-01T00:00:00Z"`` because ``0`` is truthy in Ruby
+    (see issue #782).  Routing every ``position.time`` candidate through this
+    helper at the ingest boundary makes the contract explicit: a sentinel
+    never reaches the web app, the database, or any downstream consumer.
+
+    Parameters:
+        value: Raw ``position.time`` candidate from a Meshtastic payload.
+
+    Returns:
+        The coerced positive integer, or ``None`` when the value is missing,
+        non-integer-coercible, or non-positive.
+    """
+
+    coerced = _coerce_int(value)
+    if coerced is None or coerced <= 0:
+        return None
+    return coerced
+
+
+def _normalize_lat_lon(lat, lon):
+    """Collapse a ``(lat, lon)`` pair to ``(None, None)`` when sentinel.
+
+    Meshtastic firmware emits ``(0.0, 0.0)`` whenever the radio has not yet
+    obtained a GPS lock; persisting that pair as if it were a real fix drops a
+    marker at Null Island (the Gulf of Guinea).  This helper preserves any
+    pair where at least one axis is non-zero — a node legitimately at the
+    equator (``lat = 0, lon != 0``) or on the prime meridian
+    (``lat != 0, lon = 0``) will survive — and otherwise returns
+    ``(None, None)`` so downstream callers can decide whether to omit the
+    coordinates entirely.
+
+    Parameters:
+        lat: Raw latitude candidate.
+        lon: Raw longitude candidate.
+
+    Returns:
+        A two-tuple of floats, with ``(None, None)`` substituted when both
+        axes coerce to finite zero or either coerces to ``None`` (the latter
+        already happens via :func:`_coerce_float` for non-finite inputs).
+    """
+
+    lat_f = _coerce_float(lat)
+    lon_f = _coerce_float(lon)
+    if lat_f is None or lon_f is None:
+        return (lat_f, lon_f)
+    if abs(lat_f) < _NULL_ISLAND_EPSILON and abs(lon_f) < _NULL_ISLAND_EPSILON:
+        return (None, None)
+    return (lat_f, lon_f)
+
+
 def _pkt_to_dict(packet) -> dict:
     """Normalise a packet into a plain dictionary.
 
@@ -701,6 +765,8 @@ __all__ = [
     "_coerce_float",
     "_coerce_int",
     "_load_cli_role_lookup",
+    "_normalize_lat_lon",
+    "_normalize_position_time",
     "_normalize_user_role",
     "_decode_nodeinfo_payload",
     "_extract_payload_bytes",

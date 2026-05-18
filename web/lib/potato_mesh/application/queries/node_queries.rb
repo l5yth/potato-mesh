@@ -203,10 +203,9 @@ module PotatoMesh
               r["short_name"] = node_id[0, 4] unless node_id.empty?
             end
           end
-          lh = r["last_heard"]&.to_i
-          pt = r["position_time"]&.to_i
+          lh = coerce_positive_or_nil(r["last_heard"])
+          pt = coerce_positive_or_nil(r["position_time"], ceiling: now)
           lh = now if lh && lh > now
-          pt = nil if pt && pt > now
           r["last_heard"] = lh
           r["position_time"] = pt
           r["last_seen_iso"] = Time.at(lh).utc.iso8601 if lh

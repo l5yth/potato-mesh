@@ -355,6 +355,30 @@ test('buildRenderableEntries ignores maxDistanceKm when zero/negative/non-finite
   assert.equal(buildRenderableEntries(nodes).length, 1);
 });
 
+// Issue #782: paired ``(lat=0, lon=0)`` is the Meshtastic "no GPS lock"
+// sentinel and must be skipped at render time, even if the API or a federation
+// peer slipped a sentinel row past the write-side normalisation.  Single-axis
+// zeros (equator / prime meridian) MUST be preserved.
+test('buildRenderableEntries drops paired (0, 0) Null Island sentinel', () => {
+  const nodes = [
+    { latitude: 0, longitude: 0 },
+    { latitude: '0', longitude: '0' },
+    { latitude: 0.0, longitude: 0 }
+  ];
+  assert.deepEqual(buildRenderableEntries(nodes), []);
+});
+
+test('buildRenderableEntries preserves equator and prime-meridian fixes', () => {
+  const equator = { latitude: 0, longitude: 13.5 };
+  const primeMeridian = { latitude: 52.5, longitude: 0 };
+  const result = buildRenderableEntries([equator, primeMeridian]);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].lat, 0);
+  assert.equal(result[0].lon, 13.5);
+  assert.equal(result[1].lat, 52.5);
+  assert.equal(result[1].lon, 0);
+});
+
 test('isOffsetSignificant reports true for real offsets and false near zero', () => {
   // Strict equality would treat radius * sin(π) (~1.7e-15) as non-zero;
   // the hypotenuse-based check rejects values below OFFSET_EPSILON_PX.
