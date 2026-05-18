@@ -2259,6 +2259,59 @@ RSpec.describe PotatoMesh::App::Federation do
     end
   end
 
+  describe "federation counts honour the opt-out marker" do
+    around do |example|
+      Dir.mktmpdir("federation-optout-") do |dir|
+        db_path = File.join(dir, "mesh.db")
+        RSpec::Mocks.with_temporary_scope do
+          allow(PotatoMesh::Config).to receive(:db_path).and_return(db_path)
+          allow(PotatoMesh::Config).to receive(:db_busy_timeout_ms).and_return(5000)
+          db_helper = Object.new.extend(PotatoMesh::App::Database)
+          db_helper.init_db
+          db_helper.ensure_schema_upgrades
+          example.run
+        end
+      end
+    end
+
+    let(:marker) { PotatoMesh::Config.node_opt_out_marker }
+    let(:now) { Time.now.to_i }
+
+    it "excludes opted-out nodes from active_node_count_since" do
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.execute(
+        "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role, protocol) " \
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ["!visnode1", 0x10000001, "VN", "Visible", now, now, "CLIENT", "meshtastic"],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role, protocol) " \
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ["!hidnode1", 0x10000002, "HN", "Hidden #{marker}", now, now, "CLIENT", "meshtastic"],
+      )
+      db.close
+
+      expect(federation_helpers.active_node_count_since(now - 60)).to eq(1)
+    end
+
+    it "excludes opted-out nodes from active_node_count_since_for_protocol" do
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      db.execute(
+        "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role, protocol) " \
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ["!mcvisible", 0x20000001, "MV", "MC Visible", now, now, "COMPANION", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id, num, short_name, long_name, last_heard, first_heard, role, protocol) " \
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ["!mchidden", 0x20000002, "MH", "MC #{marker} Hidden", now, now, "COMPANION", "meshcore"],
+      )
+      db.close
+
+      expect(federation_helpers.active_node_count_since_for_protocol(now - 60, "meshcore")).to eq(1)
+    end
+  end
+
   describe ".federation_worker_pool" do
     it "delegates to ensure_federation_worker_pool!" do
       sentinel = Object.new

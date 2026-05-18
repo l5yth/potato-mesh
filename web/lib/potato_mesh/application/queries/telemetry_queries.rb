@@ -44,6 +44,7 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -117,6 +118,13 @@ module PotatoMesh
       def query_telemetry_buckets(window_seconds:, bucket_seconds:, since: 0)
         window = coerce_integer(window_seconds) || DEFAULT_TELEMETRY_WINDOW_SECONDS
         window = DEFAULT_TELEMETRY_WINDOW_SECONDS if window <= 0
+        # Hard-cap the aggregation window at the 28-day visibility floor so
+        # callers cannot bypass the data-retention policy via an oversized
+        # +windowSeconds+ parameter.  The route layer also clamps the value
+        # up-front; the query repeats the clamp for defence-in-depth when
+        # callers reach this method directly.
+        window_cap = PotatoMesh::Config.four_weeks_seconds
+        window = window_cap if window > window_cap
         bucket = coerce_integer(bucket_seconds) || DEFAULT_TELEMETRY_BUCKET_SECONDS
         bucket = DEFAULT_TELEMETRY_BUCKET_SECONDS if bucket <= 0
 
@@ -146,11 +154,12 @@ module PotatoMesh
           FROM telemetry
           WHERE COALESCE(rx_time, telemetry_time) IS NOT NULL
             AND COALESCE(rx_time, telemetry_time, 0) >= ?
+            AND #{opt_out_node_id_filter("node_id")}
           GROUP BY bucket_start
           ORDER BY bucket_start ASC
           LIMIT ?
         SQL
-        params = [bucket, bucket, since_threshold, MAX_QUERY_LIMIT]
+        params = [bucket, bucket, since_threshold, *opt_out_marker_params, MAX_QUERY_LIMIT]
         rows = db.execute(sql, params)
         rows.map do |row|
           bucket_start = coerce_integer(row["bucket_start"])

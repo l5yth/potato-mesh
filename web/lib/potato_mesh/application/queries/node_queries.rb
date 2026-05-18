@@ -163,6 +163,7 @@ module PotatoMesh
           where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
         end
 
+        append_opt_out_filter(where_clauses, params, opt_out_self_filter)
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -236,6 +237,7 @@ module PotatoMesh
         since_threshold = normalize_since_threshold(since, floor: cutoff)
         where_clauses = ["last_seen_time >= ?"]
         params = [since_threshold]
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_protocol_filter(where_clauses, params, protocol)
         sql = <<~SQL
           SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol
@@ -283,29 +285,34 @@ module PotatoMesh
         hour_cutoff = reference_now - 3600
         day_cutoff = reference_now - 86_400
         week_cutoff = reference_now - PotatoMesh::Config.week_seconds
-        month_cutoff = reference_now - (30 * 24 * 60 * 60)
+        # The "month" bucket reuses the four-week cap so no stats endpoint can
+        # surface activity from beyond the 28-day API visibility floor.
+        month_cutoff = reference_now - PotatoMesh::Config.four_weeks_seconds
         pf = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        oo = " AND #{opt_out_self_filter}"
         proto = " AND protocol = ?"
         sql = <<~SQL
           SELECT
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS hour_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS day_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS week_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS month_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_hour,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_day,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_week,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_month,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_hour,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_day,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_week,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_month
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS hour_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS day_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS week_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS month_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_hour,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_day,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_week,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_month,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_hour,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_day,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_week,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_month
         SQL
         cutoffs = [hour_cutoff, day_cutoff, week_cutoff, month_cutoff]
-        # Total counts bind only cutoffs; per-protocol counts bind cutoff + protocol string.
-        params = cutoffs +
-                 cutoffs.flat_map { |c| [c, "meshcore"] } +
-                 cutoffs.flat_map { |c| [c, "meshtastic"] }
+        oo_params = opt_out_marker_params
+        # Each cutoff binds: [cutoff, *opt_out_marker_params] for totals, and
+        # [cutoff, *opt_out_marker_params, protocol] for per-protocol slices.
+        params = cutoffs.flat_map { |c| [c, *oo_params] } +
+                 cutoffs.flat_map { |c| [c, *oo_params, "meshcore"] } +
+                 cutoffs.flat_map { |c| [c, *oo_params, "meshtastic"] }
         row = with_busy_retry do
           handle.get_first_row(sql, params)
         end || {}

@@ -194,6 +194,94 @@ module PotatoMesh
         threshold = 0 if threshold.nil? || threshold.negative?
         [threshold, floor].max
       end
+
+      # SQL fragment used by every read query to filter out opted-out nodes.
+      #
+      # Operators signal opt-out by placing
+      # {PotatoMesh::Config::NODE_OPT_OUT_MARKER} (🛑) anywhere in their
+      # +short_name+ or +long_name+.  The data layer still ingests records
+      # for these nodes — the marker only suppresses them from API responses.
+      #
+      # Wrapping each display column in +COALESCE(...,'')+ matters because
+      # SQL +LIKE+ against +NULL+ yields +NULL+, which is falsy in +WHERE+
+      # but propagates through +NOT+ as +NULL+ — without the coalesce, any
+      # node missing one display column would be incorrectly filtered out.
+      OPT_OUT_NAME_PREDICATE =
+        "(COALESCE(long_name, '') LIKE '%' || ? || '%' " \
+        "OR COALESCE(short_name, '') LIKE '%' || ? || '%')".freeze
+
+      # Returns the bind parameters required by every opt-out SQL fragment.
+      #
+      # The fragments embed two LIKE expressions (one per display column), so
+      # each invocation needs the marker twice.  Centralising the binding
+      # avoids drift between fragments that match against +nodes+ directly
+      # versus those that join via a subquery.
+      #
+      # @return [Array<String>] bind parameters for the opt-out predicate.
+      def opt_out_marker_params
+        marker = PotatoMesh::Config.node_opt_out_marker
+        [marker, marker]
+      end
+
+      # SQL fragment that excludes rows whose own +long_name+/+short_name+
+      # carry the opt-out marker.  Intended for queries that read directly
+      # from the +nodes+ table.
+      #
+      # @return [String] SQL predicate suitable for AND-composition.
+      def opt_out_self_filter
+        "NOT #{OPT_OUT_NAME_PREDICATE}"
+      end
+
+      # SQL fragment that excludes rows whose textual node reference column
+      # points at an opted-out node.  Use for tables that join logically via
+      # a +node_id+/+from_id+/+to_id+ column.
+      #
+      # NULL references are preserved so anonymous chat messages and other
+      # records without an attributable sender remain visible.
+      #
+      # @param column [String] qualified SQL column name (e.g. ``"m.from_id"``).
+      # @return [String] SQL predicate suitable for AND-composition.
+      def opt_out_node_id_filter(column)
+        "(#{column} IS NULL OR #{column} NOT IN (" \
+        "SELECT node_id FROM nodes WHERE #{OPT_OUT_NAME_PREDICATE}))"
+      end
+
+      # SQL fragment that excludes rows whose numeric node reference column
+      # points at an opted-out node.  Use for tables that key on the legacy
+      # numeric node identifier (+num+, +src+, +dest+, +trace_hops.node_id+).
+      #
+      # @param column [String] qualified SQL column name.
+      # @return [String] SQL predicate suitable for AND-composition.
+      def opt_out_node_num_filter(column)
+        "(#{column} IS NULL OR #{column} NOT IN (" \
+        "SELECT num FROM nodes WHERE num IS NOT NULL AND #{OPT_OUT_NAME_PREDICATE}))"
+      end
+
+      # Append an opt-out filter to an in-flight WHERE clause builder.
+      #
+      # @param where_clauses [Array<String>] accumulating WHERE conditions.
+      # @param params [Array] accumulating bind parameters.
+      # @param fragment [String] SQL fragment produced by one of the
+      #   +opt_out_*_filter+ helpers.
+      # @return [void]
+      def append_opt_out_filter(where_clauses, params, fragment)
+        where_clauses << fragment
+        params.concat(opt_out_marker_params)
+      end
+
+      # Clamp a caller-supplied window duration to the 28-day API visibility
+      # cap.  Used by aggregate endpoints whose +windowSeconds+ parameter
+      # could otherwise reach further back than the per-id read floor.
+      #
+      # @param window_seconds [Integer, nil] requested window duration.
+      # @return [Integer, nil] +window_seconds+ clamped to at most 28 days,
+      #   or +nil+ when the input is non-positive/nil.
+      def clamp_window_seconds(window_seconds)
+        return nil if window_seconds.nil?
+        return nil if window_seconds <= 0
+        cap = PotatoMesh::Config.four_weeks_seconds
+        window_seconds > cap ? cap : window_seconds
+      end
     end
   end
 end

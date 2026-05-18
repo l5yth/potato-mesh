@@ -242,12 +242,17 @@ module PotatoMesh
 
       # Retrieve the latest node update timestamp from the database.
       #
+      # Opted-out nodes are excluded so the +/version+ cache hint and the
+      # federation self-record do not leak the freshness of nodes that have
+      # asked to stay hidden.
+      #
       # @return [Integer, nil] Unix timestamp or nil when unavailable.
       def latest_node_update_timestamp
         return nil unless File.exist?(PotatoMesh::Config.db_path)
 
         db = open_database(readonly: true)
-        value = db.get_first_value("SELECT MAX(last_heard) FROM nodes")
+        sql = "SELECT MAX(last_heard) FROM nodes WHERE #{opt_out_self_filter}"
+        value = db.get_first_value(sql, opt_out_marker_params)
         value&.to_i
       rescue SQLite3::Exception
         nil
