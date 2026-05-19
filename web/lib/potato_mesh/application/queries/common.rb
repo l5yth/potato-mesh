@@ -232,6 +232,26 @@ module PotatoMesh
         "NOT #{OPT_OUT_NAME_PREDICATE}"
       end
 
+      # Regex matching the only column-name shapes the +opt_out_node_*_filter+
+      # helpers accept: bare identifiers (+node_id+), and dotted qualifiers
+      # (+m.from_id+).  Anything else is rejected because the value is
+      # interpolated directly into SQL, where stray punctuation would either
+      # corrupt the query or open a SQL-injection surface for any future
+      # caller that forgets to pass a literal.
+      SAFE_COLUMN_IDENTIFIER = /\A[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\z/.freeze
+
+      # Validate that +column+ is a plain identifier or dotted alias before
+      # interpolation.  Raises +ArgumentError+ on anything more exotic.
+      #
+      # @param column [String] candidate column name.
+      # @return [String] +column+ unchanged when safe to interpolate.
+      def assert_safe_column_identifier!(column)
+        unless column.is_a?(String) && column.match?(SAFE_COLUMN_IDENTIFIER)
+          raise ArgumentError, "unsafe column identifier: #{column.inspect}"
+        end
+        column
+      end
+
       # SQL fragment that excludes rows whose textual node reference column
       # points at an opted-out node.  Use for tables that join logically via
       # a +node_id+/+from_id+/+to_id+ column.
@@ -240,8 +260,11 @@ module PotatoMesh
       # records without an attributable sender remain visible.
       #
       # @param column [String] qualified SQL column name (e.g. ``"m.from_id"``).
+      #   Must match {SAFE_COLUMN_IDENTIFIER}; arbitrary user input is not
+      #   accepted.
       # @return [String] SQL predicate suitable for AND-composition.
       def opt_out_node_id_filter(column)
+        assert_safe_column_identifier!(column)
         "(#{column} IS NULL OR #{column} NOT IN (" \
         "SELECT node_id FROM nodes WHERE #{OPT_OUT_NAME_PREDICATE}))"
       end
@@ -250,9 +273,11 @@ module PotatoMesh
       # points at an opted-out node.  Use for tables that key on the legacy
       # numeric node identifier (+num+, +src+, +dest+, +trace_hops.node_id+).
       #
-      # @param column [String] qualified SQL column name.
+      # @param column [String] qualified SQL column name.  Must match
+      #   {SAFE_COLUMN_IDENTIFIER}.
       # @return [String] SQL predicate suitable for AND-composition.
       def opt_out_node_num_filter(column)
+        assert_safe_column_identifier!(column)
         "(#{column} IS NULL OR #{column} NOT IN (" \
         "SELECT num FROM nodes WHERE num IS NOT NULL AND #{OPT_OUT_NAME_PREDICATE}))"
       end

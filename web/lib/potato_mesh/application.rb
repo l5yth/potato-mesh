@@ -177,6 +177,12 @@ module PotatoMesh
       ensure_self_instance_record!
       update_all_prometheus_metrics_from_nodes
 
+      # Clearing the shutdown flag before checking start_retention_thread!'s
+      # alive-guard is safe: if an old worker is still running it will keep
+      # going (the alive-check short-circuits the spawn), and if it is not,
+      # the flag must be clear for the freshly spawned thread to make any
+      # progress.  No in-flight shutdown can be in progress here because
+      # configure runs single-threaded at boot.
       clear_retention_shutdown_request!
       if retention_worker_active?
         start_retention_thread!

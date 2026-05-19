@@ -38,14 +38,20 @@ module PotatoMesh
       # the freshest activity timestamp for the table — when that column
       # drops below +(now - year_seconds)+ the row is unrecoverable through
       # the API anyway, so it is safe to remove from disk.
+      #
+      # Ordering matters: child tables that participate in +ON DELETE CASCADE+
+      # relationships (notably +neighbors+, which references +nodes+) are
+      # purged *before* their parents.  Otherwise the parent purge would
+      # cascade-delete the same rows the explicit child DELETE was about to
+      # touch, leaving +db.changes+ to under-report the work done.
       RETENTION_TARGETS = [
-        ["nodes", "last_heard"],
+        ["neighbors", "rx_time"],
         ["messages", "rx_time"],
         ["positions", "rx_time"],
         ["telemetry", "rx_time"],
-        ["neighbors", "rx_time"],
         ["traces", "rx_time"],
         ["ingestors", "last_seen_time"],
+        ["nodes", "last_heard"],
       ].freeze
 
       # Run a single retention sweep, deleting rows older than +cutoff+ from
@@ -66,13 +72,19 @@ module PotatoMesh
           # Foreign-key cascades only fire when PRAGMA foreign_keys = ON,
           # which open_database already enforces.  Relying on the schema
           # cascades keeps the DELETE list small and avoids the need to
-          # manually clean +trace_hops+/+neighbors+ before their parents.
-          RETENTION_TARGETS.each do |table, column|
-            sql = "DELETE FROM #{table} WHERE #{column} IS NOT NULL AND #{column} < ?"
-            with_busy_retry do
-              db.execute(sql, [cutoff])
+          # manually clean +trace_hops+ before its parent.
+          #
+          # The whole sweep runs inside a single transaction so a crash or
+          # shutdown mid-pass either commits every table's deletions or
+          # leaves the DB untouched — never half-purged.
+          with_busy_retry do
+            db.transaction do
+              RETENTION_TARGETS.each do |table, column|
+                sql = "DELETE FROM #{table} WHERE #{column} IS NOT NULL AND #{column} < ?"
+                db.execute(sql, [cutoff])
+                removed[table] = db.changes
+              end
             end
-            removed[table] = db.changes
           end
         ensure
           db&.close
@@ -140,16 +152,10 @@ module PotatoMesh
         return unless retention_sleep_with_shutdown(delay)
 
         loop do
-          begin
-            purge_old_data!
-          rescue StandardError => e
-            warn_log(
-              "Retention worker iteration failed",
-              context: "retention.worker",
-              error_class: e.class.name,
-              error_message: e.message,
-            )
-          end
+          # purge_old_data! rescues StandardError internally and logs to the
+          # "retention.purge" context, so the loop body is guaranteed not to
+          # raise.  No outer rescue is needed.
+          purge_old_data!
           break unless retention_sleep_with_shutdown(
             PotatoMesh::Config.retention_purge_interval_seconds,
           )

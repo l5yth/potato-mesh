@@ -805,6 +805,12 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(fragment).to include("m.from_id NOT IN")
       expect(fragment).to include("SELECT node_id FROM nodes")
     end
+
+    it "rejects column identifiers containing unsafe characters" do
+      expect { queries.opt_out_node_id_filter("from_id; DROP TABLE nodes--") }.to raise_error(ArgumentError, /unsafe column identifier/)
+      expect { queries.opt_out_node_id_filter("") }.to raise_error(ArgumentError, /unsafe column identifier/)
+      expect { queries.opt_out_node_id_filter(nil) }.to raise_error(ArgumentError, /unsafe column identifier/)
+    end
   end
 
   describe "#opt_out_node_num_filter" do
@@ -813,6 +819,23 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(fragment).to include("src IS NULL")
       expect(fragment).to include("src NOT IN")
       expect(fragment).to include("num IS NOT NULL")
+    end
+
+    it "rejects column identifiers containing unsafe characters" do
+      expect { queries.opt_out_node_num_filter("src OR 1=1") }.to raise_error(ArgumentError, /unsafe column identifier/)
+    end
+  end
+
+  describe "#assert_safe_column_identifier!" do
+    it "accepts bare identifiers and dotted qualifiers" do
+      expect(queries.assert_safe_column_identifier!("node_id")).to eq("node_id")
+      expect(queries.assert_safe_column_identifier!("m.from_id")).to eq("m.from_id")
+    end
+
+    it "rejects anything else" do
+      ["1bad", "a.b.c", "name`", "name with space", nil, 42].each do |bad|
+        expect { queries.assert_safe_column_identifier!(bad) }.to raise_error(ArgumentError, /unsafe column identifier/)
+      end
     end
   end
 

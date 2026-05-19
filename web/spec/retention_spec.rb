@@ -217,18 +217,72 @@ RSpec.describe PotatoMesh::App::Retention do
       expect(failure).not_to be_nil
       expect(failure[:context]).to eq("retention.purge")
     end
+
+    it "leaves rows with NULL retention timestamps untouched" do
+      # A node whose last_heard is NULL has no activity timestamp at all,
+      # so the purge cannot prove it is older than the cutoff and must
+      # leave it alone.  The +IS NOT NULL+ guard in the DELETE protects
+      # against accidentally wiping every such row.
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      begin
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, first_heard, role) VALUES (?,?,?,?,?,?)",
+          ["!nullnode", 0xdeadbeef, "NN", "Null Node", now - 100, "CLIENT"],
+        )
+      ensure
+        db.close
+      end
+
+      harness_class.purge_old_data!(now: now)
+
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
+      begin
+        expect(db.execute("SELECT node_id FROM nodes").flatten).to include("!nullnode")
+      ensure
+        db.close
+      end
+    end
   end
 
   describe ".retention_sleep_with_shutdown" do
-    it "returns true when the full duration elapses" do
-      result = harness_class.retention_sleep_with_shutdown(0.0)
+    it "returns true after slicing through the requested duration" do
+      slept = []
+      allow(Kernel).to receive(:sleep) { |seconds| slept << seconds }
+
+      # 0.5 s with 0.2 s slices means three iterations: 0.2, 0.2, 0.1.
+      result = harness_class.retention_sleep_with_shutdown(0.5)
+
       expect(result).to be(true)
+      expect(slept.sum).to be_within(1e-9).of(0.5)
+      expect(slept).to all(be <= 0.2 + 1e-9)
+      expect(slept.length).to be >= 2
+    end
+
+    it "returns true immediately when the duration is non-positive" do
+      expect(Kernel).not_to receive(:sleep)
+      expect(harness_class.retention_sleep_with_shutdown(0.0)).to be(true)
     end
 
     it "returns false immediately when shutdown is already requested" do
       allow(harness_class).to receive(:retention_shutdown_requested?).and_return(true)
       result = harness_class.retention_sleep_with_shutdown(5.0)
       expect(result).to be(false)
+    end
+
+    it "bails out mid-sleep when shutdown is requested between slices" do
+      slept = []
+      allow(Kernel).to receive(:sleep) { |seconds| slept << seconds }
+      call_count = 0
+      allow(harness_class).to receive(:retention_shutdown_requested?) do
+        call_count += 1
+        call_count > 2 # first two checks: keep sleeping; then shutdown.
+      end
+
+      result = harness_class.retention_sleep_with_shutdown(5.0)
+
+      expect(result).to be(false)
+      # Should not have slept the entire 5 s — the loop terminates early.
+      expect(slept.sum).to be < 1.0
     end
   end
 
@@ -280,22 +334,17 @@ RSpec.describe PotatoMesh::App::Retention do
       harness_class.retention_thread_loop
     end
 
-    it "continues iterating when purge_old_data! raises" do
+    it "tolerates purge_old_data! returning an empty hash on error" do
+      # purge_old_data! handles its own errors and returns {} — the loop
+      # should treat that as a normal outcome and proceed to the sleep step.
       call_count = 0
       allow(harness_class).to receive(:retention_sleep_with_shutdown) do |_seconds|
         call_count += 1
         call_count == 1
       end
-      allow(harness_class).to receive(:purge_old_data!).and_raise(StandardError, "boom")
+      expect(harness_class).to receive(:purge_old_data!).once.and_return({})
 
-      # Should not propagate the exception to the caller — the worker
-      # captures it and continues to the sleep step (which signals exit).
       expect { harness_class.retention_thread_loop }.not_to raise_error
-
-      warning = harness_class.log_events.find do |entry|
-        entry[:level] == :warn && entry[:context] == "retention.worker"
-      end
-      expect(warning).not_to be_nil
     end
   end
 

@@ -288,23 +288,23 @@ module PotatoMesh
         # The "month" bucket reuses the four-week cap so no stats endpoint can
         # surface activity from beyond the 28-day API visibility floor.
         month_cutoff = reference_now - PotatoMesh::Config.four_weeks_seconds
-        pf = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
-        oo = " AND #{opt_out_self_filter}"
-        proto = " AND protocol = ?"
+        private_clause = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        opt_out_clause = " AND #{opt_out_self_filter}"
+        proto_clause = " AND protocol = ?"
         sql = <<~SQL
           SELECT
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS hour_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS day_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS week_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}) AS month_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_hour,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_day,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_week,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mc_month,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_hour,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_day,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_week,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{oo}#{proto}) AS mt_month
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}) AS hour_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}) AS day_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}) AS week_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}) AS month_count,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mc_hour,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mc_day,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mc_week,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mc_month,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mt_hour,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mt_day,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mt_week,
+            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{private_clause}#{opt_out_clause}#{proto_clause}) AS mt_month
         SQL
         cutoffs = [hour_cutoff, day_cutoff, week_cutoff, month_cutoff]
         oo_params = opt_out_marker_params
