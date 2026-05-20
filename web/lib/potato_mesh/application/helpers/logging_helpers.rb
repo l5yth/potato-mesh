@@ -28,6 +28,17 @@ module PotatoMesh
         PotatoMesh::Logging.log(logger, :debug, message, context: context, **metadata)
       end
 
+      # Emit a structured info log entry tagged with the calling context.
+      #
+      # @param message [String] text to emit.
+      # @param context [String] logical source of the message.
+      # @param metadata [Hash] additional structured key/value data.
+      # @return [void]
+      def info_log(message, context: "app", **metadata)
+        logger = PotatoMesh::Logging.logger_for(self)
+        PotatoMesh::Logging.log(logger, :info, message, context: context, **metadata)
+      end
+
       # Emit a structured warning log entry tagged with the calling context.
       #
       # @param message [String] text to emit.

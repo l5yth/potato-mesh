@@ -49,6 +49,12 @@ RSpec.describe PotatoMesh::App::Retention do
           }
         end
 
+        def info_log(message, context:, **metadata)
+          (@log_events ||= []) << {
+            level: :info, message: message, context: context, metadata: metadata,
+          }
+        end
+
         def debug_log(message, context:, **metadata)
           (@log_events ||= []) << {
             level: :debug, message: message, context: context, metadata: metadata,
@@ -207,6 +213,17 @@ RSpec.describe PotatoMesh::App::Retention do
       expect(removed.values.uniq).to eq([0])
     end
 
+    it "logs the successful purge at info level" do
+      # Promoted from debug so retention activity is visible at the default
+      # log verbosity; specs lock the level in so a future refactor cannot
+      # silently demote it.
+      harness_class.purge_old_data!(now: now)
+      entry = harness_class.log_events.find do |e|
+        e[:context] == "retention.purge" && e[:level] == :info
+      end
+      expect(entry).not_to be_nil
+    end
+
     it "logs and recovers from unexpected SQLite errors" do
       # Force a transient SQLite error by closing the database file mid-call.
       allow(harness_class).to receive(:open_database).and_raise(SQLite3::Exception, "boom")
@@ -292,28 +309,6 @@ RSpec.describe PotatoMesh::App::Retention do
     end
   end
 
-  describe ".retention_worker_active?" do
-    it "is false in the RACK_ENV=test environment" do
-      original = ENV["RACK_ENV"]
-      ENV["RACK_ENV"] = "test"
-      begin
-        expect(harness_class.retention_worker_active?).to be(false)
-      ensure
-        ENV["RACK_ENV"] = original
-      end
-    end
-
-    it "is true outside the test environment" do
-      original = ENV["RACK_ENV"]
-      ENV["RACK_ENV"] = "production"
-      begin
-        expect(harness_class.retention_worker_active?).to be(true)
-      ensure
-        ENV["RACK_ENV"] = original
-      end
-    end
-  end
-
   describe ".retention_thread_loop" do
     it "exits without purging when shutdown is requested during the initial delay" do
       allow(harness_class).to receive(:retention_sleep_with_shutdown).and_return(false)
@@ -355,6 +350,246 @@ RSpec.describe PotatoMesh::App::Retention do
         expect(removed).to have_key(table)
         expect(removed[table]).to be_a(Integer)
       end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Shutdown plumbing — exercised with a Sinatra-shaped settings double so the
+  # respond_to? branches inside the retention module are followed end-to-end.
+  # ---------------------------------------------------------------------------
+  describe "shutdown lifecycle helpers" do
+    # A Sinatra-shaped settings double exposing every attribute the retention
+    # module's respond_to? checks look up.
+    settings_struct = Struct.new(
+      :retention_thread,
+      :retention_shutdown_requested,
+      :retention_shutdown_hook_installed,
+    )
+
+    let(:host_class) do
+      stx = settings_struct
+      klass = Class.new do
+        extend PotatoMesh::App::Retention
+      end
+      klass.define_singleton_method(:settings) do
+        @settings ||= stx.new
+      end
+      klass.define_singleton_method(:set) do |key, value|
+        writer = "#{key}="
+        raise ArgumentError, "unsupported setting #{key}" unless settings.respond_to?(writer)
+        settings.public_send(writer, value)
+      end
+      klass.define_singleton_method(:debug_log) { |*| }
+      klass.define_singleton_method(:warn_log) { |*| }
+      klass
+    end
+
+    describe ".start_retention_thread!" do
+      it "spawns a worker, stores it on settings, and returns the thread" do
+        # Replace the loop body with a brief sleep so the thread exits quickly
+        # rather than entering the real production loop.
+        allow(host_class).to receive(:retention_thread_loop) { sleep(0.01) }
+        allow(host_class).to receive(:ensure_retention_shutdown_hook!)
+
+        thread = host_class.start_retention_thread!
+
+        expect(thread).to be_a(Thread)
+        expect(host_class.settings.retention_thread).to be(thread)
+        thread.join(1)
+      end
+
+      it "returns the existing thread when one is still alive" do
+        allow(host_class).to receive(:ensure_retention_shutdown_hook!)
+        # An infinite sleep stands in for a long-lived worker.
+        existing = Thread.new { sleep }
+        host_class.settings.retention_shutdown_requested = false
+        host_class.set(:retention_thread, existing)
+
+        result = host_class.start_retention_thread!
+
+        expect(result).to be(existing)
+      ensure
+        existing&.kill
+        existing&.join(0.1)
+      end
+    end
+
+    describe ".retention_shutdown_requested?" do
+      it "is false when no shutdown has been requested" do
+        host_class.settings.retention_shutdown_requested = nil
+        expect(host_class.retention_shutdown_requested?).to be(false)
+      end
+
+      it "is true once a shutdown has been requested" do
+        host_class.settings.retention_shutdown_requested = true
+        expect(host_class.retention_shutdown_requested?).to be(true)
+      end
+
+      it "is false when settings lack the shutdown attribute" do
+        bare = Class.new { extend PotatoMesh::App::Retention }
+        bare_struct = Struct.new(:other)
+        bare.define_singleton_method(:settings) { @settings ||= bare_struct.new }
+        expect(bare.retention_shutdown_requested?).to be(false)
+      end
+    end
+
+    describe ".request_retention_shutdown! / .clear_retention_shutdown_request!" do
+      it "flips the settings flag on and off" do
+        host_class.request_retention_shutdown!
+        expect(host_class.settings.retention_shutdown_requested).to be(true)
+        host_class.clear_retention_shutdown_request!
+        expect(host_class.settings.retention_shutdown_requested).to be(false)
+      end
+    end
+
+    describe ".shutdown_retention_thread!" do
+      it "is a no-op when no thread has been registered" do
+        host_class.set(:retention_thread, nil)
+        expect { host_class.shutdown_retention_thread!(timeout: 0.05) }.not_to raise_error
+      end
+
+      it "wakes and joins a sleeping worker thread" do
+        thread = Thread.new { sleep }
+        host_class.set(:retention_thread, thread)
+
+        host_class.shutdown_retention_thread!(timeout: 0.5)
+
+        expect(thread).not_to be_alive
+        expect(host_class.settings.retention_thread).to be_nil
+      end
+
+      it "swallows ThreadError when wakeup raises" do
+        thread = Thread.new { sleep }
+        # Force wakeup to raise — the rescue inside shutdown_retention_thread!
+        # must swallow it and still join the thread.
+        allow(thread).to receive(:wakeup).and_raise(ThreadError, "dead"); allow(thread).to receive(:respond_to?).and_call_original
+        host_class.set(:retention_thread, thread)
+
+        expect { host_class.shutdown_retention_thread!(timeout: 0.5) }.not_to raise_error
+      ensure
+        thread&.kill
+        thread&.join(0.1)
+      end
+
+      it "force-kills the worker when join times out" do
+        # A purely CPU-bound thread won't respond to wakeup, so join(timeout)
+        # will time out and the kill branch must take over.
+        thread = Thread.new { loop { } }
+        host_class.set(:retention_thread, thread)
+
+        host_class.shutdown_retention_thread!(timeout: 0.05)
+
+        expect(thread).not_to be_alive
+      end
+    end
+
+    describe ".ensure_retention_shutdown_hook!" do
+      it "installs the hook exactly once when settings carry the flag" do
+        # First call flips the flag; second call returns early.
+        expect(host_class).to receive(:at_exit).once
+        host_class.ensure_retention_shutdown_hook!
+        host_class.ensure_retention_shutdown_hook!
+        expect(host_class.settings.retention_shutdown_hook_installed).to be(true)
+      end
+
+      it "delegates instance invocations to the host class" do
+        allow(host_class).to receive(:at_exit)
+        host_class.ensure_retention_shutdown_hook!
+        instance = host_class.new
+        # No raise — the instance entry-point should redirect to the class.
+        expect { instance.ensure_retention_shutdown_hook! }.not_to raise_error
+      end
+
+      it "falls back to an instance variable when settings lack the flag" do
+        # Build a class whose settings double has no
+        # retention_shutdown_hook_installed accessor, exercising the ivar
+        # branch in ensure_retention_shutdown_hook!.
+        bare_settings = Struct.new(:retention_thread)
+        bare = Class.new { extend PotatoMesh::App::Retention }
+        bare.define_singleton_method(:settings) { @settings ||= bare_settings.new }
+        bare.define_singleton_method(:set) { |*| }
+        bare.define_singleton_method(:shutdown_retention_thread!) { |*| }
+        allow(bare).to receive(:at_exit)
+
+        bare.ensure_retention_shutdown_hook!
+        bare.ensure_retention_shutdown_hook!
+
+        expect(bare.instance_variable_get(:@retention_shutdown_hook_installed)).to be(true)
+      end
+
+      it "registers an at_exit hook that calls shutdown_retention_thread!" do
+        captured = nil
+        allow(host_class).to receive(:at_exit) { |&block| captured = block }
+        host_class.ensure_retention_shutdown_hook!
+        expect(captured).not_to be_nil
+
+        expect(host_class).to receive(:shutdown_retention_thread!)
+        captured.call
+      end
+
+      it "swallows errors raised by shutdown_retention_thread! in the at_exit hook" do
+        captured = nil
+        allow(host_class).to receive(:at_exit) { |&block| captured = block }
+        host_class.ensure_retention_shutdown_hook!
+
+        allow(host_class).to receive(:shutdown_retention_thread!).and_raise(StandardError, "boom")
+        expect { captured.call }.not_to raise_error
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # retention_worker_active? also has a host-class branch that prefers the
+  # local +test_environment?+ helper.  Exercise it to lock in that fallback.
+  # ---------------------------------------------------------------------------
+  describe ".start_retention_worker_if_active!" do
+    it "spawns the worker when retention_worker_active? is true" do
+      klass = Class.new { extend PotatoMesh::App::Retention }
+      klass.define_singleton_method(:retention_worker_active?) { true }
+      klass.define_singleton_method(:clear_retention_shutdown_request!) { }
+      klass.define_singleton_method(:debug_log) { |*| }
+      sentinel = Object.new
+      allow(klass).to receive(:start_retention_thread!).and_return(sentinel)
+
+      expect(klass.start_retention_worker_if_active!).to be(sentinel)
+    end
+
+    it "skips the worker and logs a debug message when inactive" do
+      klass = Class.new { extend PotatoMesh::App::Retention }
+      klass.define_singleton_method(:retention_worker_active?) { false }
+      klass.define_singleton_method(:clear_retention_shutdown_request!) { }
+      captured = []
+      klass.define_singleton_method(:debug_log) do |message, **metadata|
+        captured << [message, metadata]
+      end
+      expect(klass).not_to receive(:start_retention_thread!)
+
+      expect(klass.start_retention_worker_if_active!).to be_nil
+      expect(captured.first.first).to eq("Retention worker disabled")
+    end
+  end
+
+  describe ".retention_worker_active?" do
+    # The retention module relies on the Helpers#test_environment? predicate,
+    # which is included into Object at boot time.  Both branches are
+    # exercised by toggling RACK_ENV.
+    let(:host) { Class.new { extend PotatoMesh::App::Retention } }
+
+    around do |example|
+      original = ENV["RACK_ENV"]
+      example.run
+    ensure
+      ENV["RACK_ENV"] = original
+    end
+
+    it "returns false when RACK_ENV is test" do
+      ENV["RACK_ENV"] = "test"
+      expect(host.retention_worker_active?).to be(false)
+    end
+
+    it "returns true when RACK_ENV is anything else" do
+      ENV["RACK_ENV"] = "production"
+      expect(host.retention_worker_active?).to be(true)
     end
   end
 end

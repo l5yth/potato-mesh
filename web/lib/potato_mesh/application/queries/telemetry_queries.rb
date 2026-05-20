@@ -120,11 +120,10 @@ module PotatoMesh
         window = DEFAULT_TELEMETRY_WINDOW_SECONDS if window <= 0
         # Hard-cap the aggregation window at the 28-day visibility floor so
         # callers cannot bypass the data-retention policy via an oversized
-        # +windowSeconds+ parameter.  The route layer also clamps the value
-        # up-front; the query repeats the clamp for defence-in-depth when
-        # callers reach this method directly.
-        window_cap = PotatoMesh::Config.four_weeks_seconds
-        window = window_cap if window > window_cap
+        # +windowSeconds+ parameter.  The route layer also calls
+        # +clamp_window_seconds+ up-front; reusing the same helper here keeps
+        # the cap defined in exactly one place.
+        window = clamp_window_seconds(window) || DEFAULT_TELEMETRY_WINDOW_SECONDS
         bucket = coerce_integer(bucket_seconds) || DEFAULT_TELEMETRY_BUCKET_SECONDS
         bucket = DEFAULT_TELEMETRY_BUCKET_SECONDS if bucket <= 0
 

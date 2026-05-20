@@ -256,8 +256,13 @@ module PotatoMesh
       # points at an opted-out node.  Use for tables that join logically via
       # a +node_id+/+from_id+/+to_id+ column.
       #
-      # NULL references are preserved so anonymous chat messages and other
-      # records without an attributable sender remain visible.
+      # NULL references on the outer column are preserved so anonymous chat
+      # messages and other records without an attributable sender remain
+      # visible.  The inner subquery also filters +node_id IS NOT NULL+: in
+      # SQLite, +x NOT IN (subquery)+ returns UNKNOWN when the subquery
+      # produces a NULL, which would silently exclude every row.  Guarding
+      # the subquery keeps that failure mode out of reach if a future opt-out
+      # row ever lands with a NULL +node_id+.
       #
       # @param column [String] qualified SQL column name (e.g. ``"m.from_id"``).
       #   Must match {SAFE_COLUMN_IDENTIFIER}; arbitrary user input is not
@@ -266,7 +271,7 @@ module PotatoMesh
       def opt_out_node_id_filter(column)
         assert_safe_column_identifier!(column)
         "(#{column} IS NULL OR #{column} NOT IN (" \
-        "SELECT node_id FROM nodes WHERE #{OPT_OUT_NAME_PREDICATE}))"
+        "SELECT node_id FROM nodes WHERE node_id IS NOT NULL AND #{OPT_OUT_NAME_PREDICATE}))"
       end
 
       # SQL fragment that excludes rows whose numeric node reference column

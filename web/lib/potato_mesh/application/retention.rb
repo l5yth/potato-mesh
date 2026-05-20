@@ -90,7 +90,10 @@ module PotatoMesh
           db&.close
         end
 
-        debug_log(
+        # Promoted to info so retention activity is visible at the default
+        # log level — on a busy node the per-table removal counts are useful
+        # operational signal, not debug noise.
+        info_log(
           "Purged data outside retention window",
           context: "retention.purge",
           cutoff: cutoff,
@@ -112,12 +115,41 @@ module PotatoMesh
       # test suite does not spawn a long-lived sleeper that briefly holds
       # database write locks while specs are executing.
       #
+      # {Helpers#test_environment?} is included into +Object+ at boot, so
+      # every host class transitively has the predicate available.
+      #
       # @return [Boolean] +false+ in the +RACK_ENV=test+ environment,
       #   +true+ otherwise.
       def retention_worker_active?
-        return !test_environment? if respond_to?(:test_environment?)
+        !test_environment?
+      end
 
-        ENV["RACK_ENV"] != "test"
+      # Entry point invoked from the Sinatra +configure+ block.  Clearing
+      # the shutdown flag before checking +start_retention_thread!+'s
+      # alive-guard is safe: if an old worker is still running it will keep
+      # going (the alive-check short-circuits the spawn), and if it is not,
+      # the flag must be clear for the freshly spawned thread to make any
+      # progress.  No in-flight shutdown can be in progress here because
+      # +configure+ runs single-threaded at boot.
+      #
+      # In the test environment ({#retention_worker_active?} is +false+) the
+      # worker is intentionally skipped so specs do not race against the
+      # purge loop's DELETEs.
+      #
+      # @return [Thread, nil] the worker thread when spawned, +nil+ when the
+      #   environment opted out.
+      def start_retention_worker_if_active!
+        clear_retention_shutdown_request!
+        if retention_worker_active?
+          start_retention_thread!
+        else
+          debug_log(
+            "Retention worker disabled",
+            context: "retention",
+            reason: "test environment",
+          )
+          nil
+        end
       end
 
       # Spawn the long-running retention worker.  Mirrors the federation
@@ -237,6 +269,14 @@ module PotatoMesh
       # Install an +at_exit+ hook that tears down the retention worker on
       # process termination.  Idempotent — repeated calls are no-ops after
       # the first install.
+      #
+      # The module is both +extend+ed and +include+d into the Sinatra
+      # application class, so this method may be invoked on either the class
+      # (extend path) or one of its instances (include path).  The first
+      # line below normalises both entry points onto the class so the hook
+      # registers exactly once per process — without it, +include+-side
+      # invocations would each install their own +at_exit+ block and
+      # +shutdown_retention_thread!+ would run repeatedly on exit.
       #
       # @return [void]
       def ensure_retention_shutdown_hook!

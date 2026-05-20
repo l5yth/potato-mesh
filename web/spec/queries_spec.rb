@@ -806,6 +806,13 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(fragment).to include("SELECT node_id FROM nodes")
     end
 
+    it "guards the inner subquery against NULL node_id values" do
+      # SQLite's `NOT IN (subquery returning NULL)` evaluates to UNKNOWN and
+      # would silently drop every row.  The subquery must reject NULL ids.
+      fragment = queries.opt_out_node_id_filter("from_id")
+      expect(fragment).to include("node_id IS NOT NULL")
+    end
+
     it "rejects column identifiers containing unsafe characters" do
       expect { queries.opt_out_node_id_filter("from_id; DROP TABLE nodes--") }.to raise_error(ArgumentError, /unsafe column identifier/)
       expect { queries.opt_out_node_id_filter("") }.to raise_error(ArgumentError, /unsafe column identifier/)
