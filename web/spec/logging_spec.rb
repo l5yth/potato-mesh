@@ -49,3 +49,33 @@ describe PotatoMesh::Logging do
     end
   end
 end
+
+# The Helpers module wraps PotatoMesh::Logging with severity-specific
+# convenience methods.  Each helper has the same shape, so a parameterised
+# round-trip spec keeps coverage tight without duplicating boilerplate.
+RSpec.describe PotatoMesh::App::Helpers do
+  let(:host) do
+    klass = Class.new
+    klass.include(PotatoMesh::App::Helpers)
+    klass.new
+  end
+
+  let(:logger) { instance_double(Logger) }
+
+  {
+    debug_log: :debug,
+    info_log: :info,
+    warn_log: :warn,
+  }.each do |helper, severity|
+    describe "##{helper}" do
+      it "forwards to PotatoMesh::Logging at :#{severity}" do
+        allow(PotatoMesh::Logging).to receive(:logger_for).with(host).and_return(logger)
+        expect(PotatoMesh::Logging).to receive(:log).with(
+          logger, severity, "hello", context: "test", foo: "bar",
+        )
+
+        host.public_send(helper, "hello", context: "test", foo: "bar")
+      end
+    end
+  end
+end

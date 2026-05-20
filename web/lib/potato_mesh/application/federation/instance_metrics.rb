@@ -19,6 +19,11 @@ module PotatoMesh
     module Federation
       # Count the number of nodes active since the supplied timestamp.
       #
+      # Opted-out nodes (those whose +short_name+ or +long_name+ contains
+      # the {PotatoMesh::Config::NODE_OPT_OUT_MARKER}) are excluded so the
+      # federation node total never reflects nodes that have asked to stay
+      # hidden from API consumers.
+      #
       # @param cutoff [Integer] unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open handle to reuse.
       # @return [Integer, nil] node count or nil when unavailable.
@@ -26,9 +31,10 @@ module PotatoMesh
         return nil unless cutoff
 
         handle = db || open_database(readonly: true)
+        sql = "SELECT COUNT(*) FROM nodes WHERE last_heard >= ? AND #{opt_out_self_filter}"
         count =
           with_busy_retry do
-            handle.get_first_value("SELECT COUNT(*) FROM nodes WHERE last_heard >= ?", cutoff.to_i)
+            handle.get_first_value(sql, [cutoff.to_i, *opt_out_marker_params])
           end
         Integer(count)
       rescue SQLite3::Exception, ArgumentError => e
@@ -44,7 +50,8 @@ module PotatoMesh
       end
 
       # Count the number of nodes for a specific protocol active since the
-      # supplied timestamp.
+      # supplied timestamp.  Opted-out nodes are excluded for the same
+      # reason as in {#active_node_count_since}.
       #
       # @param cutoff [Integer] unix timestamp in seconds.
       # @param protocol [String] protocol name (e.g. "meshcore", "meshtastic").
@@ -54,13 +61,10 @@ module PotatoMesh
         return nil unless cutoff && protocol
 
         handle = db || open_database(readonly: true)
+        sql = "SELECT COUNT(*) FROM nodes WHERE last_heard >= ? AND protocol = ? AND #{opt_out_self_filter}"
         count =
           with_busy_retry do
-            handle.get_first_value(
-              "SELECT COUNT(*) FROM nodes WHERE last_heard >= ? AND protocol = ?",
-              cutoff.to_i,
-              protocol,
-            )
+            handle.get_first_value(sql, [cutoff.to_i, protocol, *opt_out_marker_params])
           end
         Integer(count)
       rescue SQLite3::Exception, ArgumentError => e

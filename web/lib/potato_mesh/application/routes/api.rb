@@ -317,6 +317,12 @@ module PotatoMesh
               halt 400, { error: "bucketSeconds must be positive" }.to_json
             end
 
+            # Clamp the requested window to the 28-day data-retention floor
+            # so no caller can reach beyond the API visibility cap by passing
+            # an oversized +windowSeconds+.  The query layer repeats this
+            # clamp for defence in depth.
+            window_seconds = clamp_window_seconds(window_seconds)
+
             bucket_count = (window_seconds.to_f / bucket_seconds).ceil
             if bucket_count > PotatoMesh::App::Queries::MAX_QUERY_LIMIT
               halt 400, { error: "bucketSeconds too small for requested window" }.to_json

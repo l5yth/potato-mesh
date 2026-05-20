@@ -44,6 +44,7 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -106,6 +107,11 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
+        # Either endpoint of the neighbour relationship may carry the
+        # opt-out marker — filter both so a silenced node never appears as
+        # a source or destination of an RF link.
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("neighbor_id"))
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -163,6 +169,12 @@ module PotatoMesh
           3.times { params.concat(numeric_values) }
         end
 
+        # Drop traces whose endpoints carry the opt-out marker.  Hops are
+        # filtered separately at hydration time so a trace that only relays
+        # through a silenced node still surfaces with the offending hop
+        # removed.
+        append_opt_out_filter(where_clauses, params, opt_out_node_num_filter("src"))
+        append_opt_out_filter(where_clauses, params, opt_out_node_num_filter("dest"))
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -181,10 +193,15 @@ module PotatoMesh
         hops_by_trace = Hash.new { |hash, key| hash[key] = [] }
         unless trace_ids.empty?
           placeholders = Array.new(trace_ids.length, "?").join(", ")
+          # Hide opted-out intermediate hops too — otherwise a single trace
+          # could expose a silenced node's numeric ID via the relay chain.
+          hop_filter = opt_out_node_num_filter("th.node_id")
           hop_rows =
             db.execute(
-              "SELECT trace_id, hop_index, node_id FROM trace_hops WHERE trace_id IN (#{placeholders}) ORDER BY trace_id, hop_index",
-              trace_ids,
+              "SELECT th.trace_id, th.hop_index, th.node_id FROM trace_hops th " \
+              "WHERE th.trace_id IN (#{placeholders}) AND #{hop_filter} " \
+              "ORDER BY th.trace_id, th.hop_index",
+              trace_ids + opt_out_marker_params,
             )
           hop_rows.each do |hop|
             trace_id = coerce_integer(hop["trace_id"])

@@ -201,11 +201,65 @@ module PotatoMesh
     # fragile (traces, neighbors, ingestors) and as the floor for every
     # +/api/.../:id+ lookup so callers can backfill historical records that
     # would otherwise fall outside the seven-day default applied to bulk
-    # endpoints.
+    # endpoints.  This is also the absolute API-level visibility cap: no
+    # request may return data older than this window regardless of the
+    # +since+ or +windowSeconds+ parameters submitted.
     #
     # @return [Integer] seconds in twenty-eight days.
     def four_weeks_seconds
       28 * 24 * 60 * 60
+    end
+
+    # Hard retention window applied by the periodic purge job.  Rows whose
+    # most recent activity timestamp is older than this duration are deleted
+    # from the database.  The 28-day API visibility floor is enforced
+    # separately via {#four_weeks_seconds}, so the gap between the two
+    # windows preserves recoverable history without ever exposing it to API
+    # consumers.
+    #
+    # @return [Integer] seconds in 365 days.
+    def year_seconds
+      365 * 24 * 60 * 60
+    end
+
+    # Interval between consecutive retention purge passes.
+    #
+    # The retention worker wakes once per day to delete rows older than
+    # {#year_seconds}.  A daily cadence keeps the working set bounded
+    # without holding write locks for long stretches.
+    #
+    # @return [Integer] seconds between purge cycles.
+    def retention_purge_interval_seconds
+      24 * 60 * 60
+    end
+
+    # Grace period applied before the first retention purge runs after boot.
+    #
+    # Mirrors the federation-announcer pattern: the daemon yields the
+    # request thread for a short delay so initial schema migrations and
+    # federation handshakes complete before a potentially long-running
+    # +DELETE+ ties up the database.
+    #
+    # @return [Integer] seconds to wait before the first purge.
+    def initial_retention_delay_seconds
+      30
+    end
+
+    # Substring marker that signals a node has opted out of being displayed
+    # in any user-facing surface.  Operators include the marker anywhere in
+    # the node's short or long name; the API filters out any node whose
+    # display name contains this exact character (a single grapheme).  Data
+    # is still ingested so deduplication and routing continue to work.
+    #
+    # @return [String] frozen single-character opt-out marker.
+    NODE_OPT_OUT_MARKER = "\u{1F6D1}".freeze
+
+    # Expose {NODE_OPT_OUT_MARKER} via a method so callers that prefer the
+    # module-function style stay consistent with the rest of the module.
+    #
+    # @return [String] frozen opt-out marker character.
+    def node_opt_out_marker
+      NODE_OPT_OUT_MARKER
     end
 
     # Default upper bound for accepted JSON payload sizes.

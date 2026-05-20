@@ -1212,6 +1212,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(application_class.latest_node_update_timestamp).to be_nil
     end
+
+    it "ignores opted-out nodes when computing the freshness hint" do
+      marker = PotatoMesh::Config.node_opt_out_marker
+      with_db do |db|
+        db.execute("DELETE FROM nodes")
+        db.execute(
+          "INSERT INTO nodes (node_id, long_name, last_heard) VALUES (?, ?, ?)",
+          ["!visible", "Visible Node", 100],
+        )
+        db.execute(
+          "INSERT INTO nodes (node_id, long_name, last_heard) VALUES (?, ?, ?)",
+          ["!silenced", "Silenced #{marker} Node", 500],
+        )
+      end
+
+      expect(application_class.latest_node_update_timestamp).to eq(100)
+    end
   end
 
   describe ".build_well_known_document" do
@@ -6642,6 +6659,65 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(ids).not_to include("!hidden")
     end
 
+    it "filters opted-out nodes (\u{1F6D1} in name) from the nodes API" do
+      clear_database
+      now = reference_time.to_i
+      marker = PotatoMesh::Config.node_opt_out_marker
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!quiet001", "QT", "Quiet #{marker} Node", "TBEAM", "CLIENT", 1.0, now, now],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, snr, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+          ["!loud0001", "LD", "Loud Node", "TBEAM", "CLIENT", 1.0, now, now],
+        )
+      end
+
+      get "/api/nodes?limit=10"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |row| row["node_id"] }
+      expect(ids).to include("!loud0001")
+      expect(ids).not_to include("!quiet001")
+
+      # Per-id lookup must also pretend the opted-out node does not exist.
+      get "/api/nodes/!quiet001"
+      expect(last_response.status).to eq(404)
+    end
+
+    it "still ingests opted-out node data even though the API hides it" do
+      clear_database
+      marker = PotatoMesh::Config.node_opt_out_marker
+      payload = {
+        "!silenced" => {
+          "num" => 0xdead0001,
+          "lastHeard" => reference_time.to_i,
+          "user" => {
+            "shortName" => "SL",
+            "longName" => "Silenced #{marker} Node",
+          },
+        },
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response).to be_ok
+
+      # The row exists in the database — opt-out is a display-time filter,
+      # not an ingestion-time refusal.
+      with_db(readonly: true) do |db|
+        row = db.execute("SELECT node_id, long_name FROM nodes WHERE node_id = ?", ["!silenced"]).first
+        expect(row).not_to be_nil
+        expect(row[1]).to include(marker)
+      end
+
+      # Bulk and per-id endpoints both omit the opted-out node.
+      get "/api/nodes"
+      ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(ids).not_to include("!silenced")
+
+      get "/api/nodes/!silenced"
+      expect(last_response.status).to eq(404)
+    end
+
     it "removes the chat interface from the homepage" do
       get "/"
 
@@ -7350,6 +7426,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=1"
       expect(last_response.status).to eq(400)
       expect(JSON.parse(last_response.body)).to eq("error" => "bucketSeconds too small for requested window")
+    end
+
+    it "clamps windowSeconds to the 28-day visibility cap" do
+      # A 10-year window is well beyond four_weeks_seconds; the bucket size
+      # is selected so that under the natural 10-year window the bucket count
+      # would explode past MAX_QUERY_LIMIT and the route would return 400.
+      # When the cap kicks in correctly the request succeeds with HTTP 200.
+      huge_window = 10 * 365 * 24 * 60 * 60
+      bucket = PotatoMesh::Config.four_weeks_seconds / 100
+      get "/api/telemetry/aggregated?windowSeconds=#{huge_window}&bucketSeconds=#{bucket}"
+
+      expect(last_response).to be_ok
     end
   end
 

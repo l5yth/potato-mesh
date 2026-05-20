@@ -657,6 +657,40 @@ RSpec.describe PotatoMesh::Config do
   # @param values [Hash{String=>String, nil}] key/value pairs to set in ENV.
   # @yield [] block executed while the overrides are active.
   # @return [void]
+  describe ".year_seconds" do
+    it "matches 365 days expressed in seconds" do
+      expect(described_class.year_seconds).to eq(365 * 24 * 60 * 60)
+    end
+
+    it "is strictly larger than the 28-day visibility window" do
+      expect(described_class.year_seconds).to be > described_class.four_weeks_seconds
+    end
+  end
+
+  describe ".retention_purge_interval_seconds" do
+    it "defaults to running daily" do
+      expect(described_class.retention_purge_interval_seconds).to eq(24 * 60 * 60)
+    end
+  end
+
+  describe ".initial_retention_delay_seconds" do
+    it "yields long enough for boot work to finish without blocking startup" do
+      delay = described_class.initial_retention_delay_seconds
+      expect(delay).to be > 0
+      expect(delay).to be < described_class.retention_purge_interval_seconds
+    end
+  end
+
+  describe ".node_opt_out_marker" do
+    it "is the U+1F6D1 stop sign emoji" do
+      expect(described_class.node_opt_out_marker).to eq("\u{1F6D1}")
+    end
+
+    it "is exposed as a frozen constant" do
+      expect(described_class::NODE_OPT_OUT_MARKER).to be_frozen
+    end
+  end
+
   def within_env(values)
     original = {}
     values.each do |key, value|

@@ -163,6 +163,7 @@ module PotatoMesh
           where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
         end
 
+        append_opt_out_filter(where_clauses, params, opt_out_self_filter)
         append_protocol_filter(where_clauses, params, protocol)
 
         sql = <<~SQL
@@ -235,6 +236,7 @@ module PotatoMesh
         since_threshold = normalize_since_threshold(since, floor: cutoff)
         where_clauses = ["last_seen_time >= ?"]
         params = [since_threshold]
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_protocol_filter(where_clauses, params, protocol)
         sql = <<~SQL
           SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset, protocol
@@ -282,27 +284,39 @@ module PotatoMesh
         hour_cutoff = reference_now - 3600
         day_cutoff = reference_now - 86_400
         week_cutoff = reference_now - PotatoMesh::Config.week_seconds
-        month_cutoff = reference_now - (30 * 24 * 60 * 60)
-        pf = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
-        proto = " AND protocol = ?"
+        # The "month" bucket reuses the four-week cap so no stats endpoint can
+        # surface activity from beyond the 28-day API visibility floor.
+        month_cutoff = reference_now - PotatoMesh::Config.four_weeks_seconds
+        private_clause = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+
+        # Materialise the visible-nodes projection in a CTE so the opt-out
+        # LIKE predicate is evaluated once and the marker is bound twice in
+        # total instead of twice per subquery (44 → 22 binds).  Every COUNT
+        # below then operates on the pre-filtered set, which also matches the
+        # rest of the read API's "no opt-out node ever leaves the database
+        # layer" invariant.
         sql = <<~SQL
+          WITH visible_nodes AS (
+            SELECT last_heard, protocol
+            FROM nodes
+            WHERE #{opt_out_self_filter}#{private_clause}
+          )
           SELECT
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS hour_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS day_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS week_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}) AS month_count,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_hour,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_day,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_week,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mc_month,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_hour,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_day,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_week,
-            (SELECT COUNT(*) FROM nodes WHERE last_heard >= ?#{pf}#{proto}) AS mt_month
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS hour_count,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS day_count,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS week_count,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS month_count,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_hour,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_day,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_week,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_month,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_hour,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_day,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_week,
+            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_month
         SQL
         cutoffs = [hour_cutoff, day_cutoff, week_cutoff, month_cutoff]
-        # Total counts bind only cutoffs; per-protocol counts bind cutoff + protocol string.
-        params = cutoffs +
+        params = opt_out_marker_params + cutoffs +
                  cutoffs.flat_map { |c| [c, "meshcore"] } +
                  cutoffs.flat_map { |c| [c, "meshtastic"] }
         row = with_busy_retry do

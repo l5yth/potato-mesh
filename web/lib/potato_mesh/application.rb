@@ -61,6 +61,7 @@ require_relative "application/filesystem"
 require_relative "application/api_cache"
 require_relative "application/pages"
 require_relative "application/instances"
+require_relative "application/retention"
 require_relative "application/routes/api"
 require_relative "application/routes/ingest"
 require_relative "application/routes/root"
@@ -78,6 +79,7 @@ module PotatoMesh
     extend App::DataProcessing
     extend App::Filesystem
     extend App::Pages
+    extend App::Retention
 
     helpers App::Helpers
     include App::Database
@@ -90,6 +92,7 @@ module PotatoMesh
     include App::DataProcessing
     include App::Filesystem
     include App::Pages
+    include App::Retention
 
     register App::Routes::Api
     register App::Routes::Ingest
@@ -148,6 +151,9 @@ module PotatoMesh
       set :federation_worker_pool, nil
       set :federation_shutdown_requested, false
       set :federation_shutdown_hook_installed, false
+      set :retention_thread, nil
+      set :retention_shutdown_requested, false
+      set :retention_shutdown_hook_installed, false
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
 
@@ -170,6 +176,8 @@ module PotatoMesh
       refresh_well_known_document_if_stale
       ensure_self_instance_record!
       update_all_prometheus_metrics_from_nodes
+
+      start_retention_worker_if_active!
 
       if federation_enabled?
         ensure_federation_worker_pool!
@@ -216,6 +224,7 @@ SELF_INSTANCE_ID = PotatoMesh::Application::SELF_INSTANCE_ID unless defined?(SEL
   PotatoMesh::App::Queries,
   PotatoMesh::App::DataProcessing,
   PotatoMesh::App::Pages,
+  PotatoMesh::App::Retention,
 ].each do |mod|
   Object.include(mod) unless Object < mod
 end

@@ -53,6 +53,11 @@ module PotatoMesh
           params.concat(clause.last)
         end
 
+        # Hide chat lines that originate from or are addressed to opted-out
+        # nodes. Both endpoints are filtered so reactions/replies aimed at a
+        # silenced participant do not leak the conversation half.
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("m.from_id"))
+        append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("m.to_id"))
         append_protocol_filter(where_clauses, params, protocol, table_alias: "m")
 
         sql = <<~SQL
