@@ -104,7 +104,33 @@ export function getNodeDisplayNameForOverlay(node) {
 }
 
 /**
+ * Map a node-payload ``protocol`` field to the display label used in fallback
+ * long names.  Unknown or absent protocol values resolve to ``"Unknown"`` —
+ * historically this hardcoded ``"Meshtastic"`` regardless of the message's
+ * actual protocol, which silently mislabeled MeshCore chat senders whenever
+ * the API 404'd on the sender's node id.  See plan
+ * ``enchanted-hugging-pnueli.md`` and ``message-node-hydrator.js`` for the
+ * caller that threads ``message.protocol`` through here.
+ *
+ * @param {*} protocol Raw protocol value from the node payload.
+ * @returns {string} Display label such as ``Meshtastic``, ``Meshcore``, or
+ *   ``Unknown``.
+ */
+function protocolFallbackLabel(protocol) {
+  if (protocol == null) return 'Unknown';
+  const normalized = String(protocol).trim().toLowerCase();
+  if (normalized === 'meshcore') return 'Meshcore';
+  if (normalized === 'meshtastic') return 'Meshtastic';
+  return 'Unknown';
+}
+
+/**
  * Populate missing node name fields with sensible defaults.
+ *
+ * The fallback label respects ``node.protocol`` when present so MeshCore chat
+ * senders rendered from a hydrator placeholder are not mislabelled as
+ * Meshtastic.  Callers without protocol context (e.g. neighbour overlays)
+ * may leave the field unset and accept the neutral ``"Unknown"`` label.
  *
  * @param {Object} node Node payload.
  * @returns {void}
@@ -117,7 +143,7 @@ export function applyNodeNameFallback(node) {
   const nodeId = normalizeNodeNameValue(node.node_id ?? node.nodeId);
   if (!nodeId) return;
   const fallbackShort = nodeId.slice(-4);
-  const fallbackLong = `Meshtastic ${nodeId}`;
+  const fallbackLong = `${protocolFallbackLabel(node.protocol)} ${nodeId}`;
   node.short_name = fallbackShort;
   node.long_name = fallbackLong;
   if ('shortName' in node) node.shortName = fallbackShort;

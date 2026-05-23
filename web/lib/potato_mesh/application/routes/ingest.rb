@@ -39,10 +39,17 @@ module PotatoMesh
             halt 400, { error: "too many nodes" }.to_json if node_count > 1000
             db = open_database
             ingestor_node_id = string_or_nil(data["ingestor"])
-            protocol = resolve_protocol(db, ingestor_node_id)
+            # Wrapper-level protocol is captured once and used as the
+            # per-node fallback.  An explicit per-node ``"protocol"`` stamp
+            # still wins so a future heterogeneous payload can mix protocols
+            # within a single POST.  Both checks honour the same
+            # KNOWN_PROTOCOLS whitelist.
+            batch_protocol = resolve_record_protocol(db, data, ingestor_node_id)
             data.each do |node_id, node|
               next if node_id == "ingestor"
-              upsert_node(db, node_id, node, protocol: protocol)
+              next if node_id == "protocol"
+              per_node = node.is_a?(Hash) ? normalize_protocol_value(node["protocol"]) : nil
+              upsert_node(db, node_id, node, protocol: per_node || batch_protocol)
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
             PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")

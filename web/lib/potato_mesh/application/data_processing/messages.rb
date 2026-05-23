@@ -180,7 +180,7 @@ module PotatoMesh
         reply_id = coerce_integer(message["reply_id"] || message["replyId"])
         emoji = string_or_nil(message["emoji"])
         ingestor = string_or_nil(message["ingestor"])
-        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
+        protocol = resolve_record_protocol(db, message, ingestor, cache: protocol_cache)
 
         row = [
           msg_id,

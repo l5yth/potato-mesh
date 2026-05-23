@@ -408,6 +408,27 @@ class TestUpsertNode:
         _, payload = sent[0]
         assert payload.get("ingestor") == "!deadbeef"
 
+    def test_includes_protocol_field_from_config(self, monkeypatch):
+        """Payload carries config.PROTOCOL so the web app classifies the upsert
+        correctly even before the ingestor heartbeat has registered a
+        protocol mapping (see plan ``enchanted-hugging-pnueli.md``).
+        """
+        import data.mesh_ingestor.queue as q
+        from data.mesh_ingestor import config as ingestor_config
+
+        monkeypatch.setattr(ingestor_config, "PROTOCOL", "meshcore")
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.upsert_node("!aabbccdd", {"user": {}})
+        finally:
+            q._queue_post_json = original
+        _, payload = sent[0]
+        assert payload.get("protocol") == "meshcore"
+
 
 # ---------------------------------------------------------------------------
 # generic: on_receive deduplication
@@ -485,6 +506,30 @@ class TestStorePositionPacket:
         finally:
             q._queue_post_json = original
         assert any(p == "/api/positions" for p, _ in sent)
+
+    def test_includes_protocol_field(self, monkeypatch):
+        """Position payload carries the configured protocol so the web app
+        classifies the record correctly even before the ingestor heartbeat
+        has registered.  See plan ``enchanted-hugging-pnueli.md``.
+        """
+        import data.mesh_ingestor.queue as q
+        from data.mesh_ingestor import config as ingestor_config
+
+        monkeypatch.setattr(ingestor_config, "PROTOCOL", "meshcore")
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_position_packet(
+                self._make_packet(),
+                {"position": {"latitude": 37.5, "longitude": -122.1}},
+            )
+        finally:
+            q._queue_post_json = original
+        _, payload = next((p, pl) for p, pl in sent if p == "/api/positions")
+        assert payload.get("protocol") == "meshcore"
 
     def test_skips_when_no_node_id(self):
         """Packet missing a node ID is silently dropped."""

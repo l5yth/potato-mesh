@@ -360,7 +360,7 @@ module PotatoMesh
         lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
         modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
+        protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
         telemetry_section = normalize_json_object(payload["telemetry"])
         device_metrics = normalize_json_object(payload["device_metrics"] || payload["deviceMetrics"])

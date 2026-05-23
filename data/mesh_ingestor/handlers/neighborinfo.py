@@ -125,6 +125,10 @@ def store_neighborinfo_packet(packet: Mapping, decoded: Mapping) -> None:
         "rx_time": rx_time,
         "rx_iso": _iso(rx_time),
         "ingestor": _state.host_node_id(),
+        # Per-record protocol stamp closes the startup race where the web app
+        # processes neighbor info before the ingestor heartbeat registers a
+        # protocol mapping — see CONTRACTS.md.
+        "protocol": packet.get("protocol") or config.PROTOCOL,
     }
 
     if node_broadcast_interval is not None:

@@ -27,11 +27,11 @@ Future providers should emit payloads that match these shapes (keys + types), wh
 
 #### `POST /api/nodes`
 
-Payload is a mapping keyed by canonical node id, with an optional top-level `”ingestor”` key:
+Payload is a mapping keyed by canonical node id, with optional top-level `”ingestor”` and `”protocol”` keys:
 
-- `{ “!abcdef01”: { ... node fields ... }, “ingestor”: “!ingestornodeid” }`
+- `{ “!abcdef01”: { ... node fields ... }, “ingestor”: “!ingestornodeid”, “protocol”: “meshcore” }`
 
-When `”ingestor”` is present the protocol is inherited from the registered ingestor (see `POST /api/ingestors`); omitting it defaults to `”meshtastic”`.
+Protocol resolution per-row honours, in order: (1) an explicit per-node `”protocol”` field inside the node entry; (2) the wrapper-level top-level `”protocol”` key; (3) the registered ingestor's protocol (see `POST /api/ingestors`); (4) `”meshtastic”` as the final default. Valid values are `”meshtastic”` and `”meshcore”` — values outside this set fall through to the next source. The wrapper stamp is what the Python ingestor emits unconditionally so the web app classifies records correctly even before the ingestor heartbeat is processed (closes the startup race that misclassified MeshCore placeholders as Meshtastic).
 
 Node entry fields are “Meshtastic-ish” (camelCase) and may include:
 
@@ -65,6 +65,7 @@ Single message payload:
 - Payload: `text` (string|nil), `encrypted` (string|nil), `reply_id` (int|nil), `emoji` (string|nil)
 - RF: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil)
 - Meta: `channel_name` (string; only when not encrypted and known), `ingestor` (canonical host id), `lora_freq`, `modem_preset`
+- `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp. Takes precedence over the value inherited from the registered ingestor; values outside the whitelist fall back to the ingestor lookup, then to `"meshtastic"`. Ingestors SHOULD stamp this on every message so the web app classifies senders correctly even before the ingestor heartbeat is processed.
 
 **Cross-ingestor deduplication.** The `id` field is the sole dedup key — the server collapses repeat POSTs on the `messages.id` PRIMARY KEY. Protocols that lack a firmware-assigned packet ID MUST derive a stable, sender-side fingerprint so that the same physical transmission heard by multiple ingestors produces the same `id`. The id MUST fit in 53 bits (`0 <= id <= (1 << 53) - 1`) to round-trip through the JavaScript frontend without precision loss.
 
@@ -103,6 +104,7 @@ Single position payload:
 - Quality: `location_source` (string|nil), `precision_bits` (int|nil), `sats_in_view` (int|nil), `pdop` (float|nil)
 - Motion: `ground_speed` (float|nil), `ground_track` (float|nil)
 - RF/meta: `snr`, `rssi`, `hop_limit`, `bitfield`, `payload_b64` (string|nil), `raw` (mapping|nil), `ingestor`, `lora_freq`, `modem_preset`
+- `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
 **Sentinel handling (issue #782).** The same rules as `POST /api/nodes` apply here:
 
@@ -124,6 +126,7 @@ Single telemetry payload:
 - Metrics: many optional snake_case keys (`battery_level`, `voltage`, `temperature`, etc.)
 - Subtype: `telemetry_type` (string|nil) — optional discriminator identifying which Meshtastic protobuf oneof was set; one of `"device"`, `"environment"`, `"power"`, or `"air_quality"`. Ingestors that detect the subtype SHOULD include this field; omit rather than send `null` when unknown. The web app infers the type from metric-field presence when absent, so old ingestors remain compatible.
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
+- `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
 #### `POST /api/neighbors`
 
@@ -134,6 +137,7 @@ Neighbors snapshot payload:
 - Snapshot time: `rx_time`, `rx_iso`
 - Optional: `node_broadcast_interval_secs` (int|nil), `last_sent_by_id` (canonical string|nil)
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
+- `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
 #### `POST /api/traces`
 
@@ -145,6 +149,7 @@ Single trace payload:
 - Time: `rx_time` (int), `rx_iso` (string)
 - Metrics: `rssi` (int|nil), `snr` (float|nil), `elapsed_ms` (int|nil)
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
+- `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
 #### `POST /api/ingestors`
 
@@ -156,7 +161,7 @@ Heartbeat payload:
 - Optional: `lora_freq`, `modem_preset`
 - Optional: `protocol` (string; e.g. `"meshtastic"`, `"meshcore"`) — declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent
 
-**Protocol propagation**: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field will inherit its `protocol` value at write time.
+**Protocol propagation**: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field inherit its `protocol` value at write time when no explicit per-record `protocol` stamp is present. Per-record stamps take precedence — the ingestor heartbeat default only kicks in when the per-record field is absent or malformed.
 
 ### GET endpoint filtering
 

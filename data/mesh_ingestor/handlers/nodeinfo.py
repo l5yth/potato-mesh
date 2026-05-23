@@ -240,6 +240,10 @@ def store_nodeinfo_packet(packet: Mapping, decoded: Mapping) -> None:
 
     nodes_payload = _apply_radio_metadata_to_nodes({node_id: node_payload})
     nodes_payload["ingestor"] = _state.host_node_id()
+    # Per-record protocol stamp closes the startup race where the web app
+    # processes a node upsert before the ingestor heartbeat registers a
+    # protocol mapping for ``ingestor`` — see CONTRACTS.md.
+    nodes_payload["protocol"] = config.PROTOCOL
     queue._queue_post_json(
         "/api/nodes",
         nodes_payload,

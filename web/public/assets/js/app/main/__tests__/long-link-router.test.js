@@ -160,29 +160,68 @@ test('applyNodeNameFallback is a no-op for non-objects', () => {
   applyNodeNameFallback(undefined);
 });
 
-test('applyNodeNameFallback fills missing names from node_id', () => {
+test('applyNodeNameFallback fills missing names with neutral label when protocol is absent', () => {
+  // Without a protocol stamp the placeholder cannot guess which mesh the
+  // sender belongs to.  Historical behaviour hardcoded "Meshtastic" here
+  // which silently mislabelled MeshCore chat senders rendered from a 404
+  // hydrator path; the neutral "Unknown" label is the correct fallback.
   const node = { node_id: '!aabbccdd' };
+  applyNodeNameFallback(node);
+  assert.equal(node.short_name, 'ccdd');
+  assert.equal(node.long_name, 'Unknown !aabbccdd');
+});
+
+test('applyNodeNameFallback uses the Meshtastic label when node.protocol is "meshtastic"', () => {
+  const node = { node_id: '!aabbccdd', protocol: 'meshtastic' };
   applyNodeNameFallback(node);
   assert.equal(node.short_name, 'ccdd');
   assert.equal(node.long_name, 'Meshtastic !aabbccdd');
 });
 
+test('applyNodeNameFallback uses the Meshcore label when node.protocol is "meshcore"', () => {
+  const node = { node_id: '!aabbccdd', protocol: 'meshcore' };
+  applyNodeNameFallback(node);
+  assert.equal(node.short_name, 'ccdd');
+  assert.equal(node.long_name, 'Meshcore !aabbccdd');
+});
+
+test('applyNodeNameFallback normalises mixed-case and whitespace in node.protocol', () => {
+  const meshcore = { node_id: '!aabbccdd', protocol: '  Meshcore ' };
+  applyNodeNameFallback(meshcore);
+  assert.equal(meshcore.long_name, 'Meshcore !aabbccdd');
+
+  const meshtastic = { node_id: '!aabbccdd', protocol: 'MESHTASTIC' };
+  applyNodeNameFallback(meshtastic);
+  assert.equal(meshtastic.long_name, 'Meshtastic !aabbccdd');
+});
+
+test('applyNodeNameFallback falls back to Unknown for unrecognised protocol strings', () => {
+  const node = { node_id: '!aabbccdd', protocol: 'reticulum' };
+  applyNodeNameFallback(node);
+  assert.equal(node.long_name, 'Unknown !aabbccdd');
+});
+
 test('applyNodeNameFallback updates camelCase aliases when present', () => {
-  const node = { node_id: '!aabbccdd', shortName: '', longName: '' };
+  const node = { node_id: '!aabbccdd', shortName: '', longName: '', protocol: 'meshcore' };
   applyNodeNameFallback(node);
   assert.equal(node.shortName, 'ccdd');
-  assert.equal(node.longName, 'Meshtastic !aabbccdd');
+  assert.equal(node.longName, 'Meshcore !aabbccdd');
 });
 
 test('applyNodeNameFallback leaves existing names untouched', () => {
-  const node = { node_id: '!aabbccdd', short_name: 'AAA', long_name: 'Alpha' };
+  const node = {
+    node_id: '!aabbccdd',
+    short_name: 'AAA',
+    long_name: 'Alpha',
+    protocol: 'meshcore',
+  };
   applyNodeNameFallback(node);
   assert.equal(node.short_name, 'AAA');
   assert.equal(node.long_name, 'Alpha');
 });
 
 test('applyNodeNameFallback is a no-op when no node_id is available', () => {
-  const node = {};
+  const node = { protocol: 'meshcore' };
   applyNodeNameFallback(node);
-  assert.deepEqual(node, {});
+  assert.deepEqual(node, { protocol: 'meshcore' });
 });

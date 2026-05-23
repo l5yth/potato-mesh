@@ -323,6 +323,45 @@ test('hydrate skips non-object entries and senderless messages', async () => {
   assert.strictEqual(senderless.node, null);
 });
 
+test('hydrate copies message.protocol onto placeholder when fetch returns null', async () => {
+  // Reproduces the regression where a MeshCore chat message with a 404'd
+  // sender id used to render the placeholder with a hardcoded Meshtastic
+  // label.  The hydrator should now stamp the message protocol onto the
+  // placeholder so applyNodeFallback can derive the correct prefix and the
+  // downstream badge palette matches the source channel.
+  let observedProtocol;
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: async () => null,
+    applyNodeFallback: node => {
+      observedProtocol = node.protocol;
+    },
+  });
+  const messages = [{ from_id: '!mc404', text: 'hi', protocol: 'meshcore' }];
+
+  const result = await hydrator.hydrate(messages, new Map());
+
+  assert.equal(observedProtocol, 'meshcore');
+  assert.equal(result[0].node.node_id, '!mc404');
+  assert.equal(result[0].node.protocol, 'meshcore');
+});
+
+test('hydrate leaves placeholder protocol unset when message has none', async () => {
+  let observedProtocol;
+  const hydrator = createMessageNodeHydrator({
+    fetchNodeById: async () => null,
+    applyNodeFallback: node => {
+      observedProtocol = node.protocol;
+    },
+  });
+  const messages = [{ from_id: '!unknown', text: 'hi' }];
+
+  const result = await hydrator.hydrate(messages, new Map());
+
+  assert.equal(observedProtocol, undefined);
+  assert.equal(result[0].node.node_id, '!unknown');
+  assert.equal(Object.prototype.hasOwnProperty.call(result[0].node, 'protocol'), false);
+});
+
 test('hydrate dedupes duplicate senders without exceeding the cap', async () => {
   const probe = makeConcurrencyProbe();
   const hydrator = createMessageNodeHydrator({

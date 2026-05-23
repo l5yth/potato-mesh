@@ -80,5 +80,9 @@ def _store_meshcore_position(
         "longitude": normalized_lon,
         "position_time": pt,
         "ingestor": ingestor,
+        # Hard-coded because this helper is MeshCore-specific by construction.
+        # Stamping the protocol on every record removes the dependency on the
+        # ingestor heartbeat having been registered first.  See CONTRACTS.md.
+        "protocol": "meshcore",
     }
     _queue._queue_post_json("/api/positions", payload)

@@ -1993,4 +1993,120 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # #resolve_record_protocol / #normalize_protocol_value
+  # ---------------------------------------------------------------------------
+  # See plan ``enchanted-hugging-pnueli.md`` — these helpers close the startup
+  # race where a MeshCore record was processed before the ingestor heartbeat
+  # had registered a protocol mapping, silently mislabelling the placeholder
+  # as Meshtastic.
+  describe "#resolve_record_protocol" do
+    let(:dp_with_lookup) do
+      cls = Class.new do
+        include PotatoMesh::App::DataProcessing
+        include PotatoMesh::App::Helpers
+
+        def debug_log(*); end
+        def warn_log(*); end
+      end
+      cls.new
+    end
+
+    let(:registered_db) do
+      db = SQLite3::Database.new(":memory:")
+      db.execute(
+        "CREATE TABLE ingestors(node_id TEXT PRIMARY KEY, protocol TEXT NOT NULL DEFAULT 'meshtastic')",
+      )
+      db.execute(
+        "INSERT INTO ingestors(node_id, protocol) VALUES(?,?)",
+        ["!mcingest1", "meshcore"],
+      )
+      db
+    end
+
+    after(:each) { registered_db.close }
+
+    it "returns the explicit protocol when the record stamps a whitelisted value" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "meshcore" },
+        nil,
+      )
+      expect(result).to eq("meshcore")
+    end
+
+    it "normalises mixed-case whitespace in the explicit stamp" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "  MESHCORE  " },
+        nil,
+      )
+      expect(result).to eq("meshcore")
+    end
+
+    it "ignores a malformed explicit stamp and falls back to ingestor lookup" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "reticulum" },
+        "!mcingest1",
+      )
+      expect(result).to eq("meshcore")
+    end
+
+    it "ignores a non-Hash record and falls back to ingestor lookup" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        "not-a-hash",
+        "!mcingest1",
+      )
+      expect(result).to eq("meshcore")
+    end
+
+    it "defaults to meshtastic when explicit is absent and ingestor unregistered" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "" },
+        "!unregistered000",
+      )
+      expect(result).to eq("meshtastic")
+    end
+
+    it "honours an explicit stamp even when the ingestor is registered as a different protocol" do
+      result = dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "meshtastic" },
+        "!mcingest1",
+      )
+      expect(result).to eq("meshtastic")
+    end
+  end
+
+  describe "#normalize_protocol_value" do
+    let(:helper) do
+      cls = Class.new do
+        include PotatoMesh::App::DataProcessing
+      end
+      cls.new
+    end
+
+    it "returns the canonical lower-case string for whitelisted values" do
+      expect(helper.send(:normalize_protocol_value, "meshcore")).to eq("meshcore")
+      expect(helper.send(:normalize_protocol_value, "MESHTASTIC")).to eq("meshtastic")
+      expect(helper.send(:normalize_protocol_value, "  Meshcore  ")).to eq("meshcore")
+    end
+
+    it "returns nil for unknown or malformed values" do
+      expect(helper.send(:normalize_protocol_value, nil)).to be_nil
+      expect(helper.send(:normalize_protocol_value, "")).to be_nil
+      expect(helper.send(:normalize_protocol_value, "reticulum")).to be_nil
+      expect(helper.send(:normalize_protocol_value, 42)).to be_nil
+    end
+  end
 end

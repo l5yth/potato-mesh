@@ -811,7 +811,45 @@ def test_store_packet_dict_posts_text_message(mesh_module, monkeypatch):
     assert payload["ingestor"] == "!f00dbabe"
     assert payload["lora_freq"] == 868
     assert payload["modem_preset"] == "MediumFast"
+    # Protocol stamp is mandatory so the web app classifies messages even
+    # before the ingestor heartbeat has registered.  Defaults to
+    # ``config.PROTOCOL`` ("meshtastic" in this test environment) when the
+    # packet lacks an explicit override.
+    assert payload["protocol"] == "meshtastic"
     assert priority == mesh._MESSAGE_POST_PRIORITY
+
+
+def test_store_packet_dict_protocol_override_wins(mesh_module, monkeypatch):
+    """Explicit ``packet["protocol"]`` overrides ``config.PROTOCOL`` so
+    MeshCore handlers that build packets directly (e.g.
+    ``protocols/meshcore/handlers.py``) can emit the correct protocol stamp
+    without depending on the daemon-level environment.
+    """
+    mesh = mesh_module
+    captured = []
+    monkeypatch.setattr(
+        mesh,
+        "_queue_post_json",
+        lambda path, payload, *, priority: captured.append((path, payload, priority)),
+    )
+
+    packet = {
+        "id": 124,
+        "rxTime": 1_700_000_001,
+        "fromId": "!abc",
+        "toId": "^all",
+        "channel": 0,
+        "protocol": "meshcore",
+        "decoded": {
+            "payload": {"text": "hi"},
+            "portnum": "TEXT_MESSAGE_APP",
+        },
+    }
+    mesh.store_packet_dict(packet)
+
+    assert captured, "Expected POST for explicit-protocol message"
+    _, payload, _ = captured[0]
+    assert payload["protocol"] == "meshcore"
 
 
 def test_store_packet_dict_posts_reaction_message(mesh_module, monkeypatch):
