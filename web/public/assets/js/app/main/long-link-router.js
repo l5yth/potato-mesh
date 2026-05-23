@@ -125,6 +125,27 @@ function protocolFallbackLabel(protocol) {
 }
 
 /**
+ * Build a minimal placeholder node ready for {@link applyNodeNameFallback},
+ * carrying any ``protocol`` field discoverable on the surrounding payload
+ * (a chat message, a neighbor record, etc.).  Threading the protocol through
+ * here is what keeps the fallback long-name label aligned with the source
+ * radio instead of collapsing to the neutral ``"Unknown"`` fallback.
+ *
+ * @param {string} nodeId Canonical node identifier for the placeholder.
+ * @param {Object|null|undefined} [source] Optional surrounding payload whose
+ *   ``protocol`` field should be inherited (e.g. message, neighbor entry).
+ * @returns {{node_id: string, protocol?: string}} Placeholder node ready for
+ *   downstream fallback population.
+ */
+export function buildNodePlaceholder(nodeId, source) {
+  const placeholder = { node_id: nodeId };
+  if (source && typeof source === 'object' && source.protocol != null) {
+    placeholder.protocol = source.protocol;
+  }
+  return placeholder;
+}
+
+/**
  * Populate missing node name fields with sensible defaults.
  *
  * The fallback label respects ``node.protocol`` when present so MeshCore chat

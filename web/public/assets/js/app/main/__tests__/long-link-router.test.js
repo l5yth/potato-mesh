@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 
 import {
   applyNodeNameFallback,
+  buildNodePlaceholder,
   extractIdentifierFromHref,
   getNodeDisplayNameForOverlay,
   getNodeIdentifierFromLink,
@@ -224,4 +225,45 @@ test('applyNodeNameFallback is a no-op when no node_id is available', () => {
   const node = { protocol: 'meshcore' };
   applyNodeNameFallback(node);
   assert.deepEqual(node, { protocol: 'meshcore' });
+});
+
+// ---------------------------------------------------------------------------
+// buildNodePlaceholder
+// ---------------------------------------------------------------------------
+
+test('buildNodePlaceholder returns a bare placeholder when no source is given', () => {
+  assert.deepEqual(buildNodePlaceholder('!aabbccdd'), { node_id: '!aabbccdd' });
+  assert.deepEqual(buildNodePlaceholder('!aabbccdd', null), { node_id: '!aabbccdd' });
+  assert.deepEqual(buildNodePlaceholder('!aabbccdd', undefined), { node_id: '!aabbccdd' });
+});
+
+test('buildNodePlaceholder inherits source.protocol when present', () => {
+  const placeholder = buildNodePlaceholder('!aabbccdd', { protocol: 'meshcore' });
+  assert.deepEqual(placeholder, { node_id: '!aabbccdd', protocol: 'meshcore' });
+});
+
+test('buildNodePlaceholder omits the protocol key when source has no protocol', () => {
+  const placeholder = buildNodePlaceholder('!aabbccdd', { node_id: '!source', snr: 1 });
+  assert.deepEqual(placeholder, { node_id: '!aabbccdd' });
+  assert.equal(Object.prototype.hasOwnProperty.call(placeholder, 'protocol'), false);
+});
+
+test('buildNodePlaceholder treats explicit null protocol as absent', () => {
+  const placeholder = buildNodePlaceholder('!aabbccdd', { protocol: null });
+  assert.deepEqual(placeholder, { node_id: '!aabbccdd' });
+});
+
+test('buildNodePlaceholder ignores non-object sources', () => {
+  assert.deepEqual(
+    buildNodePlaceholder('!aabbccdd', 'not-an-object'),
+    { node_id: '!aabbccdd' },
+  );
+  assert.deepEqual(buildNodePlaceholder('!aabbccdd', 42), { node_id: '!aabbccdd' });
+});
+
+test('buildNodePlaceholder feeds straight into applyNodeNameFallback for the meshcore label', () => {
+  const placeholder = buildNodePlaceholder('!aabbccdd', { protocol: 'meshcore' });
+  applyNodeNameFallback(placeholder);
+  assert.equal(placeholder.short_name, 'ccdd');
+  assert.equal(placeholder.long_name, 'Meshcore !aabbccdd');
 });

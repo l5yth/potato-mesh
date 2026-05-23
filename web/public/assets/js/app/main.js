@@ -141,6 +141,7 @@ import {
 } from './main/format-utils.js';
 import {
   applyNodeNameFallback,
+  buildNodePlaceholder,
   extractIdentifierFromHref,
   getNodeDisplayNameForOverlay,
   getNodeIdentifierFromLink,
@@ -1806,16 +1807,10 @@ export function initializeApp(config) {
         let neighborNode = nodesById.get(neighborId);
         if (!neighborNode) {
           // Inherit the source node's protocol so the fallback label tracks
-          // the radio the neighbor lives on.  Without this hint the badge
-          // collapses to "Unknown" for any neighbor missing from the bulk
-          // /api/nodes refresh — a regression vs. the previous hardcoded
-          // "Meshtastic" label.  Neighborinfo entries are emitted by a node
-          // talking to its own radio peers so cross-protocol mixing is not
-          // a concern here.
-          const placeholder = { node_id: neighborId };
-          if (entry.protocol != null) {
-            placeholder.protocol = entry.protocol;
-          }
+          // the radio the neighbor lives on.  Neighborinfo entries are emitted
+          // by a node talking to its own radio peers, so cross-protocol mixing
+          // is not a concern here.
+          const placeholder = buildNodePlaceholder(neighborId, entry);
           applyNodeNameFallback(placeholder);
           neighborNode = placeholder;
         }
