@@ -75,6 +75,10 @@ module PotatoMesh
       # would return ``"meshtastic"`` for any unknown ingestor — which
       # silently misclassifies MeshCore traffic.  See ``CONTRACTS.md``.
       #
+      # Emits a one-line +warn_log+ when the record carries a non-empty but
+      # unrecognised value so a misbehaving custom protocol adapter is easy
+      # to spot in the operator log instead of being silently coerced.
+      #
       # @param db [SQLite3::Database] open database handle.
       # @param record [Hash, nil] inbound JSON record (message, node, position, …).
       # @param ingestor_node_id [String, nil] reporting ingestor node id.
@@ -83,8 +87,18 @@ module PotatoMesh
       # @return [String] one of {KNOWN_PROTOCOLS}; defaults via the ingestor
       #   lookup chain.
       def resolve_record_protocol(db, record, ingestor_node_id, cache: nil)
-        explicit = record.is_a?(Hash) ? normalize_protocol_value(record["protocol"]) : nil
-        return explicit if explicit
+        raw = record.is_a?(Hash) ? record["protocol"] : nil
+        if raw && !raw.to_s.strip.empty?
+          explicit = normalize_protocol_value(raw)
+          return explicit if explicit
+
+          warn_log(
+            "Rejected malformed protocol stamp; falling back to ingestor lookup",
+            context: "data_processing.resolve_record_protocol",
+            value: raw.to_s,
+            ingestor: ingestor_node_id,
+          )
+        end
 
         resolve_protocol(db, ingestor_node_id, cache: cache)
       end

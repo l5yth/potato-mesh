@@ -2001,13 +2001,19 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # before the ingestor heartbeat has registered a protocol mapping, which
   # would otherwise silently mislabel the placeholder as Meshtastic.
   describe "#resolve_record_protocol" do
+    let(:warnings) { [] }
+
     let(:dp_with_lookup) do
+      captured_warnings = warnings
       cls = Class.new do
         include PotatoMesh::App::DataProcessing
         include PotatoMesh::App::Helpers
 
+        define_method(:warn_log) do |message, **fields|
+          captured_warnings << { message: message, **fields }
+        end
+
         def debug_log(*); end
-        def warn_log(*); end
       end
       cls.new
     end
@@ -2084,6 +2090,40 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "!mcingest1",
       )
       expect(result).to eq("meshtastic")
+    end
+
+    it "logs a warning when the explicit stamp is rejected as malformed" do
+      dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "reticulum" },
+        "!mcingest1",
+      )
+      expect(warnings).not_to be_empty
+      log = warnings.first
+      expect(log[:message]).to match(/malformed protocol stamp/i)
+      expect(log[:value]).to eq("reticulum")
+      expect(log[:ingestor]).to eq("!mcingest1")
+    end
+
+    it "does not warn when the record carries no protocol stamp" do
+      dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        {},
+        "!mcingest1",
+      )
+      expect(warnings).to be_empty
+    end
+
+    it "does not warn when the protocol stamp is an empty string" do
+      dp_with_lookup.send(
+        :resolve_record_protocol,
+        registered_db,
+        { "protocol" => "" },
+        "!mcingest1",
+      )
+      expect(warnings).to be_empty
     end
   end
 
