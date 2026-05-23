@@ -105,12 +105,12 @@ export function getNodeDisplayNameForOverlay(node) {
 
 /**
  * Map a node-payload ``protocol`` field to the display label used in fallback
- * long names.  Unknown or absent protocol values resolve to ``"Unknown"`` —
- * historically this hardcoded ``"Meshtastic"`` regardless of the message's
- * actual protocol, which silently mislabeled MeshCore chat senders whenever
- * the API 404'd on the sender's node id.  See plan
- * ``enchanted-hugging-pnueli.md`` and ``message-node-hydrator.js`` for the
- * caller that threads ``message.protocol`` through here.
+ * long names.  Unknown or absent protocol values resolve to ``"Unknown"``
+ * rather than defaulting to a specific protocol — a missing stamp means the
+ * sender's protocol genuinely cannot be determined here, and guessing
+ * silently mislabels cross-protocol chat senders.  ``message-node-hydrator.js``
+ * threads ``message.protocol`` onto the placeholder before invoking the
+ * fallback so chat lookups for 404'd senders pick the right label.
  *
  * @param {*} protocol Raw protocol value from the node payload.
  * @returns {string} Display label such as ``Meshtastic``, ``Meshcore``, or

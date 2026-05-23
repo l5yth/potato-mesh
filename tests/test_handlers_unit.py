@@ -411,7 +411,7 @@ class TestUpsertNode:
     def test_includes_protocol_field_from_config(self, monkeypatch):
         """Payload carries config.PROTOCOL so the web app classifies the upsert
         correctly even before the ingestor heartbeat has registered a
-        protocol mapping (see plan ``enchanted-hugging-pnueli.md``).
+        protocol mapping (see CONTRACTS.md).
         """
         import data.mesh_ingestor.queue as q
         from data.mesh_ingestor import config as ingestor_config
@@ -510,7 +510,7 @@ class TestStorePositionPacket:
     def test_includes_protocol_field(self, monkeypatch):
         """Position payload carries the configured protocol so the web app
         classifies the record correctly even before the ingestor heartbeat
-        has registered.  See plan ``enchanted-hugging-pnueli.md``.
+        has registered.  See CONTRACTS.md.
         """
         import data.mesh_ingestor.queue as q
         from data.mesh_ingestor import config as ingestor_config

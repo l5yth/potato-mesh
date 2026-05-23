@@ -73,8 +73,7 @@ module PotatoMesh
       # record before the corresponding ingestor heartbeat registers a
       # protocol mapping; without the per-record stamp the ingestor lookup
       # would return ``"meshtastic"`` for any unknown ingestor — which
-      # silently misclassifies MeshCore traffic.  See ``CONTRACTS.md`` and
-      # plan file ``enchanted-hugging-pnueli.md``.
+      # silently misclassifies MeshCore traffic.  See ``CONTRACTS.md``.
       #
       # @param db [SQLite3::Database] open database handle.
       # @param record [Hash, nil] inbound JSON record (message, node, position, …).

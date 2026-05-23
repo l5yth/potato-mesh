@@ -331,6 +331,19 @@ RSpec.describe "Multi-protocol support" do
 
       expect(last_response.status).to eq(200)
     end
+
+    it "does not count the wrapper-level protocol key against the node batch limit" do
+      # 1000 nodes + ingestor + protocol = 1002 wrapper keys but only 1000
+      # actual nodes — the limit check must skip both metadata keys.
+      nodes = (1..1000).each_with_object({}) do |i, h|
+        h[format("!%08x", i)] = { "num" => i, "lastHeard" => now - 1 }
+      end
+      nodes["ingestor"] = MESHCORE_INGESTOR_ID
+      nodes["protocol"] = "meshcore"
+      post "/api/nodes", nodes.to_json, auth_headers
+
+      expect(last_response.status).to eq(200)
+    end
   end
 
   describe "GET ?protocol= filter" do
@@ -517,9 +530,8 @@ RSpec.describe "Multi-protocol support" do
   end
 
   # Coverage for the per-record protocol stamp that closes the startup race
-  # where the web app processed a MeshCore message before the corresponding
-  # ingestor heartbeat had registered a protocol mapping — see plan file
-  # ``enchanted-hugging-pnueli.md`` and CONTRACTS.md.
+  # where the web app processes a MeshCore message before the corresponding
+  # ingestor heartbeat has registered a protocol mapping — see CONTRACTS.md.
   describe "per-record protocol override" do
     it "honors explicit message[\"protocol\"] when ingestor is unregistered" do
       msg = {

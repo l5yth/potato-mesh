@@ -1997,10 +1997,9 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   # ---------------------------------------------------------------------------
   # #resolve_record_protocol / #normalize_protocol_value
   # ---------------------------------------------------------------------------
-  # See plan ``enchanted-hugging-pnueli.md`` — these helpers close the startup
-  # race where a MeshCore record was processed before the ingestor heartbeat
-  # had registered a protocol mapping, silently mislabelling the placeholder
-  # as Meshtastic.
+  # These helpers close the startup race where a MeshCore record is processed
+  # before the ingestor heartbeat has registered a protocol mapping, which
+  # would otherwise silently mislabel the placeholder as Meshtastic.
   describe "#resolve_record_protocol" do
     let(:dp_with_lookup) do
       cls = Class.new do
