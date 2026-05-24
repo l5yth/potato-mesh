@@ -195,7 +195,16 @@ export function createMessageNodeHydrator({
         if (node) {
           entry.message.node = node;
         } else {
+          // Copy the message's protocol stamp onto the placeholder so the
+          // fallback label and badge palette match the channel the sender
+          // appeared in.  Without this hint applyNodeFallback would default
+          // to the neutral ``Unknown`` label, even for MeshCore chats whose
+          // messages explicitly carry ``protocol: "meshcore"``.
           const placeholder = { node_id: entry.targetId };
+          const messageProtocol = entry.message && entry.message.protocol;
+          if (messageProtocol != null) {
+            placeholder.protocol = messageProtocol;
+          }
           applyNodeFallback(placeholder);
           entry.message.node = placeholder;
         }

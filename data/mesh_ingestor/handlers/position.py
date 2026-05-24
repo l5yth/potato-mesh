@@ -276,6 +276,11 @@ def store_position_packet(packet: Mapping, decoded: Mapping) -> None:
         "bitfield": bitfield,
         "payload_b64": payload_b64,
         "ingestor": _state.host_node_id(),
+        # Per-record protocol stamp closes the startup race where the web app
+        # processes a position before the ingestor heartbeat registers a
+        # protocol mapping — see CONTRACTS.md.  A handler-set override wins
+        # over the daemon-wide configured default.
+        "protocol": packet.get("protocol") or config.PROTOCOL,
     }
     if raw_payload:
         position_payload["raw"] = raw_payload
@@ -399,6 +404,10 @@ def store_traceroute_packet(packet: Mapping, decoded: Mapping) -> None:
         "snr": snr,
         "elapsed_ms": elapsed_ms,
         "ingestor": _state.host_node_id(),
+        # Per-record protocol stamp closes the startup race where the web app
+        # processes a traceroute before the ingestor heartbeat registers a
+        # protocol mapping — see CONTRACTS.md.
+        "protocol": packet.get("protocol") or config.PROTOCOL,
     }
 
     queue._queue_post_json(

@@ -85,7 +85,7 @@ module PotatoMesh
             metrics&.[]("latencyMs"),
         )
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
+        protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
         hops_value = payload.key?("hops") ? payload["hops"] : payload["path"]
         hops = normalize_trace_hops(hops_value)

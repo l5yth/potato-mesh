@@ -56,7 +56,7 @@ module PotatoMesh
         lora_freq = coerce_integer(payload["lora_freq"] || payload["loraFrequency"])
         modem_preset = string_or_nil(payload["modem_preset"] || payload["modemPreset"])
         ingestor = string_or_nil(payload["ingestor"])
-        protocol = resolve_protocol(db, ingestor, cache: protocol_cache)
+        protocol = resolve_record_protocol(db, payload, ingestor, cache: protocol_cache)
 
         ensure_unknown_node(db, node_id || node_num, node_num, heard_time: rx_time, protocol: protocol)
         touch_node_last_seen(

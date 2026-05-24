@@ -260,6 +260,10 @@ def upsert_node(node_id: object, node: object) -> None:
 
     payload = _apply_radio_metadata_to_nodes(upsert_payload(node_id, node))
     payload["ingestor"] = _state.host_node_id()
+    # Per-record protocol stamp closes the startup race where the web app
+    # processes a node upsert before the ingestor heartbeat registers a
+    # protocol mapping for ``ingestor`` — see CONTRACTS.md.
+    payload["protocol"] = config.PROTOCOL
     queue._queue_post_json("/api/nodes", payload, priority=queue._NODE_POST_PRIORITY)
 
     if config.DEBUG:
@@ -527,6 +531,12 @@ def store_packet_dict(packet: Mapping) -> None:
         "reply_id": reply_id,
         "emoji": emoji,
         "ingestor": _state.host_node_id(),
+        # Per-record protocol stamp closes the startup race where the web app
+        # processes a message before the ingestor heartbeat registers a
+        # protocol mapping for ``ingestor`` — see CONTRACTS.md.  A handler-set
+        # override (e.g. MeshCore packets carry ``"protocol": "meshcore"``) wins
+        # over the daemon-wide configured default.
+        "protocol": packet.get("protocol") or config.PROTOCOL,
     }
 
     if not encrypted_flag and channel_name_value:

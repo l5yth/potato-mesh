@@ -331,6 +331,19 @@ RSpec.describe "Multi-protocol support" do
 
       expect(last_response.status).to eq(200)
     end
+
+    it "does not count the wrapper-level protocol key against the node batch limit" do
+      # 1000 nodes + ingestor + protocol = 1002 wrapper keys but only 1000
+      # actual nodes — the limit check must skip both metadata keys.
+      nodes = (1..1000).each_with_object({}) do |i, h|
+        h[format("!%08x", i)] = { "num" => i, "lastHeard" => now - 1 }
+      end
+      nodes["ingestor"] = MESHCORE_INGESTOR_ID
+      nodes["protocol"] = "meshcore"
+      post "/api/nodes", nodes.to_json, auth_headers
+
+      expect(last_response.status).to eq(200)
+    end
   end
 
   describe "GET ?protocol= filter" do
@@ -513,6 +526,131 @@ RSpec.describe "Multi-protocol support" do
       expect(last_response.status).to eq(200)
       entry = JSON.parse(last_response.body).find { |r| r["node_id"] == "!legacy00" }
       expect(entry["protocol"]).to eq("meshtastic")
+    end
+  end
+
+  # Coverage for the per-record protocol stamp that closes the startup race
+  # where the web app processes a MeshCore message before the corresponding
+  # ingestor heartbeat has registered a protocol mapping — see CONTRACTS.md.
+  describe "per-record protocol override" do
+    it "honors explicit message[\"protocol\"] when ingestor is unregistered" do
+      msg = {
+        id: 6001,
+        rx_time: now - 10,
+        rx_iso: Time.at(now - 10).utc.iso8601,
+        from_id: "!aabbcc01",
+        text: "explicit meshcore stamp",
+        ingestor: "!unregistered000",
+        protocol: "meshcore",
+      }
+      post "/api/messages", [msg].to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        message_row = db.get_first_row(
+          "SELECT protocol FROM messages WHERE id = ?",
+          [6001],
+        )
+        expect(message_row["protocol"]).to eq("meshcore")
+
+        node_row = db.get_first_row(
+          "SELECT long_name, role, protocol FROM nodes WHERE node_id = ?",
+          ["!aabbcc01"],
+        )
+        # ``canonical_node_parts`` uppercases hex letters in the short_id; digit-only
+        # short_ids (like the ``3300`` case earlier in this file) are unaffected.
+        expect(node_row["long_name"]).to eq("Meshcore CC01")
+        expect(node_row["role"]).to eq("COMPANION")
+        expect(node_row["protocol"]).to eq("meshcore")
+      end
+    end
+
+    it "honors explicit protocol on /api/nodes wrapper when ingestor is unregistered" do
+      payload = {
+        "!11aabbcc" => { "num" => 0x11aabbcc, "lastHeard" => now - 5 },
+        "ingestor" => "!unregistered000",
+        "protocol" => "meshcore",
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT protocol FROM nodes WHERE node_id = ?", ["!11aabbcc"])
+        expect(row["protocol"]).to eq("meshcore")
+      end
+    end
+
+    it "lets per-node protocol override wrapper batch protocol" do
+      payload = {
+        "!22aabbcc" => {
+          "num" => 0x22aabbcc,
+          "lastHeard" => now - 5,
+          "protocol" => "meshcore",
+        },
+        "ingestor" => "!unregistered000",
+        "protocol" => "meshtastic",
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT protocol FROM nodes WHERE node_id = ?", ["!22aabbcc"])
+        expect(row["protocol"]).to eq("meshcore")
+      end
+    end
+
+    it "falls back to ingestor lookup when explicit protocol is malformed" do
+      register_ingestor(MESHCORE_INGESTOR_ID, protocol: "meshcore")
+      msg = {
+        id: 6002,
+        rx_time: now - 10,
+        rx_iso: Time.at(now - 10).utc.iso8601,
+        text: "garbage protocol value",
+        ingestor: MESHCORE_INGESTOR_ID,
+        protocol: "reticulum",
+      }
+      post "/api/messages", [msg].to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [6002])
+        expect(row["protocol"]).to eq("meshcore")
+      end
+    end
+
+    it "falls back to meshtastic when no explicit protocol and ingestor is unregistered" do
+      msg = {
+        id: 6003,
+        rx_time: now - 10,
+        rx_iso: Time.at(now - 10).utc.iso8601,
+        text: "no stamp, no ingestor",
+        ingestor: "!unregistered000",
+      }
+      post "/api/messages", [msg].to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [6003])
+        expect(row["protocol"]).to eq("meshtastic")
+      end
+    end
+
+    it "normalises mixed-case and whitespace in protocol stamp" do
+      msg = {
+        id: 6004,
+        rx_time: now - 10,
+        rx_iso: Time.at(now - 10).utc.iso8601,
+        text: "case normalisation",
+        ingestor: "!unregistered000",
+        protocol: "  MeshCore  ",
+      }
+      post "/api/messages", [msg].to_json, auth_headers
+      expect(last_response.status).to eq(200)
+
+      with_db(readonly: true) do |db|
+        row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [6004])
+        expect(row["protocol"]).to eq("meshcore")
+      end
     end
   end
 end
