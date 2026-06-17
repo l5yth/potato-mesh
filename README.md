@@ -11,7 +11,7 @@
 [![Matrix Chat](https://img.shields.io/badge/matrix-%23potatomesh:dod.ngo-blue)](https://matrix.to/#/#potatomesh:dod.ngo)
 
 [![Meshtastic](https://img.shields.io/badge/Meshtastic-supported-67ea94)](https://meshtastic.org)
-[![MeshCore](https://img.shields.io/badge/MeshCore-supported-000000)](https://meshcore.co.uk)
+[![MeshCore](https://img.shields.io/badge/MeshCore-supported-1f2937)](https://meshcore.io)
 
 A federated, Meshtastic & Meshcore node dashboard for your local community.
 _No MQTT clutter, just local LoRa aether._
