@@ -1,0 +1,17 @@
+# Copyright © 2025-26 l5yth & contributors
+# Licensed under the Apache License, Version 2.0 (see LICENSE)
+name: license
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  headers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Apache license headers
+        run: ./scripts/check-license-headers.sh

@@ -1,3 +1,5 @@
+# Copyright © 2025-26 l5yth & contributors
+# Licensed under the Apache License, Version 2.0 (see LICENSE)
 {
   description = "PotatoMesh - A federated, Meshtastic-powered node dashboard";
 
