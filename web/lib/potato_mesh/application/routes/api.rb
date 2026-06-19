@@ -168,11 +168,16 @@ module PotatoMesh
             include_encrypted = coerce_boolean(params["encrypted"]) || false
             since = coerce_integer(params["since"])
             since = 0 if since.nil? || since.negative?
+            # Upper-bound cursor for backward pagination (issue #796).  A request
+            # carrying +before+ is a history page, so it bypasses the shared
+            # response cache (which only memoises the default newest-page feed).
+            before = coerce_integer(params["before"])
+            before = nil if before && before <= 0
             protocol = sanitize_protocol(params["protocol"])
             enc_key = include_encrypted ? "1" : "0"
 
-            if since > 0
-              json_body = query_messages(limit, include_encrypted: include_encrypted, since: since, protocol: protocol).to_json
+            if since > 0 || before
+              json_body = query_messages(limit, include_encrypted: include_encrypted, since: since, before: before, protocol: protocol).to_json
               etag Digest::MD5.hexdigest(json_body), kind: :weak
               api_cache_control
               json_body

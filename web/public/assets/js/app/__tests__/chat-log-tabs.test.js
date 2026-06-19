@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import {
   CHAT_LOG_ENTRY_TYPES,
   buildChatTabModel,
+  isTestChannelLabel,
   MAX_CHANNEL_INDEX,
   normaliseChannelIndex,
   normaliseChannelName,
@@ -27,6 +28,42 @@ import {
 } from '../chat-log-tabs.js';
 
 const NOW = 1_000_000;
+
+// ---------------------------------------------------------------------------
+// isTestChannelLabel — word-boundary ping/test/bot detection (SPEC F2)
+// ---------------------------------------------------------------------------
+
+test('isTestChannelLabel: matches standalone keywords case-insensitively', () => {
+  for (const label of ['test', 'TEST', 'Ping', 'bot', '#test', '#ping', '#bot']) {
+    assert.equal(isTestChannelLabel(label), true, `${label} should be a test channel`);
+  }
+});
+
+test('isTestChannelLabel: matches a keyword as one word among others', () => {
+  for (const label of ['test channel', 'my bot', 'ping pong', 'daily-test', 'bot 2', 'EU ping']) {
+    assert.equal(isTestChannelLabel(label), true, `${label} should be a test channel`);
+  }
+});
+
+test('isTestChannelLabel: does NOT match keywords embedded in larger words', () => {
+  // The false positives the word-boundary rule exists to avoid (SPEC F2).
+  for (const label of ['Camping', 'Robotics', 'RobotWars', 'Contest', 'Botswana', 'Testing', 'testbed', 'MyBot', 'test2', 'pingu']) {
+    assert.equal(isTestChannelLabel(label), false, `${label} should NOT be a test channel`);
+  }
+});
+
+test('isTestChannelLabel: real default/custom channel names are not test channels', () => {
+  for (const label of ['Public', 'MediumFast', 'LongFast', '0', '#BerlinMesh', 'MeshTown']) {
+    assert.equal(isTestChannelLabel(label), false, `${label} should NOT be a test channel`);
+  }
+});
+
+test('isTestChannelLabel: non-string input returns false', () => {
+  assert.equal(isTestChannelLabel(null), false);
+  assert.equal(isTestChannelLabel(undefined), false);
+  assert.equal(isTestChannelLabel(7), false);
+  assert.equal(isTestChannelLabel(''), false);
+});
 const WINDOW = 60 * 60; // one hour
 
 function fixtureNodes() {
@@ -92,8 +129,10 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   );
 
   assert.equal(model.channels.length, 6);
-  // Primary channels (index 0) come first, secondary channels (index > 0) come last.
-  // Within each tier, ties on messageCount are broken alphabetically by label.
+  // Default/primary channels (index 0) lead, then custom channels (index > 0);
+  // these fixtures contain no test channels, so the third (test) tier is
+  // exercised by the dedicated three-tier ordering tests below.  Within each
+  // tier, ties on messageCount are broken alphabetically by label.
   assert.deepEqual(model.channels.map(channel => channel.label), [
     'EnvDefault',
     'Fallback',
@@ -140,6 +179,65 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
 test('buildChatTabModel skips channel buckets when there are no messages', () => {
   const model = buildChatTabModel({ nodes: [], messages: [], nowSeconds: NOW, windowSeconds: WINDOW });
   assert.equal(model.channels.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Three-tier channel ordering: default -> custom -> test (SPEC F1/F3/F4)
+// ---------------------------------------------------------------------------
+
+test('buildChatTabModel sinks test channels below custom channels even with more activity (F1)', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      // Custom channel, low activity (1 message).
+      { id: 'c1', rx_time: NOW - 5, channel: 1, channel_name: 'BerlinMesh' },
+      // Test channel, HIGH activity (3 messages) — must still sort last.
+      { id: 't1', rx_time: NOW - 4, channel: 2, channel_name: 'test' },
+      { id: 't2', rx_time: NOW - 3, channel: 2, channel_name: 'test' },
+      { id: 't3', rx_time: NOW - 2, channel: 2, channel_name: 'test' },
+      // Default/primary channel, low activity (1 message) — must lead.
+      { id: 'p1', rx_time: NOW - 6, channel: 0, channel_name: 'MediumFast' },
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+    primaryChannelFallbackLabel: '',
+  });
+  assert.deepEqual(model.channels.map(channel => channel.label), ['MediumFast', 'BerlinMesh', 'test']);
+  // Presentation-only (F4): the demoted test channel keeps all its messages.
+  assert.equal(findChannelByLabel(model, 'test').messageCount, 3);
+});
+
+test('buildChatTabModel never demotes an index-0 channel even if its name matches a keyword (F3)', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: 'cust', rx_time: NOW - 5, channel: 1, channel_name: 'BerlinMesh' },
+      { id: 'prim', rx_time: NOW - 4, channel: 0, channel_name: 'test' }, // primary literally named "test"
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+    primaryChannelFallbackLabel: '',
+  });
+  // The index-0 "test" channel still leads; it is NOT sunk to the test tier.
+  assert.deepEqual(model.channels.map(channel => channel.label), ['test', 'BerlinMesh']);
+  assert.equal(model.channels[0].index, 0);
+});
+
+test('buildChatTabModel orders channels within the test tier by activity then label (F1)', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [
+      { id: 'a1', rx_time: NOW - 5, channel: 1, channel_name: 'AlphaMesh' }, // custom (tier 1)
+      { id: 'pb1', rx_time: NOW - 4, channel: 2, channel_name: 'ping-bot' }, // test, 1 message
+      { id: 'tt1', rx_time: NOW - 3, channel: 3, channel_name: 'test' },     // test, 2 messages
+      { id: 'tt2', rx_time: NOW - 2, channel: 3, channel_name: 'test' },
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+    primaryChannelFallbackLabel: '',
+  });
+  // Custom first; then test channels, busier ('test', 2) before quieter ('ping-bot', 1).
+  assert.deepEqual(model.channels.map(channel => channel.label), ['AlphaMesh', 'test', 'ping-bot']);
 });
 
 test('buildChatTabModel falls back to numeric label when no metadata provided', () => {

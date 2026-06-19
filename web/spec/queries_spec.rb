@@ -677,6 +677,30 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(scoped_ids).to include(101)
       expect(scoped_ids).to include(102)
     end
+
+    it "applies an inclusive before cursor and ignores a non-positive one (issue #796)" do
+      with_db do |db|
+        [10, 20, 30].each do |offset|
+          rx = now - offset
+          db.execute(
+            "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES (?,?,?,?,?,?,?)",
+            [200 + offset, rx, Time.at(rx).utc.iso8601, "!aabbccdd", "!ffffffff", 0, "m#{offset}"],
+          )
+        end
+      end
+
+      # Inclusive ceiling: the row exactly at the cursor stays; newer rows drop.
+      # This is what lets the client page backward by feeding the oldest rx_time
+      # of each page as the next cursor without skipping boundary-second rows.
+      paged = queries.query_messages(10, before: now - 20).map { |r| r["id"] }
+      expect(paged).to include(220, 230)
+      expect(paged).not_to include(210) # newer than the cursor
+      expect(paged).not_to include(1)   # base row at `now` is newer than the cursor
+
+      # A non-positive cursor is treated as "no cursor" — the default window.
+      unbounded = queries.query_messages(10, before: 0).map { |r| r["id"] }
+      expect(unbounded).to include(1, 210, 220, 230)
+    end
   end
 
   describe "#query_telemetry" do

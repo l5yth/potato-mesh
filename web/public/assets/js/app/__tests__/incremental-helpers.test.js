@@ -16,7 +16,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit } from '../incremental-helpers.js';
+import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from '../incremental-helpers.js';
 
 // ---------------------------------------------------------------------------
 // maxRecordTimestamp
@@ -209,4 +209,50 @@ test('trimToLimit handles records with missing timestamp fields', () => {
   const result = trimToLimit(records, 2);
   assert.equal(result.length, 2);
   assert.equal(result[0].id, 3);
+});
+
+// ---------------------------------------------------------------------------
+// trimToWindow (issue #796)
+// ---------------------------------------------------------------------------
+
+test('trimToWindow drops records older than the floor and keeps the boundary', () => {
+  const records = [
+    { id: 1, rx_time: 90 },
+    { id: 2, rx_time: 100 }, // exactly at the floor → kept
+    { id: 3, rx_time: 150 },
+  ];
+  const result = trimToWindow(records, 100);
+  assert.deepEqual(result.map(r => r.id), [2, 3]);
+});
+
+test('trimToWindow retains records with a missing or non-numeric timestamp', () => {
+  const records = [
+    { id: 1 },
+    { id: 2, rx_time: 'nope' },
+    { id: 3, rx_time: 50 },
+    { id: 4, rx_time: 500 },
+  ];
+  const result = trimToWindow(records, 100);
+  assert.deepEqual(result.map(r => r.id), [1, 2, 4]);
+});
+
+test('trimToWindow uses a custom timestamp field', () => {
+  const records = [
+    { id: 1, last_heard: 10 },
+    { id: 2, last_heard: 200 },
+  ];
+  const result = trimToWindow(records, 100, 'last_heard');
+  assert.deepEqual(result.map(r => r.id), [2]);
+});
+
+test('trimToWindow returns the input unchanged for an unusable floor', () => {
+  const records = [{ id: 1, rx_time: 10 }];
+  assert.equal(trimToWindow(records, 0), records);
+  assert.equal(trimToWindow(records, Number.NaN), records);
+  assert.equal(trimToWindow(records, -5), records);
+});
+
+test('trimToWindow returns input for non-array values', () => {
+  assert.equal(trimToWindow(null, 100), null);
+  assert.equal(trimToWindow(undefined, 100), undefined);
 });

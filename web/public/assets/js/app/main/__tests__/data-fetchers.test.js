@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  fetchAllMessages,
   fetchMessages,
   fetchNeighbors,
   fetchNodeById,
@@ -340,6 +341,110 @@ test('fetchMessages propagates HTTP errors', async () => {
   const stub = withFetchStub({ ok: false, status: 500 });
   try {
     await assert.rejects(() => fetchMessages(10), /HTTP 500/);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchMessages forwards a positive before cursor and omits a non-positive one', async () => {
+  const stub = withFetchStub({ ok: true, body: [] });
+  try {
+    await fetchMessages(10, { before: 1234 });
+    assert.ok(stub.calls[0].url.includes('before=1234'));
+    await fetchMessages(10, { before: 0 });
+    assert.ok(!stub.calls[1].url.includes('before='));
+  } finally {
+    stub.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// fetchAllMessages (issue #796 backward pagination)
+// ---------------------------------------------------------------------------
+
+test('fetchAllMessages pages backward until a short page and de-duplicates by id', async () => {
+  // limit=2; the inclusive cursor re-returns the boundary row, which must be
+  // de-duplicated rather than counted twice.
+  const stub = withFetchStub((url) => {
+    if (url.includes('before=40')) {
+      return { ok: true, body: [{ id: 4, rx_time: 40 }, { id: 3, rx_time: 30 }] };
+    }
+    if (url.includes('before=30')) {
+      return { ok: true, body: [{ id: 3, rx_time: 30 }] }; // short page → stop
+    }
+    return { ok: true, body: [{ id: 5, rx_time: 50 }, { id: 4, rx_time: 40 }] };
+  });
+  try {
+    const all = await fetchAllMessages(2, {});
+    assert.deepEqual(all.map(m => m.id), [5, 4, 3]);
+    assert.equal(stub.calls.length, 3);
+    assert.ok(stub.calls[1].url.includes('before=40'));
+    assert.ok(stub.calls[2].url.includes('before=30'));
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchAllMessages stops when the server ignores the cursor (no progress)', async () => {
+  // The stub returns the same full page regardless of the cursor; without the
+  // no-progress guard this would loop forever.
+  const stub = withFetchStub({ ok: true, body: [{ id: 5, rx_time: 50 }, { id: 4, rx_time: 40 }] });
+  try {
+    const all = await fetchAllMessages(2, {});
+    assert.deepEqual(all.map(m => m.id), [5, 4]);
+    assert.equal(stub.calls.length, 2); // page 1 + one no-progress page, then stop
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchAllMessages returns [] and makes one call for an empty window', async () => {
+  const stub = withFetchStub({ ok: true, body: [] });
+  try {
+    const all = await fetchAllMessages(2, {});
+    assert.deepEqual(all, []);
+    assert.equal(stub.calls.length, 1);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchAllMessages stops when no row carries a usable timestamp cursor', async () => {
+  // A full page whose rows lack rx_time cannot advance the cursor; the loop must
+  // still terminate (and keep the rows it found).
+  const stub = withFetchStub({ ok: true, body: [{ id: 7 }, { id: 8 }] });
+  try {
+    const all = await fetchAllMessages(2, {});
+    assert.deepEqual(all.map(m => m.id), [7, 8]);
+    assert.equal(stub.calls.length, 1);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchAllMessages skips rows without an id and forwards retrieval flags', async () => {
+  const stub = withFetchStub({ ok: true, body: [{ rx_time: 40 }] }); // no id → skipped, short page
+  try {
+    const all = await fetchAllMessages(2, { encrypted: true });
+    assert.deepEqual(all, []);
+    assert.equal(stub.calls.length, 1);
+    assert.ok(stub.calls[0].url.includes('encrypted=true'));
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchAllMessages honours the maxPages backstop against a runaway feed', async () => {
+  // Every page is full and strictly older, so only maxPages bounds the walk.
+  let n = 0;
+  const stub = withFetchStub(() => {
+    n += 1;
+    return { ok: true, body: [{ id: 100 - n, rx_time: 100 - n }] };
+  });
+  try {
+    const all = await fetchAllMessages(1, { maxPages: 3 });
+    assert.equal(all.length, 3);
+    assert.equal(stub.calls.length, 3);
   } finally {
     stub.restore();
   }

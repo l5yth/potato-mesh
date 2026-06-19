@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import {
   parseMeshcoreSenderPrefix,
   findNodeByLongName,
+  buildSyntheticChatNode,
   extractLeadingMentionAsReply,
 } from '../meshcore-chat-helpers.js';
 
@@ -215,6 +216,69 @@ test('findNodeByLongName: emoji-prefix fallback preserves exact-match precedence
 test('findNodeByLongName: whitespace-only input returns null', () => {
   const { map } = makeAliceMap();
   assert.equal(findNodeByLongName('   ', map), null);
+});
+
+// ---------------------------------------------------------------------------
+// findNodeByLongName — protocol-aware resolution (no cross-protocol quoting)
+// ---------------------------------------------------------------------------
+
+test('findNodeByLongName: honors protocol and never returns a different-protocol node', () => {
+  // A Meshtastic and a MeshCore node share the long name "Timo".  The
+  // Meshtastic node is inserted first, so the protocol-blind scan returns it.
+  const meshtastic = { node_id: '!10000001', long_name: 'Timo', protocol: 'meshtastic' };
+  const meshcore = { node_id: '!20000002', long_name: 'Timo', protocol: 'meshcore' };
+  const map = new Map([
+    ['!10000001', meshtastic],
+    ['!20000002', meshcore],
+  ]);
+  assert.equal(findNodeByLongName('Timo', map, 'meshcore'), meshcore);
+  assert.equal(findNodeByLongName('Timo', map, 'meshtastic'), meshtastic);
+});
+
+test('findNodeByLongName: returns null when only a different-protocol node matches', () => {
+  const meshtastic = { node_id: '!10000001', long_name: 'Timo', protocol: 'meshtastic' };
+  const map = new Map([['!10000001', meshtastic]]);
+  // A MeshCore message must not borrow the Meshtastic node, even as a last resort.
+  assert.equal(findNodeByLongName('Timo', map, 'meshcore'), null);
+});
+
+test('findNodeByLongName: an unstamped node never matches a MeshCore request', () => {
+  // Absent protocol normalises to the Meshtastic default, so it is excluded
+  // from MeshCore resolution but eligible for Meshtastic resolution.
+  const node = { node_id: '!10000001', long_name: 'Timo' };
+  const map = new Map([['!10000001', node]]);
+  assert.equal(findNodeByLongName('Timo', map, 'meshcore'), null);
+  assert.equal(findNodeByLongName('Timo', map, 'meshtastic'), node);
+});
+
+test('findNodeByLongName: protocol filter also applies to the emoji-prefix fallback pass', () => {
+  // Same emoji-stripping fallback name, one node per protocol; the MeshCore
+  // request must resolve the MeshCore node despite the Meshtastic one matching
+  // the same stripped name first.
+  const meshtastic = { node_id: '!10000001', long_name: '\u{1F4FA} Timo +', protocol: 'meshtastic' };
+  const meshcore = { node_id: '!20000002', long_name: '\u{1F4FA} Timo +', protocol: 'meshcore' };
+  const map = new Map([
+    ['!10000001', meshtastic],
+    ['!20000002', meshcore],
+  ]);
+  assert.equal(findNodeByLongName('Timo +', map, 'meshcore'), meshcore);
+});
+
+// ---------------------------------------------------------------------------
+// buildSyntheticChatNode — protocol-stamped stand-in for unmatched names
+// ---------------------------------------------------------------------------
+
+test('buildSyntheticChatNode: carries the name as short/long name and stamps the protocol', () => {
+  assert.deepEqual(buildSyntheticChatNode('Bob', 'meshcore'), {
+    short_name: 'Bob',
+    long_name: 'Bob',
+    protocol: 'meshcore',
+  });
+});
+
+test('buildSyntheticChatNode: omits the protocol key when none is supplied', () => {
+  assert.deepEqual(buildSyntheticChatNode('Bob', null), { short_name: 'Bob', long_name: 'Bob' });
+  assert.deepEqual(buildSyntheticChatNode('Bob'), { short_name: 'Bob', long_name: 'Bob' });
 });
 
 // ---------------------------------------------------------------------------

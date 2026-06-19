@@ -238,3 +238,59 @@ test('since parameter uses a 1-second overlap to avoid missing rows', async () =
     );
   });
 });
+
+test('first load pages the chat window backward with a before cursor (issue #796)', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  // Page 1 is a *full* page (1000 rows), so the pager must request another page.
+  const page1 = Array.from({ length: 1000 }, (_, i) => ({
+    id: 5000 - i, rx_time: now - 60 - i, from_id: '!aabb', text: `m${i}`,
+  }));
+  const oldestPage1 = page1[page1.length - 1].rx_time; // inclusive cursor for page 2
+  // Page 2 re-returns the boundary row (must be de-duplicated) plus older rows,
+  // then is short — ending the walk.
+  const page2 = [
+    { id: 4001, rx_time: oldestPage1, from_id: '!aabb', text: 'boundary' },
+    ...Array.from({ length: 200 }, (_, i) => ({
+      id: 4000 - i, rx_time: oldestPage1 - 1 - i, from_id: '!aabb', text: `o${i}`,
+    })),
+  ];
+
+  const env = createDomEnvironment({ includeBody: true });
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = (url, options = {}) => {
+    calls.push({ url, options });
+    let body = [];
+    if (url.includes('/api/messages') && !url.includes('encrypted=true')) {
+      body = url.includes('before=') ? page2 : page1;
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  };
+  try {
+    initializeApp(BASE_CONFIG);
+    await new Promise(r => setTimeout(r, 100));
+
+    const plaintextMsgCalls = calls.filter(
+      c => c.url.includes('/api/messages') && !c.url.includes('encrypted=true'),
+    );
+    // A full first page must be followed by a backward page; the cursor is the
+    // oldest rx_time of page 1 (issue #796).
+    assert.ok(
+      plaintextMsgCalls.length >= 2,
+      `expected backward pagination, saw ${plaintextMsgCalls.length} message call(s)`,
+    );
+    assert.ok(!plaintextMsgCalls[0].url.includes('before='), 'first page must not carry a cursor');
+    assert.ok(
+      plaintextMsgCalls.some(c => c.url.includes(`before=${oldestPage1}`)),
+      `expected a backward page with before=${oldestPage1}`,
+    );
+    // The initial load must not use the incremental `since` cursor.
+    assert.ok(
+      plaintextMsgCalls.every(c => !c.url.includes('since=')),
+      'first load should paginate with before, never since',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.cleanup();
+  }
+});
