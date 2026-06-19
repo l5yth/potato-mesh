@@ -408,3 +408,51 @@ existing codebase, not to the change under review.
   without comment syntax (JSON fixtures under `tests/`, `*.lock` files, binary
   assets) cannot carry the notice; there is no committed allow-list or CI check
   asserting headers. The B4 commands above are the interim verification.
+
+---
+
+## Feature: Chat channel test-deprioritization
+
+Maps to SPEC decisions **F1–F4**. The ordering logic lives in
+`web/public/assets/js/app/chat-log-tabs.js` (`buildChatTabModel`); behavior is
+verified by the JS unit suite.
+
+### F-A1 — Three-tier channel ordering (default → custom → test) — F1
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
+```
+**Expected:** pass. Given a default/primary channel (index 0, e.g. "Public"), a
+custom channel (index > 0, e.g. "#BerlinMesh"), and a test channel (index > 0,
+e.g. "#test"), `buildChatTabModel(...).channels` returns them in the order
+**[default, custom, test]** — every test channel sorts after every non-test
+channel regardless of 7-day activity. Within each tier the prior ordering
+(message-count descending, then label alphabetical) is unchanged.
+
+### F-A2 — Word-boundary test detection (ping/test/bot), no false positives — F2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
+```
+**Expected:** pass. A channel label is classified **test** iff it contains the
+standalone word `ping`, `test`, or `bot` (case-insensitive, matched at word
+boundaries). So "#test", "Ping", "my bot", "test channel" are test; **"Camping",
+"Robotics", "Contest", "Botswana" are NOT** and keep their custom-tier position.
+
+### F-A3 — Primary/default channel is never demoted — F3
+**Expected (covered by the F-A1 suite):** an index-0 channel whose label matches a
+keyword (e.g. a primary literally named "test") still sorts in the default tier
+(first), never the test tier — the main community feed always leads.
+
+### F-A4 — Presentation-only, protocol-neutral — F4
+**Expected (covered by the F-A1 suite + A4c):** reordering changes only tab
+order — each channel's `messageCount`, `entries`, and `id` are unchanged, and the
+default-active tab stays the primary. Detection is by channel name, so a MeshCore
+"#test" and a Meshtastic "#test" are demoted identically (no protocol privileged).
+
+### F-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+remain green: **A4c** (chat name resolution honors protocol — same render path)
+and **B1** (all suites). The existing two-tier ordering assertions in
+`chat-log-tabs.test.js` are **updated** to the three-tier order, not removed.

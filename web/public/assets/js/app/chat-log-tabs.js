@@ -23,6 +23,50 @@ import { extractModemMetadata } from './node-modem-metadata.js';
 export const MAX_CHANNEL_INDEX = 255;
 
 /**
+ * Matches a throwaway "test" channel by the presence of the standalone word
+ * ``ping``, ``test``, or ``bot`` (case-insensitive).  The ``\b`` word boundaries
+ * are deliberate: they keep legitimate channels whose names merely *contain*
+ * those letters — "Camping", "Robotics", "Contest", "Botswana" — out of the test
+ * tier, trading the odd concatenated form ("MyBot", "test2") for zero false
+ * positives (SPEC F2).
+ * @type {RegExp}
+ */
+const TEST_CHANNEL_PATTERN = /\b(?:ping|test|bot)\b/i;
+
+/**
+ * Decide whether a channel label denotes a deprioritized "test" channel.
+ *
+ * Used by {@link buildChatTabModel} to sink ``#test`` / ``#ping`` / ``#bot``
+ * style channels below the community's real channels (SPEC F1/F2).  Matching is
+ * on the resolved display label the operator sees, case-insensitive and bounded
+ * to whole words so substrings never trigger a false positive.
+ *
+ * @param {string} label Resolved channel display label.
+ * @returns {boolean} ``true`` when the label contains a standalone test keyword.
+ */
+export function isTestChannelLabel(label) {
+  if (typeof label !== 'string') return false;
+  return TEST_CHANNEL_PATTERN.test(label);
+}
+
+/**
+ * Classify a channel bucket into its display-ordering tier (SPEC F1/F3).
+ * Lower tiers sort first:
+ *
+ *   0 — default/primary channel (index 0). Always leads and is **never** demoted
+ *       to the test tier, even if its label matches a keyword (SPEC F3).
+ *   2 — test channel: a non-primary channel whose label names ping/test/bot.
+ *   1 — any other custom (non-primary, non-test) channel.
+ *
+ * @param {{ index: number, label: string }} channel Channel bucket.
+ * @returns {number} Ordering tier (0, 1, or 2).
+ */
+function channelPriorityTier(channel) {
+  if (channel.index === 0) return 0;
+  return isTestChannelLabel(channel.label) ? 2 : 1;
+}
+
+/**
  * Discrete event types that can appear in the chat activity log.
  *
  * @type {{
@@ -311,14 +355,16 @@ export function buildChatTabModel({
     channel.entries.sort((a, b) => a.ts - b.ts);
     channel.messageCount = channel.entries.length;
   }
-  // Sort channels into two tiers:
-  //   1. Primary channels (channel index 0 — LongFast, MediumFast, Public, etc.)
-  //      ordered by activity desc so the most-active protocol leads within the tier.
-  //   2. Secondary channels (index > 0) ordered by activity desc, then alpha.
-  // Within each tier, ties on messageCount are broken alphabetically by label.
+  // Sort channels into three priority tiers (SPEC F1):
+  //   0. Default/primary channels (index 0 — LongFast, MediumFast, Public, …),
+  //      never demoted even if the name matches a test keyword (SPEC F3).
+  //   1. Custom channels (index > 0) that are not test channels.
+  //   2. Test channels (index > 0 whose label names ping/test/bot) — sunk last.
+  // Within each tier the prior ordering is preserved unchanged: activity
+  // (7-day message count) descending, then label alphabetical.
   const channels = Array.from(channelBuckets.values()).sort((a, b) => {
-    const aTier = a.index === 0 ? 0 : 1;
-    const bTier = b.index === 0 ? 0 : 1;
+    const aTier = channelPriorityTier(a);
+    const bTier = channelPriorityTier(b);
     if (aTier !== bTier) return aTier - bTier;
     return b.messageCount - a.messageCount || a.label.localeCompare(b.label);
   });
