@@ -106,3 +106,29 @@ export function trimToLimit(records, limit, tsField = 'rx_time') {
   const sorted = records.slice().sort((a, b) => (b[tsField] || 0) - (a[tsField] || 0));
   return sorted.slice(0, limit);
 }
+
+/**
+ * Drop records older than a timestamp floor, keeping the retained set aligned
+ * with a rolling window rather than a fixed row count.
+ *
+ * The chat feed pages the whole seven-day window (issue #796), so bounding the
+ * accumulated set by *count* would silently discard older-but-in-window
+ * messages on the next incremental merge.  Bounding by the window floor instead
+ * keeps exactly what the renderer can display while still preventing unbounded
+ * growth over a long-running tab.  Records whose timestamp is missing or
+ * non-numeric are retained so data is never lost to a malformed field.
+ *
+ * @param {Array<Object>} records Merged record array.
+ * @param {number} floorSeconds Minimum retained timestamp (unix seconds).
+ * @param {string} [tsField] Timestamp field name used for comparison.
+ * @returns {Array<Object>} Filtered array (same reference when nothing is
+ *   dropped or the floor is unusable).
+ */
+export function trimToWindow(records, floorSeconds, tsField = 'rx_time') {
+  if (!Array.isArray(records)) return records;
+  if (!Number.isFinite(floorSeconds) || floorSeconds <= 0) return records;
+  return records.filter(record => {
+    const ts = Number(record && record[tsField]);
+    return !Number.isFinite(ts) || ts >= floorSeconds;
+  });
+}

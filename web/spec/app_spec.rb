@@ -6533,6 +6533,81 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(scoped_since.map { |row| row["id"] }).to eq([2])
     end
 
+    # Regression for issue #796: more than MAX_QUERY_LIMIT messages inside the
+    # seven-day window must all remain reachable.  Before the fix the feed had
+    # no upper-bound cursor, so paging stalled at the newest 1000 rows and every
+    # older in-window message was invisible.
+    it "exposes every in-window message through backward pagination (issue #796)" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      cap = PotatoMesh::App::Queries::MAX_QUERY_LIMIT
+      total = cap + 500
+      # Seed more than one page of messages, all comfortably inside the
+      # seven-day window, each with a distinct rx_time so the keyset cursor is
+      # unambiguous.
+      with_db do |db|
+        db.transaction do
+          total.times do |i|
+            rx = now - 60 - i * 30
+            db.execute(
+              "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, portnum, text) VALUES(?,?,?,?,?,?,?,?)",
+              [1000 + i, rx, Time.at(rx).utc.iso8601, "!a", "!b", 0, "TEXT_MESSAGE_APP", "msg #{i}"],
+            )
+          end
+        end
+      end
+
+      # Walk the feed the way the dashboard client does: pull a page, then ask
+      # for everything at-or-before the oldest row already seen.  Without an
+      # upper-bound cursor the server cannot return anything past the newest
+      # `cap` rows, so the loop stalls and never reaches the older messages.
+      seen = {}
+      cursor = nil
+      pages = 0
+      loop do
+        url = "/api/messages?limit=#{cap}"
+        url += "&before=#{cursor}" if cursor
+        get url
+        expect(last_response).to be_ok
+        rows = JSON.parse(last_response.body)
+        # The per-request cap is unchanged: a single response never exceeds it.
+        expect(rows.size).to be <= cap
+        added = rows.reject { |row| seen.key?(row["id"]) }
+        added.each { |row| seen[row["id"]] = true }
+        pages += 1
+        break if rows.size < cap # window exhausted
+        break if added.empty?    # no progress (unfixed server ignores `before`)
+        break if pages >= 10     # hard safety bound against an infinite loop
+        cursor = rows.map { |row| row["rx_time"] }.min
+      end
+
+      expect(seen.size).to eq(total)
+    end
+
+    it "treats a non-positive before cursor as absent (issue #796)" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      with_db do |db|
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES(?,?,?,?,?,?,?)",
+          [42, now - 30, Time.at(now - 30).utc.iso8601, "!a", "!b", 0, "hi"],
+        )
+      end
+
+      # before=0 and before=-5 must be ignored (not used as a ceiling), so the
+      # row still comes back rather than being filtered out by a bogus cursor.
+      get "/api/messages?before=0"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body).map { |r| r["id"] }).to eq([42])
+
+      get "/api/messages?before=-5"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body).map { |r| r["id"] }).to eq([42])
+    end
+
     it "clamps an explicit since older than the seven-day floor up to the floor" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)

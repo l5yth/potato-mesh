@@ -98,7 +98,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
-import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit } from './incremental-helpers.js';
+import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from './incremental-helpers.js';
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
@@ -169,6 +169,7 @@ import {
   filterRecentTraces,
   resolveSnapshotLimit,
   fetchMessages as fetchMessagesImpl,
+  fetchAllMessages as fetchAllMessagesImpl,
 } from './main/data-fetchers.js';
 import {
   compareNumber,
@@ -2918,10 +2919,14 @@ export function initializeApp(config) {
         : isMeshcoreProtocol(channel.protocol)
           ? MESHCORE_ICON_SRC
           : null,
+      // Channel tabs are the chat proper: render the entire window (issue #796)
+      // rather than only the newest CHAT_LIMIT.  The entry set is already bounded
+      // by the seven-day window, so there is no count cap to apply here.
       content: buildChatFragment({
         entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
         renderEntry: entry => createMessageChatEntry(entry.item),
-        emptyLabel: 'No messages on this channel.'
+        emptyLabel: 'No messages on this channel.',
+        limit: Infinity
       }),
       index: channel.index,
       isPrimaryFallback: Boolean(channel.isPrimaryFallback)
@@ -2955,11 +2960,14 @@ export function initializeApp(config) {
    * @param {{
    *   entries: Array<{ ts: number, item: Object }>,
    *   renderEntry: Function,
-   *   emptyLabel?: string
-   * }} params Fragment construction parameters.
+   *   emptyLabel?: string,
+   *   limit?: number
+   * }} params Fragment construction parameters.  ``limit`` caps how many of the
+   *   newest entries are rendered; pass ``Infinity`` to render them all (the Log
+   *   firehose defaults to {@link CHAT_LIMIT}, chat channel tabs opt out).
    * @returns {DocumentFragment} Populated fragment.
    */
-  function buildChatFragment({ entries = [], renderEntry, emptyLabel }) {
+  function buildChatFragment({ entries = [], renderEntry, emptyLabel, limit = CHAT_LIMIT }) {
     const fragment = document.createDocumentFragment();
     if (!entries || entries.length === 0) {
       if (emptyLabel) {
@@ -2971,7 +2979,9 @@ export function initializeApp(config) {
       return fragment;
     }
     const getDivider = createDateDividerFactory();
-    const limitedEntries = entries.slice(Math.max(entries.length - CHAT_LIMIT, 0));
+    const limitedEntries = Number.isFinite(limit)
+      ? entries.slice(Math.max(entries.length - limit, 0))
+      : entries;
     let renderedEntries = 0;
     for (const entry of limitedEntries) {
       if (!entry || typeof entry.ts !== 'number') {
@@ -3013,6 +3023,24 @@ export function initializeApp(config) {
    */
   function fetchMessages(limit = MESSAGE_LIMIT, options = {}) {
     return fetchMessagesImpl(limit, {
+      ...options,
+      chatEnabled: CHAT_ENABLED,
+      normaliseMessageLimit,
+    });
+  }
+
+  /**
+   * Closure-bound bridge to ``fetchAllMessagesImpl``.  Pages the entire chat
+   * window (issue #796) so the initial load surfaces every in-window message
+   * instead of just the newest {@link MESSAGE_LIMIT}.  Like {@link fetchMessages}
+   * it injects the dashboard's ``CHAT_ENABLED`` flag and limit normaliser so the
+   * underlying pager stays pure.
+   *
+   * @param {{ encrypted?: boolean }} [options] Optional retrieval flags.
+   * @returns {Promise<Array<Object>>} Every message in the visibility window.
+   */
+  function fetchAllMessages(options = {}) {
+    return fetchAllMessagesImpl(MESSAGE_LIMIT, {
       ...options,
       chatEnabled: CHAT_ENABLED,
       normaliseMessageLimit,
@@ -3972,7 +4000,12 @@ export function initializeApp(config) {
         positionsPromise,
         neighborPromise,
         tracesPromise,
-        fetchMessages(MESSAGE_LIMIT, { since: msgSince }),
+        // First load pages the whole window so chat is complete (issue #796);
+        // incremental refreshes only need the slice newer than the high-water
+        // mark, which always fits in a single page.
+        useSince
+          ? fetchMessages(MESSAGE_LIMIT, { since: msgSince })
+          : fetchAllMessages({}),
         telemetryPromise,
         encryptedMessagesPromise
       ]);
@@ -4011,9 +4044,15 @@ export function initializeApp(config) {
       const traceEntries = useSince
         ? trimToLimit(mergeById(allTraces, incomingTraces, 'id'), TRACE_LIMIT)
         : incomingTraces;
+      // Plaintext chat is shown for the full seven-day window (issue #796), so
+      // bound the retained set by that window rather than a row count — a count
+      // cap would silently drop older-but-in-window messages on the next merge.
+      const messageWindowFloor = Math.floor(Date.now() / 1000) - CHAT_RECENT_WINDOW_SECONDS;
       const messages = useSince
-        ? trimToLimit(mergeById(allMessages, incomingMessages, 'id'), MESSAGE_LIMIT)
+        ? trimToWindow(mergeById(allMessages, incomingMessages, 'id'), messageWindowFloor)
         : incomingMessages;
+      // Encrypted blobs only feed the mixed Log tab (itself capped), so a count
+      // cap is the right memory bound for them.
       const encryptedMessages = useSince
         ? trimToLimit(mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id'), MESSAGE_LIMIT)
         : incomingEncryptedMessages;

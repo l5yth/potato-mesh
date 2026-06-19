@@ -304,6 +304,17 @@ collapse and the MeshCore content-dedup (issue #756) are covered by
 which wins over `meshtastic` as the final fallback — exactly as `CONTRACTS.md`
 ("Protocol propagation") specifies. Values outside the whitelist fall through.
 
+### C7 — Chat feed is fully paginable within the window (issue #796 regression)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "backward pagination" )
+```
+**Expected:** pass. `GET /api/messages` accepts a `before=<rx_time>` upper-bound
+cursor that only *narrows* the result set (the 7-day floor and the per-request
+`MAX_QUERY_LIMIT` cap are unchanged, so C4 still holds). With more than
+`MAX_QUERY_LIMIT` messages inside the seven-day window, paging backward by
+`before` recovers **every** in-window message instead of stalling at the newest
+1000 — the landing page and `/chat` subpage page until the window is exhausted.
+
 ---
 
 ## Layer D — Operator-facing behavior

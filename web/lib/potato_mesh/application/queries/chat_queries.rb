@@ -23,8 +23,10 @@ module PotatoMesh
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param include_encrypted [Boolean] when true, include encrypted payloads in the response.
       # @param since [Integer] unix timestamp threshold; messages with rx_time older than this are excluded.
+      # @param before [Integer, nil] inclusive upper-bound rx_time cursor used for
+      #   backward pagination (issue #796); messages newer than this are excluded.
       # @return [Array<Hash>] compacted message rows safe for API responses.
-      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0, protocol: nil)
+      def query_messages(limit, node_ref: nil, include_encrypted: false, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         now = Time.now.to_i
         # Default the chat feed to the same seven-day window the dashboard uses
@@ -41,6 +43,19 @@ module PotatoMesh
         include_encrypted = !!include_encrypted
         where_clauses << "m.rx_time >= ?"
         params << since_threshold
+
+        # Upper-bound cursor for backward pagination (issue #796).  When set,
+        # +before+ is an *inclusive* ceiling on +rx_time+: the client walks it
+        # backward (newest -> oldest), passing the oldest +rx_time+ of each page
+        # as the next cursor and de-duplicating by +id+ client-side, so rows that
+        # share the boundary second are never skipped.  Because the cursor only
+        # ever *narrows* the result set, the seven-day floor above still bounds
+        # the window — callers cannot use +before+ to reach further back.
+        before_cursor = coerce_positive_or_nil(before)
+        if before_cursor
+          where_clauses << "m.rx_time <= ?"
+          params << before_cursor
+        end
 
         unless include_encrypted
           where_clauses << "COALESCE(TRIM(m.encrypted), '') = ''"
