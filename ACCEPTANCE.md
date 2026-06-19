@@ -159,6 +159,20 @@ and error/retry paths). The contract that new protocols must preserve — and th
 fact that the Ruby/DB/UI read-side stays unchanged — is documented in
 `CONTRACTS.md` and the *"Adding a New Ingestor Protocol"* section of `CLAUDE.md`.
 
+### A4c — Chat name resolution honors protocol (no cross-protocol quoting)
+```bash
+( cd web && node --test public/assets/js/app/__tests__/meshcore-chat-helpers.test.js \
+                       public/assets/js/app/__tests__/chat-entry-renderer.test.js )
+```
+**Expected:** pass. In the chat UI a MeshCore message resolves a sender/quote/
+mention name **only** to a MeshCore node — never to a same-named Meshtastic node
+(names collide across protocols, so the lookup must filter by the message's
+protocol instead of taking the first match). When no same-protocol node matches,
+a synthetic node carrying the message's protocol is rendered rather than
+borrowing a node from another protocol (`findNodeByLongName(longName, nodesById,
+protocol)` + `chat-entry-renderer.js`). Concrete UI form of SPEC Invariant IV
+(protocol parity; neither protocol privileged in the data model or UI).
+
 ---
 
 ## Layer B — Engineering bar (restated from `CLAUDE.md`)

@@ -302,13 +302,16 @@ test('createMessageChatEntry: meshcore message with @[Name] mention resolved to 
   });
 });
 
-test('createMessageChatEntry: meshcore message with @[Name] mention, node not found — fallback', () => {
+test('createMessageChatEntry: meshcore message with @[Name] mention, node not found — synthetic badge', () => {
   withApp((t) => {
     t.rebuildNodeIndex([]);
     const div = t.createMessageChatEntry(makeMeshcoreChannelMsg('EchoBot: Pong! @[Ghost]', { rx_time: 3000 }));
     const html = innerHtml(div);
-    // @[Ghost] mention with no matching node renders as escaped plain text
-    assert.ok(html.includes('@[Ghost]'), 'unresolved mention should render as escaped @[Name] text');
+    // @[Ghost] mention with no matching node renders a synthetic protocol-stamped
+    // node badge carrying the name, never a bare ``@[Name]`` literal.
+    assert.ok(html.includes('Ghost'), 'unresolved mention should render a synthetic badge carrying the name');
+    assert.ok(html.includes('Pong!'), 'body text should still render');
+    assert.ok(!html.includes('@[Ghost]'), 'bare @[Name] literal must not survive');
   });
 });
 

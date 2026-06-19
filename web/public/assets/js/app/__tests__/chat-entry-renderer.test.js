@@ -39,8 +39,8 @@ function makeNode(overrides = {}) {
 // ---------------------------------------------------------------------------
 
 test('renderChatEntryContent: MeshCore channel leading @[Name] becomes reply prefix', () => {
-  const alice = makeNode({ node_id: '!11111111', short_name: 'AL', long_name: 'Alice' });
-  const bob = makeNode({ node_id: '!22222222', short_name: 'BO', long_name: 'Bob' });
+  const alice = makeNode({ node_id: '!11111111', short_name: 'AL', long_name: 'Alice', protocol: 'meshcore' });
+  const bob = makeNode({ node_id: '!22222222', short_name: 'BO', long_name: 'Bob', protocol: 'meshcore' });
   const nodesById = new Map([
     [alice.node_id, alice],
     [bob.node_id, bob],
@@ -71,7 +71,7 @@ test('renderChatEntryContent: MeshCore channel leading @[Name] becomes reply pre
 });
 
 test('renderChatEntryContent: MeshCore channel leading @[Name] handles name whitespace', () => {
-  const timo = makeNode({ node_id: '!6aee769f', short_name: 'TI', long_name: '\u{1F4FA} Timo +' });
+  const timo = makeNode({ node_id: '!6aee769f', short_name: 'TI', long_name: '\u{1F4FA} Timo +', protocol: 'meshcore' });
   const nodesById = new Map([[timo.node_id, timo]]);
   const message = {
     text: 'Bob: @[ Timo +] vielleicht hat jemand einen tip',
@@ -95,8 +95,8 @@ test('renderChatEntryContent: MeshCore channel leading @[Name] handles name whit
 });
 
 test('renderChatEntryContent: MeshCore multi-mention body does NOT emit reply prefix', () => {
-  const alice = makeNode({ node_id: '!11111111', short_name: 'AL', long_name: 'Alice' });
-  const bob = makeNode({ node_id: '!22222222', short_name: 'BO', long_name: 'Bob' });
+  const alice = makeNode({ node_id: '!11111111', short_name: 'AL', long_name: 'Alice', protocol: 'meshcore' });
+  const bob = makeNode({ node_id: '!22222222', short_name: 'BO', long_name: 'Bob', protocol: 'meshcore' });
   const nodesById = new Map([[alice.node_id, alice], [bob.node_id, bob]]);
   const message = {
     text: 'X: @[Alice] and @[Bob] both',
@@ -119,12 +119,60 @@ test('renderChatEntryContent: MeshCore multi-mention body does NOT emit reply pr
   assert.ok(html.includes('SHORT(BO|CLIENT|Bob)'));
 });
 
-test('renderChatEntryContent: leading mention with unresolved node still surfaces a reply prefix using the raw name (#727)', () => {
+test('renderChatEntryContent: MeshCore reply does not quote a same-named Meshtastic node (protocol collision)', () => {
+  // A Meshtastic and a MeshCore node share the long name "Timo".  The
+  // Meshtastic node is inserted first, so the protocol-blind lookup returns it.
+  // A MeshCore message quoting @[Timo] must badge the MeshCore node, never the
+  // Meshtastic one.
+  const meshtastic = makeNode({ node_id: '!10000001', short_name: 'MTMT', long_name: 'Timo', role: 'ROUTER', protocol: 'meshtastic' });
+  const meshcore = makeNode({ node_id: '!20000002', short_name: 'MCMC', long_name: 'Timo', role: 'CLIENT', protocol: 'meshcore' });
+  const nodesById = new Map([
+    [meshtastic.node_id, meshtastic],
+    [meshcore.node_id, meshcore],
+  ]);
+  const message = { text: 'X: @[Timo] thanks!', protocol: 'meshcore', to_id: '^all' };
+
+  const { html } = renderChatEntryContent({
+    message,
+    nodesById,
+    messagesById: new Map(),
+    renderShortHtml,
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+  });
+
+  assert.ok(html.includes('chat-entry-reply'), 'leading mention becomes a reply prefix');
+  assert.ok(html.includes('SHORT(MCMC|CLIENT|Timo)'), 'reply target must be the MeshCore node');
+  assert.ok(!html.includes('MTMT'), 'reply must NOT quote the same-named Meshtastic node');
+});
+
+test('renderChatEntryContent: MeshCore mention synthesises a node when only a same-named Meshtastic node exists', () => {
+  // Only a Meshtastic "Timo" is in the registry.  A MeshCore message must NOT
+  // quote it; instead a synthetic MeshCore-stamped badge carrying the name is
+  // rendered (issue: don't quote meshtastic nodes in a meshcore message).
+  const meshtastic = makeNode({ node_id: '!10000001', short_name: 'MTMT', long_name: 'Timo', role: 'ROUTER', protocol: 'meshtastic' });
+  const nodesById = new Map([[meshtastic.node_id, meshtastic]]);
+  const message = { text: 'X: hi @[Timo] and @[Timo]', protocol: 'meshcore', to_id: '^all' };
+
+  const { html } = renderChatEntryContent({
+    message,
+    nodesById,
+    messagesById: new Map(),
+    renderShortHtml,
+    escapeHtml: esc,
+    renderEmojiHtml: emoji,
+  });
+
+  assert.ok(html.includes('SHORT(Timo|-|Timo)'), 'mention renders a synthetic node badge carrying the name');
+  assert.ok(!html.includes('MTMT'), 'mention must NOT resolve to the same-named Meshtastic node');
+});
+
+test('renderChatEntryContent: leading mention with unresolved node surfaces a reply prefix using a synthetic node badge (#727)', () => {
   // Production deployments cap ``/api/nodes`` at 1000 entries, so the global
   // registry can be missing nodes that recent messages reference.  In that
-  // case the leading-mention-as-reply detection must still emit a reply
-  // prefix using the bare mention name, otherwise the body would render as
-  // ``@[Name] body...`` and look like an unresolved mention link.
+  // case the leading-mention-as-reply detection still emits a reply prefix, now
+  // backed by a protocol-stamped synthetic node badge (never a bare
+  // ``@[Name] body...`` leak, and never a same-named node from another protocol).
   const nodesById = new Map();
   const message = {
     text: 'X: @[DA6ML/p] ja, klingt sehr gut',
@@ -143,15 +191,16 @@ test('renderChatEntryContent: leading mention with unresolved node still surface
 
   assert.ok(html.includes('chat-entry-reply'), 'should include a reply prefix even without a node match');
   assert.ok(html.includes('ESC(in reply to)'), 'reply prefix label is escaped');
-  assert.ok(html.includes('ESC(DA6ML/p)'), 'mention name is shown verbatim (escaped)');
+  assert.ok(html.includes('SHORT(DA6ML/p|-|DA6ML/p)'), 'mention renders as a synthetic node badge carrying the name');
   assert.ok(html.includes('ESC(ja, klingt sehr gut)'), 'remaining text rendered after the prefix');
   // The bare ``@[Name]`` form must NOT survive into the body.
   assert.ok(!html.includes('@[ESC('), 'unresolved mention should not leak into the body');
 });
 
-test('renderChatEntryContent: inline (non-leading) mentions still render as escaped literals when unresolved', () => {
-  // Mentions that are NOT at the start are left as escaped literals — the
-  // reply-prefix fallback only applies to leading-mention-as-reply.
+test('renderChatEntryContent: inline (non-leading) unresolved mentions render as synthetic node badges', () => {
+  // Mentions that are NOT at the start no longer fall back to an escaped
+  // ``@[Name]`` literal; they render a protocol-stamped synthetic node badge so
+  // the mention is honored without borrowing a node from another protocol.
   const nodesById = new Map();
   const message = {
     text: 'X: hello @[Unknown] there',
@@ -169,7 +218,8 @@ test('renderChatEntryContent: inline (non-leading) mentions still render as esca
   });
 
   assert.ok(!html.includes('chat-entry-reply'), 'mid-text mention must not become reply prefix');
-  assert.ok(html.includes('@[ESC(Unknown)]'), 'unresolved inline mention falls back to escaped literal');
+  assert.ok(html.includes('SHORT(Unknown|-|Unknown)'), 'unresolved inline mention renders a synthetic node badge');
+  assert.ok(!html.includes('@[ESC(Unknown)]'), 'bare escaped literal must not survive');
 });
 
 test('renderChatEntryContent: MeshCore DM leading mention also becomes reply prefix', () => {
@@ -287,7 +337,7 @@ test('renderChatEntryContent: encrypted message without notice formatter returns
 // ---------------------------------------------------------------------------
 
 test('renderChatEntryContent: returns meshcoreSenderNode when prefix resolves against registry', () => {
-  const sender = makeNode({ node_id: '!11111111', short_name: 'SN', long_name: 'Sender' });
+  const sender = makeNode({ node_id: '!11111111', short_name: 'SN', long_name: 'Sender', protocol: 'meshcore' });
   const nodesById = new Map([[sender.node_id, sender]]);
   const message = {
     text: 'Sender: hello everyone',

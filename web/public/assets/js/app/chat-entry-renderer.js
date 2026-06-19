@@ -16,6 +16,7 @@
 
 import { buildMessageBody, resolveReplyPrefix } from './message-replies.js';
 import {
+  buildSyntheticChatNode,
   extractLeadingMentionAsReply,
   findNodeByLongName,
   parseMeshcoreSenderPrefix,
@@ -85,8 +86,10 @@ function formatReplyPrefixHtml(label, badgeHtml, escapeHtml) {
  *   2. MeshCore ``"SenderName: body"`` prefix parsing for channel messages.
  *   3. MeshCore leading-``@[Name]`` detection, surfacing it as an ``[in reply
  *      to BADGE]`` prefix when no structured reply is already present.
- *   4. Mention rendering for MeshCore messages, mapping ``@[Name]`` to either
- *      a badge (when the named node is known) or an escaped literal fallback.
+ *   4. Mention rendering for MeshCore messages, mapping ``@[Name]`` to a badge.
+ *      Name resolution is restricted to nodes of the message's own protocol so
+ *      a MeshCore message never quotes a same-named Meshtastic node; when no
+ *      same-protocol node matches, a synthetic protocol-stamped node is badged.
  *   5. ``buildMessageBody()`` invocation, which handles URL linkification,
  *      emoji rendering, and reaction detection.
  *   6. Encrypted-message notices when available from the caller.
@@ -145,7 +148,12 @@ export function renderChatEntryContent({
   if (isMeshcoreChannelMsg && typeof message.text === 'string') {
     parsedMeshcorePrefix = parseMeshcoreSenderPrefix(message.text);
     if (parsedMeshcorePrefix && !message.node) {
-      meshcoreSenderNode = findNodeByLongName(parsedMeshcorePrefix.senderName, nodesById);
+      // Resolve the sender only among same-protocol nodes; when none matches,
+      // synthesise a protocol-stamped stand-in rather than borrowing a
+      // same-named node from another protocol (issue: honor protocol in chat).
+      meshcoreSenderNode =
+        findNodeByLongName(parsedMeshcorePrefix.senderName, nodesById, protocol) ??
+        buildSyntheticChatNode(parsedMeshcorePrefix.senderName, protocol);
     }
   }
 
@@ -189,20 +197,15 @@ export function renderChatEntryContent({
   if (!replyPrefix && isMeshcore && effectiveBodyText) {
     const leading = extractLeadingMentionAsReply(effectiveBodyText);
     if (leading) {
-      const replyNode = findNodeByLongName(leading.mentionName, nodesById);
-      let badgeHtml = '';
-      if (replyNode) {
-        badgeHtml = renderNodeBadge(renderShortHtml, replyNode);
-      }
-      // Graceful degradation: when the registry doesn't contain the
-      // mention target (common on large deployments where ``/api/nodes``
-      // caps at 1000 entries by recency), still surface the leading
-      // mention as a reply prefix using the raw name.  Without this
-      // fallback the body would render as bare ``@[Name] body...`` which
-      // looks like an unresolved mention link to the user.
-      if (typeof badgeHtml !== 'string' || badgeHtml.length === 0) {
-        badgeHtml = `<span class="short-name">${escapeHtml(leading.mentionName)}</span>`;
-      }
+      // Resolve the quoted node among same-protocol nodes only.  When none
+      // matches — whether because the registry lacks it (``/api/nodes`` caps by
+      // recency) or only a different-protocol node shares the name — synthesise
+      // a protocol-stamped stand-in so the reply badge is always rendered with
+      // the correct protocol and never quotes a node from another protocol.
+      const replyNode =
+        findNodeByLongName(leading.mentionName, nodesById, protocol) ??
+        buildSyntheticChatNode(leading.mentionName, protocol);
+      const badgeHtml = renderNodeBadge(renderShortHtml, replyNode);
       meshcoreReplyPrefix = formatReplyPrefixHtml('in reply to', badgeHtml, escapeHtml);
       effectiveBodyText = leading.remainingText ?? '';
     }
@@ -213,11 +216,13 @@ export function renderChatEntryContent({
   // ------------------------------------------------------------------
   const renderMentionHtml = isMeshcore
     ? (mentionedName) => {
-        const mentionNode = findNodeByLongName(mentionedName, nodesById);
-        if (mentionNode) {
-          return renderNodeBadge(renderShortHtml, mentionNode);
-        }
-        return `@[${escapeHtml(mentionedName)}]`;
+        // Same-protocol resolution with a protocol-stamped synthetic fallback,
+        // so an unresolved mention renders a MeshCore badge instead of either a
+        // bare ``@[Name]`` literal or a same-named Meshtastic node.
+        const mentionNode =
+          findNodeByLongName(mentionedName, nodesById, protocol) ??
+          buildSyntheticChatNode(mentionedName, protocol);
+        return renderNodeBadge(renderShortHtml, mentionNode);
       }
     : null;
 
