@@ -155,14 +155,30 @@ module PotatoMesh
       # @param n [Hash] node payload extracted from the ingestor.
       # @param protocol [String] protocol identifier (default +meshtastic+).
       # @return [void]
+      # Read +hash[primary]+, falling back to the first present alias key. Lets the
+      # node ingest contract accept snake_case fields in addition to the Meshtastic
+      # camelCase the collector emits today; nil-aware so a boolean +false+ from the
+      # primary key is never discarded in favour of an alias.
+      #
+      # @param hash [Object] candidate mapping (ignored unless a Hash).
+      # @param primary [String] preferred key.
+      # @param aliases [Array<String>] fallback keys, tried in order.
+      # @return [Object, nil] first non-nil value, or nil.
+      def pick_alias(hash, primary, *aliases)
+        return nil unless hash.is_a?(Hash)
+        return hash[primary] unless hash[primary].nil?
+        aliases.each { |key| return hash[key] unless hash[key].nil? }
+        nil
+      end
+
       def upsert_node(db, node_id, n, protocol: "meshtastic")
         user = n["user"] || {}
-        met = n["deviceMetrics"] || {}
+        met = pick_alias(n, "deviceMetrics", "device_metrics") || {}
         pos = n["position"] || {}
         # nil when user info absent; COALESCE in the conflict clause preserves
         # the stored role rather than overwriting with a default.
         role = user["role"]
-        lh = coerce_integer(n["lastHeard"])
+        lh = coerce_integer(pick_alias(n, "lastHeard", "last_heard"))
         now = Time.now.to_i
         # Issue #782: drop Meshtastic "no GPS lock" sentinels at the write
         # boundary so neither the nodes row nor downstream readers ever see
@@ -187,7 +203,7 @@ module PotatoMesh
           loc_source = nil
         else
           alt = pos["altitude"]
-          loc_source = pos["locationSource"]
+          loc_source = pick_alias(pos, "locationSource", "location_source")
         end
         node_num = resolve_node_num(node_id, n)
 
@@ -202,7 +218,7 @@ module PotatoMesh
         # Synthetic flag: true for placeholder nodes created from channel message
         # sender names before the real contact advertisement is received.
         synthetic = user["synthetic"] ? 1 : 0
-        long_name = user["longName"]
+        long_name = pick_alias(user, "longName", "long_name")
 
         # If the incoming long name is a generic placeholder, prefer any real
         # name already on record so we never stomp known data with fallback
@@ -224,23 +240,23 @@ module PotatoMesh
         row = [
           node_id,
           node_num,
-          user["shortName"],
+          pick_alias(user, "shortName", "short_name"),
           long_name,
           user["macaddr"],
-          user["hwModel"] || n["hwModel"],
+          pick_alias(user, "hwModel", "hw_model") || pick_alias(n, "hwModel", "hw_model"),
           role,
-          user["publicKey"],
-          coerce_bool(user["isUnmessagable"]),
-          coerce_bool(n["isFavorite"]),
-          n["hopsAway"],
+          pick_alias(user, "publicKey", "public_key"),
+          coerce_bool(pick_alias(user, "isUnmessagable", "is_unmessagable")),
+          coerce_bool(pick_alias(n, "isFavorite", "is_favorite")),
+          pick_alias(n, "hopsAway", "hops_away"),
           n["snr"],
           lh,
           lh,
-          met["batteryLevel"],
+          pick_alias(met, "batteryLevel", "battery_level"),
           met["voltage"],
-          met["channelUtilization"],
-          met["airUtilTx"],
-          met["uptimeSeconds"],
+          pick_alias(met, "channelUtilization", "channel_utilization"),
+          pick_alias(met, "airUtilTx", "air_util_tx"),
+          pick_alias(met, "uptimeSeconds", "uptime_seconds"),
           pt,
           loc_source,
           coerce_integer(

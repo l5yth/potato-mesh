@@ -33,7 +33,13 @@ Payload is a mapping keyed by canonical node id, with optional top-level `”ing
 
 Protocol resolution per-row honours, in order: (1) an explicit per-node `”protocol”` field inside the node entry; (2) the wrapper-level top-level `”protocol”` key; (3) the registered ingestor's protocol (see `POST /api/ingestors`); (4) `”meshtastic”` as the final default. Valid values are `”meshtastic”` and `”meshcore”` — values outside this set fall through to the next source. The wrapper stamp is what the Python ingestor emits unconditionally so the web app classifies records correctly even before the ingestor heartbeat is processed (closes the startup race that misclassified MeshCore placeholders as Meshtastic).
 
-Node entry fields are “Meshtastic-ish” (camelCase) and may include:
+Node entry fields are “Meshtastic-ish” (camelCase) and may include the following.
+**As of 0.7.0 each field is additionally accepted in snake_case** (e.g.
+`last_heard`, `user.short_name`, `user.hw_model`, `device_metrics.battery_level`,
+`position.location_source`) so the node ingest contract is no longer
+Meshtastic-camelCase-only; the existing collector keeps emitting camelCase, which
+remains accepted. Per-field acceptance is nil-aware, so a camelCase value of
+`false` is never overridden by a snake_case alias. Fields:
 
 - `num` (int node number)
 - `lastHeard` (int unix seconds)
@@ -54,7 +60,7 @@ Node entry fields are “Meshtastic-ish” (camelCase) and may include:
 
 The web application applies the same normalisation as a safety net so legacy ingestors and replayed payloads cannot reintroduce the sentinels, but new ingestors should strip them at the source so the cross-network contract stays clean.
 
-**Wire-format note for federation peers (issue #782).** GET responses (`/api/nodes`, `/api/positions`) compact sentinel rows by **omitting** the `position_time` and `pos_time_iso` / `position_time_iso` keys rather than emitting them as `0` or `"1970-01-01T00:00:00Z"`. Federation peers consuming this API and any third-party clients SHOULD treat an *absent* `position_time` as "no GPS lock recorded" and not synthesise a zero or epoch value when re-serialising. Older peers that key on `position_time == 0` may need a small adjustment.
+**Wire-format note for federation peers (issue #782).** Position time is exposed **only** as `position_time` (unix seconds) on GET responses (`/api/nodes`, `/api/positions`); the redundant ISO twin (`pos_time_iso` on `/api/nodes`, `position_time_iso` on `/api/positions`) was **removed in 0.7.0** — clients format `position_time` themselves. Sentinel rows are compacted by **omitting** `position_time` rather than emitting `0` or `"1970-01-01T00:00:00Z"`. Federation peers consuming this API and any third-party clients SHOULD treat an *absent* `position_time` as "no GPS lock recorded" and not synthesise a zero or epoch value when re-serialising. Older peers that key on `position_time == 0` may need a small adjustment.
 
 #### `POST /api/messages`
 
@@ -162,6 +168,8 @@ Heartbeat payload:
 - Optional: `protocol` (string; e.g. `"meshtastic"`, `"meshcore"`) — declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent
 
 **Protocol propagation**: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field inherit its `protocol` value at write time when no explicit per-record `protocol` stamp is present. Per-record stamps take precedence — the ingestor heartbeat default only kicks in when the per-record field is absent or malformed.
+
+**POST response & validation (0.7.0).** Every `POST /api/*` ingest route returns `201 Created` with `{"status":"ok"}` on success (`POST /api/instances` returns `{"status":"registered"}`). A batch route (`messages` / `positions` / `telemetry` / `neighbors` / `traces`) accepts either a single record object or an array of them; any other top-level JSON type is rejected with `400 {"error":"invalid payload"}`, matching the `/api/nodes` and `/api/ingestors` object check. Clients should treat any `2xx` as success.
 
 ### GET endpoint filtering
 

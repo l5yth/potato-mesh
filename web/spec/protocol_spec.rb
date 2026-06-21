@@ -98,7 +98,7 @@ RSpec.describe "Multi-protocol support" do
     it "stores protocol when provided" do
       register_ingestor(MESHCORE_INGESTOR_ID, protocol: "meshcore")
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
       with_db(readonly: true) do |db|
         row = db.get_first_row(SELECT_INGESTOR_PROTOCOL_SQL, [MESHCORE_INGESTOR_ID])
         expect(row["protocol"]).to eq("meshcore")
@@ -108,7 +108,7 @@ RSpec.describe "Multi-protocol support" do
     it "defaults protocol to meshtastic when field is absent" do
       register_ingestor("!aabbccdd")
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
       with_db(readonly: true) do |db|
         row = db.get_first_row(SELECT_INGESTOR_PROTOCOL_SQL, ["!aabbccdd"])
         expect(row["protocol"]).to eq("meshtastic")
@@ -140,7 +140,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: MESHCORE_INGESTOR_ID,
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [42])
@@ -159,7 +159,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: MESHCORE_INGESTOR_ID,
       }
       post "/api/positions", [pos].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM positions WHERE id = ?", [100])
@@ -177,7 +177,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: MESHCORE_INGESTOR_ID,
       }
       post "/api/telemetry", [tel].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM telemetry WHERE id = ?", [200])
@@ -196,7 +196,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: MESHCORE_INGESTOR_ID,
       }
       post "/api/traces", [trace].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM traces WHERE id = ?", [300])
@@ -214,7 +214,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: MESHCORE_INGESTOR_ID,
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT long_name FROM nodes WHERE node_id = ?", ["!11223300"])
@@ -231,7 +231,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: MESHCORE_INGESTOR_ID,
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       # Meshtastic ingestor posts same ID — should be ignored
       meshtastic_msg = {
@@ -241,7 +241,7 @@ RSpec.describe "Multi-protocol support" do
         text: "meshtastic impostor",
       }
       post "/api/messages", [meshtastic_msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT text, protocol FROM messages WHERE id = ?", [500])
@@ -270,7 +270,7 @@ RSpec.describe "Multi-protocol support" do
         text: "meshtastic fallback attempt",
       }
       post "/api/messages", [meshtastic_msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT text, protocol FROM messages WHERE id = ?", [501])
@@ -295,7 +295,7 @@ RSpec.describe "Multi-protocol support" do
         "ingestor" => MESHCORE_INGESTOR_ID,
       }
       post "/api/nodes", payload.to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM nodes WHERE node_id = ?", [ALT_NODE_ID])
@@ -313,7 +313,7 @@ RSpec.describe "Multi-protocol support" do
 
       payload = { ALT_NODE_ID2 => { "num" => 0xccddee00, "lastHeard" => now - 10 } }
       post "/api/nodes", payload.to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM nodes WHERE node_id = ?", [ALT_NODE_ID2])
@@ -329,7 +329,7 @@ RSpec.describe "Multi-protocol support" do
       nodes["ingestor"] = MESHCORE_INGESTOR_ID
       post "/api/nodes", nodes.to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
     end
 
     it "does not count the wrapper-level protocol key against the node batch limit" do
@@ -342,7 +342,7 @@ RSpec.describe "Multi-protocol support" do
       nodes["protocol"] = "meshcore"
       post "/api/nodes", nodes.to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
     end
   end
 
@@ -506,7 +506,7 @@ RSpec.describe "Multi-protocol support" do
         text: "legacy message",
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [999])
@@ -544,7 +544,7 @@ RSpec.describe "Multi-protocol support" do
         protocol: "meshcore",
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         message_row = db.get_first_row(
@@ -572,7 +572,7 @@ RSpec.describe "Multi-protocol support" do
         "protocol" => "meshcore",
       }
       post "/api/nodes", payload.to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM nodes WHERE node_id = ?", ["!11aabbcc"])
@@ -591,7 +591,7 @@ RSpec.describe "Multi-protocol support" do
         "protocol" => "meshtastic",
       }
       post "/api/nodes", payload.to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM nodes WHERE node_id = ?", ["!22aabbcc"])
@@ -610,7 +610,7 @@ RSpec.describe "Multi-protocol support" do
         protocol: "reticulum",
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [6002])
@@ -627,7 +627,7 @@ RSpec.describe "Multi-protocol support" do
         ingestor: "!unregistered000",
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [6003])
@@ -645,7 +645,7 @@ RSpec.describe "Multi-protocol support" do
         protocol: "  MeshCore  ",
       }
       post "/api/messages", [msg].to_json, auth_headers
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         row = db.get_first_row("SELECT protocol FROM messages WHERE id = ?", [6004])

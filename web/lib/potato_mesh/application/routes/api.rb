@@ -56,21 +56,21 @@ module PotatoMesh
             payload = {
               name: sanitized_site_name,
               version: app_constant(:APP_VERSION),
-              lastNodeUpdate: last_update,
+              last_node_update: last_update,
               config: {
-                siteName: sanitized_site_name,
+                site_name: sanitized_site_name,
                 channel: sanitized_channel,
                 frequency: sanitized_frequency,
-                contactLink: sanitized_contact_link,
-                contactLinkUrl: sanitized_contact_link_url,
-                refreshIntervalSeconds: PotatoMesh::Config.refresh_interval_seconds,
-                mapCenter: {
+                contact_link: sanitized_contact_link,
+                contact_link_url: sanitized_contact_link_url,
+                refresh_interval_seconds: PotatoMesh::Config.refresh_interval_seconds,
+                map_center: {
                   lat: PotatoMesh::Config.map_center_lat,
                   lon: PotatoMesh::Config.map_center_lon,
                 },
-                maxDistanceKm: PotatoMesh::Config.max_distance_km,
-                instanceDomain: app_constant(:INSTANCE_DOMAIN),
-                privateMode: private_mode?,
+                max_distance_km: PotatoMesh::Config.max_distance_km,
+                instance_domain: app_constant(:INSTANCE_DOMAIN),
+                private_mode: private_mode?,
               },
             }
             payload.to_json

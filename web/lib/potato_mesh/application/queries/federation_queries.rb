@@ -67,7 +67,7 @@ module PotatoMesh
 
           position_time = coerce_positive_or_nil(r["position_time"], ceiling: now)
           r["position_time"] = position_time
-          r["position_time_iso"] = Time.at(position_time).utc.iso8601 if position_time
+          # I2: only position_time (unix int) is emitted; no ISO twin.
 
           r["precision_bits"] = coerce_integer(r["precision_bits"])
           r["sats_in_view"] = coerce_integer(r["sats_in_view"])

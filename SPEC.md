@@ -245,3 +245,26 @@ degrade gracefully to their existing node-list fallback). Integrates with
 | **S5** | **Privacy: messages zeroed in private mode** (Invariant II). When `private_mode?`, every `messages` count (in `total` and all protocol scopes) is **0**, mirroring the `PRIVATE=1` message-API 404 (A2a) so stats never leak message volume that privacy hides. Node counts keep the `CLIENT_HIDDEN` exclusion; **all** metrics honor the node opt-out marker via the per-table opt-out filter (`opt_out_self_filter` for `nodes`; `opt_out_node_id_filter` / `opt_out_node_num_filter` for the message and telemetry-umbrella tables, matching the existing list endpoints). Telemetry/positions/neighbors/traces are not gated by `PRIVATE`, so those counts remain reported. | interview |
 | **S6** | **`reticulum` is a forward-looking zero stub.** A `reticulum` scope is always emitted with all-zero counts and an in-code `# stub` comment, so the shape extends to future protocols without another break. It adds **no** ingest path (Invariant I), privileges no protocol (Invariant IV), and does **not** enter `KNOWN_PROTOCOLS` (which still gates the `?protocol=` query param at `meshcore` + `meshtastic`). | interview |
 | **S7** | **One-way federation compatibility (new reads old).** Federation consumers (`crawl.rb`) try the new shape first (`total.nodes[window]`, `meshcore.nodes.day`, `meshtastic.nodes.day`) then fall back to the old shape (`active_nodes[window]`, `meshcore.day`, `meshtastic.day`), then to the existing node-list fallback. Detection is **structural** (key presence/shape) — no in-band version field. New instances read both old and new peers; old instances reading a new peer degrade gracefully (the accepted one-way limit). | interview |
+
+---
+
+## Bugfix: API casing consistency
+
+Removes two casing inconsistencies on the HTTP API, shipped within the same
+versioned 0.7.0 break. Background: every read collection (`/api/nodes`,
+`/api/messages`, `/api/positions`, …) and `/api/stats` already emit snake_case;
+the lone camelCase **read response** was `/version`, and `POST /api/nodes` was the
+lone camelCase **ingest input** (Meshtastic-shaped). PotatoMesh is multi-protocol
+and no longer bound to the Meshtastic JSON convention, so the contract is amended
+to standardise on snake_case while preserving compatibility where it is load-bearing.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **BF1** | **`/version` response is snake_case.** Top-level `last_node_update` and the `config` block (`site_name`, `map_center` {`lat`,`lon`}, `private_mode`, `instance_domain`, `contact_link`, `contact_link_url`, `max_distance_km`, `refresh_interval_seconds`) replace the prior camelCase keys. A versioned breaking change (0.7.0); consumers are the Flutter app and external clients. | interview |
+| **BF2** | **`POST /api/nodes` additionally accepts snake_case** node fields (`last_heard`, `user.short_name`/`long_name`/`hw_model`, `device_metrics.battery_level`, `position.location_source`, …) via a **nil-aware** `pick_alias` (a `false` camelCase value is never overridden by a snake_case alias). **Additive** — the Python ingestor's camelCase output keeps working, so no ingestor change is required. | interview |
+| **BF3** | **The signed federation wire is unchanged** (Invariant III). `/.well-known/potato-mesh` and `/api/instances` keep their camelCase keys (`isPrivate`, `lastUpdateTime`, `nodesCount`, …) because those keys are inside the instance **signature** (`federation/signature.rb`); renaming them would break cross-version signature verification bilaterally. | code |
+| **BF4** | **Out of scope (deferred).** The Flutter app's `/version` reader (`app/lib/main.dart`) and the server→frontend `data-app-config` DOM channel (`frontend_app_config`) keep camelCase for now and are tracked as separate follow-ups; the frontend dashboard is unaffected (it reads `data-app-config`, not `/version`). | interview |
+| **BF5** | **`POST /api/instances` accepts snake_case aliases** for its optional fields (`contact_link`, `nodes_count`, `meshcore_nodes_count`, `meshtastic_nodes_count`) in addition to camelCase (third-party / cross-version compat); `id`/`lastUpdateTime`/`isPrivate` were already dual-keyed. The signed canonical payload (camelCase) is unchanged. (I6) | interview |
+| **BF6** | **Position time is exposed only as `position_time`** (unix int) on GET responses; the redundant ISO twin (`pos_time_iso` on `/api/nodes`, `position_time_iso` on `/api/positions`) is removed — clients format it themselves. (I2) | interview |
+| **BF7** | **All `POST /api/*` ingest routes return `201 Created`** (was `200`), matching `/api/instances`. The Python ingestor accepts any 2xx (`queue.py` urlopen); the matrix bridge is GET-only. (I3) | interview |
+| **BF8** | **List POST routes validate the top-level payload.** `/api/messages`, `/positions`, `/telemetry`, `/neighbors`, `/traces` reject a non-Array/non-Hash body with `400 {"error":"invalid payload"}`, matching `/api/nodes` strictness. (I5) | interview |

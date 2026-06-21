@@ -53,6 +53,7 @@ module PotatoMesh
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
             PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -66,6 +67,9 @@ module PotatoMesh
             rescue JSON::ParserError
               halt 400, { error: "invalid JSON" }.to_json
             end
+            unless data.is_a?(Array) || data.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
             messages = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many messages" }.to_json if messages.size > 1000
             db = open_database
@@ -74,6 +78,7 @@ module PotatoMesh
               insert_message(db, msg, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:stats:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -94,6 +99,7 @@ module PotatoMesh
             stored = upsert_ingestor(db, payload)
             halt 400, { error: "invalid payload" }.to_json unless stored
             PotatoMesh::App::ApiCache.invalidate_prefix("api:ingestors:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -147,10 +153,13 @@ module PotatoMesh
             raw_private = payload.key?("isPrivate") ? payload["isPrivate"] : payload["is_private"]
             is_private = coerce_boolean(raw_private)
             signature = string_or_nil(payload["signature"])
-            contact_link = string_or_nil(payload["contactLink"])
-            nodes_count = coerce_integer(payload["nodesCount"])
-            meshcore_nodes_count = coerce_integer(payload["meshcoreNodesCount"])
-            meshtastic_nodes_count = coerce_integer(payload["meshtasticNodesCount"])
+            # Accept either casing for third-party / cross-version compatibility
+            # (the existing camelCase keys plus their snake_case aliases).  +id+,
+            # +lastUpdateTime+, and +isPrivate+ are already dual-keyed above.
+            contact_link = string_or_nil(payload["contactLink"] || payload["contact_link"])
+            nodes_count = coerce_integer(payload["nodesCount"] || payload["nodes_count"])
+            meshcore_nodes_count = coerce_integer(payload["meshcoreNodesCount"] || payload["meshcore_nodes_count"])
+            meshtastic_nodes_count = coerce_integer(payload["meshtasticNodesCount"] || payload["meshtastic_nodes_count"])
 
             attributes = {
               id: id,
@@ -352,6 +361,9 @@ module PotatoMesh
             rescue JSON::ParserError
               halt 400, { error: "invalid JSON" }.to_json
             end
+            unless data.is_a?(Array) || data.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
             positions = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many positions" }.to_json if positions.size > 1000
             db = open_database
@@ -360,6 +372,7 @@ module PotatoMesh
               insert_position(db, pos, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:positions:", "api:nodes:", "api:stats:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -373,6 +386,9 @@ module PotatoMesh
             rescue JSON::ParserError
               halt 400, { error: "invalid JSON" }.to_json
             end
+            unless data.is_a?(Array) || data.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
             neighbor_payloads = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many neighbor packets" }.to_json if neighbor_payloads.size > 1000
             db = open_database
@@ -381,6 +397,7 @@ module PotatoMesh
               insert_neighbors(db, packet, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:neighbors:", "api:stats:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -394,6 +411,9 @@ module PotatoMesh
             rescue JSON::ParserError
               halt 400, { error: "invalid JSON" }.to_json
             end
+            unless data.is_a?(Array) || data.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
             telemetry_packets = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many telemetry packets" }.to_json if telemetry_packets.size > 1000
             db = open_database
@@ -402,6 +422,7 @@ module PotatoMesh
               insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:stats:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
@@ -415,6 +436,9 @@ module PotatoMesh
             rescue JSON::ParserError
               halt 400, { error: "invalid JSON" }.to_json
             end
+            unless data.is_a?(Array) || data.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
             trace_packets = data.is_a?(Array) ? data : [data]
             halt 400, { error: "too many traces" }.to_json if trace_packets.size > 1000
             db = open_database
@@ -423,6 +447,7 @@ module PotatoMesh
               insert_trace(db, packet, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:traces:", "api:stats:")
+            status 201
             { status: "ok" }.to_json
           ensure
             db&.close
