@@ -111,12 +111,12 @@ test('computeLocalActiveNodeStats bins unknown protocols into meshtastic bucket'
 });
 
 // ---------------------------------------------------------------------------
-// normaliseActiveNodeStatsPayload
+// normaliseActiveNodeStatsPayload (0.7.0 scope → metric → window shape)
 // ---------------------------------------------------------------------------
 
 test('normaliseActiveNodeStatsPayload validates and normalises API payload', () => {
   const result = normaliseActiveNodeStatsPayload({
-    active_nodes: { hour: '11', day: 22, week: 33, month: 44 },
+    total: { nodes: { hour: '11', day: 22, week: 33, month: 44 } },
     sampled: false,
   });
   assert.equal(result.hour, 11);
@@ -128,9 +128,9 @@ test('normaliseActiveNodeStatsPayload validates and normalises API payload', () 
 
 test('normaliseActiveNodeStatsPayload includes per-protocol buckets when present', () => {
   const result = normaliseActiveNodeStatsPayload({
-    active_nodes: { hour: 10, day: 20, week: 30, month: 40 },
-    meshcore: { hour: 3, day: 8, week: 12, month: 15 },
-    meshtastic: { hour: 7, day: 12, week: 18, month: 25 },
+    total: { nodes: { hour: 10, day: 20, week: 30, month: 40 } },
+    meshcore: { nodes: { hour: 3, day: 8, week: 12, month: 15 } },
+    meshtastic: { nodes: { hour: 7, day: 12, week: 18, month: 25 } },
     sampled: false,
   });
   assert.deepEqual(result.meshcore, { hour: 3, day: 8, week: 12, month: 15 });
@@ -139,7 +139,7 @@ test('normaliseActiveNodeStatsPayload includes per-protocol buckets when present
 
 test('normaliseActiveNodeStatsPayload omits per-protocol buckets when absent', () => {
   const result = normaliseActiveNodeStatsPayload({
-    active_nodes: { hour: 1, day: 2, week: 3, month: 4 },
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 } },
     sampled: false,
   });
   assert.equal(result.meshcore, undefined);
@@ -148,9 +148,9 @@ test('normaliseActiveNodeStatsPayload omits per-protocol buckets when absent', (
 
 test('normaliseActiveNodeStatsPayload ignores malformed per-protocol buckets', () => {
   const result = normaliseActiveNodeStatsPayload({
-    active_nodes: { hour: 1, day: 2, week: 3, month: 4 },
-    meshcore: { hour: 'bad', day: 1, week: 1, month: 1 },
-    meshtastic: 'not-an-object',
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 } },
+    meshcore: { nodes: { hour: 'bad', day: 1, week: 1, month: 1 } },
+    meshtastic: { nodes: 'not-an-object' },
     sampled: false,
   });
   assert.equal(result.hour, 1);
@@ -158,14 +158,15 @@ test('normaliseActiveNodeStatsPayload ignores malformed per-protocol buckets', (
   assert.equal(result.meshtastic, undefined);
 });
 
-test('normaliseActiveNodeStatsPayload returns null for missing active_nodes', () => {
+test('normaliseActiveNodeStatsPayload returns null for missing total.nodes', () => {
   assert.equal(normaliseActiveNodeStatsPayload({}), null);
-  assert.equal(normaliseActiveNodeStatsPayload({ active_nodes: null }), null);
+  assert.equal(normaliseActiveNodeStatsPayload({ total: null }), null);
+  assert.equal(normaliseActiveNodeStatsPayload({ total: { nodes: null } }), null);
 });
 
 test('normaliseActiveNodeStatsPayload returns null when any stat is non-numeric', () => {
   assert.equal(
-    normaliseActiveNodeStatsPayload({ active_nodes: { hour: 'x', day: 1, week: 1, month: 1 } }),
+    normaliseActiveNodeStatsPayload({ total: { nodes: { hour: 'x', day: 1, week: 1, month: 1 } } }),
     null
   );
 });
@@ -173,7 +174,7 @@ test('normaliseActiveNodeStatsPayload returns null when any stat is non-numeric'
 test('normaliseActiveNodeStatsPayload clamps negatives and truncates floats', () => {
   assert.deepEqual(
     normaliseActiveNodeStatsPayload({
-      active_nodes: { hour: -1.9, day: 2.8, week: 3.1, month: 4.9 },
+      total: { nodes: { hour: -1.9, day: 2.8, week: 3.1, month: 4.9 } },
       sampled: 1,
     }),
     { hour: 0, day: 2, week: 3, month: 4, sampled: true }
@@ -196,7 +197,7 @@ test('fetchActiveNodeStats returns remote stats when /api/stats succeeds', async
     return {
       ok: true,
       async json() {
-        return { active_nodes: { hour: 5, day: 15, week: 25, month: 35 }, sampled: false };
+        return { total: { nodes: { hour: 5, day: 15, week: 25, month: 35 } }, sampled: false };
       },
     };
   };
@@ -242,7 +243,7 @@ test('fetchActiveNodeStats falls back to local counts on invalid payload', async
     nowSeconds: NOW,
     fetchImpl: async () => ({
       ok: true,
-      async json() { return { active_nodes: { hour: 'bad' } }; },
+      async json() { return { total: { nodes: { hour: 'bad' } } }; },
     }),
   });
   assert.equal(stats.sampled, true);
@@ -256,7 +257,7 @@ test('fetchActiveNodeStats reuses cached result for repeated calls with same fet
     calls.push(url);
     return {
       ok: true,
-      async json() { return { active_nodes: { hour: 1, day: 2, week: 3, month: 4 }, sampled: false }; },
+      async json() { return { total: { nodes: { hour: 1, day: 2, week: 3, month: 4 } }, sampled: false }; },
     };
   };
 
@@ -287,7 +288,7 @@ test('fetchActiveNodeStats concurrent calls share a single in-flight request', a
   // Now let the response settle.
   resolveResponse({
     ok: true,
-    async json() { return { active_nodes: { hour: 9, day: 9, week: 9, month: 9 }, sampled: false }; },
+    async json() { return { total: { nodes: { hour: 9, day: 9, week: 9, month: 9 } }, sampled: false }; },
   });
   const [r1, r2] = await Promise.all([p1, p2]);
   assert.deepEqual(r1, r2, 'concurrent requests should receive the same result');
@@ -302,11 +303,11 @@ test('formatActiveNodeStatsText emits compact day/week/month string', () => {
     formatActiveNodeStatsText({
       stats: { day: 2, week: 3, month: 4, sampled: false },
     }),
-    '2/day \u00b7 3/week \u00b7 4/month'
+    '2/day · 3/week · 4/month'
   );
 });
 
 test('formatActiveNodeStatsText handles missing or null stats gracefully', () => {
   const text = formatActiveNodeStatsText({ stats: null });
-  assert.equal(text, '0/day \u00b7 0/week \u00b7 0/month', 'defaults to zero counts for null stats');
+  assert.equal(text, '0/day · 0/week · 0/month', 'defaults to zero counts for null stats');
 });

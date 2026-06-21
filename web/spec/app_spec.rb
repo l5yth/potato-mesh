@@ -6319,24 +6319,94 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
       expect(payload["sampled"]).to eq(false)
-      expect(payload["active_nodes"]).to include(
+      expect(payload["total"]["nodes"]).to include(
         "hour" => 1005,
         "day" => 1005,
         "week" => 1006,
         "month" => 1007,
       )
-      expect(payload["meshcore"]).to include(
+      expect(payload["meshcore"]["nodes"]).to include(
         "hour" => 5,
         "day" => 5,
         "week" => 5,
         "month" => 5,
       )
-      expect(payload["meshtastic"]).to include(
+      expect(payload["meshtastic"]["nodes"]).to include(
         "hour" => 1000,
         "day" => 1000,
         "week" => 1001,
         "month" => 1002,
       )
+      # The pre-0.7.0 flat key is gone (breaking change).
+      expect(payload).not_to have_key("active_nodes")
+      # reticulum is an always-zero forward-looking stub.
+      expect(payload["reticulum"]["nodes"].values).to all(eq(0))
+      expect(payload["reticulum"]["messages"].values).to all(eq(0))
+      expect(payload["reticulum"]["telemetry"].values).to all(eq(0))
+    end
+
+    it "counts messages and the telemetry umbrella with per-protocol breakdowns" do
+      clear_database
+      now = reference_time.to_i
+      allow(Time).to receive(:now).and_return(reference_time)
+      rx_iso = reference_time.utc.iso8601
+
+      with_db do |db|
+        # Seed the nodes the neighbor row references (neighbors has FK → nodes,
+        # and app_spec enables PRAGMA foreign_keys = ON).
+        db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!bbbb0001", 0xBBBB0001, now, now, "CLIENT"])
+        db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!cccc0001", 0xCCCC0001, now, now, "CLIENT"])
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text, protocol) VALUES (?,?,?,?,?,?,?,?)",
+          [1, now, rx_iso, "!aaaa0001", "!ffffffff", 0, "mc hi", "meshcore"],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text, protocol) VALUES (?,?,?,?,?,?,?,?)",
+          [2, now, rx_iso, "!bbbb0001", "!ffffffff", 0, "mt hi", "meshtastic"],
+        )
+        # Telemetry umbrella: one row in each contributing table (meshtastic default).
+        db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!bbbb0001"])
+        db.execute("INSERT INTO telemetry(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!bbbb0001"])
+        db.execute("INSERT INTO neighbors(node_id, neighbor_id, rx_time) VALUES (?,?,?)", ["!bbbb0001", "!cccc0001", now])
+        db.execute("INSERT INTO traces(id, rx_time, rx_iso, src, dest) VALUES (?,?,?,?,?)", [1, now, rx_iso, 1, 2])
+      end
+
+      get "/api/stats"
+      payload = JSON.parse(last_response.body)
+
+      expect(payload["total"]["messages"]["hour"]).to eq(2)
+      expect(payload["meshcore"]["messages"]["hour"]).to eq(1)
+      expect(payload["meshtastic"]["messages"]["hour"]).to eq(1)
+      # positions + telemetry + neighbors + traces, all meshtastic-default → 4.
+      expect(payload["total"]["telemetry"]["hour"]).to eq(4)
+      expect(payload["meshtastic"]["telemetry"]["hour"]).to eq(4)
+    end
+
+    it "zeroes message counts but keeps node counts in private mode" do
+      ENV["PRIVATE"] = "1"
+      clear_database
+      now = reference_time.to_i
+      allow(Time).to receive(:now).and_return(reference_time)
+      rx_iso = reference_time.utc.iso8601
+
+      with_db do |db|
+        db.execute(
+          INSERT_NODE_WITH_METADATA_SQL,
+          ["!node0001", 1, "n", "Node", "TBEAM", "CLIENT", now, now],
+        )
+        db.execute(
+          "INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES (?,?,?,?,?,?,?)",
+          [1, now, rx_iso, "!node0001", "!ffffffff", 0, "secret"],
+        )
+      end
+
+      get "/api/stats"
+      payload = JSON.parse(last_response.body)
+
+      # PRIVATE=1 forces every message count to zero (SPEC S5 / Invariant II)...
+      expect(payload["total"]["messages"].values).to all(eq(0))
+      # ...while node counts remain visible.
+      expect(payload["total"]["nodes"]["hour"]).to eq(1)
     end
   end
 

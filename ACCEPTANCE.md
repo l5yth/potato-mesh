@@ -43,9 +43,9 @@ then `kill` it afterward. Examples:
 
 ```bash
 # Privacy checks (Layer A2): private mode, federation off
-( cd web && API_TOKEN=acctest PRIVATE=1  FEDERATION=0 bundle exec rackup -p 41447 ) &  SRV=$!
+( cd web && API_TOKEN=acctest PRIVATE=1  FEDERATION=0 bundle exec ruby app.rb ) &  SRV=$!
 # Auth / contract checks (Layer C): public mode, known token
-( cd web && API_TOKEN=acctest PRIVATE=0  FEDERATION=0 bundle exec rackup -p 41447 ) &  SRV=$!
+( cd web && API_TOKEN=acctest PRIVATE=0  FEDERATION=0 bundle exec ruby app.rb ) &  SRV=$!
 # ... run curl checks ...
 kill "$SRV"
 ```
@@ -456,3 +456,119 @@ default-active tab stays the primary. Detection is by channel name, so a MeshCor
 remain green: **A4c** (chat name resolution honors protocol — same render path)
 and **B1** (all suites). The existing two-tier ordering assertions in
 `chat-log-tabs.test.js` are **updated** to the three-tier order, not removed.
+
+---
+
+## Feature: /api/stats activity counts (messages & telemetry)
+
+Maps to SPEC decisions **S1–S7**. The counts are produced by
+`query_active_node_stats` (`web/lib/potato_mesh/application/queries/node_queries.rb`),
+serialized by the `GET /api/stats` route (`application/routes/api.rb`), and
+consumed for federation by `application/federation/crawl.rb`. Unless a check says
+otherwise, start the server in **public** mode
+(`API_TOKEN=acctest PRIVATE=0 FEDERATION=0 bundle exec ruby app.rb`).
+
+### S-A1 — Breaking, versioned response shape (scope × metric tree) — S1, S2, S3
+```bash
+curl -s http://127.0.0.1:41447/api/stats \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); \
+SC=("total","meshcore","meshtastic","reticulum"); ME=("nodes","messages","telemetry"); WI=("hour","day","week","month"); \
+print(all(isinstance(d[s][m][w],int) for s in SC for m in ME for w in WI) and d["sampled"] is False and "active_nodes" not in d)'
+git grep -nA2 'def version_fallback' -- web/lib/potato_mesh/config.rb
+. .venv/bin/activate && pytest -q tests/test_version_sync.py
+```
+**Expected:** the Python check prints `True` — the payload is the tree
+`{ total, meshcore, meshtastic, reticulum }`, each scope carrying
+`{ nodes, messages, telemetry }`, each metric carrying integer
+`{ hour, day, week, month }`, with `sampled` still present and `false`. The old
+flat keys (`active_nodes`, integer-valued `meshcore`/`meshtastic`) are **gone** —
+this is the intended, versioned break. `version_fallback` returns `"0.7.0"`, and
+`test_version_sync.py` **passes** — the bump is applied in lockstep across all
+five language manifests (`data.VERSION`, `Config.version_fallback`,
+`web/package.json`, `app/pubspec.yaml`, `matrix/Cargo.toml`; `matrix/Cargo.lock`
+is updated to match). The matching `git tag v0.7.0` is the maintainer release
+step. `data/mesh_ingestor/CONTRACTS.md` documents the new `GET /api/stats` shape
+and notes the 0.7.0 break. Full shape is asserted by the Ruby suite (S-A2/S-A3).
+
+### S-A2 — `total` is unfiltered; protocol scopes are subsets; node counts preserved — S2
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "active_node_stats" )
+```
+**Expected:** pass. With nodes seeded across protocols, `query_active_node_stats`
+returns `total.<metric>` = counts over **all** rows and
+`meshcore`/`meshtastic`/`reticulum` = `protocol = ?` subsets (so
+`total ≥ Σ named protocols`). `total.nodes.{hour,day,week,month}` equals the
+counts the prior `active_nodes` returned, and `meshcore.nodes`/`meshtastic.nodes`
+equal the prior flat per-protocol counts (relocation, identical values). Every
+metric honors the node opt-out marker using the filter appropriate to its table —
+`opt_out_self_filter` for `nodes`, and `opt_out_node_id_filter` /
+`opt_out_node_num_filter` for the message and telemetry-umbrella tables —
+consistent with the existing list endpoints.
+
+### S-A3 — `telemetry` umbrella + unchanged windows — S3, S4
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "telemetry umbrella" )
+```
+**Expected:** pass. With one row inside the window in **each** of `positions`,
+`telemetry`, `neighbors`, and `traces`, the `telemetry` metric counts **all four**
+(positions + telemetry + neighbors + traces, by each table's `rx_time`); the
+`messages` metric counts the `messages` table by `rx_time`; `nodes` counts
+`nodes` by `last_heard`. Window cutoffs are unchanged — `hour` 3600s, `day`
+86 400s, `week` `week_seconds`, `month` `four_weeks_seconds` — so a row older than
+`four_weeks_seconds` is excluded from `month` (28-day floor, preserves C4).
+
+### S-A4 — Privacy: messages zeroed in private mode — S5
+*Run the server with `PRIVATE=1`.*
+```bash
+curl -s http://127.0.0.1:41447/api/stats \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); \
+SC=("total","meshcore","meshtastic","reticulum"); WI=("hour","day","week","month"); \
+print(all(d[s]["messages"][w]==0 for s in SC for w in WI))'
+```
+**Expected:** prints `True` — every `messages` count (in `total` and all protocol
+scopes) is `0` under `PRIVATE=1`, mirroring the message-API 404 (A2a). `nodes` and
+`telemetry` counts are unaffected by privacy mode (only `/api/messages*` is
+gated). Behavior is also covered by a Ruby example
+(`bundle exec rspec spec/app_spec.rb -e "/api/stats"` exercising private mode).
+
+### S-A5 — `reticulum` forward-looking zero stub — S6
+```bash
+curl -s http://127.0.0.1:41447/api/stats \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); r=d["reticulum"]; \
+ME=("nodes","messages","telemetry"); WI=("hour","day","week","month"); \
+print(all(r[m][w]==0 for m in ME for w in WI))'
+git grep -niE 'reticulum' -- web/lib/potato_mesh/application/queries/node_queries.rb
+```
+**Expected:** the Python check prints `True` — `reticulum` is present with every
+count `0`. The grep shows the `reticulum` block carries an in-code comment marking
+it a **stub** (always-zero until a Reticulum ingestor exists). `reticulum` is
+**not** added to `KNOWN_PROTOCOLS` (still `meshcore` + `meshtastic`; verified by
+A4a).
+
+### S-A6 — One-way federation compatibility (new reads old) — S7
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb -e "stats" )
+```
+**Expected:** pass. The consumer resolves remote activity counts by trying the
+**new** shape first (`total.nodes[window]`, `meshcore.nodes.day`,
+`meshtastic.nodes.day`) and falling back to the **old** shape
+(`active_nodes[window]`, `meshcore.day`, `meshtastic.day`), then to the existing
+node-list fallback. The pre-existing federation specs that feed the **old** flat
+shape continue to pass unchanged — they are the regression proof that a new
+instance still reads an old peer. New unit coverage asserts
+`remote_active_node_count_from_stats` handles both shapes (and prefers new).
+
+### S-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+remain green: **A3c** (federation specs — the old-shape stats specs must stay
+green, proving one-way new-reads-old); **A2 / A2a** (privacy — `/api/messages`
+still 404s in private mode **and** message counts are now zeroed, S-A4); and
+**B1** (all suites). The JS stats assertions in `stats.test.js` /
+`main-stats.test.js` (`normaliseActiveNodeStatsPayload`, `fetchActiveNodeStats`)
+and the dashboard consumer (`stats.js`) are **updated** to read `total.nodes` from
+the new shape, not removed. No POST/event contract changes, so **C2** and the
+Python suite are unaffected.

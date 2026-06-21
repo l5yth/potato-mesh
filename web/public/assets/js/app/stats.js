@@ -81,32 +81,31 @@ function normaliseProtocolBucket(bucket) {
 }
 
 /**
- * Parse and validate the ``/api/stats`` payload.
+ * Parse and validate the ``/api/stats`` payload (0.7.0 scope → metric → window
+ * shape) into the flat node-count snapshot the dashboard renders.
+ *
+ * Node counts are read from ``total.nodes`` and the per-protocol
+ * ``<protocol>.nodes`` sub-buckets; the other metrics (messages/telemetry) are
+ * not surfaced in the header. The browser only ever calls its own same-version
+ * instance, so only the current shape is parsed.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
  * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}|null} Normalized stats or null.
  */
 export function normaliseActiveNodeStatsPayload(payload) {
-  const activeNodes = payload && typeof payload === 'object' ? payload.active_nodes : null;
-  if (!activeNodes || typeof activeNodes !== 'object') {
+  if (!payload || typeof payload !== 'object') {
     return null;
   }
-  const hour = Number(activeNodes.hour);
-  const day = Number(activeNodes.day);
-  const week = Number(activeNodes.week);
-  const month = Number(activeNodes.month);
-  if (![hour, day, week, month].every(Number.isFinite)) {
+  const nodes = normaliseProtocolBucket(payload.total?.nodes);
+  if (!nodes) {
     return null;
   }
   const result = {
-    hour: Math.max(0, Math.trunc(hour)),
-    day: Math.max(0, Math.trunc(day)),
-    week: Math.max(0, Math.trunc(week)),
-    month: Math.max(0, Math.trunc(month)),
+    ...nodes,
     sampled: Boolean(payload.sampled)
   };
-  const meshcore = normaliseProtocolBucket(payload.meshcore);
-  const meshtastic = normaliseProtocolBucket(payload.meshtastic);
+  const meshcore = normaliseProtocolBucket(payload.meshcore?.nodes);
+  const meshtastic = normaliseProtocolBucket(payload.meshtastic?.nodes);
   if (meshcore) result.meshcore = meshcore;
   if (meshtastic) result.meshtastic = meshtastic;
   return result;

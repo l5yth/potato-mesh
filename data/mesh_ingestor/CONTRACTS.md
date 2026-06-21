@@ -183,9 +183,45 @@ Every read endpoint enforces a server-side rolling-window floor on the data it r
 | `GET /api/ingestors` | **28 days** | sparse heartbeats; same rationale |
 | `GET /api/.../:id` (per-id lookup) | **28 days** | every per-id route uses the extended window so callers can backfill historical context for a specific node/conversation that has dropped out of the bulk view. The `since` clamp still applies. |
 | `GET /api/telemetry/aggregated` | caller-controlled | `?windowSeconds=<N>` is mandatory; defaults to 86 400 (1 day). Bounded by `MAX_QUERY_LIMIT` on bucket count, not by a hard floor. |
-| `GET /api/stats` | n/a | reports counts at fixed `hour`/`day`/`week`/`month` activity buckets. |
+| `GET /api/stats` | n/a | reports activity counts at fixed `hour`/`day`/`week`/`month` buckets; response shape documented below. |
 
 Federation peers should not assume an unbounded historical window: a peer that requests `/api/messages?since=0` from a partner expecting "everything" will only ever receive the last seven days. To pull older state, request the per-id endpoint (28 days) for the relevant nodes.
 
 The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_weeks_seconds`).
+
+### GET /api/stats response shape
+
+> **Breaking change in 0.7.0.** Before 0.7.0 the payload was flat —
+> `active_nodes: {hour,day,week,month}` plus integer-valued `meshcore`/`meshtastic`
+> sub-hashes. From 0.7.0 it is the scope → metric → window tree below. The change
+> is versioned (minor bump) per the backward-compat rule above. Federation
+> consumers read the new shape and **fall back to the old shape** for pre-0.7.0
+> peers (one-way compatibility); see `application/federation/crawl.rb`.
+
+`GET /api/stats` returns counts as a `scope → metric → window` tree:
+
+```jsonc
+{
+  "total":      { "nodes": {…}, "messages": {…}, "telemetry": {…} },
+  "meshcore":   { "nodes": {…}, "messages": {…}, "telemetry": {…} },
+  "meshtastic": { "nodes": {…}, "messages": {…}, "telemetry": {…} },
+  "reticulum":  { "nodes": {…}, "messages": {…}, "telemetry": {…} },  // stub: always 0
+  "sampled": false
+}
+```
+
+- **Scopes.** `total` counts every visible row regardless of protocol; `meshcore`,
+  `meshtastic`, and `reticulum` are `protocol = ?` subsets, so
+  `total ≥ Σ named protocols`. `reticulum` is a forward-looking stub (no Reticulum
+  ingestor exists yet) and is always all-zero.
+- **Metrics.** `nodes` counts `nodes` by `last_heard`; `messages` counts `messages`
+  by `rx_time`; `telemetry` is the umbrella over `positions` + `telemetry` +
+  `neighbors` + `traces` (every non-message packet record) by `rx_time`.
+- **Windows.** Each metric maps to `{ "hour", "day", "week", "month" }` integer
+  counts at the fixed cutoffs (1 h / 24 h / `week_seconds` / `four_weeks_seconds`);
+  `month` cannot exceed the 28-day visibility floor.
+- **Privacy.** Every metric honors the node opt-out marker. When `PRIVATE=1`, all
+  `messages` counts are forced to `0` (mirroring the disabled message API);
+  `nodes`/`telemetry` counts remain.
+- **`sampled`** is unchanged: always `false` (the counts are exact, not sampled).
 

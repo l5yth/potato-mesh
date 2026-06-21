@@ -268,80 +268,210 @@ module PotatoMesh
         db&.close
       end
 
-      # Return exact active-node counts across common activity windows.
+      # Activity windows shared by every /api/stats metric, in a fixed order so
+      # generated column aliases (+total_hour+, +mc_day+, …) line up with their
+      # bind parameters.
+      STATS_WINDOWS = %w[hour day week month].freeze
+
+      # Per-protocol scopes counted alongside the unfiltered +total+, paired with
+      # the short column-alias prefix used in the generated SQL.
+      STATS_PROTOCOL_SCOPES = [["meshcore", "mc"], ["meshtastic", "mt"]].freeze
+
+      # Return exact activity counts for /api/stats as a scope → metric → window
+      # tree.
       #
-      # Counts are resolved directly in SQL with COUNT(*) thresholds against
-      # +nodes.last_heard+ to avoid sampling bias from list endpoint limits.
+      # The shape is:
+      #
+      #   { "total"      => { "nodes" => {...}, "messages" => {...}, "telemetry" => {...} },
+      #     "meshcore"   => { ... }, "meshtastic" => { ... },
+      #     "reticulum"  => { ... all zero (stub) } }
+      #
+      # where each metric maps to a +{ "hour", "day", "week", "month" }+ window
+      # hash. +total+ counts every visible row regardless of protocol; the
+      # protocol scopes are +WHERE protocol = ?+ subsets, so
+      # +total ≥ Σ named protocols+. Counts are resolved directly in SQL with
+      # COUNT(*) thresholds (no sampling bias from list-endpoint limits) and honor
+      # the node opt-out marker on every metric. +messages+ counts are forced to
+      # zero in private mode (SPEC S5 / Invariant II).
       #
       # @param now [Integer] reference unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open database handle to reuse.
-      # @return [Hash{String => Object}] counts keyed by hour/day/week/month plus
-      #   per-protocol breakdowns under "meshcore" and "meshtastic" sub-hashes.
+      # @return [Hash{String => Hash}] scope → metric → window count tree.
       def query_active_node_stats(now: Time.now.to_i, db: nil)
         handle = db || open_database(readonly: true)
         handle.results_as_hash = true
         reference_now = coerce_integer(now) || Time.now.to_i
-        hour_cutoff = reference_now - 3600
-        day_cutoff = reference_now - 86_400
-        week_cutoff = reference_now - PotatoMesh::Config.week_seconds
         # The "month" bucket reuses the four-week cap so no stats endpoint can
         # surface activity from beyond the 28-day API visibility floor.
-        month_cutoff = reference_now - PotatoMesh::Config.four_weeks_seconds
-        private_clause = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
-
-        # Materialise the visible-nodes projection in a CTE so the opt-out
-        # LIKE predicate is evaluated once and the marker is bound twice in
-        # total instead of twice per subquery (44 → 22 binds).  Every COUNT
-        # below then operates on the pre-filtered set, which also matches the
-        # rest of the read API's "no opt-out node ever leaves the database
-        # layer" invariant.
-        sql = <<~SQL
-          WITH visible_nodes AS (
-            SELECT last_heard, protocol
-            FROM nodes
-            WHERE #{opt_out_self_filter}#{private_clause}
-          )
-          SELECT
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS hour_count,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS day_count,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS week_count,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ?) AS month_count,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_hour,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_day,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_week,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mc_month,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_hour,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_day,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_week,
-            (SELECT COUNT(*) FROM visible_nodes WHERE last_heard >= ? AND protocol = ?) AS mt_month
-        SQL
-        cutoffs = [hour_cutoff, day_cutoff, week_cutoff, month_cutoff]
-        params = opt_out_marker_params + cutoffs +
-                 cutoffs.flat_map { |c| [c, "meshcore"] } +
-                 cutoffs.flat_map { |c| [c, "meshtastic"] }
-        row = with_busy_retry do
-          handle.get_first_row(sql, params)
-        end || {}
-        {
-          "hour" => row["hour_count"].to_i,
-          "day" => row["day_count"].to_i,
-          "week" => row["week_count"].to_i,
-          "month" => row["month_count"].to_i,
-          "meshcore" => {
-            "hour" => row["mc_hour"].to_i,
-            "day" => row["mc_day"].to_i,
-            "week" => row["mc_week"].to_i,
-            "month" => row["mc_month"].to_i,
-          },
-          "meshtastic" => {
-            "hour" => row["mt_hour"].to_i,
-            "day" => row["mt_day"].to_i,
-            "week" => row["mt_week"].to_i,
-            "month" => row["mt_month"].to_i,
-          },
+        cutoffs = {
+          "hour" => reference_now - 3600,
+          "day" => reference_now - 86_400,
+          "week" => reference_now - PotatoMesh::Config.week_seconds,
+          "month" => reference_now - PotatoMesh::Config.four_weeks_seconds,
         }
+
+        metrics = {
+          "nodes" => node_activity_counts(handle, cutoffs),
+          "messages" => message_activity_counts(handle, cutoffs),
+          "telemetry" => telemetry_activity_counts(handle, cutoffs),
+        }
+        assemble_stats_scopes(metrics)
       ensure
         handle&.close unless db
+      end
+
+      # Per-protocol node-activity counts keyed on +nodes.last_heard+, honoring
+      # the opt-out self-filter and, in private mode, the CLIENT_HIDDEN exclusion.
+      #
+      # @param handle [SQLite3::Database] open database handle.
+      # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
+      # @return [Hash{String => Hash}] scope => window counts.
+      def node_activity_counts(handle, cutoffs)
+        private_clause = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        projection = "SELECT last_heard AS t, protocol AS p FROM nodes " \
+                     "WHERE #{opt_out_self_filter}#{private_clause}"
+        windowed_protocol_counts(
+          handle,
+          projection_sql: projection,
+          projection_params: opt_out_marker_params,
+          cutoffs: cutoffs,
+        )
+      end
+
+      # Per-protocol message-activity counts keyed on +messages.rx_time+. Privacy
+      # mode forces every count to zero, mirroring the +PRIVATE=1+ message-API 404
+      # so /api/stats never leaks message volume that privacy hides
+      # (SPEC S5 / Invariant II).
+      #
+      # @param handle [SQLite3::Database] open database handle.
+      # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
+      # @return [Hash{String => Hash}] scope => window counts.
+      def message_activity_counts(handle, cutoffs)
+        return zero_scope_counts if private_mode?
+
+        fragments = [opt_out_node_id_filter("from_id"), opt_out_node_id_filter("to_id")]
+        projection = "SELECT rx_time AS t, protocol AS p FROM messages " \
+                     "WHERE #{fragments.join(" AND ")}"
+        windowed_protocol_counts(
+          handle,
+          projection_sql: projection,
+          projection_params: opt_out_marker_params * fragments.length,
+          cutoffs: cutoffs,
+        )
+      end
+
+      # Per-protocol telemetry-activity counts. "Telemetry" is the umbrella over
+      # every non-message packet record — positions + telemetry + neighbors +
+      # traces — unioned on +(rx_time, protocol)+, each table honoring the same
+      # opt-out filter its list endpoint applies (SPEC S3).
+      #
+      # @param handle [SQLite3::Database] open database handle.
+      # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
+      # @return [Hash{String => Hash}] scope => window counts.
+      def telemetry_activity_counts(handle, cutoffs)
+        sources = [
+          ["positions", [opt_out_node_id_filter("node_id")]],
+          ["telemetry", [opt_out_node_id_filter("node_id")]],
+          ["neighbors", [opt_out_node_id_filter("node_id"), opt_out_node_id_filter("neighbor_id")]],
+          ["traces", [opt_out_node_num_filter("src"), opt_out_node_num_filter("dest")]],
+        ]
+        projections = []
+        params = []
+        sources.each do |table, fragments|
+          projections << "SELECT rx_time AS t, protocol AS p FROM #{table} WHERE #{fragments.join(" AND ")}"
+          params.concat(opt_out_marker_params * fragments.length)
+        end
+        windowed_protocol_counts(
+          handle,
+          projection_sql: projections.join("\nUNION ALL\n"),
+          projection_params: params,
+          cutoffs: cutoffs,
+        )
+      end
+
+      # Count visible rows from a +(t, p)+ projection across every window, as an
+      # unfiltered +total+ plus one subset per protocol scope. The projection is
+      # materialised in a CTE so its opt-out predicate is evaluated once; each
+      # COUNT then runs over the pre-filtered set.
+      #
+      # @param handle [SQLite3::Database] open database handle.
+      # @param projection_sql [String] SELECT yielding +t+ (activity time) and
+      #   +p+ (protocol) columns for the visible rows of one metric.
+      # @param projection_params [Array] bind parameters for +projection_sql+.
+      # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
+      # @return [Hash{String => Hash}] +total+/+meshcore+/+meshtastic+ => window
+      #   counts.
+      def windowed_protocol_counts(handle, projection_sql:, projection_params:, cutoffs:)
+        selects = []
+        window_params = []
+
+        STATS_WINDOWS.each do |window|
+          selects << "(SELECT COUNT(*) FROM visible WHERE t >= ?) AS total_#{window}"
+          window_params << cutoffs.fetch(window)
+        end
+        STATS_PROTOCOL_SCOPES.each do |protocol, prefix|
+          STATS_WINDOWS.each do |window|
+            selects << "(SELECT COUNT(*) FROM visible WHERE t >= ? AND p = ?) AS #{prefix}_#{window}"
+            window_params << cutoffs.fetch(window)
+            window_params << protocol
+          end
+        end
+
+        sql = "WITH visible AS (#{projection_sql})\nSELECT #{selects.join(",\n  ")}"
+        row = with_busy_retry { handle.get_first_row(sql, projection_params + window_params) } || {}
+
+        scopes = { "total" => stats_window_hash(row, "total") }
+        STATS_PROTOCOL_SCOPES.each { |protocol, prefix| scopes[protocol] = stats_window_hash(row, prefix) }
+        scopes
+      end
+
+      # Extract one alias prefix's window-count hash from a result row.
+      #
+      # @param row [Hash] row returned by {windowed_protocol_counts}.
+      # @param prefix [String] column-alias prefix (+total+, +mc+, +mt+).
+      # @return [Hash{String => Integer}] window => count.
+      def stats_window_hash(row, prefix)
+        STATS_WINDOWS.each_with_object({}) do |window, acc|
+          acc[window] = row["#{prefix}_#{window}"].to_i
+        end
+      end
+
+      # Transpose metric → scope counts into the scope → metric tree returned by
+      # /api/stats and append the always-zero +reticulum+ stub.
+      #
+      # @param metrics [Hash{String => Hash}] metric => (scope => window counts).
+      # @return [Hash{String => Hash}] scope => (metric => window counts).
+      def assemble_stats_scopes(metrics)
+        scopes = {}
+        (["total"] + STATS_PROTOCOL_SCOPES.map(&:first)).each do |scope|
+          scopes[scope] = metrics.transform_values { |by_scope| by_scope[scope] }
+        end
+        # reticulum is a forward-looking stub: PotatoMesh has no Reticulum
+        # ingestor yet, so every count is zero. Emitting the scope now lets the
+        # response shape absorb the protocol later without another breaking change
+        # (SPEC S6).
+        scopes["reticulum"] = metrics.keys.each_with_object({}) do |metric, acc|
+          acc[metric] = zero_window_counts
+        end
+        scopes
+      end
+
+      # A fresh zero-filled window hash (+{ "hour" => 0, … }+), returned by value
+      # so callers never alias a shared mutable hash.
+      #
+      # @return [Hash{String => Integer}] zeroed window counts.
+      def zero_window_counts
+        STATS_WINDOWS.each_with_object({}) { |window, acc| acc[window] = 0 }
+      end
+
+      # A scope → window hash with every count zero (total + each protocol). Used
+      # for metrics suppressed by privacy mode.
+      #
+      # @return [Hash{String => Hash}] zeroed per-scope window counts.
+      def zero_scope_counts
+        scopes = { "total" => zero_window_counts }
+        STATS_PROTOCOL_SCOPES.each { |protocol, _| scopes[protocol] = zero_window_counts }
+        scopes
       end
     end
   end

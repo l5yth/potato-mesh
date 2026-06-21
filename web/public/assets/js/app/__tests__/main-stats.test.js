@@ -48,11 +48,13 @@ test('computeLocalActiveNodeStats calculates local hour/day/week/month counts wi
 
 test('normaliseActiveNodeStatsPayload validates and normalizes API payload', () => {
   const payload = {
-    active_nodes: {
-      hour: '11',
-      day: 22,
-      week: 33,
-      month: 44,
+    total: {
+      nodes: {
+        hour: '11',
+        day: 22,
+        week: 33,
+        month: 44,
+      },
     },
     sampled: false,
   };
@@ -69,9 +71,9 @@ test('normaliseActiveNodeStatsPayload validates and normalizes API payload', () 
 
 test('normaliseActiveNodeStatsPayload includes per-protocol buckets when present', () => {
   const result = normaliseActiveNodeStatsPayload({
-    active_nodes: { hour: 10, day: 20, week: 30, month: 40 },
-    meshcore: { hour: 3, day: 8, week: 12, month: 15 },
-    meshtastic: { hour: 7, day: 12, week: 18, month: 25 },
+    total: { nodes: { hour: 10, day: 20, week: 30, month: 40 } },
+    meshcore: { nodes: { hour: 3, day: 8, week: 12, month: 15 } },
+    meshtastic: { nodes: { hour: 7, day: 12, week: 18, month: 25 } },
     sampled: false,
   });
   assert.deepEqual(result.meshcore, { hour: 3, day: 8, week: 12, month: 15 });
@@ -80,11 +82,11 @@ test('normaliseActiveNodeStatsPayload includes per-protocol buckets when present
 
 test('normaliseActiveNodeStatsPayload rejects malformed stat values', () => {
   assert.equal(
-    normaliseActiveNodeStatsPayload({ active_nodes: { hour: 'x', day: 1, week: 1, month: 1 } }),
+    normaliseActiveNodeStatsPayload({ total: { nodes: { hour: 'x', day: 1, week: 1, month: 1 } } }),
     null
   );
   assert.equal(
-    normaliseActiveNodeStatsPayload({ active_nodes: null }),
+    normaliseActiveNodeStatsPayload({ total: { nodes: null } }),
     null
   );
 });
@@ -92,7 +94,7 @@ test('normaliseActiveNodeStatsPayload rejects malformed stat values', () => {
 test('normaliseActiveNodeStatsPayload clamps negatives and truncates floats', () => {
   assert.deepEqual(
     normaliseActiveNodeStatsPayload({
-      active_nodes: { hour: -1.9, day: 2.8, week: 3.1, month: 4.9 },
+      total: { nodes: { hour: -1.9, day: 2.8, week: 3.1, month: 4.9 } },
       sampled: 1
     }),
     { hour: 0, day: 2, week: 3, month: 4, sampled: true }
@@ -107,7 +109,7 @@ test('fetchActiveNodeStats uses /api/stats when available', async () => {
       ok: true,
       async json() {
         return {
-          active_nodes: { hour: 5, day: 15, week: 25, month: 35 },
+          total: { nodes: { hour: 5, day: 15, week: 25, month: 35 } },
           sampled: false,
         };
       },
@@ -134,7 +136,7 @@ test('fetchActiveNodeStats reuses cached /api/stats response for repeated calls'
       ok: true,
       async json() {
         return {
-          active_nodes: { hour: 2, day: 4, week: 6, month: 8 },
+          total: { nodes: { hour: 2, day: 4, week: 6, month: 8 } },
           sampled: false,
         };
       },
@@ -185,7 +187,7 @@ test('fetchActiveNodeStats falls back to local counts on invalid payloads', asyn
     fetchImpl: async () => ({
       ok: true,
       async json() {
-        return { active_nodes: { hour: 'bad' } };
+        return { total: { nodes: { hour: 'bad' } } };
       }
     })
   });
@@ -198,5 +200,5 @@ test('formatActiveNodeStatsText emits compact day/week/month footer string', () 
     stats: { day: 2, week: 3, month: 4, sampled: false },
   });
 
-  assert.equal(text, '2/day \u00b7 3/week \u00b7 4/month');
+  assert.equal(text, '2/day · 3/week · 4/month');
 });

@@ -1146,15 +1146,68 @@ RSpec.describe PotatoMesh::App::Queries do
 
     it "excludes opted-out nodes from active stats counters" do
       stats = queries.query_active_node_stats(now: now)
-      # Only "!visible0" is visible — opted-out and short-marker nodes are dropped.
-      expect(stats["day"]).to eq(1)
-      expect(stats["week"]).to eq(1)
-      expect(stats["month"]).to eq(1)
+      # Only "!visible0" is visible — opted-out and short-marker nodes are dropped
+      # from node, message, and telemetry counts alike.
+      expect(stats["total"]["nodes"]["day"]).to eq(1)
+      expect(stats["total"]["nodes"]["month"]).to eq(1)
+      # Message id 11 (from opt-out) and id 12 (to opt-out) drop; only the
+      # visible → broadcast line survives.
+      expect(stats["total"]["messages"]["day"]).to eq(1)
+      # Telemetry umbrella = positions(1) + telemetry(1) + neighbors(0, peer
+      # opted out) + traces(1, the opted-out src dropped).
+      expect(stats["total"]["telemetry"]["day"]).to eq(3)
     end
   end
 
   describe "#query_active_node_stats" do
-    it "caps the month bucket at four_weeks_seconds (28 days)" do
+    it "returns the full scope × metric × window tree" do
+      stats = queries.query_active_node_stats(now: now)
+      %w[total meshcore meshtastic reticulum].each do |scope|
+        expect(stats).to have_key(scope)
+        %w[nodes messages telemetry].each do |metric|
+          expect(stats[scope][metric].keys).to contain_exactly("hour", "day", "week", "month")
+          stats[scope][metric].each_value { |count| expect(count).to be_a(Integer) }
+        end
+      end
+      # The pre-0.7.0 flat keys are gone (intended breaking change).
+      expect(stats).not_to have_key("active_nodes")
+      expect(stats).not_to have_key("hour")
+    end
+
+    it "counts total across all protocols with per-protocol subsets" do
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, last_heard, first_heard, role, protocol) VALUES (?,?,?,?,?,?)",
+          ["!core0001", 0xC0000001, now, now, "CLIENT", "meshcore"],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, num, last_heard, first_heard, role, protocol) VALUES (?,?,?,?,?,?)",
+          ["!tastic01", 0x70000001, now, now, "CLIENT", "meshtastic"],
+        )
+      end
+      stats = queries.query_active_node_stats(now: now)
+      expect(stats["meshcore"]["nodes"]["day"]).to eq(1)
+      expect(stats["meshtastic"]["nodes"]["day"]).to eq(1)
+      expect(stats["total"]["nodes"]["day"]).to eq(2)
+      expect(stats["total"]["nodes"]["day"]).to eq(
+        stats["meshcore"]["nodes"]["day"] + stats["meshtastic"]["nodes"]["day"],
+      )
+    end
+
+    it "aggregates positions, telemetry, neighbors, and traces into the telemetry umbrella" do
+      with_db do |db|
+        rx_iso = Time.at(now).utc.iso8601
+        db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!feed0001"])
+        db.execute("INSERT INTO telemetry(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!feed0001"])
+        db.execute("INSERT INTO neighbors(node_id, neighbor_id, rx_time) VALUES (?,?,?)", ["!feed0001", "!feed0002", now])
+        db.execute("INSERT INTO traces(id, rx_time, rx_iso, src, dest) VALUES (?,?,?,?,?)", [1, now, rx_iso, 0x11, 0x22])
+      end
+      stats = queries.query_active_node_stats(now: now)
+      # One row in each of the four umbrella tables → 4.
+      expect(stats["total"]["telemetry"]["hour"]).to eq(4)
+    end
+
+    it "caps the node month bucket at four_weeks_seconds (28 days)" do
       twenty_nine_days_ago = now - (29 * 24 * 60 * 60)
       with_db do |db|
         db.execute(
@@ -1164,7 +1217,49 @@ RSpec.describe PotatoMesh::App::Queries do
       end
       stats = queries.query_active_node_stats(now: now)
       # 28-day cap means this 29-day-old row falls outside the "month" bucket.
-      expect(stats["month"]).to eq(0)
+      expect(stats["total"]["nodes"]["month"]).to eq(0)
+    end
+
+    it "caps the telemetry umbrella month bucket at the visibility floor" do
+      old = now - (29 * 24 * 60 * 60)
+      with_db do |db|
+        db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, old, Time.at(old).utc.iso8601, "!feed0001"])
+        db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [2, now, Time.at(now).utc.iso8601, "!feed0001"])
+      end
+      stats = queries.query_active_node_stats(now: now)
+      # Only the recent row falls inside the month window (28-day floor; the spec
+      # stubs four_weeks_seconds to 7 days, so the 29-day-old row is excluded).
+      expect(stats["total"]["telemetry"]["month"]).to eq(1)
+    end
+
+    it "emits reticulum as an all-zero stub" do
+      with_db do |db|
+        db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!any00001", 1, now, now, "CLIENT"])
+      end
+      stats = queries.query_active_node_stats(now: now)
+      stats["reticulum"].each_value do |windows|
+        windows.each_value { |count| expect(count).to eq(0) }
+      end
+    end
+
+    it "zeroes message counts in private mode but keeps nodes and telemetry" do
+      private_queries = Class.new(harness_class) do
+        def private_mode?
+          true
+        end
+      end.new
+      with_db do |db|
+        rx_iso = Time.at(now).utc.iso8601
+        db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!priv0001", 1, now, now, "CLIENT"])
+        db.execute("INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES (?,?,?,?,?,?,?)", [1, now, rx_iso, "!priv0001", "!ffffffff", 0, "hi"])
+        db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!priv0001"])
+      end
+      stats = private_queries.query_active_node_stats(now: now)
+      expect(stats["total"]["messages"]["day"]).to eq(0)
+      expect(stats["meshtastic"]["messages"]["day"]).to eq(0)
+      # Non-message metrics are unaffected by privacy mode.
+      expect(stats["total"]["nodes"]["day"]).to eq(1)
+      expect(stats["total"]["telemetry"]["day"]).to eq(1)
     end
   end
 

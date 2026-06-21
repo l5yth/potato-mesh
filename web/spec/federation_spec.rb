@@ -507,6 +507,33 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(5))
     end
 
+    it "reads the 0.7.0 stats shape for total and per-protocol counts" do
+      now = Time.at(1_700_000_000)
+      configure_remote_node_window(now)
+
+      new_shape = {
+        "total" => { "nodes" => { "hour" => 5, "day" => 7, "week" => 9, "month" => 11 } },
+        "meshcore" => { "nodes" => { "hour" => 1, "day" => 2, "week" => 3, "month" => 4 } },
+        "meshtastic" => { "nodes" => { "hour" => 4, "day" => 5, "week" => 6, "month" => 7 } },
+        "reticulum" => { "nodes" => { "hour" => 0, "day" => 0, "week" => 0, "month" => 0 } },
+        "sampled" => false,
+      }
+      mapping = stats_mapping(
+        now:,
+        stats_response: [new_shape, :stats],
+        full_nodes_response: [node_payload, :nodes],
+      )
+      stub_ingest_fetches(mapping)
+
+      federation_helpers.ingest_known_instances_from!(db, seed_domain)
+
+      # nodes_count comes from total.nodes (the 900s max age selects the hour window).
+      expect(attributes_list.map { |attrs| attrs[:nodes_count] }).to all(eq(5))
+      # Per-protocol 24h counts come from <protocol>.nodes.day.
+      expect(attributes_list.map { |attrs| attrs[:meshcore_nodes_count] }).to all(eq(2))
+      expect(attributes_list.map { |attrs| attrs[:meshtastic_nodes_count] }).to all(eq(5))
+    end
+
     it "prefers recent node window counts when /api/stats is unavailable" do
       now = Time.at(1_700_000_000)
       configure_remote_node_window(now)
@@ -2103,6 +2130,40 @@ RSpec.describe PotatoMesh::App::Federation do
       payload = { "active_nodes" => active }
       window = PotatoMesh::Config.week_seconds + 60
       expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: window)).to eq(4)
+    end
+
+    it "reads the 0.7.0 total.nodes shape" do
+      payload = { "total" => { "nodes" => active } }
+      expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: 7_200)).to eq(2)
+    end
+
+    it "prefers the new shape over a legacy active_nodes block" do
+      payload = {
+        "total" => { "nodes" => { "hour" => 1, "day" => 8, "week" => 9, "month" => 10 } },
+        "active_nodes" => active,
+      }
+      expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: 7_200)).to eq(8)
+    end
+
+    it "returns nil when neither stats shape is present" do
+      payload = { "sampled" => false }
+      expect(federation_helpers.remote_active_node_count_from_stats(payload, max_age_seconds: 7_200)).to be_nil
+    end
+  end
+
+  describe ".remote_stats_protocol_day" do
+    it "reads the 0.7.0 nodes sub-hash" do
+      payload = { "meshcore" => { "nodes" => { "day" => 9 } } }
+      expect(federation_helpers.remote_stats_protocol_day(payload, "meshcore")).to eq(9)
+    end
+
+    it "falls back to the legacy flat day count" do
+      payload = { "meshtastic" => { "day" => 4 } }
+      expect(federation_helpers.remote_stats_protocol_day(payload, "meshtastic")).to eq(4)
+    end
+
+    it "returns nil when neither shape carries the protocol" do
+      expect(federation_helpers.remote_stats_protocol_day({}, "meshcore")).to be_nil
     end
   end
 
