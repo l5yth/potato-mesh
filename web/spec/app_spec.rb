@@ -1035,26 +1035,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       it "returns the sanitized domain when configuration is present" do
         ENV.delete("APP_ENV")
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", " Example.Org ") do
-          expect(application_class.self_instance_domain).to eq("example.org")
-        end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", " Example.Org ")
+        expect(application_class.self_instance_domain).to eq("example.org")
       end
 
       it "returns nil when the domain is unavailable outside production" do
         ENV["APP_ENV"] = "development"
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil) do
-          expect(application_class.self_instance_domain).to be_nil
-        end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil)
+        expect(application_class.self_instance_domain).to be_nil
       end
 
       it "raises when the domain is unavailable in production" do
         ENV["APP_ENV"] = "production"
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil) do
-          expect { application_class.self_instance_domain }.to raise_error(
-            RuntimeError,
-            "INSTANCE_DOMAIN could not be determined",
-          )
-        end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil)
+        expect { application_class.self_instance_domain }.to raise_error(
+          RuntimeError,
+          "INSTANCE_DOMAIN could not be determined",
+        )
       end
     end
 
@@ -1062,67 +1059,60 @@ RSpec.describe "Potato Mesh Sinatra app" do
       let(:domain) { "spec.mesh.test" }
 
       it "rejects registration when the domain source is not the environment" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns) do
-          allowed, reason = application_class.self_instance_registration_decision(domain)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns)
+        allowed, reason = application_class.self_instance_registration_decision(domain)
 
-          expect(allowed).to be(false)
-          expect(reason).to eq("INSTANCE_DOMAIN source is reverse_dns")
-        end
+        expect(allowed).to be(false)
+        expect(reason).to eq("INSTANCE_DOMAIN source is reverse_dns")
       end
 
       it "rejects registration when the domain is invalid" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          allowed, reason = application_class.self_instance_registration_decision(nil)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        allowed, reason = application_class.self_instance_registration_decision(nil)
 
-          expect(allowed).to be(false)
-          expect(reason).to eq("INSTANCE_DOMAIN missing or invalid")
-        end
+        expect(allowed).to be(false)
+        expect(reason).to eq("INSTANCE_DOMAIN missing or invalid")
       end
 
       it "rejects registration when the domain resolves to a restricted IP" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          allowed, reason = application_class.self_instance_registration_decision("127.0.0.1")
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        allowed, reason = application_class.self_instance_registration_decision("127.0.0.1")
 
-          expect(allowed).to be(false)
-          expect(reason).to eq("INSTANCE_DOMAIN resolves to restricted IP")
-        end
+        expect(allowed).to be(false)
+        expect(reason).to eq("INSTANCE_DOMAIN resolves to restricted IP")
       end
 
       it "accepts registration when configuration is valid" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          allowed, reason = application_class.self_instance_registration_decision(domain)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        allowed, reason = application_class.self_instance_registration_decision(domain)
 
-          expect(allowed).to be(true)
-          expect(reason).to be_nil
-        end
+        expect(allowed).to be(true)
+        expect(reason).to be_nil
       end
     end
 
     describe ".ensure_self_instance_record!" do
       it "persists the self instance when registration is allowed" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "self.mesh") do
-            with_db do |db|
-              db.execute("DELETE FROM instances")
-            end
-
-            application_class.ensure_self_instance_record!
-
-            expect(instance_count).to eq(1)
-          end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "self.mesh")
+        with_db do |db|
+          db.execute("DELETE FROM instances")
         end
+
+        application_class.ensure_self_instance_record!
+
+        expect(instance_count).to eq(1)
       end
 
       it "skips persistence when registration is not allowed" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns) do
-          with_db do |db|
-            db.execute("DELETE FROM instances")
-          end
-
-          application_class.ensure_self_instance_record!
-
-          expect(instance_count).to eq(0)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns)
+        with_db do |db|
+          db.execute("DELETE FROM instances")
         end
+
+        application_class.ensure_self_instance_record!
+
+        expect(instance_count).to eq(0)
       end
     end
   end

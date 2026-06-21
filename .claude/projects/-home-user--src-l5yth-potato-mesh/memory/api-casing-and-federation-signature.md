@@ -54,8 +54,11 @@ the recomputed value diverged from the signed snapshot. So the recompute in
   `name`/`domain` (casing-safe).
 - RSpec `stub_const(name, value)` does **NOT** take a block — `stub_const(...) do
   … end` silently skips the block body (vacuous test). `app_spec.rb` had several
-  such blocks (the `build_well_known_document` one was fixed; the
-  `INSTANCE_DOMAIN`/`_SOURCE` resolution ones at ~1038–1117 are still vacuous).
+  such blocks (`build_well_known_document` + the `.self_instance_domain` /
+  `.self_instance_registration_decision` / `.ensure_self_instance_record!`
+  describes); **all now converted to inline `stub_const`** and genuinely run — no
+  block-form `stub_const` remains in the specs. Use the value form
+  `stub_const("X", Class.new do … end)` only when the block belongs to `Class.new`.
 - The Flutter app reads `/version` config keys (one consumer that breaks on a
   `/version` casing change); it does NOT consume the federation wire.
 
