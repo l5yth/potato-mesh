@@ -323,7 +323,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     nodes_fixture.each do |node|
       payload = { node["node_id"] => build_node_payload(node) }
       post "/api/nodes", payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
     end
   end
@@ -335,7 +335,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     messages_fixture.each do |message|
       payload = message.reject { |key, _| key == "node" }
       post "/api/messages", payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
     end
   end
@@ -347,7 +347,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   def import_positions_fixture(limit: positions_fixture.size)
     positions_fixture.first(limit).each do |position|
       post "/api/positions", position.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
     end
   end
@@ -1703,6 +1703,32 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    it "accepts snake_case optional fields on POST /api/instances" do
+      contact = "#room:example.org"
+      signed_attrs = instance_attributes.merge(contact_link: contact)
+      signature = Base64.strict_encode64(
+        instance_key.sign(OpenSSL::Digest::SHA256.new, canonical_instance_payload(signed_attrs)),
+      )
+      # snake_case contact_link plus the existing camelCase keys — third-party
+      # callers may send either casing (the camelCase keys stay accepted too).
+      snake_payload = instance_payload.merge(
+        "contact_link" => contact,
+        "signature" => signature,
+      )
+
+      post "/api/instances", snake_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+      expect(last_response.status).to eq(201)
+      with_db(readonly: true) do |db|
+        db.results_as_hash = true
+        row = db.get_first_row(
+          "SELECT contact_link FROM instances WHERE id = ?",
+          [instance_attributes[:id]],
+        )
+        expect(row["contact_link"]).to eq(contact)
+      end
+    end
+
     it "stores a federated instance when validation succeeds" do
       post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
@@ -3030,7 +3056,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/nodes", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
@@ -3065,7 +3091,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/nodes", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
@@ -3099,7 +3125,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/nodes", nodeinfo_payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
@@ -3159,7 +3185,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/nodes", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -3194,7 +3220,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/nodes", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
       expect(call_count).to be >= 2
 
@@ -3242,21 +3268,21 @@ RSpec.describe "Potato Mesh Sinatra app" do
       it "does not overwrite a real name with a meshtastic generic fallback" do
         seed_node(long_name: "Peter's Node")
         post_long_name("Meshtastic BEEF")
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(stored_long_name).to eq("Peter's Node")
       end
 
       it "writes a generic fallback when no name is on record" do
         seed_node
         post_long_name("Meshtastic BEEF")
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(stored_long_name).to eq("Meshtastic BEEF")
       end
 
       it "overwrites a generic fallback with a real name" do
         seed_node(long_name: "Meshtastic BEEF")
         post_long_name("Peter's Node")
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(stored_long_name).to eq("Peter's Node")
       end
 
@@ -3268,7 +3294,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
              auth_headers
         seed_node(long_name: "Peter's Node")
         post_long_name("Meshcore BEEF", ingestor: ingestor_id)
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(stored_long_name).to eq("Peter's Node")
       end
     end
@@ -3416,9 +3442,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     def post_twice_for_ingestor(endpoint, first_payload, second_payload)
       post endpoint, first_payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       post endpoint, second_payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
     end
 
     it "persists messages from fixture data" do
@@ -3484,9 +3510,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       }
 
       post "/api/messages", parent_payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       post "/api/messages", reaction_payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       with_db(readonly: true) do |db|
         db.results_as_hash = true
@@ -3548,7 +3574,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -3583,7 +3609,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       with_db(readonly: true) do |db|
         count = db.get_first_value("SELECT COUNT(*) FROM nodes WHERE node_id = '!ffffffff'")
         expect(count).to eq(0)
@@ -3606,7 +3632,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -3675,7 +3701,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
 
         post "/api/nodes", node_payload.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         rx_time = reference_time.to_i - 120
         position_time = rx_time - 30
@@ -3707,7 +3733,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/positions", position_payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -3771,7 +3797,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/positions", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
@@ -3800,7 +3826,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/positions", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -3864,7 +3890,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/positions", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
@@ -3940,7 +3966,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/neighbors", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4014,7 +4040,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/neighbors", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4037,7 +4063,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/neighbors", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4075,9 +4101,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
 
         post "/api/neighbors", seed_payload.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         post "/api/neighbors", empty_payload.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         with_db(readonly: true) do |db|
           remaining = db.get_first_value(SELECT_NEIGHBOR_COUNT_BY_NODE_SQL, [NEIGHBOR_EMPTY_UPDATE_ROOT_ID])
@@ -4133,9 +4159,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
 
         post "/api/neighbors", initial.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         post "/api/neighbors", update.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         with_db(readonly: true) do |db|
           db.results_as_hash = true
@@ -4166,9 +4192,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
 
         post "/api/neighbors", initial.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         post "/api/neighbors", update.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         with_db(readonly: true) do |db|
           count = db.get_first_value(
@@ -4207,7 +4233,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/neighbors", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4226,7 +4252,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4408,7 +4434,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect_stored_telemetry_type(24_001, "device")
       end
 
@@ -4424,7 +4450,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect_stored_telemetry_type(24_002, "environment")
       end
 
@@ -4442,7 +4468,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect_stored_telemetry_type(24_003, "power")
       end
 
@@ -4458,7 +4484,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
 
         get "/api/telemetry/!teltype04", {}, auth_headers
 
@@ -4481,7 +4507,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect_stored_telemetry_type(24_005, "air_quality")
       end
 
@@ -4498,7 +4524,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/telemetry", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         # Invalid explicit type must be discarded; device_metrics inference takes over.
         expect_stored_telemetry_type(24_006, "device")
       end
@@ -4524,7 +4550,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/traces", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4594,7 +4620,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/traces", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4685,7 +4711,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       }
 
       post "/api/nodes", node_payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       messages_payload = [
         {
@@ -4705,7 +4731,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", messages_payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -4785,9 +4811,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       receiver_payload["num"] = receiver_num
 
       post "/api/nodes", { sender_id => sender_payload }.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       post "/api/nodes", { receiver_id => receiver_payload }.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       encrypted_b64 = Base64.strict_encode64("secret message")
       payload = {
@@ -4806,7 +4832,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -4885,7 +4911,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/messages", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -4965,7 +4991,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
         post "/api/messages", payload.to_json, auth_headers
 
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         with_db(readonly: true) do |db|
@@ -5059,7 +5085,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -5213,7 +5239,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -5955,7 +5981,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -5979,7 +6005,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", payload.to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -6018,7 +6044,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       post "/api/messages", base_payload.merge("from_id" => nil).to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -6040,7 +6066,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "from_id" => " ",
       ).to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -6061,7 +6087,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         "from" => "!spec-sender",
       ).to_json, auth_headers
 
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
       expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
       with_db(readonly: true) do |db|
@@ -6106,13 +6132,12 @@ RSpec.describe "Potato Mesh Sinatra app" do
         end
 
         raw_position_time = node["position_time"]
+        # I2: the redundant position ISO key is dropped — only `position_time`
+        # (unix int) is emitted; clients format it. The 0-sentinel still yields no
+        # `position_time` at all (issue #782, `coerce_positive_or_nil`).
+        expect(actual_row).not_to have_key("pos_time_iso")
         if raw_position_time.is_a?(Numeric) && raw_position_time > 0
-          expected_pos_iso = Time.at(raw_position_time).utc.iso8601
-          expect(actual_row["pos_time_iso"]).to eq(expected_pos_iso)
-        else
-          # Sentinel `position_time = 0` must not emit "1970-01-01T00:00:00Z";
-          # see `coerce_positive_or_nil` in queries/common.rb (issue #782).
-          expect(actual_row).not_to have_key("pos_time_iso")
+          expect(actual_row["position_time"]).to eq(raw_position_time)
         end
       end
     end
@@ -6272,6 +6297,69 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry).not_to be_nil
       expect(entry).not_to have_key("pos_time_iso")
       expect(entry).not_to have_key("position_time")
+    end
+  end
+
+  describe "API casing consistency" do
+    it "exposes the /version config block in snake_case" do
+      get "/version"
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      cfg = payload["config"]
+      expect(cfg).to include(
+        "site_name", "map_center", "private_mode", "instance_domain",
+        "contact_link", "contact_link_url", "max_distance_km",
+        "refresh_interval_seconds"
+      )
+      expect(cfg["map_center"]).to include("lat", "lon")
+      # The pre-0.7.0 camelCase config keys are gone (breaking /version change).
+      %w[siteName mapCenter privateMode instanceDomain contactLink contactLinkUrl maxDistanceKm refreshIntervalSeconds].each do |camel|
+        expect(cfg).not_to have_key(camel)
+      end
+      expect(payload).to have_key("last_node_update")
+      expect(payload).not_to have_key("lastNodeUpdate")
+    end
+
+    it "accepts snake_case node fields on POST /api/nodes alongside camelCase" do
+      now = reference_time.to_i
+      payload = {
+        "!aabbccdd" => {
+          "num" => 0xAABBCCDD,
+          "last_heard" => now,
+          "user" => { "short_name" => "SNAK", "long_name" => "Snake Case Node", "hw_model" => "TBEAM" },
+          "device_metrics" => { "battery_level" => 77 },
+          "position" => { "latitude" => 52.0, "longitude" => 13.0 },
+        },
+      }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response.status).to eq(201)
+
+      get "/api/nodes?limit=1000"
+      row = JSON.parse(last_response.body).find { |r| r["node_id"] == "!aabbccdd" }
+      expect(row).not_to be_nil
+      expect(row["short_name"]).to eq("SNAK")
+      expect(row["long_name"]).to eq("Snake Case Node")
+      expect(row["hw_model"]).to eq("TBEAM")
+      expect(row["battery_level"]).to eq(77)
+    end
+  end
+
+  describe "POST ingest status codes" do
+    it "returns 201 Created on a successful node ingest (consistent with /api/instances)" do
+      payload = { "!c0debabe" => { "num" => 0xC0DEBABE, "last_heard" => reference_time.to_i } }
+      post "/api/nodes", payload.to_json, auth_headers
+      expect(last_response.status).to eq(201)
+      expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+    end
+  end
+
+  describe "POST payload validation" do
+    %w[messages positions telemetry neighbors traces].each do |endpoint|
+      it "rejects a non-array/non-object payload on /api/#{endpoint} with 400" do
+        post "/api/#{endpoint}", '"garbage"', auth_headers
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "invalid payload")
+      end
     end
   end
 
@@ -6515,7 +6603,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         }
 
         post "/api/messages", payload.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
         expect(JSON.parse(last_response.body)).to eq("status" => "ok")
 
         get "/api/messages"
@@ -6844,7 +6932,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         },
       }
       post "/api/nodes", payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       # The row exists in the database — opt-out is a display-time filter,
       # not an ingestion-time refusal.
@@ -6893,7 +6981,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
           "payload_b64" => "AQI=",
         }
         post "/api/positions", payload.to_json, auth_headers
-        expect(last_response).to be_ok
+        expect(last_response.status).to eq(201)
       end
 
       get "/api/positions?limit=1"
@@ -6907,7 +6995,8 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(entry["rx_time"]).to eq(rx_times.last)
       expect(entry["rx_iso"]).to eq(Time.at(rx_times.last).utc.iso8601)
       expect(entry["position_time"]).to eq(rx_times.last - 5)
-      expect(entry["position_time_iso"]).to eq(Time.at(rx_times.last - 5).utc.iso8601)
+      # I2: position ISO key dropped — only `position_time` (unix int) is emitted.
+      expect(entry).not_to have_key("position_time_iso")
       expect(entry["latitude"]).to eq(53.0)
       expect(entry["longitude"]).to eq(14.0)
       expect(entry["location_source"]).to eq("LOC_TEST")
@@ -7170,7 +7259,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   describe "GET /api/telemetry" do
     it "returns stored telemetry ordered by receive time" do
       post "/api/telemetry", telemetry_fixture.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       get "/api/telemetry?limit=2"
 
@@ -7392,7 +7481,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   describe "GET /api/telemetry/aggregated" do
     it "returns aggregated telemetry buckets for the requested interval" do
       post "/api/telemetry", telemetry_fixture.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       get "/api/telemetry/aggregated?windowSeconds=86400&bucketSeconds=300"
 
@@ -7441,7 +7530,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
     it "applies default window and bucket sizes when parameters are omitted" do
       post "/api/telemetry", telemetry_fixture.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       get "/api/telemetry/aggregated"
 
@@ -7590,7 +7679,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "returns stored traces ordered by receive time" do
       clear_database
       post "/api/traces", trace_fixture.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       get "/api/traces"
 
@@ -7615,7 +7704,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "filters traces by node reference across sources" do
       clear_database
       post "/api/traces", trace_fixture.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       get "/api/traces/#{trace_fixture.first["src"]}"
 
@@ -7650,7 +7739,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       ]
 
       post "/api/traces", payload.to_json, auth_headers
-      expect(last_response).to be_ok
+      expect(last_response.status).to eq(201)
 
       get "/api/traces"
 

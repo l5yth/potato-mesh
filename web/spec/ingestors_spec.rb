@@ -78,7 +78,7 @@ RSpec.describe "Ingestor endpoints" do
       payload = ingestor_payload
       post "/api/ingestors", payload.to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
 
       newer_last_seen = payload[:last_seen_time] + 3_600
       older_start = payload[:start_time] - 500
@@ -86,7 +86,7 @@ RSpec.describe "Ingestor endpoints" do
            payload.merge(last_seen_time: newer_last_seen, start_time: older_start).to_json,
            auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
       with_db(readonly: true) do |db|
         row = db.get_first_row(
           "SELECT node_id, start_time, last_seen_time, version, lora_freq, modem_preset FROM ingestors WHERE node_id = ?",
@@ -199,13 +199,13 @@ RSpec.describe "Ingestor endpoints" do
       # so the request succeeds rather than returning 400.
       post "/api/ingestors", ingestor_payload(start_time: nil).to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
     end
 
     it "accepts a payload where last_seen_time is missing (falls back to start_time)" do
       post "/api/ingestors", ingestor_payload(last_seen_time: nil).to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
     end
 
     it "rejects a payload where node_id is missing" do
@@ -219,7 +219,7 @@ RSpec.describe "Ingestor endpoints" do
       # succeeds and stores lora_freq as NULL.
       post "/api/ingestors", ingestor_payload(lora_freq: "not-a-number").to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
     end
 
     it "returns 200 when optional lora_freq is absent entirely" do
@@ -227,7 +227,7 @@ RSpec.describe "Ingestor endpoints" do
       payload.delete(:lora_freq)
       post "/api/ingestors", payload.to_json, auth_headers
 
-      expect(last_response.status).to eq(200)
+      expect(last_response.status).to eq(201)
     end
 
     it "returns 403 with the wrong bearer token" do

@@ -99,9 +99,10 @@ private mode — `web/lib/potato_mesh/application/routes/api.rb:49`).
 
 **A2b. Private flag is advertised (the client uses it to hide chat).**
 ```bash
-curl -s http://127.0.0.1:41447/version | grep -o '"privateMode":true'
+curl -s http://127.0.0.1:41447/version | grep -o '"private_mode":true'
 ```
-**Expected:** prints `"privateMode":true`.
+**Expected:** prints `"private_mode":true` (snake_case as of 0.7.0 — see
+[§ Bugfix: API casing consistency](#bugfix-api-casing-consistency)).
 
 **A2c. Node opt-out marker is honored wherever data is listed/exported.**
 ```bash
@@ -339,9 +340,11 @@ Maps to decisions **D10, D11** and the README. *Server env per check.*
 ```bash
 curl -s http://127.0.0.1:41447/version
 ```
-**Expected:** a JSON `config` block exposing `siteName`, `channel`, `frequency`,
-`contactLink`, `mapCenter` (`lat`/`lon`), `maxDistanceKm`, `instanceDomain`, and
-`privateMode`, reflecting the env vars set at boot (README "Web App" table).
+**Expected:** a JSON `config` block exposing `site_name`, `channel`, `frequency`,
+`contact_link`, `map_center` (`lat`/`lon`), `max_distance_km`, `instance_domain`,
+and `private_mode`, reflecting the env vars set at boot (README "Web App" table).
+Keys are snake_case as of 0.7.0 (see
+[§ Bugfix: API casing consistency](#bugfix-api-casing-consistency)).
 
 ### D2 — `ALLOWED_CHANNELS` / `HIDDEN_CHANNELS` enforced (ingestor)
 ```bash
@@ -572,3 +575,97 @@ still 404s in private mode **and** message counts are now zeroed, S-A4); and
 and the dashboard consumer (`stats.js`) are **updated** to read `total.nodes` from
 the new shape, not removed. No POST/event contract changes, so **C2** and the
 Python suite are unaffected.
+
+---
+
+## Bugfix: API casing consistency
+
+Two casing inconsistencies on the HTTP API, fixed as a versioned breaking change
+(0.7.0). The `/version` JSON response moves to snake_case (matching every other
+read response and `/api/stats`); `POST /api/nodes` **additionally** accepts
+snake_case node fields so the ingest contract is no longer Meshtastic-camelCase
+only. The **signed federation wire** (`/.well-known`, `/api/instances`) is
+deliberately **unchanged** (camelCase — its keys are part of the instance
+signature, `federation/signature.rb`).
+
+*Run the server in public mode (`API_TOKEN=acctest PRIVATE=0 FEDERATION=0 bundle exec ruby app.rb`).*
+
+### BF-A1 — `/version` response is snake_case
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "exposes the /version config block in snake_case" )
+```
+**Expected:** pass. `GET /version` returns a `config` block keyed in snake_case
+(`site_name`, `map_center` `{lat,lon}`, `private_mode`, `instance_domain`,
+`contact_link`, `contact_link_url`, `max_distance_km`, `refresh_interval_seconds`)
+plus a top-level `last_node_update`. The pre-0.7.0 camelCase keys (`siteName`,
+`mapCenter`, `privateMode`, …, `lastNodeUpdate`) are **gone**. The federation wire
+(`/.well-known`, `/api/instances`) stays camelCase (signed).
+
+### BF-A2 — `POST /api/nodes` accepts snake_case node fields
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "accepts snake_case node fields on POST /api/nodes" )
+```
+**Expected:** pass. A node POSTed with snake_case fields (`last_heard`,
+`user.short_name`/`long_name`/`hw_model`, `device_metrics.battery_level`,
+`position.latitude`/`longitude`) is stored and surfaces on `GET /api/nodes`.
+camelCase Meshtastic input (`lastHeard`, `user.shortName`, …) continues to work
+unchanged — acceptance is **additive**, so the existing Python ingestor is
+unaffected.
+
+### BF-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. Updated for the `/version` break:
+**A2b** now asserts `"private_mode":true` (was `"privateMode":true`) and **D1**
+lists the snake_case config keys. The deployed Flutter app reads the new
+`/version` keys (`app/lib/main.dart`); older app builds break until updated (the
+accepted one-way cost of the clean break). `data-app-config` (the server→frontend
+DOM channel) is intentionally **out of scope** and stays camelCase.
+
+---
+
+## Bugfix: API consistency cleanups (I2/I3/I5/I6)
+
+Four small API consistency fixes shipped in 0.7.0 alongside the casing change
+above. The signed federation wire (`/.well-known`, `/api/instances` output, the
+canonical signed payload) stays untouched throughout.
+
+### IC-A1 — `POST /api/instances` accepts both key casings (I6)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "accepts snake_case optional fields on POST /api/instances" )
+```
+**Expected:** pass. Optional fields (`contact_link`, `nodes_count`, …) accept
+snake_case in addition to camelCase; the camelCase keys and the camelCase signed
+canonical payload are unchanged.
+
+### IC-A2 — Only `position_time`, no ISO twin (I2)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "/api/nodes" -e "/api/positions" )
+```
+**Expected:** pass. `GET /api/nodes` and `/api/positions` emit `position_time`
+(unix int) and **no** `pos_time_iso` / `position_time_iso`.
+
+### IC-A3 — POST ingest routes return 201 (I3)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "POST ingest status codes" )
+```
+**Expected:** pass. Every `POST /api/*` ingest route returns `201 Created`
+(matching `/api/instances`). The ingestor treats any 2xx as success.
+
+### IC-A4 — List POST routes reject malformed payloads (I5)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "POST payload validation" )
+```
+**Expected:** pass. `/api/messages|positions|telemetry|neighbors|traces` return
+`400 {"error":"invalid payload"}` for a non-array/non-object body, matching the
+`/api/nodes` Hash check.
+
+### IC-R1 — Regression
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd matrix && cargo test --all --all-features )
+```
+**Expected:** all green. POST `be_ok` assertions were updated to `201` (not
+removed); the ingestor is unaffected (2xx success); the matrix bridge is GET-only.
