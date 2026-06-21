@@ -30,7 +30,7 @@ module PotatoMesh
           return [false, "document is not an object"]
         end
 
-        remote_pubkey = sanitize_public_key_pem(document["publicKey"])
+        remote_pubkey = sanitize_public_key_pem(document["public_key"] || document["publicKey"])
         return [false, "public key missing"] unless remote_pubkey
         return [false, "public key mismatch"] unless remote_pubkey == pubkey
 
@@ -38,12 +38,12 @@ module PotatoMesh
         return [false, "domain missing"] unless remote_domain
         return [false, "domain mismatch"] unless remote_domain.casecmp?(domain)
 
-        algorithm = string_or_nil(document["signatureAlgorithm"])
+        algorithm = string_or_nil(document["signature_algorithm"] || document["signatureAlgorithm"])
         unless algorithm&.casecmp?(PotatoMesh::Config.instance_signature_algorithm)
           return [false, "unsupported signature algorithm"]
         end
 
-        signed_payload_b64 = string_or_nil(document["signedPayload"])
+        signed_payload_b64 = string_or_nil(document["signed_payload"] || document["signedPayload"])
         signature_b64 = string_or_nil(document["signature"])
         return [false, "missing signed payload"] unless signed_payload_b64
         return [false, "missing signature"] unless signature_b64
@@ -61,7 +61,7 @@ module PotatoMesh
         end
 
         payload_domain = string_or_nil(payload["domain"])
-        payload_pubkey = sanitize_public_key_pem(payload["publicKey"])
+        payload_pubkey = sanitize_public_key_pem(payload["public_key"] || payload["publicKey"])
         return [false, "signed payload domain mismatch"] unless payload_domain&.casecmp?(domain)
         return [false, "signed payload public key mismatch"] unless payload_pubkey == pubkey
 

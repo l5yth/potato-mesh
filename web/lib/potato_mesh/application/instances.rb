@@ -134,20 +134,24 @@ module PotatoMesh
         payload = {
           "id" => id,
           "domain" => domain,
-          "pubkey" => pubkey,
+          "public_key" => pubkey,
           "name" => string_or_nil(row["name"]),
           "version" => string_or_nil(row["version"]),
           "channel" => string_or_nil(row["channel"]),
           "frequency" => string_or_nil(row["frequency"]),
           "latitude" => coerce_float(row["latitude"]),
           "longitude" => coerce_float(row["longitude"]),
-          "lastUpdateTime" => last_update_time,
-          "isPrivate" => private_flag,
-          "nodesCount" => coerce_integer(row["nodes_count"]),
-          "meshcoreNodesCount" => coerce_integer(row["meshcore_nodes_count"]),
-          "meshtasticNodesCount" => coerce_integer(row["meshtastic_nodes_count"]),
-          "contactLink" => string_or_nil(row["contact_link"]),
+          "last_update" => last_update_time,
+          "is_private" => private_flag,
+          "nodes_count" => coerce_integer(row["nodes_count"]),
+          "meshcore_nodes_count" => coerce_integer(row["meshcore_nodes_count"]),
+          "meshtastic_nodes_count" => coerce_integer(row["meshtastic_nodes_count"]),
+          # reticulum count has no column (always 0 today); served signed=0 so a
+          # crawler re-verifying a relayed v2 record rebuilds the same canonical.
+          "reticulum_nodes_count" => 0,
+          "contact_link" => string_or_nil(row["contact_link"]),
           "signature" => signature,
+          "signature_version" => PotatoMesh::Config.federation_signature_version,
         }
 
         payload.reject { |_, value| value.nil? }
@@ -194,7 +198,7 @@ module PotatoMesh
           normalized = normalize_instance_row(row)
           next unless normalized
 
-          last_update_time = normalized["lastUpdateTime"]
+          last_update_time = normalized["last_update"]
           next unless last_update_time.is_a?(Integer) && last_update_time >= min_last_update_time
 
           memo << normalized

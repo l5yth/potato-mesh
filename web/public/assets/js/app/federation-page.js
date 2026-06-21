@@ -384,7 +384,7 @@ export async function initializeFederationPage(options = {}) {
       defaultDirection: 'asc'
     },
     domain: { getValue: inst => inst.domain ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
-    contact: { getValue: inst => inst.contactLink ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
+    contact: { getValue: inst => (inst.contact_link ?? inst.contactLink) ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     version: { getValue: inst => inst.version ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     channel: { getValue: inst => inst.channel ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
     frequency: { getValue: inst => inst.frequency ?? '', compare: compareString, hasValue: hasStringValue, defaultDirection: 'asc' },
@@ -395,13 +395,13 @@ export async function initializeFederationPage(options = {}) {
       defaultDirection: 'desc'
     },
     meshcoreNodesCount: {
-      getValue: inst => toFiniteNumber(inst.meshcoreNodesCount),
+      getValue: inst => toFiniteNumber(inst.meshcore_nodes_count ?? inst.meshcoreNodesCount),
       compare: compareNumber,
       hasValue: hasNumberValue,
       defaultDirection: 'desc'
     },
     meshtasticNodesCount: {
-      getValue: inst => toFiniteNumber(inst.meshtasticNodesCount),
+      getValue: inst => toFiniteNumber(inst.meshtastic_nodes_count ?? inst.meshtasticNodesCount),
       compare: compareNumber,
       hasValue: hasNumberValue,
       defaultDirection: 'desc'
@@ -409,7 +409,7 @@ export async function initializeFederationPage(options = {}) {
     latitude: { getValue: inst => toFiniteNumber(inst.latitude), compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
     longitude: { getValue: inst => toFiniteNumber(inst.longitude), compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
     lastUpdateTime: {
-      getValue: inst => toFiniteNumber(inst.lastUpdateTime),
+      getValue: inst => toFiniteNumber(inst.last_update ?? inst.lastUpdateTime),
       compare: compareNumber,
       hasValue: hasNumberValue,
       defaultDirection: 'desc'
@@ -488,12 +488,12 @@ export async function initializeFederationPage(options = {}) {
       const domainHtml = url
         ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(instance.domain || '')}</a>`
         : escapeHtml(instance.domain || '');
-      const contactHtml = renderContactHtml(instance.contactLink);
-      const nodesCountValue = toFiniteNumber(instance.nodesCount ?? instance.nodes_count);
+      const contactHtml = renderContactHtml(instance.contact_link ?? instance.contactLink);
+      const nodesCountValue = toFiniteNumber(instance.nodes_count ?? instance.nodesCount);
       const nodesCountText = nodesCountValue == null ? '<em>—</em>' : escapeHtml(String(nodesCountValue));
-      const mcNodesVal = toFiniteNumber(instance.meshcoreNodesCount);
+      const mcNodesVal = toFiniteNumber(instance.meshcore_nodes_count ?? instance.meshcoreNodesCount);
       const mcNodesText = mcNodesVal == null ? '<em>—</em>' : `${meshcoreIconHtml()} ${escapeHtml(String(mcNodesVal))}`;
-      const mtNodesVal = toFiniteNumber(instance.meshtasticNodesCount);
+      const mtNodesVal = toFiniteNumber(instance.meshtastic_nodes_count ?? instance.meshtasticNodesCount);
       const mtNodesText = mtNodesVal == null ? '<em>—</em>' : `${meshtasticIconHtml()} ${escapeHtml(String(mtNodesVal))}`;
 
       tr.innerHTML = `
@@ -508,7 +508,7 @@ export async function initializeFederationPage(options = {}) {
         <td class="instances-col instances-col--meshtastic-nodes mono">${mtNodesText}</td>
         <td class="instances-col instances-col--latitude mono">${fmtCoords(instance.latitude)}</td>
         <td class="instances-col instances-col--longitude mono">${fmtCoords(instance.longitude)}</td>
-        <td class="instances-col instances-col--last-update mono">${timeAgo(instance.lastUpdateTime, nowSec)}</td>
+        <td class="instances-col instances-col--last-update mono">${timeAgo(instance.last_update ?? instance.lastUpdateTime, nowSec)}</td>
       `;
 
       frag.appendChild(tr);

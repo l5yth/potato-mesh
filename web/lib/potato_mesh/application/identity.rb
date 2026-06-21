@@ -175,22 +175,26 @@ module PotatoMesh
         domain_value = sanitize_instance_domain(app_constant(:INSTANCE_DOMAIN))
 
         payload = {
-          publicKey: app_constant(:INSTANCE_PUBLIC_KEY_PEM),
-          name: sanitized_site_name,
-          version: app_constant(:APP_VERSION),
-          domain: domain_value,
-          lastUpdate: last_update,
+          "public_key" => app_constant(:INSTANCE_PUBLIC_KEY_PEM),
+          "name" => sanitized_site_name,
+          "version" => app_constant(:APP_VERSION),
+          "domain" => domain_value,
+          "last_update" => last_update,
         }
 
-        signed_payload = JSON.generate(payload, sort_keys: true)
+        # Shared snake_case canonicalizer (SPEC FS1/FS4, U0) stamps
+        # signature_version inside the signed bytes so the format cannot be
+        # silently downgraded.
+        signed_payload = canonical_signed_payload(payload)
         signature = Base64.strict_encode64(
           app_constant(:INSTANCE_PRIVATE_KEY).sign(OpenSSL::Digest::SHA256.new, signed_payload),
         )
 
         document = payload.merge(
-          signature: signature,
-          signatureAlgorithm: PotatoMesh::Config.instance_signature_algorithm,
-          signedPayload: Base64.strict_encode64(signed_payload),
+          "signature_version" => PotatoMesh::Config.federation_signature_version,
+          "signature" => signature,
+          "signature_algorithm" => PotatoMesh::Config.instance_signature_algorithm,
+          "signed_payload" => Base64.strict_encode64(signed_payload),
         )
 
         json_output = JSON.pretty_generate(document)

@@ -108,6 +108,9 @@ module PotatoMesh
           nodes_count: nodes_count,
           meshcore_nodes_count: mc_count,
           meshtastic_nodes_count: mt_count,
+          # Forward-compat stub (SPEC FS2): always 0 until a Reticulum ingestor
+          # exists, but signed now so the shape need not change again.
+          reticulum_nodes_count: 0,
         }
       ensure
         db&.close
@@ -133,20 +136,22 @@ module PotatoMesh
         payload = {
           "id" => attributes[:id],
           "domain" => attributes[:domain],
-          "pubkey" => attributes[:pubkey],
+          "public_key" => attributes[:pubkey],
           "name" => attributes[:name],
           "version" => attributes[:version],
           "channel" => attributes[:channel],
           "frequency" => attributes[:frequency],
           "latitude" => attributes[:latitude],
           "longitude" => attributes[:longitude],
-          "lastUpdateTime" => attributes[:last_update_time],
-          "isPrivate" => attributes[:is_private],
-          "contactLink" => attributes[:contact_link],
-          "nodesCount" => attributes[:nodes_count],
-          "meshcoreNodesCount" => attributes[:meshcore_nodes_count],
-          "meshtasticNodesCount" => attributes[:meshtastic_nodes_count],
+          "last_update" => attributes[:last_update_time],
+          "is_private" => attributes[:is_private],
+          "contact_link" => attributes[:contact_link],
+          "nodes_count" => attributes[:nodes_count],
+          "meshcore_nodes_count" => attributes[:meshcore_nodes_count],
+          "meshtastic_nodes_count" => attributes[:meshtastic_nodes_count],
+          "reticulum_nodes_count" => attributes[:reticulum_nodes_count],
           "signature" => signature,
+          "signature_version" => PotatoMesh::Config.federation_signature_version,
         }
         payload.reject { |_, value| value.nil? }
       end

@@ -1238,16 +1238,22 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.execute("INSERT INTO nodes (node_id, last_heard) VALUES (?, ?)", ["node-z", 321])
       end
 
-      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "Example.NET") do
-        json_output, signature = application_class.build_well_known_document
-        document = JSON.parse(json_output)
+      # NOTE: stub_const does not take a block (the previous block form silently
+      # skipped every assertion below).  Stub for the example, then assert inline.
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "Example.NET")
+      json_output, signature = application_class.build_well_known_document
+      document = JSON.parse(json_output)
 
-        expect(document["domain"]).to eq("example.net")
-        expect(document["lastUpdate"]).to eq(321)
-        expect(document["signatureAlgorithm"]).to eq("rsa-sha256")
-        expect(signature).to be_a(String)
-        expect(signature).not_to be_empty
-      end
+      # v2 well-known is snake_case with a signature_version marker (SPEC FS1/FS3).
+      expect(document["domain"]).to eq("example.net")
+      expect(document["last_update"]).to eq(321)
+      expect(document["signature_algorithm"]).to eq("rsa-sha256")
+      expect(document["signature_version"]).to eq(2)
+      expect(document["public_key"]).to eq(application_class::INSTANCE_PUBLIC_KEY_PEM)
+      expect(document).not_to have_key("lastUpdate")
+      expect(document).not_to have_key("signatureAlgorithm")
+      expect(signature).to be_a(String)
+      expect(signature).not_to be_empty
     end
   end
 
@@ -2735,8 +2741,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(self_entry).not_to be_nil
       expect(self_entry["domain"]).not_to be_nil
-      expect(self_entry["isPrivate"]).to eq(false)
+      expect(self_entry["is_private"]).to eq(false)
       expect(self_entry["signature"]).not_to be_nil
+      expect(self_entry["signature_version"]).to eq(2)
+      # FS-A4: wire is snake_case only — no camelCase keys leak through.
+      expect(self_entry).not_to have_key("isPrivate")
+      expect(self_entry).not_to have_key("lastUpdateTime")
+      expect(self_entry).not_to have_key("nodesCount")
     end
 
     it "exposes validated instance records from fixture data" do
@@ -2789,7 +2800,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(remote_entry).not_to be_nil
       expect(remote_entry["domain"]).to eq("remote.example")
-      expect(remote_entry["isPrivate"]).to eq(false)
+      expect(remote_entry["is_private"]).to eq(false)
       expect(remote_entry["signature"]).to eq(remote_signature)
     end
 

@@ -94,7 +94,7 @@ RSpec.describe PotatoMesh::App::Instances do
       expect(domains).to include(application_class.app_constant(:INSTANCE_DOMAIN))
       expect(domains).not_to include("stale.mesh.test")
       expect(domains).not_to include("missing.mesh.test")
-      expect(payload.all? { |row| row["lastUpdateTime"] >= lower_bound }).to be(true)
+      expect(payload.all? { |row| row["last_update"] >= lower_bound }).to be(true)
     end
 
     it "exposes contactLink when present and omits blank values" do
@@ -130,8 +130,8 @@ RSpec.describe PotatoMesh::App::Instances do
       with_contact = payload.find { |row| row["domain"] == "alpha.mesh.test" }
       without_contact = payload.find { |row| row["domain"] == "beta.mesh.test" }
 
-      expect(with_contact["contactLink"]).to eq("https://example.org/contact")
-      expect(without_contact.key?("contactLink")).to be(false)
+      expect(with_contact["contact_link"]).to eq("https://example.org/contact")
+      expect(without_contact.key?("contact_link")).to be(false)
     end
 
     it "includes nodesCount values, preserving zeros" do
@@ -173,8 +173,8 @@ RSpec.describe PotatoMesh::App::Instances do
       with_nodes = payload.find { |row| row["domain"] == "gamma.mesh.test" }
       zero_nodes = payload.find { |row| row["domain"] == "delta.mesh.test" }
 
-      expect(with_nodes["nodesCount"]).to eq(42)
-      expect(zero_nodes["nodesCount"]).to eq(0)
+      expect(with_nodes["nodes_count"]).to eq(42)
+      expect(zero_nodes["nodes_count"]).to eq(0)
     end
 
     it "includes per-protocol node counts when present and omits when nil" do
@@ -218,10 +218,10 @@ RSpec.describe PotatoMesh::App::Instances do
       with_proto = payload.find { |row| row["domain"] == "proto.mesh.test" }
       without_proto = payload.find { |row| row["domain"] == "noproto.mesh.test" }
 
-      expect(with_proto["meshcoreNodesCount"]).to eq(20)
-      expect(with_proto["meshtasticNodesCount"]).to eq(30)
-      expect(without_proto.key?("meshcoreNodesCount")).to be(false)
-      expect(without_proto.key?("meshtasticNodesCount")).to be(false)
+      expect(with_proto["meshcore_nodes_count"]).to eq(20)
+      expect(with_proto["meshtastic_nodes_count"]).to eq(30)
+      expect(without_proto.key?("meshcore_nodes_count")).to be(false)
+      expect(without_proto.key?("meshtastic_nodes_count")).to be(false)
     end
   end
 end

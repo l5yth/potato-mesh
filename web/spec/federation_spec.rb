@@ -1151,11 +1151,17 @@ RSpec.describe PotatoMesh::App::Federation do
         nodes_count: 42,
         meshcore_nodes_count: 30,
         meshtastic_nodes_count: 12,
+        reticulum_nodes_count: 0,
       }
       payload = federation_helpers.instance_announcement_payload(attributes, "sig")
-      expect(payload["nodesCount"]).to eq(42)
-      expect(payload["meshcoreNodesCount"]).to eq(30)
-      expect(payload["meshtasticNodesCount"]).to eq(12)
+      expect(payload["nodes_count"]).to eq(42)
+      expect(payload["meshcore_nodes_count"]).to eq(30)
+      expect(payload["meshtastic_nodes_count"]).to eq(12)
+      # v2 wire is snake_case with a forward-compat reticulum count + version marker.
+      expect(payload["reticulum_nodes_count"]).to eq(0)
+      expect(payload["public_key"]).to eq("key")
+      expect(payload["signature_version"]).to eq(2)
+      expect(payload).not_to have_key("nodesCount")
     end
 
     it "omits node count fields when nil" do
@@ -2525,6 +2531,54 @@ RSpec.describe PotatoMesh::App::Federation do
       )
 
       expect(result).to be(false)
+    end
+  end
+
+  describe "instance signature v2 migration (FS1-FS4)" do
+    let(:application_class) { PotatoMesh::Application }
+    let(:keypair) { OpenSSL::PKey::RSA.new(2048) }
+    let(:pubkey_pem) { keypair.public_key.to_pem }
+    let(:attributes) do
+      {
+        id: "inst-1", domain: "a.mesh", pubkey: pubkey_pem, name: "A",
+        version: "0.7.0", channel: "#x", frequency: "915MHz",
+        latitude: 1.0, longitude: 2.0, last_update_time: 1_700_000_000,
+        is_private: false, contact_link: "#a:x", nodes_count: 7,
+        meshcore_nodes_count: 3, meshtastic_nodes_count: 4, reticulum_nodes_count: 0,
+      }
+    end
+
+    def sign_canonical(canonical)
+      Base64.strict_encode64(keypair.sign(OpenSSL::Digest::SHA256.new, canonical))
+    end
+
+    it "signs the v2 (snake_case) canonical with a signature_version marker and signed counts" do
+      parsed = JSON.parse(application_class.canonical_instance_payload(attributes))
+      expect(parsed).to include(
+        "public_key", "last_update", "is_private", "contact_link",
+        "nodes_count", "meshcore_nodes_count", "meshtastic_nodes_count",
+        "reticulum_nodes_count", "signature_version"
+      )
+      expect(parsed["signature_version"]).to eq(2)
+      expect(parsed).not_to have_key("publicKey")
+      expect(parsed).not_to have_key("lastUpdateTime")
+      expect(parsed).not_to have_key("isPrivate")
+    end
+
+    it "verifies a v2 signature" do
+      sig = sign_canonical(application_class.canonical_instance_payload_v2(attributes))
+      expect(application_class.verify_instance_signature(attributes, sig, pubkey_pem)).to be(true)
+    end
+
+    it "still verifies a legacy v1 (camelCase) signature — backward accept" do
+      sig = sign_canonical(application_class.canonical_instance_payload_v1(attributes))
+      expect(application_class.verify_instance_signature(attributes, sig, pubkey_pem)).to be(true)
+    end
+
+    it "rejects a tampered node count (counts are signed in v2)" do
+      sig = sign_canonical(application_class.canonical_instance_payload_v2(attributes))
+      tampered = attributes.merge(nodes_count: 999)
+      expect(application_class.verify_instance_signature(tampered, sig, pubkey_pem)).to be(false)
     end
   end
 
