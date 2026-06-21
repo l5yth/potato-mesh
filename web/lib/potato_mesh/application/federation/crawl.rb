@@ -25,8 +25,11 @@ module PotatoMesh
       def remote_active_node_count_from_stats(payload, max_age_seconds:)
         return nil unless payload.is_a?(Hash)
 
-        active_nodes = payload["active_nodes"]
-        return nil unless active_nodes.is_a?(Hash)
+        # Prefer the 0.7.0 shape (counts under total.nodes); fall back to the
+        # pre-0.7.0 flat active_nodes for older peers (one-way federation
+        # compatibility, SPEC S7).
+        node_windows = remote_stats_node_windows(payload)
+        return nil unless node_windows.is_a?(Hash)
 
         age = coerce_integer(max_age_seconds) || 0
         key = if age <= 3600
@@ -39,10 +42,38 @@ module PotatoMesh
             "month"
           end
 
-        value = coerce_integer(active_nodes[key])
+        value = coerce_integer(node_windows[key])
         return nil unless value
 
         [value, 0].max
+      end
+
+      # Resolve the total node-activity window hash from either /api/stats shape.
+      #
+      # @param payload [Hash] decoded /api/stats payload.
+      # @return [Hash, nil] +{ "hour", "day", "week", "month" }+ counts, or nil
+      #   when neither the 0.7.0 (+total.nodes+) nor legacy (+active_nodes+) shape
+      #   is present.
+      def remote_stats_node_windows(payload)
+        new_shape = payload.dig("total", "nodes")
+        return new_shape if new_shape.is_a?(Hash)
+
+        legacy = payload["active_nodes"]
+        legacy if legacy.is_a?(Hash)
+      end
+
+      # Resolve a protocol's 24h node count from either /api/stats shape.
+      #
+      # Reads the 0.7.0 +<protocol>.nodes.day+ value, falling back to the
+      # pre-0.7.0 flat +<protocol>.day+ for older peers.
+      #
+      # @param payload [Hash] decoded /api/stats payload.
+      # @param protocol [String] protocol scope name (e.g. "meshcore").
+      # @return [Integer, nil] node count active in the last day, or nil.
+      def remote_stats_protocol_day(payload, protocol)
+        value = payload.dig(protocol, "nodes", "day")
+        value = payload.dig(protocol, "day") if value.nil?
+        coerce_integer(value)
       end
 
       # Parse a remote federation instance payload into canonical attributes.
@@ -293,12 +324,13 @@ module PotatoMesh
           )
           attributes[:nodes_count] = stats_count if stats_count
 
-          # Extract per-protocol 24h counts (informational, not signed).
+          # Extract per-protocol 24h counts (informational, not signed).  Reads
+          # the 0.7.0 nodes sub-hash, falling back to the pre-0.7.0 flat shape.
           if stats_payload.is_a?(Hash)
-            mc_day = stats_payload.dig("meshcore", "day")
-            mt_day = stats_payload.dig("meshtastic", "day")
-            attributes[:meshcore_nodes_count] = coerce_integer(mc_day) if mc_day
-            attributes[:meshtastic_nodes_count] = coerce_integer(mt_day) if mt_day
+            mc_day = remote_stats_protocol_day(stats_payload, "meshcore")
+            mt_day = remote_stats_protocol_day(stats_payload, "meshtastic")
+            attributes[:meshcore_nodes_count] = mc_day if mc_day
+            attributes[:meshtastic_nodes_count] = mt_day if mt_day
           end
 
           nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"

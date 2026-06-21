@@ -110,16 +110,9 @@ module PotatoMesh
             content_type :json
             priv = private_mode? ? 1 : 0
             cached = PotatoMesh::App::ApiCache.fetch("api:stats:#{priv}", ttl_seconds: 15) do
-              stats = query_active_node_stats
-              {
-                active_nodes: {
-                  "hour" => stats["hour"], "day" => stats["day"],
-                  "week" => stats["week"], "month" => stats["month"],
-                },
-                meshcore: stats["meshcore"],
-                meshtastic: stats["meshtastic"],
-                sampled: false,
-              }.to_json
+              # Scope → metric → window tree (SPEC S1). +sampled+ stays last and
+              # +false+ for backward continuity with the prior payload.
+              query_active_node_stats.merge("sampled" => false).to_json
             end
 
             etag cached[:etag], kind: :weak
