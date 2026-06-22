@@ -821,3 +821,43 @@ fix only changes how the **placeholder is named/flagged** at message-ingest time
 `merge_synthetic_nodes` / `merge_into_real_node` are unchanged. The Python
 ingestor is untouched (it still emits the same name-derived synthetic upsert,
 now redundant-but-harmless with the web-side path).
+
+---
+
+## Bugfix: Federation peer DNS failure must not 500
+
+A peer registering via `POST /api/instances` (and the periodic crawl) is verified
+by fetching its `/.well-known/potato-mesh` and `/api/nodes`. The fetch path
+(`federation/instance_fetcher.rb#perform_instance_http_request`) resolves the
+peer's domain via `resolve_remote_ip_addresses` → `Addrinfo.getaddrinfo` **before**
+the wrapped HTTP attempt, but its method-level rescue caught only `ArgumentError`.
+A peer whose domain fails DNS raises `Socket::ResolutionError` (a `SocketError`),
+which escaped past `fetch_instance_json` (rescues only `JSON::ParserError` /
+`InstanceFetchError`) to the route as an unhandled **HTTP 500**. The intended
+behavior — documented in-code at the registration pre-check ("DNS lookups that
+fail to resolve are handled later") and already realized on the announce path —
+is a graceful rejection. Fix: `perform_instance_http_request` wraps `SocketError`
+(alongside `ArgumentError`) as `InstanceFetchError`. Frontend/API-shape unaffected;
+the apex (I) and privacy (II) invariants are untouched.
+
+### FD-A1 — DNS resolution failures are wrapped, not leaked
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb -e "wraps DNS resolution failures" -e "fails DNS resolution" )
+```
+**Expected:** pass. `perform_instance_http_request` raises `InstanceFetchError`
+(not a raw `Socket::ResolutionError`) when `Addrinfo.getaddrinfo` fails, and
+`fetch_instance_json` returns `[nil, errors]` (recording the failure) instead of
+raising — so a peer with an unresolvable domain is rejected with a 4xx rather
+than crashing the request with a 500.
+
+### FD-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb )
+( cd web && bundle exec rspec )
+```
+**Expected:** all green, including **A3c** (federation specs: opt-in, isolation,
+privacy override, staleness eviction). The change only converts a previously
+**uncaught** resolution error into the `InstanceFetchError` every
+`fetch_instance_json` caller already handles; the restricted-address
+`ArgumentError` path, connection-error retry/fallback, and announce path are
+unchanged.
