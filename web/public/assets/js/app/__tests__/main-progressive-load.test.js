@@ -23,7 +23,9 @@
  * 10-20s.  The fix renders the newest page immediately and streams the older
  * history in the background; this test pins that behaviour: the newest page is
  * committed even while an older page is still in flight, and the older page is
- * still merged in once it arrives (so #796 completeness is preserved).
+ * still merged in once it arrives (the background pager keeps the same backward
+ * `before`-cursor reachability as the pre-fix #796 walk — it changes *when*
+ * rows render, not *which* rows are reachable).
  *
  * @module app/__tests__/main-progressive-load
  */
@@ -143,7 +145,8 @@ test('initial chat load renders the newest page without blocking on the full win
     );
     assert.ok(backfillRequested, 'a background backfill page should have been requested');
 
-    // Releasing the older page must still merge it in (issue #796 completeness).
+    // Releasing the older page must still merge it in — the backward walk keeps
+    // the same reachability as the pre-fix #796 pager, just progressively.
     releaseGate(olderPage);
     await settle();
     assert.equal(
