@@ -114,7 +114,7 @@ module PotatoMesh
       logger = settings.logger
       return unless logger
 
-      logger.level = PotatoMesh::Config.debug? ? Logger::DEBUG : Logger::WARN
+      logger.level = PotatoMesh::Config.debug? ? Logger::DEBUG : Logger::INFO
     end
 
     # Determine the port the application should listen on by honouring the
@@ -186,6 +186,13 @@ module PotatoMesh
       end
 
       if federation_announcements_active?
+        info_log(
+          "Federation enabled",
+          context: "federation",
+          seed_count: PotatoMesh::Config.federation_seed_domains.length,
+          announcement_interval_seconds: PotatoMesh::Config.federation_announcement_interval,
+          worker_pool_size: PotatoMesh::Config.federation_worker_pool_size,
+        )
         start_initial_federation_announcement!
         start_federation_announcer!
       elsif federation_enabled?
@@ -195,8 +202,8 @@ module PotatoMesh
           reason: "test environment",
         )
       else
-        debug_log(
-          "Federation announcements disabled",
+        info_log(
+          "Federation disabled",
           context: "federation",
           reason: "configuration",
         )

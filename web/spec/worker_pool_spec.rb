@@ -93,6 +93,39 @@ RSpec.describe PotatoMesh::App::WorkerPool do
     ensure
       pool.shutdown(timeout: 0.5)
     end
+
+    it "reaps workers that ignore STOP_SIGNAL within force_kill_after" do
+      pool = described_class.new(size: 1, max_queue: 4, name: "spec-pool")
+      pool.schedule { sleep 30 }
+
+      # Give the worker a beat to actually start the sleep so the join path
+      # exercises the kill branch rather than the cooperative-exit branch.
+      sleep 0.05
+
+      started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      pool.shutdown(timeout: 0.1, force_kill_after: 0.5)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+      expect(elapsed).to be < 2.0
+      expect(pool.threads.none?(&:alive?)).to be(true)
+    end
+
+    it "rejects pending tasks that have not started yet" do
+      pool = described_class.new(size: 1, max_queue: 4, name: "spec-pool")
+      gate = Queue.new
+      pool.schedule { gate.pop }
+      Timeout.timeout(1) { sleep 0.01 until gate.num_waiting.positive? }
+
+      pending = 3.times.map { pool.schedule { :should_not_run } }
+
+      pool.shutdown(timeout: 0.1, force_kill_after: 0.5)
+
+      pending.each do |task|
+        expect do
+          task.wait(timeout: 0.5)
+        end.to raise_error(described_class::ShutdownError)
+      end
+    end
   end
 
   describe PotatoMesh::App::WorkerPool::Task do
