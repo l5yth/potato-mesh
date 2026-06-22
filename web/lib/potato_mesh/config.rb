@@ -423,6 +423,16 @@ module PotatoMesh
       "rsa-sha256"
     end
 
+    # Current federation signature/canonical format version (SPEC FS3).  Stamped
+    # inside every signed payload (instance announcement + well-known) so the
+    # format cannot be silently downgraded; verifiers accept this version and the
+    # legacy unmarked v1 form.
+    #
+    # @return [Integer] the current signature format version.
+    def federation_signature_version
+      2
+    end
+
     # Connection timeout used when establishing federation HTTP sockets.
     #
     # The timeout can be customised with the REMOTE_INSTANCE_CONNECT_TIMEOUT

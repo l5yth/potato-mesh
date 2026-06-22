@@ -669,3 +669,56 @@ canonical payload are unchanged.
 ```
 **Expected:** all green. POST `be_ok` assertions were updated to `201` (not
 removed); the ingestor is unaffected (2xx success); the matrix bridge is GET-only.
+
+---
+
+## Bugfix/Migration: Federation signature v2
+
+Maps to SPEC **FS1–FS6** — federation wire migrated to snake_case with signed
+counts and v1-backward-compatible verification.
+
+### FS-A1 — v2 sign/verify round-trip + v1 backward-accept
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb -e "signature" )
+```
+**Expected:** pass. A v2 (snake) instance signature verifies; a legacy v1
+(camelCase, no `signature_version`) signature still verifies via fallback.
+`verify_instance_signature` accepts both; instances sign/send v2.
+
+### FS-A2 — all announced counts are signed (tamper-evident)
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb -e "signed counts" )
+```
+**Expected:** pass. The announcement canonical covers `nodes_count`,
+`meshcore_nodes_count`, `meshtastic_nodes_count`, `reticulum_nodes_count`;
+altering any count invalidates the v2 signature. Nothing in the announced payload
+sits outside the signed canonical except `signature` / `signature_version`.
+
+### FS-A3 — well-known v2 snake + version marker, accepts v1+v2
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "well-known" )
+```
+**Expected:** pass. `/.well-known/potato-mesh` emits snake_case (`public_key`,
+`last_update`, `signature_algorithm`, `signed_payload`, `signature_version`); the
+validator accepts both v2 and legacy v1 documents.
+
+### FS-A4 — wire surfaces are snake_case
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "/api/instances" )
+```
+**Expected:** pass. `GET /api/instances` and the announce payload use
+`public_key`, `last_update`, `is_private`, `contact_link`, `*_nodes_count` — no
+camelCase keys.
+
+### FS-A5 — activity gate is intended behavior (not a regression)
+**Expected (covered by `federation_spec`):** an instance with **0 nodes active in
+7 days** is **not** federated — `validate_remote_nodes` rejects it ("node data is
+stale" / below `remote_instance_min_node_count`). By design.
+
+### FS-R1 — Regression
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd matrix && cargo test --all --all-features )
+```
+**Expected:** all green. The pre-existing camelCase federation specs are
+retargeted to v2 or kept as the v1-backward-accept proof, not removed.

@@ -1035,26 +1035,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       it "returns the sanitized domain when configuration is present" do
         ENV.delete("APP_ENV")
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", " Example.Org ") do
-          expect(application_class.self_instance_domain).to eq("example.org")
-        end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", " Example.Org ")
+        expect(application_class.self_instance_domain).to eq("example.org")
       end
 
       it "returns nil when the domain is unavailable outside production" do
         ENV["APP_ENV"] = "development"
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil) do
-          expect(application_class.self_instance_domain).to be_nil
-        end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil)
+        expect(application_class.self_instance_domain).to be_nil
       end
 
       it "raises when the domain is unavailable in production" do
         ENV["APP_ENV"] = "production"
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil) do
-          expect { application_class.self_instance_domain }.to raise_error(
-            RuntimeError,
-            "INSTANCE_DOMAIN could not be determined",
-          )
-        end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", nil)
+        expect { application_class.self_instance_domain }.to raise_error(
+          RuntimeError,
+          "INSTANCE_DOMAIN could not be determined",
+        )
       end
     end
 
@@ -1062,67 +1059,60 @@ RSpec.describe "Potato Mesh Sinatra app" do
       let(:domain) { "spec.mesh.test" }
 
       it "rejects registration when the domain source is not the environment" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns) do
-          allowed, reason = application_class.self_instance_registration_decision(domain)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns)
+        allowed, reason = application_class.self_instance_registration_decision(domain)
 
-          expect(allowed).to be(false)
-          expect(reason).to eq("INSTANCE_DOMAIN source is reverse_dns")
-        end
+        expect(allowed).to be(false)
+        expect(reason).to eq("INSTANCE_DOMAIN source is reverse_dns")
       end
 
       it "rejects registration when the domain is invalid" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          allowed, reason = application_class.self_instance_registration_decision(nil)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        allowed, reason = application_class.self_instance_registration_decision(nil)
 
-          expect(allowed).to be(false)
-          expect(reason).to eq("INSTANCE_DOMAIN missing or invalid")
-        end
+        expect(allowed).to be(false)
+        expect(reason).to eq("INSTANCE_DOMAIN missing or invalid")
       end
 
       it "rejects registration when the domain resolves to a restricted IP" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          allowed, reason = application_class.self_instance_registration_decision("127.0.0.1")
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        allowed, reason = application_class.self_instance_registration_decision("127.0.0.1")
 
-          expect(allowed).to be(false)
-          expect(reason).to eq("INSTANCE_DOMAIN resolves to restricted IP")
-        end
+        expect(allowed).to be(false)
+        expect(reason).to eq("INSTANCE_DOMAIN resolves to restricted IP")
       end
 
       it "accepts registration when configuration is valid" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          allowed, reason = application_class.self_instance_registration_decision(domain)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        allowed, reason = application_class.self_instance_registration_decision(domain)
 
-          expect(allowed).to be(true)
-          expect(reason).to be_nil
-        end
+        expect(allowed).to be(true)
+        expect(reason).to be_nil
       end
     end
 
     describe ".ensure_self_instance_record!" do
       it "persists the self instance when registration is allowed" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment) do
-          stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "self.mesh") do
-            with_db do |db|
-              db.execute("DELETE FROM instances")
-            end
-
-            application_class.ensure_self_instance_record!
-
-            expect(instance_count).to eq(1)
-          end
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :environment)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "self.mesh")
+        with_db do |db|
+          db.execute("DELETE FROM instances")
         end
+
+        application_class.ensure_self_instance_record!
+
+        expect(instance_count).to eq(1)
       end
 
       it "skips persistence when registration is not allowed" do
-        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns) do
-          with_db do |db|
-            db.execute("DELETE FROM instances")
-          end
-
-          application_class.ensure_self_instance_record!
-
-          expect(instance_count).to eq(0)
+        stub_const("PotatoMesh::Application::INSTANCE_DOMAIN_SOURCE", :reverse_dns)
+        with_db do |db|
+          db.execute("DELETE FROM instances")
         end
+
+        application_class.ensure_self_instance_record!
+
+        expect(instance_count).to eq(0)
       end
     end
   end
@@ -1238,16 +1228,22 @@ RSpec.describe "Potato Mesh Sinatra app" do
         db.execute("INSERT INTO nodes (node_id, last_heard) VALUES (?, ?)", ["node-z", 321])
       end
 
-      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "Example.NET") do
-        json_output, signature = application_class.build_well_known_document
-        document = JSON.parse(json_output)
+      # NOTE: stub_const does not take a block (the previous block form silently
+      # skipped every assertion below).  Stub for the example, then assert inline.
+      stub_const("PotatoMesh::Application::INSTANCE_DOMAIN", "Example.NET")
+      json_output, signature = application_class.build_well_known_document
+      document = JSON.parse(json_output)
 
-        expect(document["domain"]).to eq("example.net")
-        expect(document["lastUpdate"]).to eq(321)
-        expect(document["signatureAlgorithm"]).to eq("rsa-sha256")
-        expect(signature).to be_a(String)
-        expect(signature).not_to be_empty
-      end
+      # v2 well-known is snake_case with a signature_version marker (SPEC FS1/FS3).
+      expect(document["domain"]).to eq("example.net")
+      expect(document["last_update"]).to eq(321)
+      expect(document["signature_algorithm"]).to eq("rsa-sha256")
+      expect(document["signature_version"]).to eq(2)
+      expect(document["public_key"]).to eq(application_class::INSTANCE_PUBLIC_KEY_PEM)
+      expect(document).not_to have_key("lastUpdate")
+      expect(document).not_to have_key("signatureAlgorithm")
+      expect(signature).to be_a(String)
+      expect(signature).not_to be_empty
     end
   end
 
@@ -2735,8 +2731,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(self_entry).not_to be_nil
       expect(self_entry["domain"]).not_to be_nil
-      expect(self_entry["isPrivate"]).to eq(false)
+      expect(self_entry["is_private"]).to eq(false)
       expect(self_entry["signature"]).not_to be_nil
+      expect(self_entry["signature_version"]).to eq(2)
+      # FS-A4: wire is snake_case only — no camelCase keys leak through.
+      expect(self_entry).not_to have_key("isPrivate")
+      expect(self_entry).not_to have_key("lastUpdateTime")
+      expect(self_entry).not_to have_key("nodesCount")
     end
 
     it "exposes validated instance records from fixture data" do
@@ -2789,7 +2790,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(remote_entry).not_to be_nil
       expect(remote_entry["domain"]).to eq("remote.example")
-      expect(remote_entry["isPrivate"]).to eq(false)
+      expect(remote_entry["is_private"]).to eq(false)
       expect(remote_entry["signature"]).to eq(remote_signature)
     end
 
