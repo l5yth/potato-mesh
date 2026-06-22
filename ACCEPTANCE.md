@@ -722,3 +722,50 @@ stale" / below `remote_instance_min_node_count`). By design.
 ```
 **Expected:** all green. The pre-existing camelCase federation specs are
 retargeted to v2 or kept as the v1-backward-accept proof, not removed.
+
+---
+
+## Bugfix: Chat first-paint latency (progressive load, issue #802)
+
+PR #800 (issue #796) made the initial chat load page the **entire** seven-day
+window *before* rendering anything — on a busy instance up to ~10k messages
+across several sequential `/api/messages` pages, leaving the chat blank for
+10-20s. The fix renders the newest page immediately and **streams** the older
+history in the background (deduplicated by id), so the chat fills progressively
+while staying responsive. The change is to *when* rows render, not *which* rows
+are reachable: the background pager keeps the **same backward `before`-cursor
+semantics** as the pre-fix #796 walk, so it reaches the same rows C7 does.
+Frontend-only: no API/DB change, so the C4/C7 window floors, `MAX_QUERY_LIMIT`,
+and privacy are untouched.
+
+### PL-A1 — Newest page renders without blocking on the full window
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-progressive-load.test.js )
+```
+**Expected:** pass. On first load the newest `MESSAGE_LIMIT` messages are
+committed and rendered **even while an older page is still in flight** (the chat
+does not wait for the whole backward pagination); once the background page
+resolves it is merged in by id, extending the loaded set backward through the
+window with the same reachability as the C7 walk. A failed background page is
+swallowed (logged, not rethrown) and leaves the rendered newest page intact.
+
+### PL-A2 — Backward pager yields progressively and de-duplicates by id
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/data-fetchers.test.js )
+```
+**Expected:** pass. `paginateMessages()` yields one batch per page
+(newest → oldest), seeds its cursor from an optional `before`, de-duplicates by
+id across pages, and stops on a short page / no-progress / missing cursor /
+`maxPages`. Its eager wrapper `fetchAllMessages()` preserves its existing
+semantics (concatenation of the generator's batches).
+
+### PL-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test )
+( cd web && bundle exec rspec spec/app_spec.rb -e "backward pagination" )
+```
+**Expected:** all green. **C7** (issue #796 backward pagination) is unchanged —
+the server still clamps `before`/`since` to the seven-day floor and
+`MAX_QUERY_LIMIT`, and the client reaches the same in-window messages C7 covers
+(identical backward-cursor semantics), now progressively rather than in one
+blocking burst.

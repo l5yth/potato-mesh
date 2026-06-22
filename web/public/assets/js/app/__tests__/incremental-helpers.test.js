@@ -16,7 +16,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from '../incremental-helpers.js';
+import { maxRecordTimestamp, minRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from '../incremental-helpers.js';
 
 // ---------------------------------------------------------------------------
 // maxRecordTimestamp
@@ -78,6 +78,57 @@ test('maxRecordTimestamp skips null and non-object entries', () => {
 test('maxRecordTimestamp ignores non-number timestamp values', () => {
   const records = [{ rx_time: 'abc' }, { rx_time: 50 }];
   assert.equal(maxRecordTimestamp(records), 50);
+});
+
+// ---------------------------------------------------------------------------
+// minRecordTimestamp
+// ---------------------------------------------------------------------------
+
+test('minRecordTimestamp returns 0 for an empty array', () => {
+  assert.equal(minRecordTimestamp([]), 0);
+});
+
+test('minRecordTimestamp returns 0 for non-array input', () => {
+  assert.equal(minRecordTimestamp(null), 0);
+  assert.equal(minRecordTimestamp(undefined), 0);
+  assert.equal(minRecordTimestamp('string'), 0);
+});
+
+test('minRecordTimestamp extracts the lowest positive rx_time by default', () => {
+  // The middle row exercises both branches of the running-minimum test: 100
+  // lowers the floor from 300, then 200 (>= 100) leaves it unchanged.
+  const records = [{ rx_time: 300 }, { rx_time: 100 }, { rx_time: 200 }];
+  assert.equal(minRecordTimestamp(records), 100);
+});
+
+test('minRecordTimestamp inspects last_heard by default', () => {
+  const records = [{ last_heard: 500 }, { last_heard: 250 }];
+  assert.equal(minRecordTimestamp(records), 250);
+});
+
+test('minRecordTimestamp returns 0 when records lack timestamp fields', () => {
+  const records = [{ node_id: '!abc' }, { node_id: '!def' }];
+  assert.equal(minRecordTimestamp(records), 0);
+});
+
+test('minRecordTimestamp accepts custom field names', () => {
+  const records = [{ telemetry_time: 800 }, { telemetry_time: 400 }];
+  assert.equal(minRecordTimestamp(records, ['telemetry_time']), 400);
+});
+
+test('minRecordTimestamp picks the min across multiple fields', () => {
+  const records = [{ rx_time: 400, position_time: 150 }];
+  assert.equal(minRecordTimestamp(records, ['rx_time', 'position_time']), 150);
+});
+
+test('minRecordTimestamp skips null and non-object entries', () => {
+  const records = [null, undefined, 42, { rx_time: 10 }];
+  assert.equal(minRecordTimestamp(records), 10);
+});
+
+test('minRecordTimestamp ignores non-number and non-positive timestamps', () => {
+  const records = [{ rx_time: 'abc' }, { rx_time: 0 }, { rx_time: -5 }, { rx_time: 70 }];
+  assert.equal(minRecordTimestamp(records), 70);
 });
 
 // ---------------------------------------------------------------------------

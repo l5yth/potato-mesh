@@ -98,7 +98,7 @@ import {
   aggregateTelemetrySnapshots,
 } from './snapshot-aggregator.js';
 import { normalizeNodeCollection } from './node-snapshot-normalizer.js';
-import { maxRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from './incremental-helpers.js';
+import { maxRecordTimestamp, minRecordTimestamp, mergeById, mergeByCompositeKey, trimToLimit, trimToWindow } from './incremental-helpers.js';
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
@@ -169,7 +169,7 @@ import {
   filterRecentTraces,
   resolveSnapshotLimit,
   fetchMessages as fetchMessagesImpl,
-  fetchAllMessages as fetchAllMessagesImpl,
+  paginateMessages as paginateMessagesImpl,
 } from './main/data-fetchers.js';
 import {
   compareNumber,
@@ -317,6 +317,8 @@ export function initializeApp(config) {
   let lastTraceTimestamp = 0;
   /** Whether the very first full fetch has completed. */
   let initialFetchDone = false;
+  /** Whether the background chat-history backfill is currently running. */
+  let chatBackfillRunning = false;
 
   // NODE_LIMIT, TRACE_LIMIT, TRACE_MAX_AGE_SECONDS, and SNAPSHOT_LIMIT are
   // imported from ``./main/constants.js`` so the helpers extracted into
@@ -3030,21 +3032,54 @@ export function initializeApp(config) {
   }
 
   /**
-   * Closure-bound bridge to ``fetchAllMessagesImpl``.  Pages the entire chat
-   * window (issue #796) so the initial load surfaces every in-window message
-   * instead of just the newest {@link MESSAGE_LIMIT}.  Like {@link fetchMessages}
-   * it injects the dashboard's ``CHAT_ENABLED`` flag and limit normaliser so the
-   * underlying pager stays pure.
+   * Hydrate one page of older messages and merge it into the live chat state,
+   * then re-render the chat log.  The read-modify-write of ``allMessages`` is
+   * synchronous (no ``await`` between the merge and the assignment) so a
+   * concurrent incremental {@link refresh} cannot clobber the history this adds.
    *
-   * @param {{ encrypted?: boolean }} [options] Optional retrieval flags.
-   * @returns {Promise<Array<Object>>} Every message in the visibility window.
+   * @param {Array<Object>} batch Raw older message rows from the backfill pager.
+   * @returns {Promise<void>} Resolves once the page is merged and rendered.
    */
-  function fetchAllMessages(options = {}) {
-    return fetchAllMessagesImpl(MESSAGE_LIMIT, {
-      ...options,
-      chatEnabled: CHAT_ENABLED,
-      normaliseMessageLimit,
-    });
+  async function commitHistoricalMessages(batch) {
+    if (!Array.isArray(batch) || batch.length === 0) return;
+    const hydrated = await messageNodeHydrator.hydrate(batch, nodesById);
+    const rows = Array.isArray(hydrated) ? hydrated : [];
+    if (rows.length === 0) return;
+    const floor = Math.floor(Date.now() / 1000) - CHAT_RECENT_WINDOW_SECONDS;
+    allMessages = trimToWindow(mergeById(allMessages, rows, 'id'), floor);
+    rerenderChatLog();
+  }
+
+  /**
+   * Stream the rest of the chat window in the background once the initial load
+   * has rendered the newest page (issue #802).  Pages backward from the oldest
+   * loaded message, committing and rendering each page as it arrives so the feed
+   * fills progressively while the main thread stays responsive — every awaited
+   * fetch yields to the event loop, so this is cooperative background work
+   * rather than a blocking burst (a true Worker cannot touch the DOM).  A guard
+   * prevents overlapping runs.
+   *
+   * @returns {Promise<void>} Resolves when the window is exhausted (or on error).
+   */
+  async function backfillChatHistory() {
+    if (!CHAT_ENABLED || chatBackfillRunning) return;
+    // Resume paging from just past the oldest message the newest page rendered.
+    const before = minRecordTimestamp(allMessages, ['rx_time']);
+    if (!(before > 0)) return;
+    chatBackfillRunning = true;
+    try {
+      for await (const batch of paginateMessagesImpl(MESSAGE_LIMIT, {
+        before,
+        chatEnabled: CHAT_ENABLED,
+        normaliseMessageLimit,
+      })) {
+        await commitHistoricalMessages(batch);
+      }
+    } catch (err) {
+      console.warn('chat history backfill failed; showing the most recent page only', err);
+    } finally {
+      chatBackfillRunning = false;
+    }
   }
 
   /**
@@ -3870,6 +3905,29 @@ export function initializeApp(config) {
   }
 
   /**
+   * Re-render only the chat log from the current message/node/telemetry state.
+   * Used both by {@link applyFilter} and by the background history backfill
+   * (issue #802) so each streamed page repaints the chat without re-running the
+   * full filter pipeline (node table, map, ``/api/stats`` fetch).
+   *
+   * @param {string} [filterQuery] Raw filter text for substring highlighting;
+   *   defaults to the current filter input value.
+   * @returns {void}
+   */
+  function rerenderChatLog(filterQuery = filterInput ? filterInput.value : '') {
+    renderChatLog({
+      nodes: allNodes,
+      messages: allMessages,
+      encryptedMessages: allEncryptedMessages,
+      telemetryEntries: allTelemetryEntries,
+      positionEntries: allPositionEntries,
+      neighborEntries: allNeighbors,
+      traceEntries: allTraces,
+      filterQuery
+    });
+  }
+
+  /**
    * Apply text and role filters to the node list and re-render outputs.
    *
    * @returns {void}
@@ -3902,16 +3960,7 @@ export function initializeApp(config) {
     updateSortIndicators();
     // Pass the raw filterQuery (not the normalised form) so the chat log can
     // highlight matching substrings in their original case.
-    renderChatLog({
-      nodes: allNodes,
-      messages: allMessages,
-      encryptedMessages: allEncryptedMessages,
-      telemetryEntries: allTelemetryEntries,
-      positionEntries: allPositionEntries,
-      neighborEntries: allNeighbors,
-      traceEntries: allTraces,
-      filterQuery
-    });
+    rerenderChatLog(filterQuery);
   }
 
   // Re-filter on every keystroke so the table and map stay in sync with the
@@ -4000,12 +4049,12 @@ export function initializeApp(config) {
         positionsPromise,
         neighborPromise,
         tracesPromise,
-        // First load pages the whole window so chat is complete (issue #796);
-        // incremental refreshes only need the slice newer than the high-water
-        // mark, which always fits in a single page.
-        useSince
-          ? fetchMessages(MESSAGE_LIMIT, { since: msgSince })
-          : fetchAllMessages({}),
+        // Always fetch a single newest page here so the first paint is fast
+        // (issue #802); the rest of the seven-day window streams in afterwards
+        // via backfillChatHistory().  ``msgSince`` is 0 on the first load (so
+        // this is the newest page) and the slice past the high-water mark on
+        // every refresh after.
+        fetchMessages(MESSAGE_LIMIT, { since: msgSince }),
         telemetryPromise,
         encryptedMessagesPromise
       ]);
@@ -4080,7 +4129,16 @@ export function initializeApp(config) {
         messageNodeHydrator.hydrate(messages, nodesById),
         messageNodeHydrator.hydrate(encryptedMessages, nodesById)
       ]);
-      allMessages = Array.isArray(chatMessages) ? chatMessages : [];
+      const hydratedChat = Array.isArray(chatMessages) ? chatMessages : [];
+      // Re-merge into the *current* allMessages rather than replacing it: the
+      // background history backfill (issue #802) may have appended older pages
+      // while we awaited hydration, and a blind assignment would clobber them.
+      // The read-modify-write is synchronous, so it cannot interleave with a
+      // backfill commit.  First load has no backfill yet, so it just takes the
+      // newest page as-is.
+      allMessages = useSince
+        ? trimToWindow(mergeById(allMessages, hydratedChat, 'id'), messageWindowFloor)
+        : hydratedChat;
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
       allTelemetryEntries = aggregatedTelemetry;
       allPositionEntries = aggregatedPositions;
@@ -4088,6 +4146,12 @@ export function initializeApp(config) {
       allTraces = Array.isArray(traceEntries) ? traceEntries : [];
       initialFetchDone = true;
       applyFilter();
+      // With the newest page on screen, stream the rest of the seven-day window
+      // in the background (issue #802) so older history fills in progressively
+      // instead of blocking the first paint on the whole backward pagination.
+      if (!useSince) {
+        void backfillChatHistory();
+      }
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
       }
@@ -4275,6 +4339,8 @@ export function initializeApp(config) {
       },
       /** Trigger a manual refresh cycle (test use only). */
       refresh,
+      /** Number of plaintext chat messages currently loaded (test use only). */
+      getLoadedMessageCount: () => allMessages.length,
       /** Project an original lat/lon + pixel offset into a display LatLng. */
       projectColocatedOffsetLatLng,
       /** Re-project every recorded co-located marker (no-op without a map). */

@@ -39,6 +39,33 @@ export function maxRecordTimestamp(records, fields = ['rx_time', 'last_heard']) 
 }
 
 /**
+ * Extract the minimum *positive* timestamp from an array of API records.
+ *
+ * The mirror of {@link maxRecordTimestamp}: inspects the specified fields on
+ * each record and returns the lowest positive value found (zero and negative
+ * sentinels are ignored so a missing/placeholder timestamp never becomes the
+ * floor).  Returns 0 when the array is empty or carries no usable timestamp —
+ * used to seed the chat history backfill's ``before`` cursor (issue #802) from
+ * the oldest message already loaded.
+ *
+ * @param {Array<Object>} records API response rows.
+ * @param {Array<string>} [fields] Timestamp field names to inspect.
+ * @returns {number} Minimum positive unix timestamp across all records, or 0.
+ */
+export function minRecordTimestamp(records, fields = ['rx_time', 'last_heard']) {
+  let min = 0;
+  if (!Array.isArray(records)) return min;
+  for (const record of records) {
+    if (!record || typeof record !== 'object') continue;
+    for (const field of fields) {
+      const val = record[field];
+      if (typeof val === 'number' && val > 0 && (min === 0 || val < min)) min = val;
+    }
+  }
+  return min;
+}
+
+/**
  * Merge incremental rows into an existing collection, deduplicating by a
  * key field.  New rows replace existing entries with the same key.
  *
