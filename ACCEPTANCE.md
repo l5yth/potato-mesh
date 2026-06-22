@@ -769,3 +769,55 @@ the server still clamps `before`/`since` to the seven-day floor and
 `MAX_QUERY_LIMIT`, and the client reaches the same in-window messages C7 covers
 (identical backward-cursor semantics), now progressively rather than in one
 blocking burst.
+
+---
+
+## Bugfix: MeshCore synthetic chat-node naming & reconciliation (issue #803)
+
+A MeshCore channel message carries its sender as a `"SenderName: body"` text
+prefix (and quotes/mentions as `@[Name]`); the sender's `from_id` is a
+name-derived synthetic id. The web app's generic `ensure_unknown_node` minted a
+`"MeshCore <hex>"` placeholder marked **`synthetic=0`** (real) for that id, which
+(a) showed the wrong name, (b) blocked the correctly-named `synthetic=1` upsert
+via the real-node guard, and (c) was invisible to the long-name merge with the
+real contact — so messages were permanently mis-attributed. Mention-only names
+got no node at all. Fixed web-side (Ruby): MeshCore **channel** messages now
+synthesize/repair placeholder nodes named from the message text and marked
+`synthetic=1`, so the existing `#755` merge machinery reconciles them with real
+contacts. No ingestor/API/DB-schema change; the apex (I) and privacy (II)
+invariants are untouched.
+
+### MC-A1 — Sender & mention placeholders are named from the chat text, reconcile, and self-heal
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "meshcore synthetic chat nodes" )
+```
+**Expected:** pass. For a MeshCore channel message (`protocol=meshcore`,
+`to_id="^all"`): the sender's `from_id` node is named from the `"Name:"` prefix
+with `synthetic=1` (never `"MeshCore <hex>"`); when a real node of that
+`long_name` already exists the placeholder is **merged away** and the message
+redirected to it; a pre-existing generic `"MeshCore <hex>"` `synthetic=0`
+placeholder is **repaired** (renamed + demoted to synthetic) when a naming
+message arrives; and each `@[Name]` mention gets its own `synthetic=1`
+placeholder (`derive(name) = "!" + sha256(name)[0,8]`, matching the ingestor and
+frontend) even when that name never sent a message.
+
+### MC-A2 — Text-parsing & id-derivation helpers
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "meshcore chat text parsing" )
+```
+**Expected:** pass. `parse_meshcore_sender_name` returns the trimmed name before
+the first `:` (nil when absent/blank); `extract_meshcore_mentions` returns the
+trimmed, de-duplicated `@[Name]` list; `meshcore_synthetic_node_id` reproduces
+the ingestor/frontend derivation (`derive("DWeb 0229") == "!0f6de6b3"`).
+
+### MC-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. The pre-existing synthetic-merge specs (issues **#755**
+/ **#756** in `database_spec.rb` / `data_processing_spec.rb`) still pass — the
+fix only changes how the **placeholder is named/flagged** at message-ingest time;
+`merge_synthetic_nodes` / `merge_into_real_node` are unchanged. The Python
+ingestor is untouched (it still emits the same name-derived synthetic upsert,
+now redundant-but-harmless with the web-side path).

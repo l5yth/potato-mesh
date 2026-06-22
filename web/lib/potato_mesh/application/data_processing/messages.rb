@@ -464,7 +464,18 @@ module PotatoMesh
 
         should_touch_message = !stored_decrypted
         if should_touch_message
-          ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time, protocol: protocol)
+          # MeshCore channel messages name their sender (and quote/mention peers)
+          # in the text; synthesize/repair those placeholder nodes (issue #803)
+          # named from the text and flagged synthetic, so they reconcile with the
+          # real contact — instead of the generic "MeshCore <hex>" placeholder
+          # ensure_unknown_node would mint.  Falls through to ensure_unknown_node
+          # for non-MeshCore messages or when no sender prefix is present.
+          meshcore_sender_named =
+            protocol == "meshcore" &&
+            process_meshcore_chat_nodes(db, from_id || raw_from_id, to_id || raw_to_id, text, rx_time)
+          unless meshcore_sender_named
+            ensure_unknown_node(db, from_id || raw_from_id, message["from_num"], heard_time: rx_time, protocol: protocol)
+          end
           touch_node_last_seen(
             db,
             from_id || raw_from_id || message["from_num"],
