@@ -861,3 +861,66 @@ privacy override, staleness eviction). The change only converts a previously
 `fetch_instance_json` caller already handles; the restricted-address
 `ArgumentError` path, connection-error retry/fallback, and announce path are
 unchanged.
+
+---
+
+## Bugfix: Federation hygiene (HTTP fallback, observability, shutdown)
+
+Three small federation defects discovered while investigating a same-key
+collision between two `v0.7.0-rc2` peers. The fixes are independent of one
+another; each ships its own regression line below.
+
+### FH-A1 — HTTPS responses don't trigger an HTTP fallback
+```bash
+( cd web && bundle exec rspec spec/federation_spec.rb \
+    -e "does not fall back to HTTP after HTTPS returned an HTTP response" \
+    -e "still falls back to HTTP when HTTPS connection itself fails" )
+```
+**Expected:** pass. When an HTTPS request to `/api/instances` returns any HTTP
+status (success or error — e.g. `400` from an older v0.6.x peer rejecting the
+v2 signature, SPEC **FS5**), the `http://…:80` candidate is **not** attempted
+and no `warn_log` is emitted. The HTTP fallback only fires when HTTPS failed at
+the transport layer (`Errno::ECONNREFUSED` / `EHOSTUNREACH` / `ENETUNREACH`
+etc.), preserving the dev-instance fallback. Implemented via
+`PotatoMesh::App::InstanceHttpResponseError < InstanceFetchError`
+(`application/errors.rb`), raised by `perform_single_http_request` for non-2xx
+responses and matched ahead of the generic `InstanceFetchError` in
+`fetch_instance_json`; `announce_instance_to_domain` breaks the URI loop
+explicitly on a non-success HTTP response.
+
+### FH-A2 — Federation is observable at default log level
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "defaults to INFO" \
+                            spec/federation_spec.rb -e "logs cycle start and end at info level" )
+```
+**Expected:** pass. With `DEBUG=0` the structured logger defaults to `INFO`
+(not `WARN`), restoring visibility for operational milestones that are already
+authored as `info_log` (notably `application/retention.rb` purges and the new
+federation cycle entries). On every announcement cycle, federation emits one
+`info` line at start carrying `target_count` and one at end carrying
+`success_count` + `failure_count`. The boot path emits a one-shot
+`"Federation enabled"` info line with `seed_count`,
+`announcement_interval_seconds`, and `worker_pool_size` when federation is
+active. Per-peer announce success/failure stays at `debug` to keep cycle logs
+to ~3 lines/8h on a busy fleet. Inbound peer registrations
+(`routes/ingest.rb` "Registered remote instance") are also promoted to `info`
+since they are bounded by `federation_max_domains_per_crawl`.
+
+### FH-A3 — Federation workers shut down in bounded time
+```bash
+( cd web && bundle exec rspec spec/worker_pool_spec.rb \
+    -e "reaps workers that ignore STOP_SIGNAL within force_kill_after" \
+    -e "rejects pending tasks that have not started yet"
+  cd web && bundle exec rspec spec/federation_spec.rb \
+    -e "uses federation_shutdown_timeout_seconds (not the task timeout)" )
+```
+**Expected:** pass. `shutdown_federation_worker_pool!` budgets the pool
+shutdown by `federation_shutdown_timeout_seconds` (default 3s — env-tunable
+via `FEDERATION_SHUTDOWN_TIMEOUT`) and arms a matching `force_kill_after`, so
+a worker mid-task that ignores STOP_SIGNAL is hard-killed within that window
+rather than waiting out the 120s task timeout per thread serially. Pending
+queued tasks that have not yet started are rejected with `ShutdownError`
+during shutdown rather than executed. `Thread#kill` runs Ruby `ensure`
+blocks, so SQLite handles opened inside crawl/announce tasks (guarded by
+`ensure db&.close`) still close cleanly. Net effect: CTRL+C on a running
+instance reaps `potato-mesh-fed-N` workers in seconds, not minutes.

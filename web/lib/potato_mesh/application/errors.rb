@@ -18,5 +18,11 @@ module PotatoMesh
   module App
     # Raised when a remote instance fails to provide valid federation data.
     class InstanceFetchError < StandardError; end
+
+    # Raised when a federation request received an HTTP response that did not
+    # indicate success (e.g. 4xx/5xx).  Distinguished from {InstanceFetchError}
+    # so callers can stop probing alternative transports (HTTP after HTTPS)
+    # once a remote peer has already responded at the HTTP layer.
+    class InstanceHttpResponseError < InstanceFetchError; end
   end
 end

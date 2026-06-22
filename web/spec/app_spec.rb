@@ -1280,8 +1280,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       Sinatra::Application.apply_logger_level!
     end
 
-    it "defaults to WARN when debug logging is disabled" do
-      expect(Sinatra::Application.settings.logger.level).to eq(Logger::WARN)
+    it "defaults to INFO when debug logging is disabled" do
+      # WARN-only hid operational milestones (e.g. retention purges already
+      # promoted to info_log) and made federation cycles invisible to
+      # operators.  INFO is the documented default; DEBUG=1 raises verbosity.
+      expect(Sinatra::Application.settings.logger.level).to eq(Logger::INFO)
     end
 
     it "switches to DEBUG when debug logging is enabled" do

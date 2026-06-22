@@ -57,6 +57,18 @@ RSpec.describe PotatoMesh::App::Federation do
           @warn_messages = []
         end
 
+        def info_messages
+          @info_messages ||= []
+        end
+
+        def info_log(message, **metadata)
+          info_messages << [message, metadata]
+        end
+
+        def reset_info_messages
+          @info_messages = []
+        end
+
         def settings
           @settings ||= Struct.new(
             :federation_thread,
@@ -84,6 +96,7 @@ RSpec.describe PotatoMesh::App::Federation do
     federation_helpers.instance_variable_set(:@remote_instance_verify_callback, nil)
     federation_helpers.reset_debug_messages
     federation_helpers.reset_warn_messages
+    federation_helpers.reset_info_messages
     federation_helpers.clear_federation_crawl_state!
     federation_helpers.shutdown_federation_worker_pool!
   end
@@ -1326,6 +1339,21 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(result).to be(true)
       expect(federation_helpers.debug_messages).to include("Published federation announcement")
     end
+
+    it "does not fall back to HTTP after HTTPS returned an HTTP response" do
+      bad_response = Net::HTTPBadRequest.new("1.1", "400", "Bad Request")
+      allow(bad_response).to receive(:code).and_return("400")
+      expect(federation_helpers).to receive(:perform_announce_request)
+                                      .with(https_uri, payload)
+                                      .and_return(bad_response)
+      expect(federation_helpers).not_to receive(:perform_announce_request)
+                                          .with(http_uri, payload)
+
+      result = federation_helpers.announce_instance_to_domain("remote.mesh", payload)
+
+      expect(result).to be(false)
+      expect(federation_helpers.warn_messages).to be_empty
+    end
   end
 
   describe ".ensure_federation_worker_pool!" do
@@ -1434,6 +1462,19 @@ RSpec.describe PotatoMesh::App::Federation do
 
       expect(federation_helpers.warn_messages.last).to include("Failed to shut down federation worker pool")
       expect(federation_helpers.send(:settings).federation_worker_pool).to be_nil
+    end
+
+    it "uses federation_shutdown_timeout_seconds (not the task timeout) and arms force_kill_after" do
+      pool = instance_double(PotatoMesh::App::WorkerPool)
+      allow(PotatoMesh::Config).to receive(:federation_shutdown_timeout_seconds).and_return(3)
+      allow(PotatoMesh::Config).to receive(:federation_task_timeout_seconds).and_return(120)
+      expect(pool).to receive(:shutdown).with(
+        timeout: 3,
+        force_kill_after: 3,
+      )
+
+      federation_helpers.set(:federation_worker_pool, pool)
+      federation_helpers.shutdown_federation_worker_pool!
     end
   end
 
@@ -1731,6 +1772,45 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(metadata).not_to be_empty
       expect(metadata.join("; ")).to include("Name or service not known")
     end
+
+    it "does not fall back to HTTP after HTTPS returned an HTTP response" do
+      calls = []
+      allow(federation_helpers).to receive(:instance_uri_candidates).and_return([
+        URI.parse("https://remote.mesh/api/nodes"),
+        URI.parse("http://remote.mesh/api/nodes"),
+      ])
+      allow(federation_helpers).to receive(:perform_instance_http_request) do |uri|
+        calls << uri.scheme
+        raise PotatoMesh::App::InstanceHttpResponseError, "unexpected response 404"
+      end
+
+      payload, metadata = federation_helpers.fetch_instance_json("remote.mesh", NODES_API_PATH)
+
+      expect(payload).to be_nil
+      expect(calls).to eq(["https"])
+      expect(metadata.first).to include("unexpected response 404")
+    end
+
+    it "still falls back to HTTP when HTTPS connection itself fails" do
+      calls = []
+      allow(federation_helpers).to receive(:instance_uri_candidates).and_return([
+        URI.parse("https://remote.mesh/api/nodes"),
+        URI.parse("http://remote.mesh/api/nodes"),
+      ])
+      allow(federation_helpers).to receive(:perform_instance_http_request) do |uri|
+        calls << uri.scheme
+        if uri.scheme == "https"
+          raise PotatoMesh::App::InstanceFetchError, "Errno::ECONNREFUSED: refused"
+        else
+          '{"ok":true}'
+        end
+      end
+
+      payload, _ = federation_helpers.fetch_instance_json("remote.mesh", NODES_API_PATH)
+
+      expect(payload).to eq({ "ok" => true })
+      expect(calls).to eq(["https", "http"])
+    end
   end
 
   describe ".claim_federation_crawl_slot" do
@@ -1861,6 +1941,27 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(federation_helpers).to receive(:announce_instance_to_domain).with("beta.mesh", "payload-json")
 
       federation_helpers.announce_instance_to_all_domains
+    end
+
+    it "logs cycle start and end at info level with target and result counts" do
+      allow(federation_helpers).to receive(:federation_worker_pool).and_return(nil)
+      allow(federation_helpers).to receive(:announce_instance_to_domain)
+                                     .with("alpha.mesh", "payload-json").and_return(true)
+      allow(federation_helpers).to receive(:announce_instance_to_domain)
+                                     .with("beta.mesh", "payload-json").and_return(false)
+
+      federation_helpers.announce_instance_to_all_domains
+
+      messages = federation_helpers.info_messages
+      start_entry = messages.find { |(msg, _)| msg.include?("cycle started") }
+      end_entry = messages.find { |(msg, _)| msg.include?("cycle complete") }
+
+      expect(start_entry).not_to be_nil
+      expect(start_entry.last[:target_count]).to eq(2)
+
+      expect(end_entry).not_to be_nil
+      expect(end_entry.last[:success_count]).to eq(1)
+      expect(end_entry.last[:failure_count]).to eq(1)
     end
   end
 

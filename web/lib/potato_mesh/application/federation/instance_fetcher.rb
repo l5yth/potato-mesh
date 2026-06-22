@@ -83,10 +83,14 @@ module PotatoMesh
             when Net::HTTPSuccess
               response.body
             else
-              raise InstanceFetchError, "unexpected response #{response.code}"
+              raise InstanceHttpResponseError, "unexpected response #{response.code}"
             end
           end
         end
+      rescue InstanceHttpResponseError
+        # Reached the peer at the HTTP layer; do not wrap so callers can
+        # distinguish "peer responded with non-2xx" from "transport failure".
+        raise
       rescue StandardError => e
         raise_instance_fetch_error(e)
       end
@@ -132,6 +136,12 @@ module PotatoMesh
             return [JSON.parse(body), uri] if body
           rescue JSON::ParserError => e
             errors << "#{uri}: invalid JSON (#{e.message})"
+          rescue InstanceHttpResponseError => e
+            # Peer answered at the HTTP layer (e.g. 4xx/5xx).  Falling back to
+            # the next transport candidate (http:// after https://) adds noise
+            # without adding any chance of success — stop here.
+            errors << "#{uri}: #{e.message}"
+            break
           rescue InstanceFetchError => e
             errors << "#{uri}: #{e.message}"
           end

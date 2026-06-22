@@ -50,7 +50,11 @@ module PotatoMesh
                 target: uri.to_s,
                 status: response.code,
               )
-              false
+              # Peer answered at the HTTP layer (e.g. 4xx from an older peer
+              # that does not understand the v2 signature, SPEC FS5).  Falling
+              # back to the http:// candidate adds noise — port 80 is firewalled
+              # on most production peers — without adding any chance of success.
+              break false
             end
           rescue StandardError => e
             metadata = {
@@ -150,6 +154,15 @@ module PotatoMesh
         domains = federation_target_domains(attributes[:domain])
         pool = federation_worker_pool
         scheduled = []
+        sync_results = []
+
+        unless domains.empty?
+          info_log(
+            "Federation announcement cycle started",
+            context: "federation.announce",
+            target_count: domains.length,
+          )
+        end
 
         domains.each_with_object(scheduled) do |domain, scheduled_tasks|
           break if federation_shutdown_requested?
@@ -178,16 +191,21 @@ module PotatoMesh
             end
           end
 
-          announce_instance_to_domain(domain, payload_json)
+          sync_results << announce_instance_to_domain(domain, payload_json)
         end
 
-        wait_for_federation_tasks(scheduled)
+        async_results = wait_for_federation_tasks(scheduled)
+        all_results = sync_results + Array(async_results)
 
         unless domains.empty?
-          debug_log(
+          success_count = all_results.count { |r| r == true }
+          failure_count = all_results.length - success_count
+          info_log(
             "Federation announcement cycle complete",
             context: "federation.announce",
-            targets: domains,
+            target_count: domains.length,
+            success_count: success_count,
+            failure_count: failure_count,
           )
         end
       end
@@ -195,16 +213,18 @@ module PotatoMesh
       # Wait for scheduled federation tasks to complete while logging failures.
       #
       # @param scheduled [Array<(String, PotatoMesh::App::WorkerPool::Task)>] pairs of domains and tasks.
-      # @return [void]
+      # @return [Array<Boolean>] per-task result (true on successful publish,
+      #   false on timeout/failure); empty when no tasks were scheduled.
       def wait_for_federation_tasks(scheduled)
-        return if scheduled.empty?
+        return [] if scheduled.empty?
 
         timeout = PotatoMesh::Config.federation_task_timeout_seconds
-        scheduled.all? do |domain, task|
-          break false if federation_shutdown_requested?
+        results = []
+        scheduled.each do |domain, task|
+          break if federation_shutdown_requested?
 
           begin
-            task.wait(timeout: timeout)
+            results << (task.wait(timeout: timeout) == true)
           rescue PotatoMesh::App::WorkerPool::TaskTimeoutError => e
             warn_log(
               "Federation announcement task timed out",
@@ -214,6 +234,7 @@ module PotatoMesh
               error_class: e.class.name,
               error_message: e.message,
             )
+            results << false
           rescue StandardError => e
             warn_log(
               "Federation announcement task failed",
@@ -222,9 +243,10 @@ module PotatoMesh
               error_class: e.class.name,
               error_message: e.message,
             )
+            results << false
           end
-          true
         end
+        results
       end
     end
   end

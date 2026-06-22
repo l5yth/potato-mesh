@@ -173,9 +173,19 @@ module PotatoMesh
 
       # Stop accepting work and wait for the worker threads to finish.
       #
-      # @param timeout [Numeric, nil] seconds to wait for each worker to exit.
+      # Pending tasks that have not yet started executing are rejected with a
+      # {ShutdownError}; workers that fail to honour STOP_SIGNAL within
+      # +timeout+ are hard-killed if +force_kill_after+ is supplied.  This
+      # bounds CTRL+C / process-exit time even when a worker is blocked deep
+      # in a network call that ignores its task-level Timeout watcher.
+      #
+      # @param timeout [Numeric, nil] seconds to wait for each worker to exit
+      #   cooperatively.
+      # @param force_kill_after [Numeric, nil] additional seconds to wait
+      #   after a hard {Thread#kill}; nil disables hard-kill entirely
+      #   (legacy behavior).
       # @return [void]
-      def shutdown(timeout: nil)
+      def shutdown(timeout: nil, force_kill_after: nil)
         threads = nil
 
         @mutex.synchronize do
@@ -185,9 +195,44 @@ module PotatoMesh
           threads = @threads.dup
         end
 
+        drain_pending_tasks!
         threads.each { @queue << STOP_SIGNAL }
         threads.each { |thread| thread.join(timeout) }
+        return unless force_kill_after
+
+        threads.each do |thread|
+          next unless thread.alive?
+
+          thread.kill
+          thread.join(force_kill_after)
+        end
       end
+
+      private
+
+      # Pop and reject every task currently queued so workers see STOP_SIGNAL
+      # immediately instead of after draining a long backlog of in-flight
+      # crawl/announce jobs.  Callers awaiting those tasks observe a
+      # {ShutdownError} rather than silent timeouts.
+      #
+      # @return [void]
+      def drain_pending_tasks!
+        loop do
+          entry = begin
+              @queue.pop(true)
+            rescue ThreadError
+              nil
+            end
+          break unless entry
+
+          task, _block = entry
+          next unless task.respond_to?(:reject)
+
+          task.reject(ShutdownError.new("worker pool shut down"))
+        end
+      end
+
+      public
 
       private
 

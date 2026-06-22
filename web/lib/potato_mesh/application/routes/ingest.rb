@@ -348,7 +348,7 @@ module PotatoMesh
               per_response_limit: PotatoMesh::Config.federation_max_instances_per_response,
               overall_limit: PotatoMesh::Config.federation_max_domains_per_crawl,
             )
-            debug_log(
+            info_log(
               "Registered remote instance",
               context: "ingest.register",
               domain: attributes[:domain],

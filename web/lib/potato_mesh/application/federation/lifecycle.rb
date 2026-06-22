@@ -132,13 +132,21 @@ module PotatoMesh
 
       # Shutdown and clear the federation worker pool if present.
       #
+      # Bounded by +federation_shutdown_timeout_seconds+ (default 3s), not the
+      # per-task timeout — operators expect CTRL+C to reap within seconds, not
+      # to wait out a long-running federation cycle's worst case.
+      #
       # @return [void]
       def shutdown_federation_worker_pool!
         existing = settings.respond_to?(:federation_worker_pool) ? settings.federation_worker_pool : nil
         return unless existing
 
         begin
-          existing.shutdown(timeout: PotatoMesh::Config.federation_task_timeout_seconds)
+          shutdown_timeout = PotatoMesh::Config.federation_shutdown_timeout_seconds
+          existing.shutdown(
+            timeout: shutdown_timeout,
+            force_kill_after: shutdown_timeout,
+          )
         rescue StandardError => e
           warn_log(
             "Failed to shut down federation worker pool",
