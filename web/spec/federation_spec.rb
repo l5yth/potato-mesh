@@ -1106,6 +1106,20 @@ RSpec.describe PotatoMesh::App::Federation do
         federation_helpers.send(:perform_instance_http_request, uri)
       end.to raise_error(PotatoMesh::App::InstanceFetchError, "ArgumentError: restricted domain")
     end
+
+    it "wraps DNS resolution failures so a peer with an unresolvable domain does not 500" do
+      # Addrinfo.getaddrinfo raises Socket::ResolutionError (a SocketError) when
+      # the peer domain does not resolve.  It must be wrapped as
+      # InstanceFetchError — like the restricted-address ArgumentError above — so
+      # the fetch path rejects the peer gracefully instead of bubbling a raw
+      # SocketError up to a 500 response.
+      allow(Addrinfo).to receive(:getaddrinfo)
+                           .and_raise(Socket::ResolutionError.new("getaddrinfo: Name or service not known"))
+
+      expect do
+        federation_helpers.send(:perform_instance_http_request, uri)
+      end.to raise_error(PotatoMesh::App::InstanceFetchError, /Name or service not known/)
+    end
   end
 
   describe ".federation_sleep_with_shutdown" do
@@ -1702,6 +1716,20 @@ RSpec.describe PotatoMesh::App::Federation do
       expect(payload).to be_nil
       expect(calls).to eq(1)
       expect(metadata.first).to include("boom")
+    end
+
+    it "returns [nil, errors] instead of raising when the peer domain fails DNS resolution" do
+      # Regression for the production 500: a registering/crawled peer whose
+      # domain does not resolve must surface as a recorded fetch error (so the
+      # caller can reject it with a 4xx), never escape as an unhandled SocketError.
+      allow(Addrinfo).to receive(:getaddrinfo)
+                           .and_raise(Socket::ResolutionError.new("getaddrinfo: Name or service not known"))
+
+      payload, metadata = federation_helpers.fetch_instance_json("does-not-resolve.invalid", NODES_API_PATH)
+
+      expect(payload).to be_nil
+      expect(metadata).not_to be_empty
+      expect(metadata.join("; ")).to include("Name or service not known")
     end
   end
 

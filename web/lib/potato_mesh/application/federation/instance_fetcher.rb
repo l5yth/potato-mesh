@@ -54,7 +54,14 @@ module PotatoMesh
         end
 
         raise last_error || InstanceFetchError.new("all resolved addresses failed")
-      rescue ArgumentError => e
+      rescue ArgumentError, SocketError => e
+        # +resolve_remote_ip_addresses+ runs the DNS lookup before the wrapped
+        # HTTP attempt: a blank/restricted host raises ArgumentError, and an
+        # unresolvable domain raises Socket::ResolutionError (a SocketError).
+        # Both are converted to InstanceFetchError so every fetch_instance_json
+        # caller rejects the peer gracefully instead of letting a raw resolution
+        # error escape as a 500.  (HTTP-attempt errors are already wrapped inside
+        # perform_single_http_request, so this never masks a live connection.)
         raise_instance_fetch_error(e)
       end
 
