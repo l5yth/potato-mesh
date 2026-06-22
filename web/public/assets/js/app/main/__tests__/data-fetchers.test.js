@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 
 import {
   fetchAllMessages,
+  paginateMessages,
   fetchMessages,
   fetchNeighbors,
   fetchNodeById,
@@ -445,6 +446,81 @@ test('fetchAllMessages honours the maxPages backstop against a runaway feed', as
     const all = await fetchAllMessages(1, { maxPages: 3 });
     assert.equal(all.length, 3);
     assert.equal(stub.calls.length, 3);
+  } finally {
+    stub.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// paginateMessages (issue #802 progressive backward pagination)
+// ---------------------------------------------------------------------------
+
+test('paginateMessages yields each page of fresh rows separately as it pages back', async () => {
+  // Two full pages then a short page; the inclusive cursor re-returns the
+  // boundary row, which must be de-duplicated out of the later yield.
+  const stub = withFetchStub((url) => {
+    if (url.includes('before=30')) {
+      return { ok: true, body: [{ id: 3, rx_time: 30 }] }; // short → stop (all seen)
+    }
+    if (url.includes('before=40')) {
+      return { ok: true, body: [{ id: 4, rx_time: 40 }, { id: 3, rx_time: 30 }] };
+    }
+    return { ok: true, body: [{ id: 5, rx_time: 50 }, { id: 4, rx_time: 40 }] };
+  });
+  try {
+    const pages = [];
+    for await (const batch of paginateMessages(2, {})) {
+      pages.push(batch.map(m => m.id));
+    }
+    // One array per page, each carrying only that page's newly-seen ids — proof
+    // the caller can render progressively instead of awaiting the whole window.
+    assert.deepEqual(pages, [[5, 4], [3]]);
+    assert.equal(stub.calls.length, 3);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('paginateMessages seeds its first request from a positive before cursor', async () => {
+  // A single short page so the walk stops after the seeded request.
+  const stub = withFetchStub({ ok: true, body: [{ id: 9, rx_time: 90 }] });
+  try {
+    const pages = [];
+    for await (const batch of paginateMessages(2, { before: 500 })) {
+      pages.push(batch);
+    }
+    assert.equal(stub.calls.length, 1);
+    assert.ok(stub.calls[0].url.includes('before=500'), stub.calls[0].url);
+    assert.deepEqual(pages.flat().map(m => m.id), [9]);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('paginateMessages ignores a non-finite before seed', async () => {
+  const stub = withFetchStub({ ok: true, body: [{ id: 1, rx_time: 10 }] });
+  try {
+    const pages = [];
+    for await (const batch of paginateMessages(2, { before: Number.NaN })) {
+      pages.push(batch);
+    }
+    assert.equal(stub.calls.length, 1);
+    assert.ok(!stub.calls[0].url.includes('before='), stub.calls[0].url);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('paginateMessages stops cleanly when a page is not an array', async () => {
+  // A malformed (non-array) JSON body must end the walk rather than throw.
+  const stub = withFetchStub({ ok: true, body: { error: 'nope' } });
+  try {
+    const pages = [];
+    for await (const batch of paginateMessages(2, {})) {
+      pages.push(batch);
+    }
+    assert.deepEqual(pages, []);
+    assert.equal(stub.calls.length, 1);
   } finally {
     stub.restore();
   }

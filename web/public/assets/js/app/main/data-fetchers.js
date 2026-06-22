@@ -132,51 +132,77 @@ export async function fetchMessages(limit, options = {}) {
 }
 
 /**
- * Fetch *every* message in the server's visibility window by paging backward.
+ * Page backward through the message feed, ``yield``-ing each page's new rows.
  *
- * The API clamps each response to {@link MESSAGE_LIMIT} rows, so a single
- * request can only ever surface the newest page.  This helper walks the feed
- * from newest to oldest: it pulls a page, then re-requests everything at or
- * before the oldest ``rx_time`` it has seen (an inclusive cursor), de-duplicating
- * by ``id``.  It stops when a short page signals the window is exhausted, when a
- * page yields no new rows (the server ignored the cursor, or every row was a
- * boundary duplicate), or when ``maxPages`` is hit as a runaway backstop.
+ * The API clamps each response to {@link MESSAGE_LIMIT} rows ordered newest →
+ * oldest, so the whole window is only reachable by walking an inclusive
+ * ``before`` cursor: pull a page, then re-request everything at or before the
+ * oldest ``rx_time`` seen.  Rows are de-duplicated by ``id`` across pages (the
+ * inclusive cursor re-returns each boundary row), and each page's freshly-seen
+ * rows are yielded as soon as they arrive so callers can render progressively
+ * instead of waiting for the entire window (issue #802).
  *
- * Used for the initial chat load (issue #796) so the landing page and ``/chat``
- * subpage show the full window instead of only the newest page.
+ * Iteration stops when a short page signals the window is exhausted, when a page
+ * yields no new rows (the server ignored the cursor, or every row was a boundary
+ * duplicate), when no row carries a usable timestamp cursor, or when ``maxPages``
+ * is hit as a runaway backstop.
  *
  * @param {number} limit Page size (rows requested per API call).
- * @param {{ encrypted?: boolean, chatEnabled?: boolean, normaliseMessageLimit?: Function, maxPages?: number }} [options]
- *   Retrieval flags, dependency hooks, and an optional page-count backstop.
- * @returns {Promise<Array<Object>>} All de-duplicated messages in the window.
+ * @param {{ encrypted?: boolean, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function, maxPages?: number }} [options]
+ *   Retrieval flags, dependency hooks, an optional ``before`` cursor to seed the
+ *   walk from (used to resume paging just past an already-loaded newest page),
+ *   and an optional page-count backstop.
+ * @yields {Array<Object>} The de-duplicated new rows of each page.
+ * @returns {AsyncGenerator<Array<Object>>}
  */
-export async function fetchAllMessages(limit, options = {}) {
-  const { maxPages = 200, ...fetchOptions } = options;
-  const all = [];
+export async function* paginateMessages(limit, options = {}) {
+  const { maxPages = 200, before: initialBefore = 0, ...fetchOptions } = options;
   const seen = new Set();
-  let before = 0;
+  let before = Number.isFinite(initialBefore) && initialBefore > 0 ? initialBefore : 0;
   for (let page = 0; page < maxPages; page += 1) {
     // eslint-disable-next-line no-await-in-loop -- pages are inherently sequential (cursor depends on the prior page).
     const batch = await fetchMessages(limit, { ...fetchOptions, before });
-    if (!Array.isArray(batch) || batch.length === 0) break;
-    let added = 0;
+    if (!Array.isArray(batch) || batch.length === 0) return;
+    const fresh = [];
     let oldest = 0;
     for (const message of batch) {
       const id = message && message.id;
       if (id != null && !seen.has(id)) {
         seen.add(id);
-        all.push(message);
-        added += 1;
+        fresh.push(message);
       }
       const ts = Number(message && message.rx_time);
       if (Number.isFinite(ts) && (oldest === 0 || ts < oldest)) {
         oldest = ts;
       }
     }
+    if (fresh.length > 0) {
+      yield fresh;
+    }
     // A short page means the window is exhausted; no new rows (or no usable
     // cursor) means we cannot make further progress without looping forever.
-    if (batch.length < limit || added === 0 || oldest === 0) break;
+    if (batch.length < limit || fresh.length === 0 || oldest === 0) return;
     before = oldest;
+  }
+}
+
+/**
+ * Eagerly page *every* message in the server's visibility window into one array.
+ *
+ * Thin wrapper over {@link paginateMessages} that concatenates all yielded
+ * pages — kept for callers (and tests) that want the whole window at once;
+ * progressive callers iterate {@link paginateMessages} directly so they can
+ * render each page as it arrives (issue #802).
+ *
+ * @param {number} limit Page size (rows requested per API call).
+ * @param {{ encrypted?: boolean, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function, maxPages?: number }} [options]
+ *   Retrieval flags, dependency hooks, and an optional page-count backstop.
+ * @returns {Promise<Array<Object>>} All de-duplicated messages in the window.
+ */
+export async function fetchAllMessages(limit, options = {}) {
+  const all = [];
+  for await (const batch of paginateMessages(limit, options)) {
+    all.push(...batch);
   }
   return all;
 }
