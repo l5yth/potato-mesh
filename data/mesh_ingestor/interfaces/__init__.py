@@ -79,6 +79,7 @@ from .radio import (  # noqa: E402
     _REGION_CHANNEL_PARAMS,
     _camelcase_enum_name,
     _computed_channel_frequency,
+    _custom_preset_label,
     _ensure_radio_metadata,
     _enum_name_from_field,
     _has_field,

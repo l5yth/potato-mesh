@@ -615,6 +615,108 @@ class TestModemPreset:
         msg = SimpleNamespace(DESCRIPTOR=desc, modem_preset=99)
         assert ifaces._modem_preset(msg) is None
 
+    def test_use_preset_false_full_params(self):
+        """use_preset=False with all params returns compact custom label."""
+        msg = SimpleNamespace(
+            DESCRIPTOR=None,
+            use_preset=False,
+            spread_factor=8,
+            bandwidth=62,
+            coding_rate=6,
+        )
+        assert ifaces._modem_preset(msg) == "Custom SF8/BW62/CR6"
+
+    def test_use_preset_false_partial_params(self):
+        """use_preset=False with only some params returns bare 'Custom'."""
+        msg = SimpleNamespace(
+            DESCRIPTOR=None,
+            use_preset=False,
+            spread_factor=8,
+            bandwidth=62,
+            # coding_rate absent
+        )
+        assert ifaces._modem_preset(msg) == "Custom"
+
+    def test_use_preset_false_no_params(self):
+        """use_preset=False with no radio params returns bare 'Custom'."""
+        msg = SimpleNamespace(DESCRIPTOR=None, use_preset=False)
+        assert ifaces._modem_preset(msg) == "Custom"
+
+    def test_use_preset_true_falls_through_to_enum(self):
+        """use_preset=True is ignored; existing enum logic is used."""
+        enum_val = SimpleNamespace(name="LONG_FAST")
+        enum_type = SimpleNamespace(values_by_number={0: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"modem_preset": field_desc})
+        msg = SimpleNamespace(
+            DESCRIPTOR=desc,
+            use_preset=True,
+            modem_preset=0,
+            spread_factor=8,
+            bandwidth=62,
+            coding_rate=6,
+        )
+        assert ifaces._modem_preset(msg) == "LongFast"
+
+    def test_use_preset_absent_falls_through_to_enum(self):
+        """No use_preset attribute falls through to existing enum logic."""
+        enum_val = SimpleNamespace(name="LONG_FAST")
+        enum_type = SimpleNamespace(values_by_number={0: enum_val})
+        field_desc = SimpleNamespace(enum_type=enum_type)
+        desc = SimpleNamespace(fields_by_name={"modem_preset": field_desc})
+        # SimpleNamespace with no use_preset attribute
+        msg = SimpleNamespace(DESCRIPTOR=desc, modem_preset=0)
+        assert ifaces._modem_preset(msg) == "LongFast"
+
+
+# ---------------------------------------------------------------------------
+# _custom_preset_label
+# ---------------------------------------------------------------------------
+
+
+class TestCustomPresetLabel:
+    """Tests for :func:`interfaces._custom_preset_label`."""
+
+    def test_all_params_present(self):
+        """All three non-zero params produce the compact label."""
+        msg = SimpleNamespace(spread_factor=12, bandwidth=125, coding_rate=5)
+        assert ifaces._custom_preset_label(msg) == "Custom SF12/BW125/CR5"
+
+    def test_integer_conversion(self):
+        """Float param values are cast to int in the label."""
+        msg = SimpleNamespace(spread_factor=8.0, bandwidth=62.5, coding_rate=6.0)
+        assert ifaces._custom_preset_label(msg) == "Custom SF8/BW62/CR6"
+
+    def test_missing_coding_rate_returns_custom(self):
+        """Absent coding_rate yields the bare 'Custom' fallback."""
+        msg = SimpleNamespace(spread_factor=8, bandwidth=62)
+        assert ifaces._custom_preset_label(msg) == "Custom"
+
+    def test_missing_bandwidth_returns_custom(self):
+        """Absent bandwidth yields the bare 'Custom' fallback."""
+        msg = SimpleNamespace(spread_factor=8, coding_rate=6)
+        assert ifaces._custom_preset_label(msg) == "Custom"
+
+    def test_missing_spread_factor_returns_custom(self):
+        """Absent spread_factor yields the bare 'Custom' fallback."""
+        msg = SimpleNamespace(bandwidth=62, coding_rate=6)
+        assert ifaces._custom_preset_label(msg) == "Custom"
+
+    def test_zero_bandwidth_treated_as_absent(self):
+        """A zero bandwidth value is treated as absent, yielding 'Custom'."""
+        msg = SimpleNamespace(spread_factor=8, bandwidth=0, coding_rate=6)
+        assert ifaces._custom_preset_label(msg) == "Custom"
+
+    def test_zero_spread_factor_treated_as_absent(self):
+        """A zero spread_factor value is treated as absent, yielding 'Custom'."""
+        msg = SimpleNamespace(spread_factor=0, bandwidth=62, coding_rate=6)
+        assert ifaces._custom_preset_label(msg) == "Custom"
+
+    def test_no_params_at_all(self):
+        """A message with none of the param attributes returns 'Custom'."""
+        msg = SimpleNamespace()
+        assert ifaces._custom_preset_label(msg) == "Custom"
+
 
 # ---------------------------------------------------------------------------
 # _ensure_radio_metadata caching
