@@ -924,3 +924,64 @@ during shutdown rather than executed. `Thread#kill` runs Ruby `ensure`
 blocks, so SQLite handles opened inside crawl/announce tasks (guarded by
 `ensure db&.close`) still close cleanly. Net effect: CTRL+C on a running
 instance reaps `potato-mesh-fed-N` workers in seconds, not minutes.
+
+---
+
+## Bugfix: Chat-log incremental render & per-node hydration storm
+
+The dashboard rebuilt the **entire** chat log from HTML strings on every refresh
+tick (`element.innerHTML = …` per entry — ~77% of a refresh's main-thread time in
+the deployed profile) and the message-node hydrator backfilled each unknown
+sender with a separate `GET /api/nodes/:id` (hundreds of round trips, many `404`
+for RF-only nodes, on every cold load). The render now memoises each entry's DOM
+node and reuses it while its rendered HTML is unchanged, so an idle tick parses
+nothing; the hydrator resolves senders from the already-loaded bulk node map and
+renders an `!id` placeholder on a miss, issuing zero per-node requests.
+Frontend-only (vanilla JS, existing stack); no API/DB/ingestor change, so the
+apex (I) and privacy (II) invariants are untouched.
+
+### CR-A1 — Idle re-render materialises no entries; content preserved; no per-node fetch
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-chat-render-incremental.test.js )
+```
+**Expected:** pass. After the initial render fills the entry cache, calling
+`rerenderChatLog` again with unchanged state materialises **0** entries
+(`getChatRenderStats().materialized` stays `0` — the brief's "idle page renders
+~0 entries per cycle" gate) and the rendered chat still contains every message.
+A refresh whose sender is absent from the bulk `/api/nodes` payload issues **no**
+`GET /api/nodes/!…` request (the hydration storm is gone).
+
+### CR-A2 — Entry-node cache memoises, namespaces, prunes, and releases tabs
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/chat-entry-cache.test.js \
+                       public/assets/js/app/main/__tests__/chat-entry-keys.test.js )
+```
+**Expected:** pass. `createChatEntryCache` reuses a node while its HTML is
+unchanged, rebuilds it when the HTML changes (e.g. a renamed sender), keeps a
+distinct node per tab namespace for the same key (a message renders in both the
+Log and its channel tab), prunes entries that aged out of a tab's window, and
+releases caches for tabs no longer present. The stable per-entry keys cover
+messages (by `id`, with a timestamp/sender/text fallback) and every log-entry
+type (including encrypted).
+
+### CR-A3 — Hydration is map-only by default; per-node fetch is opt-in
+```bash
+( cd web && node --test public/assets/js/app/__tests__/message-node-hydrator.test.js )
+```
+**Expected:** pass. With no `fetchNodeById` injected (the dashboard default) the
+hydrator binds senders from `nodesById` and emits a protocol-stamped `!id`
+placeholder on a miss, performing **zero** network lookups. `applyNodeFallback`
+remains mandatory; `fetchNodeById` is now optional, and supplying it re-enables
+the bounded per-node backfill (worker-pool + negative cache) for a deliberate,
+opt-in batched refresh path.
+
+### CR-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. The public `createMessageChatEntry` /
+`createAnnouncementEntry` test surface is unchanged (now thin wrappers over the
+pure parts builders), so **A4c** (chat name resolution honours protocol) and the
+chat-entry / progressive-load suites (**PL-A1**, **PL-A2**) stay green. No
+POST/GET contract change, so the Ruby and Python suites are unaffected.
