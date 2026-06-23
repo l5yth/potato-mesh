@@ -86,6 +86,8 @@ import { initializeMobileMenu } from './mobile-menu.js';
 import { MESSAGE_LIMIT, normaliseMessageLimit } from './message-limit.js';
 import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './chat-log-tabs.js';
 import { renderChatTabs } from './chat-tabs.js';
+import { createChatEntryCache } from './main/chat-entry-cache.js';
+import { chatMessageEntryKey, chatLogEntryKey } from './main/chat-entry-keys.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageIndex } from './message-replies.js';
@@ -161,7 +163,6 @@ import {
 } from './main/constants.js';
 import {
   fetchNeighbors,
-  fetchNodeById,
   fetchNodes,
   fetchPositions,
   fetchTelemetry,
@@ -301,8 +302,13 @@ export function initializeApp(config) {
   let nodesById = new Map();
   let messagesById = new Map();
   let nodesByNum = new Map();
+  // No ``fetchNodeById`` is supplied, so the hydrator resolves senders purely
+  // from the already-loaded bulk node map (``nodesById``) and renders an ``!id``
+  // placeholder on a miss — it never issues per-node ``GET /api/nodes/:id``
+  // requests, which used to storm the server with hundreds of round trips (many
+  // 404s for RF-only nodes) on every cold load (issue: node hydration). A
+  // deliberate, batched refresh path can opt back in by injecting a fetcher.
   const messageNodeHydrator = createMessageNodeHydrator({
-    fetchNodeById,
     applyNodeFallback: applyNodeNameFallback,
     logger: console,
   });
@@ -326,6 +332,13 @@ export function initializeApp(config) {
   // values without re-declaring them here.
   const CHAT_LIMIT = MESSAGE_LIMIT;
   const CHAT_RECENT_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+  // Memoising cache of chat-log entry DOM nodes. Incremental rendering reuses
+  // already-built entries across refresh ticks so only new/changed entries are
+  // parsed from HTML, keeping idle re-renders free of per-entry work (issue:
+  // chat-log render). Exposed via ``_testUtils.getChatRenderStats`` so unit
+  // tests and the manual verification hook can confirm idle ticks materialise
+  // no entries.
+  const chatEntryCache = createChatEntryCache({ documentRef: document });
   const REFRESH_MS = config.refreshMs;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
@@ -2212,12 +2225,13 @@ export function initializeApp(config) {
   }
 
   /**
-   * Build a chat log entry describing a node join event.
+   * Build the parts (class name + HTML) for a node-join chat entry.
    *
-   * @param {Object} n Node payload.
-   * @returns {HTMLElement} Chat log element.
+   * @param {Object} node Node payload.
+   * @param {?number} [timestampOverride=null] Optional timestamp override.
+   * @returns {{ className: string, html: string }|null} Entry parts or null.
    */
-  function createNodeChatEntry(node, timestampOverride = null) {
+  function buildNodeChatEntryParts(node, timestampOverride = null) {
     if (!node || typeof node !== 'object') return null;
     const nodeIdRaw = pickFirstProperty([node], ['node_id', 'nodeId']);
     const fallbackId = nodeIdRaw || 'Unknown node';
@@ -2232,7 +2246,7 @@ export function initializeApp(config) {
     const tsSeconds = timestampOverride != null
       ? timestampOverride
       : resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
-    return createAnnouncementEntry({
+    return buildAnnouncementParts({
       timestampSeconds: tsSeconds,
       shortName: shortNameDisplay,
       longName: longNameDisplay,
@@ -2306,9 +2320,16 @@ export function initializeApp(config) {
     return `<span class="chat-entry-copy">${escapeHtml(safeBase)}${safeSuffix}</span>`;
   }
 
-  function createNodeInfoChatEntry(entry, context) {
+  /**
+   * Build the parts for a "node info updated" chat entry.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @returns {{ className: string, html: string }} Entry parts.
+   */
+  function buildNodeInfoChatEntryParts(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
-    return createAnnouncementEntry({
+    return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
       longName: label,
@@ -2320,10 +2341,17 @@ export function initializeApp(config) {
     });
   }
 
-  function createTelemetryChatEntry(entry, context) {
+  /**
+   * Build the parts for a telemetry-broadcast chat entry.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @returns {{ className: string, html: string }} Entry parts.
+   */
+  function buildTelemetryChatEntryParts(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
     const highlightSuffix = buildHighlightSuffix(formatTelemetryHighlights(entry?.telemetry));
-    return createAnnouncementEntry({
+    return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
       longName: label,
@@ -2335,10 +2363,17 @@ export function initializeApp(config) {
     });
   }
 
-  function createPositionChatEntry(entry, context) {
+  /**
+   * Build the parts for a position-broadcast chat entry.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @returns {{ className: string, html: string }} Entry parts.
+   */
+  function buildPositionChatEntryParts(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
     const highlightSuffix = buildHighlightSuffix(formatPositionHighlights(entry?.position));
-    return createAnnouncementEntry({
+    return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
       longName: label,
@@ -2350,7 +2385,14 @@ export function initializeApp(config) {
     });
   }
 
-  function createNeighborChatEntry(entry, context) {
+  /**
+   * Build the parts for a neighbour-broadcast chat entry.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @returns {{ className: string, html: string }} Entry parts.
+   */
+  function buildNeighborChatEntryParts(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
     const neighborId = entry?.neighborId ?? pickFirstProperty([entry?.neighbor], ['neighbor_id', 'neighborId']);
     let neighborLabel = null;
@@ -2364,7 +2406,7 @@ export function initializeApp(config) {
       }
     }
     const detail = neighborLabel ? `: ${escapeHtml(String(neighborLabel))}` : '';
-    return createAnnouncementEntry({
+    return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
       longName: label,
@@ -2376,32 +2418,43 @@ export function initializeApp(config) {
     });
   }
 
-  function createChatLogEntry(entry) {
+  /**
+   * Compute the class name and HTML for a mixed-feed (Log tab) chat entry,
+   * dispatching on the entry type, without touching the DOM. Returns ``null``
+   * for entries that should not render. Used by the memoising render path.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @returns {{ className: string, html: string }|null} Entry parts or null.
+   */
+  function buildChatLogEntryParts(entry) {
     if (!entry || typeof entry !== 'object') return null;
     if (entry.type === CHAT_LOG_ENTRY_TYPES.NODE_NEW) {
-      return createNodeChatEntry(entry.node ?? resolveNodeForLogEntry(entry) ?? null, entry?.ts ?? null);
+      return buildNodeChatEntryParts(entry.node ?? resolveNodeForLogEntry(entry) ?? null, entry?.ts ?? null);
     }
     const context = buildDisplayContext(entry);
     switch (entry.type) {
       case CHAT_LOG_ENTRY_TYPES.NODE_INFO:
-        return createNodeInfoChatEntry(entry, context);
+        return buildNodeInfoChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.TELEMETRY:
-        return createTelemetryChatEntry(entry, context);
+        return buildTelemetryChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.POSITION:
-        return createPositionChatEntry(entry, context);
+        return buildPositionChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
-        return createNeighborChatEntry(entry, context);
+        return buildNeighborChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.TRACE:
-        return createTraceChatEntry(entry, context);
+        return buildTraceChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
-        return entry?.message ? createMessageChatEntry(entry.message) : null;
+        return entry?.message ? buildMessageChatEntryParts(entry.message) : null;
       default:
         return null;
     }
   }
 
   /**
-   * Create a consistently formatted chat log entry for node-centric events.
+   * Compute the class name and HTML string for a node-centric announcement
+   * entry, without touching the DOM. The render path consumes this pure form so
+   * the HTML parse can be memoised per entry (issue: chat-log render); the
+   * {@link createAnnouncementEntry} wrapper materialises it into a node.
    *
    * @param {{
    *   timestampSeconds: ?number,
@@ -2413,9 +2466,9 @@ export function initializeApp(config) {
    *   messageHtml: string,
    *   protocol: ?string
    * }} params Rendering parameters.
-   * @returns {HTMLElement} Chat log element.
+   * @returns {{ className: string, html: string }} Entry class name and HTML.
    */
-  function createAnnouncementEntry({
+  function buildAnnouncementParts({
     timestampSeconds,
     shortName,
     longName,
@@ -2425,7 +2478,6 @@ export function initializeApp(config) {
     messageHtml,
     protocol: protocolHint = null
   }) {
-    const div = document.createElement('div');
     const tsDate = timestampSeconds != null ? new Date(timestampSeconds * 1000) : null;
     const ts = tsDate ? formatTime(tsDate) : '--:--:--';
     const metadata = extractChatMessageMetadata(metadataSource || nodeData || {});
@@ -2439,9 +2491,22 @@ export function initializeApp(config) {
     const announcementProtocol =
       protocolHint ?? pickFirstProperty([nodeData, metadataSource], ['protocol']);
     const announcementIconPrefix = protocolIconPrefixHtml(announcementProtocol);
-    div.className = 'chat-entry-node';
-    div.innerHTML = `${prefix}${presetTag} ${announcementIconPrefix}${shortHtml} ${messageHtml}`;
-    return div;
+    return {
+      className: 'chat-entry-node',
+      html: `${prefix}${presetTag} ${announcementIconPrefix}${shortHtml} ${messageHtml}`
+    };
+  }
+
+  /**
+   * Materialise a node-centric announcement entry as a DOM element. Thin wrapper
+   * over {@link buildAnnouncementParts} retained for the test-utility surface;
+   * the render path uses the parts form directly so it can memoise the parse.
+   *
+   * @param {Object} params Rendering parameters (see {@link buildAnnouncementParts}).
+   * @returns {HTMLElement} Chat log element.
+   */
+  function createAnnouncementEntry(params) {
+    return materializeEntryNode(buildAnnouncementParts(params));
   }
 
   /**
@@ -2466,7 +2531,15 @@ export function initializeApp(config) {
     return labels;
   }
 
-  function createTraceChatEntry(entry, context) {
+  /**
+   * Build the parts for a traceroute chat entry, or null when the trace path is
+   * too short to render.
+   *
+   * @param {Object} entry Structured chat-log entry carrying ``tracePath``.
+   * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @returns {{ className: string, html: string }|null} Entry parts or null.
+   */
+  function buildTraceChatEntryParts(entry, context) {
     if (!entry || !Array.isArray(entry.tracePath) || entry.tracePath.length < 2) {
       return null;
     }
@@ -2475,7 +2548,7 @@ export function initializeApp(config) {
     const labels = formatTracePathLabels(entry.tracePath);
     const labelText = labels.length ? labels.join(', ') : 'Traceroute';
     const labelSuffix = `: ${escapeHtml(labelText)}`;
-    return createAnnouncementEntry({
+    return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
       longName: context.longName || context.nodeId || labels[0] || 'Traceroute',
@@ -2706,12 +2779,15 @@ export function initializeApp(config) {
   }
 
   /**
-   * Build a chat log entry for a text message.
+   * Compute the class name and HTML for a text-message chat entry, without
+   * touching the DOM. Returns ``null`` for encrypted placeholder blobs that
+   * should not render. The render path consumes this pure form so the HTML
+   * parse can be memoised per message (issue: chat-log render).
    *
    * @param {Object} m Message payload.
-   * @returns {HTMLElement} Chat log element.
+   * @returns {{ className: string, html: string }|null} Entry parts or null.
    */
-  function createMessageChatEntry(m) {
+  function buildMessageChatEntryParts(m) {
     let plainText = '';
     if (m?.text != null) {
       plainText = String(m.text).trim();
@@ -2720,7 +2796,6 @@ export function initializeApp(config) {
       return null;
     }
 
-    const div = document.createElement('div');
     const tsSeconds = resolveTimestampSeconds(
       m.rx_time ?? m.rxTime,
       m.rx_iso ?? m.rxIso
@@ -2766,9 +2841,23 @@ export function initializeApp(config) {
       frequency: metadata.frequency ? escapeHtml(metadata.frequency) : ''
     });
     const presetTag = formatChatPresetTag({ presetCode: metadata.presetCode });
-    div.className = 'chat-entry-msg';
-    div.innerHTML = `${prefix}${presetTag} ${nodeProtocolPrefix}${short} ${text}`;
-    return div;
+    return {
+      className: 'chat-entry-msg',
+      html: `${prefix}${presetTag} ${nodeProtocolPrefix}${short} ${text}`
+    };
+  }
+
+  /**
+   * Materialise a text-message chat entry as a DOM element. Thin wrapper over
+   * {@link buildMessageChatEntryParts} retained for the test-utility surface;
+   * the render path uses the parts form directly so it can memoise the parse.
+   *
+   * @param {Object} m Message payload.
+   * @returns {HTMLElement|null} Chat log element, or null for hidden blobs.
+   */
+  function createMessageChatEntry(m) {
+    const parts = buildMessageChatEntryParts(m);
+    return parts ? materializeEntryNode(parts) : null;
   }
 
   /**
@@ -2908,36 +2997,46 @@ export function initializeApp(config) {
     );
 
     const logContent = buildChatFragment({
+      namespace: 'log',
       entries: filteredLogEntries,
-      renderEntry: createChatLogEntry,
+      renderParts: buildChatLogEntryParts,
+      keyOf: chatLogEntryKey,
       emptyLabel: 'No recent mesh activity.'
     });
 
-    const channelTabs = filteredChannels.map(channel => ({
-      id: channel.id || `channel-${channel.index}`,
-      label: `${channel.label} (${channel.messageCount})`,
-      iconSrc: isMeshtasticProtocol(channel.protocol)
-        ? MESHTASTIC_ICON_SRC
-        : isMeshcoreProtocol(channel.protocol)
-          ? MESHCORE_ICON_SRC
-          : null,
-      // Channel tabs are the chat proper: render the entire window (issue #796)
-      // rather than only the newest CHAT_LIMIT.  The entry set is already bounded
-      // by the seven-day window, so there is no count cap to apply here.
-      content: buildChatFragment({
-        entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
-        renderEntry: entry => createMessageChatEntry(entry.item),
-        emptyLabel: 'No messages on this channel.',
-        limit: Infinity
-      }),
-      index: channel.index,
-      isPrimaryFallback: Boolean(channel.isPrimaryFallback)
-    }));
+    const channelTabs = filteredChannels.map(channel => {
+      const tabId = channel.id || `channel-${channel.index}`;
+      return {
+        id: tabId,
+        label: `${channel.label} (${channel.messageCount})`,
+        iconSrc: isMeshtasticProtocol(channel.protocol)
+          ? MESHTASTIC_ICON_SRC
+          : isMeshcoreProtocol(channel.protocol)
+            ? MESHCORE_ICON_SRC
+            : null,
+        // Channel tabs are the chat proper: render the entire window (issue #796)
+        // rather than only the newest CHAT_LIMIT.  The entry set is already bounded
+        // by the seven-day window, so there is no count cap to apply here.
+        content: buildChatFragment({
+          namespace: tabId,
+          entries: channel.entries.map(e => ({ ts: e.ts, item: e.message })),
+          renderParts: entry => buildMessageChatEntryParts(entry.item),
+          keyOf: entry => chatMessageEntryKey(entry.item),
+          emptyLabel: 'No messages on this channel.',
+          limit: Infinity
+        }),
+        index: channel.index,
+        isPrimaryFallback: Boolean(channel.isPrimaryFallback)
+      };
+    });
 
     const tabs = [
       { id: 'log', label: 'Log', content: logContent },
       ...channelTabs
     ];
+    // Release entry-node caches for tabs no longer present (e.g. a channel that
+    // dropped out of the window) so cached DOM nodes are not retained forever.
+    chatEntryCache.retainNamespaces(new Set(tabs.map(tab => tab.id)));
 
     const previousActive = chatEl.dataset?.activeTab || null;
     const defaultActive =
@@ -2956,30 +3055,44 @@ export function initializeApp(config) {
   }
 
   /**
-   * Construct a document fragment for chat entries, inserting date dividers
-   * and optional empty-state labels.
+   * Build a div element from precomputed entry parts (class name + HTML). This
+   * is the single place a chat entry is parsed from an HTML string; both the
+   * node-returning ``create…Entry`` test wrappers and {@link chatEntryCache}
+   * funnel through it.
+   *
+   * @param {{ className: string, html: string }} parts Entry class name and HTML.
+   * @returns {HTMLElement} Entry element.
+   */
+  function materializeEntryNode({ className, html }) {
+    const div = document.createElement('div');
+    div.className = className;
+    div.innerHTML = html;
+    return div;
+  }
+
+  /**
+   * Construct a document fragment for chat entries, inserting date dividers and
+   * an optional empty-state label. Entry nodes are sourced from
+   * {@link chatEntryCache}, so an entry whose rendered HTML is unchanged since
+   * the previous refresh is reused rather than re-parsed (issue: chat-log
+   * render). Entries that aged out of this tab's window are pruned from the
+   * cache afterwards.
    *
    * @param {{
-   *   entries: Array<{ ts: number, item: Object }>,
-   *   renderEntry: Function,
+   *   namespace: string,
+   *   entries: Array<{ ts: number, item?: Object }>,
+   *   renderParts: Function,
+   *   keyOf: Function,
    *   emptyLabel?: string,
    *   limit?: number
-   * }} params Fragment construction parameters.  ``limit`` caps how many of the
-   *   newest entries are rendered; pass ``Infinity`` to render them all (the Log
-   *   firehose defaults to {@link CHAT_LIMIT}, chat channel tabs opt out).
+   * }} params Fragment construction parameters.  ``namespace`` scopes the entry
+   *   cache to a single tab; ``limit`` caps how many of the newest entries are
+   *   rendered (pass ``Infinity`` to render them all — the Log firehose defaults
+   *   to {@link CHAT_LIMIT}, chat channel tabs opt out).
    * @returns {DocumentFragment} Populated fragment.
    */
-  function buildChatFragment({ entries = [], renderEntry, emptyLabel, limit = CHAT_LIMIT }) {
+  function buildChatFragment({ namespace, entries = [], renderParts, keyOf, emptyLabel, limit = CHAT_LIMIT }) {
     const fragment = document.createDocumentFragment();
-    if (!entries || entries.length === 0) {
-      if (emptyLabel) {
-        const empty = document.createElement('p');
-        empty.className = 'chat-empty';
-        empty.textContent = emptyLabel;
-        fragment.appendChild(empty);
-      }
-      return fragment;
-    }
     const getDivider = createDateDividerFactory();
     const limitedEntries = Number.isFinite(limit)
       ? entries.slice(Math.max(entries.length - limit, 0))
@@ -2989,18 +3102,21 @@ export function initializeApp(config) {
       if (!entry || typeof entry.ts !== 'number') {
         continue;
       }
-      if (typeof renderEntry !== 'function') {
+      if (typeof renderParts !== 'function' || typeof keyOf !== 'function') {
         continue;
       }
-      const node = renderEntry(entry);
-      if (!node) {
+      const parts = renderParts(entry);
+      if (!parts) {
         continue;
       }
+      const node = chatEntryCache.materialize(namespace, keyOf(entry), parts.className, parts.html);
       const divider = getDivider(entry.ts);
       if (divider) fragment.appendChild(divider);
       fragment.appendChild(node);
       renderedEntries += 1;
     }
+    // Drop cached nodes for entries no longer present in this tab's window.
+    chatEntryCache.prune(namespace);
     if (renderedEntries === 0 && emptyLabel) {
       const empty = document.createElement('p');
       empty.className = 'chat-empty';
@@ -4339,6 +4455,20 @@ export function initializeApp(config) {
       },
       /** Trigger a manual refresh cycle (test use only). */
       refresh,
+      /** Re-render the chat log from current state (test/verification hook). */
+      rerenderChatLog,
+      /**
+       * Chat-render instrumentation: how many entries have been materialised
+       * into DOM nodes so far. Idle re-renders should not increase this once
+       * incremental rendering is in place (issue: chat-log render).
+       *
+       * @returns {{ materialized: number }} Cumulative materialisation count.
+       */
+      getChatRenderStats: () => chatEntryCache.stats(),
+      /** Reset the chat-render materialisation counter (test use only). */
+      resetChatRenderStats: () => {
+        chatEntryCache.resetStats();
+      },
       /** Number of plaintext chat messages currently loaded (test use only). */
       getLoadedMessageCount: () => allMessages.length,
       /** Project an original lat/lon + pixel offset into a display LatLng. */

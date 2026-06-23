@@ -26,26 +26,30 @@ export const MESSAGE_HYDRATION_CONCURRENCY = 4;
  * Build a hydrator capable of attaching node metadata to chat messages.
  *
  * @param {{
- *   fetchNodeById: (nodeId: string) => Promise<object|null>,
+ *   fetchNodeById?: ((nodeId: string) => Promise<object|null>)|null,
  *   applyNodeFallback: (node: object) => void,
  *   logger?: { warn?: (message?: any, ...optionalParams: any[]) => void },
  *   concurrency?: number
- * }} options Factory configuration.  ``concurrency`` overrides the default
- *   worker-pool size and is primarily intended for unit tests; callers
- *   should leave it unset in production.
+ * }} options Factory configuration.  ``fetchNodeById`` is **optional**: when
+ *   omitted (the dashboard default) the hydrator runs in *map-only* mode,
+ *   resolving senders purely from the supplied ``nodesById`` map and emitting an
+ *   ``!id`` placeholder on a miss with zero network traffic. Supplying a fetcher
+ *   re-enables the bounded per-node backfill (the opt-in batched path).
+ *   ``concurrency`` overrides the default worker-pool size and is primarily
+ *   intended for unit tests; callers should leave it unset in production.
  * @returns {{
  *   hydrate: (messages: Array<object>|null|undefined, nodesById: Map<string, object>) => Promise<Array<object>>
  * }} Hydrator API.
  */
 export function createMessageNodeHydrator({
-  fetchNodeById,
+  fetchNodeById = null,
   applyNodeFallback,
   logger = console,
   concurrency = MESSAGE_HYDRATION_CONCURRENCY,
 }) {
-  if (typeof fetchNodeById !== 'function') {
-    throw new TypeError('fetchNodeById must be a function');
-  }
+  // ``fetchNodeById`` is optional — its presence switches the hydrator between
+  // map-only mode (no network) and the per-node backfill mode.
+  const networkEnabled = typeof fetchNodeById === 'function';
   if (typeof applyNodeFallback !== 'function') {
     throw new TypeError('applyNodeFallback must be a function');
   }
@@ -133,14 +137,39 @@ export function createMessageNodeHydrator({
   }
 
   /**
+   * Attach an ``!id`` placeholder node to a message whose sender could not be
+   * resolved from the bulk map (and, in network mode, was not found via lookup).
+   * The message's protocol is copied onto the placeholder so the fallback label
+   * and badge palette match the channel the sender appeared in; without this
+   * hint ``applyNodeFallback`` would default to the neutral ``Unknown`` label,
+   * even for MeshCore chats whose messages explicitly carry
+   * ``protocol: "meshcore"``.
+   *
+   * @param {object} message Message whose ``node`` is being assigned.
+   * @param {string} targetId Canonical sender identifier.
+   * @returns {void}
+   */
+  function assignPlaceholder(message, targetId) {
+    const placeholder = { node_id: targetId };
+    const messageProtocol = message && message.protocol;
+    if (messageProtocol != null) {
+      placeholder.protocol = messageProtocol;
+    }
+    applyNodeFallback(placeholder);
+    message.node = placeholder;
+  }
+
+  /**
    * Attach node information to the provided message collection.
    *
    * Messages whose sender is already in ``nodesById`` are bound synchronously
-   * and incur no network traffic.  Misses are pushed onto a shared queue and
-   * drained by a fixed worker pool so the number of in-flight
-   * ``/api/nodes/:id`` requests never exceeds {@link workerCap}.  This caps
-   * the cold-load thundering-herd that would otherwise issue one request per
-   * unique sender in parallel.
+   * and incur no network traffic.  In **map-only** mode (no ``fetchNodeById``)
+   * every remaining miss becomes an ``!id`` placeholder with no requests at all.
+   * When a fetcher is supplied, misses are instead pushed onto a shared queue
+   * and drained by a fixed worker pool so the number of in-flight
+   * ``/api/nodes/:id`` requests never exceeds {@link workerCap} — capping the
+   * cold-load thundering-herd that would otherwise issue one request per unique
+   * sender in parallel.
    *
    * @param {Array<object>|null|undefined} messages Message payloads from the API.
    * @param {Map<string, object>} nodesById Lookup table of known nodes.
@@ -180,6 +209,16 @@ export function createMessageNodeHydrator({
       return messages;
     }
 
+    // Map-only mode: with no fetcher there is nothing to look up, so every miss
+    // resolves to an ``!id`` placeholder synchronously — no worker pool, no
+    // network requests.
+    if (!networkEnabled) {
+      for (const entry of queue) {
+        assignPlaceholder(entry.message, entry.targetId);
+      }
+      return messages;
+    }
+
     // Workers share a monotonically advancing index instead of mutating the
     // queue with ``shift()`` — ``Array#shift`` is O(n) and would turn a
     // large hydration burst into O(n²).  Single-threaded JS makes the
@@ -195,18 +234,7 @@ export function createMessageNodeHydrator({
         if (node) {
           entry.message.node = node;
         } else {
-          // Copy the message's protocol stamp onto the placeholder so the
-          // fallback label and badge palette match the channel the sender
-          // appeared in.  Without this hint applyNodeFallback would default
-          // to the neutral ``Unknown`` label, even for MeshCore chats whose
-          // messages explicitly carry ``protocol: "meshcore"``.
-          const placeholder = { node_id: entry.targetId };
-          const messageProtocol = entry.message && entry.message.protocol;
-          if (messageProtocol != null) {
-            placeholder.protocol = messageProtocol;
-          }
-          applyNodeFallback(placeholder);
-          entry.message.node = placeholder;
+          assignPlaceholder(entry.message, entry.targetId);
         }
       }
     });
