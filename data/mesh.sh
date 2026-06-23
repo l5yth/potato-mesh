@@ -15,14 +15,21 @@
 
 set -euo pipefail
 
-# Recreate the venv only when its embedded Python is missing or points to the
-# wrong prefix (e.g. a stale shebang from a sibling project's venv).  Avoid
-# --clear on every run: it wipes installed packages before each start, so any
-# restart during a PyPI outage turns a transient network failure into hard
-# ingestor downtime.
+# Recreate the venv only when its interpreter is missing or no longer reports a
+# .venv prefix.  Avoid --clear on every run: it wipes installed packages before
+# each start, so any restart during a PyPI outage turns a transient network
+# failure into hard ingestor downtime.
+#
+# The guard probes .venv/bin/python — a relocatable symlink to the system
+# interpreter that keeps working after the checkout is moved or copied.  The
+# console scripts (.venv/bin/pip, ...) are NOT relocatable: their shebang bakes
+# in the venv's absolute path at creation time, so a moved checkout leaves them
+# pointing at a missing interpreter ("bad interpreter: No such file...").  Drive
+# pip via `python -m pip` so installs survive a relocated checkout without a
+# full rebuild.
 if ! .venv/bin/python -c "import sys; exit(0 if '.venv' in sys.prefix else 1)" 2>/dev/null; then
     python -m venv --clear .venv
 fi
-.venv/bin/pip install -U pip
-.venv/bin/pip install -r "$(dirname "$0")/requirements.txt"
+.venv/bin/python -m pip install -U pip
+.venv/bin/python -m pip install -r "$(dirname "$0")/requirements.txt"
 exec .venv/bin/python mesh.py
