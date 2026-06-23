@@ -222,27 +222,30 @@ def _camelcase_enum_name(name: str | None) -> str | None:
     return "".join(camel_parts)
 
 
-def _custom_preset_label(lora_message: Any) -> str:
+def _custom_preset_label(lora_message: Any) -> str | None:
     """Return a compact custom-radio label when ``use_preset`` is disabled.
 
     Reads ``spread_factor``, ``bandwidth``, and ``coding_rate`` from
-    *lora_message*.  When all three are non-zero the label follows the same
-    compact convention used by MeshCore (e.g. ``"Custom SF8/BW62/CR6"``).
-    When any parameter is absent or zero, returns the bare ``"Custom"`` string
-    so the caller always gets a non-empty label.
+    *lora_message* and renders them in the **same bare ``SF/BW/CR`` form** that
+    MeshCore's ``_derive_modem_preset`` emits (e.g. ``"SF8/BW62/CR6"``), so one
+    radio configuration shows a single spelling across protocols (SPEC
+    Invariant IV — protocol parity).  When any parameter is absent or zero the
+    configuration is unknown, so — matching MeshCore — this returns ``None``
+    rather than inventing a label.
 
     Args:
         lora_message: A LoRa config protobuf message or compatible object.
 
     Returns:
-        A string starting with ``"Custom"``.
+        A ``"SF{sf}/BW{bw}/CR{cr}"`` string, or ``None`` when any parameter is
+        absent or zero.
     """
     sf = getattr(lora_message, "spread_factor", None) or None
     bw = getattr(lora_message, "bandwidth", None) or None
     cr = getattr(lora_message, "coding_rate", None) or None
     if sf and bw and cr:
-        return f"Custom SF{int(sf)}/BW{int(bw)}/CR{int(cr)}"
-    return "Custom"
+        return f"SF{int(sf)}/BW{int(bw)}/CR{int(cr)}"
+    return None
 
 
 def _modem_preset(lora_message: Any) -> str | None:
