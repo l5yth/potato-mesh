@@ -88,6 +88,10 @@ import { CHAT_LOG_ENTRY_TYPES, buildChatTabModel, MAX_CHANNEL_INDEX } from './ch
 import { renderChatTabs } from './chat-tabs.js';
 import { createChatEntryCache } from './main/chat-entry-cache.js';
 import { chatMessageEntryKey, chatLogEntryKey } from './main/chat-entry-keys.js';
+import { createDataCache, CACHE_SCHEMA_VERSION } from './main/data-cache.js';
+import { createIndexedDbBackend } from './main/data-cache-idb.js';
+import { isExpired as isCacheEntryExpired, isStale as isCacheEntryStale } from './main/cache-lifetime.js';
+import { cacheKeyFor } from './main/cache-keys.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
 import { buildMessageIndex } from './message-replies.js';
@@ -325,6 +329,186 @@ export function initializeApp(config) {
   let initialFetchDone = false;
   /** Whether the background chat-history backfill is currently running. */
   let chatBackfillRunning = false;
+  /** One-shot guard: the chat-history backfill runs once after the first load. */
+  let chatHistoryBackfilled = false;
+  /** Settles when the one-shot chat-history backfill finishes (test hook). */
+  let backfillPromise = Promise.resolve();
+
+  // Persistent read-side cache (SPEC FC1–FC7). The IndexedDB backend is null
+  // when storage is unavailable, and PRIVATE mode disables + wipes the cache —
+  // either way ``createDataCache`` yields a no-op cache and the app falls back to
+  // network-only behavior. ``cachedAt`` is stamped in unix seconds to match the
+  // API's record timestamps (used by the lifetime helper).
+  const dataCache = createDataCache({
+    backend: createIndexedDbBackend(),
+    schemaVersion: CACHE_SCHEMA_VERSION,
+    instanceId: config.instanceDomain || '',
+    isPrivate: isPrivateMode,
+    now: () => Math.floor(Date.now() / 1000),
+  });
+  /** Unix-seconds of the last full cache write-back (throttle gate). */
+  let lastCacheWriteSeconds = 0;
+  /** Minimum seconds between full cache write-backs (the cache lags slightly). */
+  const CACHE_WRITE_INTERVAL_SECONDS = 30;
+  /** Settles when the most recent write-back's stores have flushed (test hook). */
+  let pendingCacheWrite = Promise.resolve();
+
+  /**
+   * Persist a collection's current rows into the cache, fire-and-forget. The
+   * cache is best-effort and never blocks rendering (FC7).
+   *
+   * @param {string} collection Cache collection name.
+   * @param {Array<Object>} records Rows to persist.
+   * @returns {void}
+   */
+  function cacheWriteCollection(collection, records) {
+    if (!Array.isArray(records) || records.length === 0) return Promise.resolve();
+    const entries = [];
+    for (const record of records) {
+      const key = cacheKeyFor(collection, record);
+      if (key != null) entries.push({ key, value: record });
+    }
+    return entries.length > 0 ? dataCache.putAll(collection, entries) : Promise.resolve();
+  }
+
+  /**
+   * Shallow-copy a chat message without its hydrated ``node`` so the cache stores
+   * the raw row; the sender is re-resolved from the bulk node map on seed.
+   *
+   * @param {Object} message Hydrated chat message.
+   * @returns {Object} Message copy without ``node``.
+   */
+  function messageForCache(message) {
+    if (!message || typeof message !== 'object') return message;
+    const copy = { ...message };
+    delete copy.node;
+    return copy;
+  }
+
+  /**
+   * Throttled full write-back of the live dashboard state to the cache (SPEC
+   * FC2). Runs at most once per {@link CACHE_WRITE_INTERVAL_SECONDS} (always on
+   * the first successful refresh). No-op when the cache is disabled.
+   *
+   * @returns {void}
+   */
+  function writeBackCache() {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (lastCacheWriteSeconds && nowSeconds - lastCacheWriteSeconds < CACHE_WRITE_INTERVAL_SECONDS) {
+      return;
+    }
+    lastCacheWriteSeconds = nowSeconds;
+    pendingCacheWrite = Promise.allSettled([
+      cacheWriteCollection('nodes', allNodes),
+      cacheWriteCollection('positions', allPositionEntries),
+      cacheWriteCollection('telemetry', allTelemetryEntries),
+      cacheWriteCollection('neighbors', allNeighbors),
+      cacheWriteCollection('traces', allTraces),
+      cacheWriteCollection('messages', allMessages.map(messageForCache)),
+      cacheWriteCollection('encrypted', allEncryptedMessages.map(messageForCache)),
+    ]);
+  }
+
+  /**
+   * Read non-expired entries for ``collection`` from the cache, deleting any
+   * past their eviction window so the store stays bounded across sessions
+   * (FC3/FC5). Returns the full entries (``{ key, value, cachedAt }``) so callers
+   * can both seed the value and judge staleness.
+   *
+   * @param {string} collection Cache collection name.
+   * @param {number} nowSeconds Current time, unix seconds.
+   * @returns {Promise<Array<{ key: string, value: Object, cachedAt: number }>>} Live entries.
+   */
+  async function readLiveCacheEntries(collection, nowSeconds) {
+    const rows = await dataCache.getAll(collection);
+    const live = [];
+    for (const entry of rows) {
+      if (isCacheEntryExpired(collection, entry, nowSeconds)) {
+        void dataCache.delete(collection, entry.key);
+      } else {
+        live.push(entry);
+      }
+    }
+    return live;
+  }
+
+  /**
+   * Seed the in-memory dashboard state from the persistent cache for an instant
+   * first paint, then set the per-collection high-water marks so the subsequent
+   * refresh fetches only the delta (SPEC FC2). Cached rows are already the
+   * render-ready ``all*`` form, so seeding is a direct assignment (messages are
+   * re-hydrated against the seeded node map). No-op (returns false) when the
+   * cache is disabled or empty, leaving the normal cold fetch to proceed.
+   *
+   * @returns {Promise<boolean>} True when any cached data seeded the state.
+   */
+  async function seedFromCache() {
+    await dataCache.ready();
+    if (dataCache.isDisabled()) return false;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries] = await Promise.all([
+      readLiveCacheEntries('nodes', nowSeconds),
+      readLiveCacheEntries('positions', nowSeconds),
+      readLiveCacheEntries('telemetry', nowSeconds),
+      readLiveCacheEntries('neighbors', nowSeconds),
+      readLiveCacheEntries('traces', nowSeconds),
+    ]);
+    const messageEntries = CHAT_ENABLED ? await readLiveCacheEntries('messages', nowSeconds) : [];
+    const encryptedEntries = CHAT_ENABLED ? await readLiveCacheEntries('encrypted', nowSeconds) : [];
+    if (
+      nodeEntries.length === 0 &&
+      messageEntries.length === 0 &&
+      encryptedEntries.length === 0 &&
+      positionEntries.length === 0 &&
+      telemetryEntries.length === 0 &&
+      neighborEntries.length === 0 &&
+      traceEntries.length === 0
+    ) {
+      return false;
+    }
+
+    allNodes = nodeEntries.map(entry => entry.value);
+    allPositionEntries = positionEntries.map(entry => entry.value);
+    allTelemetryEntries = telemetryEntries.map(entry => entry.value);
+    allNeighbors = neighborEntries.map(entry => entry.value);
+    allTraces = traceEntries.map(entry => entry.value);
+    rebuildNodeIndex(allNodes);
+    const [seededChat, seededEncrypted] = await Promise.all([
+      messageNodeHydrator.hydrate(messageEntries.map(entry => entry.value), nodesById),
+      messageNodeHydrator.hydrate(encryptedEntries.map(entry => entry.value), nodesById),
+    ]);
+    allMessages = Array.isArray(seededChat) ? seededChat : [];
+    allEncryptedMessages = Array.isArray(seededEncrypted) ? seededEncrypted : [];
+
+    // FC3 staleness: when every cached node copy is older than the 24 h node
+    // staleness window, prefer a full node refresh (high-water 0 → since=0) over
+    // a delta, so all node metadata is refreshed rather than only nodes heard
+    // since the newest cached one. Inactive nodes are still seeded (retained),
+    // they are just re-fetched fresh on this first refresh.
+    const nodesStale =
+      nodeEntries.length > 0 && nodeEntries.every(entry => isCacheEntryStale('nodes', entry, nowSeconds));
+    lastNodeTimestamp = nodesStale ? 0 : maxRecordTimestamp(allNodes, ['last_heard']);
+    lastMessageTimestamp = Math.max(
+      maxRecordTimestamp(allMessages, ['rx_time']),
+      maxRecordTimestamp(allEncryptedMessages, ['rx_time']),
+    );
+    lastPositionTimestamp = maxRecordTimestamp(allPositionEntries, ['rx_time', 'position_time']);
+    lastTelemetryTimestamp = maxRecordTimestamp(allTelemetryEntries, ['rx_time', 'telemetry_time']);
+    lastNeighborTimestamp = maxRecordTimestamp(allNeighbors, ['rx_time']);
+    lastTraceTimestamp = maxRecordTimestamp(allTraces, ['rx_time']);
+    initialFetchDone = true;
+    applyFilter();
+    return true;
+  }
+
+  /**
+   * Empty the persistent cache on demand (the FC4 "clear cached data" control).
+   *
+   * @returns {Promise<void>} Resolves once the cache is cleared.
+   */
+  async function clearDataCache() {
+    await dataCache.clear();
+  }
 
   // NODE_LIMIT, TRACE_LIMIT, TRACE_MAX_AGE_SECONDS, and SNAPSHOT_LIMIT are
   // imported from ``./main/constants.js`` so the helpers extracted into
@@ -4262,11 +4446,18 @@ export function initializeApp(config) {
       allTraces = Array.isArray(traceEntries) ? traceEntries : [];
       initialFetchDone = true;
       applyFilter();
+      // Persist the freshly-merged state for the next reload/revisit (SPEC FC2),
+      // throttled and fire-and-forget so it never blocks the paint.
+      writeBackCache();
       // With the newest page on screen, stream the rest of the seven-day window
       // in the background (issue #802) so older history fills in progressively
       // instead of blocking the first paint on the whole backward pagination.
-      if (!useSince) {
-        void backfillChatHistory();
+      // Runs once after the first load — whether that load was cold or seeded
+      // from cache — so any window not already present in the cache is filled.
+      if (!chatHistoryBackfilled) {
+        chatHistoryBackfilled = true;
+        backfillPromise = backfillChatHistory();
+        void backfillPromise;
       }
       if (statusEl) {
         statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
@@ -4280,8 +4471,13 @@ export function initializeApp(config) {
   }
 
   // Kick off the first data load immediately then start the silent background
-  // auto-refresh timer.
-  refresh();
+  // auto-refresh timer. Paint from the persistent cache first (instant first
+  // paint, SPEC FC2), then refresh fetches only the delta; a disabled/empty
+  // cache makes seedFromCache a no-op so this is the normal cold load.
+  const initialLoadPromise = seedFromCache()
+    .catch(() => false)
+    .then(() => refresh());
+  void initialLoadPromise;
   restartAutoRefresh();
 
   if (refreshBtn) {
@@ -4471,6 +4667,18 @@ export function initializeApp(config) {
       },
       /** Number of plaintext chat messages currently loaded (test use only). */
       getLoadedMessageCount: () => allMessages.length,
+      /** The persistent data cache instance (test use only). */
+      dataCache,
+      /** Seed in-memory state from the persistent cache (test use only). */
+      seedFromCache,
+      /** Promise resolving once the initial seed + first refresh complete (test hook). */
+      initialLoad: initialLoadPromise,
+      /** Promise resolving once the latest cache write-back has flushed (test hook). */
+      flushCacheWrites: () => pendingCacheWrite,
+      /** Promise resolving once the one-shot chat-history backfill finishes (test hook). */
+      flushBackfill: () => backfillPromise,
+      /** Empty the persistent cache — the "clear cached data" control (FC4). */
+      clearDataCache,
       /** Project an original lat/lon + pixel offset into a display LatLng. */
       projectColocatedOffsetLatLng,
       /** Re-project every recorded co-located marker (no-op without a map). */

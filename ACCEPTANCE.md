@@ -985,3 +985,93 @@ opt-in batched refresh path.
 pure parts builders), so **A4c** (chat name resolution honours protocol) and the
 chat-entry / progressive-load suites (**PL-A1**, **PL-A2**) stay green. No
 POST/GET contract change, so the Ruby and Python suites are unaffected.
+
+---
+
+## Feature: Frontend persistent data cache
+
+Maps to SPEC decisions **FC1–FC7**. The dashboard persists its read-side data in
+the browser (IndexedDB) keyed by canonical id, paints from cache on load, and
+fetches only misses (absent or stale rows) and incremental deltas. Frontend-only
+(vanilla JS); no API/DB/ingestor change. New modules live under
+`web/public/assets/js/app/main/` (e.g. `data-cache.js` for the store and a
+lifetime/TTL helper) with co-located `__tests__`.
+
+### FC-A1 — Persistent, id-keyed store round-trips every collection — FC1
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/data-cache.test.js )
+```
+**Expected:** pass. The store reads/writes `nodes`, `messages` (incl.
+`encrypted`), `positions`, `telemetry`, `neighbors`, and `traces` keyed by the
+canonical record id (`neighbors` by the composite `(node_id, neighbor_id)` key),
+backed by IndexedDB; values written in one session are retrievable from a fresh
+store instance over the same backing database (the reload/revisit path). Reads of
+an absent id return a miss.
+
+### FC-A2 — Seed-from-cache, fetch only the delta — FC2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-cache-refresh.test.js )
+```
+**Expected:** pass. On a **warm** start (cache populated) the app paints from
+cache and each collection's first refresh requests only rows newer than the
+newest cached row (`since=<newest cached ts>`); rows already present and fresh in
+the cache are **not** re-requested. On a **cold** start (empty cache) it fetches
+the full window as today. New rows returned by the delta are merged by id and
+written back to the cache. The auto-refresh cadence is unchanged.
+
+### FC-A3 — Two-tier lifetime: staleness refetches, eviction deletes — FC3, FC5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/cache-lifetime.test.js )
+```
+**Expected:** pass. Given the per-collection windows — **nodes** stale 24 h /
+evict 7 d; **traces & neighbors** stale + evict 28 d; **messages, positions,
+telemetry** stale + evict 7 d — the helper reports an entry **stale** past its
+staleness TTL (so it is a fetch candidate) but **retains** it until its (longer
+or equal) eviction window. A node last updated 26 h ago is **stale yet not
+evicted** (still served); a node 8 d old is evicted; **no entry younger than 7
+days is ever evicted**; a trace 20 d old is retained, a trace 29 d old is
+evicted. No staleness/eviction window exceeds the server's visibility floor
+(7-day bulk; 28-day per-id/trace), preserving C4.
+
+### FC-A4 — Privacy: PRIVATE disables + wipes the cache; clear control empties it — FC4
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-cache-privacy.test.js )
+```
+**Expected:** pass. When the instance reports **PRIVATE** mode the cache performs
+**no writes** and any existing cached data is **wiped** on init; only data the
+API actually returns is ever stored (opt-out / `CLIENT_HIDDEN` rows are excluded
+server-side, so they never reach the cache; a node opt-out propagates to clients
+within the 24 h node staleness window). The **clear-cache operation**
+(`clearDataCache` — the action a "clear cached data" control invokes) empties the
+store on demand; the **visible UI control is a deferred follow-up**, but the
+capability ships and is covered here. This is the client-side realisation of the
+**FC4** amendment to Invariant II; combined with **A2a** (message API still 404s
+in private mode) no message content is cached or served when private.
+
+### FC-A5 — Versioned schema & graceful degradation — FC6, FC7
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/data-cache.test.js )
+```
+**Expected:** pass. A cache carrying a different schema version — or a different
+instance identity (`instance_domain`) — is discarded on open rather than served,
+so a data-shape change can never surface mis-shaped entries. When the storage
+backend is unavailable, throws, or exceeds quota, every store operation degrades
+silently to a no-op and the app falls back to today's network-only behavior (the
+cache is never load-bearing). The cache feeds **no** POST/ingest path and alters
+**no** API response (read-side only).
+
+### FC-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**A2 / A2a / A2b** (privacy — no cached messages surface in private mode);
+**C4 / C7** (7-day GET floor and #796 backward pagination — the cache never
+serves beyond-window rows); **PL-A1 / PL-A2** (#802 progressive load + backward
+pager — caching seeds, it does not replace, the pager); **CR-A1 … CR-R1** (#813
+incremental render + map-only hydration — the cache seeds `nodesById` and feeds
+the same render path, so idle re-renders still materialise 0 entries and no
+per-node `/api/nodes/:id` request is issued); **A4c** (protocol parity — cache
+keyed by canonical id, never mixing protocols); and **B1** (all suites). No
+POST/GET contract change, so the Ruby and Python suites are unaffected.

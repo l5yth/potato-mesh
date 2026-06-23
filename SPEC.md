@@ -290,3 +290,34 @@ marker, and one fallback chain (option **U0**).
 | **FS5** | **Versioned one-way break** (amends Invariant III, mirrors S7): old peers cannot verify a v2 signature and stop accepting this instance until upgraded (accepted cost); new instances accept old peers' v1 signatures, so a mixed fleet converges. | interview |
 | **FS6** | **`last_update`** is the sole wire name for the instance update time across both signed surfaces. | interview |
 | **FS7** | **Flutter `/api/instances` reader deferred** (extends BF4). `app/lib/main.dart` `MeshInstance.fromJson` still reads `isPrivate`/`lastUpdateTime` (camelCase) and is intentionally **not** migrated, consistent with the standing decision to defer all Flutter work. Low impact: `GET /api/instances` never serves an `is_private: true` entry (private instances 404 the endpoint via `federation_enabled?`; remote private peers are rejected at registration/crawl), so privacy stays enforced server-side — the stale reads only blank the app's `last_update`/`is_private` display until the client is updated. | review |
+
+---
+
+## Feature: Frontend persistent data cache
+
+Persists the dashboard's read-side data in the browser so a reload or revisit
+paints instantly from cache and only **cache misses** (absent or stale rows) hit
+the API. Frontend-only (vanilla JS, existing stack); no API/DB/ingestor change.
+
+**Conflict check against existing decisions.** *Apex I (local LoRa)* —
+**consistent**: storage is the local browser only, no broker/cloud, no new
+dependency. *Invariant IV (parity)* — **extends**: the cache is keyed by the
+canonical `!%08x` id uniformly across protocols, privileging neither. *D8
+(contract + GET window floors)* — **consistent/extends**: no API change, the
+client TTL is bounded by the server's visibility window, and the cache schema is
+versioned in D8's spirit. *§3.3 (SQLite is the system of record)* —
+**consistent**: the cache is a read-side performance layer that defers to the
+server for freshness (hence the 24 h node TTL). *Invariant II (privacy & consent)*
+— **contradicts as-is** (persisting messages and node positions to disk is new
+on-disk retention) and is therefore **explicitly amended** for this read-side
+cache by **FC4**; the apex is untouched.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **FC1** | **Persistent, id-keyed client cache.** Every dashboard GET collection — `nodes`, `messages` (incl. `encrypted`), `positions`, `telemetry`, `neighbors`, `traces` — is cached in the browser via **IndexedDB** (chosen over `localStorage` because a busy instance's rows exceed the ~5 MB synchronous-string budget), keyed by the canonical record id; `neighbors` use their existing composite `(node_id, neighbor_id)` key. The cache survives reload and revisit. | interview |
+| **FC2** | **Seed-then-delta refresh (reconciles "only misses fetch" with a live view).** On load the UI paints from cache and each collection's `since` high-water mark is seeded from the newest cached row; the existing auto-refresh then fetches only rows newer than the cache and merges by id (the established `since`/`mergeById` model). A **cache miss** = a row/collection absent or past its TTL → fetched. The auto-refresh cadence is unchanged. | interview |
+| **FC3** | **Two-tier lifetime — staleness (refetch) ≠ eviction (delete), per collection.** A cached entry becomes **stale** (a fresh fetch is preferred over the cached copy) after its *staleness TTL*; it is **evicted** (deleted) only after its longer *retention window*, and **nothing younger than 7 days is ever evicted** — so an inactive node stays cached and displayed up to 7 days instead of vanishing at its 24 h staleness (we must not lose inactive nodes). Per collection: **nodes** → stale **24 h** (metadata mutates), evict **7 d**; **traces & neighbors** → stale + evict **28 d**; **messages, positions, telemetry** → stale + evict **7 d**. No window exceeds the server's own visibility floor (7-day bulk list; 28-day per-id node & trace windows = `four_weeks_seconds` / `TRACE_MAX_AGE_SECONDS`), so the cache never surfaces rows the API would no longer return (C4). | interview |
+| **FC4** | **Privacy safeguards — amends Invariant II.** New client-side persistence is permitted only bounded: (i) when the instance reports **PRIVATE** mode the cache is disabled **and** any existing cache is wiped; (ii) only data the API already returns is stored (opt-out / `CLIENT_HIDDEN` rows are server-excluded; a node opt-out propagates to clients within the 24 h node TTL); (iii) TTL caps per FC3; (iv) a **clear-cache operation** (`clearDataCache`) that empties the store on demand — the action behind a "clear cached data" control; the **visible UI control is a tracked follow-up (deferred)**, the capability ships and is tested now. This explicitly amends Invariant II for the dashboard read-side cache; consent/retention/opt-out remain authoritative and the apex (I) is untouched. | interview (II amendment) |
+| **FC5** | **Bounded size.** The FC3 retention windows (evict oldest-first beyond each collection's window) together with the API's own row caps (`NODE_LIMIT`, snapshot limits) bound the store, so it cannot grow without bound. | interview |
+| **FC6** | **Versioned cache schema.** The cache carries a schema-version tag; a version bump — or a change of instance identity (e.g. `instance_domain`) — discards the cache, so a data-shape change can never serve mis-shaped entries. Mirrors D8 ("breaking changes are versioned"). | proposed |
+| **FC7** | **Read-side only, graceful degradation.** The cache never feeds any POST/ingest path and never alters API responses (§3.3, Apex I). If browser storage is unavailable, quota-exceeded, or throws, the app silently falls back to today's network-only behavior. | proposed |
