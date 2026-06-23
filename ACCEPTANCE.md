@@ -174,6 +174,16 @@ borrowing a node from another protocol (`findNodeByLongName(longName, nodesById,
 protocol)` + `chat-entry-renderer.js`). Concrete UI form of SPEC Invariant IV
 (protocol parity; neither protocol privileged in the data model or UI).
 
+### A4d — Custom radio-config label is protocol-neutral (regression: c8668a7)
+```bash
+( . .venv/bin/activate && pytest -q tests/test_interfaces_unit.py::TestCustomPresetLabelParity )
+```
+**Expected:** pass. A Meshtastic custom LoRa config (`use_preset=False`) renders
+the **same** compact `SF/BW/CR` label as MeshCore's `_derive_modem_preset` for
+identical SF/BW/CR — no protocol-specific `"Custom "` prefix — and returns `None`
+(not a bare `"Custom"`) when the parameters are unreported, so one radio config
+never displays as two different strings depending on protocol (SPEC Invariant IV).
+
 ---
 
 ## Layer B — Engineering bar (restated from `CLAUDE.md`)

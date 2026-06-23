@@ -616,7 +616,7 @@ class TestModemPreset:
         assert ifaces._modem_preset(msg) is None
 
     def test_use_preset_false_full_params(self):
-        """use_preset=False with all params returns compact custom label."""
+        """use_preset=False with all params returns the bare custom label."""
         msg = SimpleNamespace(
             DESCRIPTOR=None,
             use_preset=False,
@@ -624,10 +624,10 @@ class TestModemPreset:
             bandwidth=62,
             coding_rate=6,
         )
-        assert ifaces._modem_preset(msg) == "Custom SF8/BW62/CR6"
+        assert ifaces._modem_preset(msg) == "SF8/BW62/CR6"
 
     def test_use_preset_false_partial_params(self):
-        """use_preset=False with only some params returns bare 'Custom'."""
+        """use_preset=False with only some params returns None (config unknown)."""
         msg = SimpleNamespace(
             DESCRIPTOR=None,
             use_preset=False,
@@ -635,12 +635,12 @@ class TestModemPreset:
             bandwidth=62,
             # coding_rate absent
         )
-        assert ifaces._modem_preset(msg) == "Custom"
+        assert ifaces._modem_preset(msg) is None
 
     def test_use_preset_false_no_params(self):
-        """use_preset=False with no radio params returns bare 'Custom'."""
+        """use_preset=False with no radio params returns None (config unknown)."""
         msg = SimpleNamespace(DESCRIPTOR=None, use_preset=False)
-        assert ifaces._modem_preset(msg) == "Custom"
+        assert ifaces._modem_preset(msg) is None
 
     def test_use_preset_true_falls_through_to_enum(self):
         """use_preset=True is ignored; existing enum logic is used."""
@@ -678,44 +678,78 @@ class TestCustomPresetLabel:
     """Tests for :func:`interfaces._custom_preset_label`."""
 
     def test_all_params_present(self):
-        """All three non-zero params produce the compact label."""
+        """All three non-zero params produce the bare compact label."""
         msg = SimpleNamespace(spread_factor=12, bandwidth=125, coding_rate=5)
-        assert ifaces._custom_preset_label(msg) == "Custom SF12/BW125/CR5"
+        assert ifaces._custom_preset_label(msg) == "SF12/BW125/CR5"
 
     def test_integer_conversion(self):
         """Float param values are cast to int in the label."""
         msg = SimpleNamespace(spread_factor=8.0, bandwidth=62.5, coding_rate=6.0)
-        assert ifaces._custom_preset_label(msg) == "Custom SF8/BW62/CR6"
+        assert ifaces._custom_preset_label(msg) == "SF8/BW62/CR6"
 
-    def test_missing_coding_rate_returns_custom(self):
-        """Absent coding_rate yields the bare 'Custom' fallback."""
+    def test_missing_coding_rate_returns_none(self):
+        """Absent coding_rate yields None (config unknown)."""
         msg = SimpleNamespace(spread_factor=8, bandwidth=62)
-        assert ifaces._custom_preset_label(msg) == "Custom"
+        assert ifaces._custom_preset_label(msg) is None
 
-    def test_missing_bandwidth_returns_custom(self):
-        """Absent bandwidth yields the bare 'Custom' fallback."""
+    def test_missing_bandwidth_returns_none(self):
+        """Absent bandwidth yields None (config unknown)."""
         msg = SimpleNamespace(spread_factor=8, coding_rate=6)
-        assert ifaces._custom_preset_label(msg) == "Custom"
+        assert ifaces._custom_preset_label(msg) is None
 
-    def test_missing_spread_factor_returns_custom(self):
-        """Absent spread_factor yields the bare 'Custom' fallback."""
+    def test_missing_spread_factor_returns_none(self):
+        """Absent spread_factor yields None (config unknown)."""
         msg = SimpleNamespace(bandwidth=62, coding_rate=6)
-        assert ifaces._custom_preset_label(msg) == "Custom"
+        assert ifaces._custom_preset_label(msg) is None
 
     def test_zero_bandwidth_treated_as_absent(self):
-        """A zero bandwidth value is treated as absent, yielding 'Custom'."""
+        """A zero bandwidth value is treated as absent, yielding None."""
         msg = SimpleNamespace(spread_factor=8, bandwidth=0, coding_rate=6)
-        assert ifaces._custom_preset_label(msg) == "Custom"
+        assert ifaces._custom_preset_label(msg) is None
 
     def test_zero_spread_factor_treated_as_absent(self):
-        """A zero spread_factor value is treated as absent, yielding 'Custom'."""
+        """A zero spread_factor value is treated as absent, yielding None."""
         msg = SimpleNamespace(spread_factor=0, bandwidth=62, coding_rate=6)
-        assert ifaces._custom_preset_label(msg) == "Custom"
+        assert ifaces._custom_preset_label(msg) is None
 
     def test_no_params_at_all(self):
-        """A message with none of the param attributes returns 'Custom'."""
+        """A message with none of the param attributes returns None."""
         msg = SimpleNamespace()
-        assert ifaces._custom_preset_label(msg) == "Custom"
+        assert ifaces._custom_preset_label(msg) is None
+
+
+# ---------------------------------------------------------------------------
+# Cross-protocol parity for custom radio-config labels
+# ---------------------------------------------------------------------------
+
+
+class TestCustomPresetLabelParity:
+    """Custom radio-config labels must be identical across protocols (Invariant IV).
+
+    Regression guard for the format divergence in c8668a7: Meshtastic emitted a
+    ``"Custom "``-prefixed label while MeshCore's :func:`_derive_modem_preset`
+    emits the bare ``SF/BW/CR`` form (and ``None`` when unconfigured). The same
+    radio parameters must render the same string regardless of protocol, so the
+    dashboard never shows two spellings of one config.
+    """
+
+    def test_matches_meshcore_bare_format(self):
+        """Full params render the bare SF/BW/CR form, byte-identical to MeshCore."""
+        from data.mesh_ingestor.protocols.meshcore.decode import _derive_modem_preset
+
+        msg = SimpleNamespace(spread_factor=8, bandwidth=62, coding_rate=6)
+        label = ifaces._custom_preset_label(msg)
+        assert label == "SF8/BW62/CR6"
+        assert label == _derive_modem_preset(8, 62, 6)
+
+    def test_missing_params_match_meshcore_none(self):
+        """Absent/zero params return ``None``, matching MeshCore's behaviour."""
+        from data.mesh_ingestor.protocols.meshcore.decode import _derive_modem_preset
+
+        assert ifaces._custom_preset_label(SimpleNamespace()) is None
+        assert ifaces._custom_preset_label(SimpleNamespace()) == _derive_modem_preset(
+            0, 0, 0
+        )
 
 
 # ---------------------------------------------------------------------------
