@@ -16,5 +16,6 @@
 
 require_relative "helpers/logging_helpers"
 require_relative "helpers/html_helpers"
+require_relative "helpers/asset_helpers"
 require_relative "helpers/node_helpers"
 require_relative "helpers/config_helpers"

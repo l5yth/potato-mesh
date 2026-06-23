@@ -321,3 +321,24 @@ cache by **FC4**; the apex is untouched.
 | **FC5** | **Bounded size.** The FC3 retention windows (evict oldest-first beyond each collection's window) together with the API's own row caps (`NODE_LIMIT`, snapshot limits) bound the store, so it cannot grow without bound. | interview |
 | **FC6** | **Versioned cache schema.** The cache carries a schema-version tag; a version bump — or a change of instance identity (e.g. `instance_domain`) — discards the cache, so a data-shape change can never serve mis-shaped entries. Mirrors D8 ("breaking changes are versioned"). | proposed |
 | **FC7** | **Read-side only, graceful degradation.** The cache never feeds any POST/ingest path and never alters API responses (§3.3, Apex I). If browser storage is unavailable, quota-exceeded, or throws, the app silently falls back to today's network-only behavior. | proposed |
+
+---
+
+## Feature: Asset cache-busting (versioned static assets)
+
+After a deploy, browsers must run fresh JS/CSS without a manual hard-refresh.
+Achieved by stamping `?v=<APP_VERSION>` on every template-written asset URL **and**
+injecting one `<script type="importmap">` that remaps every served
+`/assets/js/**/*.js` module to its versioned URL — so the *entire* ES-module graph
+is invalidated each release, not just the entry points. Presentation/delivery-layer
+only; integrates with `web/lib/potato_mesh/application/helpers/` (new `asset_url`
+helper + import-map builder) and the asset references in `views/layouts/app.erb`,
+`views/charts.erb`, `views/federation.erb`, `views/node_detail.erb`.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **AV1** | **Version is the cache key.** Busting is keyed to `PotatoMesh::Application::APP_VERSION` (the existing `git describe --tags --long --abbrev=7` value, or `Config.version_fallback` when git metadata is absent). When the version changes, every asset URL changes and browsers refetch. *Documented limitation:* a build with no git metadata yields a constant fallback version, so an untagged redeploy won't change the buster — the limitation inherent in reusing `APP_VERSION`, accepted here. | interview |
+| **AV2** | **`asset_url(path)` helper.** A helper under `web/lib/potato_mesh/application/helpers/` appends `?v=<APP_VERSION>` to an absolute asset path. It is applied to every template-written JS `<script src>`, CSS `<link href>`, and the inline ES-module `import … from '…'` specifiers in `charts.erb`, `federation.erb`, `node_detail.erb`. | interview |
+| **AV3** | **Full module-graph busting via import map.** Because `?v=` on an entry-point URL does **not** propagate to that module's relative `import './x.js'`, the layout `<head>` emits exactly one `<script type="importmap">` (before any module loads) mapping every served production `/assets/js/**/*.js` module (excluding `__tests__`) to its `?v=<APP_VERSION>` URL. This invalidates the whole transitive graph (e.g. `main.js` + its 33 imports), not just the entry points. **Safety property:** a module absent from the map degrades to today's unversioned-but-working load — a missing entry can never break a working import. Browsers without import-map support degrade to today's behavior (entry points still busted via AV2). | interview |
+| **AV4** | **Scope = JS + CSS only; native, no new egress.** Only executable/style assets are versioned (all JS + `base.css`). Images, favicons, and SVG icons keep today's `Last-Modified`/`ETag` revalidation (a stale logo is cosmetic, not behavioral). The mechanism uses the native browser import-map feature — **no new dependency, build step, external host, or analytics param** — so apex (I), privacy (II), federation (III), parity (IV), fixed-stack (D7), contract (D8), and no-phone-home (D11) all hold unchanged. The version query is not part of any `/api/*` contract (D8): Sinatra serves the same static file regardless of query string. | interview |
+| **AV5** | **Engineering bar (D9).** The helper and import-map builder ship with 100% unit tests + RDoc, Apache headers, `rufo`-clean; all existing suites stay green. View/app specs that assert exact asset markup are **updated** to the versioned form, not removed. | CLAUDE.md |

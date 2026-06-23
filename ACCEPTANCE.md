@@ -1075,3 +1075,94 @@ the same render path, so idle re-renders still materialise 0 entries and no
 per-node `/api/nodes/:id` request is issued); **A4c** (protocol parity — cache
 keyed by canonical id, never mixing protocols); and **B1** (all suites). No
 POST/GET contract change, so the Ruby and Python suites are unaffected.
+
+---
+
+## Feature: Asset cache-busting (versioned static assets)
+
+Maps to SPEC decisions **AV1–AV5**. The helper + import-map builder live under
+`web/lib/potato_mesh/application/helpers/`; asset references live in
+`views/layouts/app.erb`, `views/charts.erb`, `views/federation.erb`,
+`views/node_detail.erb`. *Unless noted, run the server in public mode and
+leave it running for the curl checks:*
+
+```bash
+( cd web && API_TOKEN=acctest PRIVATE=0 FEDERATION=0 \
+    bundle exec ruby app.rb -p 41447 -o 127.0.0.1 ) &  SRV=$!
+# ... run the AV-A* curl checks below, then: kill "$SRV"
+```
+
+*(This repo has no `config.ru`; it is launched via `app.rb` — see `app.sh` —
+not `rackup`.)*
+
+### AV-A1 — Template-written JS & CSS carry `?v=<version>` — AV1, AV2
+```bash
+curl -s http://127.0.0.1:41447/ \
+  | grep -oE "/assets/(js|styles)/[A-Za-z0-9/_.-]+\?v=[^\"']+" | sort -u
+```
+**Expected:** every template-written JS `<script src>` and the `base.css`
+`<link href>` carry a `?v=<APP_VERSION>` query — at minimum
+`/assets/js/theme.js?v=…`, `/assets/js/background.js?v=…`,
+`/assets/js/app/index.js?v=…`, and `/assets/styles/base.css?v=…`. None of those
+four is emitted without the query.
+
+### AV-A2 — Exactly one import map, covering the deep module graph — AV3
+```bash
+curl -s http://127.0.0.1:41447/ | grep -c '<script type="importmap">'
+curl -s http://127.0.0.1:41447/ \
+  | grep -oE '"/assets/js/app/main\.js": *"/assets/js/app/main\.js\?v=[^"]+"'
+```
+**Expected:** the first command prints `1` (a single import map, emitted in
+`<head>` before any module loads); the second matches. `main.js` is imported
+**only** through a relative specifier inside `index.js` and is never written in
+any template, so its presence in the map with a `?v=` URL proves the *transitive*
+module graph is busted — not just the entry points.
+
+### AV-A3 — Inline-import page versions its entry specifier — AV2
+```bash
+curl -s http://127.0.0.1:41447/charts \
+  | grep -oE "from '/assets/js/app/charts-page\.js\?v=[^']+'"
+```
+**Expected:** the inline `<script type="module">` import specifier carries
+`?v=<APP_VERSION>`. `federation.erb` and `node_detail.erb` use the identical
+pattern (reachable directly only with `FEDERATION=1` / a known node id; both are
+covered by the view/app specs in AV-A6).
+
+### AV-A4 — Scope boundary: images & favicons are NOT versioned — AV4
+```bash
+curl -s http://127.0.0.1:41447/ \
+  | grep -oE "(potatomesh-logo\.svg|favicon\.[a-z]+|/assets/img/[A-Za-z0-9._-]+)\?v=" \
+  && echo "UNEXPECTED: image carries ?v=" || echo "OK: no image versioned"
+```
+**Expected:** prints `OK: no image versioned`. Image / favicon / SVG-icon URLs
+carry **no** `?v=` query — they keep today's `Last-Modified`/`ETag` revalidation,
+pinning the JS+CSS-only scope of AV4.
+
+### AV-A5 — No asset-pipeline dependency; native import map — AV4, D7
+```bash
+git grep -niE 'importmap-rails|sprockets|propshaft|webpacker|shakapacker' -- \
+  web/Gemfile web/Gemfile.lock web/package.json
+```
+**Expected:** no output. The import map is emitted directly from Ruby using the
+native browser feature; no asset-pipeline gem or npm package is introduced (the
+locked stack, D7, is unchanged).
+
+### AV-A6 — Helper + builder unit-tested; web suites green — AV5
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** pass. Includes new specs covering `asset_url` (appends
+`?v=<APP_VERSION>`) and the import-map builder (enumerates served `.js`, excludes
+`__tests__`, stamps the version, emits valid JSON). RDoc + the full Apache header
+are present on every new/edited source file (Layer B3/B4 still hold).
+
+### AV-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. **At risk and explicitly required to
+remain green:** **B1** (all suites); **B4a** (no new *unheadered* source file — any
+new helper file must carry the full Apache block); **D1** (`/version` config block —
+the shared layout's behavior is unchanged). Any existing view/app spec that
+asserted an exact *unversioned* asset string (e.g. `src="/assets/js/app/index.js"`)
+is **updated** to the `?v=` form, **not** removed.

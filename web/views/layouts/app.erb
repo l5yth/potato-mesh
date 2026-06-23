@@ -71,9 +71,12 @@
         }) %>
   </script>
   <% end %>
-  <link rel="stylesheet" href="/assets/styles/base.css" />
-  <script src="/assets/js/theme.js" defer></script>
-  <script src="/assets/js/background.js" defer></script>
+  <%# Import map versions the entire served JS module graph (SPEC AV3); must
+      precede any module load so relative imports resolve to the busted URLs. %>
+  <script type="importmap"><%= asset_import_map_json %></script>
+  <link rel="stylesheet" href="<%= asset_url("/assets/styles/base.css") %>" />
+  <script src="<%= asset_url("/assets/js/theme.js") %>" defer></script>
+  <script src="<%= asset_url("/assets/js/background.js") %>" defer></script>
 
   <!-- Leaflet CSS/JS (CDN) -->
   <link
@@ -244,6 +247,6 @@
     const CHAT_ENABLED = <%= private_mode ? "false" : "true" %>;
     const current_view_mode = '<%= view_mode %>';
   </script>
-  <script type="module" src="/assets/js/app/index.js"></script>
+  <script type="module" src="<%= asset_url("/assets/js/app/index.js") %>"></script>
 </body>
 </html>
