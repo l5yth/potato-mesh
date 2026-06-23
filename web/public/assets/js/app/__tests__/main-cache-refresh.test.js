@@ -153,6 +153,24 @@ test('eviction on seed: rows past their window are dropped and deleted (FC-A3)',
   assert.ok(keys.includes('!fresh'), 'the fresh node is retained');
 });
 
+test('a stale node cache (>24h) triggers a full node refresh, not a delta (FC3)', async () => {
+  const fake = createFakeIndexedDb();
+  // Pre-seed a node that is still within the 7-day window (not evicted) but whose
+  // cached copy is 25h old (past the 24h node staleness window).
+  const seed = createIndexedDbBackend({ indexedDB: fake.factory, databaseName: 'potato-mesh-cache' });
+  await seed.write('meta', 'meta', { schemaVersion: CACHE_SCHEMA_VERSION, instanceId: CONFIG.instanceDomain });
+  await seed.write('nodes', '!n', { value: { node_id: '!n', last_heard: NOW }, cachedAt: NOW - DAY - 3600 });
+
+  await runApp(fake.factory, { '/api/nodes': [{ node_id: '!n', last_heard: NOW }] }, async ({ calls }) => {
+    const nodeCalls = calls.filter(c => c.url.startsWith('/api/nodes?'));
+    assert.ok(nodeCalls.length > 0, 'still refreshes nodes');
+    assert.ok(
+      nodeCalls.every(c => !c.url.includes('since=')),
+      `a stale node cache should full-refresh (no since): ${nodeCalls.map(c => c.url).join(', ')}`,
+    );
+  });
+});
+
 test('a disabled cache (no IndexedDB) leaves the app on the cold network path', async () => {
   const env = createDomEnvironment({ includeBody: true });
   env.registerElement('chat', env.createElement('div', 'chat'));

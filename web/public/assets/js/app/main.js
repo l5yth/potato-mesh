@@ -90,7 +90,7 @@ import { createChatEntryCache } from './main/chat-entry-cache.js';
 import { chatMessageEntryKey, chatLogEntryKey } from './main/chat-entry-keys.js';
 import { createDataCache, CACHE_SCHEMA_VERSION } from './main/data-cache.js';
 import { createIndexedDbBackend } from './main/data-cache-idb.js';
-import { isExpired as isCacheEntryExpired } from './main/cache-lifetime.js';
+import { isExpired as isCacheEntryExpired, isStale as isCacheEntryStale } from './main/cache-lifetime.js';
 import { cacheKeyFor } from './main/cache-keys.js';
 import { formatPositionHighlights, formatTelemetryHighlights } from './chat-log-highlights.js';
 import { filterChatModel, normaliseChatFilterQuery } from './chat-search.js';
@@ -410,21 +410,23 @@ export function initializeApp(config) {
   }
 
   /**
-   * Read non-expired rows for ``collection`` from the cache, deleting any past
-   * their eviction window so the store stays bounded across sessions (FC3/FC5).
+   * Read non-expired entries for ``collection`` from the cache, deleting any
+   * past their eviction window so the store stays bounded across sessions
+   * (FC3/FC5). Returns the full entries (``{ key, value, cachedAt }``) so callers
+   * can both seed the value and judge staleness.
    *
    * @param {string} collection Cache collection name.
    * @param {number} nowSeconds Current time, unix seconds.
-   * @returns {Promise<Array<Object>>} Live record values.
+   * @returns {Promise<Array<{ key: string, value: Object, cachedAt: number }>>} Live entries.
    */
-  async function readLiveCacheRows(collection, nowSeconds) {
+  async function readLiveCacheEntries(collection, nowSeconds) {
     const rows = await dataCache.getAll(collection);
     const live = [];
     for (const entry of rows) {
       if (isCacheEntryExpired(collection, entry, nowSeconds)) {
         void dataCache.delete(collection, entry.key);
       } else {
-        live.push(entry.value);
+        live.push(entry);
       }
     }
     return live;
@@ -444,41 +446,48 @@ export function initializeApp(config) {
     await dataCache.ready();
     if (dataCache.isDisabled()) return false;
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const [nodes, positions, telemetry, neighbors, traces] = await Promise.all([
-      readLiveCacheRows('nodes', nowSeconds),
-      readLiveCacheRows('positions', nowSeconds),
-      readLiveCacheRows('telemetry', nowSeconds),
-      readLiveCacheRows('neighbors', nowSeconds),
-      readLiveCacheRows('traces', nowSeconds),
+    const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries] = await Promise.all([
+      readLiveCacheEntries('nodes', nowSeconds),
+      readLiveCacheEntries('positions', nowSeconds),
+      readLiveCacheEntries('telemetry', nowSeconds),
+      readLiveCacheEntries('neighbors', nowSeconds),
+      readLiveCacheEntries('traces', nowSeconds),
     ]);
-    const cachedMessages = CHAT_ENABLED ? await readLiveCacheRows('messages', nowSeconds) : [];
-    const cachedEncrypted = CHAT_ENABLED ? await readLiveCacheRows('encrypted', nowSeconds) : [];
+    const messageEntries = CHAT_ENABLED ? await readLiveCacheEntries('messages', nowSeconds) : [];
+    const encryptedEntries = CHAT_ENABLED ? await readLiveCacheEntries('encrypted', nowSeconds) : [];
     if (
-      nodes.length === 0 &&
-      cachedMessages.length === 0 &&
-      cachedEncrypted.length === 0 &&
-      positions.length === 0 &&
-      telemetry.length === 0 &&
-      neighbors.length === 0 &&
-      traces.length === 0
+      nodeEntries.length === 0 &&
+      messageEntries.length === 0 &&
+      encryptedEntries.length === 0 &&
+      positionEntries.length === 0 &&
+      telemetryEntries.length === 0 &&
+      neighborEntries.length === 0 &&
+      traceEntries.length === 0
     ) {
       return false;
     }
 
-    allNodes = nodes;
-    allPositionEntries = positions;
-    allTelemetryEntries = telemetry;
-    allNeighbors = neighbors;
-    allTraces = traces;
+    allNodes = nodeEntries.map(entry => entry.value);
+    allPositionEntries = positionEntries.map(entry => entry.value);
+    allTelemetryEntries = telemetryEntries.map(entry => entry.value);
+    allNeighbors = neighborEntries.map(entry => entry.value);
+    allTraces = traceEntries.map(entry => entry.value);
     rebuildNodeIndex(allNodes);
     const [seededChat, seededEncrypted] = await Promise.all([
-      messageNodeHydrator.hydrate(cachedMessages, nodesById),
-      messageNodeHydrator.hydrate(cachedEncrypted, nodesById),
+      messageNodeHydrator.hydrate(messageEntries.map(entry => entry.value), nodesById),
+      messageNodeHydrator.hydrate(encryptedEntries.map(entry => entry.value), nodesById),
     ]);
     allMessages = Array.isArray(seededChat) ? seededChat : [];
     allEncryptedMessages = Array.isArray(seededEncrypted) ? seededEncrypted : [];
 
-    lastNodeTimestamp = maxRecordTimestamp(allNodes, ['last_heard']);
+    // FC3 staleness: when every cached node copy is older than the 24 h node
+    // staleness window, prefer a full node refresh (high-water 0 → since=0) over
+    // a delta, so all node metadata is refreshed rather than only nodes heard
+    // since the newest cached one. Inactive nodes are still seeded (retained),
+    // they are just re-fetched fresh on this first refresh.
+    const nodesStale =
+      nodeEntries.length > 0 && nodeEntries.every(entry => isCacheEntryStale('nodes', entry, nowSeconds));
+    lastNodeTimestamp = nodesStale ? 0 : maxRecordTimestamp(allNodes, ['last_heard']);
     lastMessageTimestamp = Math.max(
       maxRecordTimestamp(allMessages, ['rx_time']),
       maxRecordTimestamp(allEncryptedMessages, ['rx_time']),

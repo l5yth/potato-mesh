@@ -145,7 +145,8 @@ export function createMemoryBackend() {
  * }} [options] Configuration. `backend` is the durable store (omit/`null` for a
  *   disabled cache); `instanceId` scopes the cache to one instance (e.g. the
  *   instance domain); `isPrivate` disables+wipes the cache; `now` supplies the
- *   write clock (injectable for tests).
+ *   write clock in **unix seconds** (matching the API's record timestamps so the
+ *   lifetime helper can compare them; injectable for tests).
  * @returns {{
  *   ready: () => Promise<void>,
  *   isDisabled: () => boolean,
@@ -163,7 +164,7 @@ export function createDataCache({
   schemaVersion = CACHE_SCHEMA_VERSION,
   instanceId = '',
   isPrivate = false,
-  now = () => Date.now(),
+  now = () => Math.floor(Date.now() / 1000),
 } = {}) {
   let disabled = false;
   /** @type {Promise<void>|null} */
