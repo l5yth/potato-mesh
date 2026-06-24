@@ -1176,3 +1176,102 @@ new helper file must carry the full Apache block); **D1** (`/version` config blo
 the shared layout's behavior is unchanged). Any existing view/app spec that
 asserted an exact *unversioned* asset string (e.g. `src="/assets/js/app/index.js"`)
 is **updated** to the `?v=` form, **not** removed.
+
+---
+
+## Feature: Uniform backward pagination (`?before=`) for bulk collection APIs
+
+Maps to SPEC decisions **BP1–BP9**. `?before=<unix_seconds>` is added as an
+inclusive upper-bound keyset cursor to the six bulk collection GETs — `/api/nodes`,
+`/api/positions`, `/api/telemetry`, `/api/neighbors`, `/api/traces`,
+`/api/ingestors` — mirroring the existing `/api/messages` cursor (**C7**). The
+logic lives in `web/lib/potato_mesh/application/routes/api.rb` and the `query_*`
+helpers under `web/lib/potato_mesh/application/queries/`; the cursor is documented
+in `data/mesh_ingestor/CONTRACTS.md`. Unless a check says otherwise, start the
+server in public mode
+(`API_TOKEN=acctest PRIVATE=0 FEDERATION=0 bundle exec ruby app.rb`).
+
+### BP-A1 — Every bulk collection pages backward through the full window — BP1, BP2, BP3
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "before pagination" )
+```
+**Expected:** pass. For **each** of `/api/nodes`, `/api/positions`,
+`/api/telemetry`, `/api/neighbors`, `/api/traces`, and `/api/ingestors`, seeding
+more than `MAX_QUERY_LIMIT` (1000) rows inside the route's window and walking
+newest → oldest — each page `limit=MAX_QUERY_LIMIT`, then `before=<oldest
+primary-sort value seen>`, de-duplicating by id — recovers **every** in-window row
+(the walk does not stall at the newest 1000). No single response exceeds
+`MAX_QUERY_LIMIT`. The cursor bounds the route's primary sort column inclusively:
+`rx_time` for positions/telemetry/neighbors/traces, `last_heard` for nodes,
+`last_seen_time` for ingestors.
+
+### BP-A2 — `before` only narrows; the floor still bounds the window — BP2
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "before cannot widen the window" )
+```
+**Expected:** pass. A `before` newer than `now` returns the same rows as no
+`before` (a no-op upper bound). A `before` older than the route's floor, combined
+with the floor-clamped lower bound, returns **nothing beyond the floor** — a row
+older than the 7-day / 28-day floor stays excluded, so `before` cannot reach past
+it (preserves **C4**). A non-positive or non-integer `before` (`0`, `-5`, `abc`)
+is ignored as absent (parity with the messages `coerce_positive_or_nil`), so the
+unfiltered newest page is returned.
+
+### BP-A3 — Inclusive boundary, protocol-neutral cursor — BP3, BP5
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "before pagination boundary" )
+```
+**Expected:** pass. Two rows sharing the exact boundary second are **both**
+returned when that second is passed as `before` (the inclusive `<=` ceiling never
+skips a boundary row — client dedup collapses the one-row overlap between pages).
+`?before=` composes with `?protocol=`: a backward walk filtered by
+`protocol=meshcore` returns only MeshCore rows and still recovers all of them,
+with neither protocol privileged.
+
+### BP-A4 — History pages bypass the response cache — BP7
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "before bypasses the response cache" )
+```
+**Expected:** pass. A request carrying `before` is served from a fresh query, not
+the short-lived `ApiCache` newest-page entry, and issuing it does **not** overwrite
+or evict that hot entry — a subsequent no-`before` request still returns the cached
+newest page. Matches the established `/api/messages` behavior (a `since > 0` or
+`before` request skips the cache; the cache key for the default path is unchanged).
+
+### BP-A5 — Privacy, opt-out, and apex are untouched — BP6
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "before pagination honors privacy" )
+git grep -niE 'mqtt|mosquitto|paho|amqp|kafka|broker' -- web/Gemfile web/Gemfile.lock | grep -viE 'via_?mqtt'
+```
+**Expected:** the rspec passes and the grep prints nothing. A backward walk over
+`/api/nodes` still excludes opted-out nodes (`NODE_OPT_OUT_MARKER`) and, in private
+mode, `CLIENT_HIDDEN` nodes — `before` only narrows, so it can never surface a row
+the route would otherwise hide (**A2c**, Invariant II). No manifest gains a broker
+dependency (Invariant I / **A1a**): the change is a read-side query param only.
+
+### BP-A6 — Cursor documented; deferred scope recorded — BP1, BP8, BP9
+```bash
+git grep -n 'before' -- data/mesh_ingestor/CONTRACTS.md
+```
+**Expected:** the `CONTRACTS.md` "GET endpoint time windows" section documents the
+`?before=` inclusive upper-bound cursor and names the six collections that accept
+it. The deferred items in **BP9** are out of scope and must **not** appear in this
+change: `/api/instances` still lacks `limit`/`since`/`protocol`, and
+`/api/telemetry/aggregated` still uses camelCase `windowSeconds`/`bucketSeconds`
+(no snake_case alias) — these stay tracked follow-ups, not regressions.
+
+### BP-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+remain green: **C7** (messages backward pagination — its keyset mechanism is now
+shared by six more routes, but `/api/messages` behavior is unchanged); **C4**
+(window floors — `before` only narrows, never widens); **A2 / A2a / A2c** (privacy
+& opt-out — a narrowing upper bound exposes no hidden row, and `/api/messages`
+still 404s in private mode); **A4a** (`KNOWN_PROTOCOLS` unchanged); **PL-A1 /
+PL-A2** and **FC-A2** (the frontend message pager and cache seed-then-delta are
+untouched — frontend `before` adoption is deferred per **BP9**); and **B1** (all
+suites). No POST/event contract changes, so **C2** and the Python suite are
+unaffected (the only `data/` touch is the `CONTRACTS.md` GET-window documentation).

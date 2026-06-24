@@ -197,6 +197,43 @@ Federation peers should not assume an unbounded historical window: a peer that r
 
 The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_weeks_seconds`).
 
+### GET endpoint backward pagination (`?before=`)
+
+The six bulk collection endpoints — `GET /api/nodes`, `/api/positions`,
+`/api/telemetry`, `/api/neighbors`, `/api/traces`, and `/api/ingestors` — plus the
+pre-existing `GET /api/messages` cursor accept an optional `?before=<unix_seconds>`
+**inclusive upper-bound cursor** for backward pagination. It is the companion to
+`?since=`: where `since` raises the lower bound of the window, `before` lowers the
+upper bound. `before` bounds each route's **primary sort column** — the column it
+already orders by, newest first:
+
+| Route | `before` bounds |
+| --- | --- |
+| `GET /api/nodes` | `last_heard` |
+| `GET /api/messages` | `rx_time` |
+| `GET /api/positions` | `rx_time` |
+| `GET /api/telemetry` | `rx_time` |
+| `GET /api/neighbors` | `rx_time` |
+| `GET /api/traces` | `rx_time` |
+| `GET /api/ingestors` | `last_seen_time` |
+
+To page backward through more than one `limit`-sized response (the per-request cap
+is `MAX_QUERY_LIMIT` = 1000), walk newest → oldest: fetch a page, then re-request
+with `before` set to the **oldest sort-column value** in the page just received,
+de-duplicating rows by their id. The inclusive `<=` boundary intentionally repeats
+any row that shares the boundary second, so none is skipped across the page break;
+the client's id-dedup collapses the one-row overlap. Repeat until a short page
+(fewer than `limit` rows) signals the window is exhausted. This is how a client
+retrieves **every** in-window row instead of stalling at the newest 1000.
+
+`before` **only ever narrows** the result set, so — exactly like `since` — it
+**cannot widen** the window past the route's floor in the table above: a `before`
+older than the floor merely returns fewer rows (the floor still clamps the lower
+bound), and a `before` newer than "now" is a no-op. A non-positive or non-integer
+`before` is ignored (treated as absent). The cursor composes with `?protocol=` and
+is protocol-neutral. The per-id routes (`GET /api/.../:id`) and `GET /api/instances`
+do **not** accept `before`.
+
 ### GET /api/stats response shape
 
 > **Breaking change in 0.7.0.** Before 0.7.0 the payload was flat —

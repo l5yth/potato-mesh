@@ -135,8 +135,10 @@ module PotatoMesh
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to narrow results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
+      # @param before [Integer, nil] inclusive upper-bound +last_heard+ cursor for
+      #   backward pagination (SPEC BP1); nodes newer than this are excluded.
       # @return [Array<Hash>] compacted node rows suitable for API responses.
-      def query_nodes(limit, node_ref: nil, since: 0, protocol: nil)
+      def query_nodes(limit, node_ref: nil, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -158,6 +160,13 @@ module PotatoMesh
           where_clauses << "last_heard >= ?"
           params << since_threshold
         end
+
+        # Inclusive upper-bound cursor for backward pagination (SPEC BP1-BP3).
+        # Bounds the +last_heard+ sort column so callers can page newest ->
+        # oldest past the +MAX_QUERY_LIMIT+ cap; only ever narrows (BP2).  The
+        # per-id route never supplies +before+, so single-node lookups are
+        # unaffected.
+        append_before_filter(where_clauses, params, before, column: "last_heard")
 
         if private_mode?
           where_clauses << "(role IS NULL OR role <> 'CLIENT_HIDDEN')"
@@ -224,8 +233,10 @@ module PotatoMesh
       #
       # @param limit [Integer] maximum number of ingestors to return.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
+      # @param before [Integer, nil] inclusive upper-bound +last_seen_time+ cursor
+      #   for backward pagination (SPEC BP1); ingestors newer than this are excluded.
       # @return [Array<Hash>] compacted ingestor rows suitable for API responses.
-      def query_ingestors(limit, since: 0, protocol: nil)
+      def query_ingestors(limit, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -237,6 +248,9 @@ module PotatoMesh
         since_threshold = normalize_since_threshold(since, floor: cutoff)
         where_clauses = ["last_seen_time >= ?"]
         params = [since_threshold]
+        # Inclusive upper-bound cursor for backward pagination (SPEC BP1);
+        # bounds the +last_seen_time+ sort column.
+        append_before_filter(where_clauses, params, before, column: "last_seen_time")
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_protocol_filter(where_clauses, params, protocol)
         sql = <<~SQL
