@@ -225,9 +225,19 @@ RSpec.describe PotatoMesh::App::PubSub do
 
     it "publishes a thin per-collection event (PS3)" do
       subscriber = PotatoMesh::App::PubSub.subscribe
+      # Use positions: it publishes exactly one collection. (The messages route
+      # additionally publishes nodes — covered by the message-ingest example.)
+      post "/api/positions", "[]", auth
+      expect(last_response.status).to eq(201)
+      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "positions", hint: nil }])
+    end
+
+    it "publishes nodes on a message ingest (#822 touches the author node)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
       post "/api/messages", "[]", auth
       expect(last_response.status).to eq(201)
-      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "messages", hint: nil }])
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("messages", private_mode: false)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("nodes", private_mode: false)
     end
 
     it "publishes on every ingest route" do
@@ -239,19 +249,21 @@ RSpec.describe PotatoMesh::App::PubSub do
       end
 
       ingest_routes.each_key do |collection|
+        # `nodes` is published by both the nodes route and the messages route
+        # (#822), so assert at-least-once rather than exactly-once.
         expect(PotatoMesh::App::PubSub).to have_received(:publish)
-                                             .with(collection, private_mode: false)
+                                             .with(collection, private_mode: false).at_least(:once)
       end
     end
 
     it "coalesces bursts of one collection into a single pending event" do
       subscriber = PotatoMesh::App::PubSub.subscribe
       5.times do
-        post "/api/messages", "[]", auth
+        post "/api/positions", "[]", auth
         expect(last_response.status).to eq(201)
       end
       expect(subscriber.pending_count).to eq(1)
-      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "messages", hint: nil }])
+      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "positions", hint: nil }])
     end
   end
 end

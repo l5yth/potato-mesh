@@ -1371,6 +1371,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
     end
 
+    it "does not render the Refresh button or last-updated field" do
+      get "/"
+
+      expect(last_response).to be_ok
+      # Live SSE updates replace manual refresh + a timestamp (VF1).
+      expect(last_response.body).not_to include('id="refreshBtn"')
+      expect(last_response.body).not_to include('id="status"')
+      expect(last_response.body).not_to include('class="refresh-timestamp"')
+      # The play/pause toggle is kept.
+      expect(last_response.body).to include('id="autorefreshToggle"')
+    end
+
     it "includes the application version in the footer" do
       get "/"
       expected = APP_VERSION.to_s.start_with?("v") ? APP_VERSION : "v#{APP_VERSION}"
@@ -1452,8 +1464,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="map"')
       expect(last_response.body).to include('id="filterInput"')
       expect(last_response.body).not_to include('id="autoRefresh"')
-      expect(last_response.body).to include('id="refreshBtn"')
-      expect(last_response.body).to include('id="status"')
+      expect(last_response.body).not_to include('id="refreshBtn"')
+      expect(last_response.body).not_to include('id="status"')
+      expect(last_response.body).to include('id="autorefreshToggle"')
       expect(last_response.body).not_to include('id="fitBounds"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
     end
@@ -1509,8 +1522,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('class="chat-panel chat-panel--full"')
       expect(last_response.body).to include('id="filterInput"')
       expect(last_response.body).not_to include('id="autoRefresh"')
-      expect(last_response.body).to include('id="refreshBtn"')
-      expect(last_response.body).to include('id="status"')
+      expect(last_response.body).not_to include('id="refreshBtn"')
+      expect(last_response.body).not_to include('id="status"')
+      expect(last_response.body).to include('id="autorefreshToggle"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
     end
 
@@ -1533,8 +1547,9 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('id="nodes"')
       expect(last_response.body).to include('id="filterInput"')
       expect(last_response.body).not_to include('id="autoRefresh"')
-      expect(last_response.body).to include('id="refreshBtn"')
-      expect(last_response.body).to include('id="status"')
+      expect(last_response.body).not_to include('id="refreshBtn"')
+      expect(last_response.body).not_to include('id="status"')
+      expect(last_response.body).to include('id="autorefreshToggle"')
       expect(last_response.body).not_to include('<footer class="app-footer">')
     end
   end

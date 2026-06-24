@@ -78,8 +78,13 @@ module PotatoMesh
             messages.each do |msg|
               insert_message(db, msg, protocol_cache: protocol_cache)
             end
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:stats:")
+            # A message ingest also touches the author node's last_heard (#822),
+            # so invalidate the nodes cache and publish a nodes change in addition
+            # to messages — the dashboard then refreshes (and flashes) that node.
+            # Mirrors how the positions route invalidates api:nodes:.
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:nodes:", "api:stats:")
             PotatoMesh::App::PubSub.publish("messages", private_mode: private_mode?)
+            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure

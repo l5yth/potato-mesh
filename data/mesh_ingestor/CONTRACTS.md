@@ -291,6 +291,11 @@ data: {"collection":"messages","hint":1700000000}
   `neighbors`, `traces` — exactly the dashboard ingest collections. The client
   reacts by re-running its existing delta fetch (`GET /api/<collection>?since=…`)
   and merging by id; no row data is delivered over the stream.
+- **A `POST /api/messages` ingest publishes *two* events — `messages` and
+  `nodes`** — because a message also touches the author node's `last_heard`
+  (#822). One ingest route may therefore emit more than one collection event; a
+  client must handle each event independently and must not assume a 1:1
+  route→event mapping.
 - **`hint`** (optional integer) is the newest `rx_time`/`last_heard` seen for the
   collection — a skip hint; the client may ignore it and use its own high-water
   mark. It is currently not emitted by the server (reserved).
