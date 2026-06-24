@@ -1077,6 +1077,27 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(msg_from).to eq(synth_id)
       db.close
     end
+
+    # Regression: a chat-derived synthetic carries the most recent time the node
+    # was heard.  Absorbing it into the real contact must not discard that — the
+    # real node's last_heard advances to the synthetic's newer value.
+    it "carries a merged synthetic's newer last_heard onto the real node" do
+      db = open_db
+      real_id = "!reallhf1"
+      synth_id = "!synthlf1"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_id, "Rupert", "meshcore", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Rupert", "meshcore", 1, now, now],
+      )
+      dp.merge_synthetic_nodes(db, real_id, "Rupert")
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [real_id])).to eq(now)
+    ensure
+      db&.close
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -1171,6 +1192,45 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # tell which Paul actually sent the chat.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
       expect(db.execute("SELECT from_id FROM messages WHERE id = 82").first[0]).to eq(synth_id)
+    ensure
+      db&.close
+    end
+
+    # Regression: the reverse merge must carry the synthetic's last_heard onto
+    # the real node, so a node heard only via channel chat keeps a fresh "last
+    # seen" after its contact advertisement reconciles the placeholder.
+    it "carries the synthetic's newer last_heard onto the real node" do
+      db = open_db
+      real_id = "!reallhc1"
+      synth_id = "!synthlc1"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_id, "Olivia", "meshcore", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Olivia", "meshcore", 1, now, now],
+      )
+      dp.merge_into_real_node(db, synth_id, "Olivia")
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [real_id])).to eq(now)
+    ensure
+      db&.close
+    end
+
+    it "never moves the real node's last_heard backward when the synthetic is older" do
+      db = open_db
+      real_id = "!reallhc2"
+      synth_id = "!synthlc2"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_id, "Quinn", "meshcore", 0, now, now],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Quinn", "meshcore", 1, now - 300, now - 300],
+      )
+      dp.merge_into_real_node(db, synth_id, "Quinn")
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [real_id])).to eq(now)
     ensure
       db&.close
     end
@@ -2209,6 +2269,22 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(node_for(db, sender_synth_id)).to be_nil
       from_id = db.get_first_value("SELECT from_id FROM messages WHERE id = 4242")
       expect(from_id).to eq("!02294310")
+    ensure
+      db&.close
+    end
+
+    it "advances the reconciled real node's last_heard when a chat message arrives" do
+      db = open_db
+      # The real contact is already on record, last heard before this message.
+      dp.upsert_node(db, "!02294310", {
+        "lastHeard" => now - 10,
+        "user" => { "longName" => "DWeb 0229", "shortName" => "D0", "role" => "COMPANION" },
+      }, protocol: "meshcore")
+      dp.insert_message(db, meshcore_channel_message) # rx_time => now
+      # The chat message reconciles the synthetic placeholder into the real node;
+      # the real node's last_heard must advance to the message rx_time, not stay
+      # pinned at its advertisement time.
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = '!02294310'")).to eq(now)
     ensure
       db&.close
     end
