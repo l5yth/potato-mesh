@@ -20,6 +20,9 @@
  * @type {{
  *   refreshMs: number,
  *   refreshIntervalSeconds: number,
+ *   liveUpdatesEnabled: boolean,
+ *   liveUpdatesPath: string,
+ *   safetyPollMs: number,
  *   chatEnabled: boolean,
  *   channel: string,
  *   frequency: string,
@@ -34,6 +37,9 @@
 export const DEFAULT_CONFIG = {
   refreshMs: 60_000,
   refreshIntervalSeconds: 60,
+  liveUpdatesEnabled: true,
+  liveUpdatesPath: '/api/events',
+  safetyPollMs: 300_000,
   chatEnabled: true,
   channel: '#LongFast',
   frequency: '915MHz',
@@ -72,6 +78,12 @@ export function mergeConfig(raw) {
     : DEFAULT_CONFIG.refreshIntervalSeconds;
   const refreshMs = Number(raw?.refreshMs ?? config.refreshIntervalSeconds * 1000);
   config.refreshMs = Number.isFinite(refreshMs) ? refreshMs : DEFAULT_CONFIG.refreshMs;
+  config.liveUpdatesEnabled = Boolean(raw?.liveUpdatesEnabled ?? DEFAULT_CONFIG.liveUpdatesEnabled);
+  config.liveUpdatesPath = raw?.liveUpdatesPath || DEFAULT_CONFIG.liveUpdatesPath;
+  const safetyPollMs = Number(raw?.safetyPollMs ?? DEFAULT_CONFIG.safetyPollMs);
+  config.safetyPollMs = Number.isFinite(safetyPollMs) && safetyPollMs > 0
+    ? safetyPollMs
+    : DEFAULT_CONFIG.safetyPollMs;
   config.chatEnabled = Boolean(raw?.chatEnabled ?? DEFAULT_CONFIG.chatEnabled);
   config.channel = raw?.channel || DEFAULT_CONFIG.channel;
   config.frequency = raw?.frequency || DEFAULT_CONFIG.frequency;

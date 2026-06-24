@@ -25,6 +25,17 @@ module PotatoMesh
     DEFAULT_DB_BUSY_RETRY_DELAY = 0.05
     DEFAULT_MAX_JSON_BODY_BYTES = 1_048_576
     DEFAULT_REFRESH_INTERVAL_SECONDS = 60
+    # Slow safety-poll cadence used by the dashboard when live SSE updates are
+    # active (PS5): the only timer-driven fetch path while pushes flow, a
+    # fallback that converges the UI if events are missed.
+    DEFAULT_LIVE_SAFETY_POLL_SECONDS = 300
+    # Interval at which the SSE route emits a heartbeat comment so dead
+    # connections are detected and intermediaries do not buffer the stream.
+    DEFAULT_SSE_HEARTBEAT_SECONDS = 15
+    # Maximum lifetime of a single SSE connection before the server closes it,
+    # prompting the client to reconnect (and resync). Bounds per-connection
+    # thread occupancy and gives graceful shutdown a hard ceiling.
+    DEFAULT_SSE_MAX_LIFETIME_SECONDS = 600
     DEFAULT_TILE_FILTER_LIGHT = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
     DEFAULT_TILE_FILTER_DARK = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
     DEFAULT_MAP_CENTER_LAT = 38.761944
@@ -298,6 +309,37 @@ module PotatoMesh
     # @return [Integer] polling cadence in seconds.
     def refresh_interval_seconds
       default_refresh_interval_seconds
+    end
+
+    # Determine whether live SSE updates are offered to clients.
+    #
+    # Disabled by setting +EVENTS=0+; clients then fall back to the polling
+    # cadence ({#refresh_interval_seconds}) exactly as before (PS5/PS8).
+    #
+    # @return [Boolean] true when the +GET /api/events+ stream is served.
+    def live_updates_enabled?
+      ENV.fetch("EVENTS", "1").to_s.strip != "0"
+    end
+
+    # Slow safety-poll cadence (seconds) used while live updates are active.
+    #
+    # @return [Integer] positive interval, overridable via +LIVE_SAFETY_POLL_SECONDS+.
+    def live_safety_poll_seconds
+      fetch_positive_integer("LIVE_SAFETY_POLL_SECONDS", DEFAULT_LIVE_SAFETY_POLL_SECONDS)
+    end
+
+    # Heartbeat cadence (seconds) for the SSE stream.
+    #
+    # @return [Integer] positive interval, overridable via +SSE_HEARTBEAT_SECONDS+.
+    def sse_heartbeat_seconds
+      fetch_positive_integer("SSE_HEARTBEAT_SECONDS", DEFAULT_SSE_HEARTBEAT_SECONDS)
+    end
+
+    # Maximum lifetime (seconds) of a single SSE connection.
+    #
+    # @return [Integer] positive ceiling, overridable via +SSE_MAX_LIFETIME_SECONDS+.
+    def sse_max_lifetime_seconds
+      fetch_positive_integer("SSE_MAX_LIFETIME_SECONDS", DEFAULT_SSE_MAX_LIFETIME_SECONDS)
     end
 
     # Retrieve the CSS filter used for light themed maps.

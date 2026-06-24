@@ -105,6 +105,10 @@ The web app can be configured with environment variables (defaults shown):
 | `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
+| `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |
+| `LIVE_SAFETY_POLL_SECONDS` | `300` | Slow fallback poll cadence (seconds) the dashboard uses while live SSE updates are active. |
+| `SSE_HEARTBEAT_SECONDS` | `15` | Heartbeat interval (seconds) for the live-update SSE stream so dead connections are detected and proxies do not buffer it. |
+| `SSE_MAX_LIFETIME_SECONDS` | `600` | Maximum lifetime (seconds) of a single SSE connection before the server closes it, prompting the client to reconnect and resync. |
 | `OG_IMAGE_URL` | _unset_ | Optional absolute URL for the social preview image. Must use an `http://` or `https://` scheme; values with other schemes are ignored. Most social platforms (Facebook, LinkedIn, Slack, iMessage) require **HTTPS** to render the card. When set, replaces the runtime-generated `/og-image.png` so deployments without Chromium (or with size-conscious images) can point at a CDN. |
 | `OG_IMAGE_TTL_SECONDS` | `3600` | Cache lifetime for the runtime-generated dashboard screenshot served at `/og-image.png`. |
 | `FERRUM_BROWSER_PATH` | `/usr/bin/chromium` (Docker) | Path to the headless Chromium binary used by the Open Graph preview generator. |

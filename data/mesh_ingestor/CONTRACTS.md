@@ -270,3 +270,40 @@ do **not** accept `before`.
   `nodes`/`telemetry` counts remain.
 - **`sampled`** is unchanged: always `false` (the counts are exact, not sampled).
 
+### GET /api/events live-update stream (SSE)
+
+A read-only **Server-Sent Events** stream (`text/event-stream`) that pushes thin
+"this collection changed" notifications so the dashboard refreshes on change
+instead of polling on a fixed interval. It is **outbound only** — it accepts no
+body, writes nothing, and is **not** an ingest path; it carries no row data. The
+fan-out is **in-process** (no MQTT/broker/cloud bus), preserving the apex
+invariant; this endpoint adds no ingestor obligation (the Python ingestor never
+consumes it).
+
+Each change is one SSE frame:
+
+```
+event: change
+data: {"collection":"messages","hint":1700000000}
+```
+
+- **`collection`** is one of `nodes`, `messages`, `positions`, `telemetry`,
+  `neighbors`, `traces` — exactly the dashboard ingest collections. The client
+  reacts by re-running its existing delta fetch (`GET /api/<collection>?since=…`)
+  and merging by id; no row data is delivered over the stream.
+- **`hint`** (optional integer) is the newest `rx_time`/`last_heard` seen for the
+  collection — a skip hint; the client may ignore it and use its own high-water
+  mark. It is currently not emitted by the server (reserved).
+- The server emits an initial `: connected` comment and periodic `: keepalive`
+  heartbeat comments; the connection is closed after a bounded lifetime so the
+  client's `EventSource` reconnects (and resyncs).
+- **Privacy.** When `PRIVATE=1` no `messages` events are emitted (mirroring the
+  disabled message API); the other collections still emit. Because events carry
+  no rows, opt-out / hidden rows never traverse the stream — the client always
+  re-fetches through the already-filtered `GET /api/*` routes.
+- **Config (web app).** `EVENTS=0` disables the stream (clients fall back to
+  polling at `refresh_interval_seconds`); `SSE_HEARTBEAT_SECONDS` (default 15),
+  `SSE_MAX_LIFETIME_SECONDS` (default 600), and `LIVE_SAFETY_POLL_SECONDS`
+  (default 300, the client's slow fallback poll) tune the cadence. The endpoint
+  is additive — no existing `/api/*` shape changes.
+

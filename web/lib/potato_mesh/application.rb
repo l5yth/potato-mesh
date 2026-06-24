@@ -59,10 +59,12 @@ require_relative "application/meshtastic/payload_decoder"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/api_cache"
+require_relative "application/pubsub"
 require_relative "application/pages"
 require_relative "application/instances"
 require_relative "application/retention"
 require_relative "application/routes/api"
+require_relative "application/routes/events"
 require_relative "application/routes/ingest"
 require_relative "application/routes/root"
 
@@ -95,6 +97,7 @@ module PotatoMesh
     include App::Retention
 
     register App::Routes::Api
+    register App::Routes::Events
     register App::Routes::Ingest
     register App::Routes::Root
 

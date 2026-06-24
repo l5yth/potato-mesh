@@ -1275,3 +1275,163 @@ PL-A2** and **FC-A2** (the frontend message pager and cache seed-then-delta are
 untouched — frontend `before` adoption is deferred per **BP9**); and **B1** (all
 suites). No POST/event contract changes, so **C2** and the Python suite are
 unaffected (the only `data/` touch is the `CONTRACTS.md` GET-window documentation).
+---
+
+## Feature: Live updates (SSE change pub/sub)
+
+Maps to SPEC decisions **PS1–PS8**. An in-process, in-memory pub/sub registry
+(`web/lib/potato_mesh/application/pubsub.rb`) emits a thin per-collection change
+event when an ingest `POST` writes; the new **`GET /api/events`** route streams
+those events as Server-Sent Events; the frontend SSE client (a new module under
+`web/public/assets/js/app/main/`, e.g. `event-stream.js`, with co-located
+`__tests__`) reacts by running its existing delta fetch and merging by id. The
+event shape is documented in `data/mesh_ingestor/CONTRACTS.md`. *Unless a check
+says otherwise, run the server in public mode and leave it running for the curl
+checks:*
+
+```bash
+( cd web && API_TOKEN=acctest PRIVATE=0 FEDERATION=0 \
+    bundle exec ruby app.rb -p 41447 -o 127.0.0.1 ) &  SRV=$!
+# ... run the PS-A* curl checks below, then: kill "$SRV"
+```
+
+### PS-A1 — Apex: the pub/sub adds no broker and no external client — PS1
+```bash
+# (1) No broker dependency anywhere (re-runs the A1a/A1b hard-gate greps).
+git grep -niE 'mqtt|mosquitto|paho|amqp|kafka|rabbitmq|broker' -- \
+  web/Gemfile web/Gemfile.lock data/requirements.txt \
+  matrix/Cargo.toml matrix/Cargo.lock app/pubspec.yaml app/pubspec.lock
+# (2) The pub/sub registry pulls in NO networking/broker client library.
+git grep -nE '^\s*require\b.*\b(socket|net/http|net/|faraday|httparty|excon|redis|bunny|kafka|mqtt|amqp|stomp)\b' -- \
+  web/lib/potato_mesh/application/pubsub.rb
+```
+**Expected:** (1) no output (apex hard gate **A1** still holds — no broker added).
+(2) no output: `pubsub.rb` `require`s no networking or broker client — it uses
+only in-process Ruby concurrency primitives (`Mutex` / `ConditionVariable`, which
+need no `require`) and opens **no** socket or external connection. The fan-out is
+a local, single-process registry (PS1). A FAIL here is an apex FAIL (SPEC §1).
+
+### PS-A2 — `GET /api/events` is a read-only SSE stream, never an ingest path — PS2
+```bash
+# It streams text/event-stream (cut the long-lived connection after 2s).
+curl -s -N --max-time 2 -D - -o /dev/null http://127.0.0.1:41447/api/events \
+  | grep -i '^content-type:'
+# It is read-only: POST is not accepted as an ingest path.
+curl -s -o /dev/null -w 'POST %{http_code}\n' -X POST \
+  -H 'Authorization: Bearer acctest' http://127.0.0.1:41447/api/events -d '{}'
+```
+**Expected:** the first command prints `Content-Type: text/event-stream` (the
+subscribe surface is SSE). The second prints `404` or `405` — `/api/events`
+accepts **no** body and is **not** an ingest route (§3.3); it writes nothing and
+SQLite stays the system of record. The endpoint is additive — no existing
+`/api/*` response shape changes (D8), confirmed by the unchanged Layer C checks.
+
+### PS-A3 — Thin per-collection event on ingest; client delta-fetches — PS3
+```bash
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "publishes a thin per-collection event" )
+( cd web && node --test public/assets/js/app/main/__tests__/event-stream.test.js )
+```
+**Expected:** pass. Server side: a subscriber to the registry, after a successful
+ingest `POST`, receives an event whose payload names **only** the changed
+collection (one of `nodes`/`messages`/`positions`/`telemetry`/`neighbors`/
+`traces`), optionally with a newest-`rx_time`/`last_heard` skip-hint, and carries
+**no row fields** (no body text, sender, position, etc.). Client side: on an SSE
+event for collection *X* the SSE client invokes the **existing** delta fetch for
+*X* with `since=<cached high-water>` and merges by id through the FC2 cache — it
+issues no broadcast re-fetch of unrelated collections and adds no new privacy or
+window logic of its own. Protocol-neutral: the event names the collection, never
+the protocol (Invariant IV).
+
+### PS-A4 — Publish-on-change at all six ingest routes, coalesced — PS4
+```bash
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "publishes on every ingest route" -e "coalesces bursts" )
+```
+**Expected:** pass. Each of the six dashboard ingest routes — `POST /api/nodes`,
+`/messages`, `/positions`, `/telemetry`, `/neighbors`, `/traces` — publishes its
+collection's change event after a successful write, co-located with the existing
+`ApiCache.invalidate_prefix` calls in `routes/ingest.rb`. A burst of writes to one
+collection within the debounce window is **coalesced** into a bounded number of
+emitted events (not one event per row), so a message flood cannot stampede
+subscribers.
+
+### PS-A5 — Push replaces the 60 s poll; reconnect-resync + slow safety poll — PS5
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-sse-refresh.test.js )
+```
+**Expected:** pass. The frontend no longer drives refreshes from a fixed 60 s
+timer: (a) an SSE event triggers the matching collection's delta fetch
+**immediately**; (b) on every SSE (re)connect the client runs a full delta
+**resync** across collections to recover anything missed during the gap; (c) a
+**slow safety poll** (default 5 min, configurable; surfaced via
+`refresh_interval_seconds`/settings) still runs as a fallback and is the *only*
+timer-driven path. The fast 60 s cadence is gone (no `setInterval` at 60 000 ms as
+the primary driver).
+
+### PS-A6 — Privacy: no `messages` events when PRIVATE — PS6
+*Run the server with `PRIVATE=1`.*
+```bash
+# The event stream must never carry a messages event in private mode.
+curl -s -N --max-time 3 http://127.0.0.1:41447/api/events | grep -i 'messages' \
+  && echo "UNEXPECTED: messages event in private mode" || echo "OK: no messages event"
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "suppresses messages events in private mode" )
+```
+**Expected:** the curl prints `OK: no messages event` (within the 3 s sample the
+stream emits no `messages` event under `PRIVATE=1`), and the rspec example passes:
+the registry/route suppress `messages` change events in private mode, mirroring
+the `/api/messages` 404 (A2a). Non-message collections (`nodes`, `positions`,
+`telemetry`, `neighbors`, `traces`) still emit. Because events are thin and the
+client re-fetches through the already-filtered `/api`, opt-out / `CLIENT_HIDDEN`
+rows never traverse the push (Invariant II).
+
+### PS-A7 — Cache mechanism intact under the event-driven trigger — PS7
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-cache-refresh.test.js )
+```
+**Expected:** pass. The seed-then-delta cache contract (FC-A2) is **unchanged**:
+on a warm start the first fetch still requests only `since=<newest cached ts>`,
+fresh cached rows are not re-requested, and new rows merge by id and write back.
+Only the **trigger** differs (SSE ping / reconnect resync / safety poll instead of
+the 60 s timer) — the delta/merge/cache logic is the same path. This is the
+realisation of the **PS7** amendment to FC-A2/FC-R1's "cadence unchanged" wording.
+
+### PS-A8 — Graceful degradation; engineering bar — PS8
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/event-stream.test.js )
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+git ls-files 'web/lib/potato_mesh/application/pubsub.rb' \
+  'web/public/assets/js/app/main/event-stream.js' \
+  | xargs grep -L 'Copyright © 2025-26 l5yth & contributors'
+```
+**Expected:** pass / no output. When `EventSource` is unavailable, the stream
+errors, or the feature is disabled by config, the client silently falls back to
+the safety poll and behaves exactly as today's network-only path — the push is
+**never load-bearing** (no thrown error reaches the app, no blank UI). The Ruby
+and JS suites are green with new unit coverage for `pubsub.rb`, the `/api/events`
+route, and the SSE client (100% lines/branches). The `grep -L` prints **no**
+output: every new source file carries the exact Apache header (B4a) and is
+RDoc/JSDoc-documented (B3).
+
+### PS-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. **At risk and explicitly required to
+remain green:**
+- **A1 / A1a / A1b** (apex) — no broker dependency or external client is
+  introduced by the pub/sub (also asserted by PS-A1); a FAIL is a hard-gate FAIL.
+- **A2 / A2a / A2b** (privacy) — `/api/messages` still 404s under `PRIVATE`, and
+  the stream now additionally carries no `messages` event (PS-A6).
+- **FC-A2 / FC-R1** (frontend cache) — the seed-then-delta delta/merge/cache
+  contract is unchanged; only their "auto-refresh cadence is unchanged" wording is
+  amended per **PS7** (PS-A7). Cache tests are **updated** to the event-driven
+  trigger, **not** removed.
+- **PL-A1 / PL-A2** (progressive load) and **CR-A1 / CR-A2 / CR-A3** (incremental
+  render + map-only hydration) — an SSE-triggered delta flows through the same
+  render/merge/hydration path, so idle re-renders still materialise **0** entries
+  and no per-node `/api/nodes/:id` request is issued.
+- **D1** (`/version`) — still exposes `refresh_interval_seconds` (now the
+  safety-poll cadence); the config block is otherwise unchanged.
+- **B1** (all suites). No existing POST/GET contract changes (only the additive
+  `GET /api/events` and the new event-shape docs in `CONTRACTS.md`), so **C2** and
+  the Python suite are unaffected.

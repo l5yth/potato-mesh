@@ -122,6 +122,24 @@ test('mergeConfig treats blank mapZoom as null', () => {
   assert.equal(result.mapZoom, null);
 });
 
+test('mergeConfig normalises live-update settings', () => {
+  const overridden = mergeConfig({
+    liveUpdatesEnabled: false,
+    liveUpdatesPath: '/custom/events',
+    safetyPollMs: '120000',
+  });
+  assert.equal(overridden.liveUpdatesEnabled, false);
+  assert.equal(overridden.liveUpdatesPath, '/custom/events');
+  assert.equal(overridden.safetyPollMs, 120000);
+
+  // Blank path and non-positive / non-finite poll fall back to defaults.
+  const defaulted = mergeConfig({ liveUpdatesPath: '', safetyPollMs: '-5' });
+  assert.equal(defaulted.liveUpdatesEnabled, true);
+  assert.equal(defaulted.liveUpdatesPath, DEFAULT_CONFIG.liveUpdatesPath);
+  assert.equal(defaulted.safetyPollMs, DEFAULT_CONFIG.safetyPollMs);
+  assert.equal(mergeConfig({ safetyPollMs: 'NaN' }).safetyPollMs, DEFAULT_CONFIG.safetyPollMs);
+});
+
 test('document stub returns null for unrelated selectors', () => {
   resetDocumentStub();
   assert.equal(documentStub.querySelector('#missing'), null);

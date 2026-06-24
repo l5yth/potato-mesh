@@ -383,3 +383,56 @@ feature adds new decisions without amending any prior one.
 | **BP7** | **Cache-bypass parity with messages.** A request carrying `before` (like one carrying `since > 0`) **bypasses** the shared `ApiCache` response cache, which only memoises the default newest-page feed; the cache key for the cached (no-`before`, no-`since`) path is unchanged, so history pages never pollute or evict the hot newest-page entry. | code |
 | **BP8** | **Engineering bar (D9).** Ships with 100% unit tests across the route and query layers (mirroring the existing messages-`before` specs), RDoc on every edited method, Apache headers intact, `rufo`-clean; all existing Ruby/JS/Python suites stay green. | CLAUDE.md |
 | **BP9** | **Out of scope (deferred, tracked).** This feature ships the **server capability only**. (a) Wiring the browser data cache / JS data-fetchers to *backfill* collections via `before` (beyond the existing messages pager) is a tracked follow-up — the capability is unblocked, not wired. (b) The lone camelCase query params `windowSeconds` / `bucketSeconds` on `GET /api/telemetry/aggregated` and (c) the missing `limit` / `since` / `protocol` params on `GET /api/instances` are recorded here as known API-handling inconsistencies and tracked as **separate follow-ups**, deliberately excluded to keep this feature compartmentalized. | interview |
+---
+
+## Feature: Live updates (SSE change pub/sub)
+
+Replaces the dashboard's fixed 60-second refresh poll with immediate,
+change-driven updates. An **in-process, in-memory** publish/subscribe registry
+inside the Sinatra app emits a thin "this collection changed" event whenever an
+ingest `POST` writes; browsers subscribe over **Server-Sent Events** (`GET
+/api/events`, native `EventSource`) and react by running their existing
+delta-fetch against the legacy `/api` endpoints. No row data crosses the push,
+no new dependency, and **no broker or cloud bus** — the pub/sub is a local,
+single-process fan-out. Integrates with the six `POST /api/*` ingest routes and
+their existing `ApiCache.invalidate_prefix` calls
+(`web/lib/potato_mesh/application/routes/ingest.rb`), a new
+`application/pubsub.rb` registry + `GET /api/events` route, `application.rb`
+(lifecycle wiring), `config.rb` / `helpers/config_helpers.rb` (`private_mode?`,
+toggle, intervals, `data-app-config`), and on the frontend `main.js` (the
+`setInterval(refresh, REFRESH_MS)` loop), `main/data-fetchers.js`, `settings.js`,
+a new `main/` SSE-client module, `main/data-cache.js` (seed-then-delta), and
+`main/data-merge.js` (merge-by-id). The event shape is documented in
+`data/mesh_ingestor/CONTRACTS.md`.
+
+**Conflict check against existing decisions.** *Apex I (local LoRa / no
+MQTT/broker)* — **consistent**: the pub/sub is in-memory and in-process, carries
+no broker dependency, and SSE is plain HTTP on the existing app (`guard-edits.py`
+would block a broker manifest entry regardless). *Invariant II (privacy)* —
+**consistent (+ safeguard)**: events are thin (no rows) and the client re-fetches
+through the already-filtered `/api`, so opt-out / `CLIENT_HIDDEN` never traverse
+the push; `messages` events are additionally suppressed under `PRIVATE`, mirroring
+A2a. *Invariant III (federation)* — **consistent**: local browser↔server only, no
+peer push. *Invariant IV (parity)* — **consistent/extends**: events name the
+*collection*, never the protocol; both protocols fetch identically. *§3.3
+(POST-only intake)* — **extends**: `GET /api/events` is outbound, read-only, never
+an ingest path; SQLite stays the system of record. *D7 (fixed stack)* —
+**consistent**: SSE needs no gem (Sinatra streaming + native `EventSource`); the
+in-memory fan-out is per-process (current single-process `ruby app.rb` deploy), a
+documented limitation covered by the PS5 safety poll. *D8 (stable contract)* —
+**extends**: additive endpoint, no existing `/api/*` shape change. *FC2 / FC-A2 /
+FC-R1 (cache "auto-refresh cadence unchanged")* — **amended, not silently
+overridden** by **PS7**: the seed-then-delta mechanism is untouched; only the
+*trigger* changes from a 60 s timer to event-driven + safety poll. The apex (I) is
+untouched.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **PS1** | **In-process, broker-free pub/sub (apex-safe).** Change notifications are delivered by an **in-memory, in-process** publish/subscribe registry inside the Sinatra app — no MQTT, no external broker, no new dependency or cloud bus (Invariant I). Delivered to browsers over **SSE** (`text/event-stream`) via the browser-native `EventSource`, served by Sinatra streaming under the existing single-process Puma. *Documented limitation:* in-memory fan-out is per-process; a clustered multi-worker deployment would not fan out across workers — out of scope, covered by the PS5 safety poll. | interview + apex |
+| **PS2** | **New read-side GET stream; never an ingest path.** A single new endpoint **`GET /api/events`** (SSE) is the subscribe surface. It is outbound/read-only: it accepts no body, writes nothing, and is **not** an ingest route; SQLite remains the system of record (§3.3). Additive to the API contract (D8): no existing `/api/*` shape changes. | interview + §3.3/D8 |
+| **PS3** | **Thin per-collection 'go-fetch' events.** Each event names only the collection that changed — one of `nodes`, `messages`, `positions`, `telemetry`, `neighbors`, `traces` — optionally with the newest `rx_time`/`last_heard` as a skip-hint. **No row data** is carried. The client reacts by running its **existing** delta fetch (`since=<cached high-water>`) against the legacy `/api` endpoints and merging by id through the FC2 cache — reusing every current privacy gate, window floor (C4), and merge path; privileges no protocol (Invariant IV). | interview |
+| **PS4** | **Publish-on-change at the existing write points, coalesced.** The six `POST /api/*` ingest routes publish their collection's change event after a successful write, co-located with the existing `ApiCache.invalidate_prefix` calls in `routes/ingest.rb`. Rapid bursts are **coalesced/throttled per collection** (a short debounce window) so a flood of message POSTs yields a bounded ping rate, not one event per row. | interview + code |
+| **PS5** | **Push replaces the 60 s poll; reconnect-resync + slow safety poll.** The frontend's fixed 60 s refresh timer is **removed as the primary driver**. SSE pings trigger the matching delta fetch immediately. On every SSE (re)connect the client runs a full delta **resync** to recover anything missed during a gap. A **slow background safety poll** (default 5 min, configurable) remains as a fallback for environments where SSE is blocked, buffered, or silently dead, and for any non-fan-out deployment (PS1). | interview |
+| **PS6** | **Privacy: no `messages` events when PRIVATE (Invariant II).** Under `PRIVATE=1` the server emits **no `messages` change events** and the `GET /api/events` stream carries none, mirroring the `/api/messages` 404 (A2a). Because events are thin (no row data) and the client re-fetches through the already-filtered `/api` endpoints, opt-out / `CLIENT_HIDDEN` rows never traverse the push. Defense-in-depth; Invariant II is preserved. | interview + Invariant II |
+| **PS7** | **Amends FC2/FC-A2/FC-R1 cadence wording (named, not silent).** The seed-then-delta cache *mechanism* is unchanged (still `since=<high-water>`, only-misses-fetch, merge-by-id). Only the **trigger** changes: from a fixed 60 s cadence to event-driven (SSE ping / reconnect resync / slow safety poll). FC-A2 and FC-R1's "auto-refresh cadence is unchanged" clause is **explicitly amended** to "the fetch trigger is event-driven with a slow safety-poll fallback; the delta/merge/cache contract is unchanged." | interview (FC2 amendment) |
+| **PS8** | **Graceful degradation & engineering bar (D9).** If `EventSource` is unavailable, the stream errors, or a config flag disables it, the client silently falls back to the safety poll (today's network-only behavior) — the push is **never load-bearing**. All new code (the pub/sub registry, the `GET /api/events` route, the frontend SSE client) ships with 100% unit tests, full API docs (RDoc/JSDoc), the exact Apache header, and `rufo`-clean formatting; all existing suites stay green. | D9 + proposed |

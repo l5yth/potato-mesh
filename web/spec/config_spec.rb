@@ -450,6 +450,82 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".live_updates_enabled?" do
+    it "is enabled when EVENTS is unset" do
+      within_env("EVENTS" => nil) do
+        expect(described_class.live_updates_enabled?).to be(true)
+      end
+    end
+
+    it "is disabled when EVENTS=0" do
+      within_env("EVENTS" => "0") do
+        expect(described_class.live_updates_enabled?).to be(false)
+      end
+    end
+
+    it "ignores surrounding whitespace" do
+      within_env("EVENTS" => " 0 ") do
+        expect(described_class.live_updates_enabled?).to be(false)
+      end
+    end
+  end
+
+  describe ".live_safety_poll_seconds" do
+    it "returns the baked-in cadence when unset" do
+      within_env("LIVE_SAFETY_POLL_SECONDS" => nil) do
+        expect(described_class.live_safety_poll_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_LIVE_SAFETY_POLL_SECONDS,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("LIVE_SAFETY_POLL_SECONDS" => "120") do
+        expect(described_class.live_safety_poll_seconds).to eq(120)
+      end
+    end
+
+    it "rejects non-positive overrides" do
+      within_env("LIVE_SAFETY_POLL_SECONDS" => "0") do
+        expect(described_class.live_safety_poll_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_LIVE_SAFETY_POLL_SECONDS,
+        )
+      end
+    end
+  end
+
+  describe ".sse_heartbeat_seconds" do
+    it "returns the baked-in heartbeat when unset" do
+      within_env("SSE_HEARTBEAT_SECONDS" => nil) do
+        expect(described_class.sse_heartbeat_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_SSE_HEARTBEAT_SECONDS,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("SSE_HEARTBEAT_SECONDS" => "5") do
+        expect(described_class.sse_heartbeat_seconds).to eq(5)
+      end
+    end
+  end
+
+  describe ".sse_max_lifetime_seconds" do
+    it "returns the baked-in ceiling when unset" do
+      within_env("SSE_MAX_LIFETIME_SECONDS" => nil) do
+        expect(described_class.sse_max_lifetime_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_SSE_MAX_LIFETIME_SECONDS,
+        )
+      end
+    end
+
+    it "accepts positive overrides" do
+      within_env("SSE_MAX_LIFETIME_SECONDS" => "90") do
+        expect(described_class.sse_max_lifetime_seconds).to eq(90)
+      end
+    end
+  end
+
   describe ".prom_report_id_list" do
     it "returns an empty collection when no identifiers are configured" do
       expect(described_class.prom_report_id_list).to eq([])
