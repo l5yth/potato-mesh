@@ -193,6 +193,8 @@ import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
+import { flashNodeTargets, flashMessageTargets } from './main/flash.js';
+import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -213,9 +215,7 @@ import { createEventStream } from './main/event-stream.js';
  *   inner closures for unit tests. Production callers may ignore this.
  */
 export function initializeApp(config) {
-  const statusEl = document.getElementById('status');
   const footerActiveNodes = document.getElementById('footerActiveNodes');
-  const refreshBtn = document.getElementById('refreshBtn');
   const autorefreshToggle = document.getElementById('autorefreshToggle');
   const protocolToggleMeshcore = document.getElementById('protocolToggleMeshcore');
   const protocolToggleMeshtastic = document.getElementById('protocolToggleMeshtastic');
@@ -568,6 +568,14 @@ export function initializeApp(config) {
   let liveRefreshTimer = null;
   /** Promise of the most recent live-driven refresh (test hook). */
   let liveRefreshPromise = Promise.resolve();
+  /** Count of flash rounds triggered by SSE pings (VF2 gating; test hook). */
+  let liveFlashCount = 0;
+  /** Node ids flashed by the most recent SSE-ping refresh (test hook). */
+  let lastFlashedNodeIds = [];
+  /** Message ids flashed by the most recent SSE-ping refresh (test hook). */
+  let lastFlashedMessageIds = [];
+  /** Per-render map of message id → its channel tab id, for the tab-header flash. */
+  let messageTabId = new Map();
 
   /**
    * Close any open short-info overlays that do not contain the provided anchor.
@@ -707,8 +715,42 @@ export function initializeApp(config) {
     liveRefreshTimer = null;
     const collections = new Set(dirtyCollections);
     dirtyCollections.clear();
-    liveRefreshPromise = refresh({ collections });
+    // flash: true marks this as the SSE-ping path, the only refresh that
+    // flashes changed rows (SPEC VF2). Resync / safety poll / initial load
+    // call refresh() without it, so they never flash.
+    liveRefreshPromise = refresh({ collections, flash: true });
     return liveRefreshPromise;
+  }
+
+  /**
+   * Flash each changed node's table row(s) and map marker white (SPEC VF3).
+   * Called after the table + map have rendered so the highlight lands on the
+   * final element. Targets already-rendered DOM only — it never re-materialises
+   * rows or fetches, so the incremental-render invariants (CR-A1) are preserved.
+   *
+   * @param {Set<string>} nodeIds Canonical node ids to flash.
+   * @returns {void}
+   */
+  function flashChangedNodes(nodeIds) {
+    if (!nodeIds || nodeIds.size === 0) return;
+    // Record that a flash round was triggered (VF2 gating — test hook).
+    liveFlashCount += 1;
+    lastFlashedNodeIds = [...nodeIds];
+    flashNodeTargets(nodeIds, { documentRef: document, markerByNodeId });
+  }
+
+  /**
+   * Flash each changed message's chat row(s) and its channel tab header (SPEC
+   * VF3). Called after the chat has rendered (so the rows + tabs exist and the
+   * message→tab map is populated). Targets already-rendered DOM only.
+   *
+   * @param {Set<string>} messageIds Message ids to flash.
+   * @returns {void}
+   */
+  function flashChangedMessages(messageIds) {
+    if (!messageIds || messageIds.size === 0) return;
+    lastFlashedMessageIds = [...messageIds];
+    flashMessageTargets(messageIds, { documentRef: document, messageTabId });
   }
 
   /**
@@ -853,6 +895,9 @@ export function initializeApp(config) {
   let traceLinesToggleButton = null;
   let markersLayer = null;
   let spiderLinesLayer = null;
+  // Per-render map of canonical node id → its Leaflet marker, so a live update
+  // can flash the marker for a changed node (SPEC VF3). Rebuilt every renderMap.
+  let markerByNodeId = new Map();
   // Per-render record of the offset markers we created so the zoom event
   // handlers can re-project them and keep the on-screen pixel gap constant
   // regardless of zoom level.  Each entry is
@@ -3258,6 +3303,9 @@ export function initializeApp(config) {
     filterQuery = ''
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
+    // Reset the message→tab map for this render; buildChatFragment repopulates it
+    // as it materialises each channel tab's entries (SPEC VF3 tab flash).
+    messageTabId = new Map();
     const combinedMessages = Array.isArray(messages) ? [...messages] : [];
     if (Array.isArray(encryptedMessages) && encryptedMessages.length > 0) {
       combinedMessages.push(...encryptedMessages);
@@ -3414,6 +3462,14 @@ export function initializeApp(config) {
         continue;
       }
       const node = chatEntryCache.materialize(namespace, keyOf(entry), parts.className, parts.html);
+      // Tag message rows so a live update can flash them (SPEC VF3); for channel
+      // tabs (namespace is the tab id, not 'log') record the message→tab id so
+      // the channel's tab header can flash too.
+      const messageId = entryMessageId(entry);
+      if (messageId) {
+        node.dataset.messageId = messageId;
+        if (namespace !== 'log') messageTabId.set(messageId, namespace);
+      }
       const divider = getDivider(entry.ts);
       if (divider) fragment.appendChild(divider);
       fragment.appendChild(node);
@@ -3560,6 +3616,11 @@ export function initializeApp(config) {
     const frag = document.createDocumentFragment();
     for (const n of nodes) {
       const tr = document.createElement('tr');
+      // Row-level node id hook for live-update flashes (SPEC VF3); kept distinct
+      // from the inner link's data-node-id so it never affects click handling.
+      if (typeof n.node_id === 'string' && n.node_id) {
+        tr.dataset.nodeRow = n.node_id;
+      }
       const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
       const latitudeDisplay = fmtCoords(n.latitude);
@@ -3837,6 +3898,9 @@ export function initializeApp(config) {
     // handler can detect threshold crossings on the next zoom event.
     lastRenderedZoomBucket = currentZoomBucket();
     markersLayer.clearLayers();
+    // Reset the node→marker map for this render so live-update flashes target
+    // the current markers (SPEC VF3).
+    markerByNodeId = new Map();
     const pts = [];
     const nodesById = new Map();
     for (const node of nodes) {
@@ -4151,6 +4215,10 @@ export function initializeApp(config) {
       const fallbackOverlayProvider = () => mergeOverlayDetails(null, n);
       let markerToken = 0;
       marker.addTo(markersLayer);
+      // Remember this node's marker so a live update can flash it (SPEC VF3).
+      if (n && typeof n.node_id === 'string' && n.node_id) {
+        markerByNodeId.set(n.node_id, marker);
+      }
       // Track every offset marker so the zoomend handler can reposition the
       // marker + leader line in lock-step.  Markers rendered at the shared
       // centre (singletons / low-zoom overlap / collapsed-group fallback)
@@ -4416,9 +4484,6 @@ export function initializeApp(config) {
    */
   async function refresh(refreshOptions = {}) {
     try {
-      if (statusEl) {
-        statusEl.textContent = 'refreshing…';
-      }
       // On the first load fetch the full dataset; subsequent refreshes pass
       // the ``since`` timestamp so only new/changed rows are transferred.
       // A 1-second overlap avoids missing rows that arrive at the boundary.
@@ -4574,6 +4639,14 @@ export function initializeApp(config) {
       allTraces = Array.isArray(traceEntries) ? traceEntries : [];
       initialFetchDone = true;
       applyFilter();
+      // SPEC VF2/VF3/VF4: only an SSE-ping refresh flashes (refreshOptions.flash),
+      // and only after the table + map have rendered (applyFilter above), so the
+      // highlight lands on the final, placed element. useSince excludes the
+      // initial fill. A node/position/telemetry delta flashes the changed node.
+      if (refreshOptions.flash && useSince) {
+        flashChangedNodes(collectNodeIds(incomingNodes, incomingPositions, incomingTelemetry));
+        flashChangedMessages(collectMessageIds(incomingMessages, incomingEncryptedMessages));
+      }
       // Persist the freshly-merged state for the next reload/revisit (SPEC FC2),
       // throttled and fire-and-forget so it never blocks the paint.
       writeBackCache();
@@ -4587,13 +4660,7 @@ export function initializeApp(config) {
         backfillPromise = backfillChatHistory();
         void backfillPromise;
       }
-      if (statusEl) {
-        statusEl.textContent = 'updated ' + new Date().toLocaleTimeString();
-      }
     } catch (e) {
-      if (statusEl) {
-        statusEl.textContent = 'error: ' + e.message;
-      }
       console.error(e);
     }
   }
@@ -4607,11 +4674,6 @@ export function initializeApp(config) {
     .then(() => refresh());
   void initialLoadPromise;
   restartAutoRefresh();
-
-  if (refreshBtn) {
-    // Manual refresh button bypasses the interval and runs a fetch right away.
-    refreshBtn.addEventListener('click', refresh);
-  }
 
   // --- Auto-refresh play/pause toggle ---
   if (autorefreshToggle) {
@@ -4627,7 +4689,6 @@ export function initializeApp(config) {
         autorefreshToggle.textContent = '\u25B6';
         autorefreshToggle.setAttribute('aria-label', 'Resume auto-refresh');
         autorefreshToggle.setAttribute('aria-pressed', 'true');
-        if (statusEl) statusEl.textContent = 'Refresh paused.';
       } else {
         autorefreshToggle.textContent = '\u23F8';
         autorefreshToggle.setAttribute('aria-label', 'Pause auto-refresh');
@@ -4773,6 +4834,12 @@ export function initializeApp(config) {
       isLiveActive: () => liveActive,
       /** The auto-refresh cadence last armed, in ms (test hook). */
       getAutoRefreshIntervalMs: () => autoRefreshIntervalMs,
+      /** Count of flash rounds triggered by SSE pings (VF2 gating; test hook). */
+      getLiveFlashCount: () => liveFlashCount,
+      /** Node ids flashed by the most recent SSE-ping refresh (test hook). */
+      getLastFlashedNodeIds: () => lastFlashedNodeIds,
+      /** Message ids flashed by the most recent SSE-ping refresh (test hook). */
+      getLastFlashedMessageIds: () => lastFlashedMessageIds,
       /**
        * Flush any pending debounced live refresh and await the latest
        * live-driven refresh (test hook).

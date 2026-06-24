@@ -1487,3 +1487,124 @@ only adds a `last_heard` carry to the same merge helpers), the #755 / #756
 synthetic-merge specs in `database_spec.rb` / `data_processing_spec.rb`, and **B1**
 (all suites). No POST/GET/event contract change, so the Python ingestor and
 `CONTRACTS.md` are unaffected.
+
+---
+
+## Feature: Live-update visual feedback (flash + control cleanup)
+
+Maps to SPEC decisions **VF1–VF7**. Live SSE updates now flash the affected
+element white (<100 ms); the poll-era Refresh button and "last updated" field are
+removed (play/pause stays). The flash-trigger logic + a flash helper live under
+`web/public/assets/js/app/main/` (with co-located `__tests__`); the highlight
+keyframe lives in `web/public/assets/styles/base.css`; the only server change is an
+additive `nodes` publish on `POST /api/messages`
+(`web/lib/potato_mesh/application/routes/ingest.rb`). *Run the server in public
+mode for the curl checks; run JS suites from `web/`.*
+
+### VF-A1 — Poll-era controls removed; play/pause kept — VF1
+```bash
+git grep -nE 'id="refreshBtn"|id="status"' -- web/views
+git grep -nE 'id="autorefreshToggle"' -- web/views/layouts/app.erb
+( cd web && bundle exec rspec spec/app_spec.rb -e "does not render the Refresh button or last-updated field" )
+```
+**Expected:** the first grep prints **no output** — the `#refreshBtn` button and the
+`#status` "last updated" field are gone from the views. The second prints the
+`#autorefreshToggle` line — the play/pause control remains. The rspec example
+passes: the rendered dashboard contains no `id="refreshBtn"` and no `id="status"`
+refresh-timestamp element, and still contains `id="autorefreshToggle"`. `main.js`
+no longer writes `refreshing…` / `updated <time>` status text (it has no `#status`
+element to write to).
+
+### VF-A2 — Flash fires only on SSE-ping deltas, never on load/resync/poll — VF2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-flash.test.js )
+```
+**Expected:** pass. With a fake `EventSource` + stub fetch: the **initial load**
+applies **no** flash (no strobe on paint); a subsequent SSE `change` ping for a
+collection flashes the affected element; a reconnect (`open` → resync) and a
+safety-poll refresh apply **no** flash. The flash is driven only from the
+SSE-ping-driven targeted refresh (`runLiveRefresh`), confirmed by asserting a
+resync/poll-shaped refresh leaves the flash count unchanged.
+
+### VF-A3 — Correct element flashes per collection (incl. message⇒node) — VF3
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-flash.test.js )
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "publishes nodes on a message ingest" )
+```
+**Expected:** pass. A `nodes`/`positions`/`telemetry` ping flashes the affected
+node's **node-table row** (`[data-node-id]`) and **map marker**. A `messages` ping
+flashes the **message row** and the **channel tab header**; and because
+`POST /api/messages` **also publishes `nodes`** (extends PS4 — verified by the rspec
+example: a single message POST publishes both `messages` and `nodes`), the author
+node's row + marker flash too. `neighbors` / `traces` pings flash **nothing** (the
+documented out-of-scope boundary). Detection is by id/collection and identical for
+both protocols (Invariant IV).
+
+### VF-A4 — Flash is applied after render, never to an unrendered element — VF4
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-flash.test.js )
+```
+**Expected:** pass. The flash is applied in a post-render step: a ping for a node
+not yet present in the DOM first renders/positions the row + marker (and a message
+renders its row + tab), and only then is the highlight applied — asserted by
+checking the flashed element exists and is the final rendered node at flash time
+(the render call precedes the flash call within the tick).
+
+### VF-A5 — Brief (<100 ms), white, reduced-motion-aware highlight — VF5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js )
+grep -nE '@media \(prefers-reduced-motion: reduce\)' web/public/assets/styles/base.css
+grep -nE '(animation|transition)[^;]*\b(9[0-9]|[1-9][0-9]?)ms' web/public/assets/styles/base.css
+```
+**Expected:** pass / non-empty. The flash helper applies a one-shot highlight class
+and clears it (or relies on a self-completing CSS animation) with **no layout
+shift**. `base.css` carries the highlight keyframe/rule with a duration **< 100 ms**
+and a `@media (prefers-reduced-motion: reduce)` guard that suppresses the animation
+(data still updates; only the visual is withheld). The white color and sub-100 ms
+duration are confirmed by reading the rule.
+
+### VF-A6 — Render & cache invariants preserved; #822 holds — VF6
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-chat-render-incremental.test.js )
+( cd web && bundle exec rspec spec/app_spec.rb -e "updates node last_heard for plaintext messages" )
+```
+**Expected:** pass. With the flash code present, an **idle** re-render still
+materialises **0** entries and issues **0** per-node `/api/nodes/:id` requests
+(**CR-A1** unchanged — the flash touches only already-rendered/cached DOM and never
+re-materialises). The existing #822 example confirms a message ingest still bumps
+the author node's `last_heard` (also covered at the unit level by
+`data_processing_spec.rb` "advances the reconciled real node's last_heard when a
+chat message arrives"), which is what makes the message⇒node flash reflect real
+data. The seed-then-delta cache (FC-A2) is untouched.
+
+### VF-A7 — Engineering bar — VF7
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+git ls-files 'web/public/assets/js/app/main/flash.js' \
+  'web/public/assets/js/app/__tests__/main-flash.test.js' \
+  | xargs grep -L 'Copyright © 2025-26 l5yth & contributors'
+```
+**Expected:** pass / no output. The Ruby and JS suites are green with new coverage
+for the flash trigger (changed-id selection, after-render ordering, ping-only
+gating, message⇒node fan-out), the flash helper, and the `nodes`-on-message publish.
+Every new source file carries the exact Apache header (B4a) and JSDoc (B3).
+
+### VF-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. **At risk and explicitly required to
+remain green:**
+- **CR-A1 / CR-A2 / CR-A3** (incremental render + map-only hydration — the flash
+  never re-materialises or fetches per node).
+- **PS-A5 / PS-A7** (SSE targeted fetch + cache delta) and **FC-A2** (seed-then-delta
+  — flashing is gated to SSE-ping deltas, so warm-start/resync/poll never flash).
+- **PS-A6 / A2 / A2a** (privacy — `/api/messages` still 404s in `PRIVATE`, so the new
+  `nodes`-on-message publish is moot there; node events are not privacy-gated).
+- **PL-A1 / PL-A2** (progressive load), **A4c** (chat parity — same render path), and
+  the **autorefresh/pause** specs (the toggle still pauses live + poll after the
+  Refresh/status controls are removed).
+- **B1** (all suites). The only contract change is the additive `nodes` publish on
+  message ingest (a new SSE event, documented in `CONTRACTS.md`); no POST/GET shape
+  changes, so **C2** and the Python suite are unaffected.

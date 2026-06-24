@@ -1594,12 +1594,6 @@ body.dark .node-detail__chart-grid-line {
   position: relative;
 }
 
-.refresh-timestamp {
-  font-size: 0.85em;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
 .filter-input input[type="text"] {
   flex: 1 1 auto;
   width: 100%;
@@ -2558,4 +2552,24 @@ body.dark #map .leaflet-tile.map-tiles {
 
   .markdown-body h1 { font-size: 1.3em; }
   .markdown-body h2 { font-size: 1.15em; }
+}
+
+/* Live-update flash (SPEC VF5): a brief (<100ms) white highlight applied to a
+   node row / map marker / chat message / channel tab when a live SSE update
+   lands on it. Uses an inset box-shadow overlay so there is no layout shift, and
+   self-completes (no fill) so the element reverts to its normal appearance. */
+@keyframes live-flash-highlight {
+  from { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.85); }
+  to { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0); }
+}
+
+.live-flash {
+  animation: live-flash-highlight 90ms ease-out;
+}
+
+/* Honor reduced-motion: data still updates live, only the flash is withheld. */
+@media (prefers-reduced-motion: reduce) {
+  .live-flash {
+    animation: none;
+  }
 }

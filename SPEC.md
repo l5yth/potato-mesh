@@ -436,3 +436,45 @@ untouched.
 | **PS6** | **Privacy: no `messages` events when PRIVATE (Invariant II).** Under `PRIVATE=1` the server emits **no `messages` change events** and the `GET /api/events` stream carries none, mirroring the `/api/messages` 404 (A2a). Because events are thin (no row data) and the client re-fetches through the already-filtered `/api` endpoints, opt-out / `CLIENT_HIDDEN` rows never traverse the push. Defense-in-depth; Invariant II is preserved. | interview + Invariant II |
 | **PS7** | **Amends FC2/FC-A2/FC-R1 cadence wording (named, not silent).** The seed-then-delta cache *mechanism* is unchanged (still `since=<high-water>`, only-misses-fetch, merge-by-id). Only the **trigger** changes: from a fixed 60 s cadence to event-driven (SSE ping / reconnect resync / slow safety poll). FC-A2 and FC-R1's "auto-refresh cadence is unchanged" clause is **explicitly amended** to "the fetch trigger is event-driven with a slow safety-poll fallback; the delta/merge/cache contract is unchanged." | interview (FC2 amendment) |
 | **PS8** | **Graceful degradation & engineering bar (D9).** If `EventSource` is unavailable, the stream errors, or a config flag disables it, the client silently falls back to the safety poll (today's network-only behavior) — the push is **never load-bearing**. All new code (the pub/sub registry, the `GET /api/events` route, the frontend SSE client) ships with 100% unit tests, full API docs (RDoc/JSDoc), the exact Apache header, and `rufo`-clean formatting; all existing suites stay green. | D9 + proposed |
+
+---
+
+## Feature: Live-update visual feedback (flash + control cleanup)
+
+Builds on the SSE pub/sub feature (PS1–PS8) to make live updates *visible*: when a
+change arrives over SSE the affected element briefly flashes white, so a watching
+operator sees **where** an update landed without scanning. The poll-era controls
+(the "Refresh" button and the "last updated" timestamp) are removed, since push
+makes them redundant; the play/pause toggle stays. Frontend-only (vanilla JS +
+`base.css`) except one additive server change: `POST /api/messages` also publishes
+a `nodes` change event (because a message ingest already touches the author node's
+`last_heard`, #822). Integrates with `views/layouts/app.erb` (control removal),
+`web/public/assets/js/app/main.js` (`refresh`/`runLiveRefresh` wiring, node-table +
+map-marker + chat render paths), `chat-tabs.js` (tab header), `node-rendering.js`
+(`data-node-id` rows), a new flash helper under `web/public/assets/js/app/main/`
+(+ `__tests__`), `web/public/assets/styles/base.css` (the highlight keyframe), and
+`web/lib/potato_mesh/application/routes/ingest.rb` (the `nodes`-on-message publish).
+
+**Conflict check against existing decisions.** *PS5 (push replaced poll)* —
+**realizes**: removing the Refresh button + "last updated" field is PS5's UI
+consequence. *PS4 (publish-on-change)* — **extends**: the messages route now also
+publishes `nodes` (the table it already writes via #822). *PS6 / Invariant II
+(privacy)* — **consistent**: in `PRIVATE` the message route 404s before publish, so
+no `messages`/`nodes` event fires from a message; node events are not privacy-gated.
+*CR-A1/CR-A2/CR-A3 (incremental render)* — **consistent (guarded)**: the flash
+touches only already-rendered/cached DOM after render, never re-materializing, so an
+idle tick still materializes 0 entries. *FC-A2 / PS-A7 (seed-then-delta)* —
+**consistent**: flashing is gated to SSE-ping deltas, so cold/warm seed, resync, and
+the safety poll never flash (no strobe). *Apex I / §3.3 / Invariant IV / A4c / D1* —
+**consistent**: read-side visual + one in-process publish call; protocol-neutral; no
+ingest path, no `/version` change. No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **VF1** | **Remove poll-era controls.** The `#refreshBtn` button and the `#status` "last updated" field are removed from the dashboard (along with their `main.js` handlers, the `refreshing…`/`updated <time>` status writes, and the `.refresh-timestamp` style). The `#autorefreshToggle` play/pause control is **kept** — it still pauses both the live stream and the safety poll (PS5). Manual refresh and a timestamp are redundant once push delivers updates. | interview |
+| **VF2** | **Flash only on SSE-ping deltas.** The white highlight fires **only** for rows delivered by an SSE-ping-driven targeted refresh (`runLiveRefresh`). The initial load (cold **or** warm-cache catch-up), the reconnect resync, and the slow safety poll do **not** flash — so the screen never strobes on load and a flash unambiguously means "this changed live while you were watching." Accepted limit: a change recovered *only* by resync or the safety poll updates without a flash. | interview |
+| **VF3** | **What flashes, per collection.** A `nodes` / `positions` / `telemetry` ping flashes the affected node's **map marker and node-table row** (the changed node ids are read from the ping's delta rows by `node_id`). A `messages` ping flashes the **message row** (the whole row) and the **channel tab header**; because the message ingest also touches the author node (#822), `POST /api/messages` **additionally publishes `nodes`** (extends PS4), so the author node's marker + table row flash too, with a freshly-updated "last seen". Detection is by id/collection, identical for both protocols (Invariant IV). **Scope:** `neighbors` / `traces` updates do **not** flash (they update silently) — a deliberate, documented boundary, deferrable to a follow-up. | interview |
+| **VF4** | **Render before flash.** The highlight is applied **after** the affected DOM is rendered and positioned in the same update tick — the node-table row + map marker, and the chat message row + channel tab, are materialized/placed first, then flashed (a post-render `requestAnimationFrame`/microtask step). This guarantees the flash lands on the final, placed element and is never applied to a not-yet-rendered element or an element still at its old position/offscreen. | interview |
+| **VF5** | **Brief, accessible highlight.** The flash is **white**, lasts **<100 ms**, and is a one-shot CSS highlight with **no layout shift** (e.g. background/overlay only). It **respects `prefers-reduced-motion`**: when the user has reduce-motion enabled the highlight is suppressed via an `@media (prefers-reduced-motion: reduce)` guard — the data still updates live, only the animation is withheld. | interview |
+| **VF6** | **Preserve render & cache invariants (read-side only).** The flash is applied to **already-rendered/cached** DOM nodes (the chat entry cache, existing table rows, existing markers); it **never** re-materializes chat entries or issues per-node fetches, so an idle tick still materializes **0** entries (CR-A1) and the seed-then-delta cache (FC-A2) is untouched. The only non-frontend change is the additive `nodes` publish on message ingest, which is moot under `PRIVATE` (the message route 404s first), preserving Invariant II / PS6. | proposed |
+| **VF7** | **Engineering bar (D9).** The flash-trigger logic (changed-id selection, after-render ordering, SSE-ping-only gating, message⇒node fan-out) ships with 100% unit tests, JSDoc, and the exact Apache header; the `ingest.rb` `nodes`-on-message publish is covered by a Ruby spec; existing view/app specs that assert the removed controls are **updated** to assert their absence (not deleted). CSS keyframes have no gating command, so the criterion is the trigger logic + a view assertion; all existing suites stay green. | D9 + proposed |
