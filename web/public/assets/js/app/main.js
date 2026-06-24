@@ -192,6 +192,7 @@ import {
 import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-html.js';
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
+import { createEventStream } from './main/event-stream.js';
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -524,6 +525,19 @@ export function initializeApp(config) {
   // no entries.
   const chatEntryCache = createChatEntryCache({ documentRef: document });
   const REFRESH_MS = config.refreshMs;
+  // Live-update (SSE) configuration. When live updates are active the SSE stream
+  // drives refreshes and the only timer is the slow safety poll; otherwise the
+  // app falls back to the REFRESH_MS poll exactly as before (SPEC PS5/PS8).
+  const LIVE_UPDATES_ENABLED = Boolean(config.liveUpdatesEnabled);
+  const LIVE_UPDATES_PATH = typeof config.liveUpdatesPath === 'string' && config.liveUpdatesPath
+    ? config.liveUpdatesPath
+    : '/api/events';
+  const SAFETY_POLL_MS = Number.isFinite(config.safetyPollMs) && config.safetyPollMs > 0
+    ? config.safetyPollMs
+    : REFRESH_MS;
+  // Coalesce a burst of SSE pings into one delta fetch (client-side throttle,
+  // complementing the server-side coalescing, SPEC PS4).
+  const LIVE_DEBOUNCE_MS = 250;
   const CHAT_ENABLED = Boolean(config.chatEnabled);
   const instanceSelectorEnabled = Boolean(config.instancesFeatureEnabled);
 
@@ -541,6 +555,19 @@ export function initializeApp(config) {
   let refreshTimer = null;
   let autorefreshPaused = false;
   let activeStatsRequestId = 0;
+  // --- Live-update (SSE) state ---
+  /** @type {?ReturnType<typeof createEventStream>} */
+  let liveStream = null;
+  /** Whether an SSE stream is currently open and driving updates. */
+  let liveActive = false;
+  /** The auto-refresh timer cadence last armed (ms); exposed for tests. */
+  let autoRefreshIntervalMs = 0;
+  /** Collections flagged dirty by SSE pings, fetched on the next debounced refresh. */
+  const dirtyCollections = new Set();
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let liveRefreshTimer = null;
+  /** Promise of the most recent live-driven refresh (test hook). */
+  let liveRefreshPromise = Promise.resolve();
 
   /**
    * Close any open short-info overlays that do not contain the provided anchor.
@@ -670,7 +697,91 @@ export function initializeApp(config) {
   updateSortIndicators();
 
   /**
-   * Restart the auto-refresh timer according to the user's preferences.
+   * Fetch only the collections flagged dirty by SSE pings, then clear the
+   * pending set. Targeted delta fetch (SPEC PS3): a `messages` ping fetches only
+   * `/api/messages`, not the whole dataset.
+   *
+   * @returns {Promise<void>} resolves once the targeted refresh completes.
+   */
+  function runLiveRefresh() {
+    liveRefreshTimer = null;
+    const collections = new Set(dirtyCollections);
+    dirtyCollections.clear();
+    liveRefreshPromise = refresh({ collections });
+    return liveRefreshPromise;
+  }
+
+  /**
+   * Flag a collection dirty in response to an SSE change ping and arm the
+   * debounce timer so a burst of pings collapses into one delta fetch.
+   *
+   * @param {string} collection Changed collection name.
+   * @returns {void}
+   */
+  function scheduleLiveRefresh(collection) {
+    dirtyCollections.add(collection);
+    if (!liveRefreshTimer) {
+      liveRefreshTimer = setTimeout(runLiveRefresh, LIVE_DEBOUNCE_MS);
+    }
+  }
+
+  /**
+   * Run a full delta refresh on every SSE (re)connect so any change missed
+   * while the stream was down is recovered (SPEC PS5).
+   *
+   * @returns {void}
+   */
+  function handleLiveResync() {
+    if (liveRefreshTimer) {
+      clearTimeout(liveRefreshTimer);
+      liveRefreshTimer = null;
+    }
+    dirtyCollections.clear();
+    liveRefreshPromise = refresh();
+  }
+
+  /**
+   * Open the SSE stream when live updates are enabled.
+   *
+   * @returns {boolean} true when a stream is active (caller uses the safety
+   *   poll); false when disabled/unsupported (caller uses the REFRESH_MS poll).
+   */
+  function startLiveUpdates() {
+    if (!LIVE_UPDATES_ENABLED) return false;
+    if (!liveStream) {
+      liveStream = createEventStream({
+        path: LIVE_UPDATES_PATH,
+        onChange: collection => scheduleLiveRefresh(collection),
+        onResync: () => handleLiveResync(),
+        onError: (message, error) => console.debug('live updates:', message, error),
+      });
+    }
+    liveActive = liveStream.start();
+    return liveActive;
+  }
+
+  /**
+   * Close the SSE stream and drop any pending live refresh.
+   *
+   * @returns {void}
+   */
+  function stopLiveUpdates() {
+    if (liveStream) liveStream.stop();
+    liveActive = false;
+    if (liveRefreshTimer) {
+      clearTimeout(liveRefreshTimer);
+      liveRefreshTimer = null;
+    }
+    dirtyCollections.clear();
+  }
+
+  /**
+   * Restart the auto-refresh according to the user's preferences.
+   *
+   * With live updates active the SSE stream drives fetches and the timer is the
+   * slow safety poll ({@link SAFETY_POLL_MS}); otherwise it is the legacy
+   * {@link REFRESH_MS} poll. Paused auto-refresh arms no timer and closes the
+   * stream so no background requests are made (SPEC PS5).
    *
    * @returns {void}
    */
@@ -681,12 +792,21 @@ export function initializeApp(config) {
       clearInterval(refreshTimer);
       refreshTimer = null;
     }
+    autoRefreshIntervalMs = 0;
+    // When the user has explicitly paused auto-refresh, skip arming the timer
+    // and tear down the live stream so no background API requests are made.
+    if (autorefreshPaused) {
+      stopLiveUpdates();
+      return;
+    }
+    // Prefer live push; fall back to polling when SSE is disabled/unsupported.
+    const live = startLiveUpdates();
+    const intervalMs = live ? SAFETY_POLL_MS : REFRESH_MS;
     // Only arm the timer when a positive interval is configured; a zero or
     // negative value means auto-refresh is intentionally disabled.
-    // When the user has explicitly paused auto-refresh, skip arming the timer
-    // entirely so no background API requests are made.
-    if (REFRESH_MS > 0 && !autorefreshPaused) {
-      refreshTimer = setInterval(refresh, REFRESH_MS);
+    if (intervalMs > 0) {
+      autoRefreshIntervalMs = intervalMs;
+      refreshTimer = setInterval(refresh, intervalMs);
     }
   }
 
@@ -4294,7 +4414,7 @@ export function initializeApp(config) {
    *
    * @returns {Promise<void>} Resolves when rendering completes.
    */
-  async function refresh() {
+  async function refresh(refreshOptions = {}) {
     try {
       if (statusEl) {
         statusEl.textContent = 'refreshing…';
@@ -4303,6 +4423,14 @@ export function initializeApp(config) {
       // the ``since`` timestamp so only new/changed rows are transferred.
       // A 1-second overlap avoids missing rows that arrive at the boundary.
       const useSince = initialFetchDone;
+      // Targeted delta (SPEC PS3): when an SSE ping requests specific
+      // collections, fetch only those. Gating applies only once the initial
+      // full load is done, so a ping racing the first load can never
+      // partial-fetch and wipe the collections it skipped.
+      const only = useSince && refreshOptions.collections instanceof Set
+        ? refreshOptions.collections
+        : null;
+      const want = name => !only || only.has(name);
       const nodeSince = useSince ? Math.max(0, lastNodeTimestamp - 1) : 0;
       const msgSince = useSince ? Math.max(0, lastMessageTimestamp - 1) : 0;
       const posSince = useSince ? Math.max(0, lastPositionTimestamp - 1) : 0;
@@ -4314,26 +4442,26 @@ export function initializeApp(config) {
       // that a failure in one stream (e.g. telemetry) does not abort the whole
       // refresh cycle.  Each promise resolves to an empty array on error, which
       // preserves the previous data until the next successful fetch.
-      const neighborPromise = fetchNeighbors(NODE_LIMIT, nbSince).catch(err => {
+      const neighborPromise = want('neighbors') ? fetchNeighbors(NODE_LIMIT, nbSince).catch(err => {
         console.warn('neighbor refresh failed; continuing without connections', err);
         return [];
-      });
-      const telemetryPromise = fetchTelemetry(NODE_LIMIT, telSince).catch(err => {
+      }) : Promise.resolve([]);
+      const telemetryPromise = want('telemetry') ? fetchTelemetry(NODE_LIMIT, telSince).catch(err => {
         console.warn('telemetry refresh failed; continuing without telemetry', err);
         return [];
-      });
-      const positionsPromise = fetchPositions(NODE_LIMIT, posSince).catch(err => {
+      }) : Promise.resolve([]);
+      const positionsPromise = want('positions') ? fetchPositions(NODE_LIMIT, posSince).catch(err => {
         console.warn('position refresh failed; continuing without updates', err);
         return [];
-      });
-      const tracesPromise = fetchTraces(TRACE_LIMIT, trSince).catch(err => {
+      }) : Promise.resolve([]);
+      const tracesPromise = want('traces') ? fetchTraces(TRACE_LIMIT, trSince).catch(err => {
         console.warn('trace refresh failed; continuing without traceroutes', err);
         return [];
-      });
-      const encryptedMessagesPromise = fetchMessages(MESSAGE_LIMIT, { encrypted: true, since: msgSince }).catch(err => {
+      }) : Promise.resolve([]);
+      const encryptedMessagesPromise = want('messages') ? fetchMessages(MESSAGE_LIMIT, { encrypted: true, since: msgSince }).catch(err => {
         console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
         return [];
-      });
+      }) : Promise.resolve([]);
       // Fan-out all requests simultaneously; nodes are the primary resource and
       // must succeed for rendering to proceed.
       const [
@@ -4345,7 +4473,7 @@ export function initializeApp(config) {
         incomingTelemetry,
         incomingEncryptedMessages
       ] = await Promise.all([
-        fetchNodes(NODE_LIMIT, nodeSince),
+        want('nodes') ? fetchNodes(NODE_LIMIT, nodeSince) : Promise.resolve([]),
         positionsPromise,
         neighborPromise,
         tracesPromise,
@@ -4354,7 +4482,7 @@ export function initializeApp(config) {
         // via backfillChatHistory().  ``msgSince`` is 0 on the first load (so
         // this is the newest page) and the slice past the high-water mark on
         // every refresh after.
-        fetchMessages(MESSAGE_LIMIT, { since: msgSince }),
+        want('messages') ? fetchMessages(MESSAGE_LIMIT, { since: msgSince }) : Promise.resolve([]),
         telemetryPromise,
         encryptedMessagesPromise
       ]);
@@ -4494,6 +4622,8 @@ export function initializeApp(config) {
           clearInterval(refreshTimer);
           refreshTimer = null;
         }
+        // Also close the live stream so a paused dashboard makes no requests.
+        stopLiveUpdates();
         autorefreshToggle.textContent = '\u25B6';
         autorefreshToggle.setAttribute('aria-label', 'Resume auto-refresh');
         autorefreshToggle.setAttribute('aria-pressed', 'true');
@@ -4639,6 +4769,31 @@ export function initializeApp(config) {
       adjustStatsForHiddenProtocols,
       /** Whether auto-refresh is currently paused. */
       isAutorefreshPaused: () => autorefreshPaused,
+      /** Whether an SSE live-update stream is currently active (test hook). */
+      isLiveActive: () => liveActive,
+      /** The auto-refresh cadence last armed, in ms (test hook). */
+      getAutoRefreshIntervalMs: () => autoRefreshIntervalMs,
+      /**
+       * Flush any pending debounced live refresh and await the latest
+       * live-driven refresh (test hook).
+       *
+       * @returns {Promise<void>}
+       */
+      flushLiveRefresh: async () => {
+        if (liveRefreshTimer) {
+          clearTimeout(liveRefreshTimer);
+          runLiveRefresh();
+        }
+        await liveRefreshPromise;
+      },
+      /** Stop the auto-refresh timer and close the live stream (test teardown). */
+      stopAutoRefresh: () => {
+        if (refreshTimer) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+        stopLiveUpdates();
+      },
       /** Inject mock count span elements for legend protocol count tests. */
       _setProtocolCountElements(mc, mt) {
         meshcoreCountEl = mc;

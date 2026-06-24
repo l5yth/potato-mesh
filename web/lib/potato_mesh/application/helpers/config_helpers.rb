@@ -48,6 +48,9 @@ module PotatoMesh
         {
           refreshIntervalSeconds: PotatoMesh::Config.refresh_interval_seconds,
           refreshMs: PotatoMesh::Config.refresh_interval_seconds * 1000,
+          liveUpdatesEnabled: PotatoMesh::Config.live_updates_enabled?,
+          liveUpdatesPath: "/api/events",
+          safetyPollMs: PotatoMesh::Config.live_safety_poll_seconds * 1000,
           chatEnabled: !private_mode?,
           channel: sanitized_channel,
           frequency: sanitized_frequency,

@@ -53,6 +53,7 @@ module PotatoMesh
             end
             PotatoMesh::App::Prometheus::NODES_GAUGE.set(query_nodes(1000).length)
             PotatoMesh::App::ApiCache.invalidate_prefix("api:nodes:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -78,6 +79,7 @@ module PotatoMesh
               insert_message(db, msg, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:messages:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("messages", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -380,6 +382,7 @@ module PotatoMesh
               insert_position(db, pos, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:positions:", "api:nodes:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("positions", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -405,6 +408,7 @@ module PotatoMesh
               insert_neighbors(db, packet, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:neighbors:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("neighbors", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -430,6 +434,7 @@ module PotatoMesh
               insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("telemetry", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -455,6 +460,7 @@ module PotatoMesh
               insert_trace(db, packet, protocol_cache: protocol_cache)
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:traces:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("traces", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
