@@ -1435,3 +1435,55 @@ remain green:**
 - **B1** (all suites). No existing POST/GET contract changes (only the additive
   `GET /api/events` and the new event-shape docs in `CONTRACTS.md`), so **C2** and
   the Python suite are unaffected.
+
+---
+
+## Bugfix: MeshCore chat messages must advance node `last_heard` through the synthetic→real merge
+
+A MeshCore channel chat message names its sender via a synthetic, name-derived
+placeholder node. Once the real contact advertisement reconciles that placeholder
+(issues #803 / #755), the `merge_into_real_node` / `merge_synthetic_nodes` helpers
+migrated the message rows but **dropped the placeholder's `last_heard`**, and the
+subsequent `touch_node_last_seen` in `insert_message` then targeted the just-deleted
+synthetic id — so a node heard only via channel chat showed a stale "last seen". The
+merge now carries the synthetic's `last_heard` onto the real node, advancing it but
+never moving it backward. Web-side only (Ruby
+`web/lib/potato_mesh/application/data_processing/node_writes.rb`); no ingestor / API /
+DB-schema change. Meshtastic messages and MeshCore **direct** messages were already
+correct (their `from_id` is the real node id, so no synthetic merge intervenes).
+
+### LH-A1 — A reconciled MeshCore chat message advances the real node's `last_heard`
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb \
+    -e "advances the reconciled real node's last_heard when a chat message arrives" )
+```
+**Expected:** pass. With a real MeshCore contact already on record
+(`last_heard = T0`), ingesting a channel message (`to_id="^all"`,
+`protocol="meshcore"`, sender named in the text) whose synthetic placeholder
+reconciles to that contact advances the real node's `last_heard` to the message
+`rx_time` (`> T0`), instead of leaving it pinned at the advertisement time.
+
+### LH-A2 — Both merge directions carry the synthetic's `last_heard`, never backward
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb \
+    -e "carries a merged synthetic's newer last_heard onto the real node" \
+    -e "carries the synthetic's newer last_heard onto the real node" \
+    -e "never moves the real node's last_heard backward when the synthetic is older" )
+```
+**Expected:** pass. `merge_synthetic_nodes` (a real advertisement absorbing a
+chattier synthetic) and `merge_into_real_node` (a synthetic placeholder folding into
+an existing real contact) both advance the real node's `last_heard` to
+`MAX(real, synthetic)`; when the synthetic is older the real node's `last_heard` is
+left unchanged — the merge never moves "last seen" backward.
+
+### LH-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to remain green: **MC-A1 /
+MC-A2** (#803 synthetic chat-node naming, merge, and redirect — unchanged; the fix
+only adds a `last_heard` carry to the same merge helpers), the #755 / #756
+synthetic-merge specs in `database_spec.rb` / `data_processing_spec.rb`, and **B1**
+(all suites). No POST/GET/event contract change, so the Python ingestor and
+`CONTRACTS.md` are unaffected.

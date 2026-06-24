@@ -358,6 +358,7 @@ module PotatoMesh
             "UPDATE messages SET from_id = ? WHERE from_id = ?",
             [real_node_id, synthetic_id],
           )
+          carry_last_heard_to_real_node(db, synthetic_id, real_node_id)
           db.execute(
             "DELETE FROM nodes WHERE node_id = ? AND synthetic = 1",
             [synthetic_id],
@@ -403,9 +404,32 @@ module PotatoMesh
           "UPDATE messages SET from_id = ? WHERE from_id = ?",
           [real_node_id, synthetic_node_id],
         )
+        carry_last_heard_to_real_node(db, synthetic_node_id, real_node_id)
         db.execute(
           "DELETE FROM nodes WHERE node_id = ? AND synthetic = 1",
           [synthetic_node_id],
+        )
+      end
+
+      # Advance a real node's +last_heard+ to a merged synthetic placeholder's
+      # value when the placeholder was heard more recently, so a node heard only
+      # via MeshCore channel chat keeps a fresh "last seen" after its contact
+      # advertisement reconciles the placeholder (issues #803 / #755).  +MAX+
+      # makes the carry forward-only — the merge can never move +last_heard+
+      # backward — and a missing/already-deleted synthetic row (subquery yields
+      # NULL → 0) leaves the real node untouched.  Must run *before* the synthetic
+      # row is deleted so the subquery can still read it.
+      #
+      # @param db [SQLite3::Database] open database connection.
+      # @param synthetic_node_id [String] node id of the synthetic being merged away.
+      # @param real_node_id [String] node id of the surviving real contact.
+      # @return [void]
+      def carry_last_heard_to_real_node(db, synthetic_node_id, real_node_id)
+        db.execute(
+          "UPDATE nodes SET last_heard = MAX(COALESCE(last_heard, 0), " \
+          "COALESCE((SELECT last_heard FROM nodes WHERE node_id = ?), 0)) " \
+          "WHERE node_id = ?",
+          [synthetic_node_id, real_node_id],
         )
       end
 
