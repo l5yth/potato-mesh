@@ -1356,11 +1356,35 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
 
-    it "does not collapse two meshcore messages on different channels" do
+    it "does not collapse two meshcore messages on different named channels" do
+      # Genuinely distinct channels are now distinguished by the stable
+      # channel *name*, not the per-receiver local slot index.
       db = open_db
-      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_005, "channel" => 5))
-      meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_006, "channel" => 6))
+      meshcore_harness.insert_message(
+        db, base_message.merge("id" => 1_000_005, "channel" => 5, "channel_name" => "#alpha"),
+      )
+      meshcore_harness.insert_message(
+        db, base_message.merge("id" => 1_000_006, "channel" => 6, "channel_name" => "#beta"),
+      )
       expect(message_count(db)).to eq(2)
+    ensure
+      db&.close
+    end
+
+    it "collapses the same meshcore channel message heard on different local channel indices" do
+      # One physical #bot transmission heard by two ingestors that store it at
+      # different LOCAL channel slots (4 vs 6) — so each computes a different
+      # fingerprint id. The channel *name* ("#bot") is identical across
+      # receivers, so the content-dedup must collapse it to a single row.
+      # Regression for the cross-ingestor duplication in the bug report.
+      db = open_db
+      meshcore_harness.insert_message(
+        db, base_message.merge("id" => 1_000_201, "channel" => 4, "channel_name" => "#bot"),
+      )
+      meshcore_harness.insert_message(
+        db, base_message.merge("id" => 1_000_202, "channel" => 6, "channel_name" => "#bot"),
+      )
+      expect(message_count(db)).to eq(1)
     ensure
       db&.close
     end

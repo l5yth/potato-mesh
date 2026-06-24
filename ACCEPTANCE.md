@@ -1608,3 +1608,43 @@ remain green:**
 - **B1** (all suites). The only contract change is the additive `nodes` publish on
   message ingest (a new SSE event, documented in `CONTRACTS.md`); no POST/GET shape
   changes, so **C2** and the Python suite are unaffected.
+
+---
+
+## Bugfix: MeshCore cross-ingestor dedup keys on the stable channel name
+
+A single physical MeshCore channel message heard by two ingestors that store the
+same logical channel at **different local channel-slot indices** was stored twice.
+The per-receiver `channel` index is not stable across ingestors (e.g. `#bot` sits
+at slot 4 on one device and slot 6 on another), yet it fed both the ingestor
+fingerprint discriminator (`c<N>` → two different `messages.id` values) and the
+#756 web content-dedup SELECT (`AND channel = ?` → no match), so neither dedup
+layer collapsed the duplicate. Fix (web-only, no wire change): the content-dedup
+matches on the sender-stable `channel_name` (NULL-safe) instead of the local
+`channel` index, so the safety net collapses the duplicate at the system of record
+regardless of differing ids/slots. Strengthens **C5**.
+
+### MD-A1 — Same message on different local channel slots collapses to one row
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "meshcore content dedup" )
+```
+**Expected:** pass, including "collapses the same meshcore channel message heard on
+different local channel indices": two meshcore messages with identical `from_id` /
+`to_id` / `text` / in-window `rx_time` and the **same `channel_name`** ("#bot") but
+**different `channel` indices** (4 vs 6) and different ids collapse to a **single**
+stored row. Companion examples still hold: messages with a **different
+`channel_name`** are kept separate (the legitimate distinct-channel case), and
+different `text` / `to_id` / beyond-window `rx_time` stay separate.
+
+### MD-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and required to remain green: **C5** (cross-ingestor
+dedup by id — now strengthened), the other #756 content-dedup examples (window
+inclusivity, different text/recipient), and **B1**. The pre-existing "does not
+collapse two meshcore messages on different channels" example is **updated** to use
+different channel *names* (the stable identifier) rather than different local
+indices — it is updated, not removed. No POST/GET/event contract change and no
+ingestor change, so **C2**, `CONTRACTS.md`, and the Python suite are unaffected.
