@@ -44,18 +44,11 @@ module PotatoMesh
         where_clauses << "m.rx_time >= ?"
         params << since_threshold
 
-        # Upper-bound cursor for backward pagination (issue #796).  When set,
-        # +before+ is an *inclusive* ceiling on +rx_time+: the client walks it
-        # backward (newest -> oldest), passing the oldest +rx_time+ of each page
-        # as the next cursor and de-duplicating by +id+ client-side, so rows that
-        # share the boundary second are never skipped.  Because the cursor only
-        # ever *narrows* the result set, the seven-day floor above still bounds
-        # the window — callers cannot use +before+ to reach further back.
-        before_cursor = coerce_positive_or_nil(before)
-        if before_cursor
-          where_clauses << "m.rx_time <= ?"
-          params << before_cursor
-        end
+        # Inclusive upper-bound cursor for backward pagination (issue #796;
+        # SPEC BP1-BP3), shared with every bulk collection via the helper.  It
+        # only ever *narrows*, so the seven-day floor above still bounds the
+        # window — callers cannot use +before+ to reach further back.
+        append_before_filter(where_clauses, params, before, column: "m.rx_time")
 
         unless include_encrypted
           where_clauses << "COALESCE(TRIM(m.encrypted), '') = ''"

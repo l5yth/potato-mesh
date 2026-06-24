@@ -342,3 +342,44 @@ helper + import-map builder) and the asset references in `views/layouts/app.erb`
 | **AV3** | **Full module-graph busting via import map.** Because `?v=` on an entry-point URL does **not** propagate to that module's relative `import './x.js'`, the layout `<head>` emits exactly one `<script type="importmap">` (before any module loads) mapping every served production `/assets/js/**/*.js` module (excluding `__tests__`) to its `?v=<APP_VERSION>` URL. This invalidates the whole transitive graph (e.g. `main.js` + its 33 imports), not just the entry points. **Safety property:** a module absent from the map degrades to today's unversioned-but-working load — a missing entry can never break a working import. Browsers without import-map support degrade to today's behavior (entry points still busted via AV2). | interview |
 | **AV4** | **Scope = JS + CSS only; native, no new egress.** Only executable/style assets are versioned (all JS + `base.css`). Images, favicons, and SVG icons keep today's `Last-Modified`/`ETag` revalidation (a stale logo is cosmetic, not behavioral). The mechanism uses the native browser import-map feature — **no new dependency, build step, external host, or analytics param** — so apex (I), privacy (II), federation (III), parity (IV), fixed-stack (D7), contract (D8), and no-phone-home (D11) all hold unchanged. The version query is not part of any `/api/*` contract (D8): Sinatra serves the same static file regardless of query string. | interview |
 | **AV5** | **Engineering bar (D9).** The helper and import-map builder ship with 100% unit tests + RDoc, Apache headers, `rufo`-clean; all existing suites stay green. View/app specs that assert exact asset markup are **updated** to the versioned form, not removed. | CLAUDE.md |
+
+---
+
+## Feature: Uniform backward pagination (`?before=`) for bulk collection APIs
+
+Generalizes the `/api/messages` backward-pagination cursor (issue #796, **C7**) to
+the other five bulk collection GETs so a client can page **backward through** the
+visibility window instead of stalling at the newest `MAX_QUERY_LIMIT` (1000) rows.
+Motivated by an external consumer (`l5yth/meshint`) that could not retrieve more
+than 1000 nodes from `GET /api/nodes`. Read-side only; integrates with the GET
+routes in `web/lib/potato_mesh/application/routes/api.rb`, the query helpers in
+`web/lib/potato_mesh/application/queries/` (`node_queries.rb`,
+`telemetry_queries.rb`, `federation_queries.rb`; `common.rb` already provides the
+`coerce_positive_or_nil` cursor coercion), and the GET-window documentation in
+`data/mesh_ingestor/CONTRACTS.md`.
+
+**Conflict check against existing decisions.** *D8 (stable contract + GET window
+floors)* — **extends**: `before` is a new optional, additive parameter (absent ⇒
+today's behavior) and only ever *narrows*, so it needs no version bump and no
+federation-compat fallback (unlike the 0.7.0 `/api/stats` break, **S1**). *C4
+(floors cannot be widened)* / *C7 (messages `before`)* — **extends**: the proven
+#796 keyset cursor is applied uniformly; the `MAX(since, floor)` clamp and
+`MAX_QUERY_LIMIT` cap are untouched. *Invariant I (apex)* — **consistent**:
+read-side query param, no broker/dependency/egress. *Invariant II (privacy)* —
+**consistent**: opt-out / `CLIENT_HIDDEN` / private-mode gates are unchanged and a
+narrowing upper bound can never surface a hidden row; no new on-disk retention.
+*Invariant IV (parity)* — **extends**: the cursor is protocol-neutral and composes
+with the existing `?protocol=` filter. No invariant is contradicted, so this
+feature adds new decisions without amending any prior one.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **BP1** | **Uniform `?before=` on the six bulk collections.** `GET /api/{nodes, positions, telemetry, neighbors, traces, ingestors}` accept an optional `?before=<unix_seconds>` upper-bound cursor, mirroring the existing `GET /api/messages` behavior (**C7**). `before` is an **inclusive** (`<=`) ceiling on each route's **primary sort column** — the column it already `ORDER BY … DESC`: `rx_time` for `positions`/`telemetry`/`neighbors`/`traces`, `last_heard` for `nodes`, `last_seen_time` for `ingestors`. The per-id routes (`/api/.../:id`) and `/api/instances` are **out of scope**. | interview |
+| **BP2** | **Narrows only — never widens (preserves C4/D8).** `before` composes with the existing server-side window floor as an *additional upper bound*: the effective window is `MAX(since, floor) ≤ t ≤ before`. Because `before` only removes *newer* rows, no value can reach past the 7-day / 28-day floor (a `before` older than the floor simply yields fewer/zero rows; a `before` in the future is a no-op). It therefore needs **no clamp** of its own (unlike `since`, which is clamped *up* to the floor). A non-positive or non-integer `before` is ignored as absent via the existing `coerce_positive_or_nil`, identical to messages. `MAX_QUERY_LIMIT` per request is unchanged — `before` pages *through* the window, not *beyond* it. | interview + code |
+| **BP3** | **Keyset mechanics identical to messages (#796).** The caller walks newest → oldest: each page is `ORDER BY <sort_col> DESC LIMIT n`, then the **oldest `<sort_col>` value of the page** becomes the next `before`, de-duplicating by the collection's id client-side. The inclusive boundary deliberately overlaps consecutive pages by any rows sharing the boundary second so none is skipped; client dedup collapses the overlap. This is the established **C7 / PL-A2** walk applied uniformly. | interview + code |
+| **BP4** | **Additive & backward-compatible — no version bump.** `before` is a new optional query parameter; when absent every route behaves exactly as today, and existing consumers (including the federation crawl) are unaffected. Unlike **S1**, this is *not* a breaking change: no manifest version bump and no old/new shape fallback are required. **Extends** D8's backward-compatibility rule rather than amending it. | interview |
+| **BP5** | **Protocol-neutral (Invariant IV).** The cursor is identical for all rows regardless of protocol and composes with the existing `?protocol=` filter; neither Meshtastic nor MeshCore is privileged. | interview |
+| **BP6** | **Apex & privacy untouched (Invariants I/II).** Read-side only — no broker, dependency, or egress (I). The existing opt-out, `CLIENT_HIDDEN`, and private-mode behaviors are unchanged, and because `before` only narrows it can never expose a row a route would otherwise hide (II). No new on-disk retention is introduced. | interview + code |
+| **BP7** | **Cache-bypass parity with messages.** A request carrying `before` (like one carrying `since > 0`) **bypasses** the shared `ApiCache` response cache, which only memoises the default newest-page feed; the cache key for the cached (no-`before`, no-`since`) path is unchanged, so history pages never pollute or evict the hot newest-page entry. | code |
+| **BP8** | **Engineering bar (D9).** Ships with 100% unit tests across the route and query layers (mirroring the existing messages-`before` specs), RDoc on every edited method, Apache headers intact, `rufo`-clean; all existing Ruby/JS/Python suites stay green. | CLAUDE.md |
+| **BP9** | **Out of scope (deferred, tracked).** This feature ships the **server capability only**. (a) Wiring the browser data cache / JS data-fetchers to *backfill* collections via `before` (beyond the existing messages pager) is a tracked follow-up — the capability is unblocked, not wired. (b) The lone camelCase query params `windowSeconds` / `bucketSeconds` on `GET /api/telemetry/aggregated` and (c) the missing `limit` / `since` / `protocol` params on `GET /api/instances` are recorded here as known API-handling inconsistencies and tracked as **separate follow-ups**, deliberately excluded to keep this feature compartmentalized. | interview |

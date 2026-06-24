@@ -112,6 +112,39 @@ RSpec.describe "Potato Mesh Sinatra app" do
     ensure_self_instance_record!
   end
 
+  # Walk a bulk collection endpoint backward with the +before+ cursor the way an
+  # API client must, returning the set of unique record ids recovered.  Generic
+  # over the route path, the id field used for client-side de-duplication, and
+  # the primary sort field the cursor advances on (SPEC BP1-BP3).
+  #
+  # @param path [String] collection route, e.g. ``"/api/positions"``.
+  # @param id_key [String] response field uniquely identifying a row.
+  # @param sort_key [String] response field the +before+ cursor bounds.
+  # @return [Array] the de-duplicated ids recovered across every page.
+  def walk_before(path, id_key:, sort_key:)
+    cap = PotatoMesh::App::Queries::MAX_QUERY_LIMIT
+    seen = {}
+    cursor = nil
+    pages = 0
+    loop do
+      url = "#{path}?limit=#{cap}"
+      url += "&before=#{cursor}" if cursor
+      get url
+      expect(last_response).to be_ok
+      rows = JSON.parse(last_response.body)
+      # The per-request cap is never exceeded by a single response.
+      expect(rows.size).to be <= cap
+      added = rows.reject { |row| seen.key?(row[id_key]) }
+      added.each { |row| seen[row[id_key]] = true }
+      pages += 1
+      break if rows.size < cap # window exhausted
+      break if added.empty?    # no progress (server ignoring `before`)
+      break if pages >= 10     # hard safety bound against an infinite loop
+      cursor = rows.map { |row| row[sort_key] }.min
+    end
+    seen.keys
+  end
+
   # Retrieve the number of rows stored in the instances table.
   #
   # @return [Integer] count of stored instance records.
@@ -6107,6 +6140,204 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/nodes" do
+    # Regression-style coverage for SPEC BP1-BP6: more than MAX_QUERY_LIMIT
+    # nodes inside the seven-day window must all remain reachable by paging
+    # backward with an inclusive `before` cursor (the `meshint` 1000-node cap).
+    it "exposes every in-window node through before pagination" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+
+      cap = PotatoMesh::App::Queries::MAX_QUERY_LIMIT
+      total = cap + 500
+      # Seed more than one page of nodes, all inside the seven-day window, each
+      # with a distinct last_heard so the keyset cursor is unambiguous.
+      with_db do |db|
+        db.transaction do
+          total.times do |i|
+            lh = now - 60 - i * 30
+            db.execute(
+              "INSERT INTO nodes(node_id, num, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?,?)",
+              ["!%08x" % (0x1000 + i), 0x1000 + i, "n#{i}", "Node #{i}", "TBEAM", "CLIENT", lh, lh],
+            )
+          end
+        end
+      end
+
+      # Walk the listing the way an external client (l5yth/meshint) must: pull a
+      # page, then ask for everything at-or-before the oldest last_heard already
+      # seen.  Without an upper-bound cursor the server cannot return anything
+      # past the newest `cap` rows, so the walk would stall before reaching them.
+      recovered = walk_before("/api/nodes", id_key: "node_id", sort_key: "last_heard")
+
+      expect(recovered.size).to eq(total)
+    end
+
+    it "before cannot widen the window past the floor and ignores a non-positive cursor" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      stale_last = now - (PotatoMesh::Config.week_seconds + 4 * 60 * 60)
+      fresh_last = now - 30
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?)",
+          ["!stalenode", "stal", "Stale", "TBEAM", "CLIENT", stale_last, stale_last],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?)",
+          ["!freshnode", "frsh", "Fresh", "TBEAM", "CLIENT", fresh_last, fresh_last],
+        )
+      end
+
+      # A `before` at "now" cannot reach the stale row: the seven-day floor still
+      # clamps the lower bound, so `before` only ever narrows, never widens.
+      get "/api/nodes?before=#{now}"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(ids).to include("!freshnode")
+      expect(ids).not_to include("!stalenode")
+
+      # A `before` older than the floor returns nothing beyond the floor (the only
+      # in-window row is newer than this ceiling, so the result is empty).
+      get "/api/nodes?before=#{stale_last}"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to be_empty
+
+      # A non-positive / non-integer `before` is ignored (treated as absent), so
+      # the fresh row still comes back rather than being filtered by a bogus
+      # ceiling — parity with the /api/messages coercion.
+      ["0", "-5", "abc"].each do |bogus|
+        get "/api/nodes?before=#{bogus}"
+        expect(last_response).to be_ok
+        ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+        expect(ids).to include("!freshnode"), "before=#{bogus} should be ignored"
+      end
+    end
+
+    it "before pagination boundary is inclusive and protocol-neutral" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      boundary = now - 100
+
+      with_db do |db|
+        # Two nodes sharing the exact boundary last_heard, one per protocol, plus
+        # a newer node above the boundary.
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?,?)",
+          ["!edgecore0", "ec", "Edge Core", "TBEAM", "CLIENT", boundary, boundary, "meshcore"],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?,?)",
+          ["!edgetast0", "et", "Edge Tastic", "TBEAM", "CLIENT", boundary, boundary, "meshtastic"],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?,?)",
+          ["!newer0001", "nw", "Newer", "TBEAM", "CLIENT", now - 10, now - 10, "meshcore"],
+        )
+      end
+
+      # Inclusive <= ceiling: both rows sharing the boundary second are returned
+      # when the boundary is used as `before` (the one-row overlap a client dedups).
+      get "/api/nodes?before=#{boundary}"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(ids).to include("!edgecore0", "!edgetast0")
+      expect(ids).not_to include("!newer0001")
+
+      # `before` composes with `protocol`, privileging neither protocol.
+      get "/api/nodes?before=#{boundary}&protocol=meshcore"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(ids).to eq(["!edgecore0"])
+    end
+
+    it "before pagination honors privacy and opt-out filters" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      marker = PotatoMesh::Config.node_opt_out_marker
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?)",
+          ["!plainnode", "pln", "Plain", "TBEAM", "CLIENT", now - 50, now - 50],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?)",
+          ["!optoutnod", "opt", "Quiet #{marker} One", "TBEAM", "CLIENT", now - 60, now - 60],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, hw_model, role, last_heard, first_heard) VALUES(?,?,?,?,?,?,?)",
+          ["!hiddennod", "hid", "Hidden", "TBEAM", "CLIENT_HIDDEN", now - 70, now - 70],
+        )
+      end
+
+      # A backward-paginated request still applies the opt-out filter: a node
+      # carrying the marker never appears even when within the `before` ceiling.
+      get "/api/nodes?before=#{now}"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(ids).to include("!plainnode")
+      expect(ids).not_to include("!optoutnod")
+
+      # In private mode the CLIENT_HIDDEN exclusion also still applies under a
+      # `before` walk — narrowing can never surface a hidden row (Invariant II).
+      allow(PotatoMesh::Config).to receive(:private_mode_enabled?).and_return(true)
+      get "/api/nodes?before=#{now}"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(ids).to include("!plainnode")
+      expect(ids).not_to include("!hiddennod")
+      expect(ids).not_to include("!optoutnod")
+    end
+
+    it "before bypasses the response cache" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      # Start from a clean cache so a prior example's entry cannot mask the
+      # behaviour under test (the store is process-global with a monotonic TTL).
+      PotatoMesh::App::ApiCache.invalidate_all
+
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard) VALUES(?,?,?)",
+          ["!cacheaaaa", now - 50, now - 50],
+        )
+      end
+
+      # Prime the newest-page cache with just node A.
+      get "/api/nodes?limit=3"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body).map { |r| r["node_id"] }).to eq(["!cacheaaaa"])
+
+      # Insert node B directly (no POST, so the cache is not invalidated).
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, last_heard, first_heard) VALUES(?,?,?)",
+          ["!cachebbbb", now - 40, now - 40],
+        )
+      end
+
+      # A plain request is still served the cached page (proves the cache is live).
+      get "/api/nodes?limit=3"
+      expect(JSON.parse(last_response.body).map { |r| r["node_id"] }).to eq(["!cacheaaaa"])
+
+      # A `before` request bypasses the cache and sees the fresh node B.
+      get "/api/nodes?limit=3&before=#{now}"
+      expect(last_response).to be_ok
+      before_ids = JSON.parse(last_response.body).map { |r| r["node_id"] }
+      expect(before_ids).to include("!cacheaaaa", "!cachebbbb")
+
+      # Issuing the `before` request did not overwrite the hot newest-page cache
+      # entry — a subsequent plain request still returns the cached page.
+      get "/api/nodes?limit=3"
+      expect(JSON.parse(last_response.body).map { |r| r["node_id"] }).to eq(["!cacheaaaa"])
+    end
+
     it "returns the stored nodes with derived timestamps" do
       import_nodes_fixture
 
@@ -6968,6 +7199,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/positions" do
+    it "exposes every in-window row through before pagination" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      total = PotatoMesh::App::Queries::MAX_QUERY_LIMIT + 5
+      with_db do |db|
+        db.transaction do
+          total.times do |i|
+            rx = now - 60 - i * 30
+            db.execute(
+              "INSERT INTO positions(id, node_id, rx_time, rx_iso, latitude, longitude) VALUES(?,?,?,?,?,?)",
+              [1000 + i, "!pos00001", rx, Time.at(rx).utc.iso8601, 1.0, 2.0],
+            )
+          end
+        end
+      end
+      recovered = walk_before("/api/positions", id_key: "id", sort_key: "rx_time")
+      expect(recovered.size).to eq(total)
+    end
+
     it "returns stored positions ordered by receive time" do
       node_id = "!specfetch"
       rx_times = [reference_time.to_i - 50, reference_time.to_i - 10]
@@ -7122,6 +7373,31 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/neighbors" do
+    it "exposes every in-window row through before pagination" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      total = PotatoMesh::App::Queries::MAX_QUERY_LIMIT + 5
+      with_db do |db|
+        db.transaction do
+          # neighbors carries FK(node_id) and FK(neighbor_id) -> nodes(node_id),
+          # so both endpoints must exist as nodes before the relationship rows.
+          db.execute("INSERT INTO nodes(node_id, last_heard, first_heard) VALUES(?,?,?)", ["!nbr00001", now, now])
+          total.times do |i|
+            rx = now - 60 - i * 30
+            nbr = "!%08x" % (0x20000 + i)
+            db.execute("INSERT INTO nodes(node_id, last_heard, first_heard) VALUES(?,?,?)", [nbr, rx, rx])
+            db.execute(
+              "INSERT INTO neighbors(node_id, neighbor_id, rx_time) VALUES(?,?,?)",
+              ["!nbr00001", nbr, rx],
+            )
+          end
+        end
+      end
+      recovered = walk_before("/api/neighbors", id_key: "neighbor_id", sort_key: "rx_time")
+      expect(recovered.size).to eq(total)
+    end
+
     it "excludes neighbor records older than twenty-eight days from both bulk and per-id queries" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)
@@ -7261,6 +7537,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/telemetry" do
+    it "exposes every in-window row through before pagination" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      total = PotatoMesh::App::Queries::MAX_QUERY_LIMIT + 5
+      with_db do |db|
+        db.transaction do
+          total.times do |i|
+            rx = now - 60 - i * 30
+            db.execute(
+              "INSERT INTO telemetry(id, node_id, rx_time, rx_iso) VALUES(?,?,?,?)",
+              [1000 + i, "!tel00001", rx, Time.at(rx).utc.iso8601],
+            )
+          end
+        end
+      end
+      recovered = walk_before("/api/telemetry", id_key: "id", sort_key: "rx_time")
+      expect(recovered.size).to eq(total)
+    end
+
     it "returns stored telemetry ordered by receive time" do
       post "/api/telemetry", telemetry_fixture.to_json, auth_headers
       expect(last_response.status).to eq(201)
@@ -7680,6 +7976,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/traces" do
+    it "exposes every in-window row through before pagination" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      total = PotatoMesh::App::Queries::MAX_QUERY_LIMIT + 5
+      with_db do |db|
+        db.transaction do
+          total.times do |i|
+            rx = now - 60 - i * 30
+            db.execute(
+              "INSERT INTO traces(id, rx_time, rx_iso) VALUES(?,?,?)",
+              [1000 + i, rx, Time.at(rx).utc.iso8601],
+            )
+          end
+        end
+      end
+      recovered = walk_before("/api/traces", id_key: "id", sort_key: "rx_time")
+      expect(recovered.size).to eq(total)
+    end
+
     it "returns stored traces ordered by receive time" do
       clear_database
       post "/api/traces", trace_fixture.to_json, auth_headers
@@ -7785,6 +8101,26 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/ingestors" do
+    it "exposes every in-window row through before pagination" do
+      clear_database
+      allow(Time).to receive(:now).and_return(reference_time)
+      now = reference_time.to_i
+      total = PotatoMesh::App::Queries::MAX_QUERY_LIMIT + 5
+      with_db do |db|
+        db.transaction do
+          total.times do |i|
+            ls = now - 60 - i * 30
+            db.execute(
+              "INSERT INTO ingestors(node_id, start_time, last_seen_time, version) VALUES(?,?,?,?)",
+              ["!%08x" % (0x30000 + i), ls, ls, "1.0.0"],
+            )
+          end
+        end
+      end
+      recovered = walk_before("/api/ingestors", id_key: "node_id", sort_key: "last_seen_time")
+      expect(recovered.size).to eq(total)
+    end
+
     it "uses the twenty-eight-day extended window so slow-tick ingestors stay visible" do
       clear_database
       allow(Time).to receive(:now).and_return(reference_time)

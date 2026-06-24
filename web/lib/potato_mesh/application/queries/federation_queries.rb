@@ -22,8 +22,10 @@ module PotatoMesh
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @param before [Integer, nil] inclusive upper-bound +rx_time+ cursor for
+      #   backward pagination (SPEC BP1); rows newer than this are excluded.
       # @return [Array<Hash>] compacted position rows suitable for API responses.
-      def query_positions(limit, node_ref: nil, since: 0, protocol: nil)
+      def query_positions(limit, node_ref: nil, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -43,6 +45,10 @@ module PotatoMesh
           where_clauses << clause.first
           params.concat(clause.last)
         end
+
+        # Inclusive upper-bound cursor for backward pagination (SPEC BP1);
+        # bounds the +rx_time+ sort column.
+        append_before_filter(where_clauses, params, before, column: "rx_time")
 
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_protocol_filter(where_clauses, params, protocol)
@@ -84,8 +90,10 @@ module PotatoMesh
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window for collections.
+      # @param before [Integer, nil] inclusive upper-bound +rx_time+ cursor for
+      #   backward pagination (SPEC BP1); rows newer than this are excluded.
       # @return [Array<Hash>] compacted neighbor rows suitable for API responses.
-      def query_neighbors(limit, node_ref: nil, since: 0, protocol: nil)
+      def query_neighbors(limit, node_ref: nil, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -110,6 +118,10 @@ module PotatoMesh
         # Either endpoint of the neighbour relationship may carry the
         # opt-out marker — filter both so a silenced node never appears as
         # a source or destination of an RF link.
+        # Inclusive upper-bound cursor for backward pagination (SPEC BP1);
+        # bounds the +rx_time+ sort column.
+        append_before_filter(where_clauses, params, before, column: "rx_time")
+
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("node_id"))
         append_opt_out_filter(where_clauses, params, opt_out_node_id_filter("neighbor_id"))
         append_protocol_filter(where_clauses, params, protocol)
@@ -141,8 +153,10 @@ module PotatoMesh
       # @param limit [Integer] maximum number of rows to return.
       # @param node_ref [String, Integer, nil] optional node reference to scope results.
       # @param since [Integer] unix timestamp threshold applied in addition to the rolling window.
+      # @param before [Integer, nil] inclusive upper-bound +rx_time+ cursor for
+      #   backward pagination (SPEC BP1); rows newer than this are excluded.
       # @return [Array<Hash>] compacted trace rows suitable for API responses.
-      def query_traces(limit, node_ref: nil, since: 0, protocol: nil)
+      def query_traces(limit, node_ref: nil, since: 0, before: nil, protocol: nil)
         limit = coerce_query_limit(limit)
         db = open_database(readonly: true)
         db.results_as_hash = true
@@ -173,6 +187,10 @@ module PotatoMesh
         # filtered separately at hydration time so a trace that only relays
         # through a silenced node still surfaces with the offending hop
         # removed.
+        # Inclusive upper-bound cursor for backward pagination (SPEC BP1);
+        # bounds the +rx_time+ sort column.
+        append_before_filter(where_clauses, params, before, column: "rx_time")
+
         append_opt_out_filter(where_clauses, params, opt_out_node_num_filter("src"))
         append_opt_out_filter(where_clauses, params, opt_out_node_num_filter("dest"))
         append_protocol_filter(where_clauses, params, protocol)

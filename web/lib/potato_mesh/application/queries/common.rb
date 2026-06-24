@@ -142,6 +142,40 @@ module PotatoMesh
         params << protocol
       end
 
+      # Append an inclusive upper-bound (+before+) cursor to an in-flight WHERE
+      # clause builder for backward pagination of a bulk collection endpoint
+      # (SPEC BP1-BP3; the +/api/messages+ #796 cursor generalised to every
+      # list route).
+      #
+      # +before+ is an *inclusive* (+<=+) ceiling on the route's primary sort
+      # column — the column it already +ORDER BY ... DESC+ — so a client can
+      # walk the feed newest -> oldest by passing the oldest sort value of each
+      # page as the next +before+ and de-duplicating by id, never skipping a row
+      # that shares the boundary second.  Because the cursor only ever *narrows*
+      # the result set it cannot widen the server-side window floor
+      # (SPEC BP2 / acceptance C4): a +before+ older than the floor merely
+      # returns fewer rows, and a +before+ in the future is a no-op.
+      # Non-positive / non-integer values are ignored as absent via
+      # {coerce_positive_or_nil}, matching the messages route.
+      #
+      # @param where_clauses [Array<String>] accumulating WHERE conditions (mutated).
+      # @param params [Array] accumulating bind parameters (mutated).
+      # @param before [Object] raw +before+ cursor from the request.
+      # @param column [String] qualified sort column to bound (e.g. ``"last_heard"``,
+      #   ``"m.rx_time"``).  Must match {SAFE_COLUMN_IDENTIFIER}; arbitrary user
+      #   input is not accepted.
+      # @return [Integer, nil] the coerced cursor that was applied, or +nil+ when
+      #   +before+ was absent/invalid and no clause was added.
+      def append_before_filter(where_clauses, params, before, column:)
+        assert_safe_column_identifier!(column)
+        cursor = coerce_positive_or_nil(before)
+        return nil unless cursor
+
+        where_clauses << "#{column} <= ?"
+        params << cursor
+        cursor
+      end
+
       # Normalise a caller-provided limit to a sane, positive integer.
       #
       # @param limit [Object] value coerced to an integer.
