@@ -17,8 +17,9 @@
 /**
  * Live-update flash helper.
  *
- * Applies a brief (<100 ms) white highlight to a DOM element when a live SSE
- * update lands on it (SPEC VF5). The visual itself — and its suppression under
+ * Applies a ~1.2 s white->role-colour fade to a DOM element when a live SSE
+ * update lands on it (SPEC LV1/LV2/LV3, amends VF5). The visual itself — and its
+ * suppression under
  * `prefers-reduced-motion` — lives entirely in CSS (`.live-flash` in
  * `base.css`); this module only toggles the class, so it has no dependency on a
  * real layout engine and is fully unit-testable. The class is removed after the
@@ -30,8 +31,14 @@
 /** CSS class that drives the one-shot highlight animation. */
 export const FLASH_CLASS = 'live-flash';
 
-/** Highlight lifetime in ms; kept below 100 ms per VF5. Matches the keyframe. */
-export const FLASH_DURATION_MS = 90;
+/** Element highlight lifetime in ms; the role-colour fade keyframe runs ~1.2 s (LV1). */
+export const FLASH_DURATION_MS = 1200;
+
+/** Marker white-pulse lifetime in ms (interim; the LV5 wave layers on top). */
+export const MARKER_FLASH_DURATION_MS = 90;
+
+/** Property key holding an element's pending flash-removal timer (LV2). */
+const FLASH_TIMER_KEY = '__liveFlashTimer';
 
 /**
  * Default removal scheduler (real timer). Injectable so tests stay deterministic.
@@ -41,7 +48,21 @@ export const FLASH_DURATION_MS = 90;
  * @returns {*} The timer handle.
  */
 function defaultSchedule(callback, delay) {
-  return setTimeout(callback, delay);
+  const handle = setTimeout(callback, delay);
+  // Don't let a pending fade-removal timer keep a Node process alive (tests).
+  if (handle && typeof handle.unref === 'function') handle.unref();
+  return handle;
+}
+
+/**
+ * Default timer canceller (pairs with {@link defaultSchedule}). Injectable so
+ * tests can assert that a re-flash cancels the prior removal timer.
+ *
+ * @param {*} handle Timer handle returned by the scheduler.
+ * @returns {void}
+ */
+function defaultCancel(handle) {
+  clearTimeout(handle);
 }
 
 /**
@@ -63,10 +84,24 @@ export function flashElement(element, options = {}) {
   }
   const duration = typeof options.duration === 'number' ? options.duration : FLASH_DURATION_MS;
   const schedule = typeof options.schedule === 'function' ? options.schedule : defaultSchedule;
-  // Restart the animation by clearing any in-flight highlight before re-adding.
+  const cancel = typeof options.cancel === 'function' ? options.cancel : defaultCancel;
+  // Cancel any in-flight removal timer so a re-flash mid-fade restarts cleanly
+  // and is never cut short by the previous timer (LV2 stacked, per-element timers).
+  if (element[FLASH_TIMER_KEY] != null) {
+    cancel(element[FLASH_TIMER_KEY]);
+    element[FLASH_TIMER_KEY] = null;
+  }
+  // Restart the animation: clearing the class and forcing a style read between
+  // remove and re-add restarts the CSS animation even while one is mid-flight.
   element.classList.remove(FLASH_CLASS);
+  // Reading offsetWidth forces the reflow that restarts the animation; harmless
+  // (undefined) when no layout engine is present (tests).
+  void element.offsetWidth;
   element.classList.add(FLASH_CLASS);
-  schedule(() => element.classList.remove(FLASH_CLASS), duration);
+  element[FLASH_TIMER_KEY] = schedule(() => {
+    element.classList.remove(FLASH_CLASS);
+    element[FLASH_TIMER_KEY] = null;
+  }, duration);
   return true;
 }
 
@@ -84,7 +119,7 @@ export function flashElement(element, options = {}) {
  */
 export function flashMarker(marker, options = {}) {
   if (!marker || typeof marker.setStyle !== 'function') return false;
-  const duration = typeof options.duration === 'number' ? options.duration : FLASH_DURATION_MS;
+  const duration = typeof options.duration === 'number' ? options.duration : MARKER_FLASH_DURATION_MS;
   const schedule = typeof options.schedule === 'function' ? options.schedule : defaultSchedule;
   const current = marker.options || {};
   const original = { fillColor: current.fillColor, fillOpacity: current.fillOpacity };

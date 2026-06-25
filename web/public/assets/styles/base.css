@@ -2554,22 +2554,46 @@ body.dark #map .leaflet-tile.map-tiles {
   .markdown-body h2 { font-size: 1.15em; }
 }
 
-/* Live-update flash (SPEC VF5): a brief (<100ms) white highlight applied to a
-   node row / map marker / chat message / channel tab when a live SSE update
-   lands on it. Uses an inset box-shadow overlay so there is no layout shift, and
-   self-completes (no fill) so the element reverts to its normal appearance. */
-@keyframes live-flash-highlight {
-  from { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.85); }
-  to { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0); }
+/* Live-update highlight (SPEC LV1/LV2/LV3, amends VF5): a ~1.2s fade applied to a
+   node row / chat message row when a live SSE update lands on it. It starts
+   white, fades through the element's role colour (the --flash-role-color custom
+   property stamped at render time) with increasing transparency, then clears.
+   An inset box-shadow overlay means there is no layout shift; each element runs
+   its own animation, so concurrent updates stack independently (LV2). */
+@keyframes live-flash-fade {
+  0% { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.9); }
+  30% { box-shadow: inset 0 0 0 100vmax var(--flash-role-color, rgba(255, 255, 255, 0.55)); }
+  100% { box-shadow: inset 0 0 0 100vmax transparent; }
 }
 
 .live-flash {
-  animation: live-flash-highlight 90ms ease-out;
+  animation: live-flash-fade 1.2s ease-out;
 }
 
-/* Honor reduced-motion: data still updates live, only the flash is withheld. */
+/* Map-marker wave (SPEC LV5): an expanding ring emitted from a flashed marker.
+   The ring grows from ~12px radius and fades toward the role colour over ~1.2s.
+   Rendered as a Leaflet divIcon, so it is a positioned overlay with no layout
+   shift; the marker layer removes it after the animation completes. */
+@keyframes live-flash-wave {
+  0% { transform: scale(1); opacity: 0.85; }
+  100% { transform: scale(3.5); opacity: 0; }
+}
+
+.live-flash-wave {
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  border-radius: 50%;
+  border: 2px solid var(--flash-role-color, rgba(255, 255, 255, 0.85));
+  pointer-events: none;
+  animation: live-flash-wave 1.2s ease-out forwards;
+}
+
+/* Honor reduced-motion: data still updates live, only the highlight/wave is
+   withheld. */
 @media (prefers-reduced-motion: reduce) {
-  .live-flash {
+  .live-flash,
+  .live-flash-wave {
     animation: none;
   }
 }

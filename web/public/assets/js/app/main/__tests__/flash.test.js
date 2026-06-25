@@ -40,8 +40,32 @@ function fakeElement() {
   };
 }
 
-test('FLASH_DURATION_MS is below 100ms (VF5)', () => {
-  assert.ok(FLASH_DURATION_MS < 100);
+test('FLASH_DURATION_MS is ~1.2s for the LV1 role-colour fade', () => {
+  assert.equal(FLASH_DURATION_MS, 1200);
+});
+
+test('flashElement cancels a prior removal timer when re-flashed (LV2 stacking)', () => {
+  const el = fakeElement();
+  const cancelled = [];
+  let n = 0;
+  const schedule = () => { n += 1; return `t${n}`; };
+  const cancel = (h) => cancelled.push(h);
+  flashElement(el, { schedule, cancel }); // arms t1
+  flashElement(el, { schedule, cancel }); // cancels t1, arms t2
+  assert.deepEqual(cancelled, ['t1']);
+  assert.equal(el.classList.contains(FLASH_CLASS), true, 're-flash keeps the class on');
+});
+
+test('flashElement clears its per-element handle once the removal timer fires', () => {
+  const el = fakeElement();
+  let removal = null;
+  flashElement(el, { schedule: (cb) => { removal = cb; return 'h'; } });
+  removal(); // fire the scheduled removal
+  assert.equal(el.classList.contains(FLASH_CLASS), false);
+  // A later flash must not try to cancel the now-stale handle.
+  const cancelled = [];
+  flashElement(el, { schedule: () => 'h2', cancel: (h) => cancelled.push(h) });
+  assert.deepEqual(cancelled, []);
 });
 
 test('flashElement adds the class immediately, then removes it when the timer fires', () => {

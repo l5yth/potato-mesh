@@ -108,6 +108,7 @@ import { maxRecordTimestamp, minRecordTimestamp, mergeById, mergeByCompositeKey,
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
+  getRoleFlashColor,
   getRoleKey,
   getRoleRenderPriority,
   getRoleTextColor,
@@ -3470,6 +3471,14 @@ export function initializeApp(config) {
       if (messageId) {
         node.dataset.messageId = messageId;
         if (namespace !== 'log') messageTabId.set(messageId, namespace);
+        // Stamp the sender's role colour so the live-update fade lands on it
+        // (LV3). Falls back to the CSS default when the sender node is unknown.
+        const flashMessage = entry.item || entry.message;
+        const senderId = flashMessage && (flashMessage.from_id || flashMessage.fromId);
+        const senderNode = senderId ? nodesById.get(senderId) : null;
+        if (senderNode && node.style && typeof node.style.setProperty === 'function') {
+          node.style.setProperty('--flash-role-color', getRoleFlashColor(senderNode.role, senderNode.protocol));
+        }
       }
       const divider = getDivider(entry.ts);
       if (divider) fragment.appendChild(divider);
@@ -3621,6 +3630,11 @@ export function initializeApp(config) {
       // from the inner link's data-node-id so it never affects click handling.
       if (typeof n.node_id === 'string' && n.node_id) {
         tr.dataset.nodeRow = n.node_id;
+      }
+      // Stamp the role colour so the live-update fade lands on it (LV3); the CSS
+      // keyframe reads --flash-role-color, so the flash helper needs no colour.
+      if (tr.style && typeof tr.style.setProperty === 'function') {
+        tr.style.setProperty('--flash-role-color', getRoleFlashColor(n.role, n.protocol));
       }
       const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';

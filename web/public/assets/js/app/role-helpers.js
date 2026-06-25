@@ -245,3 +245,45 @@ export function getRoleRenderPriority(role, protocol = null) {
   const priority = meshtasticRoleRenderOrder[key];
   return typeof priority === 'number' ? priority : 0;
 }
+
+
+/**
+ * Convert a ``#rrggbb`` (or ``#rgb``) hex colour to an ``rgba(r, g, b, a)``
+ * string. Used by {@link getRoleFlashColor} to express a role colour at a fixed
+ * alpha for the live-update fade keyframe (LV3).
+ *
+ * @param {*} hex Hex colour such as ``#f3ef74`` or ``#abc``.
+ * @param {number} alpha Alpha channel in the inclusive range 0..1.
+ * @returns {?string} An ``rgba(...)`` string, or ``null`` when ``hex`` is not a
+ *   parseable 3/6-digit hex colour.
+ */
+export function hexToRgba(hex, alpha) {
+  if (typeof hex !== 'string') return null;
+  let h = hex.trim();
+  if (h[0] === '#') h = h.slice(1);
+  if (h.length === 3) {
+    h = h.split('').map(c => c + c).join('');
+  }
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  const a = typeof alpha === 'number' && alpha >= 0 && alpha <= 1 ? alpha : 1;
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+/**
+ * Role colour as a translucent ``rgba()`` string for the live-update highlight
+ * fade (SPEC LV1/LV3). Stamped onto a flashable element as the
+ * ``--flash-role-color`` custom property so the CSS keyframe can fade white
+ * through the element's role colour without any per-element JS.
+ *
+ * @param {*} role Raw role value.
+ * @param {string|null|undefined} [protocol] Protocol string from the API.
+ * @param {number} [alpha=0.55] Alpha for the mid-fade role-colour stop.
+ * @returns {string} An ``rgba(...)`` colour string (translucent white fallback
+ *   when the role colour is unparseable).
+ */
+export function getRoleFlashColor(role, protocol = null, alpha = 0.55) {
+  return hexToRgba(getRoleColor(role, protocol), alpha);
+}
