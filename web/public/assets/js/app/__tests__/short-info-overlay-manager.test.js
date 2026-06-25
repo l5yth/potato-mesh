@@ -395,3 +395,43 @@ test('rendered overlays do not swallow click events by default', () => {
   assert.ok(entry);
   assert.equal(entry.element.eventHandlers.has('click'), false);
 });
+
+
+test('reanchor carries an open overlay to a replacement anchor and survives cleanup', () => {
+  const { document, window, factory, anchor, body } = createStubDom();
+  const stack = createShortInfoOverlayStack({ document, window, factory });
+  stack.render(anchor, 'Node details');
+  assert.equal(stack.isOpen(anchor), true);
+
+  // Simulate a map re-render: the marker's DOM element is replaced by a fresh
+  // one for the same node, and the old anchor is detached from the document.
+  const newAnchor = document.createElement('span');
+  newAnchor.setBoundingRect({ left: 60, top: 70, width: 16, height: 16 });
+  body.appendChild(newAnchor);
+
+  assert.equal(stack.reanchor(anchor, newAnchor), true);
+  anchor.remove(); // the old marker element is gone
+
+  // The overlay is now keyed by the new anchor ...
+  assert.equal(stack.isOpen(anchor), false);
+  assert.equal(stack.isOpen(newAnchor), true);
+  // ... and cleanupOrphans (which closed it in the orphan test above) now keeps
+  // it open because the new anchor is still in the document (item 7).
+  stack.cleanupOrphans();
+  assert.equal(stack.isOpen(newAnchor), true);
+  assert.equal(stack.getOpenOverlays().length, 1);
+});
+
+test('reanchor is a no-op for an unknown or invalid anchor', () => {
+  const { document, window, factory, anchor } = createStubDom();
+  const stack = createShortInfoOverlayStack({ document, window, factory });
+  const other = document.createElement('span');
+  // No overlay open for `anchor` yet.
+  assert.equal(stack.reanchor(anchor, other), false);
+  stack.render(anchor, 'x');
+  // Invalid replacement (no getBoundingClientRect).
+  assert.equal(stack.reanchor(anchor, {}), false);
+  // Re-anchoring to the same element is a trivial success without re-keying.
+  assert.equal(stack.reanchor(anchor, anchor), true);
+  assert.equal(stack.isOpen(anchor), true);
+});

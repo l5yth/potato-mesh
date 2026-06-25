@@ -194,6 +194,7 @@ import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/off
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
 import { flashNodeTargets, flashMessageTargets } from './main/flash.js';
+import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
 
 /**
@@ -3897,6 +3898,11 @@ export function initializeApp(config) {
     // Capture the zoom bucket the upcoming render targets so the zoomend
     // handler can detect threshold crossings on the next zoom event.
     lastRenderedZoomBucket = currentZoomBucket();
+    // Snapshot any open marker overlay before clearing the layer (item 7):
+    // clearLayers() destroys each marker's DOM element, which would orphan an
+    // open overlay and let cleanupOrphans() close it. We re-anchor to the
+    // rebuilt markers after the render below so the overlay stays open.
+    const preservedMarkerOverlays = captureOpenMarkerOverlays(overlayStack, markerByNodeId);
     markersLayer.clearLayers();
     // Reset the node→marker map for this render so live-update flashes target
     // the current markers (SPEC VF3).
@@ -4273,6 +4279,10 @@ export function initializeApp(config) {
         },
       });
     }
+    // Re-anchor any overlay preserved above onto its rebuilt marker so it
+    // stays open across the re-render instead of being closed by
+    // cleanupOrphans (item 7).
+    restoreMarkerOverlays(overlayStack, preservedMarkerOverlays, markerByNodeId);
     overlayStack.cleanupOrphans();
   }
 

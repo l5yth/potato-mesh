@@ -1648,3 +1648,79 @@ collapse two meshcore messages on different channels" example is **updated** to 
 different channel *names* (the stable identifier) rather than different local
 indices — it is updated, not removed. No POST/GET/event contract change and no
 ingestor change, so **C2**, `CONTRACTS.md`, and the Python suite are unaffected.
+
+---
+
+## Bugfix: Live-update DOM handling (map overlay, chat-tab scroll, last_heard fan-out)
+
+Three defects in how a live SSE update touches the DOM, fixed independently of
+the (separately specced) flash visual redesign:
+(1) a `positions` / `telemetry` ingest advances the affected node's `last_heard`
+server-side (`touch_node_last_seen`) but published only its own collection, so
+the live dashboard never re-pulled the node row and the node table's "last seen"
+stayed stale until the safety poll;
+(2) the channel-tab list's horizontal scroll reset to the first tab on every
+refresh because `renderChatTabs` rebuilds the whole subtree (`replaceChildren`)
+and force-scrolled the active tab into view;
+(3) an open map-marker short-info overlay closed on every refresh because
+`renderMap` clears and rebuilds all markers (`clearLayers`), orphaning the
+overlay's anchor so `cleanupOrphans` closed it.
+Web-side only (Ruby publish fan-out + frontend JS); no POST/GET shape change, so
+the apex (I) and privacy (II) invariants are untouched (the new `nodes` publish
+is moot under `PRIVATE`, mirroring #822 / PS6).
+
+### LD-A1 -- positions/telemetry ingest also publishes `nodes` (live last_heard refresh)
+```bash
+( cd web && bundle exec rspec spec/pubsub_spec.rb \
+    -e "publishes nodes on a positions ingest" \
+    -e "publishes nodes on a telemetry ingest" \
+    -e "does not publish nodes on a neighbors or traces ingest" )
+```
+**Expected:** pass. `POST /api/positions` and `POST /api/telemetry` each publish
+both their own collection **and** `nodes` (the telemetry route also now
+invalidates `api:nodes:`), so the dashboard re-fetches `/api/nodes` and the
+node-table "last seen" refreshes and flashes live -- mirroring the #822
+messages-to-nodes fan-out. `POST /api/neighbors` and `/api/traces` deliberately
+do **not** publish `nodes`, honoring the VF3 boundary that neighbors/traces flash
+nothing (their `last_heard` refresh is surfaced silently by the safety poll).
+
+### LD-A2 -- channel-tab horizontal scroll is preserved across a refresh
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-tabs.test.js )
+```
+**Expected:** pass. `renderChatTabs` captures the channel-tab list's `scrollLeft`
+before rebuilding the subtree and restores it afterward, and scrolls the active
+tab into view **only** on an explicit user tab switch (not on a passive refresh)
+-- so a live update no longer yanks the user back to the first tab while they
+scroll the channel list. A re-render yields a fresh tab-list element whose
+`scrollLeft` equals the pre-render value, and a passive render performs **zero**
+`scrollIntoView` calls.
+
+### LD-A3 -- an open map-marker overlay survives a live re-render
+```bash
+( cd web && node --test public/assets/js/app/__tests__/short-info-overlay-manager.test.js \
+                       public/assets/js/app/main/__tests__/marker-overlay-preservation.test.js )
+```
+**Expected:** pass. The overlay stack gains `reanchor(oldAnchor, newAnchor)`,
+which carries an open overlay onto a replacement anchor so a subsequent
+`cleanupOrphans` keeps it open (it closed it before). `renderMap` snapshots the
+node ids whose marker hosts an open overlay before `clearLayers()` and re-anchors
+each onto the rebuilt marker (`captureOpenMarkerOverlays` /
+`restoreMarkerOverlays`), so an overlay opened on the map stays open while live
+updates fire instead of snapping shut on every refresh.
+
+### LD-R1 -- Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**PS-A3 / PS-A4** (per-collection publish + coalescing -- the PS3 "thin event"
+and burst-coalescing examples are **updated** to a single-collection route
+(`neighbors`) since positions now also publishes `nodes`, not removed);
+**VF-A2 / VF-A3** (flash gating + message-to-node fan-out -- the new
+positions/telemetry-to-node fan-out reuses the same flash path, and neighbors/
+traces still flash nothing); **CR-A1** (an idle re-render still materialises 0
+entries -- the scroll/overlay preservation touches only already-built DOM);
+**A2 / A2a / PS-A6** (privacy -- the new `nodes` publish is moot under `PRIVATE`);
+and **B1** (all suites).

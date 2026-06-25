@@ -352,3 +352,40 @@ test('renderChatTabs arrow buttons reflect scroll position via scroll event', ()
   assert.equal(prevBtn.hidden, true);
   assert.equal(nextBtn.hidden, false);
 });
+
+
+test('renderChatTabs preserves the tablist horizontal scroll across a re-render', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') },
+    { id: 'c1', label: 'Alpha', content: new MockElement('div') },
+    { id: 'c2', label: 'Bravo', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+  const tabList1 = container.children[0].children[1];
+  tabList1.scrollLeft = 120;
+
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+  const tabList2 = container.children[0].children[1];
+
+  assert.notEqual(tabList2, tabList1);
+  assert.equal(tabList2.scrollLeft, 120);
+});
+
+test('renderChatTabs does not scroll the active tab into view on a passive re-render', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'c0' });
+  const tabList = container.children[0].children[1];
+  const totalScrollIntoView = tabList.children.reduce(
+    (n, button) => n + (button.scrollIntoViewCalls ? button.scrollIntoViewCalls.length : 0),
+    0
+  );
+  assert.equal(totalScrollIntoView, 0);
+});

@@ -388,6 +388,11 @@ module PotatoMesh
             end
             PotatoMesh::App::ApiCache.invalidate_prefix("api:positions:", "api:nodes:", "api:stats:")
             PotatoMesh::App::PubSub.publish("positions", private_mode: private_mode?)
+            # A position ingest also advances the node's last_heard
+            # (touch_node_last_seen), so publish a nodes change as well
+            # (mirrors the messages route, #822): the dashboard re-pulls and
+            # flashes that node with a freshly-updated "last seen".
+            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure
@@ -438,8 +443,14 @@ module PotatoMesh
             telemetry_packets.each do |packet|
               insert_telemetry(db, packet, protocol_cache: protocol_cache)
             end
-            PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:stats:")
+            # A telemetry ingest advances the node's last_heard
+            # (update_node_from_telemetry -> touch_node_last_seen), so also
+            # invalidate the nodes cache and publish a nodes change (mirrors
+            # the positions/messages routes): the dashboard re-pulls and
+            # flashes that node with a freshly-updated "last seen".
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:telemetry:", "api:nodes:", "api:stats:")
             PotatoMesh::App::PubSub.publish("telemetry", private_mode: private_mode?)
+            PotatoMesh::App::PubSub.publish("nodes", private_mode: private_mode?)
             status 201
             { status: "ok" }.to_json
           ensure

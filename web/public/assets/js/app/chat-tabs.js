@@ -97,6 +97,22 @@ export function renderChatTabs({
 
   const tabElements = [];
   const existingActive = container.dataset?.activeTab || null;
+  // Preserve the channel-tab list's horizontal scroll across the full-subtree
+  // rebuild below (item 5): without this, every live refresh resets scrollLeft
+  // to 0 and yanks the user back to the first tab. The previous render's tab
+  // list is the second child of the first wrapper (see the structure built
+  // below); guard defensively in case the container held no prior tab list.
+  const previousTabListWrapper = container.children && container.children[0];
+  const previousTabList =
+    previousTabListWrapper && previousTabListWrapper.children
+      ? previousTabListWrapper.children[1]
+      : null;
+  const previousScrollLeft =
+    previousTabList &&
+    previousTabList.className === 'chat-tablist' &&
+    typeof previousTabList.scrollLeft === 'number'
+      ? previousTabList.scrollLeft
+      : 0;
   const activeCandidateOrder = [existingActive, previousActiveTabId, defaultActiveTabId];
   let activeTabId = null;
 
@@ -218,7 +234,7 @@ export function renderChatTabs({
   // Initial arrow state after the DOM is in place.
   updateArrows();
 
-  const setActiveTab = newId => {
+  const setActiveTab = (newId, { scrollActiveIntoView = false } = {}) => {
     if (!newId) return;
     let matched = false;
     for (const entry of tabElements) {
@@ -233,8 +249,10 @@ export function renderChatTabs({
         if (typeof entry.panel.scrollHeight === 'number' && typeof entry.panel.scrollTop === 'number') {
           entry.panel.scrollTop = entry.panel.scrollHeight;
         }
-        // Scroll the active tab button into view within the overflow tab list.
-        if (typeof entry.button.scrollIntoView === 'function') {
+        // Scroll the active tab button into view within the overflow tab list,
+        // but only on an explicit user tab switch (item 5): a passive re-render
+        // keeps the user's current horizontal scroll instead of yanking it.
+        if (scrollActiveIntoView && typeof entry.button.scrollIntoView === 'function') {
           entry.button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         }
       } else {
@@ -249,9 +267,18 @@ export function renderChatTabs({
 
   setActiveTab(activeTabId);
 
+  // Restore the horizontal scroll captured before the rebuild so a live
+  // refresh does not reset the channel-tab list to the first tab (item 5).
+  // Applied after setActiveTab, which no longer force-scrolls on a passive
+  // render, so the restored position is authoritative.
+  if (previousScrollLeft > 0 && typeof tabList.scrollLeft === 'number') {
+    tabList.scrollLeft = previousScrollLeft;
+    updateArrows();
+  }
+
   for (const entry of tabElements) {
     entry.button.addEventListener('click', () => {
-      setActiveTab(entry.id);
+      setActiveTab(entry.id, { scrollActiveIntoView: true });
     });
   }
 
