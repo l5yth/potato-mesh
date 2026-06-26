@@ -81,11 +81,12 @@ module PotatoMesh
           # @param subscriber [PubSub::Subscriber] this client's mailbox.
           # @param heartbeat [Numeric] max seconds to block per drain.
           # @param deadline_at [Numeric] monotonic time to stop pumping.
+          # @param settle [Numeric] LV6 per-collection publish cooldown (seconds).
           # @param clock [#call] monotonic clock source.
           # @return [void]
-          def pump(out, subscriber, heartbeat:, deadline_at:, clock: DEFAULT_CLOCK)
+          def pump(out, subscriber, heartbeat:, deadline_at:, settle: 0, clock: DEFAULT_CLOCK)
             until out.closed? || clock.call >= deadline_at
-              write_batch(out, subscriber.drain(timeout: heartbeat))
+              write_batch(out, subscriber.drain(timeout: heartbeat, settle: settle))
             end
           rescue IOError, Errno::EPIPE, Errno::ECONNRESET
             # The client vanished mid-write; stop pumping and let +ensure+ run.
@@ -112,6 +113,7 @@ module PotatoMesh
                 end
 
               heartbeat = PotatoMesh::Config.sse_heartbeat_seconds
+              cooldown = PotatoMesh::Config.sse_publish_cooldown_seconds
               deadline = Events::DEFAULT_CLOCK.call + PotatoMesh::Config.sse_max_lifetime_seconds
 
               # Plain +stream+ (not +:keep_open+): {pump} owns the loop, so when it
@@ -121,7 +123,7 @@ module PotatoMesh
               stream do |out|
                 # An initial comment confirms the open stream and flushes headers.
                 out << ": connected\n\n"
-                Events.pump(out, subscriber, heartbeat: heartbeat, deadline_at: deadline)
+                Events.pump(out, subscriber, heartbeat: heartbeat, deadline_at: deadline, settle: cooldown)
               ensure
                 PotatoMesh::App::PubSub.unsubscribe(subscriber)
               end

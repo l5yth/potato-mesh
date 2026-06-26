@@ -281,8 +281,8 @@ export function hexToRgba(hex, alpha) {
  * @param {*} role Raw role value.
  * @param {string|null|undefined} [protocol] Protocol string from the API.
  * @param {number} [alpha=0.55] Alpha for the mid-fade role-colour stop.
- * @returns {string} An ``rgba(...)`` colour string (translucent white fallback
- *   when the role colour is unparseable).
+ * @returns {string} The role colour as an ``rgba(...)`` string. {@link getRoleColor}
+ *   always resolves to a parseable hex, so a real ``rgba(...)`` is always returned.
  */
 export function getRoleFlashColor(role, protocol = null, alpha = 0.55) {
   return hexToRgba(getRoleColor(role, protocol), alpha);

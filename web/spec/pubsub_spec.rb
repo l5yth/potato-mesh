@@ -171,6 +171,49 @@ RSpec.describe PotatoMesh::App::PubSub do
       end
     end
 
+    describe "#drain settle window (LV6 cooldown)" do
+      it "coalesces a burst within the settle window into one drain" do
+        subscriber.deliver("positions", 1)
+        # The injected sleeper stands in for the cooldown window; more ingestors
+        # deliver the same/another collection while it "sleeps".
+        sleeper = lambda do |_seconds|
+          subscriber.deliver("positions", 2)
+          subscriber.deliver("telemetry", 5)
+        end
+        events = subscriber.drain(timeout: 0, settle: 1, sleeper: sleeper)
+        expect(events).to eq(
+          [
+            { collection: "positions", hint: 2 },
+            { collection: "telemetry", hint: 5 },
+          ],
+        )
+      end
+
+      it "sleeps for the settle window only when a change is pending" do
+        slept = []
+        sleeper = ->(seconds) { slept << seconds }
+
+        # Idle heartbeat tick: nothing pending, so no settle sleep.
+        expect(subscriber.drain(timeout: 0, settle: 1, sleeper: sleeper)).to eq([])
+        expect(slept).to eq([])
+
+        # A pending change triggers exactly one settle sleep.
+        subscriber.deliver("nodes", nil)
+        expect(subscriber.drain(timeout: 0, settle: 1, sleeper: sleeper)).to eq(
+          [{ collection: "nodes", hint: nil }],
+        )
+        expect(slept).to eq([1])
+      end
+
+      it "does not sleep when settle is zero (cooldown disabled)" do
+        slept = []
+        sleeper = ->(seconds) { slept << seconds }
+        subscriber.deliver("nodes", nil)
+        subscriber.drain(timeout: 0, settle: 0, sleeper: sleeper)
+        expect(slept).to eq([])
+      end
+    end
+
     describe "#close" do
       it "ignores deliveries and drains immediately once closed" do
         subscriber.close

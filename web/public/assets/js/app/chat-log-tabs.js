@@ -75,7 +75,9 @@ function channelPriorityTier(channel) {
  *   TELEMETRY: 'telemetry',
  *   POSITION: 'position',
  *   NEIGHBOR: 'neighbor',
- *   TRACE: 'trace'
+ *   TRACE: 'trace',
+ *   MESSAGE: 'message',
+ *   MESSAGE_ENCRYPTED: 'message-encrypted'
  * }}
  */
 export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
@@ -85,6 +87,7 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
   POSITION: 'position',
   NEIGHBOR: 'neighbor',
   TRACE: 'trace',
+  MESSAGE: 'message',
   MESSAGE_ENCRYPTED: 'message-encrypted'
 });
 
@@ -265,6 +268,9 @@ export function buildChatTabModel({
 
   const encryptedLogEntries = [];
   const encryptedLogKeys = new Set();
+  // Plaintext messages also feed the mixed Log tab (LV7), in addition to their
+  // own channel tab, so every live-event class is represented in the Log.
+  const plaintextLogEntries = [];
 
   for (const message of messages || []) {
     if (!message) continue;
@@ -329,6 +335,8 @@ export function buildChatTabModel({
     }
 
     bucket.entries.push({ ts, message });
+    // Surface the plaintext message in the mixed Log feed too (LV7).
+    plaintextLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE, message });
   }
 
   const extraLogMessages = Array.isArray(logOnlyMessages) ? logOnlyMessages : [];
@@ -346,6 +354,9 @@ export function buildChatTabModel({
 
   if (encryptedLogEntries.length > 0) {
     logEntries.push(...encryptedLogEntries);
+  }
+  if (plaintextLogEntries.length > 0) {
+    logEntries.push(...plaintextLogEntries);
   }
 
   logEntries.sort((a, b) => a.ts - b.ts);

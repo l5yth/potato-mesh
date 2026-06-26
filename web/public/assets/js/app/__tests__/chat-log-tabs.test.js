@@ -117,16 +117,30 @@ function assertChannelMessages(model, { label, id, index, messageIds }) {
 
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
-  assert.equal(model.logEntries.length, 3);
-  assert.deepEqual(model.logEntries.map(entry => entry.type), [
-    CHAT_LOG_ENTRY_TYPES.NODE_NEW,
-    CHAT_LOG_ENTRY_TYPES.NODE_NEW,
-    CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED
-  ]);
+  // The Log feed now mirrors plaintext messages too (LV7), alongside node
+  // events and the encrypted message; assert by type counts so the test is
+  // robust to chronological interleaving.
+  const typeCounts = model.logEntries.reduce((acc, entry) => {
+    acc[entry.type] = (acc[entry.type] || 0) + 1;
+    return acc;
+  }, {});
+  assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.NODE_NEW], 2);
+  assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED], 1);
+  assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.MESSAGE], 6);
+  assert.equal(model.logEntries.length, 9);
+  // Every plaintext channel message is also represented in the Log (LV7).
+  const loggedMessageIds = model.logEntries
+    .filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE)
+    .map(entry => entry.message.id)
+    .sort();
   assert.deepEqual(
-    model.logEntries.map(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED ? entry.message.id : entry.node.id),
-    ['recent-node', 'iso-node', 'encrypted']
+    loggedMessageIds,
+    ['env-default', 'iso-ts', 'no-index', 'primary-preset', 'recent-alt', 'recent-default']
   );
+  // Log entries are sorted chronologically.
+  for (let i = 1; i < model.logEntries.length; i += 1) {
+    assert.ok(model.logEntries[i].ts >= model.logEntries[i - 1].ts);
+  }
 
   assert.equal(model.channels.length, 6);
   // Default/primary channels (index 0) lead, then custom channels (index > 0);
@@ -174,6 +188,20 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   assert.match(secondaryChannel.id, /^channel-secondary-name-berlinmesh-[a-z0-9]+$/);
   assert.equal(secondaryChannel.entries.length, 1);
   assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['recent-alt']);
+});
+
+test('buildChatTabModel mirrors plaintext messages into the Log feed (LV7)', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [{ id: 'm1', channel: 0, from_id: '!a', text: 'hi', rx_time: NOW }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const msgEntries = model.logEntries.filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE);
+  assert.equal(msgEntries.length, 1);
+  assert.equal(msgEntries[0].message.id, 'm1');
+  // The same message still appears in its channel tab.
+  assert.equal(model.channels[0].entries[0].message.id, 'm1');
 });
 
 test('buildChatTabModel skips channel buckets when there are no messages', () => {

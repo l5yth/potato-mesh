@@ -37,6 +37,9 @@ export const FLASH_DURATION_MS = 1200;
 /** Marker white-pulse lifetime in ms (interim; the LV5 wave layers on top). */
 export const MARKER_FLASH_DURATION_MS = 90;
 
+/** Map-marker wave ring lifetime in ms; matches the LV5 keyframe (~1.2s). */
+export const WAVE_DURATION_MS = 1200;
+
 /** Property key holding an element's pending flash-removal timer (LV2). */
 const FLASH_TIMER_KEY = '__liveFlashTimer';
 
@@ -126,6 +129,78 @@ export function flashMarker(marker, options = {}) {
   marker.setStyle({ fillColor: '#ffffff', fillOpacity: 1 });
   schedule(() => marker.setStyle(original), duration);
   return true;
+}
+
+/**
+ * Emit an expanding "wave" ring from a Leaflet marker (SPEC LV5).
+ *
+ * Creates a transient, non-interactive divIcon marker at the marker's location
+ * whose `.live-flash-wave` ring grows and fades toward the role colour over
+ * ~1.2s (the animation lives in `base.css`), then removes it from the host
+ * layer. Leaflet and the layer are injected so this unit-tests without a real
+ * map. A marker without `getLatLng`, or a missing Leaflet/layer, is a safe no-op.
+ *
+ * @param {?{getLatLng: Function}} marker Source Leaflet marker.
+ * @param {Object} [options] Wave configuration.
+ * @param {?Object} [options.leaflet] Leaflet namespace (`L`), injected by the caller.
+ * @param {?{addLayer: Function, removeLayer: Function}} [options.layer] Layer to host the wave.
+ * @param {?string} [options.color] Role colour for the ring (`--flash-role-color`).
+ * @param {number} [options.duration] Lifetime before removal (ms).
+ * @param {Function} [options.schedule] Removal scheduler (tests inject this).
+ * @returns {boolean} true when a wave was emitted; false when skipped.
+ */
+export function emitMarkerWave(marker, options = {}) {
+  if (!marker || typeof marker.getLatLng !== 'function') return false;
+  const leaflet = options.leaflet || null;
+  const layer = options.layer || null;
+  if (!leaflet || typeof leaflet.divIcon !== 'function' || typeof leaflet.marker !== 'function') {
+    return false;
+  }
+  if (!layer || typeof layer.addLayer !== 'function') return false;
+  const duration = typeof options.duration === 'number' ? options.duration : WAVE_DURATION_MS;
+  const schedule = typeof options.schedule === 'function' ? options.schedule : defaultSchedule;
+  const color = typeof options.color === 'string' && options.color ? options.color : 'rgba(255, 255, 255, 0.85)';
+  const icon = leaflet.divIcon({
+    className: 'live-flash-wave-icon',
+    html: `<div class="live-flash-wave" style="--flash-role-color: ${color}"></div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+  const wave = leaflet.marker(marker.getLatLng(), { icon, interactive: false, keyboard: false });
+  layer.addLayer(wave);
+  schedule(() => {
+    if (typeof layer.removeLayer === 'function') layer.removeLayer(wave);
+  }, duration);
+  return true;
+}
+
+/**
+ * Emit a wave from each changed node's marker (SPEC LV5). Looks up each node's
+ * marker and role colour and delegates to {@link emitMarkerWave}; nodes without
+ * a marker are skipped. Pure over its injected lookups, so it unit-tests without
+ * a real map.
+ *
+ * @param {?Iterable<string>} nodeIds Canonical node ids that changed.
+ * @param {Object} [options] Lookups + wave config.
+ * @param {?{get: Function}} [options.markerByNodeId] node id -> Leaflet marker.
+ * @param {?Object} [options.leaflet] Leaflet namespace (`L`).
+ * @param {?{addLayer: Function, removeLayer: Function}} [options.layer] Wave host layer.
+ * @param {?(id: string) => ?string} [options.colorForNodeId] Resolves a node's wave colour.
+ * @param {Object} [options.waveOptions] Extra options forwarded to {@link emitMarkerWave}.
+ * @returns {number} count of waves emitted.
+ */
+export function emitNodeWaves(nodeIds, options = {}) {
+  if (!nodeIds || typeof nodeIds[Symbol.iterator] !== 'function') return 0;
+  const { markerByNodeId = null, leaflet = null, layer = null, colorForNodeId = null, waveOptions = {} } = options;
+  if (!markerByNodeId || typeof markerByNodeId.get !== 'function') return 0;
+  let count = 0;
+  for (const id of nodeIds) {
+    const marker = markerByNodeId.get(id);
+    if (!marker) continue;
+    const color = typeof colorForNodeId === 'function' ? colorForNodeId(id) : null;
+    if (emitMarkerWave(marker, { ...waveOptions, leaflet, layer, color })) count += 1;
+  }
+  return count;
 }
 
 /**

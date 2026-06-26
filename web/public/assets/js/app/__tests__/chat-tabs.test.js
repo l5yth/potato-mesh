@@ -180,8 +180,8 @@ test('renderChatTabs creates tab markup and selects default active tab', () => {
   assert.equal(container.children.length, 2);
 
   const [tabListWrapper, panelWrapper] = container.children;
-  // tabListWrapper holds [prevBtn, tabList, nextBtn]
-  assert.equal(tabListWrapper.children.length, 3);
+  // tabListWrapper holds [prevBtn, tabList, nextBtn, tabSelect] (LV8 dropdown is 4th)
+  assert.equal(tabListWrapper.children.length, 4);
   const [, tabList] = tabListWrapper.children;
   assert.equal(tabList.children.length, 3);
   assert.equal(panelWrapper.children.length, 3);
@@ -388,4 +388,27 @@ test('renderChatTabs does not scroll the active tab into view on a passive re-re
     0
   );
   assert.equal(totalScrollIntoView, 0);
+});
+
+
+test('renderChatTabs renders a channel dropdown selector that jumps to a tab (LV8)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') },
+    { id: 'c1', label: 'Alpha', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+  const tabListWrapper = container.children[0];
+  const tabSelect = tabListWrapper.children[3];
+  assert.equal(tabSelect.tagName, 'SELECT');
+  // One option per tab, in order.
+  assert.deepEqual(tabSelect.children.map(option => option.value), ['log', 'c0', 'c1']);
+  // The dropdown reflects the active tab ...
+  assert.equal(tabSelect.value, 'log');
+  // ... and choosing a channel from it activates that tab.
+  tabSelect.value = 'c1';
+  tabSelect.dispatch('change');
+  assert.equal(container.dataset.activeTab, 'c1');
 });

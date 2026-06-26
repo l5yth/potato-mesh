@@ -1058,6 +1058,16 @@ body.view-chat .page-shell {
   display: none;
 }
 
+/* Channel dropdown selector (SPEC LV8): a compact jump-to-channel control at
+   the end of the tab bar; the native <select> supplies the downward triangle. */
+.chat-tab-select {
+  flex: 0 0 auto;
+  align-self: center;
+  max-width: 9rem;
+  margin-left: 0.25rem;
+  font-size: 0.85em;
+}
+
 .chat-tab:is(:focus-visible, :hover) {
   background: rgba(0, 0, 0, 0.06);
 }
@@ -2582,7 +2592,6 @@ body.dark #map .leaflet-tile.map-tiles {
 .live-flash-wave {
   width: 24px;
   height: 24px;
-  margin: -12px 0 0 -12px;
   border-radius: 50%;
   border: 2px solid var(--flash-role-color, rgba(255, 255, 255, 0.85));
   pointer-events: none;

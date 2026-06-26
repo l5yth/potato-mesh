@@ -20,11 +20,14 @@ import assert from 'node:assert/strict';
 import {
   FLASH_CLASS,
   FLASH_DURATION_MS,
+  WAVE_DURATION_MS,
   flashElement,
   flashElements,
   flashMarker,
   flashNodeTargets,
   flashMessageTargets,
+  emitMarkerWave,
+  emitNodeWaves,
 } from '../flash.js';
 
 /** A minimal element exposing a tracked classList. */
@@ -242,4 +245,117 @@ test('flashMessageTargets returns 0 for nullish or non-iterable ids', () => {
   assert.equal(flashMessageTargets(null), 0);
   assert.equal(flashMessageTargets(undefined), 0);
   assert.equal(flashMessageTargets(123), 0);
+});
+
+
+test('flashMessageTargets flashes only the message channel tab, never an unrelated/active tab (LV4)', () => {
+  const msgRow = fakeElement();
+  const ownTab = fakeElement();
+  const activeTab = fakeElement();
+  const documentRef = {
+    querySelectorAll: (sel) => {
+      if (sel.includes('data-message-id="9"')) return [msgRow];
+      if (sel.includes('data-tab-id="c-test"')) return [ownTab];
+      if (sel.includes('data-tab-id="c-primary"')) return [activeTab];
+      return [];
+    },
+  };
+  // The message belongs to #test; #primary happens to be the active tab.
+  const messageTabId = new Map([['9', 'c-test']]);
+  flashMessageTargets(['9'], { documentRef, messageTabId, flashOptions: { schedule: () => {} } });
+  assert.equal(msgRow.classList.contains(FLASH_CLASS), true, 'message row flashed');
+  assert.equal(ownTab.classList.contains(FLASH_CLASS), true, "message's own channel tab flashed");
+  assert.equal(activeTab.classList.contains(FLASH_CLASS), false, 'the unrelated/active tab is NOT flashed');
+});
+
+
+test('emitMarkerWave adds a wave divIcon marker and removes it after the duration', () => {
+  const added = [];
+  const removed = [];
+  const layer = { addLayer: (l) => added.push(l), removeLayer: (l) => removed.push(l) };
+  let divIconOpts = null;
+  let markerArgs = null;
+  const leaflet = {
+    divIcon: (opts) => { divIconOpts = opts; return { __icon: true }; },
+    marker: (latlng, opts) => { markerArgs = { latlng, opts }; return { __wave: true }; },
+  };
+  let captured = null;
+  const marker = { getLatLng: () => [1, 2] };
+  assert.equal(emitMarkerWave(marker, {
+    leaflet, layer, color: 'rgba(1, 2, 3, 0.85)', schedule: (cb) => { captured = cb; },
+  }), true);
+  assert.deepEqual(markerArgs.latlng, [1, 2]);
+  assert.equal(markerArgs.opts.interactive, false);
+  assert.match(divIconOpts.html, /live-flash-wave/);
+  assert.match(divIconOpts.html, /--flash-role-color: rgba\(1, 2, 3, 0.85\)/);
+  assert.deepEqual(added, [{ __wave: true }]);
+  assert.deepEqual(removed, []);
+  captured();
+  assert.deepEqual(removed, [{ __wave: true }]);
+});
+
+test('emitMarkerWave defaults the colour and duration', () => {
+  let divIconOpts = null;
+  let seenDelay = null;
+  const leaflet = { divIcon: (o) => { divIconOpts = o; return {}; }, marker: () => ({}) };
+  const layer = { addLayer: () => {}, removeLayer: () => {} };
+  emitMarkerWave({ getLatLng: () => [0, 0] }, { leaflet, layer, schedule: (_cb, delay) => { seenDelay = delay; } });
+  assert.match(divIconOpts.html, /--flash-role-color: rgba\(255, 255, 255, 0.85\)/);
+  assert.equal(seenDelay, WAVE_DURATION_MS);
+});
+
+test('emitMarkerWave is a safe no-op for a bad marker, leaflet, or layer', () => {
+  const leaflet = { divIcon: () => ({}), marker: () => ({}) };
+  const layer = { addLayer: () => {}, removeLayer: () => {} };
+  assert.equal(emitMarkerWave(null, { leaflet, layer }), false);
+  assert.equal(emitMarkerWave({}, { leaflet, layer }), false);
+  assert.equal(emitMarkerWave({ getLatLng: () => [0, 0] }, { layer }), false);
+  assert.equal(emitMarkerWave({ getLatLng: () => [0, 0] }, { leaflet }), false);
+  assert.equal(emitMarkerWave({ getLatLng: () => [0, 0] }, { leaflet: {}, layer }), false);
+});
+
+test('emitNodeWaves emits a wave per node that has a marker, skipping the rest', () => {
+  const waved = [];
+  const leaflet = { divIcon: () => ({}), marker: () => ({ __w: true }) };
+  const layer = { addLayer: (l) => waved.push(l), removeLayer: () => {} };
+  const markerByNodeId = new Map([
+    ['!a', { getLatLng: () => [1, 1] }],
+    ['!b', { getLatLng: () => [2, 2] }],
+  ]);
+  const count = emitNodeWaves(['!a', '!b', '!missing'], {
+    markerByNodeId, leaflet, layer,
+    colorForNodeId: (id) => `c-${id}`,
+    waveOptions: { schedule: () => {} },
+  });
+  assert.equal(count, 2);
+  assert.equal(waved.length, 2);
+});
+
+test('emitNodeWaves defaults the colour when no resolver is given', () => {
+  let html = null;
+  const leaflet = { divIcon: (o) => { html = o.html; return {}; }, marker: () => ({}) };
+  const layer = { addLayer: () => {}, removeLayer: () => {} };
+  const markerByNodeId = new Map([['!a', { getLatLng: () => [0, 0] }]]);
+  assert.equal(emitNodeWaves(['!a'], { markerByNodeId, leaflet, layer, waveOptions: { schedule: () => {} } }), 1);
+  assert.match(html, /rgba\(255, 255, 255, 0.85\)/);
+});
+
+test('emitNodeWaves is a no-op for bad ids or a missing marker map', () => {
+  assert.equal(emitNodeWaves(null, {}), 0);
+  assert.equal(emitNodeWaves(123, {}), 0);
+  assert.equal(emitNodeWaves(['!a'], {}), 0);
+  assert.equal(emitNodeWaves(['!a'], { markerByNodeId: new Map() }), 0);
+});
+
+
+test('flashElement cancels the prior real timer on re-flash via the default canceller (LV2)', async () => {
+  const el = fakeElement();
+  // First flash arms a real 60ms removal timer; the re-flash (no injected cancel)
+  // must clearTimeout it via the default canceller so the class is not removed at
+  // the first timer's mark, only by the second (live) timer.
+  flashElement(el, { duration: 60 });
+  flashElement(el, { duration: 60 });
+  assert.equal(el.classList.contains(FLASH_CLASS), true);
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  assert.equal(el.classList.contains(FLASH_CLASS), false, 'removed by the second (live) timer');
 });

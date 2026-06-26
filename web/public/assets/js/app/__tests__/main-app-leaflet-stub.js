@@ -62,6 +62,15 @@ export function makeLeafletStub() {
       clearLayers() {
         group._layers.length = 0;
         return group;
+      },
+      addLayer(layer) {
+        group._layers.push(layer);
+        return group;
+      },
+      removeLayer(layer) {
+        const index = group._layers.indexOf(layer);
+        if (index >= 0) group._layers.splice(index, 1);
+        return group;
       }
     };
     recorded.layerGroups.push(group);
@@ -93,6 +102,9 @@ export function makeLeafletStub() {
         if (!eventHandlers.has(event)) eventHandlers.set(event, []);
         eventHandlers.get(event).push(handler);
         return marker;
+      },
+      getLatLng() {
+        return marker._latLng;
       },
       _eventHandlers: eventHandlers
     };

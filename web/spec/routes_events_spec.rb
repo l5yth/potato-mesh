@@ -121,6 +121,26 @@ RSpec.describe PotatoMesh::App::Routes::Events do
         end
       end.not_to raise_error
     end
+
+    it "passes the settle cooldown through to drain (LV6)" do
+      out = fake_out_class.new(close_after: 1)
+      recorded = {}
+      subscriber = Object.new
+      subscriber.define_singleton_method(:drain) do |timeout:, settle: 0|
+        recorded[:timeout] = timeout
+        recorded[:settle] = settle
+        [{ collection: "nodes", hint: nil }]
+      end
+
+      Timeout.timeout(5) do
+        described_class.pump(
+          out, subscriber, heartbeat: 0.01, deadline_at: 1_000, settle: 0.25, clock: -> { 0 },
+        )
+      end
+
+      expect(recorded[:timeout]).to eq(0.01)
+      expect(recorded[:settle]).to eq(0.25)
+    end
   end
 
   describe "GET /api/events route" do

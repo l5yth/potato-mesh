@@ -1550,7 +1550,7 @@ renders its row + tab), and only then is the highlight applied — asserted by
 checking the flashed element exists and is the final rendered node at flash time
 (the render call precedes the flash call within the tick).
 
-### VF-A5 — Brief (<100 ms), white, reduced-motion-aware highlight — VF5
+### VF-A5 — White, reduced-motion-aware highlight (now ~1.2 s; see LV-A1) — VF5
 ```bash
 ( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js )
 grep -nE '@media \(prefers-reduced-motion: reduce\)' web/public/assets/styles/base.css
@@ -1772,7 +1772,8 @@ lookup of its own.
 
 ### LV-A4 -- a message fades its row and ONLY its own channel tab -- LV4
 ```bash
-( cd web && node --test public/assets/js/app/__tests__/main-flash.test.js )
+( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js \
+                       public/assets/js/app/__tests__/main-flash.test.js )
 ```
 **Expected:** pass. A `messages` ping fades the message row(s) and highlights the
 header of **only the message's own channel tab** (resolved via the message->tab
@@ -1793,11 +1794,13 @@ wave (VF3 boundary). The wave is non-interactive and causes no layout shift.
 ```bash
 ( cd web && bundle exec rspec spec/pubsub_spec.rb -e "cooldown" )
 ```
-**Expected:** pass. Repeated `publish(<collection>)` calls within the cooldown
-window (default 1 s, env-tunable) deliver **one** event for that collection, not
-one per call, so N ingestors hearing a single packet produce one client
-refresh/flash. The window is per-collection (a different collection is not
-suppressed) and in-process (no broker; apex-safe).
+**Expected:** pass. A burst of `publish(...)` calls is coalesced by the
+**settle window** in `Subscriber#drain` (default 1 s, env-tunable
+`SSE_PUBLISH_COOLDOWN`): once a change is pending the drain waits out the window,
+then returns each changed collection **once** (the structural pending-map
+coalescing), so N ingestors hearing a single packet produce one client
+refresh/flash. Collections that change during the same window each emit once (not
+suppressed). In-process only (no broker; apex-safe); `settle: 0` disables it.
 
 ### LV-A7 -- the Log tab logs every live-event class incl. plaintext messages -- LV7
 ```bash

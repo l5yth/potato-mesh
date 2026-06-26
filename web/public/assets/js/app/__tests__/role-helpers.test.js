@@ -161,6 +161,7 @@ test('hexToRgba converts 6- and 3-digit hex to rgba', () => {
 test('hexToRgba clamps an out-of-range alpha to 1 and rejects non-hex', () => {
   assert.equal(hexToRgba('#ffffff', 5), 'rgba(255, 255, 255, 1)');
   assert.equal(hexToRgba('#ffffff', -1), 'rgba(255, 255, 255, 1)');
+  assert.equal(hexToRgba('#ffffff', 'x'), 'rgba(255, 255, 255, 1)'); // non-number alpha -> 1
   assert.equal(hexToRgba('not-a-color', 0.5), null);
   assert.equal(hexToRgba('#12', 0.5), null);
   assert.equal(hexToRgba(123, 0.5), null);

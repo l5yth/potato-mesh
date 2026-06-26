@@ -24,6 +24,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runLiveApp, DEFAULT_RESPONSES } from './sse-app-harness.js';
+import { setupAppWithLeaflet } from './main-app-leaflet-stub.js';
 
 const NOW = Math.floor(Date.now() / 1000);
 
@@ -108,4 +109,23 @@ test('a neighbors ping flashes nothing (out of scope, VF3)', async () => {
     await testUtils.flushLiveRefresh();
     assert.equal(testUtils.getLiveFlashCount(), 0);
   });
+});
+
+
+test('flashChangedNodes emits a map-marker wave for a changed node with a marker (LV5)', () => {
+  const { testUtils, leaflet, cleanup } = setupAppWithLeaflet();
+  try {
+    const divIconsBefore = leaflet._recorded.divIcons.length;
+    const flashesBefore = testUtils.getLiveFlashCount();
+    // Inject a marker (with getLatLng) for the changed node, then flash it.
+    const marker = leaflet.circleMarker([1, 2], { fillColor: '#abc' });
+    testUtils._setMarkerForTests('!a', marker);
+    testUtils.flashChangedNodes(new Set(['!a']));
+    assert.equal(testUtils.getLiveFlashCount(), flashesBefore + 1);
+    // A wave divIcon ring was created and added to the never-cleared wave layer.
+    assert.equal(leaflet._recorded.divIcons.length, divIconsBefore + 1);
+    assert.match(leaflet._recorded.divIcons[divIconsBefore].options.html, /live-flash-wave/);
+  } finally {
+    cleanup();
+  }
 });

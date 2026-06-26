@@ -194,7 +194,7 @@ import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
-import { flashNodeTargets, flashMessageTargets } from './main/flash.js';
+import { flashNodeTargets, flashMessageTargets, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
 
@@ -739,6 +739,20 @@ export function initializeApp(config) {
     liveFlashCount += 1;
     lastFlashedNodeIds = [...nodeIds];
     flashNodeTargets(nodeIds, { documentRef: document, markerByNodeId });
+    // Emit an expanding wave from each changed node's marker (SPEC LV5). Guarded
+    // on Leaflet so the poll / no-map paths stay no-ops; the wave colour resolves
+    // to the node's role colour.
+    if (hasLeaflet && flashWavesLayer) {
+      emitNodeWaves(nodeIds, {
+        markerByNodeId,
+        leaflet: L,
+        layer: flashWavesLayer,
+        colorForNodeId: (id) => {
+          const node = nodesById.get(id);
+          return getRoleFlashColor(node && node.role, node && node.protocol, 0.85);
+        },
+      });
+    }
   }
 
   /**
@@ -897,6 +911,9 @@ export function initializeApp(config) {
   let traceLinesToggleButton = null;
   let markersLayer = null;
   let spiderLinesLayer = null;
+  // Dedicated, never-cleared layer hosting transient LV5 wave rings; each wave
+  // self-removes after its animation, so a map re-render never clears it.
+  let flashWavesLayer = null;
   // Per-render map of canonical node id → its Leaflet marker, so a live update
   // can flash the marker for a changed node (SPEC VF3). Rebuilt every renderMap.
   let markerByNodeId = new Map();
@@ -1575,6 +1592,7 @@ export function initializeApp(config) {
     });
 
     neighborLinesLayer = L.layerGroup().addTo(map);
+    flashWavesLayer = L.layerGroup().addTo(map);
     traceLinesLayer = L.layerGroup().addTo(map);
     // Spider lines render between the connection lines and the markers so the
     // dashed white "leader" lines are visible against neighbour/trace overlays
@@ -2794,6 +2812,7 @@ export function initializeApp(config) {
         return buildNeighborChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.TRACE:
         return buildTraceChatEntryParts(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.MESSAGE:
       case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
         return entry?.message ? buildMessageChatEntryParts(entry.message) : null;
       default:
@@ -4862,6 +4881,10 @@ export function initializeApp(config) {
       getLiveFlashCount: () => liveFlashCount,
       /** Node ids flashed by the most recent SSE-ping refresh (test hook). */
       getLastFlashedNodeIds: () => lastFlashedNodeIds,
+      /** Flash (and wave) the given changed node ids — test hook for the LV5 wiring. */
+      flashChangedNodes,
+      /** Inject a marker into the node->marker map — test hook for the LV5 wiring. */
+      _setMarkerForTests: (id, marker) => markerByNodeId.set(id, marker),
       /** Message ids flashed by the most recent SSE-ping refresh (test hook). */
       getLastFlashedMessageIds: () => lastFlashedMessageIds,
       /**

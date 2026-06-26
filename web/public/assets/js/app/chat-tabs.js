@@ -81,6 +81,13 @@ export function renderChatTabs({
   nextBtn.textContent = '▶';
   nextBtn.hidden = true;
 
+  // Channel dropdown selector (LV8): a native <select> listing every tab so
+  // the user can jump to a channel regardless of the horizontal scroll
+  // position (the native control supplies the downward-triangle affordance).
+  const tabSelect = document.createElement('select');
+  tabSelect.className = 'chat-tab-select';
+  tabSelect.setAttribute('aria-label', 'Jump to channel');
+
   const tabList = document.createElement('div');
   tabList.className = 'chat-tablist';
   tabList.setAttribute('role', 'tablist');
@@ -88,6 +95,7 @@ export function renderChatTabs({
   tabListWrapper.appendChild(prevBtn);
   tabListWrapper.appendChild(tabList);
   tabListWrapper.appendChild(nextBtn);
+  tabListWrapper.appendChild(tabSelect);
 
   const panelWrapper = document.createElement('div');
   panelWrapper.className = 'chat-tabpanels';
@@ -165,6 +173,10 @@ export function renderChatTabs({
 
     tabList.appendChild(button);
     panelWrapper.appendChild(panel);
+    const option = document.createElement('option');
+    option.value = uniqueId;
+    option.textContent = tab.label || uniqueId;
+    tabSelect.appendChild(option);
     tabElements.push({ id: uniqueId, button, panel });
   }
 
@@ -246,6 +258,7 @@ export function renderChatTabs({
         entry.panel.hidden = false;
         matched = true;
         container.dataset.activeTab = newId;
+        tabSelect.value = newId;
         if (typeof entry.panel.scrollHeight === 'number' && typeof entry.panel.scrollTop === 'number') {
           entry.panel.scrollTop = entry.panel.scrollHeight;
         }
@@ -281,6 +294,11 @@ export function renderChatTabs({
       setActiveTab(entry.id, { scrollActiveIntoView: true });
     });
   }
+
+  // Jump to the chosen channel when the dropdown selection changes (LV8).
+  tabSelect.addEventListener('change', () => {
+    setActiveTab(tabSelect.value, { scrollActiveIntoView: true });
+  });
 
   return container.dataset.activeTab || null;
 }
