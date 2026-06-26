@@ -16,4 +16,7 @@
 
 require_relative "lib/potato_mesh/application"
 
-PotatoMesh::Application.run! if $PROGRAM_NAME == __FILE__
+# Boot when run directly. run_server! installs INT/TERM handlers that close the
+# live-update SSE streams on shutdown -- so Ctrl+C is not blocked by an open
+# /api/events connection -- before handing off to Sinatra's run!.
+PotatoMesh::Application.run_server! if $PROGRAM_NAME == __FILE__

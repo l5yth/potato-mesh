@@ -526,6 +526,32 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".puma_force_shutdown_seconds" do
+    it "returns the baked-in default when unset" do
+      within_env("PUMA_FORCE_SHUTDOWN" => nil) do
+        expect(described_class.puma_force_shutdown_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_PUMA_FORCE_SHUTDOWN_SECONDS,
+        )
+      end
+    end
+
+    it "accepts a positive override" do
+      within_env("PUMA_FORCE_SHUTDOWN" => "10") do
+        expect(described_class.puma_force_shutdown_seconds).to eq(10)
+      end
+    end
+
+    it "falls back to the default for non-positive or invalid values" do
+      ["0", "-1", "abc", ""].each do |raw|
+        within_env("PUMA_FORCE_SHUTDOWN" => raw) do
+          expect(described_class.puma_force_shutdown_seconds).to eq(
+            PotatoMesh::Config::DEFAULT_PUMA_FORCE_SHUTDOWN_SECONDS,
+          )
+        end
+      end
+    end
+  end
+
   describe ".sse_publish_cooldown_seconds" do
     it "returns the baked-in default when unset" do
       within_env("SSE_PUBLISH_COOLDOWN" => nil) do

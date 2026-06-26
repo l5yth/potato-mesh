@@ -42,6 +42,12 @@ module PotatoMesh
     # client event so N ingestors relaying one packet do not stampede
     # subscribers (SPEC LV6).
     DEFAULT_SSE_PUBLISH_COOLDOWN_SECONDS = 1.0
+
+    # Seconds Puma waits for in-flight requests (e.g. an open SSE stream)
+    # before force-terminating them during shutdown, so Ctrl+C reaps promptly
+    # instead of blocking on a long-lived /api/events connection. Backstop to
+    # the graceful subscriber-close performed by the shutdown signal handler.
+    DEFAULT_PUMA_FORCE_SHUTDOWN_SECONDS = 3
     DEFAULT_TILE_FILTER_LIGHT = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
     DEFAULT_TILE_FILTER_DARK = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
     DEFAULT_MAP_CENTER_LAT = 38.761944
@@ -356,6 +362,14 @@ module PotatoMesh
     # @return [Float] non-negative cooldown, overridable via +SSE_PUBLISH_COOLDOWN+.
     def sse_publish_cooldown_seconds
       fetch_nonnegative_float("SSE_PUBLISH_COOLDOWN", DEFAULT_SSE_PUBLISH_COOLDOWN_SECONDS)
+    end
+
+    # Seconds Puma waits before force-terminating in-flight requests on
+    # shutdown (e.g. an open SSE stream), so Ctrl+C is not blocked by it.
+    #
+    # @return [Integer] positive timeout, overridable via +PUMA_FORCE_SHUTDOWN+.
+    def puma_force_shutdown_seconds
+      fetch_positive_integer("PUMA_FORCE_SHUTDOWN", DEFAULT_PUMA_FORCE_SHUTDOWN_SECONDS)
     end
 
     # Retrieve the CSS filter used for light themed maps.

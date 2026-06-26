@@ -1843,3 +1843,54 @@ flash), **VF-A6 / CR-A1** (idle re-render still materialises 0 entries), **LD-A1
 (positions/telemetry->nodes fan-out feeds the fade), **LD-A2** (tab scroll
 preserved - the LV8 dropdown composes with it), **A2 / A2a / PS-A6** (privacy),
 and **B1** (all suites).
+
+---
+
+## Bugfix: SSE stream must not block graceful shutdown
+
+On Ctrl+C the dashboard hung ~30-45s before exiting: an open `GET /api/events`
+SSE stream held a Puma worker thread in its `pump` loop (which exited only on
+socket close or the 600s lifetime deadline), so Puma's graceful shutdown waited
+for it -- which in turn gated the `at_exit` federation/retention teardown
+(FH-A3). The federation announce (`remote_instance_request_timeout`, 30s) and the
+retention thread kept logging because the process could not exit. Pre-existing
+since the SSE pub/sub feature (#821), not the LV6 settle window. Fix (web-only):
+(1) the SSE `pump` exits when its subscriber is closed; (2) INT/TERM handlers
+close the live-update subscribers on shutdown (chained ahead of Sinatra's trap,
+since Puma `Server#stop` is async), so the streams end and Puma drains promptly;
+(3) a Puma `force_shutdown_after` backstop (default 3s, env `PUMA_FORCE_SHUTDOWN`)
+force-terminates anything still in flight. The apex (I) and privacy (II)
+invariants are untouched.
+
+### SD-A1 -- the SSE pump stops when its subscriber is closed (shutdown)
+```bash
+( cd web && bundle exec rspec spec/routes_events_spec.rb -e "stops pumping once the subscriber is closed" )
+```
+**Expected:** pass. `Events.pump` returns as soon as its subscriber is closed --
+without writing further keepalives -- even while the stream is still open and the
+lifetime deadline is far off, so closing subscribers on shutdown ends every
+`/api/events` request instead of busy-looping or blocking for a heartbeat.
+
+### SD-A2 -- shutdown closes SSE subscribers and Puma is bounded
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "live-update shutdown handling" )
+( cd web && bundle exec rspec spec/config_spec.rb -e "puma_force_shutdown_seconds" )
+```
+**Expected:** pass. `close_live_update_subscribers!` closes every open subscriber;
+`install_pubsub_shutdown_signal_handlers!` traps INT and TERM and its handler
+closes the subscribers; `server_settings` carries `force_shutdown_after`
+(= `puma_force_shutdown_seconds`; default 3s, env `PUMA_FORCE_SHUTDOWN`). Together
+these make Ctrl+C reap the SSE stream so Puma's graceful shutdown finishes and the
+at_exit federation/retention teardown (FH-A3) runs in seconds, not tens of them.
+
+### SD-R1 -- Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and required to remain green: **PS-A2 / PS-A5**
+(the `/api/events` SSE stream + reconnect-resync still work -- the pump only gains
+a subscriber-closed exit), **PS-A4 / LV-A6** (publish + 1s settle window are
+unchanged), **FH-A3** (federation reaps in seconds -- now actually reachable on
+Ctrl+C because the SSE no longer blocks Puma), and **B1** (all suites). No
+POST/GET/event contract change.
