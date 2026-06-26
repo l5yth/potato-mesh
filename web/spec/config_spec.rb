@@ -552,6 +552,107 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe "puma thread budget" do
+    describe ".puma_min_threads" do
+      it "returns the baked-in default when unset" do
+        within_env("MIN_THREADS" => nil) do
+          expect(described_class.puma_min_threads).to eq(
+            PotatoMesh::Config::DEFAULT_PUMA_MIN_THREADS,
+          )
+        end
+      end
+
+      it "accepts a positive override" do
+        within_env("MIN_THREADS" => "8") do
+          expect(described_class.puma_min_threads).to eq(8)
+        end
+      end
+
+      it "falls back to the default for non-positive or invalid values" do
+        ["0", "-3", "abc", ""].each do |raw|
+          within_env("MIN_THREADS" => raw) do
+            expect(described_class.puma_min_threads).to eq(
+              PotatoMesh::Config::DEFAULT_PUMA_MIN_THREADS,
+            )
+          end
+        end
+      end
+    end
+
+    describe ".puma_max_threads" do
+      it "returns the baked-in default when unset" do
+        within_env("MAX_THREADS" => nil) do
+          expect(described_class.puma_max_threads).to eq(
+            PotatoMesh::Config::DEFAULT_PUMA_MAX_THREADS,
+          )
+        end
+      end
+
+      it "accepts a positive override" do
+        within_env("MAX_THREADS" => "120") do
+          expect(described_class.puma_max_threads).to eq(120)
+        end
+      end
+
+      it "falls back to the default for non-positive or invalid values" do
+        ["0", "-1", "nope", ""].each do |raw|
+          within_env("MAX_THREADS" => raw) do
+            expect(described_class.puma_max_threads).to eq(
+              PotatoMesh::Config::DEFAULT_PUMA_MAX_THREADS,
+            )
+          end
+        end
+      end
+    end
+
+    describe ".sse_thread_reserve" do
+      it "returns the baked-in default when unset" do
+        within_env("SSE_THREAD_RESERVE" => nil) do
+          expect(described_class.sse_thread_reserve).to eq(
+            PotatoMesh::Config::DEFAULT_SSE_THREAD_RESERVE,
+          )
+        end
+      end
+
+      it "accepts a positive override" do
+        within_env("SSE_THREAD_RESERVE" => "12") do
+          expect(described_class.sse_thread_reserve).to eq(12)
+        end
+      end
+
+      it "falls back to the default for non-positive or invalid values" do
+        ["0", "-2", "xyz", ""].each do |raw|
+          within_env("SSE_THREAD_RESERVE" => raw) do
+            expect(described_class.sse_thread_reserve).to eq(
+              PotatoMesh::Config::DEFAULT_SSE_THREAD_RESERVE,
+            )
+          end
+        end
+      end
+    end
+
+    describe ".puma_threads_setting" do
+      it "formats the configured min and max as a Puma min:max spec" do
+        within_env("MIN_THREADS" => "16", "MAX_THREADS" => "96") do
+          expect(described_class.puma_threads_setting).to eq("16:96")
+        end
+      end
+
+      it "defaults to a pool larger than the SSE subscriber cap (PS9)" do
+        within_env("MIN_THREADS" => nil, "MAX_THREADS" => nil, "SSE_THREAD_RESERVE" => nil) do
+          _min, max = described_class.puma_threads_setting.split(":").map(&:to_i)
+          expect(max).to be > PotatoMesh::App::PubSub::MAX_SUBSCRIBERS
+        end
+      end
+
+      it "clamps the minimum to the maximum when misconfigured (min > max)" do
+        within_env("MIN_THREADS" => "200", "MAX_THREADS" => "32") do
+          expect(described_class.puma_threads_setting).to eq("32:32")
+        end
+      end
+    end
+  end
+
   describe ".sse_publish_cooldown_seconds" do
     it "returns the baked-in default when unset" do
       within_env("SSE_PUBLISH_COOLDOWN" => nil) do

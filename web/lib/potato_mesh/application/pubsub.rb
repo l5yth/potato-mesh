@@ -46,10 +46,13 @@ module PotatoMesh
       # {publish} so a future caller typo can never crash ingest.
       COLLECTIONS = %w[nodes messages positions telemetry neighbors traces].freeze
 
-      # Hard cap on concurrently registered subscribers. Each open SSE stream
-      # occupies one subscriber (and, under the threaded server, one request
-      # thread), so this bounds resource use against a subscription flood
-      # (+PS1+ / +PS8+). The route maps {CapacityError} to an HTTP 503.
+      # Upper bound on concurrently registered subscribers. Each open SSE stream
+      # occupies one subscriber **and, under the threaded server, one request
+      # thread for its whole lifetime**, so the effective ceiling is clamped to
+      # the request-thread budget by {effective_max_subscribers}: a flood of
+      # +/api/events+ connections can never consume the threads reserved for
+      # non-SSE traffic (+PS8+ / +PS9+). The route maps {CapacityError} to an
+      # HTTP 503, after which the client falls back to its safety poll.
       MAX_SUBSCRIBERS = 64
 
       # Raised by {PubSub.subscribe} when {MAX_SUBSCRIBERS} is already reached.
@@ -167,17 +170,33 @@ module PotatoMesh
         # Register a new subscriber and return its mailbox.
         #
         # @return [Subscriber] the freshly registered subscriber.
-        # @raise [CapacityError] when {MAX_SUBSCRIBERS} is already reached.
+        # @raise [CapacityError] when {effective_max_subscribers} is reached.
         def subscribe
           @mutex.synchronize do
-            if @subscribers.size >= MAX_SUBSCRIBERS
-              raise CapacityError, "subscriber limit (#{MAX_SUBSCRIBERS}) reached"
+            cap = effective_max_subscribers
+            if @subscribers.size >= cap
+              raise CapacityError, "subscriber limit (#{cap}) reached"
             end
 
             subscriber = Subscriber.new
             @subscribers << subscriber
             subscriber
           end
+        end
+
+        # Effective concurrent-subscriber ceiling, clamped so SSE never consumes
+        # the request threads reserved for non-SSE traffic. Equal to
+        # +min(MAX_SUBSCRIBERS, Config.puma_max_threads - Config.sse_thread_reserve)+,
+        # which reconciles to {MAX_SUBSCRIBERS} at the default pool size
+        # (96 - 32 = 64) and shrinks automatically when the pool is configured
+        # smaller (SPEC PS9). Never negative: a pool at or below the reserve
+        # yields 0, so every {subscribe} is refused (503) and the client falls
+        # back to its safety poll (+PS8+) rather than the server starving.
+        #
+        # @return [Integer] the effective subscriber limit (>= 0).
+        def effective_max_subscribers
+          budget = PotatoMesh::Config.puma_max_threads - PotatoMesh::Config.sse_thread_reserve
+          [MAX_SUBSCRIBERS, [budget, 0].max].min
         end
 
         # Remove and close a subscriber. Safe to call more than once.

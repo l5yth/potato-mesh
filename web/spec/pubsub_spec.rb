@@ -43,6 +43,34 @@ RSpec.describe PotatoMesh::App::PubSub do
     end
   end
 
+  describe ".effective_max_subscribers" do
+    it "equals MAX_SUBSCRIBERS at the default pool size (96 - 32 = 64)" do
+      within_env("MAX_THREADS" => nil, "SSE_THREAD_RESERVE" => nil) do
+        expect(described_class.effective_max_subscribers).to eq(described_class::MAX_SUBSCRIBERS)
+      end
+    end
+
+    it "shrinks to the thread budget when the pool is smaller than the cap" do
+      within_env("MAX_THREADS" => "20", "SSE_THREAD_RESERVE" => "4") do
+        expect(described_class.effective_max_subscribers).to eq(16)
+      end
+    end
+
+    it "never goes negative when the pool is at or below the reserve" do
+      within_env("MAX_THREADS" => "4", "SSE_THREAD_RESERVE" => "8") do
+        expect(described_class.effective_max_subscribers).to eq(0)
+      end
+    end
+
+    it "caps subscribe at the clamped limit, then raises naming that limit" do
+      within_env("MAX_THREADS" => "10", "SSE_THREAD_RESERVE" => "8") do
+        expect(described_class.effective_max_subscribers).to eq(2)
+        2.times { described_class.subscribe }
+        expect { described_class.subscribe }.to raise_error(described_class::CapacityError, /subscriber limit \(2\)/)
+      end
+    end
+  end
+
   describe ".unsubscribe" do
     it "removes and closes the subscriber" do
       subscriber = described_class.subscribe
@@ -346,6 +374,21 @@ RSpec.describe PotatoMesh::App::PubSub do
       end
       expect(subscriber.pending_count).to eq(1)
       expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "neighbors", hint: nil }])
+    end
+  end
+
+  # Temporarily set/clear ENV keys for the duration of the block, restoring the
+  # prior values (including "previously unset") afterwards.
+  def within_env(values)
+    original = values.transform_values { |_| :__unset__ }
+    values.each do |key, value|
+      original[key] = ENV.key?(key) ? ENV[key] : :__unset__
+      value.nil? ? ENV.delete(key) : ENV[key] = value
+    end
+    yield
+  ensure
+    original.each do |key, value|
+      value == :__unset__ ? ENV.delete(key) : ENV[key] = value
     end
   end
 end
