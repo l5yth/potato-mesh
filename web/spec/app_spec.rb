@@ -8198,7 +8198,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "live-update shutdown handling" do
-    after { PotatoMesh::App::PubSub.reset! }
+    before { PotatoMesh::App::PubSub.reset! }
 
     it "exposes force_shutdown_after to Puma via server_settings" do
       expect(PotatoMesh::Application.settings.server_settings).to include(
@@ -8227,6 +8227,19 @@ RSpec.describe "Potato Mesh Sinatra app" do
         sleep 0.01
       end
       expect(PotatoMesh::App::PubSub.subscriber_count).to eq(0)
+    end
+
+    it "close_live_update_subscribers! swallows errors from reset!" do
+      allow(PotatoMesh::App::PubSub).to receive(:reset!).and_raise(StandardError, "boom")
+      expect { PotatoMesh::Application.close_live_update_subscribers! }.not_to raise_error
+    end
+
+    it "run_server! installs the shutdown signal handlers, then runs" do
+      calls = []
+      allow(PotatoMesh::Application).to receive(:install_pubsub_shutdown_signal_handlers!) { calls << :install }
+      allow(PotatoMesh::Application).to receive(:run!) { calls << :run }
+      PotatoMesh::Application.run_server!
+      expect(calls).to eq(%i[install run])
     end
   end
 end

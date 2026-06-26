@@ -16,9 +16,7 @@
 
 require_relative "lib/potato_mesh/application"
 
-if $PROGRAM_NAME == __FILE__
-  # Close SSE streams on Ctrl+C so Puma's graceful shutdown is not blocked
-  # by an open /api/events connection (chained ahead of Sinatra's own trap).
-  PotatoMesh::Application.install_pubsub_shutdown_signal_handlers!
-  PotatoMesh::Application.run!
-end
+# Boot when run directly. run_server! installs INT/TERM handlers that close the
+# live-update SSE streams on shutdown -- so Ctrl+C is not blocked by an open
+# /api/events connection -- before handing off to Sinatra's run!.
+PotatoMesh::Application.run_server! if $PROGRAM_NAME == __FILE__

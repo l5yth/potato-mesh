@@ -148,6 +148,17 @@ module PotatoMesh
       end
     end
 
+    # Boot the HTTP server: install the SSE-shutdown signal handlers (so Ctrl+C
+    # closes the live-update streams and Puma can drain) and then hand off to
+    # Sinatra's +run!+. Factored out of +app.rb+ so the bootstrap wiring is unit
+    # testable without actually starting Puma.
+    #
+    # @return [void]
+    def self.run_server!
+      install_pubsub_shutdown_signal_handlers!
+      run!
+    end
+
     # Determine the port the application should listen on by honouring the
     # conventional +PORT+ environment variable used by hosting platforms. Any
     # non-numeric or out-of-range values fall back to the provided default to
