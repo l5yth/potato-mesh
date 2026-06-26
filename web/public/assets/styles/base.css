@@ -1058,14 +1058,35 @@ body.view-chat .page-shell {
   display: none;
 }
 
-/* Channel dropdown selector (SPEC LV8): a compact jump-to-channel control at
-   the end of the tab bar; the native <select> supplies the downward triangle. */
+/* Channel dropdown selector (SPEC LV8): a compact jump-to-channel control at the
+   end of the tab bar. Mirrors the federation/region `.instance-select` chrome
+   (theme tokens + a CSS-gradient triangle) so the two dropdowns match, sized down
+   to sit beside the channel tabs. */
 .chat-tab-select {
   flex: 0 0 auto;
   align-self: center;
-  max-width: 9rem;
-  margin-left: 0.25rem;
-  font-size: 0.85em;
+  margin-left: 0.5rem;
+  max-width: 11rem;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--input-bg);
+  color: var(--input-fg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding: 4px 26px 4px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% - 3px), calc(100% - 9px) calc(50% - 3px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.chat-tab-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .chat-tab:is(:focus-visible, :hover) {
