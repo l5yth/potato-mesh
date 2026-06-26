@@ -8196,4 +8196,37 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.status).to eq(404)
     end
   end
+
+  describe "live-update shutdown handling" do
+    after { PotatoMesh::App::PubSub.reset! }
+
+    it "exposes force_shutdown_after to Puma via server_settings" do
+      expect(PotatoMesh::Application.settings.server_settings).to include(
+        force_shutdown_after: PotatoMesh::Config.puma_force_shutdown_seconds,
+      )
+    end
+
+    it "close_live_update_subscribers! closes every open SSE subscriber" do
+      PotatoMesh::App::PubSub.subscribe
+      PotatoMesh::App::PubSub.subscribe
+      expect(PotatoMesh::App::PubSub.subscriber_count).to eq(2)
+      PotatoMesh::Application.close_live_update_subscribers!
+      expect(PotatoMesh::App::PubSub.subscriber_count).to eq(0)
+    end
+
+    it "traps INT/TERM and the handler closes the SSE subscribers" do
+      trapped = {}
+      fake_trap = ->(signal, &block) { trapped[signal] = block }
+      PotatoMesh::Application.install_pubsub_shutdown_signal_handlers!(trap: fake_trap)
+      expect(trapped.keys).to contain_exactly(:INT, :TERM)
+
+      PotatoMesh::App::PubSub.subscribe
+      trapped.fetch(:INT).call # spawns a thread that closes subscribers
+      50.times do
+        break if PotatoMesh::App::PubSub.subscriber_count.zero?
+        sleep 0.01
+      end
+      expect(PotatoMesh::App::PubSub.subscriber_count).to eq(0)
+    end
+  end
 end

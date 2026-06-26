@@ -120,6 +120,34 @@ module PotatoMesh
       logger.level = PotatoMesh::Config.debug? ? Logger::DEBUG : Logger::INFO
     end
 
+    # Close every live-update SSE subscriber so their streaming +pump+ loops
+    # exit promptly. Invoked from the shutdown signal handler (idempotent) so
+    # an open +/api/events+ connection cannot block Puma's graceful shutdown,
+    # which would otherwise gate the at_exit federation/retention teardown.
+    #
+    # @return [void]
+    def self.close_live_update_subscribers!
+      PotatoMesh::App::PubSub.reset!
+    rescue StandardError
+      nil
+    end
+
+    # Install INT/TERM handlers that close the live-update SSE subscribers when
+    # the process is asked to stop, so the streaming requests end and Puma can
+    # shut down without waiting out the SSE lifetime. The handler spawns a
+    # thread because the close path takes a Mutex, which is unsafe directly in
+    # trap context. Sinatra's own trap (installed by +run!+) chains to whatever
+    # handler already exists, so installing this *before* +run!+ keeps both.
+    #
+    # @param signals [Array<Symbol>] signals to trap.
+    # @param trap [#call] trap installer (injected in tests).
+    # @return [void]
+    def self.install_pubsub_shutdown_signal_handlers!(signals: %i[INT TERM], trap: Signal.method(:trap))
+      signals.each do |signal|
+        trap.call(signal) { Thread.new { close_live_update_subscribers! } }
+      end
+    end
+
     # Determine the port the application should listen on by honouring the
     # conventional +PORT+ environment variable used by hosting platforms. Any
     # non-numeric or out-of-range values fall back to the provided default to
@@ -159,6 +187,11 @@ module PotatoMesh
       set :retention_shutdown_hook_installed, false
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
+      # Bound Puma's graceful-shutdown wait so a long-lived /api/events SSE
+      # stream cannot block Ctrl+C; the signal handler closes subscribers for a
+      # graceful exit, and this force-terminates anything still in flight after
+      # the window.
+      set :server_settings, { force_shutdown_after: PotatoMesh::Config.puma_force_shutdown_seconds }
 
       app_logger = PotatoMesh::Logging.build_logger($stdout)
       set :logger, app_logger

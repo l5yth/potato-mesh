@@ -69,8 +69,9 @@ module PotatoMesh
             end
           end
 
-          # Pump coalesced change events to +out+ until the client disconnects
-          # or the connection's lifetime deadline elapses.
+          # Pump coalesced change events to +out+ until the client disconnects,
+          # the subscriber is closed (shutdown), or the connection's lifetime
+          # deadline elapses.
           #
           # Each iteration blocks up to +heartbeat+ seconds inside
           # {PubSub::Subscriber#drain}; a timeout yields an empty batch (one
@@ -85,7 +86,7 @@ module PotatoMesh
           # @param clock [#call] monotonic clock source.
           # @return [void]
           def pump(out, subscriber, heartbeat:, deadline_at:, settle: 0, clock: DEFAULT_CLOCK)
-            until out.closed? || clock.call >= deadline_at
+            until out.closed? || subscriber.closed? || clock.call >= deadline_at
               write_batch(out, subscriber.drain(timeout: heartbeat, settle: settle))
             end
           rescue IOError, Errno::EPIPE, Errno::ECONNRESET

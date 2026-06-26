@@ -126,6 +126,7 @@ RSpec.describe PotatoMesh::App::Routes::Events do
       out = fake_out_class.new(close_after: 1)
       recorded = {}
       subscriber = Object.new
+      subscriber.define_singleton_method(:closed?) { false }
       subscriber.define_singleton_method(:drain) do |timeout:, settle: 0|
         recorded[:timeout] = timeout
         recorded[:settle] = settle
@@ -140,6 +141,23 @@ RSpec.describe PotatoMesh::App::Routes::Events do
 
       expect(recorded[:timeout]).to eq(0.01)
       expect(recorded[:settle]).to eq(0.25)
+    end
+
+    it "stops pumping once the subscriber is closed, even if the stream stays open (shutdown)" do
+      out = fake_out_class.new # never closes itself
+      subscriber = PotatoMesh::App::PubSub::Subscriber.new
+      subscriber.close # a shutdown signal closes the subscriber
+
+      # The stream never closes and the deadline is far away, so the ONLY thing
+      # that can end the loop is noticing the subscriber is closed. The clock
+      # advances each tick so an unfixed pump would busy-loop writing keepalives.
+      ticks = (0..10).to_a
+      clock = -> { ticks.shift || 5 }
+      described_class.pump(out, subscriber, heartbeat: 0, deadline_at: 5, clock: clock)
+
+      # A shutdown-closed subscriber ends the loop at the top, before any drain
+      # or keepalive write.
+      expect(out.writes).to be_empty
     end
   end
 
