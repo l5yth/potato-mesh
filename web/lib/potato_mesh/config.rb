@@ -36,6 +36,12 @@ module PotatoMesh
     # prompting the client to reconnect (and resync). Bounds per-connection
     # thread occupancy and gives graceful shutdown a hard ceiling.
     DEFAULT_SSE_MAX_LIFETIME_SECONDS = 600
+
+    # Default per-collection SSE publish cooldown (seconds). A burst of writes
+    # to one collection within this settle window coalesces into a single
+    # client event so N ingestors relaying one packet do not stampede
+    # subscribers (SPEC LV6).
+    DEFAULT_SSE_PUBLISH_COOLDOWN_SECONDS = 1.0
     DEFAULT_TILE_FILTER_LIGHT = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
     DEFAULT_TILE_FILTER_DARK = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
     DEFAULT_MAP_CENTER_LAT = 38.761944
@@ -340,6 +346,16 @@ module PotatoMesh
     # @return [Integer] positive ceiling, overridable via +SSE_MAX_LIFETIME_SECONDS+.
     def sse_max_lifetime_seconds
       fetch_positive_integer("SSE_MAX_LIFETIME_SECONDS", DEFAULT_SSE_MAX_LIFETIME_SECONDS)
+    end
+
+    # Per-collection SSE publish cooldown (seconds). Within this settle window
+    # a burst of writes to one collection coalesces into a single emitted
+    # event (SPEC LV6). Zero disables the cooldown (emit as soon as a change
+    # lands).
+    #
+    # @return [Float] non-negative cooldown, overridable via +SSE_PUBLISH_COOLDOWN+.
+    def sse_publish_cooldown_seconds
+      fetch_nonnegative_float("SSE_PUBLISH_COOLDOWN", DEFAULT_SSE_PUBLISH_COOLDOWN_SECONDS)
     end
 
     # Retrieve the CSS filter used for light themed maps.
@@ -863,6 +879,25 @@ module PotatoMesh
       end
 
       parsed.positive? ? parsed : default
+    end
+
+    # Fetch a non-negative float from the environment, falling back to
+    # +default+ when unset, blank, unparseable, or negative.
+    #
+    # @param key [String] environment variable name.
+    # @param default [Float] fallback value.
+    # @return [Float] the parsed non-negative float, or +default+.
+    def fetch_nonnegative_float(key, default)
+      value = ENV[key]
+      return default if value.nil?
+
+      trimmed = value.strip
+      return default if trimmed.empty?
+
+      parsed = Float(trimmed, exception: false)
+      return default if parsed.nil? || parsed.negative?
+
+      parsed
     end
 
     # Resolve the effective XDG directory honoring environment overrides.

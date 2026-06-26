@@ -1550,17 +1550,18 @@ renders its row + tab), and only then is the highlight applied — asserted by
 checking the flashed element exists and is the final rendered node at flash time
 (the render call precedes the flash call within the tick).
 
-### VF-A5 — Brief (<100 ms), white, reduced-motion-aware highlight — VF5
+### VF-A5 — White, reduced-motion-aware highlight (now ~1.2 s; see LV-A1) — VF5
 ```bash
 ( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js )
 grep -nE '@media \(prefers-reduced-motion: reduce\)' web/public/assets/styles/base.css
-grep -nE '(animation|transition)[^;]*\b(9[0-9]|[1-9][0-9]?)ms' web/public/assets/styles/base.css
+grep -nE '(animation|transition)[^;]*(1\.2s|120[0-9]ms)' web/public/assets/styles/base.css  # amended by LV-A1
 ```
 **Expected:** pass / non-empty. The flash helper applies a one-shot highlight class
 and clears it (or relies on a self-completing CSS animation) with **no layout
-shift**. `base.css` carries the highlight keyframe/rule with a duration **< 100 ms**
-and a `@media (prefers-reduced-motion: reduce)` guard that suppresses the animation
-(data still updates; only the visual is withheld). The white color and sub-100 ms
+shift**. `base.css` carries the highlight keyframe/rule with a duration **~1.2 s**
+(amended from the original <100 ms by **LV-A1** below) and a
+`@media (prefers-reduced-motion: reduce)` guard that suppresses the animation
+(data still updates; only the visual is withheld). The white onset and the fade
 duration are confirmed by reading the rule.
 
 ### VF-A6 — Render & cache invariants preserved; #822 holds — VF6
@@ -1648,3 +1649,197 @@ collapse two meshcore messages on different channels" example is **updated** to 
 different channel *names* (the stable identifier) rather than different local
 indices — it is updated, not removed. No POST/GET/event contract change and no
 ingestor change, so **C2**, `CONTRACTS.md`, and the Python suite are unaffected.
+
+---
+
+## Bugfix: Live-update DOM handling (map overlay, chat-tab scroll, last_heard fan-out)
+
+Three defects in how a live SSE update touches the DOM, fixed independently of
+the (separately specced) flash visual redesign:
+(1) a `positions` / `telemetry` ingest advances the affected node's `last_heard`
+server-side (`touch_node_last_seen`) but published only its own collection, so
+the live dashboard never re-pulled the node row and the node table's "last seen"
+stayed stale until the safety poll;
+(2) the channel-tab list's horizontal scroll reset to the first tab on every
+refresh because `renderChatTabs` rebuilds the whole subtree (`replaceChildren`)
+and force-scrolled the active tab into view;
+(3) an open map-marker short-info overlay closed on every refresh because
+`renderMap` clears and rebuilds all markers (`clearLayers`), orphaning the
+overlay's anchor so `cleanupOrphans` closed it.
+Web-side only (Ruby publish fan-out + frontend JS); no POST/GET shape change, so
+the apex (I) and privacy (II) invariants are untouched (the new `nodes` publish
+is moot under `PRIVATE`, mirroring #822 / PS6).
+
+### LD-A1 -- positions/telemetry ingest also publishes `nodes` (live last_heard refresh)
+```bash
+( cd web && bundle exec rspec spec/pubsub_spec.rb \
+    -e "publishes nodes on a positions ingest" \
+    -e "publishes nodes on a telemetry ingest" \
+    -e "does not publish nodes on a neighbors or traces ingest" )
+```
+**Expected:** pass. `POST /api/positions` and `POST /api/telemetry` each publish
+both their own collection **and** `nodes` (the telemetry route also now
+invalidates `api:nodes:`), so the dashboard re-fetches `/api/nodes` and the
+node-table "last seen" refreshes and flashes live -- mirroring the #822
+messages-to-nodes fan-out. `POST /api/neighbors` and `/api/traces` deliberately
+do **not** publish `nodes`, honoring the VF3 boundary that neighbors/traces flash
+nothing (their `last_heard` refresh is surfaced silently by the safety poll).
+
+### LD-A2 -- channel-tab horizontal scroll is preserved across a refresh
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-tabs.test.js )
+```
+**Expected:** pass. `renderChatTabs` captures the channel-tab list's `scrollLeft`
+before rebuilding the subtree and restores it afterward, and scrolls the active
+tab into view **only** on an explicit user tab switch (not on a passive refresh)
+-- so a live update no longer yanks the user back to the first tab while they
+scroll the channel list. A re-render yields a fresh tab-list element whose
+`scrollLeft` equals the pre-render value, and a passive render performs **zero**
+`scrollIntoView` calls.
+
+### LD-A3 -- an open map-marker overlay survives a live re-render
+```bash
+( cd web && node --test public/assets/js/app/__tests__/short-info-overlay-manager.test.js \
+                       public/assets/js/app/main/__tests__/marker-overlay-preservation.test.js )
+```
+**Expected:** pass. The overlay stack gains `reanchor(oldAnchor, newAnchor)`,
+which carries an open overlay onto a replacement anchor so a subsequent
+`cleanupOrphans` keeps it open (it closed it before). `renderMap` snapshots the
+node ids whose marker hosts an open overlay before `clearLayers()` and re-anchors
+each onto the rebuilt marker (`captureOpenMarkerOverlays` /
+`restoreMarkerOverlays`), so an overlay opened on the map stays open while live
+updates fire instead of snapping shut on every refresh.
+
+### LD-R1 -- Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to remain green:
+**PS-A3 / PS-A4** (per-collection publish + coalescing -- the PS3 "thin event"
+and burst-coalescing examples are **updated** to a single-collection route
+(`neighbors`) since positions now also publishes `nodes`, not removed);
+**VF-A2 / VF-A3** (flash gating + message-to-node fan-out -- the new
+positions/telemetry-to-node fan-out reuses the same flash path, and neighbors/
+traces still flash nothing); **CR-A1** (an idle re-render still materialises 0
+entries -- the scroll/overlay preservation touches only already-built DOM);
+**A2 / A2a / PS-A6** (privacy -- the new `nodes` publish is moot under `PRIVATE`);
+and **B1** (all suites).
+
+---
+
+## Feature: Live-update feedback v2 (fade, stacking, map wave, dedup, full log)
+
+Maps to SPEC decisions **LV1-LV9**, which deliberately amend VF2/VF3/VF5. The
+<100 ms white strobe becomes a ~1.2 s white->role-colour fade with per-element
+stacked timers; a node highlight also emits a map-marker wave; the message
+highlight blinks only the message's own channel tab; the pub/sub gains a 1 s
+per-collection publish cooldown; the Log tab logs every live-event class; and a
+channel-tab dropdown selector is added. *Run JS suites from `web/`; run the
+server in public mode for the curl/rspec checks.*
+
+### LV-A1 -- ~1.2 s white->role-colour fade replaces the <100 ms strobe -- LV1, LV3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js )
+grep -nE '@media \(prefers-reduced-motion: reduce\)' web/public/assets/styles/base.css
+grep -nE '(animation|transition)[^;]*(1\.2s|120[0-9]ms)' web/public/assets/styles/base.css
+grep -nE -- '--flash-role-color' web/public/assets/styles/base.css
+```
+**Expected:** pass / non-empty. The highlight keyframe runs **~1.2 s** (not
+<100 ms), starts white and fades through the element's role colour
+(`var(--flash-role-color, ...)`) with increasing transparency to nothing, with
+**no layout shift** and a `prefers-reduced-motion: reduce` guard that suppresses
+it. The flash helper's `FLASH_DURATION_MS` is ~1200 and only toggles a class.
+
+### LV-A2 -- per-element stacked timers; a re-flash restarts cleanly -- LV2
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js )
+```
+**Expected:** pass. `flashElement` runs each element on its own timer and, when
+re-flashed mid-fade, **cancels the prior removal timer** before re-arming so the
+class is never cleared early; two distinct elements flashed in the same tick each
+keep an independent timer (no shared/global clock).
+
+### LV-A3 -- role colour is stamped on the element at render -- LV3
+```bash
+( cd web && node --test public/assets/js/app/__tests__/node-rendering.test.js \
+                       public/assets/js/app/__tests__/main-flash.test.js )
+```
+**Expected:** pass. A rendered node-table row and chat message row carry
+`--flash-role-color` set from `getRoleColor(role, protocol)` (so the fade lands on
+the correct role colour for both protocols); the flash helper performs no colour
+lookup of its own.
+
+### LV-A4 -- a message fades its row and ONLY its own channel tab -- LV4
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js \
+                       public/assets/js/app/__tests__/main-flash.test.js )
+```
+**Expected:** pass. A `messages` ping fades the message row(s) and highlights the
+header of **only the message's own channel tab** (resolved via the message->tab
+map), never merely the active tab; the author node's row + marker fade via the
+existing message->nodes publish.
+
+### LV-A5 -- a node highlight emits a map-marker wave -- LV5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/flash.test.js )
+grep -nE 'live-flash-wave|@keyframes .*wave' web/public/assets/styles/base.css
+```
+**Expected:** pass / non-empty. Flashing a marker creates a transient expanding
+wave overlay (from ~12 px, growing and fading toward the role colour over ~1.2 s)
+added to the map and removed after the animation; `neighbors`/`traces` emit no
+wave (VF3 boundary). The wave is non-interactive and causes no layout shift.
+
+### LV-A6 -- per-collection 1 s publish cooldown dedups duplicate events -- LV6
+```bash
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "cooldown" )
+```
+**Expected:** pass. A burst of `publish(...)` calls is coalesced by the
+**settle window** in `Subscriber#drain` (default 1 s, env-tunable
+`SSE_PUBLISH_COOLDOWN`): once a change is pending the drain waits out the window,
+then returns each changed collection **once** (the structural pending-map
+coalescing), so N ingestors hearing a single packet produce one client
+refresh/flash. Collections that change during the same window each emit once (not
+suppressed). In-process only (no broker; apex-safe); `settle: 0` disables it.
+
+### LV-A7 -- the Log tab logs every live-event class incl. plaintext messages -- LV7
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
+```
+**Expected:** pass. `buildChatTabModel(...).logEntries` includes a **plaintext**
+message entry (previously only encrypted messages reached the Log), so every live
+collection - nodes, messages (plain + encrypted), positions, telemetry, neighbors,
+traces - has a Log representation. Hidden-protocol and PRIVATE gates already
+applied to the chat are unchanged.
+
+### LV-A8 -- channel-tab dropdown selector -- LV8
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-tabs.test.js )
+```
+**Expected:** pass. `renderChatTabs` renders a compact selector listing every tab
+that, when a channel is chosen, activates that tab - independent of the preserved
+horizontal scroll (LD-A2). Tab order, the default-active tab, and all data
+surfaces are unchanged.
+
+### LV-A9 -- engineering bar; invariants untouched -- LV9
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** pass. New code carries the exact Apache header + JSDoc/RDoc and is
+100% unit-tested; `prefers-reduced-motion` suppresses both the fade and the wave.
+Apex (I), privacy (II - messages still 404 under PRIVATE, so message fades/log are
+moot there; the LV6 cooldown is in-process with no broker), and parity (IV - role
+colours via `getRoleColor` for both protocols) are untouched.
+
+### LV-R1 -- Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. **VF-A5 is amended** (the duration grep now matches
+~1.2 s, not <100 ms) - updated, not removed. At risk and required to remain green:
+**VF-A2** (flash still fires only on SSE-ping deltas), **VF-A4** (render before
+flash), **VF-A6 / CR-A1** (idle re-render still materialises 0 entries), **LD-A1**
+(positions/telemetry->nodes fan-out feeds the fade), **LD-A2** (tab scroll
+preserved - the LV8 dropdown composes with it), **A2 / A2a / PS-A6** (privacy),
+and **B1** (all suites).

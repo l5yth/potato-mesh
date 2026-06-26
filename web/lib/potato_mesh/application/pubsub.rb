@@ -63,6 +63,10 @@ module PotatoMesh
       # elapses, then returns and clears the pending set. The blocking drain lets
       # the SSE route emit a heartbeat on timeout without busy-looping.
       class Subscriber
+        # Default settle-window sleeper (real time). Injectable so a test can
+        # drive the LV6 cooldown deterministically without actually sleeping.
+        DEFAULT_SLEEPER = ->(seconds) { sleep(seconds) }
+
         # Initialize an empty, open subscriber.
         def initialize
           @pending = {}
@@ -97,11 +101,25 @@ module PotatoMesh
         # signals a timeout/heartbeat tick or a closed, drained subscriber.
         #
         # @param timeout [Numeric] maximum seconds to block when idle.
+        # @param settle [Numeric] LV6 cooldown: seconds to hold after a change
+        #   lands so a burst coalesces into one batch (0 disables it).
+        # @param sleeper [#call] settle-window sleeper (injected by tests).
         # @return [Array<Hash{Symbol => Object}>] coalesced pending changes.
-        def drain(timeout:)
+        def drain(timeout:, settle: 0, sleeper: DEFAULT_SLEEPER)
           @mutex.synchronize do
             @condition.wait(@mutex, timeout) if @pending.empty? && !@closed
+          end
 
+          # Hold a brief settle window so a burst of writes to the same collection
+          # (e.g. N ingestors relaying one packet) coalesces into a single event
+          # rather than N (SPEC LV6 cooldown). The sleep runs OUTSIDE the lock so
+          # concurrent deliver() calls merge into @pending during the window; it
+          # is skipped on an idle heartbeat tick (nothing pending) and once closed.
+          if settle.positive? && !closed? && pending_count.positive?
+            sleeper.call(settle)
+          end
+
+          @mutex.synchronize do
             events = @pending.keys.sort.map do |collection|
               { collection: collection, hint: @pending[collection] }
             end

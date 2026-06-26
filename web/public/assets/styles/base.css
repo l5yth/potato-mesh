@@ -1058,6 +1058,37 @@ body.view-chat .page-shell {
   display: none;
 }
 
+/* Channel dropdown selector (SPEC LV8): a compact jump-to-channel control at the
+   end of the tab bar. Mirrors the federation/region `.instance-select` chrome
+   (theme tokens + a CSS-gradient triangle) so the two dropdowns match, sized down
+   to sit beside the channel tabs. */
+.chat-tab-select {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 0.5rem;
+  max-width: 11rem;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--input-bg);
+  color: var(--input-fg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  padding: 4px 26px 4px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% - 3px), calc(100% - 9px) calc(50% - 3px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.chat-tab-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .chat-tab:is(:focus-visible, :hover) {
   background: rgba(0, 0, 0, 0.06);
 }
@@ -2554,22 +2585,45 @@ body.dark #map .leaflet-tile.map-tiles {
   .markdown-body h2 { font-size: 1.15em; }
 }
 
-/* Live-update flash (SPEC VF5): a brief (<100ms) white highlight applied to a
-   node row / map marker / chat message / channel tab when a live SSE update
-   lands on it. Uses an inset box-shadow overlay so there is no layout shift, and
-   self-completes (no fill) so the element reverts to its normal appearance. */
-@keyframes live-flash-highlight {
-  from { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.85); }
-  to { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0); }
+/* Live-update highlight (SPEC LV1/LV2/LV3, amends VF5): a ~1.2s fade applied to a
+   node row / chat message row when a live SSE update lands on it. It starts
+   white, fades through the element's role colour (the --flash-role-color custom
+   property stamped at render time) with increasing transparency, then clears.
+   An inset box-shadow overlay means there is no layout shift; each element runs
+   its own animation, so concurrent updates stack independently (LV2). */
+@keyframes live-flash-fade {
+  0% { box-shadow: inset 0 0 0 100vmax rgba(255, 255, 255, 0.9); }
+  30% { box-shadow: inset 0 0 0 100vmax var(--flash-role-color, rgba(255, 255, 255, 0.55)); }
+  100% { box-shadow: inset 0 0 0 100vmax transparent; }
 }
 
 .live-flash {
-  animation: live-flash-highlight 90ms ease-out;
+  animation: live-flash-fade 1.2s ease-out;
 }
 
-/* Honor reduced-motion: data still updates live, only the flash is withheld. */
+/* Map-marker wave (SPEC LV5): an expanding ring emitted from a flashed marker.
+   The ring grows from ~12px radius and fades toward the role colour over ~1.2s.
+   Rendered as a Leaflet divIcon, so it is a positioned overlay with no layout
+   shift; the marker layer removes it after the animation completes. */
+@keyframes live-flash-wave {
+  0% { transform: scale(1); opacity: 0.85; }
+  100% { transform: scale(3.5); opacity: 0; }
+}
+
+.live-flash-wave {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--flash-role-color, rgba(255, 255, 255, 0.85));
+  pointer-events: none;
+  animation: live-flash-wave 1.2s ease-out forwards;
+}
+
+/* Honor reduced-motion: data still updates live, only the highlight/wave is
+   withheld. */
 @media (prefers-reduced-motion: reduce) {
-  .live-flash {
+  .live-flash,
+  .live-flash-wave {
     animation: none;
   }
 }

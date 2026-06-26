@@ -180,8 +180,8 @@ test('renderChatTabs creates tab markup and selects default active tab', () => {
   assert.equal(container.children.length, 2);
 
   const [tabListWrapper, panelWrapper] = container.children;
-  // tabListWrapper holds [prevBtn, tabList, nextBtn]
-  assert.equal(tabListWrapper.children.length, 3);
+  // tabListWrapper holds [prevBtn, tabList, nextBtn, tabSelect] (LV8 dropdown is 4th)
+  assert.equal(tabListWrapper.children.length, 4);
   const [, tabList] = tabListWrapper.children;
   assert.equal(tabList.children.length, 3);
   assert.equal(panelWrapper.children.length, 3);
@@ -351,4 +351,64 @@ test('renderChatTabs arrow buttons reflect scroll position via scroll event', ()
   tabList.dispatch('scroll');
   assert.equal(prevBtn.hidden, true);
   assert.equal(nextBtn.hidden, false);
+});
+
+
+test('renderChatTabs preserves the tablist horizontal scroll across a re-render', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') },
+    { id: 'c1', label: 'Alpha', content: new MockElement('div') },
+    { id: 'c2', label: 'Bravo', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+  const tabList1 = container.children[0].children[1];
+  tabList1.scrollLeft = 120;
+
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+  const tabList2 = container.children[0].children[1];
+
+  assert.notEqual(tabList2, tabList1);
+  assert.equal(tabList2.scrollLeft, 120);
+});
+
+test('renderChatTabs does not scroll the active tab into view on a passive re-render', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'c0' });
+  const tabList = container.children[0].children[1];
+  const totalScrollIntoView = tabList.children.reduce(
+    (n, button) => n + (button.scrollIntoViewCalls ? button.scrollIntoViewCalls.length : 0),
+    0
+  );
+  assert.equal(totalScrollIntoView, 0);
+});
+
+
+test('renderChatTabs renders a channel dropdown selector that jumps to a tab (LV8)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') },
+    { id: 'c1', label: 'Alpha', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs, defaultActiveTabId: 'log' });
+  const tabListWrapper = container.children[0];
+  const tabSelect = tabListWrapper.children[3];
+  assert.equal(tabSelect.tagName, 'SELECT');
+  // One option per tab, in order.
+  assert.deepEqual(tabSelect.children.map(option => option.value), ['log', 'c0', 'c1']);
+  // The dropdown reflects the active tab ...
+  assert.equal(tabSelect.value, 'log');
+  // ... and choosing a channel from it activates that tab.
+  tabSelect.value = 'c1';
+  tabSelect.dispatch('change');
+  assert.equal(container.dataset.activeTab, 'c1');
 });

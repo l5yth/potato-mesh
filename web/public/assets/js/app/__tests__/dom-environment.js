@@ -101,7 +101,19 @@ class MockElement {
     this._registry = registry;
     this.attributes = new Map();
     this.dataset = {};
-    this.style = {};
+    this.style = {
+      setProperty(name, value) {
+        this[name] = String(value);
+      },
+      getPropertyValue(name) {
+        return this[name] != null ? this[name] : '';
+      },
+      removeProperty(name) {
+        const previous = this[name];
+        delete this[name];
+        return previous != null ? previous : '';
+      },
+    };
     this.textContent = '';
     this.classList = new MockClassList();
     this.childNodes = [];

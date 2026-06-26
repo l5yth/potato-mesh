@@ -155,6 +155,9 @@ function createNoopOverlayStack() {
     isTokenCurrent() {
       return false;
     },
+    reanchor() {
+      return false;
+    },
     getOpenOverlays() {
       return [];
     },
@@ -181,6 +184,7 @@ function createNoopOverlayStack() {
  *   cleanupOrphans: () => void,
  *   incrementRequestToken: (anchor: Element) => number,
  *   isTokenCurrent: (anchor: Element, token: number) => boolean,
+ *   reanchor: (oldAnchor: Element, newAnchor: Element) => boolean,
  *   getOpenOverlays: () => Array<{ anchor: Element, element: Element }>
  * }} Overlay stack interface.
  */
@@ -461,6 +465,36 @@ export function createShortInfoOverlayStack(options = {}) {
   }
 
   /**
+   * Re-point an open overlay from one anchor element to another, preserving
+   * its content and request token. Used when the anchored element is replaced
+   * by a fresh DOM node (e.g. a Leaflet marker rebuilt on a map re-render) so
+   * the overlay is carried across instead of orphaned and closed by
+   * {@link cleanupOrphans} (item 7).
+   *
+   * @param {Element} oldAnchor Anchor the overlay is currently keyed by.
+   * @param {Element} newAnchor Replacement anchor element.
+   * @returns {boolean} ``true`` when an overlay was re-anchored (or the two
+   *   anchors are identical); ``false`` when no overlay exists for
+   *   ``oldAnchor`` or ``newAnchor`` is not a valid anchor.
+   */
+  function reanchor(oldAnchor, newAnchor) {
+    const state = overlayStates.get(oldAnchor);
+    if (!state || !isValidAnchor(newAnchor)) {
+      return false;
+    }
+    if (oldAnchor === newAnchor) {
+      return true;
+    }
+    overlayStates.delete(oldAnchor);
+    state.anchor = newAnchor;
+    overlayStates.set(newAnchor, state);
+    // Keep the overlay attached and reposition it against the new anchor box.
+    ensureOverlayAttached(state.element);
+    schedulePosition(state);
+    return true;
+  }
+
+  /**
    * Close every active overlay.
    *
    * @returns {void}
@@ -563,6 +597,7 @@ export function createShortInfoOverlayStack(options = {}) {
     cleanupOrphans,
     incrementRequestToken,
     isTokenCurrent,
+    reanchor,
     getOpenOverlays,
   };
 }

@@ -108,6 +108,7 @@ import { maxRecordTimestamp, minRecordTimestamp, mergeById, mergeByCompositeKey,
 import { buildTraceSegments } from './trace-paths.js';
 import {
   getRoleColor,
+  getRoleFlashColor,
   getRoleKey,
   getRoleRenderPriority,
   getRoleTextColor,
@@ -193,7 +194,8 @@ import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
-import { flashNodeTargets, flashMessageTargets } from './main/flash.js';
+import { flashNodeTargets, flashMessageTargets, emitNodeWaves } from './main/flash.js';
+import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
 
 /**
@@ -737,6 +739,20 @@ export function initializeApp(config) {
     liveFlashCount += 1;
     lastFlashedNodeIds = [...nodeIds];
     flashNodeTargets(nodeIds, { documentRef: document, markerByNodeId });
+    // Emit an expanding wave from each changed node's marker (SPEC LV5). Guarded
+    // on Leaflet so the poll / no-map paths stay no-ops; the wave colour resolves
+    // to the node's role colour.
+    if (hasLeaflet && flashWavesLayer) {
+      emitNodeWaves(nodeIds, {
+        markerByNodeId,
+        leaflet: L,
+        layer: flashWavesLayer,
+        colorForNodeId: (id) => {
+          const node = nodesById.get(id);
+          return getRoleFlashColor(node && node.role, node && node.protocol, 0.85);
+        },
+      });
+    }
   }
 
   /**
@@ -895,6 +911,9 @@ export function initializeApp(config) {
   let traceLinesToggleButton = null;
   let markersLayer = null;
   let spiderLinesLayer = null;
+  // Dedicated, never-cleared layer hosting transient LV5 wave rings; each wave
+  // self-removes after its animation, so a map re-render never clears it.
+  let flashWavesLayer = null;
   // Per-render map of canonical node id → its Leaflet marker, so a live update
   // can flash the marker for a changed node (SPEC VF3). Rebuilt every renderMap.
   let markerByNodeId = new Map();
@@ -1573,6 +1592,7 @@ export function initializeApp(config) {
     });
 
     neighborLinesLayer = L.layerGroup().addTo(map);
+    flashWavesLayer = L.layerGroup().addTo(map);
     traceLinesLayer = L.layerGroup().addTo(map);
     // Spider lines render between the connection lines and the markers so the
     // dashed white "leader" lines are visible against neighbour/trace overlays
@@ -2792,6 +2812,7 @@ export function initializeApp(config) {
         return buildNeighborChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.TRACE:
         return buildTraceChatEntryParts(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.MESSAGE:
       case CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED:
         return entry?.message ? buildMessageChatEntryParts(entry.message) : null;
       default:
@@ -3469,6 +3490,14 @@ export function initializeApp(config) {
       if (messageId) {
         node.dataset.messageId = messageId;
         if (namespace !== 'log') messageTabId.set(messageId, namespace);
+        // Stamp the sender's role colour so the live-update fade lands on it
+        // (LV3). Falls back to the CSS default when the sender node is unknown.
+        const flashMessage = entry.item || entry.message;
+        const senderId = flashMessage && (flashMessage.from_id || flashMessage.fromId);
+        const senderNode = senderId ? nodesById.get(senderId) : null;
+        if (senderNode && node.style && typeof node.style.setProperty === 'function') {
+          node.style.setProperty('--flash-role-color', getRoleFlashColor(senderNode.role, senderNode.protocol));
+        }
       }
       const divider = getDivider(entry.ts);
       if (divider) fragment.appendChild(divider);
@@ -3620,6 +3649,11 @@ export function initializeApp(config) {
       // from the inner link's data-node-id so it never affects click handling.
       if (typeof n.node_id === 'string' && n.node_id) {
         tr.dataset.nodeRow = n.node_id;
+      }
+      // Stamp the role colour so the live-update fade lands on it (LV3); the CSS
+      // keyframe reads --flash-role-color, so the flash helper needs no colour.
+      if (tr.style && typeof tr.style.setProperty === 'function') {
+        tr.style.setProperty('--flash-role-color', getRoleFlashColor(n.role, n.protocol));
       }
       const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
       const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
@@ -3897,6 +3931,11 @@ export function initializeApp(config) {
     // Capture the zoom bucket the upcoming render targets so the zoomend
     // handler can detect threshold crossings on the next zoom event.
     lastRenderedZoomBucket = currentZoomBucket();
+    // Snapshot any open marker overlay before clearing the layer (item 7):
+    // clearLayers() destroys each marker's DOM element, which would orphan an
+    // open overlay and let cleanupOrphans() close it. We re-anchor to the
+    // rebuilt markers after the render below so the overlay stays open.
+    const preservedMarkerOverlays = captureOpenMarkerOverlays(overlayStack, markerByNodeId);
     markersLayer.clearLayers();
     // Reset the node→marker map for this render so live-update flashes target
     // the current markers (SPEC VF3).
@@ -4273,6 +4312,10 @@ export function initializeApp(config) {
         },
       });
     }
+    // Re-anchor any overlay preserved above onto its rebuilt marker so it
+    // stays open across the re-render instead of being closed by
+    // cleanupOrphans (item 7).
+    restoreMarkerOverlays(overlayStack, preservedMarkerOverlays, markerByNodeId);
     overlayStack.cleanupOrphans();
   }
 
@@ -4838,6 +4881,10 @@ export function initializeApp(config) {
       getLiveFlashCount: () => liveFlashCount,
       /** Node ids flashed by the most recent SSE-ping refresh (test hook). */
       getLastFlashedNodeIds: () => lastFlashedNodeIds,
+      /** Flash (and wave) the given changed node ids — test hook for the LV5 wiring. */
+      flashChangedNodes,
+      /** Inject a marker into the node->marker map — test hook for the LV5 wiring. */
+      _setMarkerForTests: (id, marker) => markerByNodeId.set(id, marker),
       /** Message ids flashed by the most recent SSE-ping refresh (test hook). */
       getLastFlashedMessageIds: () => lastFlashedMessageIds,
       /**

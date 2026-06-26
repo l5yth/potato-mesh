@@ -526,6 +526,35 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".sse_publish_cooldown_seconds" do
+    it "returns the baked-in default when unset" do
+      within_env("SSE_PUBLISH_COOLDOWN" => nil) do
+        expect(described_class.sse_publish_cooldown_seconds).to eq(
+          PotatoMesh::Config::DEFAULT_SSE_PUBLISH_COOLDOWN_SECONDS,
+        )
+      end
+    end
+
+    it "accepts a non-negative float override (including 0 to disable)" do
+      within_env("SSE_PUBLISH_COOLDOWN" => "0.5") do
+        expect(described_class.sse_publish_cooldown_seconds).to eq(0.5)
+      end
+      within_env("SSE_PUBLISH_COOLDOWN" => "0") do
+        expect(described_class.sse_publish_cooldown_seconds).to eq(0.0)
+      end
+    end
+
+    it "falls back to the default for blank, unparseable, or negative values" do
+      ["", "  ", "abc", "-2"].each do |raw|
+        within_env("SSE_PUBLISH_COOLDOWN" => raw) do
+          expect(described_class.sse_publish_cooldown_seconds).to eq(
+            PotatoMesh::Config::DEFAULT_SSE_PUBLISH_COOLDOWN_SECONDS,
+          )
+        end
+      end
+    end
+  end
+
   describe ".prom_report_id_list" do
     it "returns an empty collection when no identifiers are configured" do
       expect(described_class.prom_report_id_list).to eq([])

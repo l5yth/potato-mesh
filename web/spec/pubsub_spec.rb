@@ -171,6 +171,49 @@ RSpec.describe PotatoMesh::App::PubSub do
       end
     end
 
+    describe "#drain settle window (LV6 cooldown)" do
+      it "coalesces a burst within the settle window into one drain" do
+        subscriber.deliver("positions", 1)
+        # The injected sleeper stands in for the cooldown window; more ingestors
+        # deliver the same/another collection while it "sleeps".
+        sleeper = lambda do |_seconds|
+          subscriber.deliver("positions", 2)
+          subscriber.deliver("telemetry", 5)
+        end
+        events = subscriber.drain(timeout: 0, settle: 1, sleeper: sleeper)
+        expect(events).to eq(
+          [
+            { collection: "positions", hint: 2 },
+            { collection: "telemetry", hint: 5 },
+          ],
+        )
+      end
+
+      it "sleeps for the settle window only when a change is pending" do
+        slept = []
+        sleeper = ->(seconds) { slept << seconds }
+
+        # Idle heartbeat tick: nothing pending, so no settle sleep.
+        expect(subscriber.drain(timeout: 0, settle: 1, sleeper: sleeper)).to eq([])
+        expect(slept).to eq([])
+
+        # A pending change triggers exactly one settle sleep.
+        subscriber.deliver("nodes", nil)
+        expect(subscriber.drain(timeout: 0, settle: 1, sleeper: sleeper)).to eq(
+          [{ collection: "nodes", hint: nil }],
+        )
+        expect(slept).to eq([1])
+      end
+
+      it "does not sleep when settle is zero (cooldown disabled)" do
+        slept = []
+        sleeper = ->(seconds) { slept << seconds }
+        subscriber.deliver("nodes", nil)
+        subscriber.drain(timeout: 0, settle: 0, sleeper: sleeper)
+        expect(slept).to eq([])
+      end
+    end
+
     describe "#close" do
       it "ignores deliveries and drains immediately once closed" do
         subscriber.close
@@ -225,11 +268,12 @@ RSpec.describe PotatoMesh::App::PubSub do
 
     it "publishes a thin per-collection event (PS3)" do
       subscriber = PotatoMesh::App::PubSub.subscribe
-      # Use positions: it publishes exactly one collection. (The messages route
-      # additionally publishes nodes — covered by the message-ingest example.)
-      post "/api/positions", "[]", auth
+      # Use neighbors: it publishes exactly one collection. (The messages,
+      # positions, and telemetry routes additionally publish nodes because they
+      # advance a node's last_heard - covered by the dedicated examples below.)
+      post "/api/neighbors", "[]", auth
       expect(last_response.status).to eq(201)
-      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "positions", hint: nil }])
+      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "neighbors", hint: nil }])
     end
 
     it "publishes nodes on a message ingest (#822 touches the author node)" do
@@ -238,6 +282,41 @@ RSpec.describe PotatoMesh::App::PubSub do
       expect(last_response.status).to eq(201)
       expect(PotatoMesh::App::PubSub).to have_received(:publish).with("messages", private_mode: false)
       expect(PotatoMesh::App::PubSub).to have_received(:publish).with("nodes", private_mode: false)
+    end
+
+    # A positions / telemetry ingest advances the affected node's last_heard
+    # server-side (touch_node_last_seen), but unlike the messages route it
+    # historically published only its own collection, so the live dashboard
+    # fetched only that collection and never re-pulled the node row, leaving
+    # the node table "last seen" stale until the safety poll. These routes now
+    # also publish "nodes" (mirroring #822) so the changed node last_heard
+    # refreshes and flashes live.
+    it "publishes nodes on a positions ingest (advances the node last_heard)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
+      post "/api/positions", "[]", auth
+      expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("positions", private_mode: false)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("nodes", private_mode: false)
+    end
+
+    it "publishes nodes on a telemetry ingest (advances the node last_heard)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
+      post "/api/telemetry", "[]", auth
+      expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("telemetry", private_mode: false)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("nodes", private_mode: false)
+    end
+
+    # Neighbors / traces also advance last_heard, but SPEC VF3 keeps them out
+    # of the flash scope, so they deliberately do NOT publish "nodes" (their
+    # last_heard refresh is surfaced silently by the safety poll, never flashed).
+    it "does not publish nodes on a neighbors or traces ingest (VF3 boundary)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
+      post "/api/neighbors", "[]", auth
+      expect(last_response.status).to eq(201)
+      post "/api/traces", "[]", auth
+      expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).not_to have_received(:publish).with("nodes", private_mode: false)
     end
 
     it "publishes on every ingest route" do
@@ -258,12 +337,15 @@ RSpec.describe PotatoMesh::App::PubSub do
 
     it "coalesces bursts of one collection into a single pending event" do
       subscriber = PotatoMesh::App::PubSub.subscribe
+      # neighbors publishes exactly one collection (positions/telemetry now
+      # also publish nodes for the last_heard hook-in), so it isolates the
+      # per-collection coalescing under test.
       5.times do
-        post "/api/positions", "[]", auth
+        post "/api/neighbors", "[]", auth
         expect(last_response.status).to eq(201)
       end
       expect(subscriber.pending_count).to eq(1)
-      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "positions", hint: nil }])
+      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "neighbors", hint: nil }])
     end
   end
 end

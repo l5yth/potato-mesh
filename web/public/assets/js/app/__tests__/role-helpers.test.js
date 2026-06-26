@@ -19,6 +19,8 @@ import assert from 'node:assert/strict';
 
 import {
   getRoleColor,
+  getRoleFlashColor,
+  hexToRgba,
   getRoleKey,
   getRoleRenderPriority,
   getRoleColors,
@@ -147,4 +149,27 @@ test('getRoleTextColor returns null for meshcore roles without override', () => 
 test('getRoleTextColor returns null for meshtastic roles', () => {
   assert.equal(getRoleTextColor('CLIENT', 'meshtastic'), null);
   assert.equal(getRoleTextColor('ROUTER', null), null);
+});
+
+
+test('hexToRgba converts 6- and 3-digit hex to rgba', () => {
+  assert.equal(hexToRgba('#f3ef74', 0.55), 'rgba(243, 239, 116, 0.55)');
+  assert.equal(hexToRgba('#abc', 1), 'rgba(170, 187, 204, 1)');
+  assert.equal(hexToRgba('ff0019', 0.5), 'rgba(255, 0, 25, 0.5)');
+});
+
+test('hexToRgba clamps an out-of-range alpha to 1 and rejects non-hex', () => {
+  assert.equal(hexToRgba('#ffffff', 5), 'rgba(255, 255, 255, 1)');
+  assert.equal(hexToRgba('#ffffff', -1), 'rgba(255, 255, 255, 1)');
+  assert.equal(hexToRgba('#ffffff', 'x'), 'rgba(255, 255, 255, 1)'); // non-number alpha -> 1
+  assert.equal(hexToRgba('not-a-color', 0.5), null);
+  assert.equal(hexToRgba('#12', 0.5), null);
+  assert.equal(hexToRgba(123, 0.5), null);
+});
+
+test('getRoleFlashColor returns the role colour at the given alpha (LV3)', () => {
+  assert.equal(getRoleFlashColor('CLIENT'), 'rgba(243, 239, 116, 0.55)');
+  assert.equal(getRoleFlashColor('ROUTER', null, 0.8), 'rgba(255, 0, 25, 0.8)');
+  // Unknown role falls back to the CLIENT colour via getRoleColor.
+  assert.equal(getRoleFlashColor('NOPE'), 'rgba(243, 239, 116, 0.55)');
 });
