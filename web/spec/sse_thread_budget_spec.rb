@@ -75,10 +75,11 @@ RSpec.describe "SSE request-thread budget" do
   end
 
   # Env keys this spec mutates; saved and restored verbatim around the run.
-  ENV_KEYS = %w[MAX_THREADS SSE_THREAD_RESERVE EVENTS PRIVATE SSE_HEARTBEAT_SECONDS].freeze
+  ENV_KEYS = %w[MIN_THREADS MAX_THREADS SSE_THREAD_RESERVE EVENTS PRIVATE SSE_HEARTBEAT_SECONDS].freeze
 
   before(:all) do
     @saved_env = ENV_KEYS.to_h { |k| [k, ENV[k]] }
+    ENV["MIN_THREADS"] = POOL.to_s
     ENV["MAX_THREADS"] = POOL.to_s
     ENV["SSE_THREAD_RESERVE"] = RESERVE.to_s
     ENV["EVENTS"] = "1"
@@ -95,10 +96,14 @@ RSpec.describe "SSE request-thread budget" do
       else
         Rack::Handler::Puma
       end
+    # Size the pool through the real production helper (the same value
+    # application.rb feeds Puma via server_settings[:Threads]) rather than a
+    # hardcoded string, so this guard also exercises Config.puma_threads_setting.
+    pool_spec = PotatoMesh::Config.puma_threads_setting
     @server_thread = Thread.new do
       handler.run(PotatoMesh::Application,
                   Host: HOST, Port: @port,
-                  Threads: "#{POOL}:#{POOL}", Silent: true) do |l|
+                  Threads: pool_spec, Silent: true) do |l|
         @launcher = l
       end
     end
