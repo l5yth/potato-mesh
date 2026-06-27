@@ -198,11 +198,19 @@ module PotatoMesh
       set :retention_shutdown_hook_installed, false
       set :port, resolve_port
       set :bind, DEFAULT_BIND_ADDRESS
-      # Bound Puma's graceful-shutdown wait so a long-lived /api/events SSE
-      # stream cannot block Ctrl+C; the signal handler closes subscribers for a
-      # graceful exit, and this force-terminates anything still in flight after
-      # the window.
-      set :server_settings, { force_shutdown_after: PotatoMesh::Config.puma_force_shutdown_seconds }
+      # Size the Puma worker-thread pool in code (default 16:96, env
+      # MIN_THREADS/MAX_THREADS). Each /api/events SSE stream pins one request
+      # thread for its lifetime, so the pool is kept well above the SSE
+      # subscriber cap (PubSub::MAX_SUBSCRIBERS) plus a reserve, ensuring live
+      # updates can never starve API/ingest/federation traffic (SPEC PS9);
+      # Puma's MRI default of 5 is far too small for that. force_shutdown_after
+      # bounds Puma's graceful-shutdown wait so a long-lived SSE stream cannot
+      # block Ctrl+C (the signal handler closes subscribers; this backstops
+      # anything still in flight after the window).
+      set :server_settings, {
+        force_shutdown_after: PotatoMesh::Config.puma_force_shutdown_seconds,
+        Threads: PotatoMesh::Config.puma_threads_setting,
+      }
 
       app_logger = PotatoMesh::Logging.build_logger($stdout)
       set :logger, app_logger

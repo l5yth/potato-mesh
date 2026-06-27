@@ -1894,3 +1894,62 @@ a subscriber-closed exit), **PS-A4 / LV-A6** (publish + 1s settle window are
 unchanged), **FH-A3** (federation reaps in seconds -- now actually reachable on
 Ctrl+C because the SSE no longer blocks Puma), and **B1** (all suites). No
 POST/GET/event contract change.
+
+## Bugfix: SSE streams must not starve the request-thread pool
+
+The live production instance went unresponsive: every request 502'd, including the
+instance's own federation self-fetch of `/api/nodes`, and at shutdown exactly five
+`/api/events` connections closed (durations 45-160s). Root cause: a `GET
+/api/events` SSE stream pins one Puma worker thread for its whole lifetime (the
+`pump` loop runs synchronously on the request thread; SD-A1), but the subscriber
+cap (`MAX_SUBSCRIBERS` = 64) sat far above Puma's pool. With no thread config the
+app ran on Puma's MRI default of **5** threads, so ~5 dashboard clients holding an
+`EventSource` occupied every worker thread and no other request -- API read,
+ingest POST, or federation self-fetch -- could be served. The cap never tripped
+before the pool starved; live updates became load-bearing, violating **PS8**.
+Pre-existing since the SSE pub/sub feature (#821). Fix (web-only): (1) size Puma's
+thread pool in code via `server_settings[:Threads]` (`Config.puma_threads_setting`,
+default `16:96`, env `MIN_THREADS`/`MAX_THREADS`); (2) clamp the SSE subscriber cap
+to `puma_max_threads - sse_thread_reserve` (env `SSE_THREAD_RESERVE`, default 32) so
+at least the reserve always remains for non-SSE traffic -- the defaults reconcile to
+the original 64 (`96 - 32`). New decision **PS9** names the budget invariant
+(`max_threads > MAX_SUBSCRIBERS + reserve`). The apex (I), privacy (II), and parity
+(IV) invariants are untouched; no POST/GET/event contract changes.
+
+### TS-A1 -- SSE can never consume the whole request-thread pool
+```bash
+( cd web && bundle exec rspec spec/sse_thread_budget_spec.rb )
+```
+**Expected:** pass. Boots a real Puma with a small fixed pool (`Threads "6:6"`,
+`SSE_THREAD_RESERVE=4`) and opens `pool`-many `/api/events` connections: at most
+`pool - reserve` are accepted (the rest get `503` and fall back to the safety poll,
+PS8), and a plain `GET /version` is still served promptly while SSE clients are
+connected. Against the unfixed code all six connections are accepted and the
+ordinary request times out (the outage).
+
+### TS-A2 -- thread budget exceeds the SSE subscriber cap by the reserve
+```bash
+( cd web && bundle exec rspec spec/config_spec.rb -e "puma thread budget" )
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "effective subscriber cap" )
+( cd web && bundle exec rspec spec/app_spec.rb -e "request-thread budget" )
+```
+**Expected:** pass. `Config.puma_max_threads` (default 96, env `MAX_THREADS`),
+`Config.puma_min_threads` (default 16, env `MIN_THREADS`), and
+`Config.sse_thread_reserve` (default 32, env `SSE_THREAD_RESERVE`) resolve and
+clamp sanely (`min <= max`); `Config.puma_threads_setting` returns `"min:max"`;
+`PubSub.effective_max_subscribers` equals `min(MAX_SUBSCRIBERS, max_threads -
+reserve)` (= 64 at defaults) and shrinks when the pool shrinks; and the application
+`server_settings[:Threads]` is present with `max > MAX_SUBSCRIBERS` (the invariant
+that was silently false before, when no `:Threads` was set at all).
+
+### TS-R1 -- Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and required to remain green: **PS-A2 / PS-A5**
+(the `/api/events` SSE stream + reconnect-resync still work), **PS-A3** (the
+subscriber cap still returns `503` at capacity -- now at the clamped value),
+**SD-A1 / SD-A2** (shutdown still reaps SSE; `server_settings` still carries
+`force_shutdown_after` alongside the new `Threads`), and **B1** (all suites). No
+POST/GET/event contract change.

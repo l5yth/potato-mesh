@@ -8197,6 +8197,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "request-thread budget" do
+    it "sizes the Puma thread pool above the SSE subscriber cap (PS9)" do
+      threads = PotatoMesh::Application.settings.server_settings[:Threads]
+      expect(threads).to eq(PotatoMesh::Config.puma_threads_setting)
+      _min, max = threads.split(":").map(&:to_i)
+      expect(max).to be > PotatoMesh::App::PubSub::MAX_SUBSCRIBERS
+      expect(max - PotatoMesh::App::PubSub::MAX_SUBSCRIBERS).to be >= PotatoMesh::Config.sse_thread_reserve
+    end
+  end
+
   describe "live-update shutdown handling" do
     before { PotatoMesh::App::PubSub.reset! }
 

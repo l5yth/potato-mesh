@@ -48,6 +48,20 @@ module PotatoMesh
     # instead of blocking on a long-lived /api/events connection. Backstop to
     # the graceful subscriber-close performed by the shutdown signal handler.
     DEFAULT_PUMA_FORCE_SHUTDOWN_SECONDS = 3
+
+    # Default Puma worker-thread pool bounds. The pool must stay larger than the
+    # SSE subscriber cap ({PotatoMesh::App::PubSub::MAX_SUBSCRIBERS}) by at least
+    # {DEFAULT_SSE_THREAD_RESERVE}, so a flood of long-lived +/api/events+
+    # streams (each pins one request thread for its lifetime) can never occupy
+    # every worker thread and starve API/ingest/federation traffic (SPEC
+    # PS8/PS9). Puma's own MRI default is only 5, which is why the floor is
+    # raised here in code rather than left to the deployment environment.
+    DEFAULT_PUMA_MIN_THREADS = 16
+    DEFAULT_PUMA_MAX_THREADS = 96
+    # Request threads kept in reserve for non-SSE traffic even when every SSE
+    # subscriber slot is occupied. With the defaults this reconciles the SSE cap
+    # back to its historical value (96 - 32 = 64).
+    DEFAULT_SSE_THREAD_RESERVE = 32
     DEFAULT_TILE_FILTER_LIGHT = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
     DEFAULT_TILE_FILTER_DARK = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
     DEFAULT_MAP_CENTER_LAT = 38.761944
@@ -370,6 +384,42 @@ module PotatoMesh
     # @return [Integer] positive timeout, overridable via +PUMA_FORCE_SHUTDOWN+.
     def puma_force_shutdown_seconds
       fetch_positive_integer("PUMA_FORCE_SHUTDOWN", DEFAULT_PUMA_FORCE_SHUTDOWN_SECONDS)
+    end
+
+    # Minimum Puma worker threads kept warm.
+    #
+    # @return [Integer] positive minimum, overridable via +MIN_THREADS+.
+    def puma_min_threads
+      fetch_positive_integer("MIN_THREADS", DEFAULT_PUMA_MIN_THREADS)
+    end
+
+    # Maximum Puma worker threads. Sized above the SSE subscriber cap plus
+    # {#sse_thread_reserve} so long-lived +/api/events+ streams cannot occupy
+    # every request thread and starve other traffic (SPEC PS9).
+    #
+    # @return [Integer] positive maximum, overridable via +MAX_THREADS+.
+    def puma_max_threads
+      fetch_positive_integer("MAX_THREADS", DEFAULT_PUMA_MAX_THREADS)
+    end
+
+    # Request threads reserved for non-SSE traffic even when every SSE
+    # subscriber slot is taken, so live updates are never load-bearing
+    # (SPEC PS8/PS9).
+    #
+    # @return [Integer] positive reserve, overridable via +SSE_THREAD_RESERVE+.
+    def sse_thread_reserve
+      fetch_positive_integer("SSE_THREAD_RESERVE", DEFAULT_SSE_THREAD_RESERVE)
+    end
+
+    # Build Puma's +Threads+ "min:max" pool spec. The minimum is clamped to the
+    # maximum so an out-of-order override (+MIN_THREADS+ > +MAX_THREADS+) cannot
+    # break the boot.
+    #
+    # @return [String] the +"min:max"+ thread-pool spec passed to Puma.
+    def puma_threads_setting
+      max = puma_max_threads
+      min = [puma_min_threads, max].min
+      "#{min}:#{max}"
     end
 
     # Retrieve the CSS filter used for light themed maps.
