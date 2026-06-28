@@ -1982,7 +1982,7 @@ layer options (subdomains `abcd`, `detectRetina`, `crossOrigin:'anonymous'`,
 ### DM-A2 — Tile-filter pipeline fully removed (native dark) — DM2
 ```bash
 git grep -niE "tile_filters|DEFAULT_TILE_FILTER|map_tile_filter|tileFilters|map-tile-filter|map-tiles-filter|resolveTileFilter|applyTileFilter|applyFiltersToAllTiles|applyFilterToTile|ensureTileHasCurrentFilter" -- web/lib web/public/assets web/views
-git grep -nE "def resolve_initial_theme" -A2 -- web/lib/potato_mesh/application/routes/root.rb
+git grep -n -A2 "def resolve_initial_theme" -- web/lib/potato_mesh/application/routes/root.rb
 ```
 **Expected:** the first prints **no output** — every artifact of the per-theme
 grayscale/invert filter is gone from Ruby, JS (incl. `settings.js` and the
