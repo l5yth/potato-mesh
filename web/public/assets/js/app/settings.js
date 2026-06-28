@@ -30,8 +30,7 @@
  *   contactLinkUrl: string | null,
  *   mapCenter: { lat: number, lon: number },
  *   mapZoom: number | null,
- *   maxDistanceKm: number,
- *   tileFilters: { light: string, dark: string }
+ *   maxDistanceKm: number
  * }}
  */
 export const DEFAULT_CONFIG = {
@@ -47,11 +46,7 @@ export const DEFAULT_CONFIG = {
   contactLinkUrl: 'https://matrix.to/#/#potatomesh:dod.ngo',
   mapCenter: { lat: 38.761944, lon: -27.090833 },
   mapZoom: null,
-  maxDistanceKm: 42,
-  tileFilters: {
-    light: 'grayscale(1) saturate(0) brightness(0.92) contrast(1.05)',
-    dark: 'grayscale(1) invert(1) brightness(0.9) contrast(1.08)'
-  }
+  maxDistanceKm: 42
 };
 
 /**
@@ -65,10 +60,6 @@ export function mergeConfig(raw) {
   config.mapCenter = {
     lat: Number(raw?.mapCenter?.lat ?? DEFAULT_CONFIG.mapCenter.lat),
     lon: Number(raw?.mapCenter?.lon ?? DEFAULT_CONFIG.mapCenter.lon)
-  };
-  config.tileFilters = {
-    light: raw?.tileFilters?.light || DEFAULT_CONFIG.tileFilters.light,
-    dark: raw?.tileFilters?.dark || DEFAULT_CONFIG.tileFilters.dark
   };
   const refreshIntervalSeconds = Number(
     raw?.refreshIntervalSeconds ?? DEFAULT_CONFIG.refreshIntervalSeconds

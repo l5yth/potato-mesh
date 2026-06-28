@@ -106,8 +106,7 @@ test('federation map centers on configured coordinates and follows theme filters
 
   const configPayload = {
     mapCenter: { lat: 10, lon: 20 },
-    mapZoom: 7,
-    tileFilters: { light: 'brightness(1)', dark: 'invert(1)' }
+    mapZoom: 7
   };
   const configEl = createElement('div');
   configEl.setAttribute('data-app-config', JSON.stringify(configPayload));
@@ -203,21 +202,6 @@ const fetchImpl = async () => ({
     await initializeFederationPage({ config: configPayload, fetchImpl, leaflet: leafletStub });
 
     assert.deepEqual(mapSetViewCalls[0], [[10, 20], 7]);
-    assert.equal(tileContainer.style.filter, 'invert(1)');
-    assert.equal(tilePane.style.filter, 'invert(1)');
-    assert.equal(tileImage.style.filter, 'invert(1)');
-
-    document.body.classList.remove('dark');
-    document.documentElement.setAttribute('data-theme', 'light');
-    window.dispatchEvent({ type: 'themechange', detail: { theme: 'light' } });
-    assert.equal(tileContainer.style.filter, 'brightness(1)');
-    assert.equal(tilePane.style.filter, 'brightness(1)');
-    assert.equal(tileImage.style.filter, 'brightness(1)');
-
-    document.documentElement.removeAttribute('data-theme');
-    document.body.classList.remove('dark');
-    window.dispatchEvent({ type: 'themechange', detail: { theme: null } });
-    assert.equal(tileContainer.style.filter, 'invert(1)');
 
     const rows = tbodyEl.childNodes;
     assert.equal(rows.length, 2);
@@ -301,8 +285,7 @@ test('federation table sorting, contact rendering, and legend creation', async (
 
   const configPayload = {
     mapCenter: { lat: 0, lon: 0 },
-    mapZoom: 3,
-    tileFilters: { light: 'none', dark: 'invert(1)' }
+    mapZoom: 3
   };
   const configEl = createElement('div');
   configEl.setAttribute('data-app-config', JSON.stringify(configPayload));
@@ -515,8 +498,7 @@ test('federation legend toggle respects media query changes', async () => {
 
   const configPayload = {
     mapCenter: { lat: 0, lon: 0 },
-    mapZoom: 3,
-    tileFilters: { light: 'none', dark: 'invert(1)' }
+    mapZoom: 3
   };
   const configEl = createElement('div');
   configEl.setAttribute('data-app-config', JSON.stringify(configPayload));

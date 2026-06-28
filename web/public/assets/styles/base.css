@@ -14,39 +14,13 @@
  * limitations under the License.
  */
 
+/*
+ * The app is dark-only. These tokens are the (formerly ``body.dark``) dark
+ * palette, promoted to ``:root`` so every element — including ``html`` itself —
+ * resolves them; the previous light palette and its always-overridden
+ * ``body.dark`` token block were removed with the light theme.
+ */
 :root {
-  --bg: #f6f3ee;
-  --bg2: #ffffff;
-  --fg: #0c0f12;
-  --muted: #5c6773;
-  --card: rgba(0, 0, 0, 0.03);
-  --line: rgba(12, 15, 18, 0.08);
-  --accent: #2b6cb0;
-  --row-alt: rgba(0, 0, 0, 0.02);
-  --table-head-bg: rgba(0, 0, 0, 0.06);
-  --table-head-fg: var(--fg);
-  --input-bg: #ffffff;
-  --input-fg: var(--fg);
-  --input-border: rgba(12, 15, 18, 0.18);
-  --input-placeholder: rgba(12, 15, 18, 0.45);
-  --control-accent: var(--accent);
-  --announcement-bg: #fff4d6;
-  --announcement-fg: #7a3f00;
-  --announcement-border: #f0c05b;
-  --pad: 16px;
-  --map-tile-filter-light: grayscale(1) saturate(0) brightness(0.92) contrast(1.05);
-  --map-tile-filter-dark: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
-}
-
-html {
-  color-scheme: light;
-}
-
-html[data-theme='dark'] {
-  color-scheme: dark;
-}
-
-body.dark {
   --bg: #0e1418;
   --bg2: #0e141b;
   --fg: #e6ebf0;
@@ -65,7 +39,11 @@ body.dark {
   --announcement-bg: #3b2500;
   --announcement-fg: #ffd184;
   --announcement-border: #a56a00;
-  --map-tiles-filter: var(--map-tile-filter-dark);
+  --pad: 16px;
+}
+
+html {
+  color-scheme: dark;
 }
 
 html,
@@ -207,7 +185,6 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  --map-tiles-filter: var(--map-tile-filter-light);
 }
 
 .page-shell {
@@ -1920,8 +1897,6 @@ input[type="radio"] {
 #map .leaflet-layer,
 #map .leaflet-tile.map-tiles {
   opacity: 0.75;
-  filter: var(--map-tiles-filter, var(--map-tile-filter-light));
-  -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-light));
 }
 
 .leaflet-popup-content-wrapper,
@@ -2286,20 +2261,6 @@ body.dark .short-info-overlay {
 
 body.dark .short-info-overlay .short-info-close:hover {
   background: rgba(255, 255, 255, 0.1);
-}
-
-#map .leaflet-tile-pane,
-#map .leaflet-layer,
-#map .leaflet-tile.map-tiles {
-  filter: var(--map-tiles-filter, var(--map-tile-filter-light));
-  -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-light));
-}
-
-body.dark #map .leaflet-tile-pane,
-body.dark #map .leaflet-layer,
-body.dark #map .leaflet-tile.map-tiles {
-  filter: var(--map-tiles-filter, var(--map-tile-filter-dark));
-  -webkit-filter: var(--map-tiles-filter, var(--map-tile-filter-dark));
 }
 
 /* ===========================

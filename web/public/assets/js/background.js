@@ -41,7 +41,8 @@
     }
 
     if (!color) {
-      color = document.body.classList.contains('dark') ? '#0e1418' : '#f6f3ee';
+      // The app is dark-only; the background fallback is always the dark colour.
+      color = '#0e1418';
     }
 
     return color;

@@ -62,8 +62,6 @@ module PotatoMesh
     # subscriber slot is occupied. With the defaults this reconciles the SSE cap
     # back to its historical value (96 - 32 = 64).
     DEFAULT_SSE_THREAD_RESERVE = 32
-    DEFAULT_TILE_FILTER_LIGHT = "grayscale(1) saturate(0) brightness(0.92) contrast(1.05)"
-    DEFAULT_TILE_FILTER_DARK = "grayscale(1) invert(1) brightness(0.9) contrast(1.08)"
     DEFAULT_MAP_CENTER_LAT = 38.761944
     DEFAULT_MAP_CENTER_LON = -27.090833
     DEFAULT_MAP_CENTER = "#{DEFAULT_MAP_CENTER_LAT},#{DEFAULT_MAP_CENTER_LON}"
@@ -420,30 +418,6 @@ module PotatoMesh
       max = puma_max_threads
       min = [puma_min_threads, max].min
       "#{min}:#{max}"
-    end
-
-    # Retrieve the CSS filter used for light themed maps.
-    #
-    # @return [String] CSS filter string.
-    def map_tile_filter_light
-      DEFAULT_TILE_FILTER_LIGHT
-    end
-
-    # Retrieve the CSS filter used for dark themed maps.
-    #
-    # @return [String] CSS filter string for dark tiles.
-    def map_tile_filter_dark
-      DEFAULT_TILE_FILTER_DARK
-    end
-
-    # Provide a simple hash of tile filters for template use.
-    #
-    # @return [Hash] frozen mapping of themes to CSS filters.
-    def tile_filters
-      {
-        light: map_tile_filter_light,
-        dark: map_tile_filter_dark,
-      }.freeze
     end
 
     # Retrieve the raw comma separated Prometheus report identifiers.

@@ -55,10 +55,6 @@
    */
   function handleReady() {
     applyTheme();
-
-    if (typeof window.applyFiltersToAllTiles === 'function') {
-      window.applyFiltersToAllTiles();
-    }
   }
 
   bootstrap();
