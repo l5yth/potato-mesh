@@ -57,11 +57,6 @@ function executeInDom(source, url, env) {
 test('theme and background modules behave correctly across scenarios', async t => {
   const env = createDomEnvironment({ readyState: 'complete', cookie: '' });
   try {
-    let filterInvocations = 0;
-    env.window.applyFiltersToAllTiles = () => {
-      filterInvocations += 1;
-    };
-
     executeInDom(themeSource, themeModuleUrl, env);
     executeInDom(backgroundSource, backgroundModuleUrl, env);
 
@@ -75,22 +70,13 @@ test('theme and background modules behave correctly across scenarios', async t =
       assert.equal(env.document.body.classList.contains('dark'), true);
     });
 
-    await t.test('re-bootstrap handles DOMContentLoaded flow and filter hooks', () => {
+    await t.test('re-bootstrap handles DOMContentLoaded flow', () => {
       env.document.readyState = 'loading';
-      filterInvocations = 0;
       themeHooks.bootstrap();
       env.triggerDOMContentLoaded();
       assert.equal(env.document.documentElement.getAttribute('data-theme'), 'dark');
       assert.equal(env.document.body.classList.contains('dark'), true);
-      assert.equal(filterInvocations, 1);
       env.document.removeEventListener('DOMContentLoaded', themeHooks.handleReady);
-    });
-
-    await t.test('handleReady calls applyFiltersToAllTiles', () => {
-      filterInvocations = 0;
-      env.document.readyState = 'complete';
-      themeHooks.handleReady();
-      assert.equal(filterInvocations, 1);
     });
 
     await t.test('applyTheme copes with absent DOM nodes', () => {
@@ -114,16 +100,17 @@ test('theme and background modules behave correctly across scenarios', async t =
       assert.equal(env.document.documentElement.style.backgroundColor.trim(), 'rgb(15, 15, 15)');
     });
 
-    await t.test('background falls back to theme defaults when styles unavailable', () => {
+    await t.test('background falls back to the dark default when styles unavailable', () => {
       env.setComputedStyleImplementation(() => {
         throw new Error('no styles');
       });
       env.document.body.classList.add('dark');
       backgroundHelpers.applyBackground();
       assert.equal(env.document.documentElement.style.backgroundColor, '#0e1418');
+      // No light theme: the fallback is the dark colour even without the dark class.
       env.document.body.classList.remove('dark');
       backgroundHelpers.applyBackground();
-      assert.equal(env.document.documentElement.style.backgroundColor, '#f6f3ee');
+      assert.equal(env.document.documentElement.style.backgroundColor, '#0e1418');
     });
 
     await t.test('background helper tolerates missing body elements', () => {

@@ -40,9 +40,7 @@ const CONFIG = Object.freeze({
   chatEnabled: true,
   mapCenter: { lat: 0, lon: 0 },
   mapZoom: null,
-  maxDistanceKm: 0,
-  tileFilters: { light: '', dark: '' },
-  instancesFeatureEnabled: false,
+  maxDistanceKm: 0,  instancesFeatureEnabled: false,
   instanceDomain: 'demo.example',
   snapshotWindowSeconds: 3600,
 });

@@ -1953,3 +1953,113 @@ subscriber cap still returns `503` at capacity -- now at the clamped value),
 **SD-A1 / SD-A2** (shutdown still reaps SSE; `server_settings` still carries
 `force_shutdown_after` alongside the new `Threads`), and **B1** (all suites). No
 POST/GET/event contract change.
+
+---
+
+## Feature: Reliable dark basemap (CARTO Dark Matter) + tolerant tile loading
+
+Maps to SPEC decisions **DM1–DM6**. The basemap URL + tolerant-load policy live in
+`web/public/assets/js/app/main.js` (dashboard) and
+`web/public/assets/js/app/federation-page.js` (federation); the offline fallback in
+`web/public/assets/js/app/main/offline-tile-layer.js`; the now-removed tile filter
+in `web/lib/potato_mesh/config.rb`,
+`web/lib/potato_mesh/application/helpers/config_helpers.rb`, and
+`web/public/assets/styles/base.css`. Unless noted, run JS checks from `web/` and
+shell checks from the repo root.
+
+### DM-A1 — Both maps use CARTO Dark Matter; HOT is gone — DM1
+```bash
+git grep -nE "basemaps\.cartocdn\.com/dark_all" -- web/public/assets/js
+git grep -niE "openstreetmap\.fr|/hot/" -- web/public/assets/js web/lib web/views
+```
+**Expected:** the first prints the CARTO Dark Matter URL
+(`{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png`) from **one** shared
+constant referenced by both the dashboard and federation maps; the second prints
+**nothing** — no `openstreetmap.fr` / `/hot/` reference remains anywhere. The
+layer options (subdomains `abcd`, `detectRetina`, `crossOrigin:'anonymous'`,
+`maxZoom`) are asserted by the JS map-init / DM-A3 suite.
+
+### DM-A2 — Tile-filter pipeline fully removed (native dark) — DM2
+```bash
+git grep -niE "tile_filters|DEFAULT_TILE_FILTER|map_tile_filter|tileFilters|map-tile-filter|map-tiles-filter|resolveTileFilter|applyTileFilter|applyFiltersToAllTiles|applyFilterToTile|ensureTileHasCurrentFilter" -- web/lib web/public/assets web/views
+git grep -nE "def resolve_initial_theme" -A2 -- web/lib/potato_mesh/application/routes/root.rb
+```
+**Expected:** the first prints **no output** — every artifact of the per-theme
+grayscale/invert filter is gone from Ruby, JS (incl. `settings.js` and the
+`theme.js` `applyFiltersToAllTiles` hook), and CSS. The `.map-tiles` **class** may
+remain (it tags the tile layer) but carries no `filter:` rule and no
+`--map-tile*-filter` custom property. The second shows `resolve_initial_theme`
+still returns `"dark"` (the theme system was already dark-only; unchanged).
+
+### DM-A3 — Dashboard tolerates isolated tile errors — DM3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/tile-failure-policy.test.js )
+```
+**Expected:** pass. The extracted, Leaflet-free basemap-liveness policy
+(`main/tile-failure-policy.js`) decides: (a) a `tileerror` — one or many — that
+arrives **after** at least one successful `tileload` does **not** request the
+offline fallback; (b) when the initial viewport yields **zero** successful loads
+and the layer signals load-complete (or the no-success error count crosses the
+threshold), the offline fallback **is** requested exactly once; (c) once latched
+"alive," later errors never re-request the fallback. The dashboard wires this
+policy to `tiles.on('tileload'|'tileerror'|'load')` so an isolated failed tile no
+longer flips the whole map to the offline placeholder.
+
+### DM-A4 — Adjacent light remnants removed — DM4
+```bash
+git grep -nE 'content="dark light"' -- web/views
+git grep -nE "f6f3ee" -- web/public/assets
+```
+**Expected:** **no output** for either — the `color-scheme` meta is `content="dark"`
+and `background.js` resolves the dark background colour unconditionally
+(`'#0e1418'`), with no light-mode branch.
+
+### DM-A5 — Clean map: no attribution overlay — DM5
+```bash
+git grep -nE "attributionControl:\s*false" -- web/public/assets/js
+git grep -nE "\battribution:" -- web/public/assets/js/app/main.js web/public/assets/js/app/federation-page.js
+```
+**Expected:** the first prints `attributionControl: false` on **both** the
+dashboard and federation maps (unchanged from today); the second prints
+**nothing** — no `attribution:` credit string was added.
+
+### DM-A6 — Apex/contract untouched — DM6
+```bash
+git grep -niE 'mqtt|mosquitto|paho|amqp|kafka|broker' -- web/public/assets/js/app/main.js web/public/assets/js/app/federation-page.js
+git grep -nE "tileFilters" -- web/lib/potato_mesh/application/helpers/config_helpers.rb
+```
+**Expected:** **no output** for either. The basemap host is not a broker, so the
+apex check **A1** stays green; and `frontend_app_config` no longer emits
+`tileFilters`, confirming nothing leaked into the `data-app-config` /
+`/version` surface (the `/version` config block — **D1 / BF1** keys — is
+unchanged, so no `/api/*` or `/version` contract moves).
+
+### DM-A7 — Dead light CSS palette collapsed (dark-only) — DM7
+```bash
+git grep -niE "color-scheme:\s*light|f6f3ee|#0c0f12|#2b6cb0|fff4d6|#7a3f00|f0c05b" -- web/public/assets/styles/base.css
+git grep -nE "^html \{|color-scheme: dark|^body\.dark \{" -- web/public/assets/styles/base.css
+```
+**Expected:** the first prints **nothing** — no light-palette hex values and no
+`color-scheme: light` remain (the dead light `:root` tokens, the always-overridden
+`body.dark` token block, and the light `color-scheme` are all gone). The second
+shows `html { color-scheme: dark }` and **no** `body.dark { … }` *token-definition*
+block — the `:root` block now carries the dark palette directly, so `html` itself
+resolves dark tokens; `body.dark` survives only as a prefix on component rules,
+which still apply because `body` always carries the class. The rendered dark UI is
+unchanged (confirmed by screenshot).
+
+### DM-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+stay green: **B1** (all suites — the JS map/tile tests and the Ruby config/app
+specs), **B4** (the exact Apache header on the new `main/tile-failure-policy.js`
+and its test), **A1** (apex — the basemap CDN is not a broker), and **D1 / BF1**
+(the `/version` config block is unchanged). The existing tile-filter assertions
+are **updated or removed as dead**, never left dangling: `__tests__/config.test.js`
+(drops the `tileFilters` expectation), `__tests__/federation-page.test.js` (drops
+`tileFilters` / `themechange`), the `theme.js` test (drops the
+`applyFiltersToAllTiles` hook), and the Ruby config/app specs that asserted
+`data-app-config` `tileFilters`. `main/__tests__/offline-tile-layer.test.js` stays
+green — the fallback layer is retained, now reached only per DM-A3.

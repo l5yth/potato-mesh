@@ -511,3 +511,44 @@ coalescing lacked.
 | **LV8** | **Channel-tab dropdown selector.** A compact selector control (a downward triangle) lists all channel tabs and jumps to a chosen one, independent of the (now-preserved, LD-A2) horizontal scroll. Presentation-only; does not change tab order, the default-active tab, or any data surface. | interview |
 | **LV9** | **Engineering bar / invariants (D9).** All new code ships with 100% unit tests, JSDoc/RDoc, the exact Apache header, and clean linters; existing suites stay green. Apex (I), privacy (II - messages still 404 under PRIVATE; the LV6 cooldown is in-process), and parity (IV) are untouched. `prefers-reduced-motion` suppresses **all** new motion (fade + wave). | D9 + proposed |
 
+---
+
+## Feature: Reliable dark basemap (CARTO Dark Matter) + tolerant tile loading
+
+Swaps the map basemap from the `openstreetmap.fr/hot` community tile server to
+**CARTO Dark Matter**. The HOT server was found unreliable: its origin/render
+backend times out on any cache-miss tile (deep-zoom / less-popular) while only
+low-zoom cached tiles still serve, and the dashboard's first `tileerror` then
+escalated that into a full-map offline placeholder. CARTO Dark Matter is a
+keyless, CORS-enabled (`access-control-allow-origin: *`), natively dark-grey
+basemap CDN. Because Dark Matter is already dark-grey, the per-theme CSS
+`grayscale/invert` tile-filter pipeline — the last remnant of the removed light
+theme — is deleted end-to-end, and the dashboard stops killing the basemap on
+isolated tile errors. Frontend + view/config only (vanilla JS, `base.css`, Ruby
+config); no new dependency, no API/DB/ingestor change, and tiles are fetched
+browser→CDN exactly as today (no server proxy).
+
+**Conflict check.** *Apex I (local LoRa / no broker)* — **consistent**: a raster
+CDN is not an MQTT/cloud message bus; no manifest/dependency change
+(`guard-edits.py` untriggered); tiles are browser→CDN as before. *Invariant II
+(privacy) / D11 (no phone-home)* — **consistent**: CARTO's public CDN is keyless
+and cookieless, so it does not worsen the third-party tile egress
+`openstreetmap.fr` already carried, and adds no per-operator credential.
+*Invariant IV (parity)* — **consistent**: the basemap is protocol-neutral.
+*D7 (fixed stack)* — **consistent**: native Leaflet URL + config/CSS deletions,
+no new package or build step. *D8 (stable contract)* — **consistent**:
+`tileFilters` lives only in the `data-app-config` DOM channel
+(`frontend_app_config`), never in `/version` or any `/api/*` shape, so its removal
+is frontend-internal — no contract change, no version bump. No invariant is
+contradicted; the change is a net simplification.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **DM1** | **Provider swap to CARTO Dark Matter.** The single, de-duplicated tile-URL constant becomes `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png` (subdomains `abcd`, `detectRetina` for the `{r}` HiDPI suffix), replacing `https://{s}.tile.openstreetmap.fr/hot/…` on **both** the dashboard map (`main.js`) and the federation map (`federation-page.js`). Keyless public CDN; returns `access-control-allow-origin: *` so the existing `crossOrigin:'anonymous'` is satisfied; natively dark-grey, so "keep the dark/grey style" holds with no filter. | interview + probe |
+| **DM2** | **Native dark style; the CSS tile-filter pipeline is removed.** Dark Matter is already styled, so the per-theme `grayscale/invert` filter (which existed only to grey out the colourful HOT tiles and is the last **light-theme** remnant) is deleted end-to-end: Ruby `DEFAULT_TILE_FILTER_LIGHT`/`DEFAULT_TILE_FILTER_DARK`, `map_tile_filter_light`/`map_tile_filter_dark`, `tile_filters`, and the `tileFilters` key in `frontend_app_config` (`config_helpers.rb`); JS `TILE_FILTER_LIGHT`/`TILE_FILTER_DARK`, `resolveTileFilter` + the tile filter-application/MutationObserver machinery in `main.js`, `applyTileFilter`/`resolveTheme`/`themechange` in `federation-page.js`, `tileFilters` in `settings.js`, and the `window.applyFiltersToAllTiles` hook in `theme.js`; CSS `--map-tile-filter-light`, `--map-tiles-filter`, and the `.map-tiles { filter: … }` rules in `base.css`. The broader theme system is already dark-only (`resolve_initial_theme` returns `"dark"`). | interview |
+| **DM3** | **Tolerate isolated tile errors (dashboard).** The first `tileerror` no longer flips the whole map to the offline placeholder. Isolated tile failures remain individual blank tiles (Leaflet default); `activateOfflineTiles` fires **only** when the basemap is comprehensively unavailable — **zero** successful tile loads across the initial viewport (provider unreachable/blocked). After **any** successful `tileload` the basemap is latched "alive" and subsequent isolated `tileerror`s never trigger the offline switch; recovery is automatic on later loads. The offline `GridLayer` (`main/offline-tile-layer.js`) is retained as the last-resort fallback. The federation map has no kill-basemap logic today, so it receives only DM1+DM2. | interview |
+| **DM4** | **Adjacent light remnants removed.** `<meta name="color-scheme" content="dark light">` → `content="dark"` (`views/layouts/app.erb`); `background.js`'s `body.classList.contains('dark') ? '#0e1418' : '#f6f3ee'` ternary collapses to the dark colour `'#0e1418'`. (The broader dead light **CSS palette** is handled separately by DM7.) | interview |
+| **DM5** | **No attribution overlay (keep the clean look).** The map keeps `attributionControl:false` as today; no `© OpenStreetMap / © CARTO` credit is rendered. Accepted trade-off: this under-attributes CARTO/OSM — the same posture already taken with the HOT tiles — and is chosen to preserve the existing clean map style. | interview |
+| **DM6** | **Engineering bar & invariants (D9).** No server-side broker/dependency/egress; no `/api/*` or `/version` contract change; protocol-neutral. Every changed JS/Ruby unit ships with 100% unit tests (existing tile-filter specs are **updated or removed-as-dead**, never left dangling), JSDoc/RDoc, the exact Apache header, and `rufo`/`black`-clean formatting; all existing suites stay green. | D9 + proposed |
+| **DM7** | **Dead light CSS palette collapsed (dark-only).** `base.css` carried a full light token palette in `:root`, always overridden by an always-applied `body.dark { … }` token block, plus `html { color-scheme: light }`. Since `body` is always `dark` (`resolve_initial_theme` is fixed `"dark"`), the light half never rendered. The dual palette is collapsed to a **single dark `:root`** (the former `body.dark` token values promoted up, so `html` itself resolves dark tokens too), the `body.dark` *token* block and the light/`data-theme` `color-scheme` rules are removed, and `html { color-scheme: dark }`. `body.dark` *component* rules are untouched (still apply, `body` always has the class), so the rendered dark appearance is unchanged — verified by screenshot. | interview (scope expansion, approved) |
+

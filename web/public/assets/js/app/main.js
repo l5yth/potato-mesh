@@ -192,6 +192,8 @@ import {
 } from './main/protocol-icons.js';
 import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-html.js';
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
+import { TILE_LAYER_URL, TILE_LAYER_OPTIONS } from './basemap-config.js';
+import { createTileFailurePolicy } from './main/tile-failure-policy.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
 import { flashNodeTargets, flashMessageTargets, emitNodeWaves } from './main/flash.js';
@@ -210,8 +212,7 @@ import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-
  *   frequency: string,
  *   mapCenter: { lat: number, lon: number },
  *   mapZoom: number | null,
- *   maxDistanceKm: number,
- *   tileFilters: { light: string, dark: string }
+ *   maxDistanceKm: number
  * }} config Normalized application configuration.
  * @returns {{ _testUtils: Object }} Object whose ``_testUtils`` property exposes
  *   inner closures for unit tests. Production callers may ignore this.
@@ -948,7 +949,6 @@ export function initializeApp(config) {
   // by groupSize we share a single instance across same-size groups and
   // across renders.  See ``getColocatedHubIcon`` for the lookup.
   const colocatedHubIconCache = new Map();
-  let tileDomObserver = null;
   const fullscreenChangeEvents = [
     'fullscreenchange',
     'webkitfullscreenchange',
@@ -1306,100 +1306,12 @@ export function initializeApp(config) {
 
 
   // --- Map setup ---
-  const TILE_LAYER_URL = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
-  const TILE_FILTER_LIGHT = config.tileFilters.light;
-  const TILE_FILTER_DARK = config.tileFilters.dark;
+  // The basemap is CARTO Dark Matter (see ``./basemap-config.js``). Its tiles
+  // are natively dark-grey, so there is no per-theme CSS colour filter — the
+  // old ``grayscale``/``invert`` pipeline was removed with the provider swap.
 
   if (hasLeaflet) {
     mapCenterLatLng = L.latLng(MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
-  }
-
-  /**
-   * Return the CSS filter applied to Leaflet tiles for the active theme.
-   *
-   * @returns {string} CSS filter expression.
-   */
-  function resolveTileFilter() {
-    return document.body.classList.contains('dark') ? TILE_FILTER_DARK : TILE_FILTER_LIGHT;
-  }
-
-  /**
-   * Apply the configured filter to an individual Leaflet tile element.
-   *
-   * @param {HTMLElement} tile Tile image element.
-   * @param {string} filterValue CSS filter expression.
-   * @returns {void}
-   */
-  function applyFilterToTileElement(tile, filterValue) {
-    if (!tile || usingOfflineTiles) return;
-    if (tile.classList && !tile.classList.contains('map-tiles')) {
-      tile.classList.add('map-tiles');
-    }
-    const value = filterValue || resolveTileFilter();
-    if (tile.style) {
-      tile.style.filter = value;
-      tile.style.webkitFilter = value;
-    }
-  }
-
-  /**
-   * Return the Leaflet DOM container that currently owns map tiles.
-   *
-   * @returns {HTMLElement|null} Tile layer container element.
-   */
-  function getActiveTileLayerContainer() {
-    if (!map) return null;
-    const layer = usingOfflineTiles ? offlineTiles : tiles;
-    return layer && typeof layer.getContainer === 'function' ? layer.getContainer() : null;
-  }
-
-  /**
-   * Apply a CSS filter to all currently mounted Leaflet tile elements.
-   *
-   * @param {string} filterValue CSS filter expression.
-   * @returns {void}
-   */
-  function applyFilterToTileContainers(filterValue) {
-    if (!map) return;
-    const value = filterValue || resolveTileFilter();
-    const container = getActiveTileLayerContainer();
-    if (container && container.style) {
-      container.style.filter = value;
-      container.style.webkitFilter = value;
-    }
-    const tilePane = typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
-    if (tilePane && tilePane.style) {
-      tilePane.style.filter = value;
-      tilePane.style.webkitFilter = value;
-    }
-  }
-
-  /**
-   * Ensure a tile element reflects the active theme filter.
-   *
-   * @param {HTMLElement} tile Tile element managed by Leaflet.
-   * @returns {void}
-   */
-  function ensureTileHasCurrentFilter(tile) {
-    if (!map || usingOfflineTiles) return;
-    const filterValue = resolveTileFilter();
-    applyFilterToTileElement(tile, filterValue);
-  }
-
-  /**
-   * Synchronise all existing tiles with the current theme filter.
-   *
-   * @returns {void}
-   */
-  function applyFiltersToAllTiles() {
-    if (!map) return;
-    const filterValue = resolveTileFilter();
-    document.body.style.setProperty('--map-tiles-filter', filterValue);
-    if (!usingOfflineTiles) {
-      const tileEls = mapContainer ? mapContainer.querySelectorAll('.leaflet-tile') : [];
-      tileEls.forEach(tile => applyFilterToTileElement(tile, filterValue));
-    }
-    applyFilterToTileContainers(filterValue);
   }
 
   /**
@@ -1418,53 +1330,6 @@ export function initializeApp(config) {
   function createOfflineTileLayer() {
     if (!hasLeaflet) return null;
     return createOfflineTileLayerImpl(L);
-  }
-
-  /**
-   * Disconnect and clear the MutationObserver tracking tile additions.
-   *
-   * @returns {void}
-   */
-  function disconnectTileObserver() {
-    if (tileDomObserver) {
-      tileDomObserver.disconnect();
-      tileDomObserver = null;
-    }
-  }
-
-  /**
-   * Observe a Leaflet tile container to reapply filters as new tiles load.
-   *
-   * @param {L.GridLayer} layer Leaflet layer whose container should be watched.
-   * @returns {void}
-   */
-  function observeTileContainer(layer) {
-    if (!map || typeof MutationObserver !== 'function') return;
-    const targetLayer = layer || (usingOfflineTiles ? offlineTiles : tiles);
-    const container = targetLayer && typeof targetLayer.getContainer === 'function' ? targetLayer.getContainer() : null;
-    const tilePane = typeof map.getPane === 'function' ? map.getPane('tilePane') : null;
-    const targets = [];
-    if (container) targets.push(container);
-    if (tilePane && !targets.includes(tilePane)) targets.push(tilePane);
-    if (!targets.length) return;
-    disconnectTileObserver();
-    tileDomObserver = new MutationObserver(mutations => {
-      const filterValue = resolveTileFilter();
-      mutations.forEach(mutation => {
-        mutation.addedNodes.forEach(node => {
-          if (!node || node.nodeType !== 1) return;
-          if (!usingOfflineTiles && node.classList && node.classList.contains('leaflet-tile')) {
-            applyFilterToTileElement(node, filterValue);
-          }
-          if (typeof node.querySelectorAll === 'function') {
-            const nestedTiles = node.querySelectorAll('.leaflet-tile');
-            nestedTiles.forEach(tile => applyFilterToTileElement(tile, filterValue));
-          }
-        });
-      });
-      applyFilterToTileContainers(filterValue);
-    });
-    targets.forEach(target => tileDomObserver.observe(target, { childList: true, subtree: true }));
   }
 
   /**
@@ -1512,11 +1377,9 @@ export function initializeApp(config) {
     }
     usingOfflineTiles = true;
     offlineTiles.addTo(map);
-    observeTileContainer(offlineTiles);
     if (message) {
       showMapStatus(message);
     }
-    applyFiltersToAllTiles();
   }
 
   const mapAlreadyInitialized = mapContainer && mapContainer._leaflet_id;
@@ -1524,37 +1387,39 @@ export function initializeApp(config) {
   if (hasLeaflet && mapContainer && !isFederationView && !mapAlreadyInitialized) {
     map = L.map(mapContainer, { worldCopyJump: true, attributionControl: false });
     showMapStatus('Loading map tiles…');
-    tiles = L.tileLayer(TILE_LAYER_URL, {
-      maxZoom: 19,
-      className: 'map-tiles',
-      crossOrigin: 'anonymous'
-    });
+    tiles = L.tileLayer(TILE_LAYER_URL, TILE_LAYER_OPTIONS);
+    const tileFailurePolicy = createTileFailurePolicy();
+    const OFFLINE_TILES_MESSAGE =
+      'Map tiles unavailable. Showing offline placeholder basemap.';
 
-    tiles.on('tileloadstart', event => {
-      if (!event || !event.tile) return;
-      ensureTileHasCurrentFilter(event.tile);
-      applyFilterToTileContainers();
-    });
-
-    tiles.on('tileload', event => {
-      if (!event || !event.tile) return;
-      ensureTileHasCurrentFilter(event.tile);
-      applyFilterToTileContainers();
-    });
-
-    tiles.on('load', () => {
-      usingOfflineTiles = false;
+    tiles.on('tileload', () => {
+      // The first successful tile latches the basemap "alive": from here on,
+      // isolated tile errors are tolerated and never swap in the offline layer.
+      tileFailurePolicy.recordTileLoad();
       hideMapStatus();
-      applyFiltersToAllTiles();
-      observeTileContainer(tiles);
     });
 
     tiles.on('tileerror', () => {
-      activateOfflineTiles('Map tiles unavailable. Showing offline placeholder basemap.');
+      // A single tile error no longer kills the basemap (DM3). The offline
+      // fallback only fires once the policy judges the basemap comprehensively
+      // unreachable (no successes after enough failures).
+      if (tileFailurePolicy.recordTileError()) {
+        activateOfflineTiles(OFFLINE_TILES_MESSAGE);
+      }
+    });
+
+    tiles.on('load', () => {
+      // The current viewport finished loading. If not a single tile succeeded,
+      // the provider is unreachable — fall back; otherwise the basemap is up.
+      if (tileFailurePolicy.recordLayerLoad()) {
+        activateOfflineTiles(OFFLINE_TILES_MESSAGE);
+        return;
+      }
+      usingOfflineTiles = false;
+      hideMapStatus();
     });
 
     tiles.addTo(map);
-    observeTileContainer(tiles);
 
     const initialBounds = computeBoundingBox(
       MAP_CENTER_COORDS,
@@ -1573,17 +1438,13 @@ export function initializeApp(config) {
 
     if (typeof map.whenReady === 'function') {
       map.whenReady(() => {
-        applyFiltersToAllTiles();
         refreshMapSize();
         applyLastRecordedBounds({ animate: false });
       });
     } else {
-      applyFiltersToAllTiles();
       applyLastRecordedBounds({ animate: false });
     }
 
-    map.on('moveend', applyFiltersToAllTiles);
-    map.on('zoomend', applyFiltersToAllTiles);
     map.on('movestart', () => {
       autoFitController.handleUserInteraction();
     });
@@ -1624,15 +1485,6 @@ export function initializeApp(config) {
     }
   } else if (mapContainer && !isFederationView) {
     setMapPlaceholder('Leaflet assets are unavailable. Data will continue to refresh without a live map.');
-  }
-
-  if (typeof window !== 'undefined') {
-    /**
-     * Helper exposed for the theme module to refresh Leaflet tile filters.
-     *
-     * @type {function(): void}
-     */
-    window.applyFiltersToAllTiles = applyFiltersToAllTiles;
   }
 
   let legendContainer = null;

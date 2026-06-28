@@ -70,8 +70,7 @@ test('mergeConfig applies default values when fields are missing', () => {
   const result = mergeConfig({});
   assert.deepEqual(result, {
     ...DEFAULT_CONFIG,
-    mapCenter: { ...DEFAULT_CONFIG.mapCenter },
-    tileFilters: { ...DEFAULT_CONFIG.tileFilters }
+    mapCenter: { ...DEFAULT_CONFIG.mapCenter }
   });
 });
 
@@ -80,7 +79,6 @@ test('mergeConfig coerces numeric values and nested objects', () => {
     refreshIntervalSeconds: '30',
     refreshMs: '45000',
     mapCenter: { lat: '10.5', lon: '20.1' },
-    tileFilters: { dark: 'contrast(2)' },
     mapZoom: '12',
     chatEnabled: 0,
     channel: '#Custom',
@@ -93,7 +91,6 @@ test('mergeConfig coerces numeric values and nested objects', () => {
   assert.equal(result.refreshIntervalSeconds, 30);
   assert.equal(result.refreshMs, 45000);
   assert.deepEqual(result.mapCenter, { lat: 10.5, lon: 20.1 });
-  assert.deepEqual(result.tileFilters, { light: DEFAULT_CONFIG.tileFilters.light, dark: 'contrast(2)' });
   assert.equal(result.mapZoom, 12);
   assert.equal(result.chatEnabled, false);
   assert.equal(result.channel, '#Custom');

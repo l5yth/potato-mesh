@@ -850,15 +850,6 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
-  describe ".tile_filters" do
-    it "returns a frozen mapping" do
-      filters = described_class.tile_filters
-
-      expect(filters).to match(light: String, dark: String)
-      expect(filters).to be_frozen
-    end
-  end
-
   describe ".pages_directory" do
     it "defaults to pages/ under the web root" do
       within_env("PAGES_DIR" => nil) do
