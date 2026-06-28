@@ -102,4 +102,52 @@ RSpec.describe "Asset cache-busting" do
       expect(map_at).to be < entry_at
     end
   end
+
+  # Regression: initial-load module-graph waterfall (slow first data paint).
+  # Without modulepreload hints the browser discovers the 89-module graph one
+  # import-tier at a time (≈5 serial round trips) before the app can fire its
+  # first /api fetch, so data does not paint for 2-3s on a real connection. The
+  # head must preload the whole ES-module graph so it downloads in parallel.
+  describe "modulepreload for the deep module graph (initial-load latency)" do
+    before { get "/" }
+
+    it "preloads a transitively-imported module so the graph loads in parallel" do
+      # main.js is reached only through a relative import inside index.js; a
+      # modulepreload for it proves the whole graph (not just entry points) is
+      # fetched up-front instead of tier-by-tier.
+      expect(last_response.body).to include(
+        %(<link rel="modulepreload" href="/assets/js/app/main.js?v=#{version}">),
+      )
+    end
+
+    it "preloads the module entry point itself" do
+      expect(last_response.body).to include(
+        %(<link rel="modulepreload" href="/assets/js/app/index.js?v=#{version}">),
+      )
+    end
+
+    it "does not preload the classic (non-module) scripts" do
+      expect(last_response.body).not_to include(
+        '<link rel="modulepreload" href="/assets/js/theme.js',
+      )
+      expect(last_response.body).not_to include(
+        '<link rel="modulepreload" href="/assets/js/background.js',
+      )
+    end
+
+    it "does not leak test files into the preloads" do
+      preloads = last_response.body.scan(/<link rel="modulepreload"[^>]*>/).join
+      expect(preloads).not_to include("__tests__")
+    end
+
+    it "places the preloads after the import map and before the module entry" do
+      body = last_response.body
+      map_at = body.index('<script type="importmap">')
+      preload_at = body.index('<link rel="modulepreload"')
+      entry_at = body.index('<script type="module" src="/assets/js/app/index.js')
+
+      expect(map_at).to be < preload_at
+      expect(preload_at).to be < entry_at
+    end
+  end
 end

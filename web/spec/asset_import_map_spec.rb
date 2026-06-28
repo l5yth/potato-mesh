@@ -57,6 +57,52 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
     end
   end
 
+  describe ".preload_paths" do
+    it "lists only the app ES modules (excludes the classic top-level scripts)" do
+      # theme.js is a classic <script>, not an ES module, so it must never be
+      # emitted as <link rel="modulepreload"> (that would fetch it as a module
+      # and double-load it). Only /assets/js/app/** modules are preloaded.
+      expect(described_class.preload_paths(@js_root)).to eq(
+        [
+          "/assets/js/app/config.js",
+          "/assets/js/app/main.js",
+        ],
+      )
+    end
+
+    it "excludes __tests__ files" do
+      expect(described_class.preload_paths(@js_root)).not_to include(
+        a_string_including("__tests__"),
+      )
+    end
+
+    it "returns an empty list when the directory is absent" do
+      expect(described_class.preload_paths(File.join(@js_root, "nope"))).to eq([])
+    end
+  end
+
+  describe ".preload_html" do
+    it "emits one version-stamped modulepreload link per app module" do
+      html = described_class.preload_html(@js_root, "1.2.3")
+
+      expect(html).to eq(
+        %(<link rel="modulepreload" href="/assets/js/app/config.js?v=1.2.3">\n) +
+          %(<link rel="modulepreload" href="/assets/js/app/main.js?v=1.2.3">),
+      )
+    end
+
+    it "never preloads the classic top-level scripts" do
+      expect(described_class.preload_html(@js_root, "1.2.3")).not_to include("theme.js")
+    end
+
+    it "is stable across repeated calls (memoized per root/version)" do
+      first = described_class.preload_html(@js_root, "7.0.0")
+      second = described_class.preload_html(@js_root, "7.0.0")
+
+      expect(second).to equal(first)
+    end
+  end
+
   describe ".document" do
     it "maps each module path to its version-stamped URL" do
       doc = described_class.document(@js_root, "1.2.3")

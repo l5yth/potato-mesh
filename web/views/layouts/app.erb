@@ -74,6 +74,12 @@
   <%# Import map versions the entire served JS module graph (SPEC AV3); must
       precede any module load so relative imports resolve to the busted URLs. %>
   <script type="importmap"><%= asset_import_map_json %></script>
+  <%# Preload the whole ES-module graph in parallel so the browser fetches it in
+      one round trip instead of discovering it import-tier by import-tier; this
+      removes the waterfall that delayed the first /api data paint. Same set the
+      import map versions; emitted after it so module URLs resolve to the busted
+      targets. A module absent here still loads normally on demand. %>
+  <%= asset_modulepreload_tags %>
   <link rel="stylesheet" href="<%= asset_url("/assets/styles/base.css") %>" />
   <script src="<%= asset_url("/assets/js/theme.js") %>" defer></script>
   <script src="<%= asset_url("/assets/js/background.js") %>" defer></script>
