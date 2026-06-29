@@ -499,7 +499,7 @@ RSpec.describe PotatoMesh::App::Database do
     db.execute(<<~SQL)
       CREATE TABLE messages(
         id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT,
-        from_id TEXT, to_id TEXT, channel INTEGER, text TEXT,
+        from_id TEXT, to_id TEXT, channel INTEGER, channel_name TEXT, text TEXT,
         protocol TEXT NOT NULL DEFAULT 'meshtastic'
       )
     SQL
@@ -525,6 +525,69 @@ RSpec.describe PotatoMesh::App::Database do
     SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
       ids = db.execute("SELECT id FROM messages ORDER BY id").flatten
       expect(ids).to eq([3_436_613_256_067_934])
+    end
+  end
+
+  it "collapses a cross-ingestor meshcore pair on different local channel slots with clock-skewed rx_time" do
+    # Production reproduction: two ingestors store the same #ping transmission
+    # at local channel slots 10 and 18 with rx_time ~126 s apart (host-clock
+    # skew). The one-shot purge must key on the stable channel *name* (not the
+    # per-receiver slot index) and span the observed skew, or the accumulated
+    # duplicates (28% of rows on potatomesh.net) never clear.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      seed_meshcore_message_tables(db)
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,channel_name,text,protocol) VALUES (?,?,?,?,?,?,?,?,?)",
+        [9_001, 1_776_750_000, "2026-04-20T00:00:00Z", "!0bcfcc74", "^all", 10, "#ping", "JO62SQ: Pong!", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,channel_name,text,protocol) VALUES (?,?,?,?,?,?,?,?,?)",
+        [9_002, 1_776_750_126, "2026-04-20T00:02:06Z", "!0bcfcc74", "^all", 18, "#ping", "JO62SQ: Pong!", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      expect(db.execute("SELECT id FROM messages ORDER BY id").flatten).to eq([9_001])
+    end
+  end
+
+  it "purges cross-ingestor duplicates on the same boot that adds the channel_name column" do
+    # Upgrade path from a pre-#825 schema (no channel_name column): the same
+    # ensure_schema_upgrades pass adds the column AND the one-shot purge must
+    # see it (keying on channel_name) the same boot, or the accumulated
+    # duplicates linger until the next restart. Two cross-slot copies (channel
+    # 10 vs 18), clock-skewed 126 s, NULL channel_name → IS-match collapse.
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute(<<~SQL)
+        CREATE TABLE nodes(
+          node_id TEXT PRIMARY KEY, long_name TEXT, role TEXT,
+          protocol TEXT NOT NULL DEFAULT 'meshtastic',
+          synthetic BOOLEAN NOT NULL DEFAULT 0
+        )
+      SQL
+      db.execute(<<~SQL)
+        CREATE TABLE messages(
+          id INTEGER PRIMARY KEY, rx_time INTEGER, rx_iso TEXT,
+          from_id TEXT, to_id TEXT, channel INTEGER, text TEXT,
+          protocol TEXT NOT NULL DEFAULT 'meshtastic'
+        )
+      SQL
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [9_101, 1_776_751_000, "2026-04-20T01:00:00Z", "!0bcfcc74", "^all", 10, "JO62SQ: Ping", "meshcore"],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,text,protocol) VALUES (?,?,?,?,?,?,?,?)",
+        [9_102, 1_776_751_126, "2026-04-20T01:02:06Z", "!0bcfcc74", "^all", 18, "JO62SQ: Ping", "meshcore"],
+      )
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true) do |db|
+      expect(db.execute("SELECT id FROM messages ORDER BY id").flatten).to eq([9_101])
     end
   end
 

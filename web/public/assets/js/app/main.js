@@ -336,6 +336,15 @@ export function initializeApp(config) {
   let chatBackfillRunning = false;
   /** One-shot guard: the chat-history backfill runs once after the first load. */
   let chatHistoryBackfilled = false;
+  /**
+   * Oldest ``rx_time`` of the newest delta page (the "live frontier"). The
+   * background backfill pages backward from here, not from the global-oldest
+   * loaded row, so a warm-cache load bridges the gap between the newest page
+   * and the seeded cache instead of paging below the cache and orphaning the
+   * window in between. 0 until the first fetch; on a cold load it equals the
+   * global-oldest, so the cold backfill is unchanged.
+   */
+  let chatLiveFrontier = 0;
   /** Settles when the one-shot chat-history backfill finishes (test hook). */
   let backfillPromise = Promise.resolve();
 
@@ -3453,8 +3462,15 @@ export function initializeApp(config) {
    */
   async function backfillChatHistory() {
     if (!CHAT_ENABLED || chatBackfillRunning) return;
-    // Resume paging from just past the oldest message the newest page rendered.
-    const before = minRecordTimestamp(allMessages, ['rx_time']);
+    // Page backward from the live frontier (oldest row of the newest delta
+    // page), not the global-oldest loaded row. On a cold load they are equal;
+    // on a warm-cache load the cache contributes older rows, so anchoring at the
+    // global min would page below the cache and never fill the gap between the
+    // cache's newest row and the newest page's oldest row (the orphaned middle
+    // window). Falls back to the global min when no live page was fetched.
+    const before = chatLiveFrontier > 0
+      ? chatLiveFrontier
+      : minRecordTimestamp(allMessages, ['rx_time']);
     if (!(before > 0)) return;
     chatBackfillRunning = true;
     try {
@@ -4495,6 +4511,11 @@ export function initializeApp(config) {
       // Update high-water marks for incremental fetching.
       const incomingNodeTs = maxRecordTimestamp(incomingNodes, ['last_heard']);
       const incomingMsgTs = maxRecordTimestamp(incomingMessages, ['rx_time']);
+      // Record the oldest row of this delta page as the backfill's live frontier
+      // (see {@link chatLiveFrontier}); the newest delta page is what the
+      // one-shot backfill must extend backward from.
+      const incomingMsgOldest = minRecordTimestamp(incomingMessages, ['rx_time']);
+      if (incomingMsgOldest > 0) chatLiveFrontier = incomingMsgOldest;
       const incomingEncMsgTs = maxRecordTimestamp(incomingEncryptedMessages, ['rx_time']);
       const incomingPosTs = maxRecordTimestamp(incomingPositions, ['rx_time', 'position_time']);
       const incomingTelTs = maxRecordTimestamp(incomingTelemetry, ['rx_time', 'telemetry_time']);

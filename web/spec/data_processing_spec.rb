@@ -1389,6 +1389,34 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       db&.close
     end
 
+    it "collapses cross-ingestor copies separated by the observed inter-ingestor clock skew" do
+      # Production reproduction (potatomesh.net: 28% meshcore duplicate rate).
+      # Two ingestors whose host clocks differ by ~126 s store the same physical
+      # #ping transmission at different local channel slots (10 vs 18) with
+      # rx_times ~126 s apart. The 30 s window let both rows persist; the dedup
+      # window must span the real-world inter-ingestor skew (median 126 s, p90
+      # 133 s observed). A literal 126 s delta pins the behaviour independently
+      # of the window constant's exact value.
+      db = open_db
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge(
+          "id" => 1_000_301, "channel" => 10, "channel_name" => "#ping",
+          "ingestor" => "!02294310",
+        ),
+      )
+      meshcore_harness.insert_message(
+        db,
+        base_message.merge(
+          "id" => 1_000_302, "rx_time" => base_rx_time + 126,
+          "channel" => 18, "channel_name" => "#ping", "ingestor" => "!930d4a21",
+        ),
+      )
+      expect(message_count(db)).to eq(1)
+    ensure
+      db&.close
+    end
+
     it "does not collapse two meshcore messages with different text" do
       db = open_db
       meshcore_harness.insert_message(db, base_message.merge("id" => 1_000_007, "text" => "first"))
