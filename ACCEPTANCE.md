@@ -495,7 +495,7 @@ git grep -nA2 'def version_fallback' -- web/lib/potato_mesh/config.rb
 `{ nodes, messages, telemetry }`, each metric carrying integer
 `{ hour, day, week, month }`, with `sampled` still present and `false`. The old
 flat keys (`active_nodes`, integer-valued `meshcore`/`meshtastic`) are **gone** —
-this is the intended, versioned break. `version_fallback` returns `"0.7.0"`, and
+this is the intended, versioned break. `version_fallback` returns `"0.7.1"`, and
 `test_version_sync.py` **passes** — the bump is applied in lockstep across all
 five language manifests (`data.VERSION`, `Config.version_fallback`,
 `web/package.json`, `app/pubspec.yaml`, `matrix/Cargo.toml`; `matrix/Cargo.lock`
