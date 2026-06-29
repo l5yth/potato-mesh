@@ -34,3 +34,12 @@ export const TRACE_MAX_AGE_SECONDS = 28 * 24 * 60 * 60;
 
 /** Snapshot multiplier — how many rows we ask for to build a richer aggregate. */
 export const SNAPSHOT_LIMIT = SNAPSHOT_WINDOW;
+
+/**
+ * ``localStorage`` key marking that the persistent cache holds data (a warm
+ * load). Set after a successful cache write-back and cleared when the cache is
+ * cleared or disabled; the cold-load boot prefetch reads it synchronously to
+ * decide whether to skip (warm) the early API requests. Shared so the writer
+ * (``main.js``) and reader (``main/boot-prefetch.js``) cannot drift.
+ */
+export const BOOT_CACHE_FLAG = 'pm:cache-present';

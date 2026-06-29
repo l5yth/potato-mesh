@@ -67,17 +67,37 @@ export function filterRecentTraces(traces, maxAgeSeconds = TRACE_MAX_AGE_SECONDS
 }
 
 /**
+ * Await a pre-issued boot-prefetch ``Response`` when one is supplied, falling
+ * back to a fresh network fetch if it is absent or rejected. This lets the
+ * cold-load prefetch (see {@link module:main/boot-prefetch}) hand its in-flight
+ * responses to these fetchers without changing their post-processing, while
+ * staying a pure pre-warm: an absent or rejected prefetch silently re-fetches,
+ * so a prefetch that never lands can never lose data (FC7).
+ *
+ * @param {Promise<Response>|undefined} responsePromise Optional in-flight response.
+ * @param {string} url Request URL used for the fetch (and the fallback).
+ * @returns {Promise<Response>} The resolved response.
+ */
+function resolveResponse(responsePromise, url) {
+  return responsePromise
+    ? Promise.resolve(responsePromise).catch(() => fetch(url, { cache: 'default' }))
+    : fetch(url, { cache: 'default' });
+}
+
+/**
  * Fetch the latest nodes from the JSON API.
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of records.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
+ * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
+ *   boot-prefetch response to consume instead of issuing a fresh request.
  * @returns {Promise<Array<Object>>} Parsed node payloads.
  */
-export async function fetchNodes(limit = NODE_LIMIT, since = 0) {
+export async function fetchNodes(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/nodes?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
-  const r = await fetch(url, { cache: 'default' });
+  const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -102,15 +122,16 @@ export async function fetchNodeById(nodeId) {
  * Fetch recent messages from the JSON API.
  *
  * @param {number} limit Maximum number of rows.
- * @param {{ encrypted?: boolean, since?: number, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function }} options
+ * @param {{ encrypted?: boolean, since?: number, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function, responsePromise?: Promise<Response> }} options
  *   Retrieval flags and dependency hooks.  When ``chatEnabled`` is false the
  *   function short-circuits to an empty array without contacting the API.
  *   ``before`` is an inclusive upper-bound ``rx_time`` cursor used for backward
- *   pagination (issue #796).
+ *   pagination (issue #796).  ``responsePromise`` is an optional pre-issued
+ *   boot-prefetch response to consume instead of fetching.
  * @returns {Promise<Array<Object>>} Parsed message payloads.
  */
 export async function fetchMessages(limit, options = {}) {
-  const { chatEnabled = true, normaliseMessageLimit, encrypted = false, since = 0, before = 0 } = options;
+  const { chatEnabled = true, normaliseMessageLimit, encrypted = false, since = 0, before = 0, responsePromise } = options;
   if (!chatEnabled) return [];
   const safeLimit = typeof normaliseMessageLimit === 'function'
     ? normaliseMessageLimit(limit)
@@ -126,7 +147,7 @@ export async function fetchMessages(limit, options = {}) {
     params.set('before', String(before));
   }
   const query = params.toString();
-  const r = await fetch(`/api/messages?${query}`, { cache: 'default' });
+  const r = await resolveResponse(responsePromise, `/api/messages?${query}`);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -212,13 +233,15 @@ export async function fetchAllMessages(limit, options = {}) {
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
+ * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
+ *   boot-prefetch response to consume instead of issuing a fresh request.
  * @returns {Promise<Array<Object>>} Parsed neighbour payloads.
  */
-export async function fetchNeighbors(limit = NODE_LIMIT, since = 0) {
+export async function fetchNeighbors(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/neighbors?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
-  const r = await fetch(url, { cache: 'default' });
+  const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -228,14 +251,16 @@ export async function fetchNeighbors(limit = NODE_LIMIT, since = 0) {
  *
  * @param {number} [limit=TRACE_LIMIT] Maximum number of records.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
+ * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
+ *   boot-prefetch response to consume instead of issuing a fresh request.
  * @returns {Promise<Array<Object>>} Parsed trace payloads.
  */
-export async function fetchTraces(limit = TRACE_LIMIT, since = 0) {
+export async function fetchTraces(limit = TRACE_LIMIT, since = 0, { responsePromise } = {}) {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
   const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
   let url = `/api/traces?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
-  const r = await fetch(url, { cache: 'default' });
+  const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const traces = await r.json();
   return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
@@ -246,13 +271,15 @@ export async function fetchTraces(limit = TRACE_LIMIT, since = 0) {
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
+ * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
+ *   boot-prefetch response to consume instead of issuing a fresh request.
  * @returns {Promise<Array<Object>>} Parsed telemetry payloads.
  */
-export async function fetchTelemetry(limit = NODE_LIMIT, since = 0) {
+export async function fetchTelemetry(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/telemetry?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
-  const r = await fetch(url, { cache: 'default' });
+  const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
@@ -262,13 +289,15 @@ export async function fetchTelemetry(limit = NODE_LIMIT, since = 0) {
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
+ * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
+ *   boot-prefetch response to consume instead of issuing a fresh request.
  * @returns {Promise<Array<Object>>} Parsed position payloads.
  */
-export async function fetchPositions(limit = NODE_LIMIT, since = 0) {
+export async function fetchPositions(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/positions?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
-  const r = await fetch(url, { cache: 'default' });
+  const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }

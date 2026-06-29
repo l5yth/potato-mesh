@@ -1179,6 +1179,129 @@ is **updated** to the `?v=` form, **not** removed.
 
 ---
 
+## Bugfix: Initial-load module-graph waterfall (slow first data paint)
+
+The dashboard's first `/api/*` fetch is gated behind the **entire** 89-module
+ES-module graph loading, and that graph was discovered one import-tier at a time
+(`index.js` → `{config,main,settings}` → main's 33 imports → … ≈ 5 serial round
+trips) because nothing told the browser the deeper modules up-front. On a real
+connection each tier costs a full RTT, so data did not paint for **2–3 s**
+(measured: ~3.7 s to the first `/api/nodes` request at 150 ms RTT / 4× CPU; the
+server itself answers every endpoint in <250 ms). The fix emits one
+`<link rel="modulepreload">` per served app ES module in `<head>` — the **same
+set the AV3 import map versions** — so the whole graph downloads in parallel
+(one round trip over HTTP/2) instead of tier-by-tier. Native browser feature, no
+build step or dependency (D7/AV4); read-side only (apex/privacy/parity untouched);
+a module absent from the preloads still loads normally (AV3's degradation
+property). Built by `PotatoMesh::App::AssetImportMap.preload_html`
+(`web/lib/potato_mesh/application/helpers/asset_helpers.rb`), rendered after the
+import map in `views/layouts/app.erb`.
+
+*Run the server in public mode (as in AV-A1) and leave it running for the curl check.*
+
+### MP-A1 — The head preloads the whole app ES-module graph (busted URLs)
+```bash
+curl -s http://127.0.0.1:41447/ \
+  | grep -oE '<link rel="modulepreload" href="/assets/js/app/[A-Za-z0-9/_.-]+\?v=[^"]+">' \
+  | grep -E 'app/(index|main)\.js'
+```
+**Expected:** matches a `<link rel="modulepreload">` for both the entry point
+`index.js` and the transitively-imported `main.js`, each carrying the
+`?v=<APP_VERSION>` query — i.e. the preloaded URL equals the import-map **target**,
+so the preload and the eventual `import` resolve to the same cache entry. Every
+served `/assets/js/app/**` module is preloaded; the classic non-module scripts
+(`/assets/js/theme.js`, `/assets/js/background.js`) and `__tests__` files are
+**not** preloaded.
+
+### MP-A2 — Preloads sit after the import map, before the module entry; unit-tested
+```bash
+( cd web && bundle exec rspec spec/asset_versioning_spec.rb -e "modulepreload" \
+                            spec/asset_import_map_spec.rb -e "preload" )
+```
+**Expected:** pass. The rendering spec asserts the modulepreload block is emitted
+**after** the `<script type="importmap">` and **before** the
+`<script type="module" src="…index.js">` entry (so resolution order is correct),
+that classic scripts and `__tests__` are excluded, and the unit specs cover
+`AssetImportMap.preload_paths` (app modules only) and `.preload_html` (one
+version-stamped link per module, memoized).
+
+### MP-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. **At risk and explicitly required to
+remain green:** **AV-A2** (still exactly one import map, still busting the deep
+graph — the preloads are additive, not a replacement); **AV-A1/AV-A4** (asset
+versioning + image-scope boundary unchanged); **D1** (the shared layout's
+`/version`-fed config behavior is unchanged); **B1** (all suites). The preloads
+are purely additive head markup — no existing asset URL, the import map, or any
+`/api/*`/`/version` shape changes.
+
+---
+
+## Bugfix: Initial-load data prefetch (cold-load early fetch)
+
+Second phase of the initial-load fix (after the module-graph preload above).
+Even with the graph preloaded, the first `/api/*` fetch still waits for the
+~806 KB bundle to download, parse, and boot. An early `<script type="module"
+async>` boot module (`web/public/assets/js/app/main/boot-prefetch.js`) now fires
+the first-load (`since=0`) API requests **in parallel with** the module graph
+(at `priority:'high'`, so they out-prioritise the parallel module preloads) and
+stashes the in-flight `Response` promises on `window.__PM_BOOT__`; the app's
+first `refresh()` consumes them via a new `responsePromise` option on the
+data-fetchers instead of issuing its own requests. It runs **only on cold loads**
+— a synchronous `localStorage` marker (`pm:cache-present`, maintained by the
+cache write-back / clear / disable paths) suppresses it on warm revisits, leaving
+the FC2 seed-then-delta path untouched. Message endpoints are skipped in private
+mode (`data-pm-chat="false"`), mirroring the `/api/messages` 404 (Invariant II /
+PS6). Pure pre-warm: an absent or rejected prefetch re-fetches (a captured error
+response surfaces and the next auto-refresh recovers), so it is never
+load-bearing (FC7). Read-side only; no API/DB/ingestor change, no new dependency (D7).
+
+*Run the server in public mode (as in AV-A1) for the curl check.*
+
+### EF-A1 — The head emits the cold-load boot-prefetch module (gated by privacy)
+```bash
+curl -s http://127.0.0.1:41447/ \
+  | grep -oE '<script type="module" async[^>]*boot-prefetch\.js[^>]*' | head
+```
+**Expected:** matches an async ES-module `<script>` whose `src` is the versioned
+`/assets/js/app/main/boot-prefetch.js?v=<APP_VERSION>`, carrying `data-pm-prefetch`
+and `data-pm-chat="true"` in public mode. Under `PRIVATE=1` the same tag carries
+`data-pm-chat="false"` (no message prefetch) — covered by the Ruby suite
+(`bundle exec rspec spec/app_spec.rb -e "cold-load boot prefetch"`).
+
+### EF-A2 — Cold load consumes the prefetch; warm load keeps the FC2 delta path
+```bash
+( cd web && node --test \
+    public/assets/js/app/main/__tests__/boot-prefetch.test.js \
+    public/assets/js/app/__tests__/main-boot-prefetch.test.js \
+    public/assets/js/app/main/__tests__/data-fetchers.test.js )
+```
+**Expected:** pass. On a cold load (no `pm:cache-present` marker) the boot module
+issues the seven first-load requests and the app consumes the stashed responses
+on its first refresh — **no duplicate cold `/api/nodes`/`/api/messages` fetch** is
+issued (the `__PM_BOOT__` global is one-shot, cleared on read). A successful cache
+write-back sets the marker; `clearDataCache` and a disabled cache (PRIVATE /
+no-IndexedDB) clear it. The data-fetchers accept a `responsePromise` and fall back
+to a fresh fetch if it is absent or rejected (so a failed prefetch never loses
+data). `coldLoadUrls` mirrors the data-fetchers' first-load URLs (no drift).
+
+### EF-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. **At risk and explicitly required to
+remain green:** **MP-A1/MP-A2** (the module-graph preload is unchanged; the boot
+module is itself one of the preloaded app modules); the **FC-A2** warm seed-delta
+behaviour (`main-cache-refresh.test.js` — a warm load still seeds from cache and
+delta-fetches, because the marker suppresses the cold prefetch); **A2/PS6**
+(privacy — no message prefetch under `PRIVATE`); **B1** (all suites). No
+`/api/*`/`/version` shape changes; the prefetch only changes *when* the first
+requests fire, not *which* rows are reachable.
+
+---
+
 ## Feature: Uniform backward pagination (`?before=`) for bulk collection APIs
 
 Maps to SPEC decisions **BP1–BP9**. `?before=<unix_seconds>` is added as an

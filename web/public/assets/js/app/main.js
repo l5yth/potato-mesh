@@ -165,6 +165,7 @@ import {
   SNAPSHOT_LIMIT,
   TRACE_LIMIT,
   TRACE_MAX_AGE_SECONDS,
+  BOOT_CACHE_FLAG,
 } from './main/constants.js';
 import {
   fetchNeighbors,
@@ -358,6 +359,27 @@ export function initializeApp(config) {
   let pendingCacheWrite = Promise.resolve();
 
   /**
+   * Record (in ``localStorage``, synchronously readable by the cold-load boot
+   * prefetch) whether the persistent cache holds data. A warm marker makes the
+   * next load skip the early prefetch and use the faster FC2 seed-then-delta
+   * path; clearing it re-enables the cold prefetch. Best-effort — storage errors
+   * are swallowed, since the prefetch degrades gracefully either way.
+   *
+   * @param {boolean} present Whether the cache now holds data.
+   * @returns {void}
+   */
+  function setCachePresentFlag(present) {
+    try {
+      const store = typeof window !== 'undefined' && window.localStorage ? window.localStorage : null;
+      if (!store) return;
+      if (present) store.setItem(BOOT_CACHE_FLAG, '1');
+      else store.removeItem(BOOT_CACHE_FLAG);
+    } catch (error) {
+      /* storage unavailable/blocked — the prefetch still degrades gracefully */
+    }
+  }
+
+  /**
    * Persist a collection's current rows into the cache, fire-and-forget. The
    * cache is best-effort and never blocks rendering (FC7).
    *
@@ -411,6 +433,10 @@ export function initializeApp(config) {
       cacheWriteCollection('messages', allMessages.map(messageForCache)),
       cacheWriteCollection('encrypted', allEncryptedMessages.map(messageForCache)),
     ]);
+    // Mark the cache populated so the next load skips the cold prefetch in favour
+    // of the faster FC2 seed-then-delta path — only when we actually have data to
+    // persist and the cache is enabled (PRIVATE / no-IndexedDB leave it cold).
+    if (!dataCache.isDisabled() && allNodes.length > 0) setCachePresentFlag(true);
   }
 
   /**
@@ -448,7 +474,12 @@ export function initializeApp(config) {
    */
   async function seedFromCache() {
     await dataCache.ready();
-    if (dataCache.isDisabled()) return false;
+    if (dataCache.isDisabled()) {
+      // No persistent cache this session (PRIVATE mode or storage unavailable);
+      // clear any stale warm-marker so the next load runs the cold prefetch.
+      setCachePresentFlag(false);
+      return false;
+    }
     const nowSeconds = Math.floor(Date.now() / 1000);
     const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries] = await Promise.all([
       readLiveCacheEntries('nodes', nowSeconds),
@@ -512,6 +543,8 @@ export function initializeApp(config) {
    */
   async function clearDataCache() {
     await dataCache.clear();
+    // Re-enable the cold prefetch on the next load now that the cache is empty.
+    setCachePresentFlag(false);
   }
 
   // NODE_LIMIT, TRACE_LIMIT, TRACE_MAX_AGE_SECONDS, and SNAPSHOT_LIMIT are
@@ -4398,27 +4431,39 @@ export function initializeApp(config) {
       const nbSince = useSince ? Math.max(0, lastNeighborTimestamp - 1) : 0;
       const trSince = useSince ? Math.max(0, lastTraceTimestamp - 1) : 0;
 
+      // Cold-load boot prefetch (initial-load latency fix): the early boot module
+      // (main/boot-prefetch.js) may have already issued the first-load (since=0)
+      // requests in parallel with the module graph. On the first cold refresh,
+      // consume those in-flight responses instead of issuing our own. One-shot
+      // (the global is cleared on read), so reconnect resyncs and later refreshes
+      // fetch normally; on a warm load the boot module skipped prefetch so this is
+      // absent and the FC2 delta path is untouched.
+      const bootSource = typeof window !== 'undefined' ? window : globalThis;
+      const boot = (!useSince && bootSource && bootSource.__PM_BOOT__) ? bootSource.__PM_BOOT__ : null;
+      if (boot) bootSource.__PM_BOOT__ = null;
+      const bootResponse = key => (boot ? boot[key] : undefined);
+
       // Secondary fetches are fire-and-forget with individual error handlers so
       // that a failure in one stream (e.g. telemetry) does not abort the whole
       // refresh cycle.  Each promise resolves to an empty array on error, which
       // preserves the previous data until the next successful fetch.
-      const neighborPromise = want('neighbors') ? fetchNeighbors(NODE_LIMIT, nbSince).catch(err => {
+      const neighborPromise = want('neighbors') ? fetchNeighbors(NODE_LIMIT, nbSince, { responsePromise: bootResponse('neighbors') }).catch(err => {
         console.warn('neighbor refresh failed; continuing without connections', err);
         return [];
       }) : Promise.resolve([]);
-      const telemetryPromise = want('telemetry') ? fetchTelemetry(NODE_LIMIT, telSince).catch(err => {
+      const telemetryPromise = want('telemetry') ? fetchTelemetry(NODE_LIMIT, telSince, { responsePromise: bootResponse('telemetry') }).catch(err => {
         console.warn('telemetry refresh failed; continuing without telemetry', err);
         return [];
       }) : Promise.resolve([]);
-      const positionsPromise = want('positions') ? fetchPositions(NODE_LIMIT, posSince).catch(err => {
+      const positionsPromise = want('positions') ? fetchPositions(NODE_LIMIT, posSince, { responsePromise: bootResponse('positions') }).catch(err => {
         console.warn('position refresh failed; continuing without updates', err);
         return [];
       }) : Promise.resolve([]);
-      const tracesPromise = want('traces') ? fetchTraces(TRACE_LIMIT, trSince).catch(err => {
+      const tracesPromise = want('traces') ? fetchTraces(TRACE_LIMIT, trSince, { responsePromise: bootResponse('traces') }).catch(err => {
         console.warn('trace refresh failed; continuing without traceroutes', err);
         return [];
       }) : Promise.resolve([]);
-      const encryptedMessagesPromise = want('messages') ? fetchMessages(MESSAGE_LIMIT, { encrypted: true, since: msgSince }).catch(err => {
+      const encryptedMessagesPromise = want('messages') ? fetchMessages(MESSAGE_LIMIT, { encrypted: true, since: msgSince, responsePromise: bootResponse('encryptedMessages') }).catch(err => {
         console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
         return [];
       }) : Promise.resolve([]);
@@ -4433,7 +4478,7 @@ export function initializeApp(config) {
         incomingTelemetry,
         incomingEncryptedMessages
       ] = await Promise.all([
-        want('nodes') ? fetchNodes(NODE_LIMIT, nodeSince) : Promise.resolve([]),
+        want('nodes') ? fetchNodes(NODE_LIMIT, nodeSince, { responsePromise: bootResponse('nodes') }) : Promise.resolve([]),
         positionsPromise,
         neighborPromise,
         tracesPromise,
@@ -4442,7 +4487,7 @@ export function initializeApp(config) {
         // via backfillChatHistory().  ``msgSince`` is 0 on the first load (so
         // this is the newest page) and the slice past the high-water mark on
         // every refresh after.
-        want('messages') ? fetchMessages(MESSAGE_LIMIT, { since: msgSince }) : Promise.resolve([]),
+        want('messages') ? fetchMessages(MESSAGE_LIMIT, { since: msgSince, responsePromise: bootResponse('messages') }) : Promise.resolve([]),
         telemetryPromise,
         encryptedMessagesPromise
       ]);

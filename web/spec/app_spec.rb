@@ -7211,6 +7211,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(body).not_to include("Track nodes, messages, and coverage in real time.")
       expect(body).to include("Track nodes and coverage in real time.")
     end
+
+    it "tells the cold-load boot prefetch to skip message endpoints" do
+      get "/"
+
+      expect(last_response).to be_ok
+      # The boot prefetch reads data-pm-chat; in private mode it must be false so
+      # the early prefetch never requests /api/messages (mirrors the 404, PS6).
+      expect(last_response.body).to include('data-pm-chat="false"')
+    end
   end
 
   describe "GET /api/positions" do

@@ -57,6 +57,40 @@ module PotatoMesh
         cache[[js_root, version]] ||= JSON.generate(document(js_root, version))
       end
 
+      # List the served **ES-module** paths to preload — every
+      # +/assets/js/app/**+ module, excluding the classic top-level scripts
+      # (+theme.js+, +background.js+) which are loaded as ordinary
+      # +<script>+ tags, not modules. Preloading a classic script as a module
+      # would fetch it a second time, so the preload set is the app graph only.
+      #
+      # @param js_root [String] absolute path to the served +/assets/js+ dir.
+      # @return [Array<String>] sorted ``/assets/js/app/...`` module paths.
+      def preload_paths(js_root)
+        module_paths(js_root).select { |path| path.start_with?("/assets/js/app/") }
+      end
+
+      # Render one +<link rel="modulepreload">+ per app module so the browser
+      # fetches the **entire** transitive ES-module graph in parallel rather
+      # than discovering it one import-tier at a time (the waterfall that
+      # delayed the dashboard's first data paint). Each href is the
+      # version-stamped URL — i.e. the import-map **target** — so the preload
+      # and the eventual +import+ resolve to the same cache entry. Memoized per
+      # +[js_root, version]+ (both constant for the process), mirroring {json}.
+      #
+      # A module absent here still loads normally on demand, so a missing entry
+      # can never break a working import (the same degradation property as the
+      # import map, SPEC AV3).
+      #
+      # @param js_root [String] absolute path to the served +/assets/js+ dir.
+      # @param version [String] cache-busting token (the application version).
+      # @return [String] newline-joined +<link rel="modulepreload">+ tags.
+      def preload_html(js_root, version)
+        cache = (@preload_cache ||= {})
+        cache[[js_root, version]] ||= preload_paths(js_root)
+          .map { |path| %(<link rel="modulepreload" href="#{path}?v=#{version}">) }
+          .join("\n")
+      end
+
       # List the absolute asset paths (``/assets/js/...``) of every served
       # module, excluding test files, in a stable sorted order.
       #
@@ -98,6 +132,17 @@ module PotatoMesh
       # @return [String] the import-map JSON document.
       def asset_import_map_json
         PotatoMesh::App::AssetImportMap.json(asset_js_root, app_constant(:APP_VERSION))
+      end
+
+      # Render the +<link rel="modulepreload">+ tags that preload the whole
+      # served ES-module graph in parallel (so the browser does not walk the
+      # import waterfall before the app can fetch its first data). Emitted in the
+      # layout head **after** the import map (which must precede any module
+      # resolution) and before the module entry point.
+      #
+      # @return [String] newline-joined modulepreload link tags.
+      def asset_modulepreload_tags
+        PotatoMesh::App::AssetImportMap.preload_html(asset_js_root, app_constant(:APP_VERSION))
       end
 
       # Absolute path to the served JavaScript asset directory.
