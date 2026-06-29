@@ -21,7 +21,12 @@ module PotatoMesh
       # content-dedup backfill.  Stored in SQLite's ``PRAGMA user_version``;
       # bump this constant when a new one-shot migration is appended and
       # check the previous value below to decide whether to skip.
-      MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION = 1
+      # Bumped 1→2: the purge now keys on the stable +channel_name+ (not the
+      # per-receiver +channel+ slot index) and inherits the widened
+      # +MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS+ (30→300 s), so it must re-run
+      # once to clear the cross-slot, clock-skewed duplicates that accumulated
+      # under the old window/key.
+      MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION = 2
 
       # Column definitions required for environment telemetry support. Each
       # entry pairs the column name with the SQL type used when backfilling
@@ -229,6 +234,10 @@ module PotatoMesh
 
           unless message_columns.include?("channel_name")
             db.execute("ALTER TABLE messages ADD COLUMN channel_name TEXT")
+            # Keep the cached column list current so the meshcore content-dedup
+            # purge below (which keys on +channel_name+) runs on this same boot
+            # rather than waiting for the next restart.
+            message_columns << "channel_name"
           end
 
           unless message_columns.include?("reply_id")
@@ -264,7 +273,10 @@ module PotatoMesh
           # cheap enough to run on every boot; the one-shot backfill below
           # is gated separately via ``PRAGMA user_version`` so it does not
           # repeat after the first successful pass.
-          meshcore_dedup_columns = %w[from_id to_id channel text rx_time protocol]
+          # +channel_name+ is required because the purge keys on it (the stable
+          # cross-ingestor discriminator) rather than the per-receiver +channel+
+          # slot index; a table lacking the column degrades to no purge.
+          meshcore_dedup_columns = %w[from_id to_id channel_name text rx_time protocol]
           if meshcore_dedup_columns.all? { |column| message_columns.include?(column) }
             db.execute(<<~SQL)
               CREATE INDEX IF NOT EXISTS idx_messages_meshcore_content
@@ -273,11 +285,25 @@ module PotatoMesh
             SQL
 
             # #756 backfill — collapse pre-existing meshcore duplicate groups.
-            # Keep the earliest (min rx_time, min id) copy in each
-            # (from_id, to_id, channel, text) cluster where any two rows are
-            # within #{PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS} s
-            # of each other.  Window matches the runtime guard so runtime and
-            # backfill behave identically.
+            # Delete any row that has an EARLIER same-content row
+            # (from_id, to_id, channel_name, text) within
+            # #{PotatoMesh::App::DataProcessing::MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS} s,
+            # keeping the earliest (min rx_time, min id) copy.  The key + window
+            # match the runtime guard (+insert_message+): the per-receiver
+            # +channel+ index differs across ingestors for one logical channel,
+            # so the stable +channel_name+ is what clusters cross-ingestor copies.
+            #
+            # NOTE — this EXISTS predicate is TRANSITIVE and so does NOT behave
+            # identically to the runtime guard: a chain of identical-content rows
+            # each within the window of the previous collapses to a single row
+            # even if the chain spans MORE than the window, whereas the runtime
+            # guard (which only compares a new row against already-persisted rows)
+            # keeps roughly one row per window gap.  This is intentionally more
+            # aggressive for the one-shot historical sweep — it also clears
+            # repeated-identical-text backlogs (e.g. a beacon/bot re-posting the
+            # same string on a cadence ≤ the window) on top of the cross-ingestor
+            # duplicates — and is a one-time effect; the gentler runtime guard
+            # governs every new row.  See #756 and ``CONTRACTS.md``.
             #
             # Gated via ``PRAGMA user_version`` so this expensive self-join
             # runs exactly once after deploy.  Post-fix the runtime guard
@@ -303,7 +329,7 @@ module PotatoMesh
                         WHERE earlier.protocol = 'meshcore'
                           AND earlier.from_id = messages.from_id
                           AND earlier.to_id IS messages.to_id
-                          AND earlier.channel IS messages.channel
+                          AND earlier.channel_name IS messages.channel_name
                           AND earlier.text = messages.text
                           AND messages.rx_time - earlier.rx_time >= 0
                           AND messages.rx_time - earlier.rx_time <= ?

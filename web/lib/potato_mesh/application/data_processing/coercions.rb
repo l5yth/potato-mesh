@@ -21,18 +21,26 @@ module PotatoMesh
       VALID_TELEMETRY_TYPES = %w[device environment power air_quality].freeze
 
       # Half-window (seconds) for the meshcore content-level message dedup
-      # in +insert_message+ and the matching one-shot backfill.  Set to
-      # roughly 3× the observed relay-retransmit delta (~10 s) so genuine
-      # clock skew across co-operating ingestors still collapses, while
-      # rapid legitimate re-sends ("ack", "ok", "test") ≥30 s apart remain
-      # distinct rows.  See issue #756 and ``CONTRACTS.md`` for rationale.
+      # in +insert_message+ and the matching one-shot backfill.  Two
+      # co-operating ingestors timestamp the same physical packet with their
+      # own host clock, and those clocks drift: on potatomesh.net a fleet of
+      # two live ingestors showed a consistent ~126 s offset (median 126 s,
+      # p90 133 s, p99 221 s), so a 30 s window missed 89.6% of the duplicate
+      # pairs and 28% of all meshcore rows were duplicates.  300 s covers
+      # ~99.5% of the observed skew.  **Accepted tradeoff:** a sender repeating
+      # the *identical* text to the same channel within 300 s collapses to one
+      # row — chosen over the 28% duplicate rate.  (The one-shot purge in
+      # +PotatoMesh::App::Database+ applies this transitively, so a chain of such
+      # repeats spanning longer than 300 s also collapses — a deliberately
+      # aggressive one-time cleanup; see that file's note.)  See issues
+      # #756 / #825 and ``CONTRACTS.md`` for rationale.
       #
       # IMPORTANT: widening this value only takes effect at runtime — the
       # one-shot backfill in +PotatoMesh::App::Database+ is frozen at
       # +MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION+.  To re-sweep pre-existing
       # rows that newly fall within an expanded window, bump the backfill
       # version so the migration re-runs on the next deploy.
-      MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS = 30
+      MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS = 300
 
       # Coerce a Ruby boolean into a SQLite integer (1/0) while passing through
       # any other value unchanged. Used when writing boolean node fields.

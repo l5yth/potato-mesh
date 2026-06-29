@@ -190,3 +190,64 @@ test('a disabled cache (no IndexedDB) leaves the app on the cold network path', 
     env.cleanup();
   }
 });
+
+test('warm cache + capped since-page bridges the orphaned middle gap', async () => {
+  // Regression (production: #ping Jun27 08:00 → Jun28 00:00 missing on revisit).
+  // A returning visitor's cache holds an older contiguous block; the delta
+  // `since`-fetch is capped at MESSAGE_LIMIT and returns only the NEWEST page
+  // (DESC+LIMIT), which need not reach the cache — leaving an orphaned middle
+  // gap [cache_newest .. livepage_oldest]. The background backfill must bridge
+  // that gap (anchor at the live frontier), not page below the global-oldest
+  // cached row.
+  const fake = createFakeIndexedDb();
+  const seed = createIndexedDbBackend({ indexedDB: fake.factory, databaseName: 'potato-mesh-cache' });
+  await seed.write('meta', 'meta', { schemaVersion: CACHE_SCHEMA_VERSION, instanceId: CONFIG.instanceDomain });
+  const msg = (id, t, text) => ({ id, channel: 0, from_id: '!a', to_id: '^all', text, rx_time: t, protocol: 'meshcore' });
+  // Cached: an older contiguous pair, within the 7-day retention so it seeds.
+  await seed.write('messages', 'c1', { value: msg('c1', NOW - 2 * DAY - 60, 'old1'), cachedAt: NOW });
+  await seed.write('messages', 'c2', { value: msg('c2', NOW - 2 * DAY, 'old2'), cachedAt: NOW });
+
+  // Server: the newest page (since-fetch) is [L1@NOW-1h, L2@NOW] and does NOT
+  // reach the cache; the gap row G@NOW-1d is reachable only via `before=` paging.
+  const L1 = msg('L1', NOW - 3600, 'live1');
+  const L2 = msg('L2', NOW, 'live2');
+  const G = msg('G', NOW - DAY, 'gap');
+  const history = [L2, L1, G, msg('c2', NOW - 2 * DAY, 'old2'), msg('c1', NOW - 2 * DAY - 60, 'old1')];
+  const ok = body => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  const stubFetch = url => {
+    if (url.includes('/api/messages')) {
+      const q = url.split('?')[1] || '';
+      if (/encrypted=true/.test(q)) return ok([]);
+      const before = Number((q.match(/before=(\d+)/) || [])[1] || 0);
+      if (before > 0) {
+        return ok(history.filter(m => m.rx_time <= before).sort((a, b) => b.rx_time - a.rx_time).slice(0, 1000));
+      }
+      return ok([L2, L1]); // since/default: newest page only (cap doesn't reach the cache)
+    }
+    return ok([]);
+  };
+
+  const env = createDomEnvironment({ includeBody: true });
+  env.registerElement('chat', env.createElement('div', 'chat'));
+  const of = globalThis.fetch;
+  const oi = globalThis.indexedDB;
+  globalThis.fetch = stubFetch;
+  globalThis.indexedDB = fake.factory;
+  try {
+    const { _testUtils } = initializeApp(CONFIG);
+    await _testUtils.initialLoad;
+    await _testUtils.flushBackfill();
+    await _testUtils.flushCacheWrites();
+    // After bridging, every distinct message is loaded: cache c1,c2 + live L1,L2
+    // + the gap row G = 5. Pre-fix the backfill pages below the cached oldest and
+    // never fetches G, so only 4 load.
+    assert.equal(
+      _testUtils.getLoadedMessageCount(), 5,
+      `the orphaned middle gap (G@NOW-1d) must be backfilled; loaded=${_testUtils.getLoadedMessageCount()}`,
+    );
+  } finally {
+    globalThis.fetch = of;
+    globalThis.indexedDB = oi;
+    env.cleanup();
+  }
+});

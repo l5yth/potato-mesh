@@ -2186,3 +2186,74 @@ are **updated or removed as dead**, never left dangling: `__tests__/config.test.
 `applyFiltersToAllTiles` hook), and the Ruby config/app specs that asserted
 `data-app-config` `tileFilters`. `main/__tests__/offline-tile-layer.test.js` stays
 green — the fallback layer is retained, now reached only per DM-A3.
+
+---
+
+## Bugfix: MeshCore dedup window vs inter-ingestor clock skew; warm-cache chat gap
+
+Two chat defects found on production `potatomesh.net` (v0.7.1-rc0) with two
+live MeshCore ingestors. **(2) Duplicates:** 28% of MeshCore rows were
+distinct-id copies of the same transmission from two ingestors whose host
+clocks differ by a consistent ~126 s (median 126 s, p90 133 s). The content
+dedup (`data_processing/messages.rb`) keys correctly on `channel_name` (#825,
+MD-A1) but bounded the match to `rx_time ± 30 s`, so 89.6% of dup pairs fell
+outside the window and persisted; the one-shot #756 purge additionally keyed on
+the per-receiver `channel` **index** (not `channel_name`), so it could not
+collapse the cross-slot copies even when it ran. Fix: widen
+`MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS` 30→300 (covers ~99.5% of the observed
+skew; **accepted tradeoff:** a sender's *identical* text repeated within 300 s
+collapses — chosen over a 28% dup rate; the one-shot purge applies this
+**transitively**, so a chain of such repeats spanning longer than 300 s also
+collapses — a deliberately aggressive one-time cleanup, gentler per-insert guard
+governs new rows), key the purge on `channel_name`, and bump
+`MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION` so the purge re-runs once to clear the
+accumulated duplicates. **(1) Missing messages:** on a warm revisit
+the cache (FC2) seeds an older contiguous block, but the delta `since`-fetch is
+capped at `MESSAGE_LIMIT` and returns the **newest** page (`ORDER BY rx_time
+DESC LIMIT`), which need not reach the cache — orphaning the window between the
+cache's newest row and the newest page's oldest row. `backfillChatHistory`
+anchored at the **global-oldest** loaded row and paged further into the past, so
+it never bridged the gap. Fix: anchor the backfill at the **live frontier** (the
+oldest row of the newest delta page). The duplicate inflation (defect 2) widened
+the gap, so the two interact, but each has a distinct root cause. Web-only; no
+wire/contract change; apex (I)/privacy (II) untouched.
+
+### MW-A1 — Dedup spans the observed inter-ingestor clock skew (runtime + purge)
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "meshcore content dedup" \
+                            spec/database_spec.rb -e "cross-ingestor meshcore pair" )
+```
+**Expected:** pass. Runtime: two MeshCore copies with identical `from_id` /
+`to_id` / `text` / `channel_name` ("#ping") but different `channel` slots
+(10 vs 18) and `rx_time` **126 s apart** collapse to one row (was two — the
+30 s window). The one-shot purge collapses the same cross-slot, clock-skewed
+pair to a single row by keying on `channel_name` and spanning the widened
+window. `MESHCORE_CONTENT_DEDUP_WINDOW_SECONDS == 300` and
+`MESHCORE_CONTENT_DEDUP_BACKFILL_VERSION` is bumped so the purge re-runs once.
+Companion #756/#825 examples still hold (different `channel_name` / `text` /
+`to_id` stay separate; beyond-window — now `> 300 s` — stays separate).
+
+### MW-A2 — Warm-cache load bridges the orphaned middle gap
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-cache-refresh.test.js )
+```
+**Expected:** pass, including "warm cache + capped since-page bridges the
+orphaned middle gap": with a seeded cache whose newest row predates the newest
+`since`-page by more than one page, the background backfill fetches the
+in-between rows (anchored at the live frontier) so **every** in-window message
+loads — no orphaned hole. The cold-load path is unchanged (live frontier ==
+global-oldest when there is no cache), so the existing seed-then-delta examples
+(FC-A2) and the progressive-load walk (PL-A1/PL-A2) stay green.
+
+### MW-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and required to remain green: **C5 / MD-A1**
+(cross-ingestor dedup — strengthened, not weakened), the #756 backfill examples
+(within-window collapse, beyond-window preserve — now measured against 300 s,
+idempotent, `user_version`-gated), **FC-A2** (seed-then-delta — the warm delta
+contract is unchanged; only the backfill anchor moved), **PL-A1/PL-A2**
+(progressive load), and **B1**. No POST/GET/event contract change and no
+ingestor change, so **C2**, `CONTRACTS.md`, and the Python suite are unaffected.
