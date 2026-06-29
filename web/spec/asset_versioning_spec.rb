@@ -150,4 +150,29 @@ RSpec.describe "Asset cache-busting" do
       expect(preload_at).to be < entry_at
     end
   end
+
+  # The cold-load boot prefetch: an early async module that fires the first-load
+  # /api requests in parallel with the module graph (initial-load latency fix).
+  describe "cold-load boot prefetch tag (initial-load latency)" do
+    before { get "/" }
+
+    it "emits a versioned async module boot tag" do
+      body = last_response.body
+      expect(body).to match(%r{<script type="module" async\s+src="/assets/js/app/main/boot-prefetch\.js\?v=#{Regexp.escape(version)}"})
+    end
+
+    it "marks the tag for the prefetch module and enables chat in public mode" do
+      body = last_response.body
+      expect(body).to include("data-pm-prefetch")
+      expect(body).to include('data-pm-chat="true"')
+    end
+
+    it "loads the boot module before the main entry point" do
+      body = last_response.body
+      boot_at = body.index("/assets/js/app/main/boot-prefetch.js")
+      entry_at = body.index('<script type="module" src="/assets/js/app/index.js')
+
+      expect(boot_at).to be < entry_at
+    end
+  end
 end

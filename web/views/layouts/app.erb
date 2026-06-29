@@ -80,6 +80,15 @@
       import map versions; emitted after it so module URLs resolve to the busted
       targets. A module absent here still loads normally on demand. %>
   <%= asset_modulepreload_tags %>
+  <%# Cold-load data prefetch: an early async module fires the first-load API
+      requests in parallel with the module graph so data paints without waiting
+      for the whole bundle to boot. Runs only on cold loads (the cache module
+      maintains a localStorage marker); data-pm-chat=false suppresses the message
+      requests in private mode (mirrors the /api/messages 404). The app consumes
+      the in-flight responses on its first refresh; if anything is unavailable it
+      simply fetches normally. %>
+  <script type="module" async src="<%= asset_url("/assets/js/app/main/boot-prefetch.js") %>"
+          data-pm-prefetch data-pm-chat="<%= private_mode ? "false" : "true" %>"></script>
   <link rel="stylesheet" href="<%= asset_url("/assets/styles/base.css") %>" />
   <script src="<%= asset_url("/assets/js/theme.js") %>" defer></script>
   <script src="<%= asset_url("/assets/js/background.js") %>" defer></script>

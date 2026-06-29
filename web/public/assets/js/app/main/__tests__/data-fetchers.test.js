@@ -525,3 +525,75 @@ test('paginateMessages stops cleanly when a page is not an array', async () => {
     stub.restore();
   }
 });
+
+// ---------------------------------------------------------------------------
+// responsePromise (cold-load boot prefetch consumption)
+// ---------------------------------------------------------------------------
+
+/** Build a Response-like resolved value with the given JSON body. */
+function jsonResponse(body, { ok = true, status = 200 } = {}) {
+  return { ok, status, json: async () => body };
+}
+
+test('fetchNodes consumes a supplied responsePromise without hitting the network', async () => {
+  const stub = withFetchStub({ ok: true, body: [{ node_id: '!net' }] });
+  try {
+    const boot = Promise.resolve(jsonResponse([{ node_id: '!boot' }]));
+    const nodes = await fetchNodes(NODE_LIMIT, 0, { responsePromise: boot });
+    assert.deepEqual(nodes, [{ node_id: '!boot' }]);
+    assert.equal(stub.calls.length, 0, 'the prefetched response is used, no fetch issued');
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchTraces still applies the recency filter to a prefetched response', async () => {
+  const stub = withFetchStub({ ok: true, body: [] });
+  try {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const boot = Promise.resolve(jsonResponse([
+      { id: 1, rx_time: nowSeconds },              // recent — kept
+      { id: 2, rx_time: nowSeconds - 40 * 86400 }, // older than the 28-day TRACE_MAX_AGE — dropped
+    ]));
+    const traces = await fetchTraces(TRACE_LIMIT, 0, { responsePromise: boot });
+    assert.deepEqual(traces.map(t => t.id), [1]);
+    assert.equal(stub.calls.length, 0);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchMessages consumes a supplied responsePromise', async () => {
+  const stub = withFetchStub({ ok: true, body: [] });
+  try {
+    const boot = Promise.resolve(jsonResponse([{ id: 7, text: 'boot' }]));
+    const messages = await fetchMessages(NODE_LIMIT, { responsePromise: boot });
+    assert.deepEqual(messages, [{ id: 7, text: 'boot' }]);
+    assert.equal(stub.calls.length, 0);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('a rejected responsePromise falls back to a fresh network fetch', async () => {
+  const stub = withFetchStub({ ok: true, body: [{ node_id: '!fallback' }] });
+  try {
+    const boot = Promise.reject(new Error('prefetch died'));
+    const nodes = await fetchNodes(NODE_LIMIT, 0, { responsePromise: boot });
+    assert.deepEqual(nodes, [{ node_id: '!fallback' }]);
+    assert.equal(stub.calls.length, 1, 'a failed prefetch re-fetches so data is never lost');
+    assert.ok(stub.calls[0].url.startsWith('/api/nodes?'));
+  } finally {
+    stub.restore();
+  }
+});
+
+test('a prefetched non-ok response throws like a failed fetch', async () => {
+  const stub = withFetchStub({ ok: true, body: [] });
+  try {
+    const boot = Promise.resolve(jsonResponse(null, { ok: false, status: 503 }));
+    await assert.rejects(() => fetchPositions(NODE_LIMIT, 0, { responsePromise: boot }), /HTTP 503/);
+  } finally {
+    stub.restore();
+  }
+});

@@ -1239,6 +1239,69 @@ are purely additive head markup — no existing asset URL, the import map, or an
 
 ---
 
+## Bugfix: Initial-load data prefetch (cold-load early fetch)
+
+Second phase of the initial-load fix (after the module-graph preload above).
+Even with the graph preloaded, the first `/api/*` fetch still waits for the
+~806 KB bundle to download, parse, and boot. An early `<script type="module"
+async>` boot module (`web/public/assets/js/app/main/boot-prefetch.js`) now fires
+the first-load (`since=0`) API requests **in parallel with** the module graph
+(at `priority:'high'`, so they out-prioritise the parallel module preloads) and
+stashes the in-flight `Response` promises on `window.__PM_BOOT__`; the app's
+first `refresh()` consumes them via a new `responsePromise` option on the
+data-fetchers instead of issuing its own requests. It runs **only on cold loads**
+— a synchronous `localStorage` marker (`pm:cache-present`, maintained by the
+cache write-back / clear / disable paths) suppresses it on warm revisits, leaving
+the FC2 seed-then-delta path untouched. Message endpoints are skipped in private
+mode (`data-pm-chat="false"`), mirroring the `/api/messages` 404 (Invariant II /
+PS6). Pure pre-warm: an absent or rejected prefetch re-fetches (a captured error
+response surfaces and the next auto-refresh recovers), so it is never
+load-bearing (FC7). Read-side only; no API/DB/ingestor change, no new dependency (D7).
+
+*Run the server in public mode (as in AV-A1) for the curl check.*
+
+### EF-A1 — The head emits the cold-load boot-prefetch module (gated by privacy)
+```bash
+curl -s http://127.0.0.1:41447/ \
+  | grep -oE '<script type="module" async[^>]*boot-prefetch\.js[^>]*' | head
+```
+**Expected:** matches an async ES-module `<script>` whose `src` is the versioned
+`/assets/js/app/main/boot-prefetch.js?v=<APP_VERSION>`, carrying `data-pm-prefetch`
+and `data-pm-chat="true"` in public mode. Under `PRIVATE=1` the same tag carries
+`data-pm-chat="false"` (no message prefetch) — covered by the Ruby suite
+(`bundle exec rspec spec/app_spec.rb -e "cold-load boot prefetch"`).
+
+### EF-A2 — Cold load consumes the prefetch; warm load keeps the FC2 delta path
+```bash
+( cd web && node --test \
+    public/assets/js/app/main/__tests__/boot-prefetch.test.js \
+    public/assets/js/app/__tests__/main-boot-prefetch.test.js \
+    public/assets/js/app/main/__tests__/data-fetchers.test.js )
+```
+**Expected:** pass. On a cold load (no `pm:cache-present` marker) the boot module
+issues the seven first-load requests and the app consumes the stashed responses
+on its first refresh — **no duplicate cold `/api/nodes`/`/api/messages` fetch** is
+issued (the `__PM_BOOT__` global is one-shot, cleared on read). A successful cache
+write-back sets the marker; `clearDataCache` and a disabled cache (PRIVATE /
+no-IndexedDB) clear it. The data-fetchers accept a `responsePromise` and fall back
+to a fresh fetch if it is absent or rejected (so a failed prefetch never loses
+data). `coldLoadUrls` mirrors the data-fetchers' first-load URLs (no drift).
+
+### EF-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. **At risk and explicitly required to
+remain green:** **MP-A1/MP-A2** (the module-graph preload is unchanged; the boot
+module is itself one of the preloaded app modules); the **FC-A2** warm seed-delta
+behaviour (`main-cache-refresh.test.js` — a warm load still seeds from cache and
+delta-fetches, because the marker suppresses the cold prefetch); **A2/PS6**
+(privacy — no message prefetch under `PRIVATE`); **B1** (all suites). No
+`/api/*`/`/version` shape changes; the prefetch only changes *when* the first
+requests fire, not *which* rows are reachable.
+
+---
+
 ## Feature: Uniform backward pagination (`?before=`) for bulk collection APIs
 
 Maps to SPEC decisions **BP1–BP9**. `?before=<unix_seconds>` is added as an
