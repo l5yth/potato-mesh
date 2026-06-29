@@ -114,6 +114,15 @@ async def _run_meshcore(
 
         iface.isConnected = True
 
+        # Keep the contact roster live: with auto-update enabled the meshcore
+        # library re-fetches changed contacts whenever an ADVERTISEMENT /
+        # PATH_UPDATE push arrives (its built-in _contact_change handler), so a
+        # re-advert from a known node refreshes its position / last_advert
+        # without waiting for a reconnect.  Combined with the ADVERTISEMENT
+        # handler (which surfaces non-roster nodes), this closes the adverts gap
+        # where only startup-roster and auto-added contacts were captured.
+        mc.auto_update_contacts = True
+
         try:
             await mc.ensure_contacts()
         except Exception as exc:

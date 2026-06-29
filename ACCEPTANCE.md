@@ -184,6 +184,24 @@ identical SF/BW/CR — no protocol-specific `"Custom "` prefix — and returns `
 (not a bare `"Custom"`) when the parameters are unreported, so one radio config
 never displays as two different strings depending on protocol (SPEC Invariant IV).
 
+### A4e — MeshCore captures adverts from other nodes (regression: adverts gap)
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "advert or is_known_contact or auto_update" )
+```
+**Expected:** pass. The MeshCore provider does not depend on the radio's auto-add
+setting to learn about other nodes. `_run_meshcore` sets
+`mc.auto_update_contacts = True` (so the library re-fetches changed contacts on
+every `ADVERTISEMENT` / `PATH_UPDATE` push — a re-advert from a known node
+refreshes its position / `last_advert` without a reconnect) **and** subscribes an
+`ADVERTISEMENT` handler that, for a public key **not** in the contact roster,
+upserts a minimal "heard now" node (`_advert_to_node_dict`: `lastHeard` +
+`protocol` + `user.shortName`/`publicKey`, no name/type/position) while skipping
+keys already tracked (`_MeshcoreInterface.is_known_contact`). This surfaces nodes
+the radio will not auto-add (manual-add / observer mode) without clobbering richer
+records. Local-LoRa RX only — no broker, no new ingest path (SPEC Invariants I/IV).
+Documented under *"MeshCore advert sourcing"* in `CONTRACTS.md`.
+
 ---
 
 ## Layer B — Engineering bar (restated from `CLAUDE.md`)

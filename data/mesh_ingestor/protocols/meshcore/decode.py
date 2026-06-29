@@ -61,6 +61,39 @@ def _contact_to_node_dict(contact: dict) -> dict:
     return node
 
 
+def _advert_to_node_dict(pub_key: str) -> dict:
+    """Build a minimal ``POST /api/nodes`` dict for a bare MeshCore advert.
+
+    A MeshCore ``ADVERTISEMENT`` push (``PacketType.ADVERTISEMENT``) carries
+    only the advertiser's 32-byte public key — no name, type, or position.
+    This surfaces the advertiser as "heard now" with a stable canonical node
+    ID so that radios which do **not** auto-add the advertiser to their contact
+    roster (e.g. when ``manual_add_contacts`` is set) still register the node.
+    The richer ``user.longName`` / role / position fields are filled in later
+    if and when a full contact advertisement (``NEW_CONTACT``) is received for
+    the same key; the Ruby web app preserves an existing long name on conflict,
+    so this placeholder never clobbers a real name.
+
+    Parameters:
+        pub_key: 64-character lowercase hex string for the advertiser's public
+            key, as carried by the ``ADVERTISEMENT`` event payload.
+
+    Returns:
+        Node dict compatible with the ``POST /api/nodes`` payload format,
+        containing only ``lastHeard`` (now), ``protocol``, and a ``user`` block
+        with ``shortName`` and ``publicKey``.
+    """
+    node_id = _meshcore_node_id(pub_key)
+    return {
+        "lastHeard": int(time.time()),
+        "protocol": "meshcore",
+        "user": {
+            "shortName": _meshcore_short_name(node_id),
+            "publicKey": pub_key,
+        },
+    }
+
+
 def _derive_modem_preset(sf: object, bw: object, cr: object) -> str | None:
     """Return a compact radio-parameter string from spreading factor, bandwidth, and coding rate.
 

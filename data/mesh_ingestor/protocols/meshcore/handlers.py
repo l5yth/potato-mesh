@@ -19,7 +19,12 @@ from __future__ import annotations
 import time
 
 from ... import config, ingestors as _ingestors
-from .decode import _contact_to_node_dict, _derive_modem_preset, _self_info_to_node_dict
+from .decode import (
+    _advert_to_node_dict,
+    _contact_to_node_dict,
+    _derive_modem_preset,
+    _self_info_to_node_dict,
+)
 from .identity import _derive_synthetic_node_id, _meshcore_node_id
 from .interface import _MeshcoreInterface
 from .messages import (
@@ -195,6 +200,29 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
     async def on_contact_update(evt) -> None:
         _process_contact_update(evt.payload or {}, iface, _handlers)
 
+    async def on_advertisement(evt) -> None:
+        # A bare ADVERTISEMENT push carries only the advertiser's public key.
+        payload = evt.payload or {}
+        pub_key = payload.get("public_key", "")
+        node_id = _meshcore_node_id(pub_key)
+        if node_id is None:
+            return
+        # Known contacts are kept current by the meshcore library's auto-update
+        # re-fetch (its built-in _contact_change handler reacts to this same
+        # ADVERTISEMENT push and re-fetches changed contacts), so re-emitting
+        # them here would only add redundant POSTs.  Surface ONLY nodes the
+        # radio did not add to its roster (manual-add / auto-add off), for which
+        # the bare advert is otherwise the only signal that the node was heard.
+        if iface.is_known_contact(pub_key):
+            return
+        _handlers.upsert_node(node_id, _advert_to_node_dict(pub_key))
+        _handlers._mark_packet_seen()
+        config._debug_log(
+            "MeshCore advert from non-roster node",
+            context="meshcore.advert",
+            node_id=node_id,
+        )
+
     async def on_channel_msg(evt) -> None:
         payload = evt.payload or {}
         sender_ts = payload.get("sender_timestamp")
@@ -318,6 +346,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         "CONTACTS": on_contacts,
         "NEW_CONTACT": on_contact_update,
         "NEXT_CONTACT": on_contact_update,
+        "ADVERTISEMENT": on_advertisement,
         "CHANNEL_MSG_RECV": on_channel_msg,
         "CONTACT_MSG_RECV": on_contact_msg,
         "DISCONNECTED": on_disconnected,
