@@ -2189,6 +2189,63 @@ green — the fallback layer is retained, now reached only per DM-A3.
 
 ---
 
+## Bugfix: Progressive backfill for every bulk collection (issue #832)
+
+The server pages **every** bulk collection backward via `?before=` (SPEC
+BP1-BP8), but only the message feed wired it on the client (the deferred
+follow-up **BP9a**). So the node table — and positions, telemetry, neighbors,
+traces — stalled at the newest `MAX_QUERY_LIMIT` (1000) rows the server returns
+in one page (the reported symptom: "the node table only lists 1000 items").
+The fix mirrors the proven chat backfill (issue #802) across all five
+collections: the newest page paints first, then a one-shot background pager
+walks each collection's inclusive `before` cursor newest → oldest, de-duplicating
+by id and committing+rendering each page, until the visibility window is
+exhausted. The client row-caps on positions/telemetry/traces are lifted from a
+fixed count to the server's own window bound (so a backfilled page is not trimmed
+straight back out on the next refresh). Frontend-only: no API/DB/ingestor change,
+so the C4/C7 window floors, `MAX_QUERY_LIMIT`, and privacy are untouched.
+
+### CB-A1 — Every bulk collection pages backward past the first 1000-row page
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-collection-backfill.test.js )
+```
+**Expected:** pass. On a cold load whose newest page is **full** (=== the
+per-collection cap), each of `nodes`, `positions`, `telemetry`, `neighbors`, and
+`traces` issues at least one `GET /api/<collection>?…&before=<cursor>` request and
+merges the older rows in — so the loaded node set grows **past** `NODE_LIMIT`
+(1000) instead of stalling at it. The newest page is rendered **before** any
+backward paging starts (the page is never blank/blocking), matching the #802
+progressive-load contract. A short newest page (window already exhausted) records
+no frontier and fires **no** backward request.
+
+### CB-A2 — Generic backward pager + `before` cursor on every fetcher
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/data-fetchers.test.js )
+```
+**Expected:** pass. `paginateCollection(fetchPage, {limit, before, idOf, cursorOf})`
+generalises the message walk (`paginateMessages` now delegates to it): it pages
+newest → oldest, de-duplicates by `idOf`, advances an inclusive `before` cursor to
+the oldest `cursorOf` value of each page, and stops on a short page / no-progress /
+missing cursor / `maxPages`. `fetchNodes`/`fetchPositions`/`fetchTelemetry`/
+`fetchNeighbors`/`fetchTraces` each forward a positive `before` and omit a
+non-positive one (mirroring the existing `fetchMessages` `before` contract, C7);
+`fetchTraces` accepts `applyAgeFilter:false` so the pager sees the server's raw
+page length and terminates correctly.
+
+### CB-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+stay green: **C7 / PL-A1 / PL-A2** (the message pager is unchanged — `paginateMessages`
+delegates to the new generic pager with identical observable behavior), **B1**
+(all suites), and **B4** (the exact Apache header on the new test). The cursor
+columns match the server's `ORDER BY` per collection (`last_heard` for nodes,
+`rx_time` for the rest), so no widening of the C4 window floor is possible; the
+backfill only ever *narrows* (BP2).
+
+---
+
 ## Bugfix: MeshCore dedup window vs inter-ingestor clock skew; warm-cache chat gap
 
 Two chat defects found on production `potatomesh.net` (v0.7.1-rc0) with two

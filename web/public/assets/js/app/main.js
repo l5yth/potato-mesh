@@ -177,6 +177,7 @@ import {
   resolveSnapshotLimit,
   fetchMessages as fetchMessagesImpl,
   paginateMessages as paginateMessagesImpl,
+  paginateCollection,
 } from './main/data-fetchers.js';
 import {
   compareNumber,
@@ -347,6 +348,18 @@ export function initializeApp(config) {
   let chatLiveFrontier = 0;
   /** Settles when the one-shot chat-history backfill finishes (test hook). */
   let backfillPromise = Promise.resolve();
+  /**
+   * Live frontiers for the bulk collections (oldest cursor value of the newest
+   * page) — the one-shot background backfill pages backward from here, exactly
+   * like {@link chatLiveFrontier}. 0 means "no backfill" (a short newest page,
+   * or a warm-cache load whose data is already seeded). Issue #832 / SPEC BP9a.
+   * @type {{ nodes: number, positions: number, telemetry: number, neighbors: number, traces: number }}
+   */
+  let collectionLiveFrontiers = { nodes: 0, positions: 0, telemetry: 0, neighbors: 0, traces: 0 };
+  /** One-shot guard: the bulk-collection backfill runs once after the first load. */
+  let collectionsBackfilled = false;
+  /** Settles when the one-shot bulk-collection backfill finishes (test hook). */
+  let collectionBackfillPromise = Promise.resolve();
 
   // Persistent read-side cache (SPEC FC1–FC7). The IndexedDB backend is null
   // when storage is unavailable, and PRIVATE mode disables + wipes the cache —
@@ -3489,6 +3502,178 @@ export function initializeApp(config) {
   }
 
   /**
+   * Re-aggregate the per-source snapshot arrays and re-enrich the node
+   * collection (display name, position, distance, telemetry) from the current
+   * module-level ``all*`` sources, then rebuild the node lookup index. Shared by
+   * {@link refresh} and the background collection backfill (issue #832) so a
+   * streamed history page derives the rendered node state identically to a full
+   * refresh. Does not touch ``allMessages`` / ``allEncryptedMessages`` (hydrated
+   * separately) or ``allTraces`` (not node-derived).
+   *
+   * @returns {void}
+   */
+  function rebuildNodeDerivedState() {
+    const aggregatedNodes = aggregateNodeSnapshots(allNodes);
+    const aggregatedPositions = aggregatePositionSnapshots(allPositionEntries);
+    const aggregatedNeighbors = aggregateNeighborSnapshots(allNeighbors);
+    const aggregatedTelemetry = aggregateTelemetrySnapshots(allTelemetryEntries);
+    // Enrich merged node records with display name, position, distance, and
+    // telemetry before any rendering or filtering takes place.
+    aggregatedNodes.forEach(applyNodeNameFallback);
+    mergePositionsIntoNodes(aggregatedNodes, aggregatedPositions);
+    computeDistances(aggregatedNodes);
+    mergeTelemetryIntoNodes(aggregatedNodes, aggregatedTelemetry);
+    normalizeNodeCollection(aggregatedNodes);
+    allNodes = aggregatedNodes;
+    // Rebuild lookup maps so marker updates and message hydration always resolve
+    // to the latest node objects.
+    rebuildNodeIndex(allNodes);
+    allTelemetryEntries = aggregatedTelemetry;
+    allPositionEntries = aggregatedPositions;
+    allNeighbors = aggregatedNeighbors;
+  }
+
+  /** Floor (unix s) below which backfilled positions/telemetry are dropped (FC3: 7 d). */
+  const recentBackfillFloor = () => Math.floor(Date.now() / 1000) - CHAT_RECENT_WINDOW_SECONDS;
+  /** Floor (unix s) below which backfilled neighbors/traces are dropped (FC3: 28 d). */
+  const longBackfillFloor = () => Math.floor(Date.now() / 1000) - TRACE_MAX_AGE_SECONDS;
+
+  /**
+   * Per-collection wiring for the background backfill (issue #832). Each entry
+   * knows how to fetch a backward page (inclusive ``before`` cursor on the
+   * route's primary sort column), how to identify a row for cross-page
+   * de-duplication, which cursor value advances the walk, how to merge a page
+   * into the module state (bounded by the same window the refresh tick uses), and
+   * how to re-derive the rendered state the merged collection feeds.
+   *
+   * Cursor columns match each route's server-side ``ORDER BY`` (SPEC BP1):
+   * ``last_heard`` for nodes, ``rx_time`` for the rest.
+   *
+   * @type {ReadonlyArray<Object>}
+   */
+  const COLLECTION_BACKFILLS = [
+    {
+      name: 'nodes',
+      fetchPage: (limit, before) => fetchNodes(limit, 0, { before }),
+      idOf: row => row && row.node_id,
+      cursorOf: row => row && row.last_heard,
+      merge: batch => { allNodes = mergeById(allNodes, batch, 'node_id'); },
+      refine: () => rebuildNodeDerivedState(),
+    },
+    {
+      name: 'positions',
+      fetchPage: (limit, before) => fetchPositions(limit, 0, { before }),
+      idOf: row => row && row.id,
+      cursorOf: row => row && row.rx_time,
+      merge: batch => {
+        allPositionEntries = trimToWindow(mergeById(allPositionEntries, batch, 'id'), recentBackfillFloor());
+      },
+      refine: () => rebuildNodeDerivedState(),
+    },
+    {
+      name: 'telemetry',
+      fetchPage: (limit, before) => fetchTelemetry(limit, 0, { before }),
+      idOf: row => row && row.id,
+      cursorOf: row => row && row.rx_time,
+      merge: batch => {
+        allTelemetryEntries = trimToWindow(mergeById(allTelemetryEntries, batch, 'id'), recentBackfillFloor());
+      },
+      refine: () => rebuildNodeDerivedState(),
+    },
+    {
+      name: 'neighbors',
+      fetchPage: (limit, before) => fetchNeighbors(limit, 0, { before }),
+      // Composite primary key (node_id, neighbor_id) — unique per tuple, so the
+      // inclusive boundary row is de-duplicated across pages.
+      idOf: row => (row ? `${row.node_id}|${row.neighbor_id}` : undefined),
+      cursorOf: row => row && row.rx_time,
+      merge: batch => {
+        allNeighbors = trimToWindow(
+          mergeByCompositeKey(allNeighbors, batch, ['node_id', 'neighbor_id']),
+          longBackfillFloor(),
+        );
+      },
+      refine: () => { allNeighbors = aggregateNeighborSnapshots(allNeighbors); },
+    },
+    {
+      name: 'traces',
+      // Fetch raw (applyAgeFilter:false) so the pager sees the server's true page
+      // length for short-page termination; the age bound is applied by the
+      // window-trim in merge() instead.
+      fetchPage: (limit, before) => fetchTraces(limit, 0, { before, applyAgeFilter: false }),
+      idOf: row => row && row.id,
+      cursorOf: row => row && row.rx_time,
+      merge: batch => {
+        allTraces = trimToWindow(mergeById(allTraces, batch, 'id'), longBackfillFloor());
+      },
+      refine: () => {},
+    },
+  ];
+
+  /**
+   * Merge one streamed backward page into the module state, re-derive what it
+   * feeds, and repaint — progressively, one page at a time, mirroring the chat
+   * history backfill (issue #802). The merge + re-render is synchronous (no
+   * ``await``) so it cannot interleave with a concurrent refresh or another
+   * collection's commit. Each page is network-spaced, so the per-page render is
+   * not a hot loop; the stats fetch is skipped (the authoritative count is
+   * server-computed and unchanged by how many rows the client has paged in).
+   *
+   * @param {Object} spec One {@link COLLECTION_BACKFILLS} entry.
+   * @param {Array<Object>} batch Freshly-seen rows for this page (the pager only
+   *   ever yields a non-empty array).
+   * @returns {void}
+   */
+  function commitBackfillPage(spec, batch) {
+    spec.merge(batch);
+    spec.refine();
+    renderFilteredOutputs();
+  }
+
+  /**
+   * Page one collection backward from its live frontier, committing+rendering
+   * each page, until the visibility window is exhausted. A no-op (no request)
+   * when the collection recorded no frontier — a short newest page or a warm-cache
+   * load. Errors are swallowed (logged) so one failing stream never aborts the
+   * others or the rendered newest page — mirroring {@link backfillChatHistory}.
+   *
+   * @param {Object} spec One {@link COLLECTION_BACKFILLS} entry.
+   * @returns {Promise<void>} Resolves when this collection's window is exhausted.
+   */
+  async function backfillCollection(spec) {
+    const before = collectionLiveFrontiers[spec.name];
+    if (!(before > 0)) return;
+    try {
+      for await (const batch of paginateCollection(spec.fetchPage, {
+        limit: NODE_LIMIT,
+        before,
+        idOf: spec.idOf,
+        cursorOf: spec.cursorOf,
+      })) {
+        commitBackfillPage(spec, batch);
+      }
+    } catch (err) {
+      console.warn(`${spec.name} backfill failed; showing the most recent page only`, err);
+    }
+  }
+
+  /**
+   * One-shot background backfill of every bulk collection (issue #832). After
+   * the first paint has rendered each collection's newest page, page the five
+   * collections backward through their visibility windows concurrently, each
+   * committing+repainting its pages as they arrive. Each {@link backfillCollection}
+   * self-gates on its frontier, so a collection with none (a short newest page, or
+   * a warm-cache load) returns without a request and the fan-out is a clean no-op
+   * when there is nothing to page — no pointless request, no empty long-load.
+   * Invoked once (guarded by ``collectionsBackfilled`` in {@link refresh}).
+   *
+   * @returns {Promise<void>} Resolves when every collection's window is exhausted.
+   */
+  async function backfillAllCollections() {
+    await Promise.all(COLLECTION_BACKFILLS.map(spec => backfillCollection(spec)));
+  }
+
+  /**
    * Compute distance from the configured map center.
    *
    * @param {number} lat Latitude in degrees.
@@ -4360,6 +4545,33 @@ export function initializeApp(config) {
   }
 
   /**
+   * Render the filter-dependent outputs — node table, map markers, sort
+   * indicators, and chat log — from the current in-memory state, **without** the
+   * ``/api/stats`` fetch. {@link applyFilter} composes this with the stats
+   * refresh; the background collection backfill (issue #832) calls it directly so
+   * streaming a history page repaints the table/map without firing a redundant
+   * authoritative-count request per page — the ``/api/stats`` count is
+   * server-computed and unaffected by how many rows the client has paged in.
+   *
+   * @param {string} [filterQuery] Raw filter text for substring highlighting;
+   *   defaults to the current filter input value.
+   * @returns {void}
+   */
+  function renderFilteredOutputs(filterQuery = filterInput ? filterInput.value : '') {
+    // Text and role filters apply only to the node table and map; the chat log
+    // always receives the full node collection so reply-thread lookups succeed
+    // even for nodes that are currently hidden by the active filter.
+    const sortedNodes = getFilteredSortedNodes();
+    const nowSec = Date.now() / 1000;
+    renderTable(sortedNodes, nowSec);
+    renderMap(sortedNodes, nowSec);
+    updateSortIndicators();
+    // Pass the raw filterQuery (not the normalised form) so the chat log can
+    // highlight matching substrings in their original case.
+    rerenderChatLog(filterQuery);
+  }
+
+  /**
    * Apply text and role filters to the node list and re-render outputs.
    *
    * @returns {void}
@@ -4367,15 +4579,10 @@ export function initializeApp(config) {
   function applyFilter() {
     updateFilterClearVisibility();
     const filterQuery = filterInput ? filterInput.value : '';
-    // Text and role filters apply only to the node table and map; the chat log
-    // always receives the full node collection so reply-thread lookups succeed
-    // even for nodes that are currently hidden by the active filter.
-    const sortedNodes = getFilteredSortedNodes();
-    const nowSec = Date.now()/1000;
-    renderTable(sortedNodes, nowSec);
-    renderMap(sortedNodes, nowSec);
+    renderFilteredOutputs(filterQuery);
     // Show an immediate local estimate for the title so it doesn't flicker
     // to (0) while waiting for the async /api/stats response.
+    const nowSec = Date.now() / 1000;
     const localStats = computeLocalActiveNodeStats(allNodes, nowSec);
     updateTitleCount(adjustStatsForHiddenProtocols(localStats));
     // Title, legend, footer, and visibility are then corrected by /api/stats
@@ -4389,10 +4596,6 @@ export function initializeApp(config) {
       updateFooterStats(visibleStats);
       applyProtocolVisibility(stats);
     });
-    updateSortIndicators();
-    // Pass the raw filterQuery (not the normalised form) so the chat log can
-    // highlight matching substrings in their original case.
-    rerenderChatLog(filterQuery);
   }
 
   // Re-filter on every keystroke so the table and map stay in sync with the
@@ -4529,56 +4732,71 @@ export function initializeApp(config) {
       if (incomingNbTs > lastNeighborTimestamp) lastNeighborTimestamp = incomingNbTs;
       if (incomingTrTs > lastTraceTimestamp) lastTraceTimestamp = incomingTrTs;
 
-      // Merge incremental results with existing data.  On first load the
-      // existing arrays are empty so the merge is effectively a no-op.
-      // Merge incremental results with existing data then trim to the
-      // configured limits so long-running tabs do not accumulate stale
-      // entries beyond what the server would return on a fresh fetch.
-      const nodes = useSince ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
-      const positions = useSince
-        ? trimToLimit(mergeById(allPositionEntries, incomingPositions, 'id'), NODE_LIMIT)
+      // Capture each bulk collection's live frontier (oldest cursor of the
+      // newest page) so the one-shot background backfill (issue #832) can page
+      // backward from there, exactly like chatLiveFrontier. Cold load only: a
+      // warm-cache load already has the deeper history seeded (and its useSince
+      // delta pages are short), and a *short* newest page means the window is
+      // already exhausted — both record 0 so no pointless backward request fires
+      // (avoids an empty, long-loading page). The cursor column matches each
+      // route's server-side ORDER BY: last_heard for nodes, rx_time for the rest.
+      if (!useSince) {
+        const frontierIfFull = (rows, cap, keys) =>
+          Array.isArray(rows) && rows.length >= cap ? minRecordTimestamp(rows, keys) : 0;
+        collectionLiveFrontiers = {
+          nodes: frontierIfFull(incomingNodes, NODE_LIMIT, ['last_heard']),
+          positions: frontierIfFull(incomingPositions, NODE_LIMIT, ['rx_time']),
+          telemetry: frontierIfFull(incomingTelemetry, NODE_LIMIT, ['rx_time']),
+          neighbors: frontierIfFull(incomingNeighbors, NODE_LIMIT, ['rx_time']),
+          traces: frontierIfFull(incomingTraces, TRACE_LIMIT, ['rx_time']),
+        };
+      }
+
+      // Merge incremental results into the module-level collections.  On first
+      // load the existing arrays are empty so the merge is effectively a no-op.
+      // The per-packet collections (positions/telemetry/neighbors/traces) are
+      // bounded by their server visibility window rather than a fixed row count
+      // (issue #832): a count cap would trim a background backfill's older pages
+      // straight back out on the next refresh tick. Windows mirror FC3 — 7 d for
+      // positions/telemetry (like messages), 28 d for neighbors/traces.
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const messageWindowFloor = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
+      const recentWindowFloor = nowSeconds - CHAT_RECENT_WINDOW_SECONDS;
+      const longWindowFloor = nowSeconds - TRACE_MAX_AGE_SECONDS;
+      allNodes = useSince ? mergeById(allNodes, incomingNodes, 'node_id') : incomingNodes;
+      allPositionEntries = useSince
+        ? trimToWindow(mergeById(allPositionEntries, incomingPositions, 'id'), recentWindowFloor)
         : incomingPositions;
-      const neighborTuples = useSince
-        ? mergeByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id'])
-        : incomingNeighbors;
-      const telemetryEntries = useSince
-        ? trimToLimit(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), NODE_LIMIT)
+      allTelemetryEntries = useSince
+        ? trimToWindow(mergeById(allTelemetryEntries, incomingTelemetry, 'id'), recentWindowFloor)
         : incomingTelemetry;
-      const traceEntries = useSince
-        ? trimToLimit(mergeById(allTraces, incomingTraces, 'id'), TRACE_LIMIT)
+      allNeighbors = useSince
+        ? trimToWindow(mergeByCompositeKey(allNeighbors, incomingNeighbors, ['node_id', 'neighbor_id']), longWindowFloor)
+        : incomingNeighbors;
+      allTraces = useSince
+        ? trimToWindow(mergeById(allTraces, incomingTraces, 'id'), longWindowFloor)
         : incomingTraces;
-      // Plaintext chat is shown for the full seven-day window (issue #796), so
-      // bound the retained set by that window rather than a row count — a count
-      // cap would silently drop older-but-in-window messages on the next merge.
-      const messageWindowFloor = Math.floor(Date.now() / 1000) - CHAT_RECENT_WINDOW_SECONDS;
-      const messages = useSince
-        ? trimToWindow(mergeById(allMessages, incomingMessages, 'id'), messageWindowFloor)
-        : incomingMessages;
       // Encrypted blobs only feed the mixed Log tab (itself capped), so a count
       // cap is the right memory bound for them.
       const encryptedMessages = useSince
         ? trimToLimit(mergeById(allEncryptedMessages, incomingEncryptedMessages, 'id'), MESSAGE_LIMIT)
         : incomingEncryptedMessages;
+      // Plaintext chat is shown for the full seven-day window (issue #796), so
+      // bound the retained set by that window rather than a row count — a count
+      // cap would silently drop older-but-in-window messages on the next merge.
+      const messages = useSince
+        ? trimToWindow(mergeById(allMessages, incomingMessages, 'id'), messageWindowFloor)
+        : incomingMessages;
 
-      // Collapse per-source snapshot arrays into single merged records; the
-      // snapshot window de-duplicates entries from multiple ingestors.
-      const aggregatedNodes = aggregateNodeSnapshots(nodes);
-      const aggregatedPositions = aggregatePositionSnapshots(positions);
-      const aggregatedNeighbors = aggregateNeighborSnapshots(neighborTuples);
-      const aggregatedTelemetry = aggregateTelemetrySnapshots(telemetryEntries);
-      // Enrich merged node records with display name, position, distance, and
-      // telemetry before any rendering or filtering takes place.
-      aggregatedNodes.forEach(applyNodeNameFallback);
-      mergePositionsIntoNodes(aggregatedNodes, aggregatedPositions);
-      computeDistances(aggregatedNodes);
-      mergeTelemetryIntoNodes(aggregatedNodes, aggregatedTelemetry);
-      normalizeNodeCollection(aggregatedNodes);
-      allNodes = aggregatedNodes;
-      // Rebuild lookup maps after every refresh so marker updates and message
-      // hydration always resolve to the latest node objects.
-      rebuildNodeIndex(allNodes);
-      // Hydrate messages with node metadata in parallel; the node index must be
-      // rebuilt first so lookups find the freshly merged records.
+      // Collapse per-source snapshots and enrich the node collection from the
+      // merged sources.  Shared with the background backfill so a streamed page
+      // re-derives identically (issue #832); this also re-aggregates and stores
+      // allPositionEntries/allTelemetryEntries/allNeighbors in their collapsed
+      // form (allTraces is not node-derived and keeps the merged value above).
+      rebuildNodeDerivedState();
+      // Hydrate messages with node metadata in parallel; the node index has just
+      // been rebuilt (inside rebuildNodeDerivedState) so lookups find the freshly
+      // merged records.
       const [chatMessages, encryptedChatMessages] = await Promise.all([
         messageNodeHydrator.hydrate(messages, nodesById),
         messageNodeHydrator.hydrate(encryptedMessages, nodesById)
@@ -4594,10 +4812,6 @@ export function initializeApp(config) {
         ? trimToWindow(mergeById(allMessages, hydratedChat, 'id'), messageWindowFloor)
         : hydratedChat;
       allEncryptedMessages = Array.isArray(encryptedChatMessages) ? encryptedChatMessages : [];
-      allTelemetryEntries = aggregatedTelemetry;
-      allPositionEntries = aggregatedPositions;
-      allNeighbors = aggregatedNeighbors;
-      allTraces = Array.isArray(traceEntries) ? traceEntries : [];
       initialFetchDone = true;
       applyFilter();
       // SPEC VF2/VF3/VF4: only an SSE-ping refresh flashes (refreshOptions.flash),
@@ -4620,6 +4834,15 @@ export function initializeApp(config) {
         chatHistoryBackfilled = true;
         backfillPromise = backfillChatHistory();
         void backfillPromise;
+      }
+      // Likewise stream the rest of every bulk collection's window in the
+      // background (issue #832) so the node table / map fill past the newest
+      // 1000-row page the server returns at once. One-shot after the first load;
+      // a no-op when no collection recorded a frontier (warm load / short page).
+      if (!collectionsBackfilled) {
+        collectionsBackfilled = true;
+        collectionBackfillPromise = backfillAllCollections();
+        void collectionBackfillPromise;
       }
     } catch (e) {
       console.error(e);
@@ -4854,6 +5077,16 @@ export function initializeApp(config) {
       },
       /** Number of plaintext chat messages currently loaded (test use only). */
       getLoadedMessageCount: () => allMessages.length,
+      /** Number of node rows currently loaded into the table (test use only). */
+      getLoadedNodeCount: () => allNodes.length,
+      /** Number of position entries currently loaded (test use only). */
+      getLoadedPositionCount: () => allPositionEntries.length,
+      /** Number of telemetry entries currently loaded (test use only). */
+      getLoadedTelemetryCount: () => allTelemetryEntries.length,
+      /** Number of neighbour tuples currently loaded (test use only). */
+      getLoadedNeighborCount: () => allNeighbors.length,
+      /** Number of trace entries currently loaded (test use only). */
+      getLoadedTraceCount: () => allTraces.length,
       /** The persistent data cache instance (test use only). */
       dataCache,
       /** Seed in-memory state from the persistent cache (test use only). */
@@ -4864,6 +5097,8 @@ export function initializeApp(config) {
       flushCacheWrites: () => pendingCacheWrite,
       /** Promise resolving once the one-shot chat-history backfill finishes (test hook). */
       flushBackfill: () => backfillPromise,
+      /** Promise resolving once the one-shot bulk-collection backfill finishes (test hook). */
+      flushCollectionBackfills: () => collectionBackfillPromise,
       /** Empty the persistent cache — the "clear cached data" control (FC4). */
       clearDataCache,
       /** Project an original lat/lon + pixel offset into a display LatLng. */

@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 
 import {
   fetchAllMessages,
+  paginateCollection,
   paginateMessages,
   fetchMessages,
   fetchNeighbors,
@@ -524,6 +525,163 @@ test('paginateMessages stops cleanly when a page is not an array', async () => {
   } finally {
     stub.restore();
   }
+});
+
+// ---------------------------------------------------------------------------
+// before cursor forwarding (issue #832 backward pagination)
+// ---------------------------------------------------------------------------
+
+for (const [name, fn, path] of [
+  ['fetchNodes', fetchNodes, '/api/nodes'],
+  ['fetchPositions', fetchPositions, '/api/positions'],
+  ['fetchTelemetry', fetchTelemetry, '/api/telemetry'],
+  ['fetchNeighbors', fetchNeighbors, '/api/neighbors'],
+  ['fetchTraces', fetchTraces, '/api/traces'],
+]) {
+  test(`${name} forwards a positive before cursor and omits a non-positive one`, async () => {
+    const stub = withFetchStub({ ok: true, body: [] });
+    try {
+      await fn(50, 0, { before: 4242 });
+      assert.ok(stub.calls[0].url.startsWith(`${path}?`));
+      assert.ok(stub.calls[0].url.includes('before=4242'), stub.calls[0].url);
+      await fn(50, 0, { before: 0 });
+      assert.ok(!stub.calls[1].url.includes('before='), stub.calls[1].url);
+    } finally {
+      stub.restore();
+    }
+  });
+}
+
+test('fetchTraces with applyAgeFilter:false returns rows verbatim (raw page length preserved)', async () => {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const stub = withFetchStub({
+    ok: true,
+    body: [
+      { id: 1, rx_time: nowSeconds },
+      { id: 2, rx_time: nowSeconds - 365 * 24 * 3600 }, // expired — kept when the filter is off
+    ],
+  });
+  try {
+    const raw = await fetchTraces(50, 0, { applyAgeFilter: false });
+    assert.deepEqual(raw.map(t => t.id), [1, 2]);
+  } finally {
+    stub.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// paginateCollection (issue #832 generic backward pager)
+// ---------------------------------------------------------------------------
+
+test('paginateCollection pages backward by cursor and de-duplicates by id', async () => {
+  // limit=2; the inclusive cursor re-returns the boundary row, which must be
+  // de-duplicated out of the later page.
+  const pages = {
+    0: [{ id: 5, t: 50 }, { id: 4, t: 40 }],
+    40: [{ id: 4, t: 40 }, { id: 3, t: 30 }],
+    30: [{ id: 3, t: 30 }], // short → stop (all seen)
+  };
+  const seenBefore = [];
+  const fetchPage = async (limit, before) => {
+    seenBefore.push(before);
+    return pages[before] || pages[0];
+  };
+  const out = [];
+  for await (const batch of paginateCollection(fetchPage, { limit: 2, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch.map(r => r.id));
+  }
+  assert.deepEqual(out, [[5, 4], [3]]);
+  assert.deepEqual(seenBefore, [0, 40, 30]);
+});
+
+test('paginateCollection seeds the first request from a positive before and stops on a short page', async () => {
+  const calls = [];
+  const fetchPage = async (limit, before) => {
+    calls.push(before);
+    return before === 500 ? [{ id: 9, t: 90 }] : [];
+  };
+  const out = [];
+  for await (const batch of paginateCollection(fetchPage, { limit: 2, before: 500, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch.map(r => r.id));
+  }
+  assert.deepEqual(out, [[9]]);
+  assert.deepEqual(calls, [500]);
+});
+
+test('paginateCollection ignores a non-finite before seed', async () => {
+  const calls = [];
+  const fetchPage = async (limit, before) => {
+    calls.push(before);
+    return [{ id: 1, t: 10 }];
+  };
+  const out = [];
+  for await (const batch of paginateCollection(fetchPage, { limit: 2, before: Number.NaN, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch);
+  }
+  assert.equal(calls[0], 0);
+});
+
+test('paginateCollection makes one call and yields nothing for an empty window', async () => {
+  let calls = 0;
+  const out = [];
+  for await (const batch of paginateCollection(async () => { calls += 1; return []; }, { limit: 2, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch);
+  }
+  assert.deepEqual(out, []);
+  assert.equal(calls, 1);
+});
+
+test('paginateCollection stops on a no-progress page (server ignored the cursor)', async () => {
+  // The same full page is returned regardless of the cursor; without the
+  // no-progress guard this would loop forever.
+  const out = [];
+  for await (const batch of paginateCollection(async () => [{ id: 5, t: 50 }, { id: 4, t: 40 }], { limit: 2, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch.map(r => r.id));
+  }
+  assert.deepEqual(out, [[5, 4]]);
+});
+
+test('paginateCollection stops when no row carries a usable cursor', async () => {
+  const calls = [];
+  const fetchPage = async (limit, before) => {
+    calls.push(before);
+    return [{ id: 7 }, { id: 8 }]; // full page, no cursor field
+  };
+  const out = [];
+  for await (const batch of paginateCollection(fetchPage, { limit: 2, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch.map(r => r.id));
+  }
+  assert.deepEqual(out, [[7, 8]]);
+  assert.equal(calls.length, 1); // oldest stayed 0 → stop after one page
+});
+
+test('paginateCollection skips rows without an id and then stops (no progress)', async () => {
+  let calls = 0;
+  const out = [];
+  for await (const batch of paginateCollection(async () => { calls += 1; return [{ t: 40 }, { t: 30 }]; }, { limit: 2, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch);
+  }
+  assert.deepEqual(out, []);
+  assert.equal(calls, 1);
+});
+
+test('paginateCollection honours the maxPages backstop against a runaway feed', async () => {
+  let n = 0;
+  const fetchPage = async () => { n += 1; return [{ id: 100 - n, t: 100 - n }]; }; // always full, strictly older
+  let pages = 0;
+  // eslint-disable-next-line no-unused-vars
+  for await (const _ of paginateCollection(fetchPage, { limit: 1, maxPages: 3, idOf: r => r.id, cursorOf: r => r.t })) {
+    pages += 1;
+  }
+  assert.equal(pages, 3);
+});
+
+test('paginateCollection stops cleanly when a page is not an array', async () => {
+  const out = [];
+  for await (const batch of paginateCollection(async () => ({ error: 'nope' }), { limit: 2, idOf: r => r.id, cursorOf: r => r.t })) {
+    out.push(batch);
+  }
+  assert.deepEqual(out, []);
 });
 
 // ---------------------------------------------------------------------------
