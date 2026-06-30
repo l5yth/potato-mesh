@@ -95,6 +95,26 @@ class _MeshcoreInterface:
                 result.append((node_id, _contact_to_node_dict(contact)))
         return result
 
+    def is_known_contact(self, pub_key: str) -> bool:
+        """Return ``True`` when *pub_key* is already in the contact snapshot.
+
+        Used by the ``ADVERTISEMENT`` handler to decide whether a bare advert
+        needs a placeholder upsert: known contacts are kept fresh by the
+        meshcore library's auto-update re-fetch, so only non-roster public keys
+        are surfaced from a bare advert.
+
+        Parameters:
+            pub_key: Full public-key hex string from an ``ADVERTISEMENT`` event.
+
+        Returns:
+            ``True`` when a contact with that public key is already tracked,
+            ``False`` for an empty key or one not yet in the snapshot.
+        """
+        if not pub_key:
+            return False
+        with self._contacts_lock:
+            return pub_key in self._contacts
+
     def lookup_node_id(self, pubkey_prefix: str) -> str | None:
         """Return the canonical node ID for the contact matching *pubkey_prefix*.
 

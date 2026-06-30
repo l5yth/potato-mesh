@@ -2938,6 +2938,7 @@ def _make_fake_meshcore_mod(
             "NEXT_CONTACT",
             "CHANNEL_MSG_RECV",
             "CONTACT_MSG_RECV",
+            "ADVERTISEMENT",
             "DISCONNECTED",
             "CONNECTED",
             "ACK",
@@ -2966,10 +2967,18 @@ def _make_fake_meshcore_mod(
         def __init__(self, cx):
             self._catch_all = None
             self.commands = _FakeCommands()
+            # Mirrors the upstream property the runner flips on to keep the
+            # contact roster live across re-adverts (meshcore adverts gap).
+            self.auto_update_contacts = False
+            # Records every non-catch-all subscription so tests can assert the
+            # runner wires the ADVERTISEMENT handler.
+            self.subscribed_events = []
 
         def subscribe(self, event_type, callback):
             if event_type is None:
                 self._catch_all = callback
+            else:
+                self.subscribed_events.append(event_type)
 
         async def connect(self):
             if connect_stall_event is not None:
@@ -3421,3 +3430,92 @@ def test_run_meshcore_on_unhandled_skips_known_records_unknown(monkeypatch):
 
     assert len(recorded) == 1, "only the unknown event should be recorded"
     assert "UNKNOWN_EVT" in recorded[0]
+
+
+# ---------------------------------------------------------------------------
+# MeshCore adverts from non-roster nodes (issue: meshcore adverts gap)
+# ---------------------------------------------------------------------------
+
+
+def test_advert_to_node_dict_minimal_heard_fields():
+    """_advert_to_node_dict builds a name-less 'heard now' node for a bare advert."""
+    from data.mesh_ingestor.protocols.meshcore import _advert_to_node_dict
+
+    pub_key = "aabbccdd" + "11" * 28
+    node = _advert_to_node_dict(pub_key)
+
+    assert isinstance(node["lastHeard"], int) and node["lastHeard"] > 0
+    assert node["protocol"] == "meshcore"
+    assert node["user"]["publicKey"] == pub_key
+    # Short name tracks the node id, consistent with _contact_to_node_dict.
+    assert node["user"]["shortName"] == "aabb"
+    # A bare advert carries no name, type, or position — only the pubkey.
+    assert "longName" not in node["user"]
+    assert "position" not in node
+
+
+def test_is_known_contact_reflects_snapshot():
+    """is_known_contact returns True only for public keys already in the roster."""
+    iface = _MeshcoreInterface(target=None)
+    pub_key = "aabbccdd" + "00" * 28
+    assert iface.is_known_contact(pub_key) is False
+    assert iface.is_known_contact("") is False
+    iface._update_contact({"public_key": pub_key, "adv_name": "Alice"})
+    assert iface.is_known_contact(pub_key) is True
+
+
+def test_on_advertisement_upserts_unknown_node(monkeypatch):
+    """A bare ADVERTISEMENT from a non-roster node upserts a heard-now placeholder."""
+    import asyncio
+
+    _captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    pub_key = "aabbccdd" + "22" * 28
+    asyncio.run(hmap["ADVERTISEMENT"](_FakeEvt({"public_key": pub_key})))
+
+    assert len(upserted) == 1
+    node_id, node_dict = upserted[0]
+    assert node_id == "!aabbccdd"
+    assert node_dict["user"]["publicKey"] == pub_key
+
+
+def test_on_advertisement_skips_known_contact(monkeypatch):
+    """A re-advert from a roster node is left to the auto-update re-fetch (no upsert)."""
+    import asyncio
+
+    pub_key = "aabbccdd" + "33" * 28
+    _captured, upserted, _iface, hmap = _setup_channel_msg_handlers(
+        monkeypatch, contacts=[{"public_key": pub_key, "adv_name": "Bob"}]
+    )
+    asyncio.run(hmap["ADVERTISEMENT"](_FakeEvt({"public_key": pub_key})))
+
+    assert upserted == []
+
+
+def test_on_advertisement_ignores_unmappable_pubkey(monkeypatch):
+    """An advert whose public key cannot map to a node id is dropped."""
+    import asyncio
+
+    _captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(hmap["ADVERTISEMENT"](_FakeEvt({"public_key": "ab"})))
+    asyncio.run(hmap["ADVERTISEMENT"](_FakeEvt({})))
+
+    assert upserted == []
+
+
+def test_run_meshcore_enables_auto_update_and_subscribes_advert(monkeypatch):
+    """_run_meshcore must enable contact auto-update and subscribe the advert handler."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    fake_mod = _make_fake_meshcore_mod()
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+    _connected, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+
+    assert error_holder[0] is None
+    assert iface._mc.auto_update_contacts is True
+    assert fake_mod.EventType.ADVERTISEMENT in iface._mc.subscribed_events

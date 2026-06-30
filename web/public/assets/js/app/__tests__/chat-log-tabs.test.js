@@ -117,26 +117,19 @@ function assertChannelMessages(model, { label, id, index, messageIds }) {
 
 test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   const model = buildModel();
-  // The Log feed now mirrors plaintext messages too (LV7), alongside node
-  // events and the encrypted message; assert by type counts so the test is
-  // robust to chronological interleaving.
+  // Message bodies never reach the Log feed (LV7 amended); these fixture
+  // messages carry no sender id, so they appear only in their channel tabs.
+  // The Log holds the two in-window node-join events plus the lone encrypted
+  // message.  Assert by type counts so the test is robust to interleaving.
   const typeCounts = model.logEntries.reduce((acc, entry) => {
     acc[entry.type] = (acc[entry.type] || 0) + 1;
     return acc;
   }, {});
   assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.NODE_NEW], 2);
   assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED], 1);
-  assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.MESSAGE], 6);
-  assert.equal(model.logEntries.length, 9);
-  // Every plaintext channel message is also represented in the Log (LV7).
-  const loggedMessageIds = model.logEntries
-    .filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE)
-    .map(entry => entry.message.id)
-    .sort();
-  assert.deepEqual(
-    loggedMessageIds,
-    ['env-default', 'iso-ts', 'no-index', 'primary-preset', 'recent-alt', 'recent-default']
-  );
+  // No plaintext MESSAGE entries ever reach the Log.
+  assert.equal(typeCounts[CHAT_LOG_ENTRY_TYPES.MESSAGE] ?? 0, 0);
+  assert.equal(model.logEntries.length, 3);
   // Log entries are sorted chronologically.
   for (let i = 1; i < model.logEntries.length; i += 1) {
     assert.ok(model.logEntries[i].ts >= model.logEntries[i - 1].ts);
@@ -190,23 +183,137 @@ test('buildChatTabModel returns sorted nodes and channel buckets', () => {
   assert.deepEqual(secondaryChannel.entries.map(entry => entry.message.id), ['recent-alt']);
 });
 
-test('buildChatTabModel mirrors plaintext messages into the Log feed (LV7)', () => {
-  const model = buildChatTabModel({
-    nodes: [],
-    messages: [{ id: 'm1', channel: 0, from_id: '!a', text: 'hi', rx_time: NOW }],
-    nowSeconds: NOW,
-    windowSeconds: WINDOW
-  });
-  const msgEntries = model.logEntries.filter(entry => entry.type === CHAT_LOG_ENTRY_TYPES.MESSAGE);
-  assert.equal(msgEntries.length, 1);
-  assert.equal(msgEntries[0].message.id, 'm1');
-  // The same message still appears in its channel tab.
-  assert.equal(model.channels[0].entries[0].message.id, 'm1');
-});
-
 test('buildChatTabModel skips channel buckets when there are no messages', () => {
   const model = buildChatTabModel({ nodes: [], messages: [], nowSeconds: NOW, windowSeconds: WINDOW });
   assert.equal(model.channels.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Log feed is node-centric: message bodies never reach the Log (LV7 amended).
+// Each event yields one Log entry; a decrypted message is recorded as a
+// node-info update (reason "message"), never its text.  An "updated node info
+// (advert)" entry is emitted only when no more-specific event already
+// represents that heard.
+// ---------------------------------------------------------------------------
+
+test('buildChatTabModel keeps decrypted message bodies out of the Log (LV7 amended)', () => {
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!00000001', long_name: 'Alice', last_heard: NOW - 5 }],
+    messages: [{ id: 'm1', channel: 0, from_id: '!00000001', text: 'secret words', rx_time: NOW - 5 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  // No plaintext MESSAGE entries: message bodies never reach the Log feed.
+  const messageEntries = model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.MESSAGE);
+  assert.equal(messageEntries.length, 0);
+  // The decrypted message is represented as a node-info update, reason "message".
+  const infoEntries = model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO);
+  assert.ok(infoEntries.some(e => e.reason === 'message' && e.nodeId === '!00000001'));
+  // The raw text appears nowhere in the Log feed.
+  assert.ok(!JSON.stringify(model.logEntries).includes('secret words'));
+  // The body still lives in its channel tab.
+  assert.equal(model.channels[0].entries[0].message.id, 'm1');
+});
+
+test('buildChatTabModel emits node-info (advert) only when no specific event claims the heard', () => {
+  // Pure advert: node heard with no position/message/etc. at that ts.
+  const advertOnly = buildChatTabModel({
+    nodes: [{ node_id: '!a', last_heard: NOW - 5 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const advertInfos = advertOnly.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO);
+  assert.equal(advertInfos.length, 1);
+  assert.equal(advertInfos[0].reason, 'advert');
+
+  // Same node heard via a position at the same ts: only the position entry,
+  // no redundant "updated node info" (the position is the specific type).
+  const withPosition = buildChatTabModel({
+    nodes: [{ node_id: '!a', last_heard: NOW - 5 }],
+    positions: [{ node_id: '!a', rx_time: NOW - 5, latitude: 1, longitude: 2 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.ok(withPosition.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.POSITION));
+  assert.equal(
+    withPosition.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO).length,
+    0
+  );
+});
+
+test('buildChatTabModel does not emit redundant node-info for telemetry/neighbor/trace', () => {
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!a', last_heard: NOW - 5 }],
+    telemetry: [{ node_id: '!a', rx_time: NOW - 5, battery_level: 80 }],
+    neighbors: [{ node_id: '!a', neighbor_id: '!b', rx_time: NOW - 5 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  // Telemetry + neighbor each emit their own specific entry...
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.TELEMETRY));
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.NEIGHBOR));
+  // ...and the advert is claimed by them, so no "updated node info" duplicate.
+  assert.equal(
+    model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO).length,
+    0
+  );
+});
+
+test('buildChatTabModel attributes a message whose sender is absent from the nodes feed', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [{ id: 'm1', channel: 0, from_id: '!00000002', text: 'hi', rx_time: NOW }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const infoEntries = model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO);
+  assert.equal(infoEntries.length, 1);
+  assert.equal(infoEntries[0].reason, 'message');
+  assert.equal(infoEntries[0].nodeId, '!00000002');
+  // No node object and no node number could be resolved for an RF-only sender.
+  assert.equal(infoEntries[0].node, null);
+  assert.equal(infoEntries[0].nodeNum, null);
+});
+
+test('buildChatTabModel falls back to the hydrated message.node for an off-feed sender', () => {
+  const model = buildChatTabModel({
+    nodes: [],
+    messages: [{
+      id: 'm1',
+      channel: 0,
+      from_id: '!00000003',
+      text: 'hi',
+      rx_time: NOW,
+      node: { node_id: '!00000003', long_name: 'Carol' }
+    }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  const info = model.logEntries.find(
+    e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO && e.reason === 'message'
+  );
+  assert.ok(info);
+  assert.equal(info.node.long_name, 'Carol');
+});
+
+test('buildChatTabModel records one message node-info per sender per timestamp', () => {
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!00000001', last_heard: NOW }],
+    messages: [
+      { id: 'm1', channel: 0, from_id: '!00000001', text: 'a', rx_time: NOW },
+      { id: 'm2', channel: 0, from_id: '!00000001', text: 'b', rx_time: NOW }
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  // Two bodies in the channel tab, but the Log holds a single node-info update.
+  assert.equal(model.channels[0].entries.length, 2);
+  assert.equal(
+    model.logEntries.filter(
+      e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO && e.reason === 'message'
+    ).length,
+    1
+  );
 });
 
 // ---------------------------------------------------------------------------

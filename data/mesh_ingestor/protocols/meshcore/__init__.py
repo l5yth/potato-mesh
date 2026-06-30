@@ -98,6 +98,7 @@ from .debug_log import (  # noqa: E402
     _to_json_safe,
 )
 from .decode import (  # noqa: E402
+    _advert_to_node_dict,
     _contact_to_node_dict,
     _derive_modem_preset,
     _self_info_to_node_dict,
@@ -144,6 +145,7 @@ __all__ = [
     "_MESHCORE_ID_BITS",
     "_MESHCORE_ID_MASK",
     "_MeshcoreInterface",
+    "_advert_to_node_dict",
     "_contact_to_node_dict",
     "_derive_message_id",
     "_derive_modem_preset",

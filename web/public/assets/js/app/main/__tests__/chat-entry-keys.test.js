@@ -50,25 +50,36 @@ test('chatLogEntryKey reuses the message key for encrypted entries', () => {
   assert.equal(chatLogEntryKey(entry), 'enc:msg:9');
 });
 
-test('chatLogEntryKey builds a type/node/ts/neighbor key for announcements', () => {
+test('chatLogEntryKey builds a type/node/ts/neighbor/reason key for announcements', () => {
   assert.equal(
     chatLogEntryKey({ type: CHAT_LOG_ENTRY_TYPES.NODE_NEW, nodeId: '!abc', ts: 123 }),
-    'log:node-new:!abc:123:',
+    'log:node-new:!abc:123::',
   );
   // Neighbor id read directly off the entry.
   assert.equal(
     chatLogEntryKey({ type: 'neighbor', nodeId: '!a', ts: 1, neighborId: '!b' }),
-    'log:neighbor:!a:1:!b',
+    'log:neighbor:!a:1:!b:',
   );
   // Neighbor id read from the nested neighbor payload.
   assert.equal(
     chatLogEntryKey({ type: 'neighbor', nodeId: '!a', ts: 1, neighbor: { neighbor_id: '!c' } }),
-    'log:neighbor:!a:1:!c',
+    'log:neighbor:!a:1:!c:',
+  );
+});
+
+test('chatLogEntryKey distinguishes node-info entries by reason', () => {
+  // Same node + timestamp but different reasons must not collide in the cache.
+  const base = { type: CHAT_LOG_ENTRY_TYPES.NODE_INFO, nodeId: '!a', ts: 7 };
+  assert.equal(chatLogEntryKey({ ...base, reason: 'advert' }), 'log:node-info:!a:7::advert');
+  assert.equal(chatLogEntryKey({ ...base, reason: 'message' }), 'log:node-info:!a:7::message');
+  assert.notEqual(
+    chatLogEntryKey({ ...base, reason: 'advert' }),
+    chatLogEntryKey({ ...base, reason: 'message' }),
   );
 });
 
 test('chatLogEntryKey defaults missing fields to empty segments', () => {
-  assert.equal(chatLogEntryKey({}), 'log::::');
+  assert.equal(chatLogEntryKey({}), 'log:::::');
 });
 
 test('chatLogEntryKey tolerates non-object input', () => {
@@ -79,5 +90,5 @@ test('chatLogEntryKey tolerates non-object input', () => {
 test('chatLogEntryKey without a message on an encrypted entry uses the generic key', () => {
   // No ``message`` → falls through to the generic announcement key path.
   const entry = { type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, nodeId: '!z', ts: 5 };
-  assert.equal(chatLogEntryKey(entry), `log:${CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED}:!z:5:`);
+  assert.equal(chatLogEntryKey(entry), `log:${CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED}:!z:5::`);
 });

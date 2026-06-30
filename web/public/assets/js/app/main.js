@@ -2538,9 +2538,11 @@ export function initializeApp(config) {
    * Build a formatted suffix that enumerates highlight values.
    *
    * @param {Array<{label: string, value: string}>} highlights Highlight metadata entries.
+   * @param {string} [separator=' — '] Leading separator placed before the joined
+   *   highlights (e.g. ``': '`` so a position reads "Broadcasted position info: …").
    * @returns {string} HTML suffix containing escaped highlight entries.
    */
-  function buildHighlightSuffix(highlights) {
+  function buildHighlightSuffix(highlights, separator = ' — ') {
     if (!Array.isArray(highlights) || highlights.length === 0) {
       return '';
     }
@@ -2563,7 +2565,7 @@ export function initializeApp(config) {
     if (!parts.length) {
       return '';
     }
-    return ` — ${parts.join(', ')}`;
+    return `${separator}${parts.join(', ')}`;
   }
 
   /**
@@ -2605,6 +2607,12 @@ export function initializeApp(config) {
    */
   function buildNodeInfoChatEntryParts(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    // The reason annotates *why* the node record updated — "(advert)" for a bare
+    // heard / node-info update, "(message)" for a decrypted chat message recorded
+    // node-centrically so its body never reaches the Log (LV7).  Absent reason
+    // degrades to the plain "Updated node info" copy.
+    const reason = typeof entry?.reason === 'string' ? entry.reason.trim() : '';
+    const reasonSuffix = reason ? ` (${reason})` : '';
     return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
@@ -2613,7 +2621,7 @@ export function initializeApp(config) {
       metadataSource: context.metadataSource,
       nodeData: context.nodeData,
       protocol: context.protocol,
-      messageHtml: `${renderEmojiHtml('💾')} ${renderAnnouncementCopy('Updated node info')}`
+      messageHtml: `${renderEmojiHtml('💾')} ${renderAnnouncementCopy(`Updated node info${reasonSuffix}`)}`
     });
   }
 
@@ -2648,7 +2656,9 @@ export function initializeApp(config) {
    */
   function buildPositionChatEntryParts(entry, context) {
     const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
-    const highlightSuffix = buildHighlightSuffix(formatPositionHighlights(entry?.position));
+    // A position reads "Broadcasted position info: <lat>, <lon>" (colon, not the
+    // em dash used by telemetry) to match the neighbour entry's punctuation.
+    const highlightSuffix = buildHighlightSuffix(formatPositionHighlights(entry?.position), ': ');
     return buildAnnouncementParts({
       timestampSeconds: entry?.ts ?? null,
       shortName: context.shortName,
@@ -4981,7 +4991,7 @@ export function initializeApp(config) {
    * Inner closures exposed for unit tests. Production callers should ignore
    * this return value.
    *
-   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function, buildDisplayContext: Function, rebuildNodeIndex: Function } }}
+   * @returns {{ _testUtils: { buildMapPopupHtml: Function, normalizeOverlaySource: Function, createAnnouncementEntry: Function, createMessageChatEntry: Function, buildChatLogEntryParts: Function, buildDisplayContext: Function, rebuildNodeIndex: Function } }}
    */
   return {
     _testUtils: {
@@ -4989,6 +4999,7 @@ export function initializeApp(config) {
       normalizeOverlaySource,
       createAnnouncementEntry,
       createMessageChatEntry,
+      buildChatLogEntryParts,
       buildDisplayContext,
       rebuildNodeIndex,
       makeRoleFilterKey,

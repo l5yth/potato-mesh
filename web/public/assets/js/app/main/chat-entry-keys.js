@@ -62,5 +62,9 @@ export function chatLogEntryKey(entry) {
   const nodeId = entry.nodeId ?? '';
   const ts = entry.ts ?? '';
   const neighborId = entry.neighborId ?? entry.neighbor?.neighbor_id ?? '';
-  return `log:${type}:${nodeId}:${ts}:${neighborId}`;
+  // ``reason`` is part of the key so two node-info entries that share a node and
+  // timestamp but render differently — "(advert)" vs "(message)" — never collide
+  // in the memoising render cache.
+  const reason = entry.reason ?? '';
+  return `log:${type}:${nodeId}:${ts}:${neighborId}:${reason}`;
 }

@@ -92,6 +92,22 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
 });
 
 /**
+ * Reason annotations for {@link CHAT_LOG_ENTRY_TYPES.NODE_INFO} entries.
+ *
+ * A node-info entry renders as "Updated node info (<reason>)".  ``advert`` is
+ * the generic "this node was heard / its record updated" fallback emitted only
+ * when no more-specific event already represents that heard; ``message`` records
+ * a decrypted chat message as a node-info update so the message body never
+ * reaches the Log feed (only its channel tab).
+ *
+ * @type {{ ADVERT: 'advert', MESSAGE: 'message' }}
+ */
+export const NODE_INFO_REASONS = Object.freeze({
+  ADVERT: 'advert',
+  MESSAGE: 'message'
+});
+
+/**
  * Resolve the chronological snapshots associated with an aggregated entry.
  *
  * @param {*} entry Candidate snapshot or aggregate.
@@ -158,36 +174,37 @@ export function buildChatTabModel({
   const channelBuckets = new Map();
   const primaryChannelEnvLabel = normalisePrimaryChannelEnvLabel(primaryChannelFallbackLabel);
   const nodeById = new Map();
-  const nodeByNum = new Map();
-  const nodeInfoKeys = new Set();
 
-  const buildNodeInfoKey = (nodeId, nodeNum, ts) => `${nodeId ?? ''}:${nodeNum ?? ''}:${ts ?? ''}`;
-  const recordNodeInfoEntry = (ts, nodeId, nodeNum) => {
-    if (ts == null) return;
-    const key = buildNodeInfoKey(nodeId, nodeNum, ts);
-    if (nodeInfoKeys.has(key)) return;
-    const node = nodeId && nodeById.has(nodeId)
-      ? nodeById.get(nodeId)
-      : (nodeNum != null && nodeByNum.has(nodeNum) ? nodeByNum.get(nodeNum) : null);
-    if (!node) return;
-    nodeInfoKeys.add(key);
-    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NODE_INFO, node, nodeId, nodeNum });
+  // A heard is "claimed" by the most-specific event that represents it
+  // (position / telemetry / neighbor / trace / decrypted message).  A node's
+  // generic "updated node info (advert)" entry is suppressed when its
+  // last_heard is already claimed, so each heard yields exactly one Log entry
+  // and message bodies are recorded as node-info updates, never echoed (LV7).
+  const claimedHeards = new Set();
+  const claimKey = (nodeId, nodeNum, ts) => `${nodeId ?? ''}:${nodeNum ?? ''}:${ts ?? ''}`;
+  // Every call site validates ``ts`` (>= cutoff) before claiming, so no null guard.
+  const claimHeard = (ts, nodeId, nodeNum) => {
+    claimedHeards.add(claimKey(nodeId, nodeNum, ts));
   };
+  // A node's last_heard yields an "updated node info (advert)" entry unless a
+  // more-specific event claims that timestamp.  Collected up front and resolved
+  // after every specific event is processed, so source ordering is irrelevant.
+  const advertCandidates = [];
+  // Dedup for decrypted-message node-info entries (one per sender per second).
+  const messageInfoKeys = new Set();
 
   for (const node of nodes || []) {
     if (!node) continue;
     const nodeId = normaliseNodeId(node);
     const nodeNum = normaliseNodeNum(node);
     if (nodeId) nodeById.set(nodeId, node);
-    if (nodeNum != null) nodeByNum.set(nodeNum, node);
     const firstTs = resolveTimestampSeconds(node.first_heard ?? node.firstHeard, node.first_heard_iso ?? node.firstHeardIso);
     if (firstTs != null && firstTs >= cutoff) {
       logEntries.push({ ts: firstTs, type: CHAT_LOG_ENTRY_TYPES.NODE_NEW, node, nodeId, nodeNum });
     }
     const lastTs = resolveTimestampSeconds(node.last_heard ?? node.lastHeard, node.last_seen_iso ?? node.lastSeenIso);
     if (lastTs != null && lastTs >= cutoff) {
-      logEntries.push({ ts: lastTs, type: CHAT_LOG_ENTRY_TYPES.NODE_INFO, node, nodeId, nodeNum });
-      nodeInfoKeys.add(buildNodeInfoKey(nodeId, nodeNum, lastTs));
+      advertCandidates.push({ ts: lastTs, node, nodeId, nodeNum });
     }
   }
 
@@ -203,7 +220,7 @@ export function buildChatTabModel({
       const nodeId = normaliseNodeId(snapshot);
       const nodeNum = normaliseNodeNum(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.TELEMETRY, telemetry: snapshot, nodeId, nodeNum });
-      recordNodeInfoEntry(ts, nodeId, nodeNum);
+      claimHeard(ts, nodeId, nodeNum);
     }
   }
 
@@ -219,7 +236,7 @@ export function buildChatTabModel({
       const nodeId = normaliseNodeId(snapshot);
       const nodeNum = normaliseNodeNum(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.POSITION, position: snapshot, nodeId, nodeNum });
-      recordNodeInfoEntry(ts, nodeId, nodeNum);
+      claimHeard(ts, nodeId, nodeNum);
     }
   }
 
@@ -233,7 +250,7 @@ export function buildChatTabModel({
       const nodeNum = normaliseNodeNum(snapshot);
       const neighborId = normaliseNeighborId(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: snapshot, nodeId, nodeNum, neighborId });
-      recordNodeInfoEntry(ts, nodeId, nodeNum);
+      claimHeard(ts, nodeId, nodeNum);
     }
   }
 
@@ -263,14 +280,11 @@ export function buildChatTabModel({
       nodeId: firstHop.id ?? null,
       nodeNum: firstHop.num ?? null
     });
-    recordNodeInfoEntry(ts, firstHop.id ?? null, firstHop.num ?? null);
+    claimHeard(ts, firstHop.id ?? null, firstHop.num ?? null);
   }
 
   const encryptedLogEntries = [];
   const encryptedLogKeys = new Set();
-  // Plaintext messages also feed the mixed Log tab (LV7), in addition to their
-  // own channel tab, so every live-event class is represented in the Log.
-  const plaintextLogEntries = [];
 
   for (const message of messages || []) {
     if (!message) continue;
@@ -335,8 +349,29 @@ export function buildChatTabModel({
     }
 
     bucket.entries.push({ ts, message });
-    // Surface the plaintext message in the mixed Log feed too (LV7).
-    plaintextLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE, message });
+    // The decrypted body lives ONLY in its channel tab.  In the mixed Log feed
+    // the message is recorded as a node-info update (reason "message") for its
+    // sender, so message bodies never reach the Log (LV7).  A message whose
+    // sender cannot be identified appears only in its channel tab.
+    const fromId = normaliseNodeId(message.from_id ?? message.fromId);
+    if (fromId) {
+      const senderNode = nodeById.get(fromId)
+        ?? (message.node && typeof message.node === 'object' ? message.node : null);
+      const fromNum = senderNode ? normaliseNodeNum(senderNode) : null;
+      const infoKey = `${fromId}:${ts}`;
+      if (!messageInfoKeys.has(infoKey)) {
+        messageInfoKeys.add(infoKey);
+        logEntries.push({
+          ts,
+          type: CHAT_LOG_ENTRY_TYPES.NODE_INFO,
+          reason: NODE_INFO_REASONS.MESSAGE,
+          node: senderNode,
+          nodeId: fromId,
+          nodeNum: fromNum
+        });
+      }
+      claimHeard(ts, fromId, fromNum);
+    }
   }
 
   const extraLogMessages = Array.isArray(logOnlyMessages) ? logOnlyMessages : [];
@@ -355,8 +390,23 @@ export function buildChatTabModel({
   if (encryptedLogEntries.length > 0) {
     logEntries.push(...encryptedLogEntries);
   }
-  if (plaintextLogEntries.length > 0) {
-    logEntries.push(...plaintextLogEntries);
+
+  // Emit "updated node info (advert)" for every heard not already represented
+  // by a more-specific event (position / telemetry / neighbor / trace /
+  // decrypted message), realising the "unless another specific type was already
+  // emitted" rule.
+  for (const candidate of advertCandidates) {
+    if (claimedHeards.has(claimKey(candidate.nodeId, candidate.nodeNum, candidate.ts))) {
+      continue;
+    }
+    logEntries.push({
+      ts: candidate.ts,
+      type: CHAT_LOG_ENTRY_TYPES.NODE_INFO,
+      reason: NODE_INFO_REASONS.ADVERT,
+      node: candidate.node,
+      nodeId: candidate.nodeId,
+      nodeNum: candidate.nodeNum
+    });
   }
 
   logEntries.sort((a, b) => a.ts - b.ts);

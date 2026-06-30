@@ -184,6 +184,24 @@ identical SF/BW/CR — no protocol-specific `"Custom "` prefix — and returns `
 (not a bare `"Custom"`) when the parameters are unreported, so one radio config
 never displays as two different strings depending on protocol (SPEC Invariant IV).
 
+### A4e — MeshCore captures adverts from other nodes (regression: adverts gap)
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "advert or is_known_contact or auto_update" )
+```
+**Expected:** pass. The MeshCore provider does not depend on the radio's auto-add
+setting to learn about other nodes. `_run_meshcore` sets
+`mc.auto_update_contacts = True` (so the library re-fetches changed contacts on
+every `ADVERTISEMENT` / `PATH_UPDATE` push — a re-advert from a known node
+refreshes its position / `last_advert` without a reconnect) **and** subscribes an
+`ADVERTISEMENT` handler that, for a public key **not** in the contact roster,
+upserts a minimal "heard now" node (`_advert_to_node_dict`: `lastHeard` +
+`protocol` + `user.shortName`/`publicKey`, no name/type/position) while skipping
+keys already tracked (`_MeshcoreInterface.is_known_contact`). This surfaces nodes
+the radio will not auto-add (manual-add / observer mode) without clobbering richer
+records. Local-LoRa RX only — no broker, no new ingest path (SPEC Invariants I/IV).
+Documented under *"MeshCore advert sourcing"* in `CONTRACTS.md`.
+
 ---
 
 ## Layer B — Engineering bar (restated from `CLAUDE.md`)
@@ -1925,15 +1943,24 @@ coalescing), so N ingestors hearing a single packet produce one client
 refresh/flash. Collections that change during the same window each emit once (not
 suppressed). In-process only (no broker; apex-safe); `settle: 0` disables it.
 
-### LV-A7 -- the Log tab logs every live-event class incl. plaintext messages -- LV7
+### LV-A7 -- the Log tab is node-centric; message bodies never reach it -- LV7 (amended)
 ```bash
-( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js \
+                       public/assets/js/app/__tests__/main-log-render.test.js \
+                       public/assets/js/app/main/__tests__/chat-entry-keys.test.js )
 ```
-**Expected:** pass. `buildChatTabModel(...).logEntries` includes a **plaintext**
-message entry (previously only encrypted messages reached the Log), so every live
-collection - nodes, messages (plain + encrypted), positions, telemetry, neighbors,
-traces - has a Log representation. Hidden-protocol and PRIVATE gates already
-applied to the chat are unchanged.
+**Expected:** pass. `buildChatTabModel(...).logEntries` carries **no** plaintext
+`message` entry: a decrypted message is recorded as a **node-info update** (reason
+`message`) for its sender, so the body lives **only** in its channel tab. Every
+live collection still has a Log representation -- new node, advert / node-info
+update ("Updated node info (advert)"), decrypted message ("Updated node info
+(message)"), position ("Broadcasted position info: ..." with a colon), neighbour,
+telemetry, trace, and encrypted message. The generic "updated node info
+(<reason>)" is emitted **only when no more-specific event already claims that
+heard** (a position/telemetry/neighbour/trace/message suppresses a redundant
+advert line). **Amends the prior LV-A7**, which required a plaintext message entry
+in the Log -- the oversight corrected here. Hidden-protocol and PRIVATE gates
+already applied to the chat are unchanged.
 
 ### LV-A8 -- channel-tab dropdown selector -- LV8
 ```bash
