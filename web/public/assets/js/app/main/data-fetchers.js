@@ -89,14 +89,17 @@ function resolveResponse(responsePromise, url) {
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of records.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
- * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
- *   boot-prefetch response to consume instead of issuing a fresh request.
+ * @param {{ responsePromise?: Promise<Response>, before?: number }} [options]
+ *   Optional pre-issued boot-prefetch response to consume instead of issuing a
+ *   fresh request, and an inclusive upper-bound ``last_heard`` cursor for
+ *   backward pagination (SPEC BP1; issue #832).
  * @returns {Promise<Array<Object>>} Parsed node payloads.
  */
-export async function fetchNodes(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
+export async function fetchNodes(limit = NODE_LIMIT, since = 0, { responsePromise, before = 0 } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/nodes?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
+  if (before > 0) url += `&before=${before}`;
   const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
@@ -153,46 +156,48 @@ export async function fetchMessages(limit, options = {}) {
 }
 
 /**
- * Page backward through the message feed, ``yield``-ing each page's new rows.
+ * Generic backward pager shared by every bulk collection (issue #832; the
+ * deferred SPEC BP9a follow-up).
  *
- * The API clamps each response to {@link MESSAGE_LIMIT} rows ordered newest →
- * oldest, so the whole window is only reachable by walking an inclusive
- * ``before`` cursor: pull a page, then re-request everything at or before the
- * oldest ``rx_time`` seen.  Rows are de-duplicated by ``id`` across pages (the
- * inclusive cursor re-returns each boundary row), and each page's freshly-seen
- * rows are yielded as soon as they arrive so callers can render progressively
- * instead of waiting for the entire window (issue #802).
+ * The API clamps each response to its per-route cap ordered newest → oldest, so
+ * the whole window is only reachable by walking an inclusive ``before`` cursor:
+ * pull a page, then re-request everything at or before the oldest cursor value
+ * seen.  Rows are de-duplicated by ``idOf`` across pages (the inclusive cursor
+ * re-returns each boundary row), and each page's freshly-seen rows are yielded as
+ * soon as they arrive so callers render progressively instead of awaiting the
+ * whole window.
  *
  * Iteration stops when a short page signals the window is exhausted, when a page
  * yields no new rows (the server ignored the cursor, or every row was a boundary
- * duplicate), when no row carries a usable timestamp cursor, or when ``maxPages``
- * is hit as a runaway backstop.
+ * duplicate), when no row carries a usable cursor value, or when ``maxPages`` is
+ * hit as a runaway backstop.
  *
- * @param {number} limit Page size (rows requested per API call).
- * @param {{ encrypted?: boolean, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function, maxPages?: number }} [options]
- *   Retrieval flags, dependency hooks, an optional ``before`` cursor to seed the
- *   walk from (used to resume paging just past an already-loaded newest page),
- *   and an optional page-count backstop.
+ * @param {(limit: number, before: number) => Promise<Array<Object>>} fetchPage
+ *   Fetches one page bounded by an inclusive ``before`` cursor (0 ⇒ newest page).
+ * @param {{ limit: number, before?: number, maxPages?: number,
+ *   idOf: (row: Object) => *, cursorOf: (row: Object) => * }} options
+ *   ``limit`` page size; ``before`` optional seed cursor (resume just past an
+ *   already-loaded newest page); ``maxPages`` runaway backstop; ``idOf`` per-row
+ *   dedup key; ``cursorOf`` per-row cursor value (the column the route orders by).
  * @yields {Array<Object>} The de-duplicated new rows of each page.
  * @returns {AsyncGenerator<Array<Object>>}
  */
-export async function* paginateMessages(limit, options = {}) {
-  const { maxPages = 200, before: initialBefore = 0, ...fetchOptions } = options;
+export async function* paginateCollection(fetchPage, { limit, before: initialBefore = 0, maxPages = 200, idOf, cursorOf }) {
   const seen = new Set();
   let before = Number.isFinite(initialBefore) && initialBefore > 0 ? initialBefore : 0;
   for (let page = 0; page < maxPages; page += 1) {
     // eslint-disable-next-line no-await-in-loop -- pages are inherently sequential (cursor depends on the prior page).
-    const batch = await fetchMessages(limit, { ...fetchOptions, before });
+    const batch = await fetchPage(limit, before);
     if (!Array.isArray(batch) || batch.length === 0) return;
     const fresh = [];
     let oldest = 0;
-    for (const message of batch) {
-      const id = message && message.id;
+    for (const row of batch) {
+      const id = idOf(row);
       if (id != null && !seen.has(id)) {
         seen.add(id);
-        fresh.push(message);
+        fresh.push(row);
       }
-      const ts = Number(message && message.rx_time);
+      const ts = Number(cursorOf(row));
       if (Number.isFinite(ts) && (oldest === 0 || ts < oldest)) {
         oldest = ts;
       }
@@ -205,6 +210,37 @@ export async function* paginateMessages(limit, options = {}) {
     if (batch.length < limit || fresh.length === 0 || oldest === 0) return;
     before = oldest;
   }
+}
+
+/**
+ * Page backward through the message feed, ``yield``-ing each page's new rows.
+ *
+ * A thin specialisation of {@link paginateCollection} for the chat feed: rows
+ * are keyed by ``id`` and the cursor is ``rx_time`` (the column the messages
+ * route orders by).  Each page's freshly-seen rows are yielded as soon as they
+ * arrive so callers can render progressively instead of waiting for the entire
+ * window (issue #802).
+ *
+ * @param {number} limit Page size (rows requested per API call).
+ * @param {{ encrypted?: boolean, before?: number, chatEnabled?: boolean, normaliseMessageLimit?: Function, maxPages?: number }} [options]
+ *   Retrieval flags, dependency hooks, an optional ``before`` cursor to seed the
+ *   walk from (used to resume paging just past an already-loaded newest page),
+ *   and an optional page-count backstop.
+ * @yields {Array<Object>} The de-duplicated new rows of each page.
+ * @returns {AsyncGenerator<Array<Object>>}
+ */
+export async function* paginateMessages(limit, options = {}) {
+  const { maxPages = 200, before = 0, ...fetchOptions } = options;
+  yield* paginateCollection(
+    (pageLimit, pageBefore) => fetchMessages(pageLimit, { ...fetchOptions, before: pageBefore }),
+    {
+      limit,
+      before,
+      maxPages,
+      idOf: row => row && row.id,
+      cursorOf: row => row && row.rx_time,
+    },
+  );
 }
 
 /**
@@ -233,14 +269,17 @@ export async function fetchAllMessages(limit, options = {}) {
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
- * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
- *   boot-prefetch response to consume instead of issuing a fresh request.
+ * @param {{ responsePromise?: Promise<Response>, before?: number }} [options]
+ *   Optional pre-issued boot-prefetch response to consume instead of issuing a
+ *   fresh request, and an inclusive upper-bound ``rx_time`` cursor for backward
+ *   pagination (SPEC BP1; issue #832).
  * @returns {Promise<Array<Object>>} Parsed neighbour payloads.
  */
-export async function fetchNeighbors(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
+export async function fetchNeighbors(limit = NODE_LIMIT, since = 0, { responsePromise, before = 0 } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/neighbors?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
+  if (before > 0) url += `&before=${before}`;
   const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
@@ -251,19 +290,25 @@ export async function fetchNeighbors(limit = NODE_LIMIT, since = 0, { responsePr
  *
  * @param {number} [limit=TRACE_LIMIT] Maximum number of records.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
- * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
- *   boot-prefetch response to consume instead of issuing a fresh request.
+ * @param {{ responsePromise?: Promise<Response>, before?: number, applyAgeFilter?: boolean }} [options]
+ *   Optional pre-issued boot-prefetch response to consume instead of issuing a
+ *   fresh request; an inclusive upper-bound ``rx_time`` cursor for backward
+ *   pagination (SPEC BP1; issue #832); and ``applyAgeFilter`` (default ``true``)
+ *   which, when ``false``, returns the server's rows verbatim so a backward pager
+ *   sees the true page length for its short-page termination (the client age
+ *   filter is re-applied at merge time instead).
  * @returns {Promise<Array<Object>>} Parsed trace payloads.
  */
-export async function fetchTraces(limit = TRACE_LIMIT, since = 0, { responsePromise } = {}) {
+export async function fetchTraces(limit = TRACE_LIMIT, since = 0, { responsePromise, before = 0, applyAgeFilter = true } = {}) {
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : TRACE_LIMIT;
   const effectiveLimit = Math.min(safeLimit, NODE_LIMIT);
   let url = `/api/traces?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
+  if (before > 0) url += `&before=${before}`;
   const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const traces = await r.json();
-  return filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS);
+  return applyAgeFilter ? filterRecentTraces(traces, TRACE_MAX_AGE_SECONDS) : traces;
 }
 
 /**
@@ -271,14 +316,17 @@ export async function fetchTraces(limit = TRACE_LIMIT, since = 0, { responseProm
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
- * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
- *   boot-prefetch response to consume instead of issuing a fresh request.
+ * @param {{ responsePromise?: Promise<Response>, before?: number }} [options]
+ *   Optional pre-issued boot-prefetch response to consume instead of issuing a
+ *   fresh request, and an inclusive upper-bound ``rx_time`` cursor for backward
+ *   pagination (SPEC BP1; issue #832).
  * @returns {Promise<Array<Object>>} Parsed telemetry payloads.
  */
-export async function fetchTelemetry(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
+export async function fetchTelemetry(limit = NODE_LIMIT, since = 0, { responsePromise, before = 0 } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/telemetry?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
+  if (before > 0) url += `&before=${before}`;
   const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
@@ -289,14 +337,17 @@ export async function fetchTelemetry(limit = NODE_LIMIT, since = 0, { responsePr
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
  * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
- * @param {{ responsePromise?: Promise<Response> }} [options] Optional pre-issued
- *   boot-prefetch response to consume instead of issuing a fresh request.
+ * @param {{ responsePromise?: Promise<Response>, before?: number }} [options]
+ *   Optional pre-issued boot-prefetch response to consume instead of issuing a
+ *   fresh request, and an inclusive upper-bound ``rx_time`` cursor for backward
+ *   pagination (SPEC BP1; issue #832).
  * @returns {Promise<Array<Object>>} Parsed position payloads.
  */
-export async function fetchPositions(limit = NODE_LIMIT, since = 0, { responsePromise } = {}) {
+export async function fetchPositions(limit = NODE_LIMIT, since = 0, { responsePromise, before = 0 } = {}) {
   const effectiveLimit = resolveSnapshotLimit(limit, NODE_LIMIT);
   let url = `/api/positions?limit=${effectiveLimit}`;
   if (since > 0) url += `&since=${since}`;
+  if (before > 0) url += `&before=${before}`;
   const r = await resolveResponse(responsePromise, url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
