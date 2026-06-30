@@ -1943,15 +1943,24 @@ coalescing), so N ingestors hearing a single packet produce one client
 refresh/flash. Collections that change during the same window each emit once (not
 suppressed). In-process only (no broker; apex-safe); `settle: 0` disables it.
 
-### LV-A7 -- the Log tab logs every live-event class incl. plaintext messages -- LV7
+### LV-A7 -- the Log tab is node-centric; message bodies never reach it -- LV7 (amended)
 ```bash
-( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js \
+                       public/assets/js/app/__tests__/main-log-render.test.js \
+                       public/assets/js/app/main/__tests__/chat-entry-keys.test.js )
 ```
-**Expected:** pass. `buildChatTabModel(...).logEntries` includes a **plaintext**
-message entry (previously only encrypted messages reached the Log), so every live
-collection - nodes, messages (plain + encrypted), positions, telemetry, neighbors,
-traces - has a Log representation. Hidden-protocol and PRIVATE gates already
-applied to the chat are unchanged.
+**Expected:** pass. `buildChatTabModel(...).logEntries` carries **no** plaintext
+`message` entry: a decrypted message is recorded as a **node-info update** (reason
+`message`) for its sender, so the body lives **only** in its channel tab. Every
+live collection still has a Log representation -- new node, advert / node-info
+update ("Updated node info (advert)"), decrypted message ("Updated node info
+(message)"), position ("Broadcasted position info: ..." with a colon), neighbour,
+telemetry, trace, and encrypted message. The generic "updated node info
+(<reason>)" is emitted **only when no more-specific event already claims that
+heard** (a position/telemetry/neighbour/trace/message suppresses a redundant
+advert line). **Amends the prior LV-A7**, which required a plaintext message entry
+in the Log -- the oversight corrected here. Hidden-protocol and PRIVATE gates
+already applied to the chat are unchanged.
 
 ### LV-A8 -- channel-tab dropdown selector -- LV8
 ```bash
