@@ -98,7 +98,6 @@ import { buildMessageIndex } from './message-replies.js';
 import { renderChatEntryContent } from './chat-entry-renderer.js';
 import {
   SNAPSHOT_WINDOW,
-  aggregateNeighborSnapshots,
   aggregateNodeSnapshots,
   aggregatePositionSnapshots,
   aggregateTelemetrySnapshots,
@@ -129,7 +128,6 @@ import {
 // remain locally callable inside ``initializeApp`` because module-level
 // bindings are visible in every nested scope.
 import {
-  cssEscape,
   fmtCoords,
   fmtHw,
   formatDate,
@@ -241,7 +239,6 @@ export function initializeApp(config) {
     ? String(document.body.dataset.privateMode).toLowerCase() === 'true'
     : false;
   const isDashboardView = bodyClassList ? bodyClassList.contains('view-dashboard') : false;
-  const isChatView = bodyClassList ? bodyClassList.contains('view-chat') : false;
   const isMapView = bodyClassList ? bodyClassList.contains('view-map') : false;
   const mapZoomOverride = Number.isFinite(config.mapZoom) ? Number(config.mapZoom) : null;
 
@@ -655,30 +652,6 @@ export function initializeApp(config) {
         continue;
       }
       overlayStack.close(entry.anchor);
-    }
-  }
-
-  /**
-   * Scroll the active chat tab panel to its most recent entry when the
-   * dedicated chat view is displayed.
-   *
-   * @returns {void}
-   */
-  function scrollActiveChatPanelToBottom() {
-    if (!chatEl || !isChatView) {
-      return;
-    }
-    const activeTabId = chatEl.dataset?.activeTab;
-    if (!activeTabId) {
-      return;
-    }
-    const escapedId = cssEscape(activeTabId);
-    if (!escapedId) {
-      return;
-    }
-    const panel = chatEl.querySelector(`#chat-panel-${escapedId}`);
-    if (panel && typeof panel.scrollHeight === 'number' && typeof panel.scrollTop === 'number') {
-      panel.scrollTop = panel.scrollHeight;
     }
   }
 
@@ -3341,7 +3314,10 @@ export function initializeApp(config) {
       previousActiveTabId: previousActive,
       defaultActiveTabId: defaultActive
     });
-    scrollActiveChatPanelToBottom();
+    // renderChatTabs now owns chat-panel scroll: it pins to the bottom on the
+    // initial render and tail-follows a bottom-pinned reader, but preserves the
+    // vertical position on a passive live refresh (bugfix B). No extra
+    // force-scroll here — that was what reset the reader to the bottom every tick.
   }
 
   /**
@@ -3525,7 +3501,6 @@ export function initializeApp(config) {
   function rebuildNodeDerivedState() {
     const aggregatedNodes = aggregateNodeSnapshots(allNodes);
     const aggregatedPositions = aggregatePositionSnapshots(allPositionEntries);
-    const aggregatedNeighbors = aggregateNeighborSnapshots(allNeighbors);
     const aggregatedTelemetry = aggregateTelemetrySnapshots(allTelemetryEntries);
     // Enrich merged node records with display name, position, distance, and
     // telemetry before any rendering or filtering takes place.
@@ -3538,9 +3513,16 @@ export function initializeApp(config) {
     // Rebuild lookup maps so marker updates and message hydration always resolve
     // to the latest node objects.
     rebuildNodeIndex(allNodes);
-    allTelemetryEntries = aggregatedTelemetry;
-    allPositionEntries = aggregatedPositions;
-    allNeighbors = aggregatedNeighbors;
+    // The per-packet accumulators (allTelemetryEntries / allPositionEntries /
+    // allNeighbors) are deliberately left RAW — the aggregated forms above are
+    // locals used only to enrich the node records. Writing an aggregate back into
+    // an accumulator would feed it into the next refresh's merge + re-aggregation,
+    // which is lossy: aggregateSnapshots clones with ``{...snapshot}`` (dropping
+    // the non-enumerable ``snapshots`` history) and merges oldest-last (pinning to
+    // the stalest reading), collapsing each node's history to {stale-first, newest}
+    // so a telemetry/position Log entry flashes in and vanishes on the next tick.
+    // Keeping the accumulators raw gives every packet a stable, id-keyed Log entry
+    // (bugfix A1).
   }
 
   /** Floor (unix s) below which backfilled positions/telemetry are dropped (FC3: 7 d). */
@@ -3603,7 +3585,10 @@ export function initializeApp(config) {
           longBackfillFloor(),
         );
       },
-      refine: () => { allNeighbors = aggregateNeighborSnapshots(allNeighbors); },
+      // Neighbors stay RAW (like traces) so the Log keeps every per-pair snapshot
+      // and the map / overlay consumers dedupe internally; re-aggregating here
+      // would erode history exactly as the refresh path used to (bugfix A1).
+      refine: () => {},
     },
     {
       name: 'traces',
@@ -4798,11 +4783,12 @@ export function initializeApp(config) {
         ? trimToWindow(mergeById(allMessages, incomingMessages, 'id'), messageWindowFloor)
         : incomingMessages;
 
-      // Collapse per-source snapshots and enrich the node collection from the
-      // merged sources.  Shared with the background backfill so a streamed page
-      // re-derives identically (issue #832); this also re-aggregates and stores
-      // allPositionEntries/allTelemetryEntries/allNeighbors in their collapsed
-      // form (allTraces is not node-derived and keeps the merged value above).
+      // Aggregate per-source snapshots into locals and enrich the node collection
+      // from the merged sources.  Shared with the background backfill so a streamed
+      // page re-derives identically (issue #832).  The per-packet accumulators
+      // (allPositionEntries/allTelemetryEntries/allNeighbors) are left RAW so the
+      // Log keeps a stable entry per packet — re-storing the aggregated form would
+      // erode history on the next tick (bugfix A1).
       rebuildNodeDerivedState();
       // Hydrate messages with node metadata in parallel; the node index has just
       // been rebuilt (inside rebuildNodeDerivedState) so lookups find the freshly
