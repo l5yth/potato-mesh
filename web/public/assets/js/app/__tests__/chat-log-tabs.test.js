@@ -259,6 +259,46 @@ test('buildChatTabModel does not emit redundant node-info for telemetry/neighbor
   );
 });
 
+test('buildChatTabModel suppresses the advert when the specific event omits node_num (A2)', () => {
+  // Real-world shape: the node record carries a node_num, but the telemetry /
+  // position rows carry only node_id (node_num is int|nil per CONTRACTS, and is
+  // frequently nil — notably for MeshCore). The heard is the same node + ts, so
+  // the specific events must still claim it and suppress the redundant advert.
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!a', node_num: 10, last_heard: NOW - 5 }],
+    telemetry: [{ node_id: '!a', rx_time: NOW - 5, battery_level: 80 }],
+    positions: [{ node_id: '!a', rx_time: NOW - 5, latitude: 1, longitude: 2 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  // The specific events still render their own entries...
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.TELEMETRY));
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.POSITION));
+  // ...and no redundant "Updated node info (advert)" appears despite the
+  // node_num mismatch between the node record and the telemetry/position rows.
+  assert.equal(
+    model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO).length,
+    0
+  );
+});
+
+test('buildChatTabModel keeps an id-less heard from claiming or being suppressed (A2 edge)', () => {
+  const model = buildChatTabModel({
+    // A node heard with neither node_id nor node_num: its advert still renders,
+    // and the unresolved (null) id is never used to suppress another heard.
+    nodes: [{ last_heard: NOW - 5 }],
+    // A telemetry row with no node_id/node_num: it renders its own entry but
+    // claims nothing — an id-less heard cannot stand in for any node's advert.
+    telemetry: [{ rx_time: NOW - 6, battery_level: 1 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.TELEMETRY));
+  const adverts = model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO);
+  assert.equal(adverts.length, 1);
+  assert.equal(adverts[0].reason, 'advert');
+});
+
 test('buildChatTabModel attributes a message whose sender is absent from the nodes feed', () => {
   const model = buildChatTabModel({
     nodes: [],
