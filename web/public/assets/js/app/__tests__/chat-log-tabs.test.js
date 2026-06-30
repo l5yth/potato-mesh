@@ -282,6 +282,31 @@ test('buildChatTabModel suppresses the advert when the specific event omits node
   );
 });
 
+test('buildChatTabModel suppresses the advert when a node was heard via an encrypted message (A3, logOnly feed)', () => {
+  // Production shape: encrypted messages arrive via logOnlyMessages. The
+  // "🔒 encrypted message" line is the sender's Log representation for that heard,
+  // so the redundant "Updated node info (advert)" must be suppressed (LV7).
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!a', last_heard: NOW - 5 }],
+    logOnlyMessages: [{ id: 'e1', encrypted: true, from_id: '!a', channel: 78, rx_time: NOW - 5 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED));
+  assert.equal(model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO).length, 0);
+});
+
+test('buildChatTabModel suppresses the advert for an encrypted message in the messages feed (A3)', () => {
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!a', last_heard: NOW - 5 }],
+    messages: [{ id: 'e2', encrypted: true, from_id: '!a', channel: 78, rx_time: NOW - 5 }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW
+  });
+  assert.ok(model.logEntries.some(e => e.type === CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED));
+  assert.equal(model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO).length, 0);
+});
+
 test('buildChatTabModel keeps an id-less heard from claiming or being suppressed (A2 edge)', () => {
   const model = buildChatTabModel({
     // A node heard with neither node_id nor node_num: its advert still renders,

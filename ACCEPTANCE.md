@@ -2386,7 +2386,7 @@ rendered Log shows all three "Broadcasted telemetry" entries — the raw
 accumulator is no longer collapsed to a single per-node aggregate by the next
 tick's re-aggregation.
 
-### CL-A2 -- the advert is suppressed when a specific event omits `node_num`
+### CL-A2 -- the advert is suppressed when a specific event omits `node_num`, and for encrypted-message hears
 ```bash
 ( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
 ```
@@ -2394,9 +2394,14 @@ tick's re-aggregation.
 position rows carry only `node_id`, `buildChatTabModel(...).logEntries` still
 emits the telemetry and position entries and **no** redundant node-info (advert)
 entry. An id-less heard (no `node_id`, no derivable `node_num`) claims nothing and
-is never suppressed. Realises LV-A7 ("a position/telemetry/... suppresses a
-redundant advert line") across the `node_num`-nil shapes that previously slipped
-through.
+is never suppressed. An **encrypted message** (in either the `messages` or the
+`logOnlyMessages` feed) claims its sender's heard, so a node heard only via a
+`🔒 encrypted message on channel <id>` line shows **no** redundant
+`Updated node info (advert)` beneath it — the encrypted-message line is that
+heard's Log representation, mirroring how a decrypted message becomes a
+`(message)` node-info. Realises LV-A7 ("a position/telemetry/.../message
+suppresses a redundant advert line") across the `node_num`-nil and encrypted-
+message shapes that previously slipped through.
 
 ### CL-A3 -- a passive chat re-render preserves the reader's vertical scroll
 ```bash

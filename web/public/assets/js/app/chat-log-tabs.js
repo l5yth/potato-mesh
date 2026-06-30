@@ -309,6 +309,11 @@ export function buildChatTabModel({
         encryptedLogKeys.add(key);
         encryptedLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
       }
+      // The "🔒 encrypted message" line is this sender's Log representation for the
+      // heard (the sender id is known even though the body is encrypted), so claim
+      // it — a decrypted message does the same — suppressing the redundant
+      // "(advert)" line for the same node + ts (LV7).
+      claimHeard(ts, normaliseNodeId(message.from_id ?? message.fromId));
       continue;
     }
 
@@ -397,6 +402,9 @@ export function buildChatTabModel({
     }
     encryptedLogKeys.add(key);
     encryptedLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
+    // Claim the sender's heard so the redundant "(advert)" line is suppressed,
+    // matching the main message loop (LV7).
+    claimHeard(ts, normaliseNodeId(message.from_id ?? message.fromId));
   }
 
   if (encryptedLogEntries.length > 0) {
