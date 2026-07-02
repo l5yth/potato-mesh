@@ -180,7 +180,15 @@ async fn poll_once(
 
                 if let Err(e) = handle_message(potato, matrix, state, msg).await {
                     error!("Error handling message {}: {:?}", msg.id, e);
-                    continue;
+                    // Messages are processed in ascending `rx_time` order and the
+                    // state watermark (which builds the next `since=` query, in
+                    // memory and on disk) advances only on success. If we kept
+                    // going, a *later* message that succeeds would push the
+                    // watermark past this *failed* one, so the next poll would
+                    // never refetch it — a silent, permanent loss. Stop the batch
+                    // here instead: the failed message and everything after it
+                    // stay uncommitted and are retried on the next poll, in order.
+                    break;
                 }
 
                 // persist after each processed message
@@ -217,7 +225,13 @@ async fn main() -> Result<()> {
     let cfg = config::load(cli.to_inputs())?;
     log_config(&cfg);
 
-    let http = reqwest::Client::builder().build()?;
+    // Bound every HTTP request so a hung homeserver or PotatoMesh API cannot
+    // stall the single-threaded poll loop indefinitely. `timeout` caps the
+    // whole request/response; `connect_timeout` caps TCP/TLS establishment.
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?;
     let potato = PotatoClient::new(http.clone(), cfg.potatomesh.clone());
     potato.health_check().await?;
     let matrix = MatrixAppserviceClient::new(http.clone(), cfg.matrix.clone());
@@ -744,6 +758,133 @@ mod tests {
         assert_eq!(loaded.last_message_id, Some(1));
         assert_eq!(loaded.last_rx_time, Some(100));
         assert_eq!(loaded.last_rx_time_ids, vec![1]);
+    }
+
+    /// Regression test for the watermark-advance bug: within a single batch,
+    /// an *earlier* message (lower `rx_time`) that fails to forward must not be
+    /// silently skipped forever just because a *later* message would succeed.
+    ///
+    /// The batch is `[A(rx_time=10, fails), B(rx_time=20, would succeed)]`.
+    /// `A` fails because its node lookup returns 500; `B`'s full forward chain
+    /// is mocked to succeed. With the fix, `poll_once` stops at the first
+    /// failure, so the watermark never advances past `A` and `A` stays eligible
+    /// for retry. Under the old code, `B` succeeded and pushed `last_rx_time` to
+    /// 20, permanently stranding `A` — which this test would catch.
+    #[tokio::test]
+    async fn poll_once_does_not_advance_watermark_past_failed_message() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+
+        // Batch of two TEXT messages; poll_once sorts ascending by rx_time so A
+        // (rx_time=10) is processed before B (rx_time=20) regardless of order.
+        let mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id":1,"rx_time":10,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!aaaaaaaa","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!aaaaaaaa"},
+                    {"id":2,"rx_time":20,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!bbbbbbbb","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!bbbbbbbb"}
+                ]"#,
+            )
+            .create();
+
+        // Earlier message A fails: its node lookup returns 500.
+        let mock_node_a = server
+            .mock("GET", "/api/nodes/aaaaaaaa")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .create();
+
+        // Later message B would fully succeed (node + register + join +
+        // displayname + send). These stay unused under the fix, but make the
+        // test a true regression: under the buggy code B forwards and advances
+        // the watermark to 20.
+        let _mock_node_b = server
+            .mock("GET", "/api/nodes/bbbbbbbb")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"node_id":"!bbbbbbbb","long_name":"Node B","short_name":"NB"}"#)
+            .create();
+        let _mock_register = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_join = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/join".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_display = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/profile/.+/displayname".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_send = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/send/.+".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potatomesh_cfg = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 1,
+        };
+        let matrix_cfg = MatrixConfig {
+            homeserver: server.url(),
+            as_token: "AS_TOKEN".to_string(),
+            hs_token: "HS_TOKEN".to_string(),
+            server_name: "example.org".to_string(),
+            room_id: "!roomid:example.org".to_string(),
+        };
+
+        let potato = PotatoClient::new(http_client.clone(), potatomesh_cfg);
+        let matrix = MatrixAppserviceClient::new(http_client, matrix_cfg);
+        let mut state = BridgeState::default();
+
+        poll_once(&potato, &matrix, &mut state, state_str).await;
+
+        // A's node lookup was attempted and failed.
+        mock_msgs.assert();
+        mock_node_a.assert();
+
+        // The watermark must NOT have advanced past the failed message, so A
+        // remains eligible to be refetched and retried on the next poll.
+        let msg_a = PotatoMessage {
+            id: 1,
+            rx_time: 10,
+            node_id: "!aaaaaaaa".to_string(),
+            ..sample_msg(1)
+        };
+        assert_eq!(
+            state.last_rx_time, None,
+            "watermark advanced despite a failed earlier message"
+        );
+        assert_ne!(
+            state.last_rx_time,
+            Some(20),
+            "watermark jumped past the failed message to the later success"
+        );
+        assert!(
+            state.should_forward(&msg_a),
+            "failed message must remain eligible for retry"
+        );
     }
 
     /// Drive `handle_message` end-to-end against a mocked Matrix homeserver

@@ -95,8 +95,23 @@ impl MatrixAppserviceClient {
         if resp.status().is_success() {
             Ok(())
         } else {
-            // If user already exists, Synapse / HS usually returns 400 M_USER_IN_USE.
-            // We'll just ignore non-success and hope it's that case.
+            // If the puppet already exists, Synapse / HS returns 400 M_USER_IN_USE,
+            // which is expected and safely ignored. Anything else (e.g. 401/403 from
+            // a misconfigured `as_token`) is surfaced with the status and the Matrix
+            // error body so the failure is diagnosable instead of being swallowed
+            // here and only manifesting as a downstream error.
+            let status = resp.status();
+            let body_snip = resp.text().await.unwrap_or_default();
+            let already_registered =
+                status == reqwest::StatusCode::BAD_REQUEST || body_snip.contains("M_USER_IN_USE");
+            if !already_registered {
+                tracing::warn!(
+                    "Unexpected response registering puppet user {}: status {}, body: {}",
+                    localpart,
+                    status,
+                    body_snip
+                );
+            }
             Ok(())
         }
     }
@@ -339,6 +354,29 @@ mod tests {
             .match_query("kind=user")
             .match_header("authorization", "Bearer AS_TOKEN")
             .with_status(400) // M_USER_IN_USE
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_registered("testuser").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_registered_unexpected_status_logs_and_is_ok() {
+        // A non-400 failure (e.g. 403 from a misconfigured as_token) is NOT the
+        // expected "already registered" case, so it exercises the warn branch.
+        // The call still returns Ok(()) so registration remains non-fatal.
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .with_status(403)
+            .with_body(r#"{"errcode":"M_FORBIDDEN","error":"bad token"}"#)
             .create();
 
         let mut cfg = dummy_cfg();
