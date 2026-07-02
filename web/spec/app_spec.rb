@@ -2768,6 +2768,51 @@ RSpec.describe "Potato Mesh Sinatra app" do
         ],
       )
     end
+
+    context "when federation is disabled" do
+      around do |example|
+        original = ENV["FEDERATION"]
+        begin
+          ENV["FEDERATION"] = "0"
+          example.run
+        ensure
+          if original.nil?
+            ENV.delete("FEDERATION")
+          else
+            ENV["FEDERATION"] = original
+          end
+        end
+      end
+
+      it "returns 404 and never attempts to process the registration" do
+        # A disabled instance must reject the announcement before touching the
+        # network or the database — otherwise an attacker could still force
+        # outbound federation fetches and DB writes against a PRIVATE=1 /
+        # FEDERATION=0 deployment simply by POSTing a signed announcement.
+        expect_any_instance_of(Sinatra::Application).not_to receive(:fetch_instance_json)
+
+        post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+        expect(last_response.status).to eq(404)
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM instances WHERE id = ?", [instance_attributes[:id]])
+          expect(count).to eq(0)
+        end
+      end
+    end
+
+    context "when private mode is enabled" do
+      it "returns 404 regardless of the FEDERATION setting" do
+        # federation_enabled? forces false whenever PRIVATE=1, independent of
+        # FEDERATION; the route guard must honour that combination too.
+        ENV["PRIVATE"] = "1"
+
+        post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
+
+        expect(last_response.status).to eq(404)
+      end
+    end
   end
 
   describe "GET /api/instances" do

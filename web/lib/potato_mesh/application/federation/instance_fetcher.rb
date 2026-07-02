@@ -81,7 +81,17 @@ module PotatoMesh
             response = connection.request(request)
             case response
             when Net::HTTPSuccess
-              response.body
+              # Cap accepted response bodies (mirrors the inbound
+              # +read_json_body+ ceiling) so a malicious or misbehaving peer
+              # cannot force this process to retain an unbounded body in
+              # memory or hand an oversized payload to JSON.parse.
+              max_bytes = PotatoMesh::Config.remote_instance_max_response_bytes
+              body = response.body
+              if body && body.bytesize > max_bytes
+                raise InstanceHttpResponseError, "response exceeds maximum size of #{max_bytes} bytes"
+              end
+
+              body
             else
               raise InstanceHttpResponseError, "unexpected response #{response.code}"
             end

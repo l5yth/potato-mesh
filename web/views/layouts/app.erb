@@ -61,14 +61,20 @@
   <link rel="icon" type="image/svg+xml" sizes="any" href="/potatomesh-logo.svg" />
   <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
   <% if (defined?(current_view_mode) ? current_view_mode : nil).to_s == "dashboard" %>
-  <script type="application/ld+json">
-    <%= JSON.generate({
+  <% # Escape characters that could prematurely close the <script> element
+     # (or be misinterpreted as HTML) when meta_name/canonical_base/
+     # meta_description are attacker-influenced. JSON string escaping alone
+     # is not enough here since a literal "</script>" inside a JSON string
+     # value still terminates the element in HTML parsing. %>
+  <% instance_ld_json = JSON.generate({
           "@context" => "https://schema.org",
           "@type" => "WebSite",
           "name" => meta_name,
           "url" => canonical_base,
           "description" => meta_description,
-        }) %>
+        }).gsub("<", "\\u003c").gsub(">", "\\u003e").gsub("&", "\\u0026") %>
+  <script type="application/ld+json">
+    <%= instance_ld_json %>
   </script>
   <% end %>
   <%# Import map versions the entire served JS module graph (SPEC AV3); must

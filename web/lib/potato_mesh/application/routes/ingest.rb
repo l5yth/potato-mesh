@@ -113,6 +113,13 @@ module PotatoMesh
           end
 
           app.post "/api/instances" do
+            # Reject federation registrations outright when federation is
+            # disabled (mirrors the GET /api/instances guard in api.rb) so a
+            # PRIVATE=1 or FEDERATION=0 deployment never performs outbound
+            # federation fetches or writes in response to an unsolicited,
+            # signed announcement.
+            halt 404 unless federation_enabled?
+
             content_type :json
             begin
               payload = JSON.parse(read_json_body)

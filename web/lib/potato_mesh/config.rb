@@ -73,6 +73,7 @@ module PotatoMesh
     DEFAULT_REMOTE_INSTANCE_CONNECT_TIMEOUT = 15
     DEFAULT_REMOTE_INSTANCE_READ_TIMEOUT = 60
     DEFAULT_REMOTE_INSTANCE_REQUEST_TIMEOUT = 30
+    DEFAULT_REMOTE_INSTANCE_MAX_RESPONSE_BYTES = 8 * 1_048_576
     DEFAULT_FEDERATION_MAX_INSTANCES_PER_RESPONSE = 64
     DEFAULT_FEDERATION_MAX_DOMAINS_PER_CRAWL = 256
     DEFAULT_FEDERATION_WORKER_POOL_SIZE = 4
@@ -564,6 +565,21 @@ module PotatoMesh
       fetch_positive_integer(
         "REMOTE_INSTANCE_REQUEST_TIMEOUT",
         DEFAULT_REMOTE_INSTANCE_REQUEST_TIMEOUT,
+      )
+    end
+
+    # Maximum accepted size of a single federation HTTP response body.
+    #
+    # Mirrors {#max_json_body_bytes}, which caps inbound ingest payloads, so
+    # a malicious or misbehaving federation peer cannot force this process to
+    # buffer an unbounded response body in memory.  Customisable via the
+    # REMOTE_INSTANCE_MAX_RESPONSE_BYTES environment variable.
+    #
+    # @return [Integer] byte ceiling for federation HTTP response bodies.
+    def remote_instance_max_response_bytes
+      fetch_positive_integer(
+        "REMOTE_INSTANCE_MAX_RESPONSE_BYTES",
+        DEFAULT_REMOTE_INSTANCE_MAX_RESPONSE_BYTES,
       )
     end
 
