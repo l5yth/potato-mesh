@@ -17,7 +17,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderChatTabs } from '../chat-tabs.js';
+import { renderChatTabs, __test__ } from '../chat-tabs.js';
 
 class MockClassList {
   constructor() {
@@ -390,6 +390,114 @@ test('renderChatTabs does not scroll the active tab into view on a passive re-re
   assert.equal(totalScrollIntoView, 0);
 });
 
+
+/** Return the single visible (active) panel within a rendered container. */
+function activePanel(container) {
+  const panelWrapper = container.children[1];
+  if (!panelWrapper || !Array.isArray(panelWrapper.children)) return null;
+  return panelWrapper.children.find(panel => panel && panel.hidden === false) || null;
+}
+
+test('renderChatTabs preserves the active panel vertical scroll across a passive re-render (bugfix B)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = () => [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs: tabs(), defaultActiveTabId: 'c0' });
+
+  // The user scrolls up to read history: the panel is no longer at the bottom.
+  const panel1 = activePanel(container);
+  panel1.scrollHeight = 1000;
+  panel1.clientHeight = 300;
+  panel1.scrollTop = 120; // 1000 - 120 - 300 = 580 px from the bottom → not pinned
+
+  // A passive live refresh (no tab switch) re-renders the same tabs.
+  renderChatTabs({ document, container, tabs: tabs(), defaultActiveTabId: 'c0' });
+  const panel2 = activePanel(container);
+
+  assert.notEqual(panel2, panel1); // a fresh panel element (full subtree rebuild)
+  assert.equal(
+    panel2.scrollTop,
+    120,
+    'a passive re-render must preserve the vertical scroll, not yank the reader to the bottom'
+  );
+});
+
+test('renderChatTabs keeps a bottom-pinned reader pinned across a passive re-render (tail-follow, bugfix B)', () => {
+  const document = createMockDocument();
+  const container = new MockElement('div');
+  const tabs = () => [
+    { id: 'log', label: 'Log', content: new MockElement('div') },
+    { id: 'c0', label: 'Default', content: new MockElement('div') }
+  ];
+  renderChatTabs({ document, container, tabs: tabs(), defaultActiveTabId: 'c0' });
+
+  // The user is at the bottom, reading the newest entries.
+  const panel1 = activePanel(container);
+  panel1.scrollHeight = 1000;
+  panel1.clientHeight = 300;
+  panel1.scrollTop = 700; // 1000 - 700 - 300 = 0 → pinned to the bottom
+
+  renderChatTabs({ document, container, tabs: tabs(), defaultActiveTabId: 'c0' });
+  const panel2 = activePanel(container);
+
+  // Still pinned: scrolled to the new bottom so freshly-arrived entries stay visible.
+  assert.equal(
+    panel2.scrollTop,
+    panel2.scrollHeight,
+    'a bottom-pinned reader must stay pinned to the new bottom (tail-follow)'
+  );
+});
+
+test('capturePreviousActivePanelScroll returns null when there is no prior panel (bugfix B)', () => {
+  const { capturePreviousActivePanelScroll } = __test__;
+  assert.equal(capturePreviousActivePanelScroll(null), null);
+  assert.equal(capturePreviousActivePanelScroll({}), null);
+  assert.equal(capturePreviousActivePanelScroll({ children: [] }), null);
+});
+
+test('capturePreviousActivePanelScroll returns null when every panel is hidden (bugfix B)', () => {
+  const { capturePreviousActivePanelScroll } = __test__;
+  const container = { children: [{}, { children: [null, { hidden: true }, { hidden: true }] }] };
+  assert.equal(capturePreviousActivePanelScroll(container), null);
+});
+
+test('capturePreviousActivePanelScroll reports the visible panel offset and pinned state (bugfix B)', () => {
+  const { capturePreviousActivePanelScroll, SCROLL_PIN_TOLERANCE_PX } = __test__;
+  assert.equal(SCROLL_PIN_TOLERANCE_PX, 4);
+
+  // A hidden panel precedes the visible one (mirrors the Log tab before a channel).
+  const pinnedPanel = { hidden: false, scrollTop: 700, scrollHeight: 1000, clientHeight: 300 };
+  const pinned = capturePreviousActivePanelScroll({ children: [{}, { children: [{ hidden: true }, pinnedPanel] }] });
+  assert.deepEqual(pinned, { top: 700, pinned: true }); // 1000 - 700 - 300 = 0 <= tol
+
+  const scrolledUp = { hidden: false, scrollTop: 100, scrollHeight: 1000, clientHeight: 300 };
+  const up = capturePreviousActivePanelScroll({ children: [{}, { children: [scrolledUp] }] });
+  assert.deepEqual(up, { top: 100, pinned: false }); // 600 px from the bottom > tol
+});
+
+test('applyActivePanelScroll pins, preserves, or no-ops on a missing panel (bugfix B)', () => {
+  const { applyActivePanelScroll } = __test__;
+  // No panel → no throw, nothing to do.
+  assert.doesNotThrow(() => applyActivePanelScroll(null, { top: 5, pinned: false }));
+
+  // No prior state (initial render) → pin to the bottom.
+  const initial = { scrollTop: 0, scrollHeight: 900 };
+  applyActivePanelScroll(initial, null);
+  assert.equal(initial.scrollTop, 900);
+
+  // Was pinned → pin to the new bottom (tail-follow).
+  const pinned = { scrollTop: 0, scrollHeight: 900 };
+  applyActivePanelScroll(pinned, { top: 42, pinned: true });
+  assert.equal(pinned.scrollTop, 900);
+
+  // Was scrolled up → restore the exact offset.
+  const preserved = { scrollTop: 0, scrollHeight: 900 };
+  applyActivePanelScroll(preserved, { top: 42, pinned: false });
+  assert.equal(preserved.scrollTop, 42);
+});
 
 test('renderChatTabs renders a channel dropdown selector that jumps to a tab (LV8)', () => {
   const document = createMockDocument();

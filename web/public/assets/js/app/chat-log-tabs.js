@@ -181,11 +181,23 @@ export function buildChatTabModel({
   // last_heard is already claimed, so each heard yields exactly one Log entry
   // and message bodies are recorded as node-info updates, never echoed (LV7).
   const claimedHeards = new Set();
-  const claimKey = (nodeId, nodeNum, ts) => `${nodeId ?? ''}:${nodeNum ?? ''}:${ts ?? ''}`;
-  // Every call site validates ``ts`` (>= cutoff) before claiming, so no null guard.
-  const claimHeard = (ts, nodeId, nodeNum) => {
-    claimedHeards.add(claimKey(nodeId, nodeNum, ts));
+  // A heard is claimed by its canonical node id + ts. The canonical ``!%08x`` id
+  // is derived from ``node_num`` when a record carries only the number
+  // ({@link normaliseNodeId}), so the id alone identifies a node across every
+  // event shape. The prior key folded in ``node_num`` and required BOTH to match,
+  // so a specific event carrying only ``node_id`` (``node_num`` is int|nil per
+  // CONTRACTS, and is commonly nil — notably for MeshCore) failed to claim the
+  // node record's heard and leaked a redundant "Updated node info (advert)" line
+  // (bugfix A2).
+  const claimKey = (nodeId, ts) => `${nodeId}:${ts}`;
+  // Every call site validates ``ts`` (>= cutoff) before claiming, so no ts guard.
+  // An id-less event (no node_id and no derivable node_num) claims nothing — it
+  // cannot identify a node, so it must not suppress another node's advert.
+  const claimHeard = (ts, nodeId) => {
+    if (nodeId) claimedHeards.add(claimKey(nodeId, ts));
   };
+  // True when a more-specific event already claimed this node's heard at ``ts``.
+  const heardClaimed = (nodeId, ts) => Boolean(nodeId) && claimedHeards.has(claimKey(nodeId, ts));
   // A node's last_heard yields an "updated node info (advert)" entry unless a
   // more-specific event claims that timestamp.  Collected up front and resolved
   // after every specific event is processed, so source ordering is irrelevant.
@@ -220,7 +232,7 @@ export function buildChatTabModel({
       const nodeId = normaliseNodeId(snapshot);
       const nodeNum = normaliseNodeNum(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.TELEMETRY, telemetry: snapshot, nodeId, nodeNum });
-      claimHeard(ts, nodeId, nodeNum);
+      claimHeard(ts, nodeId);
     }
   }
 
@@ -236,7 +248,7 @@ export function buildChatTabModel({
       const nodeId = normaliseNodeId(snapshot);
       const nodeNum = normaliseNodeNum(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.POSITION, position: snapshot, nodeId, nodeNum });
-      claimHeard(ts, nodeId, nodeNum);
+      claimHeard(ts, nodeId);
     }
   }
 
@@ -250,7 +262,7 @@ export function buildChatTabModel({
       const nodeNum = normaliseNodeNum(snapshot);
       const neighborId = normaliseNeighborId(snapshot);
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: snapshot, nodeId, nodeNum, neighborId });
-      claimHeard(ts, nodeId, nodeNum);
+      claimHeard(ts, nodeId);
     }
   }
 
@@ -280,7 +292,7 @@ export function buildChatTabModel({
       nodeId: firstHop.id ?? null,
       nodeNum: firstHop.num ?? null
     });
-    claimHeard(ts, firstHop.id ?? null, firstHop.num ?? null);
+    claimHeard(ts, firstHop.id ?? null);
   }
 
   const encryptedLogEntries = [];
@@ -297,6 +309,11 @@ export function buildChatTabModel({
         encryptedLogKeys.add(key);
         encryptedLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
       }
+      // The "🔒 encrypted message" line is this sender's Log representation for the
+      // heard (the sender id is known even though the body is encrypted), so claim
+      // it — a decrypted message does the same — suppressing the redundant
+      // "(advert)" line for the same node + ts (LV7).
+      claimHeard(ts, normaliseNodeId(message.from_id ?? message.fromId));
       continue;
     }
 
@@ -370,7 +387,7 @@ export function buildChatTabModel({
           nodeNum: fromNum
         });
       }
-      claimHeard(ts, fromId, fromNum);
+      claimHeard(ts, fromId);
     }
   }
 
@@ -385,6 +402,9 @@ export function buildChatTabModel({
     }
     encryptedLogKeys.add(key);
     encryptedLogEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.MESSAGE_ENCRYPTED, message });
+    // Claim the sender's heard so the redundant "(advert)" line is suppressed,
+    // matching the main message loop (LV7).
+    claimHeard(ts, normaliseNodeId(message.from_id ?? message.fromId));
   }
 
   if (encryptedLogEntries.length > 0) {
@@ -396,7 +416,7 @@ export function buildChatTabModel({
   // decrypted message), realising the "unless another specific type was already
   // emitted" rule.
   for (const candidate of advertCandidates) {
-    if (claimedHeards.has(claimKey(candidate.nodeId, candidate.nodeNum, candidate.ts))) {
+    if (heardClaimed(candidate.nodeId, candidate.ts)) {
       continue;
     }
     logEntries.push({

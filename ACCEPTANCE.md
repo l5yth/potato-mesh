@@ -2341,3 +2341,92 @@ idempotent, `user_version`-gated), **FC-A2** (seed-then-delta — the warm delta
 contract is unchanged; only the backfill anchor moved), **PL-A1/PL-A2**
 (progressive load), and **B1**. No POST/GET/event contract change and no
 ingestor change, so **C2**, `CONTRACTS.md`, and the Python suite are unaffected.
+
+---
+
+## Bugfix: Chat-log entry retention, advert suppression, and chat vertical scroll
+
+Three independent chat-panel defects, all frontend-only (no API/DB/ingestor
+change, so the apex (I) and privacy (II) invariants are untouched):
+
+**(A1)** `rebuildNodeDerivedState` stored the *aggregated* snapshot arrays back
+into the raw accumulators (`allTelemetryEntries` / `allPositionEntries` /
+`allNeighbors`), which are also the merge targets for every refresh + backfill
+page. Re-aggregating an already-aggregated array is lossy (`aggregateSnapshots`
+clones with `{...snapshot}`, dropping the non-enumerable `snapshots` history, and
+merges oldest-last so the stalest reading's `rx_time`/`id` win), collapsing each
+node's history to `{stale-first, newest}` — so a telemetry/position Log entry
+appeared for one refresh tick and vanished on the next (no scrolling involved).
+The accumulators now stay **raw**; the aggregated forms are locals used only to
+enrich node records, so every packet keeps a stable, id-keyed Log entry.
+
+**(A2)** The advert-suppression claim key folded in `node_num` and required BOTH
+`node_id` and `node_num` to match. Specific events (telemetry/positions/
+neighbors) frequently carry only `node_id` (`node_num` is int|nil per CONTRACTS,
+commonly nil for MeshCore) while the node record carries a `node_num`, so the
+combined key failed to match and a redundant "Updated node info (advert)" line
+leaked alongside the specific entry (violating LV7/LV-A7). Suppression now keys on
+the canonical `!%08x` id alone (which `normaliseNodeId` derives from `node_num`
+when needed), so the id identifies a node across every event shape.
+
+**(B)** Every chat render force-scrolled the active panel to the bottom (in
+`setActiveTab`, plus a second `scrollActiveChatPanelToBottom` call), so a live
+update (40-80/hr in production) yanked the reader back to the bottom and made
+upward scrolling impossible. The prior LD-A2 fix preserved only the *horizontal*
+tab-list scroll. `renderChatTabs` now captures the active panel's vertical
+`scrollTop` before the subtree rebuild and restores it.
+
+### CL-A1 -- telemetry/position Log entries survive successive refreshes
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-log-snapshot-retention.test.js )
+```
+**Expected:** pass. After one node emits three telemetry packets across three
+refreshes, all three stay loaded (`getLoadedTelemetryCount() === 3`) and the
+rendered Log shows all three "Broadcasted telemetry" entries — the raw
+accumulator is no longer collapsed to a single per-node aggregate by the next
+tick's re-aggregation.
+
+### CL-A2 -- the advert is suppressed when a specific event omits `node_num`, and for encrypted-message hears
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js )
+```
+**Expected:** pass. When the node record carries a `node_num` but the telemetry/
+position rows carry only `node_id`, `buildChatTabModel(...).logEntries` still
+emits the telemetry and position entries and **no** redundant node-info (advert)
+entry. An id-less heard (no `node_id`, no derivable `node_num`) claims nothing and
+is never suppressed. An **encrypted message** (in either the `messages` or the
+`logOnlyMessages` feed) claims its sender's heard, so a node heard only via a
+`🔒 encrypted message on channel <id>` line shows **no** redundant
+`Updated node info (advert)` beneath it — the encrypted-message line is that
+heard's Log representation, mirroring how a decrypted message becomes a
+`(message)` node-info. Realises LV-A7 ("a position/telemetry/.../message
+suppresses a redundant advert line") across the `node_num`-nil and encrypted-
+message shapes that previously slipped through.
+
+### CL-A3 -- a passive chat re-render preserves the reader's vertical scroll
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-tabs.test.js )
+```
+**Expected:** pass. `renderChatTabs` captures the active panel's `scrollTop`
+before the `replaceChildren` rebuild and restores it on the fresh panel: a reader
+scrolled up keeps their exact offset across a passive refresh, a bottom-pinned
+reader stays pinned to the new bottom (tail-follow), and an initial render (no
+prior panel) pins to the bottom. The per-render force-scroll (and the redundant
+`scrollActiveChatPanelToBottom`) are gone; panel scroll-to-bottom now fires only
+on an explicit tab switch (click/dropdown). Composes with the LD-A2 horizontal
+scroll preservation and the LV8 dropdown.
+
+### CL-R1 -- Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to stay green: **LV-A7**
+(node-centric Log; the advert-suppression rule is strengthened, not weakened),
+**LD-A2** (horizontal tab scroll still preserved -- the new vertical-scroll
+preservation composes with it), **LV-A8** (the channel dropdown still jumps tabs),
+**VF-A6 / CR-A1** (an idle re-render still materialises 0 entries -- the scroll
+capture touches only already-built DOM), **CB-A1** (every bulk collection still
+backfills; the accumulators it merges into are raw, which is the shape the model
+already expects), and **B1** (all suites). Frontend-only: no POST/GET/event
+contract change, so `CONTRACTS.md` and the Python suite are unaffected.
