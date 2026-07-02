@@ -3750,14 +3750,14 @@ export function initializeApp(config) {
       const protocolIconCell = protocolIconPrefixHtml(n.protocol);
       tr.innerHTML = `
         <td class="nodes-col nodes-col--protocol">${protocolIconCell}</td>
-        <td class="mono nodes-col nodes-col--node-id">${n.node_id || ""}</td>
+        <td class="mono nodes-col nodes-col--node-id">${escapeHtml(n.node_id || "")}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
         <td class="nodes-col nodes-col--frequency">${loraFrequencyDisplay}</td>
         <td class="nodes-col nodes-col--modem-preset">${modemPresetDisplay}</td>
         <td class="nodes-col nodes-col--last-seen">${timeAgo(n.last_heard, nowSec)}</td>
-        <td class="nodes-col nodes-col--role">${n.role || "CLIENT"}</td>
-        <td class="nodes-col nodes-col--hw-model">${fmtHw(n.hw_model)}</td>
+        <td class="nodes-col nodes-col--role">${escapeHtml(n.role || "CLIENT")}</td>
+        <td class="nodes-col nodes-col--hw-model">${escapeHtml(fmtHw(n.hw_model))}</td>
         <td class="nodes-col nodes-col--battery">${fmtAlt(n.battery_level, "%")}</td>
         <td class="nodes-col nodes-col--voltage">${fmtAlt(n.voltage, "V")}</td>
         <td class="nodes-col nodes-col--uptime">${timeHum(n.uptime_seconds)}</td>

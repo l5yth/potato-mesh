@@ -73,12 +73,18 @@ export function formatChatMessagePrefix({ timestamp, frequency }) {
  * Empty channel names remain blank within the brackets, mirroring the original
  * UI behaviour that reserves the slot without introducing placeholder text.
  *
- * @param {{ channelName: string|null }} params Normalised and escaped display strings.
+ * The channel name originates from untrusted, attacker-controllable data (a
+ * MeshCore/Meshtastic channel name can be set to arbitrary text by any radio
+ * on the mesh), so it is escaped here before being embedded in the returned
+ * HTML string. Callers must pass the *raw* channel name — pre-escaping it
+ * before calling this function would cause double-escaping.
+ *
+ * @param {{ channelName: string|null }} params Raw (unescaped) channel name.
  * @returns {string} Channel tag suitable for HTML insertion.
  */
 export function formatChatChannelTag({ channelName }) {
   const channel = typeof channelName === 'string' ? channelName : channelName == null ? '' : String(channelName);
-  return `[${channel}]`;
+  return `[${escapeHtml(channel)}]`;
 }
 
 /**
@@ -184,9 +190,10 @@ function firstNonNull(...candidates) {
   return null;
 }
 
-// normalizeString is the canonical implementation in utils.js; imported here
-// so callers of chat-format.js that use it directly continue to work.
-import { normalizeString } from './utils.js';
+// normalizeString and escapeHtml are the canonical implementations in
+// utils.js; imported here so callers of chat-format.js that use them
+// directly continue to work.
+import { normalizeString, escapeHtml } from './utils.js';
 import { resolveMeshcorePresetDisplay } from './node-modem-metadata.js';
 
 /**

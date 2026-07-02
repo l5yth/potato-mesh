@@ -127,6 +127,26 @@ test('formatChatChannelTag wraps channel names after the short name slot', () =>
   );
 });
 
+test('formatChatChannelTag escapes HTML metacharacters in the channel name (DOM XSS)', () => {
+  // Channel names originate from untrusted mesh traffic (any radio can set an
+  // arbitrary channel name) and the result of this function is inserted via
+  // innerHTML by node-page/messages.js, so an unescaped channel name would
+  // allow markup/script injection that executes for every viewer of the node
+  // detail page. Regression test for that DOM-XSS finding.
+  assert.equal(
+    formatChatChannelTag({ channelName: '<img src=x onerror=alert(1)>' }),
+    '[&lt;img src=x onerror=alert(1)&gt;]'
+  );
+  assert.equal(
+    formatChatChannelTag({ channelName: '</script><script>alert(1)</script>' }),
+    '[&lt;/script&gt;&lt;script&gt;alert(1)&lt;/script&gt;]'
+  );
+  assert.equal(
+    formatChatChannelTag({ channelName: `"'&` }),
+    '[&quot;&#39;&amp;]'
+  );
+});
+
 test('formatChatPresetTag renders preset hints with placeholders', () => {
   assert.equal(formatChatPresetTag({ presetCode: 'MF' }), '[MF]');
   assert.equal(formatChatPresetTag({ presetCode: null }), `[${PRESET_PLACEHOLDER}]`);
