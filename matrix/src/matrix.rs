@@ -102,8 +102,11 @@ impl MatrixAppserviceClient {
             // here and only manifesting as a downstream error.
             let status = resp.status();
             let body_snip = resp.text().await.unwrap_or_default();
-            let already_registered =
-                status == reqwest::StatusCode::BAD_REQUEST || body_snip.contains("M_USER_IN_USE");
+            // Only the specific M_USER_IN_USE errcode means "puppet already
+            // exists" -- keying off the bare 400 status would also swallow real
+            // failures returned as 400 (malformed request, config issues) and
+            // skip the diagnostic warning below.
+            let already_registered = body_snip.contains("M_USER_IN_USE");
             if !already_registered {
                 tracing::warn!(
                     "Unexpected response registering puppet user {}: status {}, body: {}",
@@ -353,7 +356,32 @@ mod tests {
             .mock("POST", "/_matrix/client/v3/register")
             .match_query("kind=user")
             .match_header("authorization", "Bearer AS_TOKEN")
-            .with_status(400) // M_USER_IN_USE
+            .with_status(400)
+            .with_body(r#"{"errcode":"M_USER_IN_USE","error":"User ID already taken."}"#)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_registered("testuser").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_registered_other_400_is_not_treated_as_in_use() {
+        // A 400 that is NOT M_USER_IN_USE (e.g. a malformed request) must reach
+        // the warn branch rather than being silently ignored as "already
+        // registered". The call still returns Ok(()) so registration is
+        // non-fatal, but the failure is surfaced for diagnosis.
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .with_status(400)
+            .with_body(r#"{"errcode":"M_INVALID_PARAM","error":"bad request"}"#)
             .create();
 
         let mut cfg = dummy_cfg();
