@@ -78,23 +78,30 @@ module PotatoMesh
         Timeout.timeout(PotatoMesh::Config.remote_instance_request_timeout) do
           http.start do |connection|
             request = build_federation_http_request(Net::HTTP::Get, uri)
-            response = connection.request(request)
-            case response
-            when Net::HTTPSuccess
-              # Cap accepted response bodies (mirrors the inbound
-              # +read_json_body+ ceiling) so a malicious or misbehaving peer
-              # cannot force this process to retain an unbounded body in
-              # memory or hand an oversized payload to JSON.parse.
-              max_bytes = PotatoMesh::Config.remote_instance_max_response_bytes
-              body = response.body
-              if body && body.bytesize > max_bytes
-                raise InstanceHttpResponseError, "response exceeds maximum size of #{max_bytes} bytes"
+            # Stream the response with the block form of +request+ so the size
+            # cap (mirroring the inbound +read_json_body+ ceiling) is enforced
+            # *incrementally*. The non-block form buffers the whole body into
+            # memory before we could inspect it, so a malicious/oversized peer
+            # could still cause a large allocation before we raise. Reading in
+            # chunks lets us abort as soon as the limit is exceeded.
+            max_bytes = PotatoMesh::Config.remote_instance_max_response_bytes
+            body = nil
+            connection.request(request) do |response|
+              unless response.is_a?(Net::HTTPSuccess)
+                raise InstanceHttpResponseError, "unexpected response #{response.code}"
               end
 
-              body
-            else
-              raise InstanceHttpResponseError, "unexpected response #{response.code}"
+              buffer = +""
+              response.read_body do |chunk|
+                buffer << chunk
+                if buffer.bytesize > max_bytes
+                  raise InstanceHttpResponseError,
+                        "response exceeds maximum size of #{max_bytes} bytes"
+                end
+              end
+              body = buffer
             end
+            body
           end
         end
       rescue InstanceHttpResponseError

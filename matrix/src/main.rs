@@ -25,7 +25,7 @@ use anyhow::Result;
 #[cfg(not(test))]
 use clap::Parser;
 use tokio::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[cfg(not(test))]
 use crate::cli::Cli;
@@ -36,6 +36,14 @@ use crate::matrix_server::run_synapse_listener;
 use crate::potatomesh::{FetchParams, PotatoClient, PotatoMessage, PotatoNode};
 #[cfg(not(test))]
 use tokio::time::sleep;
+
+/// Consecutive poll attempts a single message may fail before it is skipped
+/// (advanced past, with a warning) so it cannot block every message queued
+/// behind it forever. Transient failures (a brief homeserver/API hiccup)
+/// recover well within this bound; a message still failing after this many
+/// polls is treated as poison and dropped — a far better outcome than silently
+/// losing everything queued behind it.
+const MAX_FORWARD_ATTEMPTS: u32 = 5;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct BridgeState {
@@ -50,6 +58,14 @@ pub struct BridgeState {
     /// Legacy checkpoint timestamp used before last_rx_time was added.
     #[serde(default, skip_serializing)]
     last_checked_at: Option<u64>,
+    /// Id of the message currently blocking the batch, and how many consecutive
+    /// polls it has failed to forward. In-memory only (never persisted — a
+    /// restart is itself a fresh attempt); used to skip a poison message after
+    /// [`MAX_FORWARD_ATTEMPTS`] instead of retrying it forever.
+    #[serde(skip)]
+    failing_msg_id: Option<u64>,
+    #[serde(skip)]
+    failing_msg_attempts: u32,
 }
 
 impl BridgeState {
@@ -180,15 +196,46 @@ async fn poll_once(
 
                 if let Err(e) = handle_message(potato, matrix, state, msg).await {
                     error!("Error handling message {}: {:?}", msg.id, e);
-                    // Messages are processed in ascending `rx_time` order and the
-                    // state watermark (which builds the next `since=` query, in
-                    // memory and on disk) advances only on success. If we kept
-                    // going, a *later* message that succeeds would push the
-                    // watermark past this *failed* one, so the next poll would
-                    // never refetch it — a silent, permanent loss. Stop the batch
-                    // here instead: the failed message and everything after it
-                    // stay uncommitted and are retried on the next poll, in order.
+                    // Track consecutive failures of THIS specific message across
+                    // polls (the batch is refetched each poll while the
+                    // watermark is stuck, so the same id reappears at the head).
+                    if state.failing_msg_id == Some(msg.id) {
+                        state.failing_msg_attempts += 1;
+                    } else {
+                        state.failing_msg_id = Some(msg.id);
+                        state.failing_msg_attempts = 1;
+                    }
+
+                    if state.failing_msg_attempts >= MAX_FORWARD_ATTEMPTS {
+                        // Poison message: it has failed too many polls in a row,
+                        // so skip it rather than block the whole batch behind it
+                        // indefinitely. Advance the watermark past it (as if
+                        // processed) and continue with the rest. Dropping this
+                        // one message is the lesser evil versus stalling forever.
+                        warn!(
+                            "Skipping message {} after {} failed forward attempts; advancing past it",
+                            msg.id, state.failing_msg_attempts
+                        );
+                        state.failing_msg_id = None;
+                        state.failing_msg_attempts = 0;
+                        state.update_with(msg);
+                        persist_state(state, state_path);
+                        continue;
+                    }
+
+                    // Below the skip threshold: stop the batch here. The failed
+                    // message and everything after it stay uncommitted and are
+                    // retried, in order, on the next poll — so a *transient*
+                    // failure never loses, reorders, or duplicates anything. (The
+                    // watermark advances only on success, so a later success can
+                    // never jump past this failure — the silent-loss bug.)
                     break;
+                }
+
+                // Success clears any failure tracking for this message.
+                if state.failing_msg_id == Some(msg.id) {
+                    state.failing_msg_id = None;
+                    state.failing_msg_attempts = 0;
                 }
 
                 // persist after each processed message
@@ -476,6 +523,7 @@ mod tests {
             last_rx_time: None,
             last_rx_time_ids: vec![],
             last_checked_at: None,
+            ..Default::default()
         };
         let older = sample_msg(9);
         let newer = sample_msg(11);
@@ -520,6 +568,7 @@ mod tests {
             last_rx_time: Some(99),
             last_rx_time_ids: vec![123],
             last_checked_at: Some(77),
+            ..Default::default()
         };
         state.save(path_str).unwrap();
 
@@ -582,6 +631,7 @@ mod tests {
             last_rx_time: Some(123),
             last_rx_time_ids: vec![],
             last_checked_at: None,
+            ..Default::default()
         };
 
         let params = build_fetch_params(&state);
@@ -596,6 +646,7 @@ mod tests {
             last_rx_time: Some(123),
             last_rx_time_ids: vec![],
             last_checked_at: None,
+            ..Default::default()
         };
 
         let params = build_fetch_params(&state);
@@ -610,6 +661,7 @@ mod tests {
             last_rx_time: None,
             last_rx_time_ids: vec![],
             last_checked_at: None,
+            ..Default::default()
         };
 
         let params = build_fetch_params(&state);
@@ -634,6 +686,7 @@ mod tests {
             last_rx_time: Some(123),
             last_rx_time_ids: vec![42],
             last_checked_at: None,
+            ..Default::default()
         };
 
         persist_state(&state, path_str);
@@ -704,6 +757,7 @@ mod tests {
             last_rx_time: Some(100),
             last_rx_time_ids: vec![1],
             last_checked_at: None,
+            ..Default::default()
         };
 
         poll_once(&potato, &matrix, &mut state, state_str).await;
@@ -884,6 +938,120 @@ mod tests {
         assert!(
             state.should_forward(&msg_a),
             "failed message must remain eligible for retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_once_skips_poison_message_after_max_attempts() {
+        // A permanently-failing message must not block the batch forever. A
+        // (rx_time=10) always fails (node lookup 500); B (rx_time=20) succeeds.
+        // After MAX_FORWARD_ATTEMPTS polls the bridge skips A (advances past it)
+        // and then forwards B, so the watermark reaches 20 — progress is made
+        // while earlier polls still refused to jump past the failure.
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+
+        let _mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id":1,"rx_time":10,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!aaaaaaaa","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!aaaaaaaa"},
+                    {"id":2,"rx_time":20,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!bbbbbbbb","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!bbbbbbbb"}
+                ]"#,
+            )
+            .create();
+
+        // A always fails; B's full forward chain always succeeds.
+        let _mock_node_a = server
+            .mock("GET", "/api/nodes/aaaaaaaa")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .create();
+        let _mock_node_b = server
+            .mock("GET", "/api/nodes/bbbbbbbb")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"node_id":"!bbbbbbbb","long_name":"Node B","short_name":"NB"}"#)
+            .create();
+        let _mock_register = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_join = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/join".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_display = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/profile/.+/displayname".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_send = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/send/.+".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potato = PotatoClient::new(
+            http_client.clone(),
+            PotatomeshConfig {
+                base_url: server.url(),
+                poll_interval_secs: 1,
+            },
+        );
+        let matrix = MatrixAppserviceClient::new(
+            http_client,
+            MatrixConfig {
+                homeserver: server.url(),
+                as_token: "AS_TOKEN".to_string(),
+                hs_token: "HS_TOKEN".to_string(),
+                server_name: "example.org".to_string(),
+                room_id: "!roomid:example.org".to_string(),
+            },
+        );
+        let mut state = BridgeState::default();
+
+        // Poll up to (and including) the skip threshold.
+        for _ in 0..MAX_FORWARD_ATTEMPTS {
+            poll_once(&potato, &matrix, &mut state, state_str).await;
+        }
+
+        // A was skipped on the final poll and B then forwarded, so the watermark
+        // advanced to B's rx_time. A is no longer eligible (it is behind the
+        // watermark), and the failure tracker was cleared.
+        assert_eq!(
+            state.last_rx_time,
+            Some(20),
+            "poison message should have been skipped and the later message forwarded"
+        );
+        let msg_a = PotatoMessage {
+            id: 1,
+            rx_time: 10,
+            node_id: "!aaaaaaaa".to_string(),
+            ..sample_msg(1)
+        };
+        assert!(
+            !state.should_forward(&msg_a),
+            "skipped message must not be reprocessed"
         );
     }
 

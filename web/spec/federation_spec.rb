@@ -949,15 +949,16 @@ RSpec.describe PotatoMesh::App::Federation do
     it "applies federation headers to instance fetch requests" do
       connection = instance_double(HTTP_CONNECTION_DOUBLE)
       success_response = Net::HTTPOK.new("1.1", "200", "OK")
-      allow(success_response).to receive(:body).and_return("{}")
       allow(success_response).to receive(:code).and_return("200")
+      allow(success_response).to receive(:read_body).and_yield("{}")
 
       captured_request = nil
       allow(http_client).to receive(:start) do |&block|
         block.call(connection)
       end
-      allow(connection).to receive(:request) do |request|
+      allow(connection).to receive(:request) do |request, &block|
         captured_request = request
+        block.call(success_response)
         success_response
       end
 
@@ -978,13 +979,41 @@ RSpec.describe PotatoMesh::App::Federation do
       allow(http_client).to receive(:start) do |&block|
         block.call(connection)
       end
-      allow(connection).to receive(:request).and_return(failure_response)
+      allow(connection).to receive(:request) do |_request, &block|
+        block.call(failure_response)
+        failure_response
+      end
 
       expect do
         federation_helpers.send(:perform_single_http_request, uri)
       end.to raise_error(
         PotatoMesh::App::InstanceFetchError,
         a_string_including("unexpected response 502"),
+      )
+    end
+
+    it "rejects a response body larger than the configured maximum" do
+      connection = instance_double(HTTP_CONNECTION_DOUBLE)
+      success_response = Net::HTTPOK.new("1.1", "200", "OK")
+      allow(success_response).to receive(:code).and_return("200")
+      # Stream the body in chunks; the cap is exceeded partway through, so the
+      # read must be aborted before the whole body is buffered into memory.
+      allow(success_response).to receive(:read_body).and_yield("aaaa").and_yield("bbbb")
+
+      allow(PotatoMesh::Config).to receive(:remote_instance_max_response_bytes).and_return(5)
+      allow(http_client).to receive(:start) do |&block|
+        block.call(connection)
+      end
+      allow(connection).to receive(:request) do |_request, &block|
+        block.call(success_response)
+        success_response
+      end
+
+      expect do
+        federation_helpers.send(:perform_single_http_request, uri)
+      end.to raise_error(
+        PotatoMesh::App::InstanceFetchError,
+        a_string_including("exceeds maximum size of 5 bytes"),
       )
     end
 
