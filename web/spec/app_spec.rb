@@ -2803,26 +2803,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
 
     context "when private mode is enabled" do
-      around do |example|
-        # Restore PRIVATE after the example so private-mode does not leak into
-        # later specs (which would cause order-dependent failures). Mirrors the
-        # FEDERATION around/ensure pattern used above.
-        original = ENV["PRIVATE"]
-        begin
-          ENV["PRIVATE"] = "1"
-          example.run
-        ensure
-          if original.nil?
-            ENV.delete("PRIVATE")
-          else
-            ENV["PRIVATE"] = original
-          end
-        end
-      end
-
       it "returns 404 regardless of the FEDERATION setting" do
-        # federation_enabled? forces false whenever PRIVATE=1, independent of
-        # FEDERATION; the route guard must honour that combination too.
+        # federation_enabled? returns false whenever private mode is on,
+        # independent of FEDERATION; the route guard must honour that too. Stub
+        # Config.private_mode_enabled? (the suite's convention, e.g. the node
+        # visibility specs) rather than toggling ENV["PRIVATE"] — the top-level
+        # `before` hook deletes ENV["PRIVATE"] before each example, and stubbing
+        # also avoids any cross-spec ENV leak.
+        allow(PotatoMesh::Config).to receive(:private_mode_enabled?).and_return(true)
+
         post "/api/instances", instance_payload.to_json, { "CONTENT_TYPE" => "application/json" }
 
         expect(last_response.status).to eq(404)
