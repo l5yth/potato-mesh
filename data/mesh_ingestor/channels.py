@@ -310,6 +310,18 @@ def register_channel(channel_idx: int, channel_name_value: str) -> None:
     )
 
 
+def is_primary_channel(channel_index: int | None) -> bool:
+    """Return ``True`` when *channel_index* is the primary channel (index 0)."""
+
+    return channel_index == 0
+
+
+def is_primary_only() -> bool:
+    """Return ``True`` when ingestion is restricted to the primary channel."""
+
+    return bool(getattr(config, "PRIMARY_CHANNEL_ONLY", False))
+
+
 def _reset_channel_cache() -> None:
     """Clear cached channel data. Intended for use in tests only."""
 
@@ -327,5 +339,7 @@ __all__ = [
     "hidden_channel_names",
     "is_allowed_channel",
     "is_hidden_channel",
+    "is_primary_channel",
+    "is_primary_only",
     "_reset_channel_cache",
 ]

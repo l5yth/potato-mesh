@@ -52,6 +52,9 @@ from data.mesh_ingestor.mesh_protocol import MeshProtocol  # noqa: E402 - path s
 from data.mesh_ingestor.protocols.meshtastic import (  # noqa: E402 - path setup
     MeshtasticProvider,
 )
+from data.mesh_ingestor.protocols.meshtastic_udp import (  # noqa: E402 - path setup
+    MeshtasticUdpProvider,
+)
 from data.mesh_ingestor.connection import parse_tcp_target  # noqa: E402 - path setup
 from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     EventType,
@@ -85,6 +88,11 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
 def test_meshtastic_provider_satisfies_protocol():
     """MeshtasticProvider must structurally satisfy the Provider Protocol."""
     assert isinstance(MeshtasticProvider(), MeshProtocol)
+
+
+def test_meshtastic_udp_provider_satisfies_protocol():
+    """MeshtasticUdpProvider must structurally satisfy the Provider Protocol."""
+    assert isinstance(MeshtasticUdpProvider(), MeshProtocol)
 
 
 def test_daemon_main_uses_provider_connect(monkeypatch):

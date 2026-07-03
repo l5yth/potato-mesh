@@ -1331,3 +1331,148 @@ class TestCoerceEmojiStringFailure:
                 raise RuntimeError("boom")
 
         assert generic_mod._coerce_emoji_codepoint(Boom()) is None
+
+
+# ---------------------------------------------------------------------------
+# store_packet_dict — PRIMARY_CHANNEL_ONLY guard
+# ---------------------------------------------------------------------------
+
+
+class TestStorePacketDictPrimaryChannelGuard:
+    """Tests for the ``PRIMARY_CHANNEL_ONLY`` guard in
+    :func:`handlers.store_packet_dict`.
+
+    Mirrors the existing disallowed-channel / hidden-channel guard tests:
+    build a message packet on a non-primary channel and confirm it is
+    dropped (no queue POST, ``_record_ignored_packet`` called with
+    ``reason="non-primary-channel"``) only when
+    ``config.PRIMARY_CHANNEL_ONLY`` is enabled.
+    """
+
+    def _make_packet(self, *, channel: int, pkt_id: int = 4242) -> dict:
+        return {
+            "id": pkt_id,
+            "rxTime": 1_700_000_000,
+            "from": "!sender",
+            "to": "^all",
+            "channel": channel,
+            "decoded": {"text": "secondary channel msg", "portnum": 1},
+        }
+
+    def test_drops_secondary_channel_when_flag_enabled(self, monkeypatch):
+        """Non-primary channel packet is dropped when the flag is on."""
+        import data.mesh_ingestor.queue as q
+
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", True)
+        monkeypatch.setattr(config, "ALLOWED_CHANNELS", ())
+        monkeypatch.setattr(config, "HIDDEN_CHANNELS", ())
+        monkeypatch.setattr(config, "DEBUG", False)
+
+        sent = []
+        ignored = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        monkeypatch.setattr(
+            ignored_mod,
+            "_record_ignored_packet",
+            lambda packet, *, reason: ignored.append(reason),
+        )
+        try:
+            handlers.store_packet_dict(self._make_packet(channel=3))
+        finally:
+            q._queue_post_json = original
+
+        assert sent == []
+        assert ignored == ["non-primary-channel"]
+
+    def test_drops_secondary_channel_logs_when_debug_enabled(self, monkeypatch, capsys):
+        """The debug log branch fires (and is skipped when DEBUG is off, per
+        the sibling test above) so both sides of the ``if config.DEBUG``
+        branch are covered."""
+        import data.mesh_ingestor.queue as q
+
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", True)
+        monkeypatch.setattr(config, "ALLOWED_CHANNELS", ())
+        monkeypatch.setattr(config, "HIDDEN_CHANNELS", ())
+        monkeypatch.setattr(config, "DEBUG", True)
+
+        sent = []
+        ignored = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        monkeypatch.setattr(
+            ignored_mod,
+            "_record_ignored_packet",
+            lambda packet, *, reason: ignored.append(reason),
+        )
+        capsys.readouterr()
+        try:
+            handlers.store_packet_dict(self._make_packet(channel=3))
+        finally:
+            q._queue_post_json = original
+
+        assert sent == []
+        assert ignored == ["non-primary-channel"]
+        assert "Ignored packet on non-primary channel" in capsys.readouterr().out
+
+    def test_allows_primary_channel_when_flag_enabled(self, monkeypatch):
+        """Channel 0 (PRIMARY) is never dropped by this guard, flag on or
+        off."""
+        import data.mesh_ingestor.queue as q
+
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", True)
+        monkeypatch.setattr(config, "ALLOWED_CHANNELS", ())
+        monkeypatch.setattr(config, "HIDDEN_CHANNELS", ())
+        monkeypatch.setattr(config, "DEBUG", False)
+
+        sent = []
+        ignored = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        monkeypatch.setattr(
+            ignored_mod,
+            "_record_ignored_packet",
+            lambda packet, *, reason: ignored.append(reason),
+        )
+        try:
+            handlers.store_packet_dict(self._make_packet(channel=0))
+        finally:
+            q._queue_post_json = original
+
+        assert any(path == "/api/messages" for path, _ in sent)
+        assert "non-primary-channel" not in ignored
+
+    def test_does_not_drop_secondary_channel_when_flag_disabled(self, monkeypatch):
+        """With the flag off, a secondary-channel packet is NOT dropped by
+        this guard (it proceeds to be queued)."""
+        import data.mesh_ingestor.queue as q
+
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", False)
+        monkeypatch.setattr(config, "ALLOWED_CHANNELS", ())
+        monkeypatch.setattr(config, "HIDDEN_CHANNELS", ())
+        monkeypatch.setattr(config, "DEBUG", False)
+
+        sent = []
+        ignored = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        monkeypatch.setattr(
+            ignored_mod,
+            "_record_ignored_packet",
+            lambda packet, *, reason: ignored.append(reason),
+        )
+        try:
+            handlers.store_packet_dict(self._make_packet(channel=3))
+        finally:
+            q._queue_post_json = original
+
+        assert any(path == "/api/messages" for path, _ in sent)
+        assert "non-primary-channel" not in ignored
