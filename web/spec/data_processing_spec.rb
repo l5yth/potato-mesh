@@ -841,6 +841,19 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(row["long_name"]).to be_nil
     end
 
+    it "does not fill a missing short_name with a stale empty shortName" do
+      db = open_db
+      dp.upsert_node(db, "!60e53d9b", { "lastHeard" => now }, protocol: "meshcore")
+      dp.upsert_node(db, "!60e53d9b", {
+        "lastHeard" => now - 17,
+        "user" => { "shortName" => "", "longName" => "Alpha Repeater" },
+      }, protocol: "meshcore")
+      row = node_row(db)
+      db.close
+      expect(row["short_name"]).to be_nil
+      expect(row["long_name"]).to eq("Alpha Repeater")
+    end
+
     it "still ignores stale synthetic placeholders for real rows" do
       db = open_db
       upsert_advert_placeholder(db, now)

@@ -333,13 +333,15 @@ module PotatoMesh
             # permanently unnamed ghost. Fill identity columns that are still
             # NULL from any non-synthetic record regardless of staleness: gaps
             # get filled, fresher values are never regressed, and synthetic
-            # chat placeholders remain barred from real rows. NULLIF keeps an
-            # empty MeshCore adv_name from filling long_name.
+            # chat placeholders remain barred from real rows. NULLIF keeps
+            # empty strings — a MeshCore contact may carry an empty adv_name,
+            # and shortName is guarded the same way — from filling
+            # long_name/short_name with blank text.
             if synthetic.zero?
               db.execute(<<~SQL, [node_num, short_name, long_name, macaddr, hw_model, role, public_key, is_unmessagable, node_id])
                 UPDATE nodes SET
                   num=COALESCE(num, ?),
-                  short_name=COALESCE(short_name, ?),
+                  short_name=COALESCE(short_name, NULLIF(?, '')),
                   long_name=COALESCE(long_name, NULLIF(?, '')),
                   macaddr=COALESCE(macaddr, ?),
                   hw_model=COALESCE(hw_model, ?),

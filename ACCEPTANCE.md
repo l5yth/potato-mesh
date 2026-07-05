@@ -435,6 +435,21 @@ existing codebase, not to the change under review.
   without comment syntax (JSON fixtures under `tests/`, `*.lock` files, binary
   assets) cannot carry the notice; there is no committed allow-list or CI check
   asserting headers. The B4 commands above are the interim verification.
+- **A1b — two benign textual matches in the broker grep.** The repo-wide A1b
+  command matches `.claude/hooks/guard-edits.py` (the anti-broker edit guard's
+  own pattern list) and the "no broker" documentation comment in
+  `web/lib/potato_mesh/application/pubsub.rb` (PS1). Both are descriptive or
+  defensive text *about* the apex ban — neither is a broker dependency or
+  connection — but they sit outside A1b's `via_mqtt` exemption wording. Treat
+  these two files as documented exemptions until the A1b filter codifies them.
+- **B1 — sandbox DNS breaks the `POST /api/instances` spec block.** In
+  sandboxed environments whose resolver maps the suite's test domains
+  (`mesh.example`, …) into the SSRF guard's restricted address ranges, 17
+  `spec/app_spec.rb` "POST /api/instances" examples fail with
+  `{"error":"restricted domain"}` (400 instead of 201). Environmental only:
+  the failures reproduce identically with and without any change under review
+  and do not occur where the test domains resolve normally (CI). Attribute to
+  the environment, not the codebase or the change.
 
 ---
 
@@ -2554,9 +2569,10 @@ real rows. No ingestor/API/DB-schema change; protocol-neutral (Invariant IV).
 placeholder (`lastHeard = now`, no name) followed by the roster contact record
 (`lastHeard = last_advert`, older by 17 s and by ~2 years in a second example) —
 leaves the node **named** with its real role and public key. The stale record
-never regresses `last_heard`, never overwrites an existing name/role, an empty
-MeshCore `adv_name` does not fill anything, and a stale `synthetic=1` chat
-placeholder still cannot touch a real row.
+never regresses `last_heard`, never overwrites an existing name/role, empty
+strings never fill `long_name` / `short_name` (the other identity fields of the
+same record still fill), and a stale `synthetic=1` chat placeholder still
+cannot touch a real row.
 
 ### GH-R1 — Regression: prior acceptance still holds
 ```bash
