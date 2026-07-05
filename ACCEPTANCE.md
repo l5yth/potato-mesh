@@ -2453,7 +2453,7 @@ PRIMARY_CHANNEL_KEY='not-base64!!' python -c 'import data.mesh_ingestor.config' 
 `TRANSPORT`/`PROTOCOL` import-time validation. Previously the raw value was
 stored unchecked and only decoded lazily inside `channel_hash` /
 `decrypt_meshpacket`, so with `PRIMARY_CHANNEL_NAME` set a malformed key raised
-`binascii.Error` out of `connect()` — caught by `daemon._connect_interface`'s
+`binascii.Error` out of `connect()` — caught by `daemon._try_connect`'s
 generic `except Exception`, which logged only "Failed to create mesh interface"
 and retried forever: the service never ingested and never surfaced the cause.
 Valid keys of any decodable length (1-byte default `AQ==`, 16/32-byte PSKs) are
@@ -2517,4 +2517,7 @@ suite (`test_meshtastic_udp_unit.py` — the provider consumes the validated key
 and group-bound socket unchanged), `test_config_unit.py`'s UDP-var defaults
 (blank-fallback semantics unchanged), and the bridge watermark/poison tests
 (the new test only adds coverage; `poll_once` is untouched). The web app,
-federation wire, and Flutter app are not touched by this batch.
+federation wire, and Flutter app are behaviorally untouched by this batch —
+the only edits outside the four fixes are the lockstep 0.7.2 version-bump
+stamps (manifests, lockfiles, iOS plist, README pinned tags, S-A1), verified
+by `tests/test_version_sync.py`.
