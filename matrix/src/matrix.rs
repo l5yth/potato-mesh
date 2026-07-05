@@ -95,8 +95,26 @@ impl MatrixAppserviceClient {
         if resp.status().is_success() {
             Ok(())
         } else {
-            // If user already exists, Synapse / HS usually returns 400 M_USER_IN_USE.
-            // We'll just ignore non-success and hope it's that case.
+            // If the puppet already exists, Synapse / HS returns 400 M_USER_IN_USE,
+            // which is expected and safely ignored. Anything else (e.g. 401/403 from
+            // a misconfigured `as_token`) is surfaced with the status and the Matrix
+            // error body so the failure is diagnosable instead of being swallowed
+            // here and only manifesting as a downstream error.
+            let status = resp.status();
+            let body_snip = resp.text().await.unwrap_or_default();
+            // Only the specific M_USER_IN_USE errcode means "puppet already
+            // exists" -- keying off the bare 400 status would also swallow real
+            // failures returned as 400 (malformed request, config issues) and
+            // skip the diagnostic warning below.
+            let already_registered = body_snip.contains("M_USER_IN_USE");
+            if !already_registered {
+                tracing::warn!(
+                    "Unexpected response registering puppet user {}: status {}, body: {}",
+                    localpart,
+                    status,
+                    body_snip
+                );
+            }
             Ok(())
         }
     }
@@ -338,7 +356,55 @@ mod tests {
             .mock("POST", "/_matrix/client/v3/register")
             .match_query("kind=user")
             .match_header("authorization", "Bearer AS_TOKEN")
-            .with_status(400) // M_USER_IN_USE
+            .with_status(400)
+            .with_body(r#"{"errcode":"M_USER_IN_USE","error":"User ID already taken."}"#)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_registered("testuser").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_registered_other_400_is_not_treated_as_in_use() {
+        // A 400 that is NOT M_USER_IN_USE (e.g. a malformed request) must reach
+        // the warn branch rather than being silently ignored as "already
+        // registered". The call still returns Ok(()) so registration is
+        // non-fatal, but the failure is surfaced for diagnosis.
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .with_status(400)
+            .with_body(r#"{"errcode":"M_INVALID_PARAM","error":"bad request"}"#)
+            .create();
+
+        let mut cfg = dummy_cfg();
+        cfg.homeserver = server.url();
+        let client = MatrixAppserviceClient::new(reqwest::Client::new(), cfg);
+        let result = client.ensure_user_registered("testuser").await;
+
+        mock.assert();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_user_registered_unexpected_status_logs_and_is_ok() {
+        // A non-400 failure (e.g. 403 from a misconfigured as_token) is NOT the
+        // expected "already registered" case, so it exercises the warn branch.
+        // The call still returns Ok(()) so registration remains non-fatal.
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query("kind=user")
+            .match_header("authorization", "Bearer AS_TOKEN")
+            .with_status(403)
+            .with_body(r#"{"errcode":"M_FORBIDDEN","error":"bad token"}"#)
             .create();
 
         let mut cfg = dummy_cfg();
