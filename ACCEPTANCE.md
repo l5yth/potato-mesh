@@ -226,7 +226,6 @@ grep -A14 '^coverage:' .codecov.yml
 `target: 100%` and `threshold: 10%`. Per-language coverage is produced by the
 suites in B1 (SimpleCov for Ruby, `pytest-cov`, `cargo llvm-cov`, `flutter
 --coverage`, V8 for JS) and enforced server-side by Codecov.
-> See [§ Known gaps](#known-gaps): the `patch` block is currently missing.
 
 ### B3 — 100% API documentation (language standard)
 ```bash
@@ -432,9 +431,6 @@ These deviate from the bar above and are surfaced by the Phase 2 environment
 audit. They are **FAIL** until fixed, but a reviewer should attribute them to the
 existing codebase, not to the change under review.
 
-- **B2 — `.codecov.yml` has no `patch` block.** It defines only
-  `coverage.status.project.default` (target 100% / threshold 10%); `CLAUDE.md`
-  requires the same on **patch**. Fix tracked in the Phase 2 audit.
 - **B4 — header-check exemptions are conventional, not codified.** Formats
   without comment syntax (JSON fixtures under `tests/`, `*.lock` files, binary
   assets) cannot carry the notice; there is no committed allow-list or CI check
@@ -513,7 +509,7 @@ git grep -nA2 'def version_fallback' -- web/lib/potato_mesh/config.rb
 `{ nodes, messages, telemetry }`, each metric carrying integer
 `{ hour, day, week, month }`, with `sampled` still present and `false`. The old
 flat keys (`active_nodes`, integer-valued `meshcore`/`meshtastic`) are **gone** —
-this is the intended, versioned break. `version_fallback` returns `"0.7.1"`, and
+this is the intended, versioned break. `version_fallback` returns `"0.7.2"`, and
 `test_version_sync.py` **passes** — the bump is applied in lockstep across all
 five language manifests (`data.VERSION`, `Config.version_fallback`,
 `web/package.json`, `app/pubspec.yaml`, `matrix/Cargo.toml`; `matrix/Cargo.lock`
@@ -2430,3 +2426,98 @@ capture touches only already-built DOM), **CB-A1** (every bulk collection still
 backfills; the accumulators it merges into are raw, which is the shape the model
 already expects), and **B1** (all suites). Frontend-only: no POST/GET/event
 contract change, so `CONTRACTS.md` and the Python suite are unaffected.
+
+---
+
+## Bugfix: UDP-transport hardening & bridge failure-tracker coverage
+
+Four small defects fixed as a batch. The first two live on the passive
+UDP-transport surface (PR #838), which shipped with **no SPEC/ACCEPTANCE
+feature section** — the contract was silent there, so these are its first
+command-backed checks. The third closes a test-coverage gap (D9/B1) in the
+Matrix bridge's poison-message tracker (PR #839). The fourth repairs the
+Python CI dependency drift that turned `main` red after #838. Formatting
+drift found alongside (rufo on `web/views/layouts/app.erb`, the cause of the
+red Ruby workflow on `main`) is covered by the existing **B5**, no new check
+needed.
+
+### UH-A1 — malformed `PRIMARY_CHANNEL_KEY` fails at import, not in the retry loop
+```bash
+( . .venv/bin/activate && pytest -q tests/test_config_unit.py -k PrimaryChannelKey )
+PRIMARY_CHANNEL_KEY='not-base64!!' python -c 'import data.mesh_ingestor.config'  # exits non-zero, names the var
+```
+**Expected:** the unit tests pass; the one-liner fails with
+`ValueError: PRIMARY_CHANNEL_KEY is not valid base64: 'not-base64!!'. …`.
+`config.py` validates the key as base64 **at import time** (decoding exactly as
+`meshtastic_udp_decode.expand_default_key` later would), matching the existing
+`TRANSPORT`/`PROTOCOL` import-time validation. Previously the raw value was
+stored unchecked and only decoded lazily inside `channel_hash` /
+`decrypt_meshpacket`, so with `PRIMARY_CHANNEL_NAME` set a malformed key raised
+`binascii.Error` out of `connect()` — caught by `daemon._try_connect`'s
+generic `except Exception`, which logged only "Failed to create mesh interface"
+and retried forever: the service never ingested and never surfaced the cause.
+Valid keys of any decodable length (1-byte default `AQ==`, 16/32-byte PSKs) are
+accepted unchanged; blank still falls back to `AQ==`.
+
+### UH-A2 — UDP multicast sockets bind the group address, never all interfaces
+```bash
+( . .venv/bin/activate && pytest -q tests/test_meshtastic_udp_socket_unit.py tests/test_capture_udp_fixtures_unit.py )
+git grep -n 'bind(("", ' -- data/
+```
+**Expected:** tests pass; the grep prints nothing. Both
+`data/mesh_ingestor/protocols/meshtastic_udp_socket.py` and its documented
+mirror `data/tools/capture_udp_fixtures.py` bind `(group, port)` instead of the
+wildcard `("", port)` (CodeQL *py/bind-socket-all-network-interfaces*): the
+kernel then delivers only datagrams addressed to the multicast group, so
+unicast traffic sent to the port on any local interface never reaches the
+socket. Receive behavior for "Mesh via UDP" traffic is unchanged (the transport
+is multicast-only); binding a group address is POSIX behavior (Linux/macOS, the
+platforms the transport targets). The capture tool, previously untested, gains
+unit coverage of its socket plumbing.
+
+### UH-A3 — bridge failure-tracker success-path reset is covered — D9/B1
+```bash
+( cd matrix && cargo test poll_once_clears_failure_tracker_when_failed_message_recovers )
+```
+**Expected:** pass. The most common real-world sequence — a message fails a
+poll transiently, then succeeds on the next — executes the success-path reset
+in `poll_once` (`matrix/src/main.rs`: clear `failing_msg_id` /
+`failing_msg_attempts` after a successful `handle_message`), which **no prior
+test reached**: the watermark test stops at the first failure and the poison
+test's tracker is already cleared by the skip before the next success. The test
+arms the tracker with a 500 node lookup, swaps the mock to 200, re-polls, and
+asserts the tracker is cleared, the watermark advances through the recovered
+message to the batch tail, and the message is not reprocessed. Verified by
+mutation: with the reset disabled (`if false && …`) only this test fails —
+every other test stays green, which is the coverage gap this closes.
+
+### UH-A4 — Python CI installs the ingestor deps from the manifest
+```bash
+grep -n 'pip install -r data/requirements.txt' .github/workflows/python.yml
+```
+**Expected:** one match in the workflow's install step. The workflow previously
+hand-listed packages (`black pytest pytest-cov meshtastic meshcore`), which
+silently drifted from `data/requirements.txt` when PR #838 added
+`cryptography>=42.0.0` — every Python CI run on `main` since then failed test
+collection with `ModuleNotFoundError: No module named 'cryptography'`.
+Installing from the manifest (which also carries the dev deps) keeps CI in
+lockstep with the documented [Setup](#setup-one-time) command and removes the
+drift channel.
+
+### UH-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( . .venv/bin/activate && black --check ./ )
+( cd matrix && cargo test --all --all-features && cargo fmt --all -- --check \
+            && cargo clippy --all-targets --all-features -- -D warnings )
+( cd web && bundle exec rspec ) && ( cd web && npm test ) && ( cd web && bundle exec rufo --check . )
+```
+**Expected:** all green, including **B5** (rufo/black — `views/layouts/app.erb`
+re-formatted). At risk and explicitly required to stay green: the UDP provider
+suite (`test_meshtastic_udp_unit.py` — the provider consumes the validated key
+and group-bound socket unchanged), `test_config_unit.py`'s UDP-var defaults
+(blank-fallback semantics unchanged), and the bridge watermark/poison tests
+(the new test only adds coverage; `poll_once` is untouched). The web app,
+federation wire, and Flutter app are behaviorally untouched by this batch —
+the only edits outside the four fixes are the lockstep 0.7.2 version-bump
+stamps (manifests, lockfiles, iOS plist, README pinned tags, S-A1), verified
+by `tests/test_version_sync.py`.

@@ -69,14 +69,21 @@ class TestOpenMulticastSocket:
     """Tests for :func:`open_multicast_socket`."""
 
     def test_sets_options_binds_joins_and_times_out(self, monkeypatch):
-        """Happy path: reuseaddr, bind, IP_ADD_MEMBERSHIP, and a 1s timeout."""
+        """Happy path: reuseaddr, group-bound bind, IP_ADD_MEMBERSHIP, 1s timeout.
+
+        The bind must target the multicast *group* address, never the wildcard
+        ``""``/``0.0.0.0`` — a wildcard bind would deliver unicast datagrams
+        sent to the port on any local interface (CodeQL: binding a socket to
+        all network interfaces).
+        """
         fake = FakeSock()
         monkeypatch.setattr(udp_socket.socket, "socket", lambda *a, **k: fake)
 
         sock = udp_socket.open_multicast_socket("224.0.0.69", 4403)
 
         assert sock is fake
-        assert ("bind", ("", 4403)) in fake.calls
+        assert ("bind", ("224.0.0.69", 4403)) in fake.calls
+        assert ("bind", ("", 4403)) not in fake.calls
         assert (
             "setsockopt",
             (real_socket.SOL_SOCKET, real_socket.SO_REUSEADDR, 1),
@@ -139,7 +146,7 @@ class TestOpenMulticastSocket:
             (real_socket.SOL_SOCKET, real_socket.SO_REUSEPORT, 1),
         ) in fake.calls
         # Despite the OSError, bind/join/timeout still happened.
-        assert ("bind", ("", 4403)) in fake.calls
+        assert ("bind", ("224.0.0.69", 4403)) in fake.calls
         assert ("settimeout", 1.0) in fake.calls
 
     def test_join_uses_requested_group_and_port(self, monkeypatch):
@@ -149,7 +156,7 @@ class TestOpenMulticastSocket:
 
         udp_socket.open_multicast_socket("239.1.2.3", 5000)
 
-        assert ("bind", ("", 5000)) in fake.calls
+        assert ("bind", ("239.1.2.3", 5000)) in fake.calls
         expected_mreq = real_socket.inet_aton("239.1.2.3") + real_socket.inet_aton(
             "0.0.0.0"
         )
