@@ -35,8 +35,11 @@ def open_multicast_socket(group: str, port: int) -> socket.socket:
     Creates an IPv4 UDP socket suitable for receive-only Meshtastic "Mesh via
     UDP" multicast traffic: address reuse is enabled (so multiple local
     listeners, or quick restarts, don't collide on the port), the socket is
-    bound to the wildcard address, and it joins *group* via
-    ``IP_ADD_MEMBERSHIP`` on the default interface (``0.0.0.0``).
+    bound to the *group* address itself — never the wildcard, so unicast
+    datagrams sent to the port on any local interface are not delivered to
+    it — and it joins *group* via ``IP_ADD_MEMBERSHIP`` on the default
+    interface (``0.0.0.0``). Binding a multicast group address is POSIX
+    behaviour (Linux/macOS, the platforms this transport is exercised on).
 
     Args:
         group: IPv4 multicast group address to join, e.g. ``"224.0.0.69"``.
@@ -57,7 +60,12 @@ def open_multicast_socket(group: str, port: int) -> socket.socket:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         except OSError:
             pass
-    sock.bind(("", port))
+    # Bind the multicast group address, not the wildcard: the kernel then
+    # only delivers datagrams addressed to group:port, so unicast traffic to
+    # the port never reaches this socket (CodeQL: binding a socket to all
+    # network interfaces). POSIX-only behaviour, which matches the platforms
+    # this transport supports.
+    sock.bind((group, port))
     # Joining with the wildcard interface (0.0.0.0) lets the kernel pick
     # the receiving interface, matching how the capture tool joins the group.
     mreq = socket.inet_aton(group) + socket.inet_aton("0.0.0.0")

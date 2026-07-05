@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import base64
 import math
 import os
 from datetime import datetime, timezone
@@ -90,8 +91,28 @@ TRANSPORT = _raw_transport
 PRIMARY_CHANNEL_ONLY = os.environ.get("PRIMARY_CHANNEL_ONLY") == "1"
 """When ``True``, only channel index 0 (PRIMARY) is ingested; all else is dropped."""
 
-PRIMARY_CHANNEL_KEY = os.environ.get("PRIMARY_CHANNEL_KEY", "AQ==").strip() or "AQ=="
-"""Base64 PSK used to decrypt the primary channel; defaults to the Meshtastic default key."""
+_raw_primary_key = os.environ.get("PRIMARY_CHANNEL_KEY", "AQ==").strip() or "AQ=="
+try:
+    # Decode exactly the way meshtastic_udp_decode.expand_default_key later
+    # will, so a malformed key fails HERE with a clear startup error (parity
+    # with the TRANSPORT/PROTOCOL validation above) instead of surfacing as a
+    # lazy binascii.Error out of connect() that the daemon's generic
+    # reconnect handler would swallow and retry forever.
+    # binascii.Error and UnicodeEncodeError both subclass ValueError.
+    base64.b64decode(_raw_primary_key.encode("ascii"), validate=True)
+except ValueError as exc:
+    raise ValueError(
+        f"PRIMARY_CHANNEL_KEY is not valid base64: {_raw_primary_key!r}. "
+        "Provide the channel PSK exactly as printed by `meshtastic --info` "
+        '(e.g. "AQ==" for the default key).'
+    ) from exc
+
+PRIMARY_CHANNEL_KEY = _raw_primary_key
+"""Base64 PSK used to decrypt the primary channel; defaults to the Meshtastic default key.
+
+Validated as base64 at import time: a malformed value raises :class:`ValueError`
+immediately (like an unknown :data:`TRANSPORT`), rather than failing lazily
+inside ``channel_hash``/``decrypt_meshpacket`` during ``connect()``."""
 
 PRIMARY_CHANNEL_NAME = os.environ.get("PRIMARY_CHANNEL_NAME", "").strip()
 """Name of the primary channel (e.g. ``"MediumFast"``), used to compute the

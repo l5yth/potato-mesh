@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 from pathlib import Path
 
@@ -608,6 +609,58 @@ class TestUdpTransportDefaults:
         monkeypatch.setenv("INGESTOR_NODE_ID", "   ")
         importlib.reload(config)
         assert config.INGESTOR_NODE_ID is None
+
+
+class TestPrimaryChannelKeyValidation:
+    """Tests for import-time base64 validation of :data:`config.PRIMARY_CHANNEL_KEY`."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        """Clear UDP-transport env vars and reload config to defaults after each test."""
+        import importlib
+
+        _clear_udp_env(monkeypatch)
+        yield
+        _clear_udp_env(monkeypatch)
+        importlib.reload(config)
+
+    def test_invalid_base64_raises_value_error_at_import(self, monkeypatch):
+        """A non-base64 PRIMARY_CHANNEL_KEY raises ValueError at import time.
+
+        Regression guard: the key used to be stored raw and only decoded
+        lazily inside ``channel_hash``/``decrypt_meshpacket``, so a malformed
+        key first surfaced as ``binascii.Error`` out of ``connect()`` — which
+        the daemon's generic handler swallowed, logging only "Failed to create
+        mesh interface" and retrying forever instead of stopping the service
+        with a clear startup error (parity with ``TRANSPORT``/``PROTOCOL``).
+        """
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_KEY", "not-base64!!")
+        with pytest.raises(ValueError, match="PRIMARY_CHANNEL_KEY"):
+            importlib.reload(config)
+
+    def test_non_ascii_key_raises_value_error_at_import(self, monkeypatch):
+        """A non-ASCII PRIMARY_CHANNEL_KEY is rejected at import time as well.
+
+        ``expand_default_key`` encodes the key as ASCII before decoding, so a
+        non-ASCII value raises ``UnicodeEncodeError`` (a ``ValueError``) on the
+        same lazy path; import-time validation must catch this shape too.
+        """
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_KEY", "ÄQ==")
+        with pytest.raises(ValueError, match="PRIMARY_CHANNEL_KEY"):
+            importlib.reload(config)
+
+    def test_valid_padded_base64_key_is_accepted(self, monkeypatch):
+        """A well-formed padded base64 PSK (32-byte key) imports cleanly."""
+        import importlib
+
+        key = base64.b64encode(bytes(range(32))).decode("ascii")
+        monkeypatch.setenv("PRIMARY_CHANNEL_KEY", key)
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_KEY == key
 
 
 class TestUdpTransportAllExports:

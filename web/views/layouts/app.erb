@@ -67,12 +67,12 @@
      # is not enough here since a literal "</script>" inside a JSON string
      # value still terminates the element in HTML parsing. %>
   <% instance_ld_json = JSON.generate({
-          "@context" => "https://schema.org",
-          "@type" => "WebSite",
-          "name" => meta_name,
-          "url" => canonical_base,
-          "description" => meta_description,
-        }).gsub("<", "\\u003c").gsub(">", "\\u003e").gsub("&", "\\u0026") %>
+       "@context" => "https://schema.org",
+       "@type" => "WebSite",
+       "name" => meta_name,
+       "url" => canonical_base,
+       "description" => meta_description,
+     }).gsub("<", "\\u003c").gsub(">", "\\u003e").gsub("&", "\\u0026") %>
   <script type="application/ld+json">
     <%= instance_ld_json %>
   </script>

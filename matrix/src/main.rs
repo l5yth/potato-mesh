@@ -1055,6 +1055,152 @@ mod tests {
         );
     }
 
+    /// Companion to the two failure-path tests above, covering the
+    /// success-path tracker reset (the `if state.failing_msg_id == Some(msg.id)`
+    /// clear after a successful `handle_message`): a message that failed
+    /// transiently and then succeeds on a later poll must clear the tracker
+    /// and let the watermark advance. Neither prior test executes that reset —
+    /// the watermark test stops at the first failure and never re-polls, and
+    /// in the poison test the tracker is already cleared by the skip before
+    /// the next message succeeds. Without this test a regression in the reset
+    /// (not clearing, or clearing the wrong id) would pass CI, and the stale
+    /// attempt count would let a single later transient failure of the same
+    /// message hit `MAX_FORWARD_ATTEMPTS` and drop it.
+    #[tokio::test]
+    async fn poll_once_clears_failure_tracker_when_failed_message_recovers() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let state_path = tmp_dir.path().join("state.json");
+        let state_str = state_path.to_str().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+
+        // Batch of two TEXT messages, refetched on every poll while the
+        // watermark is stuck (same shape as the watermark/poison tests).
+        let _mock_msgs = server
+            .mock("GET", "/api/messages")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id":1,"rx_time":10,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!aaaaaaaa","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!aaaaaaaa"},
+                    {"id":2,"rx_time":20,"rx_iso":"2025-11-27T00:00:00Z","from_id":"!bbbbbbbb","to_id":"^all","channel":1,"portnum":"TEXT_MESSAGE_APP","text":"Ping","lora_freq":868,"modem_preset":"MediumFast","channel_name":"TEST","node_id":"!bbbbbbbb"}
+                ]"#,
+            )
+            .create();
+
+        // Poll 1: A's node lookup fails transiently (500), arming the tracker.
+        let mock_node_a_fail = server
+            .mock("GET", "/api/nodes/aaaaaaaa")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .create();
+
+        // B's node lookup and the Matrix forward chain (shared by A once its
+        // node lookup recovers) always succeed.
+        let _mock_node_b = server
+            .mock("GET", "/api/nodes/bbbbbbbb")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"node_id":"!bbbbbbbb","long_name":"Node B","short_name":"NB"}"#)
+            .create();
+        let _mock_register = server
+            .mock("POST", "/_matrix/client/v3/register")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_join = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/join".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_display = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/profile/.+/displayname".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+        let _mock_send = server
+            .mock(
+                "PUT",
+                mockito::Matcher::Regex(r"/_matrix/client/v3/rooms/.+/send/.+".to_string()),
+            )
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let potato = PotatoClient::new(
+            http_client.clone(),
+            PotatomeshConfig {
+                base_url: server.url(),
+                poll_interval_secs: 1,
+            },
+        );
+        let matrix = MatrixAppserviceClient::new(
+            http_client,
+            MatrixConfig {
+                homeserver: server.url(),
+                as_token: "AS_TOKEN".to_string(),
+                hs_token: "HS_TOKEN".to_string(),
+                server_name: "example.org".to_string(),
+                room_id: "!roomid:example.org".to_string(),
+            },
+        );
+        let mut state = BridgeState::default();
+
+        poll_once(&potato, &matrix, &mut state, state_str).await;
+
+        // The transient failure armed the tracker and stalled the watermark.
+        assert_eq!(state.failing_msg_id, Some(1));
+        assert_eq!(state.failing_msg_attempts, 1);
+        assert_eq!(state.last_rx_time, None);
+
+        // Poll 2: A's node lookup now succeeds, like B's.
+        mock_node_a_fail.remove_async().await;
+        let _mock_node_a_ok = server
+            .mock("GET", "/api/nodes/aaaaaaaa")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"node_id":"!aaaaaaaa","long_name":"Node A","short_name":"NA"}"#)
+            .create();
+
+        poll_once(&potato, &matrix, &mut state, state_str).await;
+
+        // The success-path reset cleared the tracker for the recovered id...
+        assert_eq!(
+            state.failing_msg_id, None,
+            "tracker id must be cleared when the failing message finally forwards"
+        );
+        assert_eq!(
+            state.failing_msg_attempts, 0,
+            "attempt count must be reset when the failing message finally forwards"
+        );
+        // ...and the watermark advanced through A to B.
+        assert_eq!(
+            state.last_rx_time,
+            Some(20),
+            "watermark should advance once the transient failure recovers"
+        );
+        let msg_a = PotatoMessage {
+            id: 1,
+            rx_time: 10,
+            node_id: "!aaaaaaaa".to_string(),
+            ..sample_msg(1)
+        };
+        assert!(
+            !state.should_forward(&msg_a),
+            "recovered message must not be reprocessed"
+        );
+    }
+
     /// Drive `handle_message` end-to-end against a mocked Matrix homeserver
     /// and PotatoMesh API, asserting that the bridged message body carries
     /// the expected protocol tag and preset abbreviation. Shared by the

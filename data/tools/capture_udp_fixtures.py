@@ -84,7 +84,9 @@ def open_multicast_socket(group: str, port: int) -> socket.socket:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         except OSError:
             pass
-    sock.bind(("", port))
+    # Bind the group address, not the wildcard, so unicast datagrams to the
+    # port are never delivered (mirrors meshtastic_udp_socket.py; POSIX-only).
+    sock.bind((group, port))
     mreq = socket.inet_aton(group) + socket.inet_aton("0.0.0.0")
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     sock.settimeout(1.0)
