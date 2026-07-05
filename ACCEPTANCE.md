@@ -2521,3 +2521,51 @@ federation wire, and Flutter app are behaviorally untouched by this batch —
 the only edits outside the four fixes are the lockstep 0.7.2 version-bump
 stamps (manifests, lockfiles, iOS plist, README pinned tags, S-A1), verified
 by `tests/test_version_sync.py`.
+
+---
+
+## Bugfix: MeshCore ghost nodes (stale contact enrichment discarded)
+
+A MeshCore node first seen via a bare `ADVERTISEMENT` push was upserted as a
+minimal placeholder stamped `lastHeard = now` (receiver wall clock). The
+follow-up roster contact record — carrying the real name/role/public key — is
+stamped `lastHeard = last_advert`, the **sender-side** advert-creation time,
+which is always older than the placeholder's receive time (seconds for healthy
+clocks, years for broken ones). `upsert_node`'s row-level freshness guard
+(`WHERE excluded.last_heard >= nodes.last_heard`) therefore discarded the
+entire named update, permanently: every later contact re-post (auto-update,
+periodic snapshot, restart) is also sender-stamped and also lost, while each
+advertised-position ingest re-bumps the row's `last_heard`. Result: nameless
+"ghost" nodes with a hex `short_name`, NULL role (displayed as the CLIENT
+default), and an advert-stamped `position_time` — violating the reconciliation
+promise in `CONTRACTS.md` ("a later full contact advertisement reconciles it",
+SPEC A4e). Fixed web-side (Ruby): after the guarded upsert, a non-synthetic
+record additionally **fills identity columns that are still NULL** (`num`,
+`short_name`, `long_name`, `macaddr`, `hw_model`, `role`, `public_key`,
+`is_unmessagable`) regardless of staleness — stale data can fill gaps but can
+never overwrite fresher values, and synthetic placeholders remain barred from
+real rows. No ingestor/API/DB-schema change; protocol-neutral (Invariant IV).
+
+### GH-A1 — Stale contact records name advert-placeholder ghosts
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "stale contact record enrichment" )
+```
+**Expected:** pass. Replaying the ingestor's wire sequence — bare-advert
+placeholder (`lastHeard = now`, no name) followed by the roster contact record
+(`lastHeard = last_advert`, older by 17 s and by ~2 years in a second example) —
+leaves the node **named** with its real role and public key. The stale record
+never regresses `last_heard`, never overwrites an existing name/role, an empty
+MeshCore `adv_name` does not fill anything, and a stale `synthetic=1` chat
+placeholder still cannot touch a real row.
+
+### GH-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test ) && ( cd web && bundle exec rufo --check . )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** all green. At risk and explicitly required to stay green: the
+pre-existing `upsert_node` guard specs (`data_processing_spec.rb` — role/
+identity preservation, generic-name fallback, synthetic flag + merge #755/#803)
+and `database_spec.rb`'s node-merge suites, since the fix appends a second
+NULL-fill statement inside the same `upsert_node` transaction; the Python
+ingestor is untouched (A4e's advert-capture suite unchanged).
