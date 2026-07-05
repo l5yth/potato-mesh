@@ -369,3 +369,251 @@ class TestParseLoraFreqEnv:
         monkeypatch.delenv("FREQUENCY", raising=False)
         importlib.reload(config)
         assert config.LORA_FREQ is None
+
+
+# ---------------------------------------------------------------------------
+# TRANSPORT / PRIMARY_CHANNEL_ONLY / PRIMARY_CHANNEL_KEY / MESH_UDP_* /
+# INGESTOR_NODE_ID
+# ---------------------------------------------------------------------------
+
+# Every new env-driven config name introduced for the passive UDP transport.
+_UDP_ENV_VARS = (
+    "TRANSPORT",
+    "PRIMARY_CHANNEL_ONLY",
+    "PRIMARY_CHANNEL_KEY",
+    "PRIMARY_CHANNEL_NAME",
+    "MESH_UDP_GROUP",
+    "MESH_UDP_PORT",
+    "INGESTOR_NODE_ID",
+)
+
+
+def _clear_udp_env(monkeypatch) -> None:
+    """Delete every UDP-transport env var so tests start from a clean slate."""
+    for name in _UDP_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+class TestTransportConfig:
+    """Tests for :data:`config.TRANSPORT`."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        """Clear UDP-transport env vars and reload config to defaults after each test.
+
+        Prevents state set by one test (or leaked into later test modules
+        sharing this process) from affecting subsequent tests, since
+        ``config`` attributes set via :func:`importlib.reload` persist in
+        ``sys.modules`` beyond the env vars that produced them.
+        """
+        import importlib
+
+        _clear_udp_env(monkeypatch)
+        yield
+        _clear_udp_env(monkeypatch)
+        importlib.reload(config)
+
+    def test_transport_defaults_to_api(self, monkeypatch):
+        """TRANSPORT defaults to 'api' when unset."""
+        import importlib
+
+        monkeypatch.delenv("TRANSPORT", raising=False)
+        importlib.reload(config)
+        assert config.TRANSPORT == "api"
+
+    def test_transport_udp_lowercased(self, monkeypatch):
+        """TRANSPORT values are lower-cased; 'UDP' becomes 'udp'."""
+        import importlib
+
+        monkeypatch.setenv("TRANSPORT", "UDP")
+        importlib.reload(config)
+        assert config.TRANSPORT == "udp"
+
+    def test_transport_invalid_raises_value_error(self, monkeypatch):
+        """An unrecognised TRANSPORT value raises ValueError at import time."""
+        import importlib
+
+        monkeypatch.setenv("TRANSPORT", "bogus")
+        with pytest.raises(ValueError, match="Unknown TRANSPORT"):
+            importlib.reload(config)
+
+
+class TestPrimaryChannelOnlyConfig:
+    """Tests for :data:`config.PRIMARY_CHANNEL_ONLY`."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        """Clear UDP-transport env vars and reload config to defaults after each test."""
+        import importlib
+
+        _clear_udp_env(monkeypatch)
+        yield
+        _clear_udp_env(monkeypatch)
+        importlib.reload(config)
+
+    def test_primary_channel_only_flag(self, monkeypatch):
+        """PRIMARY_CHANNEL_ONLY is True when the env var is exactly '1'."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", "1")
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_ONLY is True
+
+    def test_primary_channel_only_defaults_false(self, monkeypatch):
+        """PRIMARY_CHANNEL_ONLY defaults to False when unset."""
+        import importlib
+
+        monkeypatch.delenv("PRIMARY_CHANNEL_ONLY", raising=False)
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_ONLY is False
+
+    def test_primary_channel_only_false_for_non_one_values(self, monkeypatch):
+        """Any value other than the literal '1' leaves the flag False."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_ONLY", "true")
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_ONLY is False
+
+
+class TestPrimaryChannelNameConfig:
+    """Tests for :data:`config.PRIMARY_CHANNEL_NAME`."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        """Clear UDP-transport env vars and reload config to defaults after each test."""
+        import importlib
+
+        _clear_udp_env(monkeypatch)
+        yield
+        _clear_udp_env(monkeypatch)
+        importlib.reload(config)
+
+    def test_defaults_to_empty_string(self, monkeypatch):
+        """PRIMARY_CHANNEL_NAME defaults to '' (fail-closed sentinel) when unset."""
+        import importlib
+
+        monkeypatch.delenv("PRIMARY_CHANNEL_NAME", raising=False)
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_NAME == ""
+
+    def test_reads_and_strips_env_value(self, monkeypatch):
+        """A configured name is read and surrounding whitespace stripped."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_NAME", "  MediumFast  ")
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_NAME == "MediumFast"
+
+    def test_exported_in_all(self):
+        """PRIMARY_CHANNEL_NAME is part of the module's public surface."""
+        assert "PRIMARY_CHANNEL_NAME" in config.__all__
+
+
+class TestUdpTransportDefaults:
+    """Tests for PRIMARY_CHANNEL_KEY, MESH_UDP_GROUP, MESH_UDP_PORT, INGESTOR_NODE_ID."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch):
+        """Clear UDP-transport env vars and reload config to defaults after each test."""
+        import importlib
+
+        _clear_udp_env(monkeypatch)
+        yield
+        _clear_udp_env(monkeypatch)
+        importlib.reload(config)
+
+    def test_udp_defaults(self, monkeypatch):
+        """All four vars fall back to their documented defaults when unset."""
+        import importlib
+
+        for k in (
+            "PRIMARY_CHANNEL_KEY",
+            "MESH_UDP_GROUP",
+            "MESH_UDP_PORT",
+            "INGESTOR_NODE_ID",
+        ):
+            monkeypatch.delenv(k, raising=False)
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_KEY == "AQ=="
+        assert config.MESH_UDP_GROUP == "224.0.0.69"
+        assert config.MESH_UDP_PORT == 4403
+        assert config.INGESTOR_NODE_ID is None
+
+    def test_primary_channel_key_custom_value(self, monkeypatch):
+        """A custom PRIMARY_CHANNEL_KEY overrides the default."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_KEY", "c3VwZXJzZWNyZXQ=")
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_KEY == "c3VwZXJzZWNyZXQ="
+
+    def test_primary_channel_key_blank_falls_back_to_default(self, monkeypatch):
+        """A whitespace-only PRIMARY_CHANNEL_KEY falls back to the default."""
+        import importlib
+
+        monkeypatch.setenv("PRIMARY_CHANNEL_KEY", "   ")
+        importlib.reload(config)
+        assert config.PRIMARY_CHANNEL_KEY == "AQ=="
+
+    def test_mesh_udp_group_custom_value(self, monkeypatch):
+        """A custom MESH_UDP_GROUP overrides the default."""
+        import importlib
+
+        monkeypatch.setenv("MESH_UDP_GROUP", "239.1.2.3")
+        importlib.reload(config)
+        assert config.MESH_UDP_GROUP == "239.1.2.3"
+
+    def test_mesh_udp_group_blank_falls_back_to_default(self, monkeypatch):
+        """A whitespace-only MESH_UDP_GROUP falls back to the default."""
+        import importlib
+
+        monkeypatch.setenv("MESH_UDP_GROUP", "   ")
+        importlib.reload(config)
+        assert config.MESH_UDP_GROUP == "224.0.0.69"
+
+    def test_mesh_udp_port_custom_value(self, monkeypatch):
+        """A custom MESH_UDP_PORT is parsed to an int."""
+        import importlib
+
+        monkeypatch.setenv("MESH_UDP_PORT", "5000")
+        importlib.reload(config)
+        assert config.MESH_UDP_PORT == 5000
+        assert isinstance(config.MESH_UDP_PORT, int)
+
+    def test_mesh_udp_port_blank_falls_back_to_default(self, monkeypatch):
+        """A whitespace/empty MESH_UDP_PORT falls back to 4403 without raising.
+
+        A blank value is common in ``.env`` files; parsing it with a bare
+        ``int()`` would raise ``ValueError`` at import and stop the service.
+        """
+        import importlib
+
+        monkeypatch.setenv("MESH_UDP_PORT", "   ")
+        importlib.reload(config)  # must not raise
+        assert config.MESH_UDP_PORT == 4403
+
+    def test_ingestor_node_id_custom_value(self, monkeypatch):
+        """A custom INGESTOR_NODE_ID is returned stripped of surrounding whitespace."""
+        import importlib
+
+        monkeypatch.setenv("INGESTOR_NODE_ID", " !deadbeef ")
+        importlib.reload(config)
+        assert config.INGESTOR_NODE_ID == "!deadbeef"
+
+    def test_ingestor_node_id_blank_is_none(self, monkeypatch):
+        """A whitespace-only INGESTOR_NODE_ID normalises to None."""
+        import importlib
+
+        monkeypatch.setenv("INGESTOR_NODE_ID", "   ")
+        importlib.reload(config)
+        assert config.INGESTOR_NODE_ID is None
+
+
+class TestUdpTransportAllExports:
+    """Tests that the new config names are exported via ``__all__``."""
+
+    def test_new_names_in_all(self):
+        """TRANSPORT, PRIMARY_CHANNEL_ONLY, and the UDP vars are in __all__."""
+        for name in _UDP_ENV_VARS:
+            assert name in config.__all__

@@ -627,6 +627,10 @@ def main(*, provider: MeshProtocol | None = None) -> None:
             from .protocols.meshcore import MeshcoreProvider
 
             provider = MeshcoreProvider()
+        elif config.TRANSPORT == "udp":
+            from .protocols.meshtastic_udp import MeshtasticUdpProvider
+
+            provider = MeshtasticUdpProvider()
         else:
             from .protocols.meshtastic import MeshtasticProvider
 

@@ -447,6 +447,16 @@ def store_packet_dict(packet: Mapping) -> None:
     except Exception:
         channel = 0
 
+    if channels.is_primary_only() and not channels.is_primary_channel(channel):
+        _ignored_mod._record_ignored_packet(packet, reason="non-primary-channel")
+        if config.DEBUG:
+            config._debug_log(
+                "Ignored packet on non-primary channel",
+                context="handlers.store_packet_dict",
+                channel=channel,
+            )
+        return
+
     channel_name_value = channels.channel_name(channel)
 
     pkt_id = _first(packet, "id", "packet_id", "packetId", default=None)

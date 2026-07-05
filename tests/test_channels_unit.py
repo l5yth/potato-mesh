@@ -472,3 +472,40 @@ class TestRegisterChannel:
         channels.register_channel(1, "Chat")
         assert channels.channel_name(0) == "LongFast"
         assert channels.channel_name(1) == "Chat"
+
+
+# ---------------------------------------------------------------------------
+# is_primary_channel / is_primary_only
+# ---------------------------------------------------------------------------
+
+
+class TestIsPrimaryChannel:
+    """Tests for :func:`channels.is_primary_channel`."""
+
+    def test_is_primary_channel_true_for_zero(self):
+        """Channel index 0 (PRIMARY) is reported as primary."""
+        assert channels.is_primary_channel(0) is True
+
+    def test_is_primary_channel_false_for_nonzero(self):
+        """Any non-zero channel index is not primary."""
+        assert channels.is_primary_channel(1) is False
+
+    def test_is_primary_channel_false_for_none(self):
+        """A missing channel index is not primary."""
+        assert channels.is_primary_channel(None) is False
+
+
+class TestIsPrimaryOnly:
+    """Tests for :func:`channels.is_primary_only`."""
+
+    def test_is_primary_only_reads_config(self, monkeypatch):
+        """Reflects the live value of ``config.PRIMARY_CHANNEL_ONLY``."""
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", True)
+        assert channels.is_primary_only() is True
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", False)
+        assert channels.is_primary_only() is False
+
+    def test_is_primary_only_defaults_false_when_attr_missing(self, monkeypatch):
+        """Falls back to ``False`` if ``config.PRIMARY_CHANNEL_ONLY`` is absent."""
+        monkeypatch.delattr(config, "PRIMARY_CHANNEL_ONLY", raising=False)
+        assert channels.is_primary_only() is False

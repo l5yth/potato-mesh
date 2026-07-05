@@ -103,6 +103,13 @@ The web app can be configured with environment variables (defaults shown):
 | `DEBUG` | `0` | Set to `1` for verbose logging in the web and ingestor services. |
 | `ALLOWED_CHANNELS` | _unset_ | Comma-separated channel names the ingestor accepts; when set, all other channels are skipped before hidden filters. |
 | `HIDDEN_CHANNELS` | _unset_ | Comma-separated channel names the ingestor will ignore when forwarding packets. |
+| `TRANSPORT` | `api` | Ingestor transport: `api` (Meshtastic library over serial/TCP/BLE) or `udp` (passive LAN multicast; see [Passive UDP transport](#passive-udp-transport)). |
+| `PRIMARY_CHANNEL_ONLY` | `0` | Set to `1` to ingest only the primary channel (index 0) and drop all other channels. In UDP transport this requires `PRIMARY_CHANNEL_NAME`; without it, every packet is dropped (fail closed). |
+| `PRIMARY_CHANNEL_KEY` | `AQ==` | Base64 PSK used to decrypt the primary channel in UDP transport (default = Meshtastic default key). |
+| `PRIMARY_CHANNEL_NAME` | _unset_ | Name of channel 0 (e.g. `MediumFast`/`LongFast` — the preset name the firmware uses when the channel name is blank, as shown by `meshtastic --info`). Used to compute the channel hash that identifies primary traffic on the UDP multicast. Required by UDP `PRIMARY_CHANNEL_ONLY=1`, because a secondary channel can share the default `AQ==` key — only the per-channel hash of *(name, key)* distinguishes them. |
+| `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
+| `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
+| `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat in UDP transport (which cannot auto-detect "self"). |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
 | `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |
@@ -266,6 +273,39 @@ ingestion limited, set `ALLOWED_CHANNELS` to a comma-separated whitelist (for
 example `ALLOWED_CHANNELS="Chat,Ops"`); packets on other channels are discarded.
 Use `HIDDEN_CHANNELS` to block specific channels from the web UI even when they
 appear in the allowlist.
+
+### Passive UDP transport
+
+The Meshtastic node radio accepts only **one** API client at a time (serial or
+TCP), so an ingestor connected over `CONNECTION` monopolizes the node — the
+phone app, CLI, and message sending fight it for the single slot. Setting
+`TRANSPORT=udp` switches the ingestor to a **passive** listener that never
+connects to the node's API at all: it joins the node's LAN multicast group
+(Meshtastic "Mesh via UDP", `224.0.0.69:4403`) and decodes packets off the wire,
+leaving the node's API slot completely free.
+
+Enable "Mesh via UDP" on the node first (`meshtastic --set
+network.enabled_protocols 1`). The ingestor decrypts the primary channel with
+`PRIMARY_CHANNEL_KEY` (the Meshtastic default key `AQ==` by default). Private
+channels with their own secret keys are cryptographically unreadable and
+dropped. To guarantee **only** channel 0 is ingested, set
+`PRIMARY_CHANNEL_ONLY=1` **and** `PRIMARY_CHANNEL_NAME` (e.g. `MediumFast`): each
+packet advertises the hash of its channel *(name + key)*, and only packets whose
+hash matches the primary channel's are accepted. This is stricter than decrypting
+with the primary key — a secondary channel created with the default `AQ==` key
+would decrypt too, but has a different name and therefore a different hash, so it
+is dropped. If `PRIMARY_CHANNEL_NAME` is not set while `PRIMARY_CHANNEL_ONLY=1`,
+the ingestor fails closed and drops everything. Because there is no API
+connection, the node's bulk node database is not read — the node list rebuilds
+over the air from observed packets, and payloads (position, telemetry,
+traceroute, …) are decoded into the exact same shape the API/serial transport
+produces, so the collector receives identical records.
+
+`TRANSPORT=udp` requires host networking so the container can receive LAN
+multicast (`network_mode: host`). A ready-to-use Raspberry Pi (arm64) deployment
+is provided in [`data/tools/compose.udp.pi.yml`](data/tools/compose.udp.pi.yml).
+Capture live packets for testing with
+[`data/tools/capture_udp_fixtures.py`](data/tools/capture_udp_fixtures.py).
 
 ## Nix
 

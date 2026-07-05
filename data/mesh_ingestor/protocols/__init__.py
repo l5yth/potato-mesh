@@ -28,7 +28,9 @@ def __getattr__(name: str) -> object:
 
     ``MeshcoreProvider`` and ``ClosedBeforeConnectedError`` are imported on
     demand so that the MeshCore library (once wired in) is not loaded at
-    startup when ``PROTOCOL=meshtastic``.
+    startup when ``PROTOCOL=meshtastic``. ``MeshtasticUdpProvider`` is
+    likewise lazy so its ``cryptography``/protobuf imports are not paid for
+    unless ``TRANSPORT=udp`` is actually selected.
     """
     if name == "MeshcoreProvider":
         from .meshcore import MeshcoreProvider
@@ -38,7 +40,16 @@ def __getattr__(name: str) -> object:
         from .meshcore import ClosedBeforeConnectedError
 
         return ClosedBeforeConnectedError
+    if name == "MeshtasticUdpProvider":
+        from .meshtastic_udp import MeshtasticUdpProvider
+
+        return MeshtasticUdpProvider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["MeshtasticProvider", "MeshcoreProvider", "ClosedBeforeConnectedError"]
+__all__ = [
+    "MeshtasticProvider",
+    "MeshcoreProvider",
+    "ClosedBeforeConnectedError",
+    "MeshtasticUdpProvider",
+]

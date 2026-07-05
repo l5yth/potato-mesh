@@ -1,0 +1,60 @@
+# Copyright © 2025-26 l5yth & contributors
+# Licensed under the Apache License, Version 2.0 (see LICENSE)
+#
+# Passive UDP ingestor deployment for a Raspberry Pi 5 (arm64).
+#
+# Runs the ingestor in TRANSPORT=udp mode. It reads the same .env as the
+# standard deployment (API_TOKEN etc. are untouched) and only swaps the node
+# connection from single-client serial/TCP to passive LAN multicast.
+#
+# Prerequisites on the Pi (once):
+#   1. Get the source onto the Pi (arm64 images are built natively — no QEMU).
+#   2. Build the arm64 image from it:
+#        docker build -f data/Dockerfile -t potato-mesh-ingestor:udp .
+#   3. Copy this file to your compose.yml and add PRIMARY_CHANNEL_NAME +
+#      INGESTOR_NODE_ID to .env.
+#   4. docker compose up -d
+#
+# `network_mode: host` is REQUIRED — multicast (224.0.0.69) cannot reach a
+# bridged container.
+
+services:
+  ingestor:
+    image: potato-mesh-ingestor:udp        # built locally from source (step 2)
+    network_mode: host                     # REQUIRED for LAN multicast reception
+    environment:
+      TRANSPORT: ${TRANSPORT:-udp}
+      PRIMARY_CHANNEL_ONLY: ${PRIMARY_CHANNEL_ONLY:-1}
+      PRIMARY_CHANNEL_KEY: ${PRIMARY_CHANNEL_KEY:-AQ==}
+      # Name of channel 0 (the preset name when the radio leaves it blank, e.g.
+      # MediumFast / LongFast). REQUIRED for primary-only filtering: it is what
+      # distinguishes the primary channel from a secondary channel that shares
+      # the default AQ== key. If unset, primary-only mode drops ALL traffic.
+      PRIMARY_CHANNEL_NAME: ${PRIMARY_CHANNEL_NAME:-}
+      MESH_UDP_GROUP: ${MESH_UDP_GROUP:-224.0.0.69}
+      MESH_UDP_PORT: ${MESH_UDP_PORT:-4403}
+      INGESTOR_NODE_ID: ${INGESTOR_NODE_ID:-}
+      API_TOKEN: ${API_TOKEN}
+      INSTANCE_DOMAIN: ${INSTANCE_DOMAIN}
+      POTATOMESH_INSTANCE: ${POTATOMESH_INSTANCE}
+      DEBUG: ${DEBUG:-0}
+      FEDERATION: ${FEDERATION:-1}
+      PRIVATE: ${PRIVATE:-0}
+    volumes:
+      - potatomesh_data:/app/.local/share/potato-mesh
+      - potatomesh_config:/app/.config/potato-mesh
+      - potatomesh_logs:/app/logs
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+volumes:
+  potatomesh_data:
+    driver: local
+  potatomesh_config:
+    driver: local
+  potatomesh_logs:
+    driver: local

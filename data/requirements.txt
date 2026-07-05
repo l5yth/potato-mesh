@@ -3,6 +3,7 @@ meshtastic>=2.5.0
 meshcore>=2.3.5
 bleak>=0.21.0
 protobuf>=5.27.2
+cryptography>=42.0.0  # AES-CTR decryption for the passive UDP transport
 
 # Development dependencies (optional)
 black>=24.8.0
