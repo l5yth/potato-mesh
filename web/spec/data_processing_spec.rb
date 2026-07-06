@@ -745,6 +745,129 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   end
 
   # ---------------------------------------------------------------------------
+  # upsert_node — MeshCore ghost nodes: a bare-advert placeholder row (stamped
+  # with the receiver's wall clock) must not starve the follow-up roster
+  # contact record, whose lastHeard is the sender-stamped last_advert and is
+  # therefore always older (seconds for healthy clocks, years for broken
+  # ones). The freshness guard may skip the stale record's timestamps, but
+  # its identity fields (name, role, public key, …) must still fill columns
+  # that are NULL, or the node stays a permanently nameless "ghost".
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — stale contact record enrichment (ghost nodes)" do
+    include_context "with isolated db"
+
+    let(:pub_key) { "60e53d9b#{"ab" * 28}" }
+
+    # Mirror the ingestor's bare-advert placeholder (_advert_to_node_dict +
+    # radio metadata): wall-clock lastHeard, shortName/publicKey, no name/role.
+    def upsert_advert_placeholder(db, heard_at)
+      dp.upsert_node(db, "!60e53d9b", {
+        "lastHeard" => heard_at,
+        "lora_freq" => 869,
+        "modem_preset" => "SF8/BW62/CR8",
+        "user" => { "shortName" => "60e5", "publicKey" => pub_key },
+      }, protocol: "meshcore")
+    end
+
+    # Mirror the follow-up roster contact (_contact_to_node_dict): the full
+    # record named from the advert, stamped with the sender-side last_advert.
+    def upsert_contact_record(db, last_advert, long_name: "Alpha Repeater")
+      dp.upsert_node(db, "!60e53d9b", {
+        "lastHeard" => last_advert,
+        "lora_freq" => 869,
+        "modem_preset" => "SF8/BW62/CR8",
+        "user" => {
+          "longName" => long_name,
+          "shortName" => "60e5",
+          "publicKey" => pub_key,
+          "role" => "REPEATER",
+        },
+      }, protocol: "meshcore")
+    end
+
+    def node_row(db)
+      db.execute("SELECT * FROM nodes WHERE node_id = '!60e53d9b'").first
+    end
+
+    it "fills name and role from a contact record stamped seconds older (healthy clock)" do
+      db = open_db
+      upsert_advert_placeholder(db, now)
+      upsert_contact_record(db, now - 17)
+      row = node_row(db)
+      db.close
+      expect(row["long_name"]).to eq("Alpha Repeater")
+      expect(row["role"]).to eq("REPEATER")
+      expect(row["public_key"]).to eq(pub_key)
+    end
+
+    it "fills name and role from a contact record stamped years older (broken node clock)" do
+      db = open_db
+      upsert_advert_placeholder(db, now)
+      upsert_contact_record(db, now - 66_988_974)
+      row = node_row(db)
+      db.close
+      expect(row["long_name"]).to eq("Alpha Repeater")
+      expect(row["role"]).to eq("REPEATER")
+    end
+
+    it "keeps the newer last_heard when a stale contact record enriches the row" do
+      db = open_db
+      upsert_advert_placeholder(db, now)
+      upsert_contact_record(db, now - 17)
+      row = node_row(db)
+      db.close
+      expect(row["last_heard"]).to eq(now)
+    end
+
+    it "does not overwrite an existing name or role with stale data" do
+      db = open_db
+      upsert_contact_record(db, now, long_name: "Fresh Name")
+      dp.upsert_node(db, "!60e53d9b", {
+        "lastHeard" => now - 3600,
+        "user" => { "longName" => "Old Name", "shortName" => "OLD", "role" => "COMPANION" },
+      }, protocol: "meshcore")
+      row = node_row(db)
+      db.close
+      expect(row["long_name"]).to eq("Fresh Name")
+      expect(row["role"]).to eq("REPEATER")
+    end
+
+    it "does not fill a missing name with a stale empty adv_name" do
+      db = open_db
+      upsert_advert_placeholder(db, now)
+      upsert_contact_record(db, now - 17, long_name: "")
+      row = node_row(db)
+      db.close
+      expect(row["long_name"]).to be_nil
+    end
+
+    it "does not fill a missing short_name with a stale empty shortName" do
+      db = open_db
+      dp.upsert_node(db, "!60e53d9b", { "lastHeard" => now }, protocol: "meshcore")
+      dp.upsert_node(db, "!60e53d9b", {
+        "lastHeard" => now - 17,
+        "user" => { "shortName" => "", "longName" => "Alpha Repeater" },
+      }, protocol: "meshcore")
+      row = node_row(db)
+      db.close
+      expect(row["short_name"]).to be_nil
+      expect(row["long_name"]).to eq("Alpha Repeater")
+    end
+
+    it "still ignores stale synthetic placeholders for real rows" do
+      db = open_db
+      upsert_advert_placeholder(db, now)
+      dp.upsert_node(db, "!60e53d9b", {
+        "lastHeard" => now - 17,
+        "user" => { "longName" => "Chat Alias", "synthetic" => true },
+      }, protocol: "meshcore")
+      row = node_row(db)
+      db.close
+      expect(row["long_name"]).to be_nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # upsert_node — synthetic flag + merge
   # ---------------------------------------------------------------------------
   describe "#upsert_node — synthetic node handling", :db do

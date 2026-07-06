@@ -148,13 +148,6 @@ module PotatoMesh
         updated
       end
 
-      # Insert or update a node row from an inbound NodeInfo-style payload.
-      #
-      # @param db [SQLite3::Database] open database handle.
-      # @param node_id [String] canonical node identifier.
-      # @param n [Hash] node payload extracted from the ingestor.
-      # @param protocol [String] protocol identifier (default +meshtastic+).
-      # @return [void]
       # Read +hash[primary]+, falling back to the first present alias key. Lets the
       # node ingest contract accept snake_case fields in addition to the Meshtastic
       # camelCase the collector emits today; nil-aware so a boolean +false+ from the
@@ -171,6 +164,26 @@ module PotatoMesh
         nil
       end
 
+      # Insert or update a node row from an inbound NodeInfo-style payload.
+      #
+      # Two-phase write. Phase one is the freshness-guarded upsert: a record
+      # whose +lastHeard+ is older than the stored row cannot change
+      # timestamps, telemetry, or position. Phase two fills identity columns
+      # (+num+, +short_name+, +long_name+, +macaddr+, +hw_model+, +role+,
+      # +public_key+, +is_unmessagable+) that are still NULL, regardless of the
+      # record's staleness — a stale-but-richer record (e.g. a MeshCore roster
+      # contact stamped with the sender-side +last_advert+, which is always
+      # older than the wall-clock +lastHeard+ of the bare-advert placeholder
+      # that created the row) still names the node instead of being discarded
+      # wholesale, which produced permanently unnamed "ghost" nodes
+      # (ACCEPTANCE GH-A1). Synthetic chat placeholders never touch real rows
+      # in either phase.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param node_id [String] canonical node identifier.
+      # @param n [Hash] node payload extracted from the ingestor.
+      # @param protocol [String] protocol identifier (default +meshtastic+).
+      # @return [void]
       def upsert_node(db, node_id, n, protocol: "meshtastic")
         user = n["user"] || {}
         met = pick_alias(n, "deviceMetrics", "device_metrics") || {}
@@ -219,6 +232,11 @@ module PotatoMesh
         # sender names before the real contact advertisement is received.
         synthetic = user["synthetic"] ? 1 : 0
         long_name = pick_alias(user, "longName", "long_name")
+        short_name = pick_alias(user, "shortName", "short_name")
+        macaddr = user["macaddr"]
+        hw_model = pick_alias(user, "hwModel", "hw_model") || pick_alias(n, "hwModel", "hw_model")
+        public_key = pick_alias(user, "publicKey", "public_key")
+        is_unmessagable = coerce_bool(pick_alias(user, "isUnmessagable", "is_unmessagable"))
 
         # If the incoming long name is a generic placeholder, prefer any real
         # name already on record so we never stomp known data with fallback
@@ -240,13 +258,13 @@ module PotatoMesh
         row = [
           node_id,
           node_num,
-          pick_alias(user, "shortName", "short_name"),
+          short_name,
           long_name,
-          user["macaddr"],
-          pick_alias(user, "hwModel", "hw_model") || pick_alias(n, "hwModel", "hw_model"),
+          macaddr,
+          hw_model,
           role,
-          pick_alias(user, "publicKey", "public_key"),
-          coerce_bool(pick_alias(user, "isUnmessagable", "is_unmessagable")),
+          public_key,
+          is_unmessagable,
           coerce_bool(pick_alias(n, "isFavorite", "is_favorite")),
           pick_alias(n, "hopsAway", "hops_away"),
           n["snr"],
@@ -304,6 +322,35 @@ module PotatoMesh
               WHERE COALESCE(excluded.last_heard,0) >= COALESCE(nodes.last_heard,0)
                 AND NOT (COALESCE(nodes.synthetic,0) = 0 AND excluded.synthetic = 1)
             SQL
+
+            # Ghost-node repair (GH-A1): the guard above skips records whose
+            # last_heard is older than the stored row — correct for timestamps,
+            # telemetry, and position, but it also starved identity data. A
+            # MeshCore roster contact is stamped with the sender-side
+            # last_advert, which is always older than the wall-clock lastHeard
+            # of the bare-advert placeholder that created the row, so the
+            # name/role/public key never landed and the node stayed a
+            # permanently unnamed ghost. Fill identity columns that are still
+            # NULL from any non-synthetic record regardless of staleness: gaps
+            # get filled, fresher values are never regressed, and synthetic
+            # chat placeholders remain barred from real rows. NULLIF keeps
+            # empty strings — a MeshCore contact may carry an empty adv_name,
+            # and shortName is guarded the same way — from filling
+            # long_name/short_name with blank text.
+            if synthetic.zero?
+              db.execute(<<~SQL, [node_num, short_name, long_name, macaddr, hw_model, role, public_key, is_unmessagable, node_id])
+                UPDATE nodes SET
+                  num=COALESCE(num, ?),
+                  short_name=COALESCE(short_name, NULLIF(?, '')),
+                  long_name=COALESCE(long_name, NULLIF(?, '')),
+                  macaddr=COALESCE(macaddr, ?),
+                  hw_model=COALESCE(hw_model, ?),
+                  role=COALESCE(role, ?),
+                  public_key=COALESCE(public_key, ?),
+                  is_unmessagable=COALESCE(is_unmessagable, ?)
+                WHERE node_id = ?
+              SQL
+            end
 
             # Reconcile synthetic placeholder rows with their real counterparts
             # whenever a MeshCore node is upserted.  Both directions must fire —
