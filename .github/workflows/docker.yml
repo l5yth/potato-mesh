@@ -42,6 +42,9 @@ jobs:
       packages: write
 
     strategy:
+      # One architecture's breakage must never withhold the other
+      # architectures' images: publish legs are independent (DK-A1).
+      fail-fast: false
       matrix:
         service: [web, ingestor, matrix-bridge]
         architecture:

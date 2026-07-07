@@ -2585,3 +2585,69 @@ identity preservation, generic-name fallback, synthetic flag + merge #755/#803)
 and `database_spec.rb`'s node-merge suites, since the fix appends a second
 NULL-fill statement inside the same `upsert_node` transaction; the Python
 ingestor is untouched (A4e's advert-capture suite unchanged).
+
+---
+
+## Bugfix: Docker release builds on 32-bit ARM (fail-fast teardown + missing armv7 toolchain)
+
+The v0.7.2 release build (run 28775124854) failed twice the same way: PR #838
+added `cryptography>=42.0.0` (AES-CTR for the passive UDP transport), which —
+like its C dependency `cffi` — publishes **no 32-bit ARM wheels** (neither
+musllinux nor manylinux `armv7l`), so the `python:*-alpine` armv7 image build
+compiles both from source. The Dockerfile's throwaway `.build-deps` lacked the
+required toolchain, dying at `src/c/_cffi_backend.c:15:10: fatal error: ffi.h:
+No such file or directory`. Because the build matrix left `fail-fast` at its
+default (`true`), that one leg cancelled all eight healthy publish jobs —
+web and matrix-bridge images for every architecture were never pushed, and
+GitHub's carried-over-failure semantics make re-running any job of the run
+impossible (new attempts are cancelled within seconds by the failed sibling).
+UH-A4 fixed the same #838 dependency drift for `python.yml`; the image-build
+half was uncovered — no prior criterion asserted that container images build.
+Fix: `fail-fast: false` on the `build-and-push` matrix (one architecture's
+breakage must never withhold the other architectures' images), and the armv7
+compile toolchain (`libffi-dev openssl-dev pkgconfig rust cargo`) added to the
+`.build-deps` that are removed again after `pip install` (image size
+unchanged). Cold armv7 builds compile cryptography's Rust extension under QEMU
+(~30–60 min), amortised by the workflow's per-service/arch GHA layer cache.
+
+### DK-A1 — one failing architecture cannot tear down the release matrix
+```bash
+grep -n 'fail-fast: false' .github/workflows/docker.yml
+```
+**Expected:** exactly one match, inside the `build-and-push` job's `strategy`
+block — sibling matrix jobs keep building and pushing when one leg fails, so a
+single-architecture defect degrades the release to 8/9 images instead of 2/9.
+
+### DK-A2 — ingestor image builds for linux/arm/v7 (cryptography from source)
+```bash
+docker buildx build --platform linux/arm/v7 -f data/Dockerfile --target production .
+```
+**Expected:** exit 0 (requires QEMU binfmt:
+`docker run --privileged --rm tonistiigi/binfmt --install arm`; a cold build
+compiles `cffi` + `cryptography` from source and may take 30–60 min emulated).
+Zero-docker fallback (static form, suitable for sandboxes without a daemon):
+```bash
+sed -n '/virtual .build-deps/,/pip install/p' data/Dockerfile \
+  | grep -v '^[[:space:]]*#' | grep -cE 'libffi-dev|openssl-dev|pkgconfig|rust|cargo'
+```
+**Expected:** prints `5` — the armv7 source-build toolchain is present in
+`.build-deps` (comment lines excluded; the packages are still removed by the
+trailing `apk del .build-deps`).
+Rust-drift caveat, so the next failure of this class is recognised quickly: a
+future `cryptography` bump may require a newer Rust than the pinned Alpine
+release ships; the failure mode is this same job failing with a Rust version
+error, and the remedies are bumping `PYTHON_VERSION` (newer Alpine) or capping
+`cryptography` in `data/requirements.txt`.
+
+### DK-R1 — Regression: prior acceptance still holds
+```bash
+grep -nA3 '^on:' .github/workflows/docker.yml
+git ls-files '.github/workflows/docker.yml' 'data/Dockerfile' \
+  | xargs grep -L 'Copyright © 2025-26 l5yth & contributors'
+```
+**Expected:** the workflow still triggers on `v*` tag pushes and
+`workflow_dispatch` (release flow unchanged); the license-notice grep prints
+nothing (B4 intact). No source code, dependency manifest, or test suite is
+touched by this fix — B1 suites are unaffected by construction; the only
+behavioral deltas are matrix cancellation policy and armv7 build-stage
+packages.
