@@ -35,7 +35,17 @@ RUN set -eux; \
         gcc \
         musl-dev \
         linux-headers \
-        build-base; \
+        build-base \
+        # cryptography and cffi publish no 32-bit ARM wheels, so armv7
+        # compiles both from source: cffi needs the libffi headers, and
+        # cryptography's Rust extension needs rust/cargo plus the OpenSSL
+        # headers found via pkgconfig (DK-A2). All of it is removed again
+        # by the trailing `apk del`, so the final image size is unchanged.
+        libffi-dev \
+        openssl-dev \
+        pkgconfig \
+        rust \
+        cargo; \
     python -m pip install --no-cache-dir -r requirements.txt; \
     apk del .build-deps
 
