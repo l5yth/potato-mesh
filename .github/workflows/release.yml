@@ -14,10 +14,17 @@
 
 name: Mobile Release
 
+# DISABLED: the Flutter reader apps are currently dysfunctional and must not be
+# released until the underlying issues are fixed. The automatic tag-push trigger
+# is intentionally removed so version tags (e.g. v0.7.3) do NOT build or publish
+# mobile release artifacts. The workflow is retained under workflow_dispatch so
+# maintainers can still run it manually while validating a fix; restore the
+# "push: tags" trigger below to re-enable automatic releases.
 on:
-  push:
-    tags:
-      - "*"
+  workflow_dispatch:
+  # push:
+  #   tags:
+  #     - "*"
 
 permissions:
   contents: write
