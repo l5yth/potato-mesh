@@ -24,7 +24,7 @@ import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
 import { meshcoreIconHtml, meshtasticIconHtml } from './protocol-helpers.js';
-import { TILE_LAYER_URL, TILE_LAYER_OPTIONS } from './basemap-config.js';
+import { createBasemapLayer } from './basemap-config.js';
 
 /**
  * Escape HTML special characters to prevent XSS.
@@ -584,7 +584,9 @@ export async function initializeFederationPage(options = {}) {
     map = leaflet.map(mapContainer, { worldCopyJump: true, attributionControl: false });
     map.setView([config.mapCenter.lat, config.mapCenter.lon], initialZoom);
 
-    leaflet.tileLayer(TILE_LAYER_URL, TILE_LAYER_OPTIONS).addTo(map);
+    // Shared HOT-primary basemap with per-tile CARTO fallback (see
+    // ``./basemap-config.js``); identical to the dashboard map.
+    createBasemapLayer(leaflet).addTo(map);
 
     markersLayer = leaflet.layerGroup().addTo(map);
   }

@@ -1899,6 +1899,25 @@ input[type="radio"] {
   opacity: 0.75;
 }
 
+/*
+ * Primary HOT basemap tiles are natively colourful; this static filter greys
+ * them to match the dark UI. Leaflet stamps the layer's `className` on the tile
+ * container, so the per-tile class `.map-tiles-hot` (added by
+ * `main/fallback-tile-layer.js`) is what carries the filter. A tile that has
+ * fallen back to CARTO (already dark) drops `.map-tiles-hot` for
+ * `.map-tiles-fallback` and renders unfiltered — inverting it would make it
+ * light. Offline placeholder tiles carry neither class and stay unfiltered too.
+ */
+#map .leaflet-tile.map-tiles-hot {
+  filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
+  -webkit-filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
+}
+
+#map .leaflet-tile.map-tiles-fallback {
+  filter: none;
+  -webkit-filter: none;
+}
+
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
   background: #fff;

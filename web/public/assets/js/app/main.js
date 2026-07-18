@@ -192,7 +192,7 @@ import {
 } from './main/protocol-icons.js';
 import { buildNeighborTooltipHtml, buildTraceTooltipHtml } from './main/tooltip-html.js';
 import { createOfflineTileLayer as createOfflineTileLayerImpl } from './main/offline-tile-layer.js';
-import { TILE_LAYER_URL, TILE_LAYER_OPTIONS } from './basemap-config.js';
+import { createBasemapLayer } from './basemap-config.js';
 import { createTileFailurePolicy } from './main/tile-failure-policy.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
@@ -1334,9 +1334,12 @@ export function initializeApp(config) {
 
 
   // --- Map setup ---
-  // The basemap is CARTO Dark Matter (see ``./basemap-config.js``). Its tiles
-  // are natively dark-grey, so there is no per-theme CSS colour filter — the
-  // old ``grayscale``/``invert`` pipeline was removed with the provider swap.
+  // The basemap is HOT (primary, dark-filtered via the ``.map-tiles-hot`` CSS
+  // rule) with a per-tile CARTO fallback, built by the shared
+  // ``createBasemapLayer`` factory (see ``./basemap-config.js`` and
+  // ``./main/fallback-tile-layer.js``). A HOT tile that errors or is slow (>1s)
+  // is individually swapped to CARTO; only a tile that fails on both providers
+  // reaches the offline placeholder wired below.
 
   if (hasLeaflet) {
     mapCenterLatLng = L.latLng(MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
@@ -1415,7 +1418,7 @@ export function initializeApp(config) {
   if (hasLeaflet && mapContainer && !isFederationView && !mapAlreadyInitialized) {
     map = L.map(mapContainer, { worldCopyJump: true, attributionControl: false });
     showMapStatus('Loading map tiles…');
-    tiles = L.tileLayer(TILE_LAYER_URL, TILE_LAYER_OPTIONS);
+    tiles = createBasemapLayer(L);
     const tileFailurePolicy = createTileFailurePolicy();
     const OFFLINE_TILES_MESSAGE =
       'Map tiles unavailable. Showing offline placeholder basemap.';
@@ -1428,9 +1431,10 @@ export function initializeApp(config) {
     });
 
     tiles.on('tileerror', () => {
-      // A single tile error no longer kills the basemap (DM3). The offline
-      // fallback only fires once the policy judges the basemap comprehensively
-      // unreachable (no successes after enough failures).
+      // Leaflet emits ``tileerror`` only when a tile failed on BOTH HOT and its
+      // CARTO fallback (see ``main/fallback-tile-layer.js``). A single such error
+      // still does not kill the basemap (DM3); the offline placeholder fires only
+      // once the policy judges the basemap comprehensively unreachable.
       if (tileFailurePolicy.recordTileError()) {
         activateOfflineTiles(OFFLINE_TILES_MESSAGE);
       }
