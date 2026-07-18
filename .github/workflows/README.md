@@ -11,5 +11,7 @@
 - **`ruby.yml`** - Ruby Sinatra app testing
 - **`javascript.yml`** - Frontend test suite
 - **`mobile.yml`** - Flutter mobile tests with coverage reporting
-- **`release.yml`** - Tag-triggered Flutter release builds for Android and iOS
+- **`release.yml`** - Flutter release builds for Android and iOS (**disabled**:
+  manual `workflow_dispatch` only; the tag-push trigger is commented out until
+  the dysfunctional reader apps are fixed)
 

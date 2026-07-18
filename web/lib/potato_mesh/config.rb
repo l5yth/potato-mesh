@@ -315,13 +315,13 @@ module PotatoMesh
     # Provide the fallback version string when git metadata is unavailable.
     #
     # 0.7.0 introduced the breaking /api/stats response-shape change
-    # (SPEC S1); 0.7.2 is the current patch release, kept in lockstep with
-    # the other language manifests. The matching +git tag v0.7.2+ is the
+    # (SPEC S1); 0.7.3 is the current patch release, kept in lockstep with
+    # the other language manifests. The matching +git tag v0.7.3+ is the
     # maintainer release step.
     #
     # @return [String] semantic version identifier.
     def version_fallback
-      "0.7.2"
+      "0.7.3"
     end
 
     # Default refresh interval for frontend polling routines.
