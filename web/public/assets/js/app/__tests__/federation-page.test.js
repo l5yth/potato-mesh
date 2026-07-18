@@ -45,6 +45,29 @@ function createBasicFederationPageHarness() {
   return { ...env, statusEl, tbodyEl };
 }
 
+/**
+ * Build a Leaflet ``TileLayer`` class stub with ``extend`` so the shared
+ * ``createBasemapLayer`` factory (which subclasses ``L.TileLayer`` for the
+ * per-tile HOT→CARTO fallback) resolves to a layer exposing ``addTo`` in the
+ * federation harness. ``createTile`` is never invoked because the map stub
+ * renders no tiles, so the subclass body is irrelevant.
+ *
+ * @returns {Function} Constructable ``TileLayer`` with a static ``extend``.
+ */
+function makeTileLayerClass() {
+  function TileLayer() {}
+  TileLayer.extend = function extend() {
+    return function BasemapLayer() {
+      return {
+        addTo() {
+          return this;
+        }
+      };
+    };
+  };
+  return TileLayer;
+}
+
 function createBasicLeafletStub(options = {}) {
   const { markerPopups = null, fitBounds = false } = options;
 
@@ -59,6 +82,7 @@ function createBasicLeafletStub(options = {}) {
         }
       };
     },
+    TileLayer: makeTileLayerClass(),
     tileLayer() {
       return {
         addTo() {
@@ -155,6 +179,7 @@ test('federation map centers on configured coordinates and follows theme filters
     map() {
       return mapStub;
     },
+    TileLayer: makeTileLayerClass(),
     tileLayer() {
       return tileLayerStub;
     },
@@ -366,6 +391,7 @@ test('federation table sorting, contact rendering, and legend creation', async (
     map() {
       return mapStub;
     },
+    TileLayer: makeTileLayerClass(),
     tileLayer() {
       return {
         addTo() {
@@ -598,6 +624,7 @@ test('federation legend toggle respects media query changes', async () => {
         fitBounds() {}
       };
     },
+    TileLayer: makeTileLayerClass(),
     tileLayer() {
       return {
         addTo() {

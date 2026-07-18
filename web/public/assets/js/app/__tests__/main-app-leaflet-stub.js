@@ -162,6 +162,43 @@ export function makeLeafletStub() {
   }
 
   /**
+   * Build an ``L.TileLayer`` class stub supporting ``extend`` so the shared
+   * ``createBasemapLayer`` factory (which subclasses ``L.TileLayer`` to add the
+   * per-tile HOT→CARTO fallback) resolves in the harness.  Instances reuse the
+   * ``makeTileLayer`` shape (``on`` / ``addTo`` / ``_events``); ``createTile`` is
+   * never invoked because the map stub does not render tiles.
+   *
+   * @returns {Function} Constructable ``TileLayer`` with a static ``extend``.
+   */
+  function makeTileLayerClass() {
+    /**
+     * @param {string} url Tile URL template.
+     * @param {Object} [options] Tile options.
+     */
+    function TileLayer(url, options) {
+      Object.assign(this, makeTileLayer(url, options));
+    }
+    /**
+     * @param {Object} proto Prototype members mixed into the subclass.
+     * @returns {Function} The subclass constructor.
+     */
+    TileLayer.extend = function extend(proto) {
+      /**
+       * @param {string} url Tile URL template.
+       * @param {Object} [options] Tile options.
+       */
+      function Sub(url, options) {
+        TileLayer.call(this, url, options);
+      }
+      Sub.prototype = Object.create(TileLayer.prototype);
+      Sub.prototype.constructor = Sub;
+      Object.assign(Sub.prototype, proto);
+      return Sub;
+    };
+    return TileLayer;
+  }
+
+  /**
    * Construct the map stub returned by ``L.map()``.  ``getZoom`` is
    * mutable via ``_setZoom`` so individual tests can drive the dispatch
    * branches without re-instantiating the entire harness.
@@ -215,6 +252,7 @@ export function makeLeafletStub() {
       return stub._map;
     },
     tileLayer: makeTileLayer,
+    TileLayer: makeTileLayerClass(),
     layerGroup: makeLayerGroup,
     circleMarker(latLng, options) {
       const marker = makeMarker(latLng, options);

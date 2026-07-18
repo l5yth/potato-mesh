@@ -2129,6 +2129,11 @@ in `web/lib/potato_mesh/config.rb`,
 shell checks from the repo root.
 
 ### DM-A1 — Both maps use CARTO Dark Matter; HOT is gone — DM1
+
+> **⚠️ Superseded by HT-A1** (§ *HOT primary basemap (dark-filtered) with per-tile
+> CARTO fallback*). HOT is intentionally restored as the **primary** basemap, so
+> the "HOT is gone" expectation below no longer holds by design; CARTO is retained
+> as the per-tile fallback. **HT-A1 is the authoritative check.**
 ```bash
 git grep -nE "basemaps\.cartocdn\.com/dark_all" -- web/public/assets/js
 git grep -niE "openstreetmap\.fr|/hot/" -- web/public/assets/js web/lib web/views
@@ -2141,6 +2146,13 @@ layer options (subdomains `abcd`, `detectRetina`, `crossOrigin:'anonymous'`,
 `maxZoom`) are asserted by the JS map-init / DM-A3 suite.
 
 ### DM-A2 — Tile-filter pipeline fully removed (native dark) — DM2
+
+> **⚠️ Partially superseded by HT-A2.** A single **static** dark filter is
+> intentionally reintroduced for HOT tiles (CSS/JS constant only). The Ruby
+> `tile_filters` / `data-app-config` `tileFilters` half of this check **still
+> holds** (that plumbing stays removed), and none of the removed per-theme
+> machinery (`resolveTileFilter` / `applyFiltersToAllTiles` / MutationObserver /
+> `--map-tile*-filter`) returns. **HT-A2 is the authoritative check.**
 ```bash
 git grep -niE "tile_filters|DEFAULT_TILE_FILTER|map_tile_filter|tileFilters|map-tile-filter|map-tiles-filter|resolveTileFilter|applyTileFilter|applyFiltersToAllTiles|applyFilterToTile|ensureTileHasCurrentFilter" -- web/lib web/public/assets web/views
 git grep -n -A2 "def resolve_initial_theme" -- web/lib/potato_mesh/application/routes/root.rb
@@ -2651,3 +2663,123 @@ nothing (B4 intact). No source code, dependency manifest, or test suite is
 touched by this fix — B1 suites are unaffected by construction; the only
 behavioral deltas are matrix cancellation policy and armv7 build-stage
 packages.
+
+---
+
+## Feature: HOT primary basemap (dark-filtered) with per-tile CARTO fallback
+
+Maps to SPEC decisions **HT1–HT8**. The shared basemap factory lives in
+`web/public/assets/js/app/basemap-config.js`; the per-tile timeout→CARTO tile
+layer in `web/public/assets/js/app/main/fallback-tile-layer.js`; the dashboard
+wiring in `web/public/assets/js/app/main.js` and federation wiring in
+`web/public/assets/js/app/federation-page.js`; the static dark filter in
+`web/public/assets/styles/base.css`; the offline last-resort tier in
+`web/public/assets/js/app/main/offline-tile-layer.js` (dashboard only). Run JS
+checks from `web/`, shell checks from the repo root.
+
+### HT-A1 — HOT is the primary basemap on both maps; CARTO retained as fallback — HT1
+```bash
+git grep -nE "tile\.openstreetmap\.fr/hot" -- web/public/assets/js
+git grep -nE "basemaps\.cartocdn\.com/dark_all" -- web/public/assets/js
+```
+**Expected:** the first prints the HOT URL
+(`{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png`) from **one** shared basemap
+module (`basemap-config.js`) referenced by both the dashboard and federation maps;
+the second still prints the CARTO Dark Matter URL
+(`{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png`) — **retained**, now as
+the per-tile fallback source, not the primary. HOT options (`subdomains:'abc'`,
+`maxZoom:19`, `crossOrigin:'anonymous'`) and CARTO options (`subdomains:'abcd'`,
+`detectRetina`, `crossOrigin:'anonymous'`) are asserted by the HT-A3/HT-A5 suites.
+**Supersedes DM-A1** (which required the HOT reference to be absent).
+
+### HT-A2 — Dark filter reintroduced for HOT only; static, dark-only, off the contract — HT2
+```bash
+git grep -nE "grayscale\(1\) invert\(1\)" -- web/public/assets/styles/base.css
+git grep -niE "tile_filters|DEFAULT_TILE_FILTER|map_tile_filter|tileFilters|resolveTileFilter|applyFiltersToAllTiles|--map-tile" -- web/lib web/public/assets/js web/public/assets/styles web/views
+git grep -n -A2 "def resolve_initial_theme" -- web/lib/potato_mesh/application/routes/root.rb
+```
+**Expected:** the first prints the reintroduced dark filter
+(`grayscale(1) invert(1) brightness(0.9) contrast(1.08)`) as a **static** rule on
+the per-tile class `.map-tiles-hot` in `base.css` (Leaflet puts a layer's
+`className` on the tile container, not each tile, so per-tile filtering uses a
+per-tile class). The second prints **nothing** — none of the removed
+per-theme machinery returns: no Ruby `tile_filters`/`DEFAULT_TILE_FILTER_*`, no
+`data-app-config` `tileFilters`, no JS `resolveTileFilter`/`applyFiltersToAllTiles`,
+and no `--map-tile*-filter` custom property. The filter is one static CSS rule
+(HOT-only; CARTO-fallback tiles carry `.map-tiles-fallback { filter: none }`); the
+third shows `resolve_initial_theme` still returns `"dark"` (app stays dark-only, so
+no light filter exists). **Supersedes the CSS/JS half of DM-A2**; the Ruby/contract
+half of DM-A2 still holds.
+
+### HT-A3 — Per-tile 1000 ms timeout swaps HOT→CARTO — HT3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/fallback-tile-layer.test.js )
+```
+**Expected:** pass. The Leaflet-free fallback logic decides: (a) a tile whose HOT
+image loads before 1000 ms keeps the HOT source (filtered) and cancels its timer;
+(b) a tile whose HOT image fires `error` is swapped to the CARTO URL for the same
+`{z}/{x}/{y}` immediately; (c) a tile whose HOT image neither loads nor errors
+within 1000 ms is swapped to CARTO on timeout; (d) a swapped tile is marked
+`.map-tiles-fallback` (unfiltered) and requests the CARTO subdomain/retina URL.
+The 1000 ms threshold is a single named constant (the source of truth).
+
+### HT-A4 — Offline placeholder only when BOTH providers fail (dashboard) — HT4
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/fallback-tile-layer.test.js \
+                       public/assets/js/app/main/__tests__/tile-failure-policy.test.js )
+```
+**Expected:** pass. The fallback layer signals Leaflet `tileload` when **either**
+HOT or the CARTO fallback serves a tile, and signals `tileerror` **only** when the
+CARTO fallback tile *also* fails (covered by `fallback-tile-layer.test.js`). The
+DM3 `tile-failure-policy` is unchanged and stays green: the offline `GridLayer`
+(`main/offline-tile-layer.js`) activates only on comprehensive both-provider
+failure (zero successful loads across the initial viewport), preserving DM-A3
+tolerance one tier lower. The federation map has no offline tier (unchanged from
+DM3).
+
+### HT-A5 — Both maps use the one shared basemap factory — HT5
+```bash
+git grep -nE "createBasemapLayer" -- web/public/assets/js/app/basemap-config.js web/public/assets/js/app/main.js web/public/assets/js/app/federation-page.js
+git grep -nE "createOfflineTileLayer|activateOfflineTiles" -- web/public/assets/js/app/federation-page.js
+```
+**Expected:** the first shows `createBasemapLayer` **defined once** in
+`basemap-config.js` and **called by both** `main.js` and `federation-page.js` — one
+basemap definition, both maps identical (HOT-primary + CARTO fallback). The second
+prints **nothing** — the offline GridLayer tier is dashboard-only (federation gains
+no kill-basemap/offline logic, per DM3).
+
+### HT-A6 — No attribution overlay (reaffirms DM5) — HT6
+```bash
+git grep -nE "attributionControl:\s*false" -- web/public/assets/js
+git grep -nE "\battribution:" -- web/public/assets/js/app/main.js web/public/assets/js/app/federation-page.js web/public/assets/js/app/basemap-config.js
+```
+**Expected:** the first prints `attributionControl: false` on **both** maps
+(unchanged from DM-A5); the second prints **nothing** — no `attribution:` credit
+string was added for HOT or CARTO.
+
+### HT-A7 — Apex/contract untouched — HT7
+```bash
+git grep -niE 'mqtt|mosquitto|paho|amqp|kafka|broker' -- web/public/assets/js/app/basemap-config.js web/public/assets/js/app/main/fallback-tile-layer.js web/public/assets/js/app/main.js web/public/assets/js/app/federation-page.js
+git grep -nE "tileFilters" -- web/lib/potato_mesh/application/helpers/config_helpers.rb
+git diff --name-only HEAD -- web/Gemfile web/package.json data/requirements.txt matrix/Cargo.toml app/pubspec.yaml
+```
+**Expected:** the first two print **nothing** — the basemap hosts are not brokers
+(apex **A1** stays green) and `frontend_app_config` emits no `tileFilters` (no
+`/version` / `data-app-config` contract move). The third prints **nothing** — no
+dependency manifest changed, so `guard-edits.py` never triggers and the frozen
+stack (**D6**) is unaffected.
+
+### HT-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly amended and required to
+stay green: **DM-A1** (superseded by HT-A1 — HOT is intentionally back), **DM-A2**
+(CSS/JS half superseded by HT-A2 — the static dark filter is intentionally back;
+the Ruby/contract half still holds), **DM-A3** (extended by HT-A4 — tolerance
+preserved behind the CARTO tier). Still green unchanged: **DM-A5 / DM-A6 / DM-A7**,
+**A1** (apex — no broker), **B1** (all suites), **B4** (exact Apache header on the
+new `main/fallback-tile-layer.js` and its test), and **D1 / BF1** (the `/version`
+config block is unchanged). The DM-era JS tests are **updated** to the HOT-primary
++ CARTO-fallback wiring, not removed: `__tests__/config.test.js`,
+`__tests__/federation-page.test.js`, and the leaflet-stub map-init harness.
