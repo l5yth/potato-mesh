@@ -21,9 +21,10 @@
  * dark-styled by the CSS ``grayscale``/``invert`` filter on
  * {@link HOT_TILE_CLASS}. Any HOT tile that fires ``error`` or fails to load
  * within a short timeout is individually swapped to the corresponding **CARTO
- * Dark Matter** tile at the same ``z/x/y``; the swapped tile drops
- * {@link HOT_TILE_CLASS} for {@link FALLBACK_TILE_CLASS} and renders unfiltered
- * (CARTO is already dark, so an ``invert`` would render it light).
+ * Voyager** tile at the same ``z/x/y``; the swapped tile drops
+ * {@link HOT_TILE_CLASS} for {@link FALLBACK_TILE_CLASS}, which carries the
+ * *same* dark filter (both providers are natively colourful), so a fallback tile
+ * blends with its HOT neighbours instead of standing out as a checkerboard cell.
  *
  * The URL builder ({@link buildFallbackTileUrl}) and the per-tile state machine
  * ({@link wireTileFallback}) are Leaflet-free — they operate on a plain
@@ -49,7 +50,11 @@
 export const HOT_TILE_CLASS = 'map-tiles-hot';
 
 /**
- * CSS class marking a tile that has fallen back to CARTO (rendered unfiltered).
+ * CSS class marking a tile that has fallen back to CARTO.
+ *
+ * Carries the same ``grayscale``/``invert`` dark filter as {@link HOT_TILE_CLASS}
+ * (CARTO Voyager is natively colourful, like HOT), so a fallback tile blends with
+ * its HOT neighbours rather than reading as a distinct checkerboard cell.
  *
  * @type {string}
  */

@@ -1900,22 +1900,20 @@ input[type="radio"] {
 }
 
 /*
- * Primary HOT basemap tiles are natively colourful; this static filter greys
- * them to match the dark UI. Leaflet stamps the layer's `className` on the tile
- * container, so the per-tile class `.map-tiles-hot` (added by
- * `main/fallback-tile-layer.js`) is what carries the filter. A tile that has
- * fallen back to CARTO (already dark) drops `.map-tiles-hot` for
- * `.map-tiles-fallback` and renders unfiltered — inverting it would make it
- * light. Offline placeholder tiles carry neither class and stay unfiltered too.
+ * Both basemap providers are natively colourful, light-background raster maps
+ * (HOT primary, CARTO Voyager fallback). This one static filter greys and
+ * inverts them to match the dark UI, applied identically to primary HOT tiles
+ * (`.map-tiles-hot`) and to per-tile CARTO fallback tiles (`.map-tiles-fallback`)
+ * so a viewport mixing both providers renders as one coherent dark basemap
+ * instead of a light/dark checkerboard. Leaflet stamps the layer's `className`
+ * on the tile container, so these per-tile classes (added by
+ * `main/fallback-tile-layer.js`) are what carry the filter. Offline placeholder
+ * tiles carry neither class and stay unfiltered.
  */
-#map .leaflet-tile.map-tiles-hot {
+#map .leaflet-tile.map-tiles-hot,
+#map .leaflet-tile.map-tiles-fallback {
   filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
   -webkit-filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
-}
-
-#map .leaflet-tile.map-tiles-fallback {
-  filter: none;
-  -webkit-filter: none;
 }
 
 .leaflet-popup-content-wrapper,

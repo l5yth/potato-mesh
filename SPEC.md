@@ -598,3 +598,47 @@ URL/layer config, no new package or build step. *D8 (stable contract)* —
 | **HT7** | **Apex / privacy / stack / contract all untouched.** HOT and CARTO are raster tile CDNs, not MQTT/cloud brokers — the apex (I) holds and `guard-edits.py` is untriggered (no manifest/dependency change). Both are keyless and cookieless, and CARTO is requested only for a HOT tile that failed, so the common case egresses to HOT alone — no new phone-home or per-operator credential (II / D11). Native Leaflet only, no new package or build step (D7). The dark filter is a frontend CSS constant and never enters `/version`, `data-app-config`, or any `/api/*` shape, so there is no contract change or version bump (D8). | proposed |
 | **HT8** | **Engineering bar (D9).** The new/changed frontend units — the shared `createBasemapLayer` factory, the per-tile timeout/fallback tile layer, and its pure timeout/URL helpers — ship with **100% unit tests**, full JSDoc, the exact Apache header, and clean linters; all existing suites stay green. The DM-era tile tests are **updated**, not left dangling: `__tests__/config.test.js`, `__tests__/federation-page.test.js`, the leaflet-stub map-init harness, and `main/__tests__/tile-failure-policy.test.js` are retargeted to the HOT-primary + CARTO-fallback wiring. | D9 + proposed |
 
+---
+
+## Bugfix: Basemap provider blend (chess-pattern fix)
+
+The HOT-primary / per-tile-CARTO-fallback basemap (**HT1–HT3**) rendered a
+**light/dark checkerboard** in normal use: HOT tiles that beat the per-tile
+deadline showed dark-filtered, while tiles that missed it fell back to the
+**unfiltered, natively-dark CARTO Dark Matter** (HT2's deliberate `filter:none`
+exemption) — two visibly different looks tiling the same viewport. The mix was
+*routine*, not rare, because HOT (`openstreetmap.fr`) is slow and HT3's **1000 ms**
+deadline was aggressive, so a healthy fraction of tiles fell back on every load
+(and re-raced, so the pattern shifted on each pan/zoom). This is a **spec-silent**
+consequence of HT2 (filtered-HOT vs unfiltered-CARTO look different *by
+construction*) meeting HT3 (frequent per-tile fallback) — no acceptance criterion
+was violated; the contract was silent on the visual seam. The fix attacks both
+halves: make fallback *rare* (graceful timeout) **and** make the two providers
+*look alike* (colored CARTO source + shared dark filter). Frontend-only
+(`basemap-config.js`, `base.css`); no API/DB/ingestor change and no contract move
+(HT7 posture preserved: still frontend constants, off `/version` and
+`data-app-config`).
+
+**Conflict check.** *HT1 (CARTO source = Dark Matter)* — **amended** (BL2: CARTO
+Voyager). *HT2 (CARTO fallback exempt from the filter)* — **amended** (BL3: the
+fallback shares HOT's filter; HT2's "already dark → don't invert" rationale is void
+because the source is now light/colored). *HT3 (1000 ms)* — **amended** (BL1:
+2500 ms). *HT4 / HT5 (fallback ladder, shared factory, both maps)* —
+**consistent**: the per-tile swap mechanism, the offline last tier, and the single
+`createBasemapLayer` factory are unchanged; the federation map shares the `#map`
+filter selector, so the blend lands on both maps (parity, Invariant IV). *HT6 (no
+attribution)* — **reaffirmed**: Voyager is OSM+CARTO like Dark Matter and
+`attributionControl:false` is unchanged. *Apex I / privacy II / D7 / D8 / D11* —
+**untouched**: Voyager is a keyless, cookieless, CORS-enabled raster CDN like Dark
+Matter; no manifest/dependency/contract change, no version bump. The pattern may
+still not be eliminated 100% (a genuinely-failing HOT tile whose CARTO cover is
+also slow can briefly flash), but under normal latency both levers together make
+it rare and, when it occurs, near-invisible.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **BL1** | **Graceful per-tile timeout: 1000 ms → 2500 ms (amends HT3).** `FALLBACK_TIMEOUT_MS` (the single source of truth in `basemap-config.js`) is raised to **2500 ms**, so a slow-but-arriving HOT tile beats the deadline instead of falling back — restoring CARTO to the *rare safety net* HT3 intended, given HOT's real-world latency. Fewer routine fallbacks is the first half of removing the checkerboard. Accepted cost: when HOT is genuinely dead, the blank→CARTO recovery for that tile is up to 2.5 s (was 1 s); the offline tier (HT4) is unaffected. | interview |
+| **BL2** | **Colored CARTO source: Dark Matter → Voyager (amends HT1).** The fallback URL becomes `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png` (same `subdomains:'abcd'`, `detectRetina`, `crossOrigin:'anonymous'`; keyless CORS CDN). Voyager is CARTO's natively-colourful, light-background raster style — chosen precisely so the *same* dark filter that greys HOT greys it too. (A natively-dark source could not be filtered to match — HT2's original constraint — which is why HT2 exempted it; BL3 removes that exemption because BL2 removes its cause.) | interview |
+| **BL3** | **Shared dark filter on the fallback tile (amends HT2).** `.map-tiles-fallback` no longer renders `filter:none`; it carries the **same** `grayscale(1) invert(1) brightness(0.9) contrast(1.08)` filter as `.map-tiles-hot`, expressed as one comma-grouped `base.css` rule (the single source of truth for the value). Both providers therefore converge to one coherent dark look, so a viewport mixing HOT and CARTO tiles is no longer a checkerboard — the second half of the fix. The per-tile class swap in `fallback-tile-layer.js` is **unchanged**; only what `.map-tiles-fallback` *does* in CSS changes. Offline placeholder tiles still carry neither class and stay unfiltered. | interview |
+| **BL4** | **Both maps, one rule; posture preserved (reaffirms HT5 / HT7).** The federation map shares the dashboard's `#map` container, so the single `base.css` filter rule and the shared `createBasemapLayer` factory land the blend on **both** maps identically (parity, Invariant IV). The filter value and the timeout stay **frontend constants** — no Ruby `tile_filters`, no `/version` / `data-app-config` key, no `/api/*` change, no version bump (HT7 / D8 unchanged). | proposed |
+

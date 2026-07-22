@@ -2678,6 +2678,14 @@ wiring in `web/public/assets/js/app/main.js` and federation wiring in
 checks from `web/`, shell checks from the repo root.
 
 ### HT-A1 — HOT is the primary basemap on both maps; CARTO retained as fallback — HT1
+
+> **⚠️ CARTO-URL half superseded by BL-A2** (§ *Bugfix: Basemap provider blend
+> (chess-pattern fix)*). The CARTO fallback source is intentionally migrated from
+> the natively-dark Dark Matter (`dark_all`) to the *colored* Voyager
+> (`rastertiles/voyager`), so the `dark_all` grep below no longer matches by
+> design. The **HOT-primary half stands** (HOT is still the primary on both maps);
+> **BL-A2 is the authoritative check** for the fallback source.
+
 ```bash
 git grep -nE "tile\.openstreetmap\.fr/hot" -- web/public/assets/js
 git grep -nE "basemaps\.cartocdn\.com/dark_all" -- web/public/assets/js
@@ -2693,6 +2701,17 @@ the per-tile fallback source, not the primary. HOT options (`subdomains:'abc'`,
 **Supersedes DM-A1** (which required the HOT reference to be absent).
 
 ### HT-A2 — Dark filter reintroduced for HOT only; static, dark-only, off the contract — HT2
+
+> **⚠️ Filter-scope half superseded by BL-A1** (§ *Bugfix: Basemap provider blend
+> (chess-pattern fix)*). The dark filter is intentionally **no longer HOT-only**:
+> `.map-tiles-fallback` now carries the *same* filter as `.map-tiles-hot` (BL3), so
+> the two providers blend. The greps below still pass unchanged (the filter is
+> still one static `base.css` rule, the removed Ruby/contract machinery stays
+> removed, `resolve_initial_theme` is still `"dark"`); only the *scope* prose
+> ("HOT-only", "`.map-tiles-fallback { filter: none }`") is amended. **BL-A1 is the
+> authoritative check** for the shared filter. Offline placeholder tiles still stay
+> unfiltered.
+
 ```bash
 git grep -nE "grayscale\(1\) invert\(1\)" -- web/public/assets/styles/base.css
 git grep -niE "tile_filters|DEFAULT_TILE_FILTER|map_tile_filter|tileFilters|resolveTileFilter|applyFiltersToAllTiles|--map-tile" -- web/lib web/public/assets/js web/public/assets/styles web/views
@@ -2706,10 +2725,11 @@ per-tile class). The second prints **nothing** — none of the removed
 per-theme machinery returns: no Ruby `tile_filters`/`DEFAULT_TILE_FILTER_*`, no
 `data-app-config` `tileFilters`, no JS `resolveTileFilter`/`applyFiltersToAllTiles`,
 and no `--map-tile*-filter` custom property. The filter is one static CSS rule
-(HOT-only; CARTO-fallback tiles carry `.map-tiles-fallback { filter: none }`); the
-third shows `resolve_initial_theme` still returns `"dark"` (app stays dark-only, so
-no light filter exists). **Supersedes the CSS/JS half of DM-A2**; the Ruby/contract
-half of DM-A2 still holds.
+(shared by `.map-tiles-hot` and `.map-tiles-fallback` per BL3; offline placeholder
+tiles carry neither class and stay unfiltered); the third shows
+`resolve_initial_theme` still returns `"dark"` (app stays dark-only, so no light
+filter exists). **Supersedes the CSS/JS half of DM-A2**; the Ruby/contract half of
+DM-A2 still holds.
 
 ### HT-A3 — Per-tile 1000 ms timeout swaps HOT→CARTO — HT3
 ```bash
@@ -2783,3 +2803,57 @@ new `main/fallback-tile-layer.js` and its test), and **D1 / BF1** (the `/version
 config block is unchanged). The DM-era JS tests are **updated** to the HOT-primary
 + CARTO-fallback wiring, not removed: `__tests__/config.test.js`,
 `__tests__/federation-page.test.js`, and the leaflet-stub map-init harness.
+
+---
+
+## Bugfix: Basemap provider blend (chess-pattern fix)
+
+Maps to SPEC decisions **BL1–BL4**. The graceful timeout and colored CARTO source
+live in `web/public/assets/js/app/basemap-config.js`; the shared dark filter in
+`web/public/assets/styles/base.css`; both are locked by
+`web/public/assets/js/app/__tests__/basemap-blend.test.js`. The per-tile HOT vs
+CARTO looks (dark-filtered HOT tiles beside unfiltered CARTO tiles, on a routine
+1000 ms fallback) rendered the basemap as a **light/dark checkerboard**; the fix
+makes fallback rare (2500 ms) **and** blends the two providers to one dark look
+(colored Voyager source + shared filter). Run JS checks from `web/`, shell checks
+from the repo root.
+
+### BL-A1 — Graceful 2500 ms timeout + colored Voyager fallback + shared filter
+```bash
+( cd web && node --test public/assets/js/app/__tests__/basemap-blend.test.js )
+```
+**Expected:** pass. Asserts (1) `FALLBACK_TIMEOUT_MS === 2500` (raised from the
+aggressive 1000 ms, so a slow-but-arriving HOT tile beats the deadline and
+fallback stays rare); (2) `CARTO_TILE_URL` targets the *colored* CARTO **Voyager**
+style (`/rastertiles/voyager/`), not the natively-dark `dark_all`; and (3)
+`base.css` applies the **same** `grayscale(1) invert(1) …` dark filter to
+`.map-tiles-fallback` as to `.map-tiles-hot` (no longer `filter:none`). Together
+these make a viewport mixing HOT and CARTO tiles render as one coherent dark
+basemap instead of a checkerboard.
+
+### BL-A2 — No Dark Matter reference remains; Voyager is the sole fallback source
+```bash
+git grep -n "dark_all" -- web/public
+git grep -nE "rastertiles/voyager" -- web/public/assets/js/app/basemap-config.js
+```
+**Expected:** the first prints **nothing** — the natively-dark Dark Matter source
+is fully replaced (production constant and test fixtures alike); the second prints
+the Voyager fallback URL from the one shared basemap module. **Supersedes the
+`dark_all` half of HT-A1**; the HOT-primary half of HT-A1 is unchanged (HOT is
+still the primary basemap on both maps).
+
+### BL-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly amended and required to
+stay green: **HT-A1** (the CARTO fallback URL is now Voyager, not `dark_all` — the
+`basemap-config.test.js` / `fallback-tile-layer.test.js` fixtures are **updated**,
+not removed); **HT-A2** (the dark filter now also covers `.map-tiles-fallback` —
+still one static `base.css` rule; the removed Ruby/contract `tileFilters`
+machinery stays removed, offline tiles stay unfiltered); **HT-A3** (the per-tile
+swap mechanism is unchanged — only the timeout constant and the swapped-in URL
+differ). Still green unchanged: **HT-A4 / A5 / A6 / A7** (fallback ladder, one
+shared factory on both maps, no attribution, apex/contract untouched), **A1** (no
+broker — the basemap hosts are raster CDNs), **B1** (all suites), and **B4** (exact
+Apache header on the new `basemap-blend.test.js`).
