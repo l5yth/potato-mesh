@@ -26,6 +26,7 @@ from .channels import _ensure_channel_names
 from .connection import _make_connection
 from .handlers import _make_event_handlers
 from .interface import ClosedBeforeConnectedError, _MeshcoreInterface
+from .telemetry import _telemetry_poll_loop
 
 
 async def _ensure_autoadd_eviction(mc) -> None:
@@ -238,7 +239,17 @@ async def _run_meshcore(
 
         await mc.start_auto_message_fetching()
 
-        await stop_event.wait()
+        # Telemetry collection (TI-A3): host self reads over the companion
+        # link plus round-robin contact pulls, cadence-bounded by config.
+        poll_task = asyncio.create_task(_telemetry_poll_loop(mc, iface))
+        try:
+            await stop_event.wait()
+        finally:
+            poll_task.cancel()
+            try:
+                await poll_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     except Exception as exc:
         if not connected_event.is_set():

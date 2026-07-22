@@ -110,6 +110,8 @@ The web app can be configured with environment variables (defaults shown):
 | `MESH_UDP_GROUP` | `224.0.0.69` | Multicast group joined in UDP transport. |
 | `MESH_UDP_PORT` | `4403` | Multicast port joined in UDP transport. |
 | `INGESTOR_NODE_ID` | _unset_ | `!xxxxxxxx` id used for the ingestor heartbeat in UDP transport (which cannot auto-detect "self"). |
+| `MESHCORE_TELEMETRY_POLL_SECONDS` | `300` | Seconds between MeshCore contact telemetry polls (one on-air request per interval, round-robin over the roster). Set `0` to disable on-air polling. |
+| `MESHCORE_SELF_TELEMETRY_SECONDS` | `3600` | Seconds between MeshCore host self-telemetry reads (battery/sensors over the companion link, no airtime). Set `0` to disable. |
 | `FEDERATION` | `1` | Set to `1` to announce your instance and crawl peers, or `0` to disable federation. Private mode overrides this. |
 | `PRIVATE` | `0` | Set to `1` to hide the chat UI, disable message APIs, and exclude hidden clients from public listings. |
 | `EVENTS` | `1` | Set to `0` to disable the live-update SSE stream (`GET /api/events`); clients then fall back to polling at the refresh interval. |

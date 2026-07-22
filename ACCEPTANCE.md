@@ -3038,3 +3038,89 @@ GH-A1** (MeshCore message/contact machinery — naming, `last_heard`, and
 stale-contact behavior unchanged), and **B1/B4/B5** (all suites, headers,
 formatters). The JS suite is exercised for regression only — RF7 adds no
 frontend behavior.
+
+---
+
+## Bugfix: Missing telemetry at ingest (all families, both protocols)
+
+Two ingest-time data losses. **Meshtastic:** the telemetry protobuf `oneof` has
+eight variants, but extraction targeted only `deviceMetrics.*` /
+`environmentMetrics.*` paths — PowerMetrics (16 fields), AirQualityMetrics (25,
+incl. PM series, particle counts, CO2, formaldehyde, VOC/NOx), HealthMetrics
+(3), LocalStats (15), HostMetrics (9), TrafficManagementStats (7), and the
+repeated `oneWireTemperature` were dropped; the last four families were not
+even recognised by the discriminator, landing as rows with no `telemetry_type`
+and no metrics. The web app mirrored the drop (no columns, no metric
+definitions, `power_metrics`/`air_quality_metrics` consulted only for type
+inference). **MeshCore:** telemetry was structurally unreachable — no
+subscription to `TELEMETRY_RESPONSE`/`STATUS_RESPONSE`/`BATTERY`, no telemetry
+commands issued, no CayenneLPP mapping — although the `meshcore` library
+(≥2.3.5) exposes self battery/sensors and per-contact pulls, violating
+Invariant IV (protocol parity; the web/DB side was already protocol-ready).
+Fix: the ingestor extracts **every** field of all eight Meshtastic families
+(`telemetry_type` gains `local_stats`/`health`/`host`/`traffic`; body
+temperature stays distinct as `health_temperature`; `one_wire_temperature` is
+a JSON float list), the web app stores and serves all new columns (schema +
+boot auto-migration + insert/upsert; `GET /api/telemetry` is `SELECT *`), and
+the MeshCore provider collects host self-telemetry (no airtime) plus
+round-robin contact telemetry/status polls (conservative, env-tunable,
+disableable). Frontend intentionally untouched. `CONTRACTS.md` amended
+additively (D8); apex (I) and privacy (II) untouched.
+
+### TI-A1 — Meshtastic ingestor extracts every telemetry family
+```bash
+( . .venv/bin/activate && pytest -q tests/test_handlers_unit.py -k "ExtendedTelemetry" )
+```
+**Expected:** pass. For each `oneof` family the queued `/api/telemetry`
+payload carries the family's snake_case metric keys and the correct
+`telemetry_type`: power (`ch1_voltage`…`ch8_current`), air_quality
+(`pm*_standard/environmental`, `particles_*`, `co2*`, `form_*`, `pm_voc_idx`,
+`pm_nox_idx`, `particles_tps`), health (`heart_bpm`, `spo2`,
+`health_temperature` — never the ambient `temperature` key), local_stats
+(counters + reuse of `uptime_seconds`/`channel_utilization`/`air_util_tx`),
+host (`freemem_bytes`, `diskfree*_bytes`, `load*`, `user_string`), traffic
+(`packets_inspected`, …), and environment's `one_wire_temperature` list.
+
+### TI-A2 — Web app stores and serves the extended metrics
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "extended metric families" )
+```
+**Expected:** pass. `insert_telemetry` persists values from the
+`power_metrics` / `air_quality_metrics` / `health_metrics` / `local_stats` /
+`host_metrics` / `traffic_management_stats` sub-objects (and their flat
+snake_case keys) into real columns; the diagnostics `telemetry_type` values
+are accepted; `one_wire_temperature` round-trips as a JSON array;
+`user_string` stores text. Existing databases gain the columns via the boot
+auto-migrator (`ensure_schema_upgrades`), fresh installs via
+`data/telemetry.sql`.
+
+### TI-A3 — MeshCore provider collects telemetry
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "telemetry" )
+```
+**Expected:** pass. The MeshCore event-handler map subscribes
+`TELEMETRY_RESPONSE`, `STATUS_RESPONSE`, and `BATTERY`; CayenneLPP entries map
+to the canonical metric keys (temperature, `relative_humidity`,
+`barometric_pressure`, voltage, current, lux, `battery_level`); status
+responses map `bat` (mV) → voltage (V) and uptime; events resolve
+`pubkey_pre` to the contact's canonical node id (host prefix → host node);
+resulting packets flow through `store_packet_dict` → `store_telemetry_packet`
+with `protocol="meshcore"`. The poll loop honours
+`MESHCORE_TELEMETRY_POLL_SECONDS` (0 disables contact polling) and
+`MESHCORE_SELF_TELEMETRY_SECONDS`, one on-air request at a time (local LoRa
+only — no broker, Invariant I).
+
+### TI-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ ) && ( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. At risk and explicitly required
+to remain green: **C2** (canonical POST shapes — the metric additions are
+additive, existing keys unchanged), **A4b/A4e** (MeshCore provider conformance
+and advert handling — new subscriptions must not disturb existing handlers),
+**A2/A2a** (privacy — telemetry remains ungated by `PRIVATE`, unchanged),
+**D2** (channel filters unaffected), and the host-telemetry suppression window
+(self-poll responses are throttled by the existing
+`store_telemetry_packet` host gate). The frontend is intentionally untouched
+(TM-A1 unchanged); `tests/` fixtures are unmodified so CI replay (C2) is
+unaffected.

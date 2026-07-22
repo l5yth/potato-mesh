@@ -1,0 +1,82 @@
+-- Copyright © 2025-26 l5yth & contributors
+-- Licensed under the Apache License, Version 2.0 (see LICENSE)
+--
+-- Reference migration for pre-existing databases (TI-A2): adds the extended
+-- telemetry metric columns (PowerMetrics, AirQualityMetrics, HealthMetrics,
+-- LocalStats, HostMetrics, TrafficManagementStats, one-wire probe list).
+-- The web app applies the same additions automatically at boot via
+-- ensure_schema_upgrades (web/lib/potato_mesh/application/database.rb); this
+-- script exists for operators migrating a database by hand.
+
+ALTER TABLE telemetry ADD COLUMN ch1_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch1_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch2_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch2_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch3_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch3_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch4_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch4_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch5_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch5_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch6_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch6_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch7_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch7_current REAL;
+ALTER TABLE telemetry ADD COLUMN ch8_voltage REAL;
+ALTER TABLE telemetry ADD COLUMN ch8_current REAL;
+ALTER TABLE telemetry ADD COLUMN pm10_standard INTEGER;
+ALTER TABLE telemetry ADD COLUMN pm25_standard INTEGER;
+ALTER TABLE telemetry ADD COLUMN pm100_standard INTEGER;
+ALTER TABLE telemetry ADD COLUMN pm40_standard INTEGER;
+ALTER TABLE telemetry ADD COLUMN pm10_environmental INTEGER;
+ALTER TABLE telemetry ADD COLUMN pm25_environmental INTEGER;
+ALTER TABLE telemetry ADD COLUMN pm100_environmental INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_03um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_05um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_10um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_25um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_40um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_50um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_100um INTEGER;
+ALTER TABLE telemetry ADD COLUMN particles_tps REAL;
+ALTER TABLE telemetry ADD COLUMN co2 INTEGER;
+ALTER TABLE telemetry ADD COLUMN co2_temperature REAL;
+ALTER TABLE telemetry ADD COLUMN co2_humidity REAL;
+ALTER TABLE telemetry ADD COLUMN form_formaldehyde REAL;
+ALTER TABLE telemetry ADD COLUMN form_humidity REAL;
+ALTER TABLE telemetry ADD COLUMN form_temperature REAL;
+ALTER TABLE telemetry ADD COLUMN pm_temperature REAL;
+ALTER TABLE telemetry ADD COLUMN pm_humidity REAL;
+ALTER TABLE telemetry ADD COLUMN pm_voc_idx REAL;
+ALTER TABLE telemetry ADD COLUMN pm_nox_idx REAL;
+ALTER TABLE telemetry ADD COLUMN heart_bpm INTEGER;
+ALTER TABLE telemetry ADD COLUMN spo2 INTEGER;
+ALTER TABLE telemetry ADD COLUMN health_temperature REAL;
+ALTER TABLE telemetry ADD COLUMN num_packets_tx INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_packets_rx INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_packets_rx_bad INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_online_nodes INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_total_nodes INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_rx_dupe INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_tx_relay INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_tx_relay_canceled INTEGER;
+ALTER TABLE telemetry ADD COLUMN heap_total_bytes INTEGER;
+ALTER TABLE telemetry ADD COLUMN heap_free_bytes INTEGER;
+ALTER TABLE telemetry ADD COLUMN num_tx_dropped INTEGER;
+ALTER TABLE telemetry ADD COLUMN noise_floor INTEGER;
+ALTER TABLE telemetry ADD COLUMN freemem_bytes INTEGER;
+ALTER TABLE telemetry ADD COLUMN diskfree1_bytes INTEGER;
+ALTER TABLE telemetry ADD COLUMN diskfree2_bytes INTEGER;
+ALTER TABLE telemetry ADD COLUMN diskfree3_bytes INTEGER;
+ALTER TABLE telemetry ADD COLUMN load1 INTEGER;
+ALTER TABLE telemetry ADD COLUMN load5 INTEGER;
+ALTER TABLE telemetry ADD COLUMN load15 INTEGER;
+ALTER TABLE telemetry ADD COLUMN user_string TEXT;
+ALTER TABLE telemetry ADD COLUMN packets_inspected INTEGER;
+ALTER TABLE telemetry ADD COLUMN position_dedup_drops INTEGER;
+ALTER TABLE telemetry ADD COLUMN nodeinfo_cache_hits INTEGER;
+ALTER TABLE telemetry ADD COLUMN rate_limit_drops INTEGER;
+ALTER TABLE telemetry ADD COLUMN unknown_packet_drops INTEGER;
+ALTER TABLE telemetry ADD COLUMN hop_exhausted_packets INTEGER;
+ALTER TABLE telemetry ADD COLUMN router_hops_preserved INTEGER;
+ALTER TABLE telemetry ADD COLUMN one_wire_temperature TEXT;

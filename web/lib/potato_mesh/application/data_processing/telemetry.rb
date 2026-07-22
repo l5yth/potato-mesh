@@ -267,8 +267,11 @@ module PotatoMesh
       #
       # @param key_map [Hash{Symbol=>Array<String>}] ordered mapping of source names to candidate keys.
       # @param sources [Hash{Symbol=>Hash}] data structures to search for metric values.
-      # @param type [Symbol] coercion strategy, ``:float`` or ``:integer``.
-      # @return [Numeric, nil] coerced metric value or nil when no candidates exist.
+      # @param type [Symbol] coercion strategy: ``:float``, ``:integer``,
+      #   ``:string`` (trimmed text, e.g. ``user_string``), or ``:float_array``
+      #   (list of floats serialised to a JSON string, e.g.
+      #   ``one_wire_temperature``).
+      # @return [Numeric, String, nil] coerced metric value or nil when no candidates exist.
       def resolve_numeric_metric(key_map, sources, type)
         key_map.each do |source, keys|
           next if keys.nil? || keys.empty?
@@ -294,6 +297,10 @@ module PotatoMesh
                 coerce_float(value)
               when :integer
                 coerce_integer(value)
+              when :string
+                string_or_nil(value)
+              when :float_array
+                coerce_float_array_json(value)
               else
                 value
               end
@@ -306,6 +313,22 @@ module PotatoMesh
       end
 
       private :resolve_numeric_metric
+
+      # Coerce a repeated float metric into its JSON storage form.
+      #
+      # @param value [Object] candidate value; only arrays are accepted.
+      # @return [String, nil] JSON array of finite floats, or nil when nothing
+      #   usable remains (empty arrays are treated as absent, never stored).
+      def coerce_float_array_json(value)
+        return nil unless value.is_a?(Array)
+
+        floats = value.map { |item| coerce_float(item) }.compact
+        return nil if floats.empty?
+
+        JSON.generate(floats)
+      end
+
+      private :coerce_float_array_json
 
       # Persist a telemetry packet and refresh the related node row.
       #
@@ -371,6 +394,14 @@ module PotatoMesh
         power_metrics ||= normalize_json_object(telemetry_section["powerMetrics"]) if telemetry_section&.key?("powerMetrics")
         air_quality_metrics = normalize_json_object(payload["air_quality_metrics"] || payload["airQualityMetrics"])
         air_quality_metrics ||= normalize_json_object(telemetry_section["airQualityMetrics"]) if telemetry_section&.key?("airQualityMetrics")
+        local_stats = normalize_json_object(payload["local_stats"] || payload["localStats"])
+        local_stats ||= normalize_json_object(telemetry_section["localStats"]) if telemetry_section&.key?("localStats")
+        health_metrics = normalize_json_object(payload["health_metrics"] || payload["healthMetrics"])
+        health_metrics ||= normalize_json_object(telemetry_section["healthMetrics"]) if telemetry_section&.key?("healthMetrics")
+        host_metrics = normalize_json_object(payload["host_metrics"] || payload["hostMetrics"])
+        host_metrics ||= normalize_json_object(telemetry_section["hostMetrics"]) if telemetry_section&.key?("hostMetrics")
+        traffic_stats = normalize_json_object(payload["traffic_management_stats"] || payload["trafficManagementStats"])
+        traffic_stats ||= normalize_json_object(telemetry_section["trafficManagementStats"]) if telemetry_section&.key?("trafficManagementStats")
 
         telemetry_type = string_or_nil(payload["telemetry_type"])
         telemetry_type = nil unless VALID_TELEMETRY_TYPES.include?(telemetry_type)
@@ -382,6 +413,14 @@ module PotatoMesh
             "power"
           elsif air_quality_metrics&.any?
             "air_quality"
+          elsif local_stats&.any?
+            "local_stats"
+          elsif health_metrics&.any?
+            "health"
+          elsif host_metrics&.any?
+            "host"
+          elsif traffic_stats&.any?
+            "traffic"
           end
 
         sources = {
@@ -389,10 +428,16 @@ module PotatoMesh
           telemetry: telemetry_section,
           device: device_metrics,
           environment: environment_metrics,
+          power: power_metrics,
+          air_quality: air_quality_metrics,
+          local_stats: local_stats,
+          health: health_metrics,
+          host: host_metrics,
+          traffic: traffic_stats,
         }
 
         metric_values = {}
-        TELEMETRY_METRIC_DEFINITIONS.each do |column, type, key_map|
+        (TELEMETRY_METRIC_DEFINITIONS + EXTENDED_TELEMETRY_METRIC_DEFINITIONS).each do |column, type, key_map|
           value = resolve_numeric_metric(key_map, sources, type)
           metric_values[column] = value unless value.nil?
         end
@@ -470,13 +515,16 @@ module PotatoMesh
           protocol,
           telemetry_type,
         ]
+        # Extended metric columns bind after telemetry_type, in the canonical
+        # EXTENDED_TELEMETRY_COLUMN_NAMES order the SQL fragments share.
+        row += EXTENDED_TELEMETRY_COLUMN_NAMES.map { |column| metric_values[column] }
 
         placeholders = Array.new(row.length, "?").join(",")
 
         with_busy_retry do
           db.execute <<~SQL, row
                        INSERT INTO telemetry(id,node_id,node_num,from_id,to_id,rx_time,rx_iso,telemetry_time,channel,portnum,hop_limit,snr,rssi,bitfield,payload_b64,
-                                             battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,gas_resistance,current,iaq,distance,lux,white_lux,ir_lux,uv_lux,wind_direction,wind_speed,weight,wind_gust,wind_lull,radiation,rainfall_1h,rainfall_24h,soil_moisture,soil_temperature,ingestor,protocol,telemetry_type)
+                                             battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,temperature,relative_humidity,barometric_pressure,gas_resistance,current,iaq,distance,lux,white_lux,ir_lux,uv_lux,wind_direction,wind_speed,weight,wind_gust,wind_lull,radiation,rainfall_1h,rainfall_24h,soil_moisture,soil_temperature,ingestor,protocol,telemetry_type#{EXTENDED_TELEMETRY_INSERT_COLUMNS_SQL})
                        VALUES (#{placeholders})
                        ON CONFLICT(id) DO UPDATE SET
                          node_id=COALESCE(excluded.node_id,telemetry.node_id),
@@ -521,7 +569,7 @@ module PotatoMesh
                          soil_temperature=COALESCE(excluded.soil_temperature,telemetry.soil_temperature),
                          ingestor=COALESCE(NULLIF(telemetry.ingestor,''), excluded.ingestor),
                          protocol=COALESCE(NULLIF(telemetry.protocol,'meshtastic'), excluded.protocol),
-                         telemetry_type=COALESCE(excluded.telemetry_type,telemetry.telemetry_type)
+                         telemetry_type=COALESCE(excluded.telemetry_type,telemetry.telemetry_type)#{EXTENDED_TELEMETRY_UPSERT_SQL}
                      SQL
         end
 

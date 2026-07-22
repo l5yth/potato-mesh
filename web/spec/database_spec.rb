@@ -151,6 +151,35 @@ RSpec.describe PotatoMesh::App::Database do
     expect { harness_class.ensure_schema_upgrades }.not_to raise_error
   end
 
+  it "backfills every extended telemetry metric column on an existing schema (TI-A2)" do
+    SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
+      db.execute("CREATE TABLE nodes(node_id TEXT)")
+      db.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+      db.execute("CREATE TABLE telemetry(id INTEGER PRIMARY KEY, rx_time INTEGER NOT NULL, rx_iso TEXT NOT NULL)")
+    end
+
+    harness_class.ensure_schema_upgrades
+
+    telemetry_columns = column_names_for("telemetry")
+    # Data-driven over the same definitions insert_telemetry writes with, so
+    # the auto-migration can never drift from the write path.
+    PotatoMesh::App::DataProcessing::EXTENDED_TELEMETRY_COLUMN_TYPES.each do |name, _type|
+      expect(telemetry_columns).to include(name)
+    end
+
+    expect { harness_class.ensure_schema_upgrades }.not_to raise_error
+  end
+
+  it "ships every extended telemetry metric column in the fresh-install schema (TI-A2)" do
+    # Assert against the bundled DDL file itself (not a migrated database) so
+    # a column added to the write path can never be forgotten in
+    # data/telemetry.sql — fresh installs execute that file verbatim.
+    schema_sql = File.read(File.expand_path("../../data/telemetry.sql", __dir__))
+    PotatoMesh::App::DataProcessing::EXTENDED_TELEMETRY_COLUMN_TYPES.each do |name, type|
+      expect(schema_sql).to match(/^\s+#{Regexp.escape(name)}\s+#{type}\b/i)
+    end
+  end
+
   it "initialises the telemetry table when it is missing" do
     SQLite3::Database.new(PotatoMesh::Config.db_path) do |db|
       db.execute("CREATE TABLE nodes(node_id TEXT)")

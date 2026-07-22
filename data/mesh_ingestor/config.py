@@ -140,6 +140,29 @@ raise ``ValueError`` at import and prevent the service from starting."""
 INGESTOR_NODE_ID = os.environ.get("INGESTOR_NODE_ID", "").strip() or None
 """Optional ``!xxxxxxxx`` host node id used for the ingestor heartbeat in UDP mode."""
 
+MESHCORE_TELEMETRY_POLL_SECONDS = int(
+    os.environ.get("MESHCORE_TELEMETRY_POLL_SECONDS", "300").strip() or "300"
+)
+"""Seconds between successive MeshCore contact telemetry polls (TI-A3).
+
+MeshCore exposes other nodes' telemetry only via on-air pull requests, so the
+provider round-robins the contact roster issuing one request per interval —
+airtime is bounded to one request per ``MESHCORE_TELEMETRY_POLL_SECONDS``
+regardless of roster size.  Values ``<= 0`` disable contact polling entirely
+(host self-telemetry is governed separately by
+``MESHCORE_SELF_TELEMETRY_SECONDS``).  Stripped with a default fallback like
+``MESH_UDP_PORT`` so a blank value in a ``.env`` file cannot break startup."""
+
+MESHCORE_SELF_TELEMETRY_SECONDS = int(
+    os.environ.get("MESHCORE_SELF_TELEMETRY_SECONDS", "3600").strip() or "3600"
+)
+"""Seconds between MeshCore host self-telemetry reads (battery + sensors).
+
+Self reads are local companion-link commands (no LoRa airtime).  The default
+matches the host-telemetry suppression window in
+``handlers._state._HOST_TELEMETRY_INTERVAL_SECS`` (one hour) so more frequent
+reads would only be suppressed anyway.  Values ``<= 0`` disable self polling."""
+
 
 def _parse_lora_freq_env(raw: str | None) -> float | int | None:
     """Parse the ``FREQUENCY`` environment variable into a numeric LoRa frequency.

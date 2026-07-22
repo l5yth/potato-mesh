@@ -395,7 +395,11 @@ module PotatoMesh
         end
 
         telemetry_columns = db.execute("PRAGMA table_info(telemetry)").map { |row| row[1] }
-        TELEMETRY_COLUMN_DEFINITIONS.each do |name, type|
+        # The environment expansion plus the extended metric families (TI-A2:
+        # power / air-quality / health / local / host / traffic stats and the
+        # one-wire probe list) share one idempotent backfill loop; the extended
+        # pairs derive from the same definitions insert_telemetry writes with.
+        (TELEMETRY_COLUMN_DEFINITIONS + DataProcessing::EXTENDED_TELEMETRY_COLUMN_TYPES).each do |name, type|
           next if telemetry_columns.include?(name)
 
           db.execute("ALTER TABLE telemetry ADD COLUMN #{name} #{type}")
