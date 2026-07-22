@@ -2857,3 +2857,57 @@ differ). Still green unchanged: **HT-A4 / A5 / A6 / A7** (fallback ladder, one
 shared factory on both maps, no attribution, apex/contract untouched), **A1** (no
 broker — the basemap hosts are raster CDNs), **B1** (all suites), and **B4** (exact
 Apache header on the new `basemap-blend.test.js`).
+
+---
+
+## Bugfix: Node-table telemetry hidden by newer packets of another type
+
+Meshtastic telemetry is a protobuf `oneof` — each packet carries exactly one
+metric family (device / environment / power / air-quality;
+`data/mesh_ingestor/handlers/telemetry.py`). The node table's environment
+columns exist only through the client-side per-node telemetry merge
+(`aggregateTelemetrySnapshots` → `mergeTelemetryIntoNodes`), which merged a
+fixed `SNAPSHOT_WINDOW = 7` packet window: seven newer device/power packets
+evicted the last environment packet wholesale, hiding temperature / humidity /
+pressure (and, on the node detail page, IAQ etc.) although the rows were still
+in the accumulator and the DB. Selection and precedence were also array-order
+driven (first-7-encountered, position-0 wins), which is wrong for warm
+IndexedDB cache seeds (key order) and incremental `mergeById` appends — stale
+values could beat fresh ones. Fix: `aggregateTelemetrySnapshots` now performs a
+**per-field latest-non-null merge** — each field takes the value from the
+node's newest packet (by `rx_time`, falling back to `telemetry_time`) that
+carries it non-null, order-independently, bounded by the caller's existing
+7-day accumulator window instead of a packet count. A null/absent field never
+clears an older valid value. Frontend read-side only — no API/DB/ingestor
+change; apex (I) and privacy (II) untouched; protocol-neutral (IV). The raw
+accumulators stay raw (CL-A1/bugfix A1 unchanged).
+
+### TM-A1 — per-field latest-non-null telemetry merge
+```bash
+( cd web && node --test public/assets/js/app/__tests__/snapshot-aggregator.test.js )
+```
+**Expected:** pass. With one environment packet followed by more than
+`SNAPSHOT_WINDOW` newer device/power packets for the same node, the aggregate
+retains the environment metrics (temperature / humidity / pressure) alongside
+the newest device metrics; the newest non-null value per field wins regardless
+of input array order (inputs that differ only in order produce identical
+aggregates whenever timestamps differ; an equal-timestamp conflict resolves
+deterministically to the row later in the input); a null/absent field never
+overwrites an older valid value; the hidden `snapshots` history is
+chronological and `latestSnapshot` is the newest packet by timestamp, not by
+array position.
+
+### TM-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and explicitly required
+to remain green: **CL-A1** (the Log's raw-accumulator retention —
+`main-log-snapshot-retention.test.js` — the fix changes only the aggregated
+locals, never the accumulators), the node detail page and chart suites
+(`node-details.test.js`, node-page chart tests — the aggregate keeps its
+`snapshots` / `latestSnapshot` shape), and `data-merge.test.js`
+(`mergeTelemetryIntoNodes` consumes one aggregate per node unchanged). Node /
+position / neighbor aggregation keep their existing `SNAPSHOT_WINDOW`
+semantics — only telemetry aggregation changes. No Ruby/Python surface is
+touched (**C2** and the Python suite unaffected).

@@ -80,7 +80,7 @@ test('aggregateNodeSnapshots reconciles identifiers and fills missing values', (
   assert.equal(node.snapshots.length, 3);
 });
 
-test('aggregateTelemetrySnapshots and aggregatePositionSnapshots mirror node aggregation', () => {
+test('aggregateTelemetrySnapshots and aggregatePositionSnapshots retain older non-null fields', () => {
   const telemetryEntries = [
     { node_id: SAMPLE_NODE_ID, node_num: 5, temperature: null, rx_time: 20 },
     { node_num: 5, temperature: 21.5, humidity: 52, rx_time: 10 },
@@ -89,7 +89,7 @@ test('aggregateTelemetrySnapshots and aggregatePositionSnapshots mirror node agg
     { node_id: SAMPLE_NODE_ID, node_num: 5, longitude: 13.4, rx_time: 25 },
     { node_num: 5, latitude: 52.5, rx_time: 15 },
   ];
-  const telemetryAggregated = aggregateTelemetrySnapshots(telemetryEntries, { limit: 3 });
+  const telemetryAggregated = aggregateTelemetrySnapshots(telemetryEntries);
   const positionAggregated = aggregatePositionSnapshots(positionEntries, { limit: 3 });
   assert.equal(telemetryAggregated.length, 1);
   assert.equal(positionAggregated.length, 1);
@@ -118,4 +118,104 @@ test('aggregateNeighborSnapshots groups by node pairs', () => {
 test('aggregateSnapshots returns an empty array when no entries are provided', () => {
   assert.deepEqual(aggregateSnapshots(null, { keySelector: () => 'noop' }), []);
   assert.deepEqual(aggregateNodeSnapshots([], {}), []);
+});
+
+// Regression: hidden telemetry in the node table. Meshtastic telemetry is a
+// protobuf oneof — each packet carries exactly one metric family — so the
+// aggregate must keep the newest non-null value per field across families
+// instead of merging a fixed packet-count window (TM-A1 in ACCEPTANCE.md).
+
+/**
+ * Build a newest-first packet stream: one environment packet followed by
+ * ``newerCount`` newer device/power packets for the same node.
+ *
+ * @param {number} newerCount Number of non-environment packets newer than the
+ *   environment packet.
+ * @returns {Array<Object>} Telemetry entries ordered newest-first.
+ */
+function environmentThenNewerPackets(newerCount) {
+  const entries = [];
+  for (let i = newerCount; i >= 1; i -= 1) {
+    entries.push({
+      id: 9000 + i,
+      node_id: SAMPLE_NODE_ID,
+      rx_time: 1000 + i * 60,
+      telemetry_type: i % 2 ? 'device' : 'power',
+      // Power packets carry no extracted metric columns at all; device packets
+      // carry the device family only.
+      ...(i % 2 ? { battery_level: 80, voltage: 4.05 } : {}),
+    });
+  }
+  entries.push({
+    id: 9000,
+    node_id: SAMPLE_NODE_ID,
+    rx_time: 1000,
+    telemetry_type: 'environment',
+    temperature: 21.5,
+    relative_humidity: 40.2,
+    barometric_pressure: 1013.2,
+  });
+  return entries;
+}
+
+test('aggregateTelemetrySnapshots keeps environment metrics past SNAPSHOT_WINDOW newer packets of other types', () => {
+  const aggregated = aggregateTelemetrySnapshots(environmentThenNewerPackets(SNAPSHOT_WINDOW + 1));
+  assert.equal(aggregated.length, 1);
+  const record = aggregated[0];
+  // Latest known environment readings survive alongside the newest device values.
+  assert.equal(record.temperature, 21.5);
+  assert.equal(record.relative_humidity, 40.2);
+  assert.equal(record.barometric_pressure, 1013.2);
+  assert.equal(record.battery_level, 80);
+  assert.equal(record.voltage, 4.05);
+});
+
+test('aggregateTelemetrySnapshots prefers the newest non-null value per field regardless of input order', () => {
+  // Append/IndexedDB-seed order: the older packet sits first in the array, the
+  // way a warm cache seed (key order) or an incremental mergeById append holds it.
+  const older = { id: 3, node_id: SAMPLE_NODE_ID, rx_time: 1000, telemetry_type: 'device', battery_level: 20, voltage: 3.2 };
+  const newer = { id: 9, node_id: SAMPLE_NODE_ID, rx_time: 2000, telemetry_type: 'device', battery_level: 90, voltage: 4.1 };
+  for (const entries of [[older, newer], [newer, older]]) {
+    const aggregated = aggregateTelemetrySnapshots(entries);
+    assert.equal(aggregated.length, 1);
+    const record = aggregated[0];
+    assert.equal(record.battery_level, 90);
+    assert.equal(record.voltage, 4.1);
+    // The hidden history stays chronological and the latest snapshot is the
+    // newest packet by timestamp, not by array position.
+    assert.deepEqual(record.snapshots.map(s => s.rx_time), [1000, 2000]);
+    assert.equal(record.latestSnapshot.rx_time, 2000);
+  }
+});
+
+test('aggregateTelemetrySnapshots resolves equal timestamps to the row later in the input', () => {
+  // Same-second packets are equally fresh; the deterministic tie rule is that
+  // the row appearing later in the input (a fresher append) wins the conflict.
+  const tied = aggregateTelemetrySnapshots([
+    { id: 1, node_id: SAMPLE_NODE_ID, rx_time: 1000, battery_level: 20 },
+    { id: 2, node_id: SAMPLE_NODE_ID, rx_time: 1000, battery_level: 90 },
+  ]);
+  assert.equal(tied.length, 1);
+  assert.equal(tied[0].battery_level, 90);
+  assert.equal(tied[0].latestSnapshot.id, 2);
+  // Two untimestamped rows tie at -Infinity: the explicit comparator keeps the
+  // ordering deterministic (no NaN from subtracting infinities) and the later
+  // row still wins.
+  const untimed = aggregateTelemetrySnapshots([
+    { id: 3, node_id: SAMPLE_NODE_ID, voltage: 3.2 },
+    { id: 4, node_id: SAMPLE_NODE_ID, voltage: 4.1 },
+  ]);
+  assert.equal(untimed.length, 1);
+  assert.equal(untimed[0].voltage, 4.1);
+  assert.deepEqual(untimed[0].snapshots.map(s => s.id), [3, 4]);
+});
+
+test('aggregateTelemetrySnapshots never overwrites a valid value with an empty field', () => {
+  const aggregated = aggregateTelemetrySnapshots([
+    { id: 2, node_id: SAMPLE_NODE_ID, rx_time: 2000, telemetry_type: 'environment', temperature: 22.1, relative_humidity: null },
+    { id: 1, node_id: SAMPLE_NODE_ID, rx_time: 1000, telemetry_type: 'environment', temperature: 21.5, relative_humidity: 40.2 },
+  ]);
+  assert.equal(aggregated.length, 1);
+  assert.equal(aggregated[0].temperature, 22.1);
+  assert.equal(aggregated[0].relative_humidity, 40.2);
 });

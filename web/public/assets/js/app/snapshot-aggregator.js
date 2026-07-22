@@ -210,15 +210,89 @@ export function aggregateNodeSnapshots(entries, { limit = SNAPSHOT_WINDOW } = {}
 }
 
 /**
- * Aggregate telemetry packets for each node.
+ * Resolve the timestamp used to order a telemetry packet.
+ *
+ * ``rx_time`` is authoritative (stamped on every stored packet); the
+ * self-reported ``telemetry_time`` is the fallback. Entries carrying neither
+ * are treated as infinitely old so they only ever fill fields that no
+ * timestamped packet provides.
+ *
+ * @param {Object} entry Telemetry payload.
+ * @returns {number} Unix timestamp in seconds, or ``-Infinity`` when absent.
+ */
+function resolveTelemetryTimestamp(entry) {
+  const rxTime = normaliseNum(entry.rx_time ?? entry.rxTime);
+  if (rxTime != null) return rxTime;
+  const telemetryTime = normaliseNum(entry.telemetry_time ?? entry.telemetryTime);
+  if (telemetryTime != null) return telemetryTime;
+  return Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Aggregate telemetry packets for each node with per-field latest-non-null
+ * semantics.
+ *
+ * Meshtastic telemetry is a protobuf ``oneof``: each packet carries exactly
+ * one metric family (device / environment / power / air-quality), so a
+ * packet-count window can evict one family wholesale when another family
+ * transmits more often. Instead of merging a bounded window, every field of
+ * the aggregate takes the value from the node's newest packet (per
+ * {@link resolveTelemetryTimestamp}) that carries it non-null. A null/absent
+ * field never overwrites an older valid value, and the result is independent
+ * of input order (warm cache seeds arrive in IndexedDB key order and
+ * incremental refreshes append, so the caller's array is not reliably
+ * newest-first). The retained set is bounded by the caller's accumulator
+ * window (7 days), not a packet count.
+ *
+ * Each aggregate exposes the same non-enumerable metadata as
+ * {@link aggregateSnapshots}: ``snapshots`` (the node's packets in
+ * chronological order, ties broken by input order; read-only references — do
+ * not mutate) and ``latestSnapshot`` (the newest packet by timestamp).
  *
  * @param {Array<Object>} entries Telemetry payloads.
- * @param {{ limit?: number }} [options] Aggregation options.
- * @returns {Array<Object>} Aggregated telemetry data.
+ * @returns {Array<Object>} Aggregated telemetry data, one entry per node.
  */
-export function aggregateTelemetrySnapshots(entries, { limit = SNAPSHOT_WINDOW } = {}) {
+export function aggregateTelemetrySnapshots(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
   const resolveKey = createNodeKeyResolver();
-  return aggregateSnapshots(entries, { keySelector: resolveKey, limit });
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!isObject(entry)) continue;
+    const key = resolveKey(entry);
+    if (!key) continue;
+    const group = groups.get(key);
+    if (group) {
+      group.push(entry);
+    } else {
+      groups.set(key, [entry]);
+    }
+  }
+  const aggregates = [];
+  for (const group of groups.values()) {
+    // Sort ascending by timestamp, preserving input order on ties so a row
+    // appended later (a fresher delta with the same rx second) wins.
+    const orderedSnapshots = group
+      .map((snapshot, index) => ({ snapshot, timestamp: resolveTelemetryTimestamp(snapshot), index }))
+      .sort((a, b) => {
+        // Explicit compare: subtraction yields NaN for two -Infinity stamps.
+        if (a.timestamp < b.timestamp) return -1;
+        if (a.timestamp > b.timestamp) return 1;
+        return a.index - b.index;
+      })
+      .map(item => item.snapshot);
+    // Folding the null-skipping merge oldest→newest leaves each field holding
+    // the newest non-null value across all of the node's packets.
+    const target = {};
+    for (const snapshot of orderedSnapshots) {
+      mergeSnapshotFields(target, snapshot);
+    }
+    defineHiddenProperty(target, 'snapshots', orderedSnapshots);
+    defineHiddenProperty(target, 'latestSnapshot', orderedSnapshots[orderedSnapshots.length - 1] ?? null);
+    aggregates.push(target);
+  }
+  return aggregates;
 }
 
 /**
