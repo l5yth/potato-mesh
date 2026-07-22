@@ -30,7 +30,7 @@ import {
   withImgDocument,
 } from './tile-test-helpers.js';
 
-const CARTO_TEMPLATE = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const CARTO_TEMPLATE = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
 
 /**
  * Build a recording ``done`` callback for tile-ready assertions.
@@ -55,7 +55,7 @@ test('buildFallbackTileUrl substitutes subdomain and coords without a retina suf
     { template: CARTO_TEMPLATE, subdomains: 'abcd', retina: false }
   );
   // (3 + 2) % 4 = 1 -> 'b'
-  assert.equal(url, 'https://b.basemaps.cartocdn.com/dark_all/5/3/2.png');
+  assert.equal(url, 'https://b.basemaps.cartocdn.com/rastertiles/voyager/5/3/2.png');
 });
 
 test('buildFallbackTileUrl appends @2x when retina is requested', () => {
@@ -64,7 +64,7 @@ test('buildFallbackTileUrl appends @2x when retina is requested', () => {
     { template: CARTO_TEMPLATE, subdomains: 'abcd', retina: true }
   );
   // (1 + 0) % 4 = 1 -> 'b'
-  assert.equal(url, 'https://b.basemaps.cartocdn.com/dark_all/4/1/0@2x.png');
+  assert.equal(url, 'https://b.basemaps.cartocdn.com/rastertiles/voyager/4/1/0@2x.png');
 });
 
 test('buildFallbackTileUrl defaults the subdomains when none are configured', () => {
@@ -73,7 +73,7 @@ test('buildFallbackTileUrl defaults the subdomains when none are configured', ()
     { template: CARTO_TEMPLATE, retina: false }
   );
   // subdomains default 'abc'; (0 + 0) % 3 = 0 -> 'a'
-  assert.equal(url, 'https://a.basemaps.cartocdn.com/dark_all/2/0/0.png');
+  assert.equal(url, 'https://a.basemaps.cartocdn.com/rastertiles/voyager/2/0/0.png');
 });
 
 test('buildFallbackTileUrl uses the absolute coord sum for the subdomain index', () => {
@@ -82,7 +82,7 @@ test('buildFallbackTileUrl uses the absolute coord sum for the subdomain index',
     { template: CARTO_TEMPLATE, subdomains: 'abcd', retina: false }
   );
   // abs(-1 + -2) = 3 -> 3 % 4 = 3 -> 'd'
-  assert.equal(url, 'https://d.basemaps.cartocdn.com/dark_all/3/-1/-2.png');
+  assert.equal(url, 'https://d.basemaps.cartocdn.com/rastertiles/voyager/3/-1/-2.png');
 });
 
 // ---------------------------------------------------------------------------
@@ -297,7 +297,7 @@ test('createFallbackTileLayer.createTile builds a filtered HOT tile that falls b
     assert.equal(tile.src, 'https://c.hot/3/1/1.png');
     tile.dispatch('error'); // force the fallback
     // (1 + 1) % 4 = 2 -> 'c'; retina -> @2x
-    assert.equal(tile.src, 'https://c.basemaps.cartocdn.com/dark_all/3/1/1@2x.png');
+    assert.equal(tile.src, 'https://c.basemaps.cartocdn.com/rastertiles/voyager/3/1/1@2x.png');
     assert.equal(tile.classList.contains(FALLBACK_TILE_CLASS), true);
   } finally {
     doc.restore();

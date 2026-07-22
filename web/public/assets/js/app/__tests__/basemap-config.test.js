@@ -40,10 +40,10 @@ test('HOT is the primary tile source; CARTO is retained for the fallback', () =>
   assert.equal(HOT_TILE_OPTIONS.subdomains, 'abc');
   assert.equal(HOT_TILE_OPTIONS.crossOrigin, 'anonymous');
   assert.equal(HOT_TILE_OPTIONS.maxZoom, 19);
-  assert.match(CARTO_TILE_URL, /basemaps\.cartocdn\.com\/dark_all/);
+  assert.match(CARTO_TILE_URL, /basemaps\.cartocdn\.com\/rastertiles\/voyager/);
   assert.equal(CARTO_TILE_OPTIONS.subdomains, 'abcd');
   assert.equal(CARTO_TILE_OPTIONS.detectRetina, true);
-  assert.equal(FALLBACK_TIMEOUT_MS, 1000);
+  assert.equal(FALLBACK_TIMEOUT_MS, 2500);
 });
 
 test('prefersRetinaTiles reflects the device pixel ratio', () => {
@@ -80,7 +80,10 @@ test('createBasemapLayer builds the HOT-primary layer with CARTO fallback wiring
     assert.equal(tile.src, 'https://a.tile.openstreetmap.fr/hot/6/2/1.png');
     tile.dispatch('error'); // fall back
     // (2 + 1) % 4 = 3 -> 'd' CARTO, non-retina
-    assert.equal(tile.src, 'https://d.basemaps.cartocdn.com/dark_all/6/2/1.png');
+    assert.equal(
+      tile.src,
+      'https://d.basemaps.cartocdn.com/rastertiles/voyager/6/2/1.png'
+    );
     assert.equal(tile.classList.contains(FALLBACK_TILE_CLASS), true);
   } finally {
     globalThis.devicePixelRatio = previous;

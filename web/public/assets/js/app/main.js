@@ -1337,9 +1337,10 @@ export function initializeApp(config) {
   // The basemap is HOT (primary, dark-filtered via the ``.map-tiles-hot`` CSS
   // rule) with a per-tile CARTO fallback, built by the shared
   // ``createBasemapLayer`` factory (see ``./basemap-config.js`` and
-  // ``./main/fallback-tile-layer.js``). A HOT tile that errors or is slow (>1s)
-  // is individually swapped to CARTO; only a tile that fails on both providers
-  // reaches the offline placeholder wired below.
+  // ``./main/fallback-tile-layer.js``). A HOT tile that errors or is slow
+  // (>2.5s) is individually swapped to CARTO Voyager (greyed by the same dark
+  // filter as HOT, so the two providers blend); only a tile that fails on both
+  // providers reaches the offline placeholder wired below.
 
   if (hasLeaflet) {
     mapCenterLatLng = L.latLng(MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);

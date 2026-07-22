@@ -24,12 +24,14 @@
  *
  * The **primary** basemap is OpenStreetMap France **HOT** (Humanitarian OSM
  * Team) — a natively colourful raster basemap greyed to match the dark UI by the
- * static ``grayscale``/``invert`` CSS filter on ``.map-tiles-hot``. **CARTO Dark
- * Matter** (natively dark-grey) is retained as a **per-tile fallback**: any HOT
- * tile that errors or fails to load within {@link FALLBACK_TIMEOUT_MS} is
- * individually replaced by the CARTO tile at the same coordinate (see
- * ``main/fallback-tile-layer.js``). Both providers are keyless, CORS-enabled
- * public CDNs.
+ * static ``grayscale``/``invert`` CSS filter on ``.map-tiles-hot``. **CARTO
+ * Voyager** (also a natively colourful raster basemap) is retained as a
+ * **per-tile fallback**: any HOT tile that errors or fails to load within
+ * {@link FALLBACK_TIMEOUT_MS} is individually replaced by the CARTO tile at the
+ * same coordinate (see ``main/fallback-tile-layer.js``) and is greyed by the
+ * *same* dark filter (``.map-tiles-fallback``), so a viewport mixing both
+ * providers renders as one coherent dark basemap rather than a light/dark
+ * checkerboard. Both providers are keyless, CORS-enabled public CDNs.
  *
  * @module app/basemap-config
  */
@@ -66,15 +68,20 @@ export const HOT_TILE_OPTIONS = {
 };
 
 /**
- * Tile URL template for the CARTO Dark Matter fallback basemap.
+ * Tile URL template for the CARTO Voyager fallback basemap.
  *
- * ``{s}`` rotates over the ``abcd`` subdomains, ``{r}`` expands to ``@2x`` on
- * HiDPI displays, and ``{z}/{x}/{y}`` is the standard slippy-map tile coordinate.
+ * Voyager is CARTO's natively colourful raster style (unlike the previously used
+ * Dark Matter, which was already dark). A colourful source is deliberate: the
+ * per-tile CARTO fallback is greyed by the *same* ``grayscale``/``invert`` filter
+ * as HOT (``.map-tiles-fallback``), so both providers converge to the same dark
+ * look. ``{s}`` rotates over the ``abcd`` subdomains, ``{r}`` expands to ``@2x``
+ * on HiDPI displays, and ``{z}/{x}/{y}`` is the standard slippy-map tile
+ * coordinate.
  *
  * @type {string}
  */
 export const CARTO_TILE_URL =
-  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+  'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
 
 /**
  * Leaflet ``tileLayer`` options describing the CARTO fallback source.
@@ -97,11 +104,16 @@ export const CARTO_TILE_OPTIONS = {
  * Per-tile timeout, in milliseconds, before a slow HOT tile falls back to CARTO.
  *
  * The single source of truth for the fallback deadline; a HOT tile that has
- * neither loaded nor errored within this window is swapped to CARTO.
+ * neither loaded nor errored within this window is swapped to CARTO. Set at
+ * **2500 ms** (raised from an aggressive 1000 ms) so a slow-but-arriving HOT tile
+ * beats the deadline rather than falling back — keeping fallback the rare safety
+ * net it is meant to be, given HOT's real-world latency. Fewer routine fallbacks
+ * (combined with the shared dark filter on ``.map-tiles-fallback``) is what keeps
+ * a viewport from rendering as a HOT/CARTO checkerboard.
  *
  * @type {number}
  */
-export const FALLBACK_TIMEOUT_MS = 1000;
+export const FALLBACK_TIMEOUT_MS = 2500;
 
 /**
  * Whether the current display should request ``@2x`` (HiDPI) fallback tiles.
