@@ -3526,7 +3526,9 @@ export function initializeApp(config) {
     // the non-enumerable ``snapshots`` history) and merges oldest-last (pinning to
     // the stalest reading), collapsing each node's history to {stale-first, newest}
     // so a telemetry/position Log entry flashes in and vanishes on the next tick.
-    // Keeping the accumulators raw gives every packet a stable, id-keyed Log entry
+    // (Telemetry now aggregates per-field by timestamp — TM-A1 — but re-storing
+    // its aggregate would still collapse the Log's per-packet history.) Keeping
+    // the accumulators raw gives every packet a stable, id-keyed Log entry
     // (bugfix A1).
   }
 
