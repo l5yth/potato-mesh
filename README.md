@@ -274,6 +274,24 @@ example `ALLOWED_CHANNELS="Chat,Ops"`); packets on other channels are discarded.
 Use `HIDDEN_CHANNELS` to block specific channels from the web UI even when they
 appear in the allowlist.
 
+### MeshCore
+
+Set `PROTOCOL=meshcore` to ingest from a MeshCore companion-firmware node
+instead (serial, TCP, or BLE via the same `CONNECTION` formats). Alongside
+contacts and messages, the ingestor captures RF metrics: per-message SNR and
+hop counts, per-channel-message RSSI and repeater path (decoded from the
+radio's RX log), and per-advert SNR/RSSI/hops for every node heard on air —
+including nodes the radio's contact roster has no room for.
+
+**Note — the ingestor writes one radio setting.** At startup it enables the
+firmware's *overwrite-oldest-contact* flag (`autoadd_config` bit `0x01`,
+firmware ≥ 1.16) so a full contact roster evicts its oldest non-favourite
+entry instead of rejecting new nodes. The write happens only when the bit is
+not already set, preserves all other auto-add settings, persists on the
+device, and never evicts favourites. Older firmware without the command is
+left untouched. Evicted contacts remain in the dashboard's database — only
+the radio's local roster rotates.
+
 ### Passive UDP transport
 
 The Meshtastic node radio accepts only **one** API client at a time (serial or

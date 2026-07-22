@@ -41,6 +41,8 @@ def test_message_event_schema():
     assert "from_id" in MessageEvent.__optional_keys__
     assert "snr" in MessageEvent.__optional_keys__
     assert "rssi" in MessageEvent.__optional_keys__
+    assert "hops" in MessageEvent.__optional_keys__
+    assert "path" in MessageEvent.__optional_keys__
 
 
 def test_message_event_requires_id_rx_time_rx_iso():

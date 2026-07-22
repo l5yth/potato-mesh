@@ -71,6 +71,7 @@ module PotatoMesh
         sql = <<~SQL
           SELECT m.id, m.rx_time, m.rx_iso, m.from_id, m.to_id, m.channel,
                  m.portnum, m.text, m.encrypted, m.rssi, m.hop_limit,
+                 m.hops, m.path,
                  m.lora_freq, m.modem_preset, m.channel_name, m.snr,
                  m.reply_id, m.emoji, m.ingestor, m.protocol
           FROM messages m

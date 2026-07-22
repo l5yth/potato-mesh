@@ -44,6 +44,7 @@ remains accepted. Per-field acceptance is nil-aware, so a camelCase value of
 - `num` (int node number)
 - `lastHeard` (int unix seconds)
 - `snr` (float)
+- `rssi` (int|nil) — per-advert reception RSSI (SPEC RF3). Sourced from MeshCore RX-log adverts; Meshtastic reports no per-node RSSI, so the field stays absent/NULL there. The web upsert keeps the last stored value when an update omits it (`COALESCE`), so contact-roster refreshes never wipe a per-advert reading.
 - `hopsAway` (int)
 - `isFavorite` (bool)
 - `user` (mapping; e.g. `shortName`, `longName`, `macaddr`, `hwModel`, `publicKey`, `isUnmessagable`)
@@ -62,11 +63,15 @@ The web application applies the same normalisation as a safety net so legacy ing
 
 **Wire-format note for federation peers (issue #782).** Position time is exposed **only** as `position_time` (unix seconds) on GET responses (`/api/nodes`, `/api/positions`); the redundant ISO twin (`pos_time_iso` on `/api/nodes`, `position_time_iso` on `/api/positions`) was **removed in 0.7.0** — clients format `position_time` themselves. Sentinel rows are compacted by **omitting** `position_time` rather than emitting `0` or `"1970-01-01T00:00:00Z"`. Federation peers consuming this API and any third-party clients SHOULD treat an *absent* `position_time` as "no GPS lock recorded" and not synthesise a zero or epoch value when re-serialising. Older peers that key on `position_time == 0` may need a small adjustment.
 
-**MeshCore advert sourcing (capturing adverts from other nodes).** A MeshCore node announces itself by broadcasting an *advert* (public key + type + name + optional lat/lon). The ingestor surfaces heard adverts to `POST /api/nodes` through three complementary paths so coverage does not depend on the radio's auto-add setting:
+**MeshCore advert sourcing (capturing adverts from other nodes).** A MeshCore node announces itself by broadcasting an *advert* (public key + type + name + optional lat/lon). The ingestor surfaces heard adverts to `POST /api/nodes` through four complementary paths so coverage does not depend on the radio's auto-add setting or roster capacity:
 
 - *Contact roster (rich).* The startup `ensure_contacts()` fetch plus live `NEW_CONTACT` / `NEXT_CONTACT` pushes carry the full advert (name, role, position) and upsert complete node rows. This covers every node the radio has added to its contact book.
 - *Auto-update re-fetch (freshness).* The provider sets `mc.auto_update_contacts = True`, so the meshcore library re-fetches **changed** contacts (incrementally, by `lastmod`) whenever an `ADVERTISEMENT` / `PATH_UPDATE` push arrives. A re-advert from a known node therefore refreshes its `last_advert` / position without waiting for a reconnect.
 - *Bare advert (reach).* The `ADVERTISEMENT` (pubkey-only) push is also handled directly: for a public key **not** in the contact roster it upserts a minimal "heard now" node (`lastHeard`, `protocol`, `user.shortName`/`publicKey` only — no name/type/position), so radios running with auto-add off still register the advertiser. Known keys are skipped (the auto-update path keeps them fresh). The Ruby web app preserves an existing long name on conflict, so this placeholder never clobbers a richer record, and a later full contact advertisement reconciles it. Reconciliation does not depend on timestamp ordering: the contact record carries `lastHeard = last_advert` (the **sender-stamped** advert-creation time), which is always older than the placeholder's wall-clock stamp — the web app's node upsert therefore fills identity fields (name, role, public key, …) that are still NULL even from an older-stamped record, while timestamps/telemetry stay freshness-guarded (ACCEPTANCE GH-A1).
+
+- *RX-log advert (full identity + signal, roster-independent — SPEC RF3).* Companion firmware ≥ 1.16 pushes every received RF frame (`RX_LOG_DATA`) while a client is connected; the library parses `ADVERT` frames completely (full public key, name, type, optional lat/lon). The ingestor converts these to full node upserts carrying per-reception `snr` / `rssi` / `hopsAway`, so node identity and signal metrics no longer depend on the radio's contact roster at all — including when the roster is full. Absent RX-log frames (older/other builds) are never an error; the three paths above still function. Non-`ADVERT` RX-log frames are not ingested (DEBUG-only capture).
+
+**MeshCore roster-eviction assertion (SPEC RF4).** At startup the provider asserts the firmware's `AUTO_ADD_OVERWRITE_OLDEST` bit (`autoadd_config` bit `0x01`): it reads the current config and, only when the bit is unset, writes `config | 0x01` back — preserving the type-filter bits and `autoadd_max_hops`, and skipping the write (and its flash `savePrefs()`) when already set. With the bit set, a full contact roster evicts its oldest non-favourite entry instead of rejecting new contacts, so `NEW_CONTACT` coverage keeps rotating; favourites are never evicted (firmware guarantee) and the resulting `CONTACT_DELETED` pushes are deliberately ignored (the web DB retains evicted nodes; server-side retention remains the only data-expiry authority). Unconditional, no configuration knob; pre-1.16 firmware answers `ERROR`/timeout, which logs a warning and never blocks startup.
 
 New protocols SHOULD likewise treat "node was heard" as a first-class, name-optional upsert so peer discovery does not hinge on a roster being populated.
 
@@ -77,7 +82,10 @@ Single message payload:
 - Required: `id` (int), `rx_time` (int), `rx_iso` (string)
 - Identity: `from_id` (string/int), `to_id` (string/int), `channel` (int), `portnum` (string|nil)
 - Payload: `text` (string|nil), `encrypted` (string|nil), `reply_id` (int|nil), `emoji` (string|nil)
-- RF: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil)
+- RF: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil), `hops` (int|nil), `path` (string|nil)
+  - `hops` (SPEC RF1) — repeater relays actually travelled, distinct from `hop_limit`'s remaining-budget semantic. MeshCore: the native `path_len` with the `255` "direct" sentinel normalised to `0`. Meshtastic: `hopStart − hopLimit` when both are present, else absent. Additive; absent for legacy senders.
+  - `path` (SPEC RF2) — MeshCore hop-hash route from the library's RX-log⇆message join (`decrypt_channels`): lowercase hex, `path_hash_size`-byte repeater hashes concatenated in travel order (last hash = the repeater heard directly). Absent on a join miss, on RX-log-less firmware, and on direct messages (E2E-encrypted, no join). Stored verbatim; no hash→node resolution is attempted. Additive.
+  - Both fields are serialised back on `GET /api/messages`; neither participates in the dedup fingerprint below (the id derivation is byte-identical to pre-RF releases).
 - Meta: `channel_name` (string; only when not encrypted and known), `ingestor` (canonical host id), `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp. Takes precedence over the value inherited from the registered ingestor; values outside the whitelist fall back to the ingestor lookup, then to `"meshtastic"`. Ingestors SHOULD stamp this on every message so the web app classifies senders correctly even before the ingestor heartbeat is processed.
 

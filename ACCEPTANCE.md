@@ -450,6 +450,22 @@ existing codebase, not to the change under review.
   the failures reproduce identically with and without any change under review
   and do not occur where the test domains resolve normally (CI). Attribute to
   the environment, not the codebase or the change.
+- **C2 — `tests/test_mesh.py` fails in isolation on Python 3.14.** Running
+  the C2 command alone (`pytest -q tests/test_mesh.py`) fails 3 daemon
+  reconnect-loop tests (`test_main_retries_interface_creation`,
+  `test_main_reconnects_when_connection_event_clears`,
+  `test_main_recreates_interface_after_snapshot_error`): their local
+  `DummyEvent` helpers monkeypatch the global `threading.Event` with a
+  `wait(self, timeout)` signature that requires an argument, and Python
+  3.14's `Thread.start()` calls `self._started.wait()` with none →
+  `TypeError`. Pre-existing and independent of any change under review
+  (reproduces on a clean tree), and **the full suite (`pytest -q tests/`)
+  passes** — the failure is an isolation/collection-order artifact of the
+  global patch. A naive `timeout=None` default is *not* a fix: it lets the
+  patched-Event path run further and breaks thread startup in the full suite
+  too ("cannot join thread before it is started"). Needs a proper follow-up
+  that stops monkeypatching the global `threading.Event` in those three
+  tests; until then, judge C2 by the full-suite run.
 
 ---
 
@@ -2911,3 +2927,114 @@ locals, never the accumulators), the node detail page and chart suites
 position / neighbor aggregation keep their existing `SNAPSHOT_WINDOW`
 semantics — only telemetry aggregation changes. No Ruby/Python surface is
 touched (**C2** and the Python suite unaffected).
+
+---
+
+## Feature: MeshCore RF metrics (RSSI/SNR/hops/path) & roster-eviction assertion
+
+Maps to SPEC decisions **RF1–RF8**. Ingestor-side logic lives in
+`data/mesh_ingestor/protocols/meshcore/` (runner, handlers, decode) and the
+Meshtastic hops computation in the packet store path; web-side, one additive
+migration adds `messages.hops`, `messages.path`, and `nodes.rssi`, mapped in
+`data_processing/` and serialized by the existing GET routes. Store + API only —
+no dashboard rendering (RF7). Unless a check says otherwise, Python commands
+assume the repo venv (`. .venv/bin/activate`).
+
+### RF-A1 — hops-travelled stored on messages, both protocols — RF1
+```bash
+( . .venv/bin/activate && pytest -q tests/ -k "hops" )
+( cd web && bundle exec rspec spec -e "message hops" )
+```
+**Expected:** pass. MeshCore: a `CHANNEL_MSG_RECV`/`CONTACT_MSG_RECV` payload
+with `path_len: N` (N ≤ 63) yields a stored packet with `hops == N`; the `255`
+"direct" sentinel yields `hops == 0`; an absent `path_len` omits the field.
+Meshtastic: a packet carrying both `hopStart` and `hopLimit` yields
+`hops == hopStart − hopLimit`; either absent → field omitted. Web: the
+`messages` table has an additive `hops INTEGER` column (NULL for legacy rows),
+`POST /api/messages` accepts it, `GET /api/messages` serializes it, and the
+existing `hop_limit` column/semantics are untouched.
+
+### RF-A2 — channel-message RSSI + path via the decrypt_channels join — RF2
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "decrypt or path or rssi" )
+( cd web && bundle exec rspec spec -e "message path" )
+```
+**Expected:** pass. `_run_meshcore` sets `mc.decrypt_channels = True` before
+`mc.connect()` returns. A channel-message payload carrying joined `RSSI`/`path`
+stores both (`rssi` → existing column; `path` → additive `messages.path TEXT`,
+lowercase hex, hashes in travel order); a payload **without** them (join miss,
+RX-log-less firmware) stores the message identically with the fields absent —
+never an error. DMs never carry `path`/`rssi` (E2E, no join — RF2's documented
+boundary). The message id (`_derive_message_id` inputs) is byte-identical with
+and without the new fields.
+
+### RF-A3 — RX-log ADVERT frames upsert full node identity + signal — RF3
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "rx_log or advert" )
+( cd web && bundle exec rspec spec -e "node rssi" )
+```
+**Expected:** pass. An `RX_LOG_DATA` event with `payload_typename == "ADVERT"`
+upserts a node keyed by the canonical id derived from the full `adv_key`
+(`_meshcore_node_id`), carrying `adv_name` (long name), the
+`_MESHCORE_ADV_TYPE_ROLE` role for `adv_type`, a position when
+`adv_lat`/`adv_lon` are present, and per-reception `snr` → `nodes.snr`,
+`path_len` → `nodes.hops_away`, `rssi` → the additive `nodes.rssi INTEGER`
+column. A malformed advert (missing/short `adv_key`, absent parse fields) is
+tolerated without raising. Non-`ADVERT` RX-log frames produce **no** upsert and
+remain in the `DEBUG`-only capture; `RX_LOG_DATA` itself no longer lands in
+`ignored-meshcore.txt`. With **zero** RX-log frames the provider still passes
+RF-A1/RF-A4 behavior (graceful degradation). Web: `POST /api/nodes` accepts
+`rssi`, `GET /api/nodes` serializes it, and it stays `NULL` for Meshtastic
+nodes (no source).
+
+### RF-A4 — roster-eviction assertion: read-modify-write, skip, tolerate — RF4
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "autoadd" )
+```
+**Expected:** pass. After connect the runner calls `get_autoadd_config`: when
+bit `0x01` is already set → **no** `set_autoadd_config` call (no flash write);
+when unset → exactly one `set_autoadd_config(config | 0x01)` (type-filter bits
+1–4 preserved, one-byte payload so `autoadd_max_hops` is untouched); when the
+query/set errors or times out (pre-1.16 firmware) → a warning is logged and
+startup **continues** (the connection still succeeds, mirroring
+`_ensure_channel_names` tolerance). No env/config knob gates the behavior
+(RF4: always-on, README-documented).
+
+### RF-A5 — CONTACT_DELETED is an explicit debug no-op — RF5
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "contact_deleted" )
+```
+**Expected:** pass. `CONTACT_DELETED` appears in the subscribed handler map; on
+event it debug-logs and performs **no** node deletion, no POST, and no ignored-
+file write — the web DB retains evicted nodes (`retention.rb` remains the only
+data-expiry authority).
+
+### RF-A6 — contract documented; migration additive; dedup frozen — RF6
+```bash
+git grep -nE 'hops|path|rssi' -- data/mesh_ingestor/CONTRACTS.md | head
+grep -nE 'ALTER TABLE (messages|nodes) ADD COLUMN' data/migrations/*rf_metric*.sql
+grep -nE 'hops|path' data/messages.sql; grep -n 'rssi' data/nodes.sql
+( . .venv/bin/activate && pytest -q tests/ -k "derive_message_id or dedup" )
+```
+**Expected:** `CONTRACTS.md` documents `messages.hops`/`messages.path` (with
+the `255`→direct rule and the path hex format) and `nodes.rssi` (advert→node
+mapping). The migration contains only additive `ALTER TABLE … ADD COLUMN`
+statements (no drops/rewrites); the base schema files carry the new columns for
+fresh databases. The dedup tests pass unchanged — the fingerprint inputs are
+byte-identical to pre-feature (MD-A1/MW-A1 hold).
+
+### RF-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ )
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. At risk and explicitly required
+to remain green: **A4e** (the MeshCore adverts-gap checks — the
+bare-`ADVERTISEMENT` minimal-upsert fallback must keep working alongside the
+new RX-log enrichment; its assertions are **updated**, not removed), **C2**
+(`test_mesh.py` POST shapes — all field additions are additive), **MD-A1 /
+MW-A1** (MeshCore dedup — id derivation byte-identical), **MC-A1 / LH-A1 /
+GH-A1** (MeshCore message/contact machinery — naming, `last_heard`, and
+stale-contact behavior unchanged), and **B1/B4/B5** (all suites, headers,
+formatters). The JS suite is exercised for regression only — RF7 adds no
+frontend behavior.

@@ -52,6 +52,8 @@ class MessageEvent(_MessageEventRequired, total=False):
     snr: float | None
     rssi: int | None
     hop_limit: int | None
+    hops: int | None
+    path: str | None
     reply_id: int | None
     emoji: str | None
     channel_name: str

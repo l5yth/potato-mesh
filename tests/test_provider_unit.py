@@ -70,6 +70,8 @@ from data.mesh_ingestor.protocols.meshcore import (  # noqa: E402 - path setup
     _make_connection,
     _make_event_handlers,
     _meshcore_adv_type_to_role,
+    _normalize_hops,
+    _normalize_path,
     _meshcore_node_id,
     _meshcore_short_name,
     _parse_sender_name,
@@ -1726,6 +1728,382 @@ def test_on_contact_msg_queues_packet_with_from_id(monkeypatch):
     )
 
 
+def test_normalize_hops_maps_path_len_to_hops_travelled():
+    """_normalize_hops passes counts through, maps the 255 sentinel to 0, and
+    rejects absent/unparseable/negative values (SPEC RF1)."""
+    assert _normalize_hops(None) is None
+    assert _normalize_hops(0) == 0
+    assert _normalize_hops(3) == 3
+    assert _normalize_hops("2") == 2
+    assert _normalize_hops(255) == 0
+    assert _normalize_hops("bogus") is None
+    assert _normalize_hops(-1) is None
+
+
+def test_on_channel_msg_includes_hops_from_path_len(monkeypatch):
+    """A channel message with path_len carries the hop count on the packet."""
+    import asyncio
+
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_010,
+                    "text": "routed message",
+                    "channel_idx": 1,
+                    "path_len": 3,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["hops"] == 3
+
+
+def test_on_channel_msg_direct_sentinel_yields_zero_hops(monkeypatch):
+    """The 255 'direct' path_len sentinel normalizes to hops == 0."""
+    import asyncio
+
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_011,
+                    "text": "direct channel message",
+                    "channel_idx": 0,
+                    "path_len": 255,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["hops"] == 0
+
+
+def test_on_channel_msg_hops_none_when_path_len_absent(monkeypatch):
+    """A payload without path_len (older firmware) leaves hops unset."""
+    import asyncio
+
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_012,
+                    "text": "legacy message",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["hops"] is None
+
+
+def test_on_contact_msg_includes_hops_from_path_len(monkeypatch):
+    """Direct messages carry the normalized hop count too (native field, RF1)."""
+    import asyncio
+    import data.mesh_ingestor as _mesh_pkg
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    iface = _MeshcoreInterface(target=None)
+    iface.host_node_id = "!deadbeef"
+
+    hmap = _make_event_handlers(iface, "/dev/ttyUSB0")
+    asyncio.run(
+        hmap["CONTACT_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_013,
+                    "text": "routed dm",
+                    "pubkey_prefix": "aabbccddee11",
+                    "path_len": 2,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["hops"] == 2
+
+
+def test_normalize_path_values():
+    """_normalize_path lowercases hex strings and rejects non-string/empty."""
+    assert _normalize_path("F0BF44B53377") == "f0bf44b53377"
+    assert _normalize_path("aabb") == "aabb"
+    assert _normalize_path("") is None
+    assert _normalize_path(None) is None
+    assert _normalize_path(123) is None
+
+
+def test_on_channel_msg_includes_path_from_rx_log_join(monkeypatch):
+    """A channel message with a joined RX-log path stores it lowercased."""
+    import asyncio
+
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_014,
+                    "text": "joined message",
+                    "channel_idx": 0,
+                    "path": "F0BF44B53377",
+                    "path_len": 3,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["path"] == "f0bf44b53377"
+    assert captured[0]["hops"] == 3
+
+
+def test_on_channel_msg_path_none_on_join_miss_or_invalid(monkeypatch):
+    """A join miss (absent path) or malformed path leaves the field None."""
+    import asyncio
+
+    captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_015,
+                    "text": "no join",
+                    "channel_idx": 0,
+                }
+            )
+        )
+    )
+    asyncio.run(
+        hmap["CHANNEL_MSG_RECV"](
+            _FakeEvt(
+                {
+                    "sender_timestamp": 1_758_000_016,
+                    "text": "bad join",
+                    "channel_idx": 0,
+                    "path": 4711,
+                }
+            )
+        )
+    )
+
+    assert len(captured) == 2
+    assert captured[0]["path"] is None
+    assert captured[1]["path"] is None
+
+
+def test_on_contact_deleted_is_debug_logged_no_op(monkeypatch):
+    """CONTACT_DELETED must log the evicted node and touch nothing else (RF5)."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    logs: list = []
+    monkeypatch.setattr(
+        _mod.config, "_debug_log", lambda msg, **kw: logs.append((msg, kw))
+    )
+
+    assert "CONTACT_DELETED" in hmap
+    asyncio.run(hmap["CONTACT_DELETED"](_FakeEvt({"pubkey": "aabbccdd" + "00" * 28})))
+
+    # No packet stored, no node upserted, no exception — just the debug line.
+    assert captured == []
+    assert upserted == []
+    assert any(
+        kw.get("context") == "meshcore.contact_deleted"
+        and kw.get("node_id") == "!aabbccdd"
+        for _msg, kw in logs
+    )
+
+
+def test_on_contact_deleted_tolerates_empty_payload(monkeypatch):
+    """A CONTACT_DELETED push with no payload must not raise."""
+    import asyncio
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    asyncio.run(hmap["CONTACT_DELETED"](_FakeEvt(None)))
+
+    assert captured == []
+    assert upserted == []
+
+
+def test_rx_advert_to_node_dict_full_frame():
+    """A fully-populated RX-log ADVERT frame maps every field (RF3)."""
+    from data.mesh_ingestor.protocols.meshcore import _rx_advert_to_node_dict
+
+    pub_key = "511617e3" + "00" * 28
+    node = _rx_advert_to_node_dict(
+        {
+            "adv_key": pub_key,
+            "adv_name": "BER Drachentoeter",
+            "adv_type": 2,
+            "adv_lat": 52.516274,
+            "adv_lon": 13.405612,
+            "recv_time": 1_758_000_020,
+            "snr": 12.0,
+            "rssi": -69,
+            "path_len": 2,
+        }
+    )
+
+    assert node["lastHeard"] == 1_758_000_020
+    assert node["protocol"] == "meshcore"
+    assert node["user"]["longName"] == "BER Drachentoeter"
+    assert node["user"]["publicKey"] == pub_key
+    assert node["user"]["role"] == "REPEATER"
+    assert node["snr"] == 12.0
+    assert node["rssi"] == -69
+    assert node["hopsAway"] == 2
+    assert node["position"] == {
+        "latitude": 52.516274,
+        "longitude": 13.405612,
+        "time": 1_758_000_020,
+    }
+
+
+def test_rx_advert_to_node_dict_minimal_frame():
+    """A name-less, position-less advert omits those keys instead of churning."""
+    from data.mesh_ingestor.protocols.meshcore import _rx_advert_to_node_dict
+
+    pub_key = "aabbccdd" + "00" * 28
+    node = _rx_advert_to_node_dict({"adv_key": pub_key, "path_len": 0})
+
+    assert node["user"]["publicKey"] == pub_key
+    assert "longName" not in node["user"]
+    assert "role" not in node["user"]
+    assert "position" not in node
+    assert "snr" not in node and "rssi" not in node
+    # A zero-hop (directly heard) advert still records hopsAway == 0.
+    assert node["hopsAway"] == 0
+    assert isinstance(node["lastHeard"], int)
+
+
+def test_on_rx_log_data_advert_upserts_node_and_position(monkeypatch):
+    """An RX-log ADVERT frame upserts the full node and stores its position."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore.handlers as _handlers_mod
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    positions: list = []
+    monkeypatch.setattr(
+        _handlers_mod,
+        "_store_meshcore_position",
+        lambda *args: positions.append(args),
+    )
+
+    pub_key = "511617e3" + "00" * 28
+    asyncio.run(
+        hmap["RX_LOG_DATA"](
+            _FakeEvt(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_key": pub_key,
+                    "adv_name": "BER Drachentoeter",
+                    "adv_type": 2,
+                    "adv_lat": 52.516274,
+                    "adv_lon": 13.405612,
+                    "recv_time": 1_758_000_021,
+                    "snr": 11.5,
+                    "rssi": -70,
+                    "path_len": 3,
+                }
+            )
+        )
+    )
+
+    assert captured == []  # adverts never produce message packets
+    assert len(upserted) == 1
+    node_id, node = upserted[0]
+    assert node_id == "!511617e3"
+    assert node["user"]["longName"] == "BER Drachentoeter"
+    assert node["snr"] == 11.5 and node["rssi"] == -70 and node["hopsAway"] == 3
+    assert len(positions) == 1
+    assert positions[0][0] == "!511617e3"
+    assert positions[0][1] == 52.516274 and positions[0][2] == 13.405612
+
+
+def test_on_rx_log_data_advert_without_position_skips_position_store(monkeypatch):
+    """No adv_lat/adv_lon on the advert -> node upsert only, no position POST."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore.handlers as _handlers_mod
+
+    _captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    positions: list = []
+    monkeypatch.setattr(
+        _handlers_mod,
+        "_store_meshcore_position",
+        lambda *args: positions.append(args),
+    )
+
+    asyncio.run(
+        hmap["RX_LOG_DATA"](
+            _FakeEvt(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_key": "aabbccdd" + "00" * 28,
+                    "snr": 4.0,
+                }
+            )
+        )
+    )
+
+    assert len(upserted) == 1
+    assert positions == []
+
+
+def test_on_rx_log_data_non_advert_routes_to_debug_capture(monkeypatch):
+    """Non-ADVERT RF frames go to the DEBUG-only capture, never upsert (RF3)."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    recorded: list = []
+    monkeypatch.setattr(
+        _mod,
+        "_record_meshcore_message",
+        lambda message, *, source: recorded.append((message, source)),
+    )
+
+    asyncio.run(
+        hmap["RX_LOG_DATA"](
+            _FakeEvt({"payload_typename": "GRP_TXT", "snr": 1.0, "rssi": -90})
+        )
+    )
+
+    assert captured == [] and upserted == []
+    assert len(recorded) == 1
+    message, source = recorded[0]
+    assert message["payload_typename"] == "GRP_TXT"
+    assert source.endswith(":RX_LOG_DATA")
+
+
+def test_on_rx_log_data_malformed_advert_tolerated(monkeypatch):
+    """A short/absent adv_key is skipped without raising (RF3)."""
+    import asyncio
+
+    captured, upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+
+    asyncio.run(
+        hmap["RX_LOG_DATA"](_FakeEvt({"payload_typename": "ADVERT", "adv_key": "ab"}))
+    )
+    asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt({"payload_typename": "ADVERT"})))
+
+    assert captured == [] and upserted == []
+
+
 def test_on_channel_msg_id_identical_across_ingestors_with_different_rosters(
     monkeypatch,
 ):
@@ -2917,6 +3295,9 @@ def _make_fake_meshcore_mod(
     disconnect_raises: bool = False,
     connect_stall_event=None,
     on_ensure_contacts=None,
+    autoadd_config: int | None = 0x1F,
+    autoadd_get_raises: bool = False,
+    autoadd_set_error: bool = False,
 ):
     """Build a minimal fake ``meshcore`` module for testing :func:`_run_meshcore`.
 
@@ -2947,6 +3328,8 @@ def _make_fake_meshcore_mod(
             "CHANNEL_MSG_RECV",
             "CONTACT_MSG_RECV",
             "ADVERTISEMENT",
+            "CONTACT_DELETED",
+            "RX_LOG_DATA",
             "DISCONNECTED",
             "CONNECTED",
             "ACK",
@@ -2961,6 +3344,11 @@ def _make_fake_meshcore_mod(
     )
 
     class _FakeCommands:
+        def __init__(self):
+            # Records every set_autoadd_config write so RF4 tests can assert
+            # the read-modify-write / skip-when-set behavior.
+            self.autoadd_set_calls: list[int] = []
+
         async def send_device_query(self):
             # Return minimal DEVICE_INFO — channel probing is not under test here.
             return types.SimpleNamespace(
@@ -2971,6 +3359,24 @@ def _make_fake_meshcore_mod(
             # Return ERROR for all channels — channel probing is not under test here.
             return types.SimpleNamespace(type=EventType.ERROR, payload={})
 
+        async def get_autoadd_config(self):
+            # ``autoadd_config=None`` simulates pre-1.16 firmware: an ERROR
+            # reply whose payload carries no ``config`` key.
+            if autoadd_get_raises:
+                raise TimeoutError("autoadd query timed out")
+            if autoadd_config is None:
+                return types.SimpleNamespace(type=EventType.ERROR, payload={})
+            return types.SimpleNamespace(
+                type=EventType.CHANNEL_INFO,  # any non-ERROR type
+                payload={"config": autoadd_config},
+            )
+
+        async def set_autoadd_config(self, flag):
+            self.autoadd_set_calls.append(flag)
+            if autoadd_set_error:
+                return types.SimpleNamespace(type=EventType.ERROR, payload={})
+            return types.SimpleNamespace(type=EventType.OK, payload={})
+
     class _FakeMeshCore:
         def __init__(self, cx):
             self._catch_all = None
@@ -2978,6 +3384,9 @@ def _make_fake_meshcore_mod(
             # Mirrors the upstream property the runner flips on to keep the
             # contact roster live across re-adverts (meshcore adverts gap).
             self.auto_update_contacts = False
+            # Mirrors the upstream property enabling the RX-log⇆message join
+            # (SPEC RF2); the runner must flip it on before connecting.
+            self.decrypt_channels = False
             # Records every non-catch-all subscription so tests can assert the
             # runner wires the ADVERTISEMENT handler.
             self.subscribed_events = []
@@ -3511,7 +3920,9 @@ def test_on_advertisement_ignores_unmappable_pubkey(monkeypatch):
 
 
 def test_run_meshcore_enables_auto_update_and_subscribes_advert(monkeypatch):
-    """_run_meshcore must enable contact auto-update and subscribe the advert handler."""
+    """_run_meshcore must enable contact auto-update, enable the RX-log join
+    (decrypt_channels, RF2), and subscribe the advert + contact-deleted
+    handlers."""
     import asyncio
     import data.mesh_ingestor.protocols.meshcore as _mod
 
@@ -3526,4 +3937,101 @@ def test_run_meshcore_enables_auto_update_and_subscribes_advert(monkeypatch):
 
     assert error_holder[0] is None
     assert iface._mc.auto_update_contacts is True
+    assert iface._mc.decrypt_channels is True
     assert fake_mod.EventType.ADVERTISEMENT in iface._mc.subscribed_events
+    assert fake_mod.EventType.CONTACT_DELETED in iface._mc.subscribed_events
+    assert fake_mod.EventType.RX_LOG_DATA in iface._mc.subscribed_events
+
+
+def _run_meshcore_with_autoadd(monkeypatch, **factory_kwargs):
+    """Drive ``_run_meshcore`` with a fake lib and return ``(iface, error_holder, logs)``.
+
+    Shared harness for the RF4 roster-eviction assertion tests: captures
+    ``config._debug_log`` calls so tests can assert the warning/info paths.
+    """
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    logs: list = []
+    monkeypatch.setattr(
+        _mod.config, "_debug_log", lambda msg, **kw: logs.append((msg, kw))
+    )
+    fake_mod = _make_fake_meshcore_mod(**factory_kwargs)
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
+
+    iface = _MeshcoreInterface(target=None)
+    connected, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+    assert connected.is_set()
+    return iface, error_holder, logs
+
+
+def test_run_meshcore_asserts_eviction_bit_when_unset(monkeypatch):
+    """Bit 0x01 unset -> exactly one read-modify-write set preserving bits 1-4."""
+    iface, error_holder, logs = _run_meshcore_with_autoadd(
+        monkeypatch, autoadd_config=0x1E
+    )
+
+    assert error_holder[0] is None
+    assert iface._mc.commands.autoadd_set_calls == [0x1F]
+    assert any(
+        kw.get("context") == "meshcore.autoadd" and kw.get("autoadd_config") == 0x1F
+        for _msg, kw in logs
+    )
+
+
+def test_run_meshcore_skips_autoadd_write_when_bit_already_set(monkeypatch):
+    """Bit 0x01 already set -> no set call (no savePrefs flash write)."""
+    iface, error_holder, _logs = _run_meshcore_with_autoadd(
+        monkeypatch, autoadd_config=0x1F
+    )
+
+    assert error_holder[0] is None
+    assert iface._mc.commands.autoadd_set_calls == []
+
+
+def test_run_meshcore_autoadd_unsupported_firmware_continues(monkeypatch):
+    """Pre-1.16 firmware (ERROR reply, no config) -> warning, startup continues."""
+    iface, error_holder, logs = _run_meshcore_with_autoadd(
+        monkeypatch, autoadd_config=None
+    )
+
+    assert error_holder[0] is None
+    assert iface._mc.commands.autoadd_set_calls == []
+    assert any(
+        kw.get("context") == "meshcore.autoadd" and kw.get("severity") == "warning"
+        for _msg, kw in logs
+    )
+
+
+def test_run_meshcore_autoadd_query_timeout_continues(monkeypatch):
+    """A raising/timing-out query is swallowed with a warning; startup continues."""
+    iface, error_holder, logs = _run_meshcore_with_autoadd(
+        monkeypatch, autoadd_get_raises=True
+    )
+
+    assert error_holder[0] is None
+    assert iface._mc.commands.autoadd_set_calls == []
+    assert any(
+        kw.get("context") == "meshcore.autoadd"
+        and kw.get("severity") == "warning"
+        and "timed out" in str(kw.get("error", ""))
+        for _msg, kw in logs
+    )
+
+
+def test_run_meshcore_autoadd_set_rejected_logs_warning(monkeypatch):
+    """An ERROR reply to the set is logged as a warning; startup continues."""
+    iface, error_holder, logs = _run_meshcore_with_autoadd(
+        monkeypatch, autoadd_config=0x00, autoadd_set_error=True
+    )
+
+    assert error_holder[0] is None
+    assert iface._mc.commands.autoadd_set_calls == [0x01]
+    assert any(
+        kw.get("context") == "meshcore.autoadd"
+        and kw.get("severity") == "warning"
+        and kw.get("autoadd_config") == 0x01
+        for _msg, kw in logs
+    )

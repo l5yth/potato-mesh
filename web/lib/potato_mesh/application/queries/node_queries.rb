@@ -177,6 +177,7 @@ module PotatoMesh
 
         sql = <<~SQL
           SELECT node_id, short_name, long_name, hw_model, role, snr,
+                 rssi, hops_away,
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
                  position_time, location_source, precision_bits,

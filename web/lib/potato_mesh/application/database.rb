@@ -152,6 +152,12 @@ module PotatoMesh
             db.execute("ALTER TABLE nodes ADD COLUMN synthetic BOOLEAN NOT NULL DEFAULT 0")
           end
 
+          # RF metrics (SPEC RF3/RF6): per-advert reception RSSI. NULL for
+          # Meshtastic nodes, which report no per-node RSSI.
+          unless node_columns.include?("rssi")
+            db.execute("ALTER TABLE nodes ADD COLUMN rssi INTEGER")
+          end
+
           if node_columns.include?("long_name")
             existing_indexes = db.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='nodes'").flatten
             unless existing_indexes.include?("idx_nodes_long_name")
@@ -257,6 +263,17 @@ module PotatoMesh
           unless message_columns.include?("protocol")
             db.execute("ALTER TABLE messages ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
             db.execute("UPDATE messages SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
+          end
+
+          # RF metrics (SPEC RF1/RF2/RF6): hops actually travelled (distinct
+          # from hop_limit's remaining-budget semantic) and the MeshCore
+          # hop-hash route. Both additive, NULL for legacy rows.
+          unless message_columns.include?("hops")
+            db.execute("ALTER TABLE messages ADD COLUMN hops INTEGER")
+          end
+
+          unless message_columns.include?("path")
+            db.execute("ALTER TABLE messages ADD COLUMN path TEXT")
           end
 
           reply_index_exists =

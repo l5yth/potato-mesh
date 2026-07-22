@@ -243,6 +243,42 @@ def _is_encrypted_flag(value: object) -> bool:
     return bool(value)
 
 
+def _hops_travelled(packet: Mapping, hop_limit: object) -> int | None:
+    """Return the number of repeater hops a message actually travelled.
+
+    Prefers an explicit ``hops`` value stamped by a protocol handler (MeshCore
+    normalizes its native ``path_len`` field this way, including the
+    255-means-direct sentinel).  Falls back to the Meshtastic derivation
+    ``hopStart - hopLimit``: ``hopStart`` is the sender's initial hop budget
+    and ``hopLimit`` the budget remaining on receipt, so their difference is
+    the relay count (SPEC RF1).  Distinct from the stored ``hop_limit`` field,
+    which keeps its remaining-budget semantic unchanged.
+
+    Parameters:
+        packet: Normalized packet mapping possibly carrying ``hops`` and/or
+            ``hopStart``/``hop_start``.
+        hop_limit: The already-extracted ``hopLimit``/``hop_limit`` value
+            (passed in so the caller's single extraction is reused).
+
+    Returns:
+        The hop count as an ``int``, or ``None`` when neither source is
+        present or a value cannot be coerced to an integer.
+    """
+    explicit = _first(packet, "hops", default=None)
+    if explicit is not None:
+        try:
+            return int(explicit)
+        except (TypeError, ValueError):
+            return None
+    hop_start = _first(packet, "hopStart", "hop_start", default=None)
+    if hop_start is None or hop_limit is None:
+        return None
+    try:
+        return int(hop_start) - int(hop_limit)
+    except (TypeError, ValueError):
+        return None
+
+
 def upsert_node(node_id: object, node: object) -> None:
     """Schedule an upsert for a single node.
 
@@ -481,6 +517,13 @@ def store_packet_dict(packet: Mapping) -> None:
     snr = _first(packet, "snr", "rx_snr", "rxSnr", default=None)
     rssi = _first(packet, "rssi", "rx_rssi", "rxRssi", default=None)
     hop = _first(packet, "hopLimit", "hop_limit", default=None)
+    hops = _hops_travelled(packet, hop)
+    # Hop-hash route stamped by the MeshCore handler (RF2); Meshtastic packets
+    # never carry it.  Guarded to strings so a malformed value is dropped
+    # rather than serialized as garbage.
+    path = _first(packet, "path", default=None)
+    if not isinstance(path, str):
+        path = None
 
     to_id_normalized = str(to_id).strip() if to_id is not None else ""
 
@@ -538,6 +581,8 @@ def store_packet_dict(packet: Mapping) -> None:
         "snr": float(snr) if snr is not None else None,
         "rssi": int(rssi) if rssi is not None else None,
         "hop_limit": int(hop) if hop is not None else None,
+        "hops": hops,
+        "path": path,
         "reply_id": reply_id,
         "emoji": emoji,
         "ingestor": _state.host_node_id(),
