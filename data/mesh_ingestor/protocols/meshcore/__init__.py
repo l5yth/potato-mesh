@@ -78,6 +78,7 @@ from ... import queue as _queue  # noqa: E402
 from ...connection import default_serial_targets  # noqa: E402
 
 from ._constants import (  # noqa: E402 - keep grouped with sibling re-exports.
+    _AUTO_ADD_OVERWRITE_OLDEST,
     _CHANNEL_PROBE_FALLBACK_MAX,
     _CONNECT_TIMEOUT_SECS,
     _DEFAULT_BAUDRATE,
@@ -101,6 +102,7 @@ from .decode import (  # noqa: E402
     _advert_to_node_dict,
     _contact_to_node_dict,
     _derive_modem_preset,
+    _rx_advert_to_node_dict,
     _self_info_to_node_dict,
 )
 from .handlers import (  # noqa: E402
@@ -120,12 +122,14 @@ from .interface import ClosedBeforeConnectedError, _MeshcoreInterface  # noqa: E
 from .messages import (  # noqa: E402
     _derive_message_id,
     _extract_mention_names,
+    _normalize_hops,
+    _normalize_path,
     _parse_sender_name,
     _synthetic_node_dict,
 )
 from .position import _store_meshcore_position  # noqa: E402
 from .provider import MeshcoreProvider  # noqa: E402
-from .runner import _run_meshcore  # noqa: E402
+from .runner import _ensure_autoadd_eviction, _run_meshcore  # noqa: E402
 
 __all__ = [
     "BLEConnection",
@@ -135,6 +139,7 @@ __all__ = [
     "MeshcoreProvider",
     "SerialConnection",
     "TCPConnection",
+    "_AUTO_ADD_OVERWRITE_OLDEST",
     "_CHANNEL_PROBE_FALLBACK_MAX",
     "_CONNECT_TIMEOUT_SECS",
     "_DEFAULT_BAUDRATE",
@@ -150,6 +155,7 @@ __all__ = [
     "_derive_message_id",
     "_derive_modem_preset",
     "_derive_synthetic_node_id",
+    "_ensure_autoadd_eviction",
     "_ensure_channel_names",
     "_extract_mention_names",
     "_log_unhandled_loop_exception",
@@ -158,6 +164,8 @@ __all__ = [
     "_meshcore_adv_type_to_role",
     "_meshcore_node_id",
     "_meshcore_short_name",
+    "_normalize_hops",
+    "_normalize_path",
     "_parse_sender_name",
     "_process_contact_update",
     "_process_contacts",
@@ -165,6 +173,7 @@ __all__ = [
     "_pubkey_prefix_to_node_id",
     "_record_meshcore_message",
     "_run_meshcore",
+    "_rx_advert_to_node_dict",
     "_self_info_to_node_dict",
     "_store_meshcore_position",
     "_synthetic_node_dict",

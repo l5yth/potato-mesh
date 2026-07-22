@@ -1476,3 +1476,133 @@ class TestStorePacketDictPrimaryChannelGuard:
 
         assert any(path == "/api/messages" for path, _ in sent)
         assert "non-primary-channel" not in ignored
+
+
+# ---------------------------------------------------------------------------
+# _hops_travelled — hops-travelled derivation (SPEC RF1)
+# ---------------------------------------------------------------------------
+
+
+class TestHopsTravelled:
+    """Unit tests for :func:`generic._hops_travelled`.
+
+    The helper prefers an explicit handler-stamped ``hops`` value (MeshCore's
+    normalized ``path_len``) and falls back to the Meshtastic derivation
+    ``hopStart - hopLimit``; anything unparseable yields ``None``.
+    """
+
+    def test_explicit_hops_wins_over_derivation(self):
+        """A handler-stamped hops value beats the hopStart/hopLimit fallback."""
+        assert generic_mod._hops_travelled({"hops": 4, "hopStart": 7}, 2) == 4
+
+    def test_explicit_zero_hops_is_preserved(self):
+        """hops == 0 (MeshCore direct sentinel already normalized) survives."""
+        assert generic_mod._hops_travelled({"hops": 0, "hopStart": 7}, 2) == 0
+
+    def test_explicit_hops_uncoercible_returns_none(self):
+        """A non-integer explicit hops yields None, never a crash."""
+        assert generic_mod._hops_travelled({"hops": "bogus"}, 2) is None
+
+    def test_meshtastic_derivation_camel_case(self):
+        """hopStart 7 with hopLimit 2 remaining means 5 relays travelled."""
+        assert generic_mod._hops_travelled({"hopStart": 7}, 2) == 5
+
+    def test_meshtastic_derivation_snake_case(self):
+        """The snake_case hop_start alias is accepted too."""
+        assert generic_mod._hops_travelled({"hop_start": 5}, 1) == 4
+
+    def test_missing_hop_start_returns_none(self):
+        """Without hopStart the derivation cannot run."""
+        assert generic_mod._hops_travelled({}, 2) is None
+
+    def test_missing_hop_limit_returns_none(self):
+        """Without hopLimit the derivation cannot run."""
+        assert generic_mod._hops_travelled({"hopStart": 3}, None) is None
+
+    def test_uncoercible_fallback_values_return_none(self):
+        """Unparseable hopStart/hopLimit values yield None, never a crash."""
+        assert generic_mod._hops_travelled({"hopStart": "x"}, 2) is None
+        assert generic_mod._hops_travelled({"hopStart": 7}, "y") is None
+
+
+class TestStorePacketDictHops:
+    """``store_packet_dict`` stamps the message payload with ``hops`` (RF1).
+
+    Mirrors the primary-channel-guard harness: capture the queued POST payload
+    and assert the ``hops`` field alongside the untouched ``hop_limit``.
+    """
+
+    def _store(self, monkeypatch, packet: dict) -> dict:
+        """Run ``store_packet_dict`` and return the queued message payload."""
+        import data.mesh_ingestor.queue as q
+
+        monkeypatch.setattr(config, "PRIMARY_CHANNEL_ONLY", False)
+        monkeypatch.setattr(config, "ALLOWED_CHANNELS", ())
+        monkeypatch.setattr(config, "HIDDEN_CHANNELS", ())
+        monkeypatch.setattr(config, "DEBUG", False)
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            handlers.store_packet_dict(packet)
+        finally:
+            q._queue_post_json = original
+
+        assert len(sent) == 1 and sent[0][0] == "/api/messages"
+        return sent[0][1]
+
+    def _make_packet(self, **extra) -> dict:
+        packet = {
+            "id": 555,
+            "rxTime": 1_700_000_100,
+            "from": "!sender",
+            "to": "^all",
+            "channel": 0,
+            "decoded": {"text": "hops probe", "portnum": 1},
+        }
+        packet.update(extra)
+        return packet
+
+    def test_meshtastic_hops_derived_from_hop_start_and_limit(self, monkeypatch):
+        """hopStart 7 / hopLimit 2 stores hops 5 with hop_limit untouched."""
+        payload = self._store(monkeypatch, self._make_packet(hopStart=7, hopLimit=2))
+        assert payload["hops"] == 5
+        assert payload["hop_limit"] == 2
+
+    def test_explicit_hops_field_is_stored_verbatim(self, monkeypatch):
+        """A protocol-handler-stamped hops value (MeshCore) is stored as-is."""
+        payload = self._store(monkeypatch, self._make_packet(hops=0))
+        assert payload["hops"] == 0
+
+    def test_hops_none_when_no_source_present(self, monkeypatch):
+        """Neither hops nor hopStart present -> hops is None (legacy shape)."""
+        payload = self._store(monkeypatch, self._make_packet(hopLimit=3))
+        assert payload["hops"] is None
+        assert payload["hop_limit"] == 3
+
+
+class TestStorePacketDictPath:
+    """``store_packet_dict`` forwards the MeshCore hop-hash route (RF2)."""
+
+    def test_meshcore_path_is_forwarded(self, monkeypatch):
+        """A handler-stamped path string reaches the queued payload."""
+        harness = TestStorePacketDictHops()
+        payload = harness._store(monkeypatch, harness._make_packet(path="f0bf44b53377"))
+        assert payload["path"] == "f0bf44b53377"
+
+    def test_non_string_path_is_dropped(self, monkeypatch):
+        """A malformed (non-string) path value is dropped, not serialized."""
+        harness = TestStorePacketDictHops()
+        payload = harness._store(
+            monkeypatch, harness._make_packet(path=["f0bf", "4453"])
+        )
+        assert payload["path"] is None
+
+    def test_path_none_when_absent(self, monkeypatch):
+        """Meshtastic packets carry no path -> payload path is None."""
+        harness = TestStorePacketDictHops()
+        payload = harness._store(monkeypatch, harness._make_packet())
+        assert payload["path"] is None

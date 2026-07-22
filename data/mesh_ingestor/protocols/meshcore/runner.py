@@ -21,11 +21,75 @@ import sys
 import threading
 
 from ... import config
-from ._constants import _DEFAULT_BAUDRATE
+from ._constants import _AUTO_ADD_OVERWRITE_OLDEST, _DEFAULT_BAUDRATE
 from .channels import _ensure_channel_names
 from .connection import _make_connection
 from .handlers import _make_event_handlers
 from .interface import ClosedBeforeConnectedError, _MeshcoreInterface
+
+
+async def _ensure_autoadd_eviction(mc) -> None:
+    """Assert the firmware's roster-eviction bit at startup (SPEC RF4).
+
+    Reads the device's ``autoadd_config`` and, **only when** bit ``0x01``
+    (:data:`~._constants._AUTO_ADD_OVERWRITE_OLDEST`) is unset, writes
+    ``config | 0x01`` back — a read-modify-write that preserves the
+    type-filter bits 1–4, and a one-byte set so the firmware leaves
+    ``autoadd_max_hops`` untouched.  When the bit is already set no write is
+    issued: the firmware runs ``savePrefs()`` on every set, so skipping the
+    no-op write avoids a flash write per ingestor restart.
+
+    Unconditional by design (no env/config knob); favourites are never
+    evicted (firmware guarantee) and the setting persists in device flash.
+    A device that does not support commands 58/59 (pre-1.16 firmware)
+    answers with an ``ERROR`` event or times out — both are tolerated by the
+    caller's ``try``/``except`` warning path, mirroring
+    :func:`~.channels._ensure_channel_names`.
+
+    Parameters:
+        mc: Connected ``MeshCore`` instance.
+    """
+    evt = await mc.commands.get_autoadd_config()
+    payload = getattr(evt, "payload", None) or {}
+    current = payload.get("config")
+    if current is None:
+        # ERROR reply (unsupported command) or malformed payload — leave the
+        # device untouched and surface a warning; startup continues.
+        config._debug_log(
+            "MeshCore autoadd config unavailable; eviction bit not asserted",
+            context="meshcore.autoadd",
+            severity="warning",
+            always=True,
+        )
+        return
+
+    current = int(current)
+    if current & _AUTO_ADD_OVERWRITE_OLDEST:
+        config._debug_log(
+            "MeshCore roster-eviction bit already set",
+            context="meshcore.autoadd",
+            autoadd_config=current,
+        )
+        return
+
+    desired = current | _AUTO_ADD_OVERWRITE_OLDEST
+    set_evt = await mc.commands.set_autoadd_config(desired)
+    if getattr(getattr(set_evt, "type", None), "name", "") == "ERROR":
+        config._debug_log(
+            "MeshCore rejected autoadd eviction config write",
+            context="meshcore.autoadd",
+            severity="warning",
+            always=True,
+            autoadd_config=desired,
+        )
+        return
+    config._debug_log(
+        "MeshCore roster-eviction bit asserted",
+        context="meshcore.autoadd",
+        severity="info",
+        always=True,
+        autoadd_config=desired,
+    )
 
 
 async def _run_meshcore(
@@ -67,6 +131,15 @@ async def _run_meshcore(
         cx = _make_connection(target, _DEFAULT_BAUDRATE)
         mc = MeshCore(cx)
         iface._mc = mc
+
+        # Enable the library's RX-log⇆message join (SPEC RF2): with channel
+        # secrets registered (``_ensure_channel_names`` fetches every channel,
+        # and the reader auto-registers each secret into its packet parser),
+        # the lib matches each CHANNEL_MSG_RECV to its on-air frame and injects
+        # RSSI / path / recv_time.  Purely local decryption with keys already
+        # on the radio; a miss (no RX-log frame) simply leaves those fields
+        # absent, so this degrades gracefully on firmware without RX logging.
+        mc.decrypt_channels = True
 
         handlers_map = _make_event_handlers(iface, target)
         for event_name, callback in handlers_map.items():
@@ -146,6 +219,20 @@ async def _run_meshcore(
                 "Failed to fetch channel names",
                 context="meshcore.channels",
                 severity="warning",
+                error=str(exc),
+            )
+
+        # Assert the roster-eviction bit (RF4) after the readiness signal so a
+        # slow or unsupported command never delays startup; errors and
+        # timeouts are tolerated exactly like the channel-name fetch above.
+        try:
+            await _ensure_autoadd_eviction(mc)
+        except Exception as exc:
+            config._debug_log(
+                "Failed to assert autoadd eviction config",
+                context="meshcore.autoadd",
+                severity="warning",
+                always=True,
                 error=str(exc),
             )
 

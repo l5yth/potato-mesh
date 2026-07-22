@@ -181,6 +181,10 @@ module PotatoMesh
         emoji = string_or_nil(message["emoji"])
         ingestor = string_or_nil(message["ingestor"])
         protocol = resolve_record_protocol(db, message, ingestor, cache: protocol_cache)
+        # RF metrics (SPEC RF1/RF2): hops actually travelled and the MeshCore
+        # hop-hash route; both additive and absent for legacy senders.
+        hops = coerce_integer(message["hops"])
+        path = string_or_nil(message["path"])
 
         row = [
           msg_id,
@@ -195,6 +199,8 @@ module PotatoMesh
           message["snr"],
           message["rssi"],
           message["hop_limit"],
+          hops,
+          path,
           lora_freq,
           modem_preset,
           channel_name,
@@ -312,6 +318,8 @@ module PotatoMesh
               updates["snr"] = message["snr"] if message.key?("snr")
               updates["rssi"] = message["rssi"] if message.key?("rssi")
               updates["hop_limit"] = message["hop_limit"] if message.key?("hop_limit")
+              updates["hops"] = hops unless hops.nil?
+              updates["path"] = path if path
               updates["lora_freq"] = lora_freq unless lora_freq.nil?
               updates["modem_preset"] = modem_preset if modem_preset
               updates["channel_name"] = channel_name if channel_name
@@ -381,8 +389,8 @@ module PotatoMesh
 
             begin
               db.execute <<~SQL, row
-                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,lora_freq,modem_preset,channel_name,reply_id,emoji,ingestor,protocol)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,channel,portnum,text,encrypted,snr,rssi,hop_limit,hops,path,lora_freq,modem_preset,channel_name,reply_id,emoji,ingestor,protocol)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                          SQL
             rescue SQLite3::ConstraintException
               existing_row = db.get_first_row(
@@ -413,6 +421,8 @@ module PotatoMesh
                 fallback_updates["snr"] = message["snr"] if message.key?("snr")
                 fallback_updates["rssi"] = message["rssi"] if message.key?("rssi")
                 fallback_updates["hop_limit"] = message["hop_limit"] if message.key?("hop_limit")
+                fallback_updates["hops"] = hops unless hops.nil?
+                fallback_updates["path"] = path if path
                 fallback_updates["portnum"] = portnum if portnum
                 fallback_updates["lora_freq"] = lora_freq unless lora_freq.nil?
                 fallback_updates["modem_preset"] = modem_preset if modem_preset

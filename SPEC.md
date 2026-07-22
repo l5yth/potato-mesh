@@ -642,3 +642,56 @@ it rare and, when it occurs, near-invisible.
 | **BL3** | **Shared dark filter on the fallback tile (amends HT2).** `.map-tiles-fallback` no longer renders `filter:none`; it carries the **same** `grayscale(1) invert(1) brightness(0.9) contrast(1.08)` filter as `.map-tiles-hot`, expressed as one comma-grouped `base.css` rule (the single source of truth for the value). Both providers therefore converge to one coherent dark look, so a viewport mixing HOT and CARTO tiles is no longer a checkerboard — the second half of the fix. The per-tile class swap in `fallback-tile-layer.js` is **unchanged**; only what `.map-tiles-fallback` *does* in CSS changes. Offline placeholder tiles still carry neither class and stay unfiltered. | interview |
 | **BL4** | **Both maps, one rule; posture preserved (reaffirms HT5 / HT7).** The federation map shares the dashboard's `#map` container, so the single `base.css` filter rule and the shared `createBasemapLayer` factory land the blend on **both** maps identically (parity, Invariant IV). The filter value and the timeout stay **frontend constants** — no Ruby `tile_filters`, no `/version` / `data-app-config` key, no `/api/*` change, no version bump (HT7 / D8 unchanged). | proposed |
 
+---
+
+## Feature: MeshCore RF metrics (RSSI/SNR/hops/path) & roster-eviction assertion
+
+Closes the MeshCore↔Meshtastic RF-metrics parity gap (issue #762 for MeshCore):
+messages gain RSSI/SNR/hops-travelled/path, and node records gain per-advert
+signal metrics, all sourced from data the `meshcore` library already delivers
+but the ingestor currently drops. Three mechanisms: (1) native `path_len`/`SNR`
+fields on the message sync events; (2) the library's built-in RX-log⇆message
+join enabled via `decrypt_channels`; (3) a new `RX_LOG_DATA` subscription
+handling on-air `ADVERT` frames (full node identity + signal metrics,
+roster-independent). Additionally the ingestor asserts the firmware's
+`AUTO_ADD_OVERWRITE_OLDEST` roster-eviction bit at startup so a full contact
+roster keeps rotating instead of rejecting new contacts. Integrates with
+`data/mesh_ingestor/protocols/meshcore/{handlers,runner,decode,interface,_constants}.py`,
+the packet store path in `data/mesh_ingestor/handlers/`, `CONTRACTS.md`, one
+additive SQLite migration (`messages.hops`, `messages.path`, `nodes.rssi`), the
+message/node mappings in `web/lib/potato_mesh/application/data_processing/`,
+and the serializers in `queries/`.
+
+**Conflict check against existing decisions.** *Apex I (local LoRa)* —
+**consistent**: every new datum arrives over the existing local serial/BLE/TCP
+radio link; `decrypt_channels` is local crypto using channel keys the radio
+already holds; no broker, dependency, or egress (`guard-edits.py` untriggered).
+*Invariant II (privacy & consent)* — **consistent**: no new data class (channel
+messages already arrive decrypted via companion sync; adverts are public
+broadcasts already stored via the contact path); server-side opt-out,
+`PRIVATE`, and retention gates are untouched. The startup config write (RF4) is
+a **device** mutation, not a data exposure — treated as a §4.2 scope extension,
+documented operator-visibly in the README rather than silent. *Invariant IV
+(parity)* — **extends**: fills MeshCore's missing `rxSnr`/`rxRssi`/hops
+equivalents using the columns Meshtastic already populates; the new `hops`
+column is computed for **both** protocols. *D8/§3.4 (stable contract)* —
+**extends**: strictly additive fields (`hops`/`path` on messages, `rssi` on
+nodes; adverts otherwise reuse the already-accepted `snr`/`hops_away` node
+fields), no version bump. *A4e (MeshCore adverts gap)* — **extends**: RX-log
+adverts enrich non-roster nodes with full identity; the bare-`ADVERTISEMENT`
+minimal upsert stays as the fallback for builds without RX-log frames (A4e
+criteria updated, not removed). *MD-A1/MW-A1 (MeshCore dedup)* —
+**consistent**: `_derive_message_id` inputs stay byte-identical (RF6). No
+decision is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **RF1** | **Hops-travelled on messages, both protocols.** Message packets gain a `hops` field = repeater relays actually travelled: MeshCore reads the native `path_len` on `CONTACT_MSG_RECV`/`CHANNEL_MSG_RECV` (the `255` "direct" sentinel normalizes to `0`; the 2-bit `path_hash_mode` prefix is masked off); Meshtastic computes `hopStart − hopLimit` when both are present (else omits). Stored in a new **additive** `messages.hops INTEGER` column — deliberately distinct from `hop_limit` (remaining budget, a different semantic, left untouched). MeshCore V3 sync frames' native `SNR` continues to flow into the existing `messages.snr` column. | interview + code |
+| **RF2** | **Channel-message RSSI/path via the library's RX-log join.** The runner sets `mc.decrypt_channels = True`; the `meshcore` lib then matches each `CHANNEL_MSG_RECV` to its on-air frame by `SHA256(sender_timestamp + text)` and injects `RSSI`, `path`, `recv_time` (channel secrets are already registered by `_ensure_channel_names`, so no new key handling). The handler forwards `RSSI` → the existing `messages.rssi` column and the hop-hash route → a new **additive** `messages.path TEXT` column (lowercase hex, `path_hash_size`-byte hashes concatenated in travel order, last = the repeater heard directly; raw material for a future topology view, no hash→node resolution attempted now). **DM RSSI is explicitly out of scope** — direct messages are E2E-encrypted so no RX-log join exists; DMs still get native SNR + hops via RF1. | interview + code |
+| **RF3** | **RX-log `ADVERT` frames become full node upserts (roster-independent).** A new `RX_LOG_DATA` subscription handles frames with `payload_typename == "ADVERT"`: `adv_key` (full 32-byte pubkey) → canonical `!%08x` id, `adv_name` → long name, `adv_type` → role via `_MESHCORE_ADV_TYPE_ROLE`, `adv_lat`/`adv_lon` → position store, and per-reception `snr` → `nodes.snr`, `path_len` → `nodes.hops_away` (existing, already-accepted node fields), `rssi` → a new **additive** `nodes.rssi INTEGER` column (Meshtastic has no per-node RSSI source — `NodeInfo` carries only SNR — so it stays `NULL` there; the column itself is protocol-neutral). This restores full node identity even when the radio's roster is full, closing the anonymous-placeholder gap. **Only `ADVERT` frames are handled**; other RX-log payload types stay in the DEBUG-only catch-all, and `RX_LOG_DATA` no longer falls through to `ignored-meshcore.txt`. Degrades gracefully: companion firmware ≥ 1.16 pushes RX-log frames unconditionally while a client is connected, but if none arrive (other builds), RF1 metrics and the existing bare-`ADVERTISEMENT` fallback (A4e) still function — absent frames are never an error. | interview + code |
+| **RF4** | **Always-on roster-eviction assertion (extends §4.2 ingestor scope).** At startup (after connect, `_ensure_channel_names`-style error tolerance) the ingestor reads `get_autoadd_config` and, **only if** bit `0x01` (`AUTO_ADD_OVERWRITE_OLDEST`) is unset, writes `config \| 0x01` back — a read-modify-write that preserves the type-filter bits 1–4 and never touches `autoadd_max_hops`; when the bit is already set no write occurs (the firmware `savePrefs()`es every set — skipping avoids flash wear). Unconditional by deliberate choice — **no env/config knob**; the behavior is documented in the README (deliberate and operator-visible, not silent), favourites are never evicted (firmware guarantee), and the write persists in device flash. `ERROR`/timeout from pre-1.16 firmware logs a warning and continues. This is the ingestor's **first and only** radio-config write, bounded to this single bit. | interview |
+| **RF5** | **`CONTACT_DELETED` becomes an explicit no-op handler.** Roster eviction (RF4) makes the firmware emit `PUSH_CODE_CONTACT_DELETED` per evicted contact; the event moves from the DEBUG catch-all to an explicit debug-logged no-op in the handler map — the web DB **intentionally retains** evicted nodes (dashboard history is independent of roster capacity; `retention.rb` remains the only data-expiry authority). | interview |
+| **RF6** | **Additive contract; dedup fingerprint frozen.** `CONTRACTS.md` documents the new fields (`messages.hops`/`messages.path`, `nodes.rssi`), the `255`→direct rule, the path hex format, and the advert→node field mapping. All changes are **additive** (D8: no version bump): the POST routes accept and the GET routes serialize the new fields; absent fields stay `NULL`. The MeshCore dedup fingerprint (`_derive_message_id` inputs) and the `v1:` content-dedup scheme are **byte-identical** — new fields ride alongside, never inside, the id derivation (MD-A1/MW-A1 preserved). | interview + code |
+| **RF7** | **Store + API only; UI display deferred.** v1 ends at the JSON API — no dashboard rendering of the new metrics (chat hover, node popup, topology view from `path` are tracked follow-ups). Closes #762 for MeshCore at the data layer. | interview |
+| **RF8** | **Engineering bar (D9).** All new/changed units ship with 100% unit tests (including: RF1 hops normalization edge cases, RF2 join-absent fallback, RF3 malformed-advert tolerance, RF4 read-modify-write/skip/error paths, RF5 no-op), full PDoc/RDoc, the exact Apache header, `black`/`rufo` clean; every existing suite stays green. | CLAUDE.md |
+

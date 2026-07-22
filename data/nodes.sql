@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   is_favorite        BOOLEAN,
   hops_away          INTEGER,
   snr                REAL,
+  rssi               INTEGER,
   last_heard         INTEGER,
   first_heard        INTEGER,
   battery_level      REAL,

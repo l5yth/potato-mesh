@@ -268,6 +268,7 @@ module PotatoMesh
           coerce_bool(pick_alias(n, "isFavorite", "is_favorite")),
           pick_alias(n, "hopsAway", "hops_away"),
           n["snr"],
+          n["rssi"],
           lh,
           lh,
           pick_alias(met, "batteryLevel", "battery_level"),
@@ -294,9 +295,9 @@ module PotatoMesh
           db.transaction do
             db.execute(<<~SQL, row)
               INSERT INTO nodes(node_id,num,short_name,long_name,macaddr,hw_model,role,public_key,is_unmessagable,is_favorite,
-                                hops_away,snr,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
+                                hops_away,snr,rssi,last_heard,first_heard,battery_level,voltage,channel_utilization,air_util_tx,uptime_seconds,
                                 position_time,location_source,precision_bits,latitude,longitude,altitude,lora_freq,modem_preset,protocol,synthetic)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(node_id) DO UPDATE SET
                 num=COALESCE(excluded.num, nodes.num),
                 short_name=COALESCE(excluded.short_name, nodes.short_name),
@@ -307,6 +308,7 @@ module PotatoMesh
                 public_key=COALESCE(excluded.public_key, nodes.public_key),
                 is_unmessagable=COALESCE(excluded.is_unmessagable, nodes.is_unmessagable),
                 is_favorite=excluded.is_favorite, hops_away=excluded.hops_away, snr=excluded.snr, last_heard=excluded.last_heard,
+                rssi=COALESCE(excluded.rssi, nodes.rssi),
                 first_heard=COALESCE(nodes.first_heard, excluded.first_heard, excluded.last_heard),
                 battery_level=excluded.battery_level, voltage=excluded.voltage, channel_utilization=excluded.channel_utilization,
                 air_util_tx=excluded.air_util_tx, uptime_seconds=excluded.uptime_seconds,
