@@ -139,6 +139,20 @@ module PotatoMesh
         PotatoMesh::Sanitizer.sanitized_frequency
       end
 
+      # Retrieve the configured MeshCore preset for the join strip.
+      #
+      # @return [String, nil] sanitised MeshCore preset or nil when unset (SPEC UX12).
+      def sanitized_meshcore_preset
+        PotatoMesh::Sanitizer.sanitized_meshcore_preset
+      end
+
+      # Retrieve the configured MeshCore frequency for the join strip.
+      #
+      # @return [String, nil] sanitised MeshCore frequency or nil when unset (SPEC UX12).
+      def sanitized_meshcore_freq
+        PotatoMesh::Sanitizer.sanitized_meshcore_freq
+      end
+
       # Retrieve the configured contact link or nil when unset.
       #
       # @return [String, nil] contact link identifier.

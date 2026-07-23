@@ -83,31 +83,79 @@ export const meshcoreRoleColors = Object.freeze({
   COMPANION: '#164A88',
 });
 
-/**
- * MeshCore role text colour overrides — only populated for roles whose
- * background is dark enough that the default (near-black) text becomes
- * illegible.  Roles absent from this map inherit the page default.
- *
- * @type {Readonly<Record<string, string>>}
- */
-export const meshcoreRoleTextColors = Object.freeze({
-  COMPANION: '#e0e0e0',
-});
+/** Dark text candidate for light badge backgrounds (WCAG pick, SPEC UX2). */
+const BADGE_TEXT_DARK = '#111418';
+
+/** Light text candidate for dark badge backgrounds (WCAG pick, SPEC UX2). */
+const BADGE_TEXT_LIGHT = '#ffffff';
 
 /**
- * Return the foreground text colour for a role badge, or ``null`` when the
- * page default is acceptable.
+ * Convert one sRGB channel (0-255) to its linear-light value (WCAG 2.x).
+ *
+ * @param {number} channel Channel value in the 0-255 range.
+ * @returns {number} Linearised channel.
+ */
+function linearChannel(channel) {
+  const c = channel / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/**
+ * Compute WCAG relative luminance for a ``#rgb``/``#rrggbb`` colour.
+ *
+ * @param {string} hex CSS hex colour.
+ * @returns {number} Relative luminance in [0, 1].
+ */
+function relativeLuminance(hex) {
+  let h = String(hex).replace('#', '');
+  if (h.length === 3) h = [...h].map(ch => ch + ch).join('');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return 0.2126 * linearChannel(r) + 0.7152 * linearChannel(g) + 0.0722 * linearChannel(b);
+}
+
+/**
+ * Compute the WCAG contrast ratio between two hex colours.
+ *
+ * @param {string} a First colour.
+ * @param {string} b Second colour.
+ * @returns {number} Contrast ratio (>= 1).
+ */
+function contrastRatio(a, b) {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const [hi, lo] = la >= lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * Pick the badge text colour with the higher WCAG contrast against a
+ * background — near-black on light fills, white on dark fills (SPEC UX2;
+ * replaces the one-role ``meshcoreRoleTextColors`` special case, audit D-008).
+ *
+ * @param {string} backgroundHex Badge background colour.
+ * @returns {string} CSS colour string for the badge text.
+ */
+export function getContrastTextColor(backgroundHex) {
+  return contrastRatio(BADGE_TEXT_DARK, backgroundHex) >=
+    contrastRatio(BADGE_TEXT_LIGHT, backgroundHex)
+    ? BADGE_TEXT_DARK
+    : BADGE_TEXT_LIGHT;
+}
+
+/**
+ * Return the foreground text colour for a role badge.
+ *
+ * Computed from the badge background's luminance so every role of every
+ * protocol palette clears the 4.5:1 AA floor (SPEC UX2).
  *
  * @param {*} role Raw role value from the API.
  * @param {string|null|undefined} [protocol] Protocol string from the API.
- * @returns {string|null} CSS colour string, or ``null`` to inherit.
+ * @returns {string} CSS colour string for the badge text.
  */
 export function getRoleTextColor(role, protocol = null) {
-  if (isMeshcoreProtocol(protocol)) {
-    const key = getRoleKey(role);
-    return meshcoreRoleTextColors[key] ?? null;
-  }
-  return null;
+  return getContrastTextColor(getRoleColor(role, protocol));
 }
 
 /**

@@ -735,3 +735,58 @@ No existing decision is contradicted or amended.
 | **RT4** | **Format & contract unchanged.** The output format stays exactly today's (`4s`, `3m 12s`, `5h 2m`, `3d 4h`; empty/invalid timestamps keep rendering exactly as today). Frontend-only: no API, `/version`, or `data-app-config` change (D8), vanilla JS with no new dependency (D7), protocol-neutral (Invariant IV), no network egress and no new data exposure (Invariants I/II). | interview |
 | **RT5** | **Engineering bar (D9).** The ticker module and every touched render path ship with 100% unit tests, full JSDoc, the exact Apache header, and clean linters; all existing suites stay green. Existing formatter specs (`format-utils.test.js`, display-formatter tests) remain valid unchanged — the format is untouched; render-path specs are **updated** only where fields gain tick registration. | CLAUDE.md |
 
+
+---
+
+## Bugfix: Frontend design & UX audit remediation (D-001…D-040)
+
+Remediates the 2026-07-22 design/UX audit of the dashboard frontend: 39 of its
+40 findings reproduced deterministically against source, live server HTML, and
+computed WCAG contrast (D-039 — "sort indicators invisible until first click" —
+did **not** reproduce: `sortState` initialises to `last_heard`/`desc` and
+`updateSortIndicators()` runs at init, so it is rejected). No finding violated
+an existing SPEC decision or acceptance criterion — the contract was silent on
+empty states, accessibility, contrast, information architecture, and visual
+encoding; this section closes that gap. The maintainer gates from the audit are
+ratified as contract: the map is the landing thesis, static pages belong to a
+secondary tier, **dark-only is identity**, operator-facing theme tokens are in
+scope, and the reduced mobile table is legitimate but must be curated.
+
+**Conflict check against existing decisions.** *DM7 (dead light palette
+collapsed)* — **extends**: the remaining light *component* literals + their
+`body.dark` overrides (explicitly left by DM7) are now folded to single dark
+rules; rendered appearance unchanged. *VF5/LV1–LV9 (flash/fade/wave,
+reduced-motion)* — **consistent/extends**: `prefers-reduced-motion` additionally
+gates Leaflet zoom easing and the chat-tablist smooth scroll (motion LV9 never
+covered). *RT1–RT4 (relative-time tick)* — **extends RT2**: the shared ~1 s
+tick additionally refreshes row age-bucket attributes (write-on-change, no
+re-render; markers stamp their bucket at render only — a deliberate VF3-style
+boundary). *LD-A2 (horizontal tab scroll preserved)* / *LV8 (tab dropdown)* —
+**consistent**: the strip keeps its scroll behaviour on desktop; ≤900 px the
+strip is hidden and LV8's dropdown is the sole channel navigation. *Invariant
+IV (parity)* — **extends**: MeshCore/Meshtastic gain a shape channel (square vs
+circle markers) — differentiation, not privilege; both remain equally legible
+and equally featured. *FS1–FS6 (signed federation wire)* — **consistent**: the
+CHANNEL→preset migration (UX12) keeps every wire/JSON **key** unchanged
+(`channel` now carries the resolved preset string), so no third signature
+break. *D8 (stable contract)* — **consistent**: no `/api/*` shape change;
+`/version` keys unchanged (values follow UX12 resolution). *Apex I / privacy
+II* — untouched: presentation-layer only, no dependency, no egress.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **UX1** | **Audit ratified; D-039 rejected.** The 39 reproduced findings are defects to fix; D-039 is dropped as not-reproduced (init stamps the default ▼). Line-number evidence re-based after #851. | audit + review |
+| **UX2** | **Accessibility floor: WCAG 2.1 AA contrast (1.4.3) for UI text.** Role-badge text colour is computed from the badge background's luminance (both palettes, all roles ≥ 4.5:1; kills the one-off `meshcoreRoleTextColors` map); chat log entries render `--muted`; errors render a new `--danger: #ff6b6b` token (≥ 4.5:1 on `--bg`); links use the single `--accent` (the `body.dark a { color:#9bd }` override is deleted); the four `#4a90e2` focus-ring literals become `var(--accent)`. | interview |
+| **UX3** | **Token aliases, not a rename.** `:root` gains `--border: var(--line)`, `--surface: var(--bg2)`, `--table-header-bg: var(--table-head-bg)`, `--hover-bg: var(--row-alt)` (fixing the federation table's undefined-token borders/sticky header) plus `--danger`. The audit's full `--pm-*` operator-theming rename is **deferred** to a follow-up feature. | interview |
+| **UX4** | **Degenerate states speak.** The layout ships a `<noscript>` notice; the nodes table ships a server-rendered `nodes-empty-row` ("No nodes heard yet — waiting for the first ingestor report.") that JS removes once nodes render and restores when the set is empty; empty table cells render a muted `—` dash (overlay parity); the empty-map placeholder stripes rise to 8–12 % white and always show the placeholder message when no positions exist. | interview |
+| **UX5** | **Freshness is visible state.** Rows and markers carry an age bucket — `live` (< 3 h), `today` (< 24 h), `stale` — stamped at render; CSS dims stale rows and accent-rules live rows; markers scale `fillOpacity` .85/.55/.30 by bucket. Buckets on rows refresh via the shared RT2 tick (attribute write-on-change; extends RT2). Markers restamp on data refresh only. | interview |
+| **UX6** | **Live/paused is legible.** The `#autorefreshToggle` becomes a text-bearing control: `● live` while streaming, `❚❚ paused HH:MM` when paused (timestamp = pause moment). Same element/id, aria semantics kept. | interview |
+| **UX7** | **Protocol shape channel + line key.** MeshCore markers render as square chips (`L.divIcon`), Meshtastic stays circular — colour keeps encoding role, shape encodes protocol (colourblind-safe). The legend's existing neighbor/trace toggle buttons gain 24 px line samples (solid = neighbor, dashed = traceroute), closing the missing-key gap without new controls. | interview |
+| **UX8** | **Legend defaults honest.** `/map` renders the legend expanded on desktop (collapsed ≤ 659 px and on the dashboard); the toggle label reads `Hide legend` / `Show legend` with a suffix **only** when role filters are active (mirrors the aria gating). | interview |
+| **UX9** | **Table IA curated.** Nodes table: a grouped second header row (Identity · Radio · Activity · Health · Utilization · Environment · Position) whose colspans are JS-maintained across the responsive tiers; ≤ 659 px survivors become Protocol/Short/Long/Last Seen/**Battery** (Role hides); a per-row `+` disclosure reveals the hidden fields as a definition list; rows get a hover state and a whole-row click that follows the long-name link; numeric columns right-align in the mono face with `tabular-nums` and the unit-bearing headers name their units (`Battery %`, `Voltage V`); `thead` was already sticky (the pre-existing bare `th` rule) and the fold gives it a solid background; both tables gain visually-hidden `<caption>`s and `scope="col"`; the dashboard gains visually-hidden section `h2`s. Federation table: Preset terminology (UX12), priority column order (Name · Domain · Preset · Frequency · Active …), lat/lon behind responsive tiers. | interview |
+| **UX10** | **Number honesty.** Utilisation renders 1 decimal; battery > 100 renders `100% ⚡` (powered sentinel); voltage with \|V\| < 0.01 renders the dash. | interview |
+| **UX11** | **Shell economics.** Site title clamps (`clamp(18px, 2.2vw, 28px)`, 40 vw ellipsis); the hamburger breakpoint rises to 1100 px; static pages move from both navs to the footer links row; the `(week)` count leaves the h1/tab title — the meta line becomes `N nodes today · M this week` with the day figure in `--fg`; the federation nav count gains a `title` tooltip; the Charts nav drops its protocol icon; the region selector collapses behind a compact 🌐 toggle; the announcement banner wraps to ≤ 3 lines under 600 px; the colocated-hub hit area grows to 32 px (16 px visual); chat ≤ 900 px shows the LV8 dropdown only (28 px arrows on desktop); chat entries get an 8ch hanging indent; `Select region ...` becomes `Other regions…`. | interview |
+| **UX12** | **Join surface + preset config migration (deprecating, fallback-compatible).** New env vars `MESHTASTIC_PRESET` (default `#LongFast` — the pre-existing `DEFAULT_CHANNEL` constant, so stock instances keep today's advertised strings) + `MESHTASTIC_FREQ` (default `915MHz`) and `MESHCORE_PRESET` + `MESHCORE_FREQ` (both empty ⇒ MeshCore line hidden). `CHANNEL`/`FREQUENCY` are **deprecated but honoured as fallbacks** for the Meshtastic pair. A `join-line` strip in the meta row renders `Meshtastic · <preset> · <freq>` (+ `MeshCore · <preset> · <freq>` when configured), linking to the About page when one exists. Terminology moves channel→preset everywhere operator-facing (federation table header **Preset**); every wire/JSON **key** (`channel` in `/version`, `data-app-config`, the signed federation payload) is unchanged and now carries the resolved Meshtastic preset string — no signature or contract break (FS1/BF3/D8 hold). README documents the migration. | interview |
+| **UX13** | **Map-first mobile landing, CSS only — found already implemented.** The audited route-swap was rejected (impossible viewport-conditionally server-side); the agreed CSS mechanism turned out to already ship: the ≤ 1024 px media block orders the chat panel after the map (`.chat-panel { order: 2 }`), so the mobile dashboard paints map-first today. Verified against source during the fix; no change was needed and the audit's D-004 evidence is corrected accordingly. Desktop order, routes, and bookmarks unchanged. | interview + review |
+| **UX14** | **Keyboard/AT equivalence declared.** `#map` gains `aria-describedby` pointing to a visually-hidden note naming the nodes table as the keyboard-accessible equivalent (markers stay pointer-driven — Leaflet focus retrofit rejected); tables/captions/scope per UX9. | interview |
+| **UX15** | **Engineering bar (D9).** Every change ships with 100 % unit tests (JS `node:test`, RSpec), full JSDoc/RDoc, the exact Apache header, `rufo`-clean formatting; all existing suites stay green; view specs asserting moved markup are updated, not deleted. | CLAUDE.md |

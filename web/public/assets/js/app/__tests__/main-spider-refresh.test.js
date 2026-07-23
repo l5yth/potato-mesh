@@ -378,8 +378,9 @@ test('createColocatedHubMarker emits "*<count>" html and toggles expansion on cl
       const iconOptions = result.options.icon.options;
       assert.equal(iconOptions.className, 'colocated-spider-hub');
       assert.ok(/\*4</.test(iconOptions.html), `html ${iconOptions.html} should contain *4`);
-      assert.deepEqual(iconOptions.iconSize, [16, 16]);
-      assert.deepEqual(iconOptions.iconAnchor, [8, 8]);
+      // 32 px hit area around the 16 px glyph (SPEC UX11, audit D-031).
+      assert.deepEqual(iconOptions.iconSize, [32, 32]);
+      assert.deepEqual(iconOptions.iconAnchor, [16, 16]);
       // ``bubblingMouseEvents: false`` keeps Leaflet's internal event
       // routing from forwarding the click to map-level handlers.  The
       // ``riseOnHover`` option is intentionally absent because divIcon

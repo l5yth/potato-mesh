@@ -233,6 +233,22 @@ module PotatoMesh
       sanitized_string(Config.frequency)
     end
 
+    # Retrieve the configured MeshCore preset, normalising blanks to nil.
+    #
+    # @return [String, nil] MeshCore preset label or +nil+ when unset (SPEC UX12).
+    def sanitized_meshcore_preset
+      value = sanitized_string(Config.meshcore_preset)
+      value.empty? ? nil : value
+    end
+
+    # Retrieve the configured MeshCore frequency, normalising blanks to nil.
+    #
+    # @return [String, nil] MeshCore frequency identifier or +nil+ when unset (SPEC UX12).
+    def sanitized_meshcore_freq
+      value = sanitized_string(Config.meshcore_freq)
+      value.empty? ? nil : value
+    end
+
     # Retrieve the configured contact link and normalise blank values to nil.
     #
     # @return [String, nil] contact link identifier or +nil+ when blank.

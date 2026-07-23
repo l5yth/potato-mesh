@@ -517,19 +517,22 @@ export async function initializeFederationPage(options = {}) {
       const mtNodesVal = toFiniteNumber(instance.meshtastic_nodes_count ?? instance.meshtasticNodesCount);
       const mtNodesText = mtNodesVal == null ? '<em>—</em>' : `${meshtasticIconHtml()} ${escapeHtml(String(mtNodesVal))}`;
 
+      // Cell order mirrors `_instances_table.erb`'s traveler-first header
+      // order (SPEC UX9/UX12): where + settings + alive lead; coordinates
+      // and version trail.
       tr.innerHTML = `
         <td class="instances-col instances-col--name">${nameHtml}</td>
         <td class="instances-col instances-col--domain mono">${domainHtml}</td>
-        <td class="instances-col instances-col--contact">${contactHtml || '<em>—</em>'}</td>
-        <td class="instances-col instances-col--version mono">${escapeHtml(instance.version || '')}</td>
         <td class="instances-col instances-col--channel">${renderContactHtml(instance.channel) || ''}</td>
         <td class="instances-col instances-col--frequency">${escapeHtml(instance.frequency || '')}</td>
         <td class="instances-col instances-col--nodes mono">${nodesCountText}</td>
         <td class="instances-col instances-col--meshcore-nodes mono">${mcNodesText}</td>
         <td class="instances-col instances-col--meshtastic-nodes mono">${mtNodesText}</td>
+        ${lastUpdateCellHtml(instance, nowSec)}
+        <td class="instances-col instances-col--contact">${contactHtml || '<em>—</em>'}</td>
+        <td class="instances-col instances-col--version mono">${escapeHtml(instance.version || '')}</td>
         <td class="instances-col instances-col--latitude mono">${fmtCoords(instance.latitude)}</td>
         <td class="instances-col instances-col--longitude mono">${fmtCoords(instance.longitude)}</td>
-        ${lastUpdateCellHtml(instance, nowSec)}
       `;
 
       frag.appendChild(tr);

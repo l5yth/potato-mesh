@@ -13,11 +13,17 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
+<%# Visually-hidden section headings give screen readers landmarks on the
+    dashboard composite (SPEC UX9); .visually-hidden is absolutely
+    positioned, so the headings never join the flex layout. %>
 <div class="map-row">
   <% unless private_mode %>
+    <h2 class="visually-hidden">Chat</h2>
     <%= erb :"shared/_chat_panel", locals: { full_screen: false } %>
   <% end %>
+  <h2 class="visually-hidden">Map</h2>
   <%= erb :"shared/_map_panel", locals: { full_screen: false, legend_collapsed: true } %>
 </div>
 
+<h2 class="visually-hidden">Nodes</h2>
 <%= erb :"shared/_nodes_table", locals: { full_screen: false } %>

@@ -195,10 +195,10 @@ test('fetchActiveNodeStats falls back to local counts on invalid payloads', asyn
   assert.equal(stats.month, 0);
 });
 
-test('formatActiveNodeStatsText emits compact day/week/month footer string', () => {
+test('formatActiveNodeStatsText emits the worded day/week footer string', () => {
   const text = formatActiveNodeStatsText({
     stats: { day: 2, week: 3, month: 4, sampled: false },
   });
 
-  assert.equal(text, '2/day · 3/week · 4/month');
+  assert.equal(text, '2 nodes today · 3 this week');
 });

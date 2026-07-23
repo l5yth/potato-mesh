@@ -21,12 +21,14 @@ import {
   normaliseActiveNodeStatsPayload,
   fetchActiveNodeStats,
   formatActiveNodeStatsText,
+  formatActiveNodeStatsHtml,
 } from './stats.js';
 export {
   computeLocalActiveNodeStats,
   normaliseActiveNodeStatsPayload,
   fetchActiveNodeStats,
   formatActiveNodeStatsText,
+  formatActiveNodeStatsHtml,
 };
 
 import {
@@ -55,7 +57,7 @@ import {
 import { createMapAutoFitController } from './map-auto-fit-controller.js';
 import { resolveAutoFitBoundsConfig } from './map-auto-fit-settings.js';
 import { attachNodeInfoRefreshToMarker, overlayToPopupNode } from './map-marker-node-info.js';
-import { resolveLegendVisibility } from './map-legend-visibility.js';
+import { resolveLegendVisibility, legendToggleLabel } from './map-legend-visibility.js';
 import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focus.js';
 import { createMapCenterResetHandler } from './map-center-reset.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
@@ -68,10 +70,12 @@ import {
   buildTelemetryDisplayEntries,
   collectTelemetryMetrics,
   fmtAlt,
+  fmtBattery,
   fmtHumidity,
   fmtPressure,
   fmtTemperature,
   fmtTx,
+  fmtVoltage,
 } from './short-info-telemetry.js';
 import { renderSatsInViewBadge } from './short-info-satellites.js';
 import { createMessageNodeHydrator } from './message-node-hydrator.js';
@@ -200,6 +204,29 @@ import { createEventStream } from './main/event-stream.js';
 import { flashNodeTargets, flashMessageTargets, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
+import {
+  nodeAgeBucket,
+  markerFillOpacityForBucket,
+  updateAgeBucketElements,
+} from './main/age-bucket.js';
+import {
+  autorefreshControlState,
+  pauseTimestampText,
+  applyAutorefreshControlState,
+} from './main/autorefresh-control.js';
+import { createNodeMarker } from './main/node-marker.js';
+import { colocatedHubIconDefinition } from './main/colocated-hub-icon.js';
+import { syncNodesEmptyRow } from './main/table-empty-state.js';
+import { formatTableCell } from './main/table-cell-format.js';
+import {
+  NODES_TABLE_COLUMN_GROUPS,
+  NODES_TABLE_TOTAL_COLUMNS,
+  hiddenColumnsForWidth,
+  syncGroupHeaderColspans,
+  nodeExtraRowParts,
+  rowActivationHref,
+} from './main/nodes-table-ia.js';
+import { legendLineSampleSvg } from './main/legend-line-samples.js';
 
 /**
  * Build the node-table row's two timestamp cells ("last seen" and
@@ -216,7 +243,11 @@ import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-
  */
 export function buildNodeRowTimestampCellsHtml(node, nowSec) {
   const lastPositionTime = toFiniteNumber(node.position_time ?? node.positionTime);
-  const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
+  // A node that never reported a position renders the muted dash (SPEC UX4)
+  // rather than an indistinguishable blank; the tick attribute is absent so
+  // the shared ticker never rewrites the dash.
+  const lastPositionCell =
+    lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : formatTableCell('');
   const lastSeenAttrs = tickAttributes(node.last_heard);
   const lastPositionAttrs = tickAttributes(lastPositionTime);
   return {
@@ -254,6 +285,9 @@ export function initializeApp(config) {
   const titleEl = document.querySelector('title');
   const headerEl = document.querySelector('h1');
   const headerTitleTextEl = headerEl ? headerEl.querySelector('.site-title-text') : null;
+  // The h1's server-rendered text is the restore point for updateTitleCount
+  // (SPEC UX11: no count decorates the site title).
+  const siteTitleBaseText = headerTitleTextEl ? headerTitleTextEl.textContent : '';
   const chatEl = document.getElementById('chat');
   const instanceSelect = document.getElementById('instanceSelect');
   const baseTitle = document.title;
@@ -625,7 +659,7 @@ export function initializeApp(config) {
     void initializeInstanceSelector({
       selectElement: instanceSelect,
       instanceDomain: config.instanceDomain,
-      defaultLabel: 'Select region ...',
+      defaultLabel: 'Other regions…',
     }).catch(error => {
       console.warn('Instance selector initialisation failed', error);
     });
@@ -759,6 +793,58 @@ export function initializeApp(config) {
   }
 
   updateSortIndicators();
+
+  // --- Nodes-table IA wiring (SPEC UX9) ---
+  // Whole-row activation follows the long-name link (interactive elements
+  // keep their own behaviour), the `+` cell toggles the hidden-field
+  // disclosure row, and the grouped header's colspans track the responsive
+  // hide tiers.
+  const nodesTbody = nodesTable ? nodesTable.querySelector('tbody') : null;
+  if (nodesTbody && typeof nodesTbody.addEventListener === 'function') {
+    nodesTbody.addEventListener('click', event => {
+      const target = event && event.target ? event.target : null;
+      const toggle = target && typeof target.closest === 'function'
+        ? target.closest('.node-extra-toggle')
+        : null;
+      if (toggle) {
+        const row = toggle.closest('tr');
+        const extra = row ? row.nextElementSibling : null;
+        if (extra && extra.classList && extra.classList.contains('node-extra')) {
+          extra.hidden = !extra.hidden;
+          toggle.setAttribute('aria-expanded', String(!extra.hidden));
+          toggle.textContent = extra.hidden ? '+' : '−';
+        }
+        return;
+      }
+      const row = target && typeof target.closest === 'function' ? target.closest('tr') : null;
+      if (!row || !row.classList || row.classList.contains('node-extra') ||
+          row.classList.contains('nodes-empty-row')) {
+        return;
+      }
+      const href = rowActivationHref(row, target);
+      if (href) window.location.href = href;
+    });
+  }
+  const nodesGroupHeaderRow = nodesTable ? nodesTable.querySelector('.nodes-group-header') : null;
+
+  /**
+   * Re-span the grouped header row for the current viewport width.
+   *
+   * @returns {void}
+   */
+  function syncNodesGroupHeader() {
+    if (!nodesGroupHeaderRow) return;
+    const width = typeof window !== 'undefined' && Number.isFinite(window.innerWidth)
+      ? window.innerWidth
+      : Number.MAX_SAFE_INTEGER;
+    const hidden = hiddenColumnsForWidth(width);
+    syncGroupHeaderColspans(nodesGroupHeaderRow, NODES_TABLE_COLUMN_GROUPS, cls => !hidden.has(cls));
+  }
+  syncNodesGroupHeader();
+  if (nodesGroupHeaderRow && typeof window !== 'undefined' &&
+      typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', syncNodesGroupHeader);
+  }
 
   /**
    * Fetch only the collections flagged dirty by SSE pings, then clear the
@@ -1563,12 +1649,11 @@ export function initializeApp(config) {
     if (!legendToggleButton) return;
     const hasFilters = activeRoleFilters.size > 0;
     legendToggleButton.setAttribute('aria-pressed', legendVisible ? 'true' : 'false');
-    const baseLabel = legendVisible ? 'Hide map legend' : 'Show map legend';
-    const baseText = legendVisible ? 'Hide legend' : 'Show legend';
-    const labelSuffix = hasFilters ? ' (role filters active)' : '';
-    const textSuffix = ' (filters)';
-    legendToggleButton.setAttribute('aria-label', baseLabel + labelSuffix);
-    legendToggleButton.textContent = baseText + textSuffix;
+    // Both label layers gate their filter suffix on *active* filters (SPEC
+    // UX8, audit D-012) — the shared helper keeps them in lockstep.
+    const { text, ariaLabel } = legendToggleLabel(legendVisible, hasFilters);
+    legendToggleButton.setAttribute('aria-label', ariaLabel);
+    legendToggleButton.textContent = text;
     if (hasFilters) {
       legendToggleButton.setAttribute('data-has-active-filters', 'true');
     } else {
@@ -1611,7 +1696,9 @@ export function initializeApp(config) {
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
     const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
-    neighborLinesToggleButton.textContent = label;
+    // The toggle doubles as the legend key for the solid neighbor-line style
+    // (SPEC UX7, audit D-014).
+    neighborLinesToggleButton.innerHTML = `${legendLineSampleSvg('neighbor')} ${label}`;
     // aria-pressed reflects whether the user has *activated* the toggle (i.e. lines are
     // currently hidden). When lines are visible (default), the button is unpressed.
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'false' : 'true');
@@ -1645,7 +1732,9 @@ export function initializeApp(config) {
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
     const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
-    traceLinesToggleButton.textContent = label;
+    // The toggle doubles as the legend key for the dashed traceroute style
+    // (SPEC UX7, audit D-014).
+    traceLinesToggleButton.innerHTML = `${legendLineSampleSvg('trace')} ${label}`;
     // aria-pressed reflects whether the user has *activated* the toggle (lines hidden).
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'false' : 'true');
     traceLinesToggleButton.setAttribute('aria-label', label);
@@ -1898,7 +1987,9 @@ export function initializeApp(config) {
     });
     setLegendVisibility(initialLegendVisible);
     legendMediaQuery.addEventListener('change', event => {
-      if (legendDefaultCollapsed || isDashboardView || isMapView) return;
+      // The dedicated map view follows the media query too (SPEC UX8): only
+      // the cramped dashboard and an explicit template collapse opt out.
+      if (legendDefaultCollapsed || isDashboardView) return;
       setLegendVisibility(!event.matches);
     });
   } else if (mapContainer && !hasLeaflet) {
@@ -3778,8 +3869,15 @@ export function initializeApp(config) {
       return;
     }
     const frag = document.createDocumentFragment();
+    let rowIndex = 0;
     for (const n of nodes) {
       const tr = document.createElement('tr');
+      // Zebra striping is stamped per node row because the hidden disclosure
+      // rows (SPEC UX9) would otherwise consume every even nth-child slot.
+      if (rowIndex % 2 === 1 && tr.classList && typeof tr.classList.add === 'function') {
+        tr.classList.add('row-alt');
+      }
+      rowIndex += 1;
       // Row-level node id hook for live-update flashes (SPEC VF3); kept distinct
       // from the inner link's data-node-id so it never affects click handling.
       if (typeof n.node_id === 'string' && n.node_id) {
@@ -3789,6 +3887,13 @@ export function initializeApp(config) {
       // keyframe reads --flash-role-color, so the flash helper needs no colour.
       if (tr.style && typeof tr.style.setProperty === 'function') {
         tr.style.setProperty('--flash-role-color', getRoleFlashColor(n.role, n.protocol));
+      }
+      // Freshness bucket (SPEC UX5): rows carry data-age/data-age-ts so CSS
+      // can dim stale nodes and the shared tick keeps the bucket honest.
+      const rowAgeTs = toFiniteNumber(n.last_heard);
+      if (rowAgeTs != null && rowAgeTs > 0 && typeof tr.setAttribute === 'function') {
+        tr.setAttribute('data-age', nodeAgeBucket(rowAgeTs, nowSec));
+        tr.setAttribute('data-age-ts', String(rowAgeTs));
       }
       // Timestamp cells opt into the shared live tick via data-ts-ago (RT1/RT2).
       const timestampCells = buildNodeRowTimestampCellsHtml(n, nowSec);
@@ -3802,28 +3907,32 @@ export function initializeApp(config) {
       const modemPresetDisplay = resolvedPreset ? escapeHtml(resolvedPreset) : '';
       const longNameHtml = renderNodeLongNameLink(n.long_name, n.node_id);
       const protocolIconCell = protocolIconPrefixHtml(n.protocol);
+      // Measurement cells render the muted dash for absent values (SPEC UX4)
+      // and honest numbers (SPEC UX10); `num` columns right-align in the mono
+      // face via CSS.
       tr.innerHTML = `
         <td class="nodes-col nodes-col--protocol">${protocolIconCell}</td>
         <td class="mono nodes-col nodes-col--node-id">${escapeHtml(n.node_id || "")}</td>
         <td class="nodes-col nodes-col--short-name">${renderShortHtml(n.short_name, n.role, n.long_name, n)}</td>
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
-        <td class="nodes-col nodes-col--frequency">${loraFrequencyDisplay}</td>
-        <td class="nodes-col nodes-col--modem-preset">${modemPresetDisplay}</td>
+        <td class="nodes-col nodes-col--frequency num">${formatTableCell(loraFrequencyDisplay)}</td>
+        <td class="nodes-col nodes-col--modem-preset">${formatTableCell(modemPresetDisplay)}</td>
         ${timestampCells.lastSeen}
         <td class="nodes-col nodes-col--role">${escapeHtml(n.role || "CLIENT")}</td>
-        <td class="nodes-col nodes-col--hw-model">${escapeHtml(fmtHw(n.hw_model))}</td>
-        <td class="nodes-col nodes-col--battery">${fmtAlt(n.battery_level, "%")}</td>
-        <td class="nodes-col nodes-col--voltage">${fmtAlt(n.voltage, "V")}</td>
-        <td class="nodes-col nodes-col--uptime">${timeHum(n.uptime_seconds)}</td>
-        <td class="nodes-col nodes-col--channel-util">${fmtTx(n.channel_utilization)}</td>
-        <td class="nodes-col nodes-col--air-util-tx">${fmtTx(n.air_util_tx)}</td>
-        <td class="nodes-col nodes-col--temperature">${fmtTemperature(n.temperature)}</td>
-        <td class="nodes-col nodes-col--humidity">${fmtHumidity(n.relative_humidity)}</td>
-        <td class="nodes-col nodes-col--pressure">${fmtPressure(n.barometric_pressure)}</td>
-        <td class="nodes-col nodes-col--latitude">${latitudeDisplay}</td>
-        <td class="nodes-col nodes-col--longitude">${longitudeDisplay}</td>
-        <td class="nodes-col nodes-col--altitude">${fmtAlt(n.altitude, "m")}</td>
-        ${timestampCells.lastPosition}`;
+        <td class="nodes-col nodes-col--hw-model">${formatTableCell(escapeHtml(fmtHw(n.hw_model)))}</td>
+        <td class="nodes-col nodes-col--battery num">${formatTableCell(fmtBattery(n.battery_level))}</td>
+        <td class="nodes-col nodes-col--voltage num">${formatTableCell(fmtVoltage(n.voltage))}</td>
+        <td class="nodes-col nodes-col--uptime num">${formatTableCell(timeHum(n.uptime_seconds))}</td>
+        <td class="nodes-col nodes-col--channel-util num">${formatTableCell(fmtTx(n.channel_utilization))}</td>
+        <td class="nodes-col nodes-col--air-util-tx num">${formatTableCell(fmtTx(n.air_util_tx))}</td>
+        <td class="nodes-col nodes-col--temperature num">${formatTableCell(fmtTemperature(n.temperature))}</td>
+        <td class="nodes-col nodes-col--humidity num">${formatTableCell(fmtHumidity(n.relative_humidity))}</td>
+        <td class="nodes-col nodes-col--pressure num">${formatTableCell(fmtPressure(n.barometric_pressure))}</td>
+        <td class="nodes-col nodes-col--latitude num">${formatTableCell(latitudeDisplay)}</td>
+        <td class="nodes-col nodes-col--longitude num">${formatTableCell(longitudeDisplay)}</td>
+        <td class="nodes-col nodes-col--altitude num">${formatTableCell(fmtAlt(n.altitude, "m"))}</td>
+        ${timestampCells.lastPosition}
+        <td class="nodes-col nodes-col--more"><button type="button" class="node-extra-toggle" aria-expanded="false" aria-label="Show all fields">+</button></td>`;
 
       enhanceCoordinateCell({
         cell: tr.querySelector('.nodes-col--latitude'),
@@ -3848,8 +3957,40 @@ export function initializeApp(config) {
         onActivate: focusMapOnCoordinates
       });
       frag.appendChild(tr);
+
+      // Hidden-field disclosure row (SPEC UX9): the `+` cell reveals every
+      // field the smallest responsive tier hides, so the mobile view loses
+      // nothing permanently. Values reuse the display strings computed above.
+      const extraParts = nodeExtraRowParts(
+        [
+          { label: 'Node ID', valueHtml: formatTableCell(escapeHtml(n.node_id || '')) },
+          { label: 'Frequency', valueHtml: formatTableCell(loraFrequencyDisplay) },
+          { label: 'LoRa Preset', valueHtml: formatTableCell(modemPresetDisplay) },
+          { label: 'Role', valueHtml: escapeHtml(n.role || 'CLIENT') },
+          { label: 'HW Model', valueHtml: formatTableCell(escapeHtml(fmtHw(n.hw_model))) },
+          { label: 'Voltage', valueHtml: formatTableCell(fmtVoltage(n.voltage)) },
+          { label: 'Uptime', valueHtml: formatTableCell(timeHum(n.uptime_seconds)) },
+          { label: 'Channel Util', valueHtml: formatTableCell(fmtTx(n.channel_utilization)) },
+          { label: 'Air Util Tx', valueHtml: formatTableCell(fmtTx(n.air_util_tx)) },
+          { label: 'Temperature', valueHtml: formatTableCell(fmtTemperature(n.temperature)) },
+          { label: 'Humidity', valueHtml: formatTableCell(fmtHumidity(n.relative_humidity)) },
+          { label: 'Pressure', valueHtml: formatTableCell(fmtPressure(n.barometric_pressure)) },
+          { label: 'Latitude', valueHtml: formatTableCell(latitudeDisplay) },
+          { label: 'Longitude', valueHtml: formatTableCell(longitudeDisplay) },
+          { label: 'Altitude', valueHtml: formatTableCell(fmtAlt(n.altitude, 'm')) },
+        ],
+        NODES_TABLE_TOTAL_COLUMNS,
+      );
+      const extraTr = document.createElement('tr');
+      extraTr.className = extraParts.className;
+      extraTr.hidden = true;
+      extraTr.innerHTML = extraParts.innerHtml;
+      frag.appendChild(extraTr);
     }
     tb.replaceChildren(frag);
+    // Keep the waiting row honest (SPEC UX4): present while the node set is
+    // empty, gone the moment real rows render.
+    syncNodesEmptyRow(tb, nodes.length, document, NODES_TABLE_TOTAL_COLUMNS);
     overlayStack.cleanupOrphans();
   }
 
@@ -4027,12 +4168,8 @@ export function initializeApp(config) {
   function getColocatedHubIcon(groupSize) {
     const cached = colocatedHubIconCache.get(groupSize);
     if (cached) return cached;
-    const icon = L.divIcon({
-      html: '<span class="colocated-spider-hub__glyph">*' + groupSize + '</span>',
-      className: 'colocated-spider-hub',
-      iconSize: [16, 16],
-      iconAnchor: [8, 8]
-    });
+    // 32 px hit area around the 16 px glyph (SPEC UX11, audit D-031).
+    const icon = L.divIcon(colocatedHubIconDefinition(groupSize));
     colocatedHubIconCache.set(groupSize, icon);
     return icon;
   }
@@ -4363,13 +4500,13 @@ export function initializeApp(config) {
       const markerLatLng = useOffset ? projectColocatedOffsetLatLng(lat, lon, dx, dy) : [lat, lon];
 
       const color = getRoleColor(n.role, n.protocol);
-      const marker = L.circleMarker(markerLatLng, {
+      // Shape encodes protocol, colour keeps encoding role, and fill opacity
+      // encodes the freshness bucket (SPEC UX5/UX7).
+      const marker = createNodeMarker(L, markerLatLng, {
+        protocol: n.protocol,
+        color,
         radius: 9,
-        color: '#000',
-        weight: 1,
-        fillColor: color,
-        fillOpacity: 0.7,
-        opacity: 0.7
+        fillOpacity: markerFillOpacityForBucket(nodeAgeBucket(n.last_heard, Date.now() / 1000))
       });
 
       // Draw a faint dotted leader line from each fanned-out marker back to
@@ -4910,7 +5047,10 @@ export function initializeApp(config) {
   restartAutoRefresh();
 
   // --- Auto-refresh play/pause toggle ---
+  // Live vs. paused is visible text, not a glyph-only secret (SPEC UX6):
+  // `\u25CF live` while streaming, `\u275A\u275A paused HH:MM` when frozen.
   if (autorefreshToggle) {
+    applyAutorefreshControlState(autorefreshToggle, autorefreshControlState(false, null));
     autorefreshToggle.addEventListener('click', () => {
       autorefreshPaused = !autorefreshPaused;
       if (autorefreshPaused) {
@@ -4920,13 +5060,12 @@ export function initializeApp(config) {
         }
         // Also close the live stream so a paused dashboard makes no requests.
         stopLiveUpdates();
-        autorefreshToggle.textContent = '\u25B6';
-        autorefreshToggle.setAttribute('aria-label', 'Resume auto-refresh');
-        autorefreshToggle.setAttribute('aria-pressed', 'true');
+        applyAutorefreshControlState(
+          autorefreshToggle,
+          autorefreshControlState(true, pauseTimestampText(new Date()))
+        );
       } else {
-        autorefreshToggle.textContent = '\u23F8';
-        autorefreshToggle.setAttribute('aria-label', 'Pause auto-refresh');
-        autorefreshToggle.setAttribute('aria-pressed', 'false');
+        applyAutorefreshControlState(autorefreshToggle, autorefreshControlState(false, null));
         refresh();
         restartAutoRefresh();
       }
@@ -4959,19 +5098,23 @@ export function initializeApp(config) {
   setupMetaProtocolToggle(protocolToggleMeshtastic, 'meshtastic');
 
   /**
-   * Update the page/tab title with the total active-node count for the past 7 days.
+   * Keep the page/tab and header titles at their base text.
    *
-   * @param {{week: number}} stats Active-node stats from /api/stats.
+   * The unexplained week-count suffix left the titles (SPEC UX11, audit
+   * D-027) — the vital sign now lives in the meta row via
+   * {@link updateFooterStats}. This restores the base text idempotently so a
+   * stale decorated title from an earlier render heals on the next stats
+   * refresh.
+   *
+   * @param {?{week: number}} stats Active-node stats (unused; kept for the
+   *   established call signature).
    * @returns {void}
    */
   function updateTitleCount(stats) {
-    const count = stats?.week ?? 0;
-    const text = `${baseTitle} (${count})`;
-    if (titleEl) titleEl.textContent = text;
-    if (headerTitleTextEl) {
-      headerTitleTextEl.textContent = text;
-    } else if (headerEl) {
-      headerEl.textContent = text;
+    void stats;
+    if (titleEl) titleEl.textContent = baseTitle;
+    if (headerTitleTextEl && headerTitleTextEl.textContent !== siteTitleBaseText) {
+      headerTitleTextEl.textContent = siteTitleBaseText;
     }
   }
 
@@ -4995,7 +5138,10 @@ export function initializeApp(config) {
    */
   function updateFooterStats(stats) {
     if (!footerActiveNodes) return;
-    footerActiveNodes.textContent = 'Active: ' + formatActiveNodeStatsText({ stats });
+    // The day count is the page's proof of life (SPEC UX11): render it
+    // promoted via the shared markup helper; the numbers are numeric-coerced
+    // upstream so the fragment is inert.
+    footerActiveNodes.innerHTML = formatActiveNodeStatsHtml({ stats });
   }
 
   /**
