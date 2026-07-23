@@ -160,13 +160,18 @@ test('updateFooterStats populates the active-stats element when present', () => 
     const el = env.document.getElementById('footerActiveNodes');
     testUtils.updateFooterStats({ day: 10, week: 20, month: 30, sampled: false });
 
+    // SPEC UX11 (audit D-026): worded vital sign with the day figure promoted.
     assert.ok(
-      el.textContent.includes('/day'),
-      `expected footerActiveNodes to contain "/day", got: ${el.textContent}`,
+      el.innerHTML.includes('10 nodes today'),
+      `expected footerActiveNodes to contain "10 nodes today", got: ${el.innerHTML}`,
     );
     assert.ok(
-      el.textContent.includes('10/day'),
-      `expected footerActiveNodes to contain "10/day", got: ${el.textContent}`,
+      el.innerHTML.includes('meta-active-nodes__today'),
+      `expected the day segment to be styleable, got: ${el.innerHTML}`,
+    );
+    assert.ok(
+      el.innerHTML.includes('20 this week'),
+      `expected footerActiveNodes to contain "20 this week", got: ${el.innerHTML}`,
     );
   } finally {
     cleanup();

@@ -65,14 +65,50 @@ export function fmtAlt(value, suffix) {
 /**
  * Format utilisation metrics as percentages.
  *
+ * One decimal by default (SPEC UX10, audit D-022): three decimals of duty
+ * cycle were precision theater — callers needing more pass ``decimals``.
+ *
  * @param {*} value Raw utilisation value.
- * @param {number} [decimals=3] Decimal precision applied to the percentage.
+ * @param {number} [decimals=1] Decimal precision applied to the percentage.
  * @returns {string} Formatted percentage string.
  */
-export function fmtTx(value, decimals = 3) {
+export function fmtTx(value, decimals = 1) {
   if (!isFiniteNumber(value)) return '';
   const num = Number(value);
   return `${num.toFixed(decimals)}%`;
+}
+
+/**
+ * Format a battery level, honouring the firmware's powered sentinel.
+ *
+ * Meshtastic reports > 100 (typically 101) for externally powered nodes;
+ * that renders as ``100% ⚡`` instead of an impossible percentage (SPEC UX10).
+ *
+ * @param {*} value Raw battery level percentage.
+ * @returns {string} Formatted battery string, or ``''`` without a reading.
+ */
+export function fmtBattery(value) {
+  if (!isFiniteNumber(value) && !(value === 0 || value === '0')) return '';
+  const num = Number(value);
+  if (num > 100) return '100% ⚡';
+  return `${num}%`;
+}
+
+/**
+ * Format a battery voltage, treating below-noise magnitudes as no reading.
+ *
+ * |V| < 0.01 is measurement noise from boards without a battery sense line
+ * (e.g. ``-0.001V``) and renders as absent rather than as a bogus figure
+ * (SPEC UX10).
+ *
+ * @param {*} value Raw voltage reading.
+ * @returns {string} Formatted voltage string, or ``''`` without a reading.
+ */
+export function fmtVoltage(value) {
+  if (!isFiniteNumber(value)) return '';
+  const num = Number(value);
+  if (Math.abs(num) < 0.01) return '';
+  return `${num}V`;
 }
 
 /**
@@ -403,6 +439,8 @@ export default {
   buildTelemetryDisplayEntries,
   fmtAlt,
   fmtTx,
+  fmtBattery,
+  fmtVoltage,
   fmtTemperature,
   fmtHumidity,
   fmtPressure,

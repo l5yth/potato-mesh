@@ -1406,8 +1406,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "renders the federation instance selector when federation is enabled" do
       get "/"
 
+      # SPEC UX11 (audit D-029/D-038): the selector sits behind a compact
+      # toggle and the placeholder names the action.
       expect(last_response.body).to include('id="instanceSelect"')
-      expect(last_response.body).to include("Select region ...")
+      expect(last_response.body).to include('id="instanceSelectToggle"')
+      expect(last_response.body).to include("Other regions…")
     end
 
     it "omits the instance selector when private mode is active" do

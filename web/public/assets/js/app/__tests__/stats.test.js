@@ -298,16 +298,18 @@ test('fetchActiveNodeStats concurrent calls share a single in-flight request', a
 // formatActiveNodeStatsText
 // ---------------------------------------------------------------------------
 
-test('formatActiveNodeStatsText emits compact day/week/month string', () => {
+// SPEC UX11 (audit D-026): the vital sign reads as words with the day count
+// leading; the month figure moved off the line.
+test('formatActiveNodeStatsText emits the worded day/week vital sign', () => {
   assert.equal(
     formatActiveNodeStatsText({
       stats: { day: 2, week: 3, month: 4, sampled: false },
     }),
-    '2/day · 3/week · 4/month'
+    '2 nodes today · 3 this week'
   );
 });
 
 test('formatActiveNodeStatsText handles missing or null stats gracefully', () => {
   const text = formatActiveNodeStatsText({ stats: null });
-  assert.equal(text, '0/day · 0/week · 0/month', 'defaults to zero counts for null stats');
+  assert.equal(text, '0 nodes today · 0 this week', 'defaults to zero counts for null stats');
 });

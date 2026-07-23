@@ -3,6 +3,26 @@
 
 # CHANGELOG
 
+## Unreleased
+
+Frontend design & UX audit remediation (SPEC UX1–UX15): 38 audit findings
+fixed across accessibility, degenerate states, information architecture, and
+the shell — plus the CHANNEL/FREQUENCY → MESHTASTIC_/MESHCORE_ preset config
+migration (deprecated-with-fallback) feeding the new join strip.
+
+### Features
+* Web: join strip renders the radio settings newcomers need; new `MESHTASTIC_PRESET`/`MESHTASTIC_FREQ` + `MESHCORE_PRESET`/`MESHCORE_FREQ` env vars (`CHANNEL`/`FREQUENCY` deprecated but honoured)
+* Web: node freshness buckets (live/today/stale) on table rows and map markers, riding the shared relative-time tick
+* Web: MeshCore nodes render as square map chips — shape encodes protocol, colour keeps encoding role
+* Web: nodes table gains grouped headers, curated mobile columns (Battery survives), a per-row disclosure of hidden fields, row hover/click, numeric alignment, captions/scopes
+
+### Fixes
+* Web: WCAG AA text contrast — role-badge text computed by background luminance; chat log entries, error text, links, and focus rings tokenised (`--danger`, single `--accent`)
+* Web: federation table's undefined CSS tokens aliased — row borders and the sticky header render again
+* Web: legend expanded by default on /map, honest toggle label (filter suffix only when filters are active), line-style key on the neighbor/trace toggles; fixed the malformed `data-legend-collapsed` attribute
+* Web: noscript notice + server-rendered "no nodes heard yet" waiting row; empty table cells render a muted dash; visible `● live` / `❚❚ paused HH:MM` refresh state
+* Web: dark-only stylesheet completed (DM7 component-layer fold), reduced-motion now also gates Leaflet zoom and tab-strip scrolling; shell cleanups (title clamp, 1100 px hamburger, static pages demoted to the footer, count moved off the h1, compact region toggle, wrapped announcements, 32 px hub hit area, chat hanging indent)
+
 ## v0.6.2
 
 This is a service release of the radio mesh app-suite `potato-mesh` v0.6.2, focused on Meshcore-related fixes, federation accuracy, and bridge coverage. The Matrix bridge now understands Meshcore traffic, and several duplication and classification issues in the web app and ingestor have been tightened up.

@@ -172,8 +172,8 @@ test('buildTelemetryDisplayEntries formats values for overlays', () => {
   assert.equal(entryMap.get('Voltage'), '4.224V');
   assert.equal(entryMap.get('Current'), '71.5 mA');
   assert.equal(entryMap.get('Uptime'), 'formatted-305044');
-  assert.equal(entryMap.get('Channel Util'), '0.597%');
-  assert.equal(entryMap.get('Air Util Tx'), '0.039%');
+  assert.equal(entryMap.get('Channel Util'), '0.6%');
+  assert.equal(entryMap.get('Air Util Tx'), '0.0%');
   assert.equal(entryMap.get('Temperature'), '22.0°C');
   assert.equal(entryMap.get('Humidity'), '39.5%');
   assert.equal(entryMap.get('Pressure'), '1017.8 hPa');

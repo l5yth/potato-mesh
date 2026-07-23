@@ -71,6 +71,11 @@ function updateFederationNavCount(options) {
 
     dataset.federationLabel = label;
     link.textContent = `${label} (${normalizedCount})`;
+    // Name the naked number (SPEC UX11, audit D-027): the count reads as
+    // trivia without a unit, so the tooltip states what it counts.
+    if (typeof link.setAttribute === 'function') {
+      link.setAttribute('title', `${normalizedCount} federated instances`);
+    }
   });
 }
 
@@ -135,6 +140,30 @@ export function buildInstanceUrl(domain) {
  * }} options Configuration for the selector behaviour.
  * @returns {Promise<void>} Promise resolving once the selector has been initialised.
  */
+/**
+ * Wire the compact region toggle (SPEC UX11, audit D-029).
+ *
+ * The header shows a small 🌐 button; activating it reveals the region
+ * `<select>` on demand instead of spending 220 px of every header on a
+ * traveler-only task. Missing elements (federation off, tests without the
+ * toggle) leave the selector in its server-rendered state.
+ *
+ * @param {?Document} doc Document to query for the toggle button.
+ * @param {?HTMLSelectElement} selectElement The region select element.
+ * @returns {void}
+ */
+export function wireInstanceSelectorToggle(doc, selectElement) {
+  if (!doc || typeof doc.getElementById !== 'function' || !selectElement) return;
+  const toggle = doc.getElementById('instanceSelectToggle');
+  if (!toggle || typeof toggle.addEventListener !== 'function') return;
+  toggle.addEventListener('click', () => {
+    const reveal = selectElement.hidden !== false ? true : false;
+    selectElement.hidden = !reveal;
+    toggle.setAttribute('aria-expanded', String(reveal));
+    if (reveal && typeof selectElement.focus === 'function') selectElement.focus();
+  });
+}
+
 export async function initializeInstanceSelector(options) {
   const {
     selectElement,
@@ -142,7 +171,7 @@ export async function initializeInstanceSelector(options) {
     windowObject = typeof window !== 'undefined' ? window : undefined,
     documentObject = typeof document !== 'undefined' ? document : undefined,
     instanceDomain,
-    defaultLabel = 'Select region ...',
+    defaultLabel = 'Other regions…',
     navigate,
   } = options;
 
@@ -151,6 +180,7 @@ export async function initializeInstanceSelector(options) {
   }
 
   const doc = documentObject || windowObject?.document || null;
+  wireInstanceSelectorToggle(doc, selectElement);
 
   if (selectElement.options.length === 0) {
     const optionFactory =

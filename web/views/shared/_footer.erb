@@ -13,7 +13,9 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 -->
-<% slim = defined?(slim) && slim %>
+<% slim = defined?(slim) && slim
+   footer_static_pages = defined?(static_pages) && static_pages ? static_pages : []
+   footer_view_mode = defined?(current_view_mode) && current_view_mode ? current_view_mode.to_s : "" %>
 <footer class="app-footer<%= slim ? " app-footer--slim" : "" %>">
   <div class="footer-content">
     <span class="footer-brand">PotatoMesh</span>
@@ -22,6 +24,13 @@
     <% end %>
     <span class="footer-separator" aria-hidden="true">—</span>
     <span class="footer-links">
+      <%# Static operator pages live in the footer tier (SPEC UX11): the
+          primary nav carries only the product views. %>
+      <% footer_static_pages.each do |sp| %>
+        <% sp_active = footer_view_mode == "page_#{sp.slug}" %>
+        <a href="/pages/<%= Rack::Utils.escape_path(sp.slug) %>"<%= sp_active ? ' aria-current="page"' : "" %>><%= Rack::Utils.escape_html(sp.title) %></a>
+        <span class="footer-separator" aria-hidden="true">—</span>
+      <% end %>
       GitHub:
       <a href="https://github.com/l5yth/potato-mesh" target="_blank">l5yth/potato-mesh</a>
       <% if contact_link && !contact_link.empty? %>

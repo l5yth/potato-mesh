@@ -193,10 +193,27 @@ export async function fetchActiveNodeStats({ nodes, nowSeconds, fetchImpl = fetc
  * @returns {string} Compact user-visible string, e.g. ``"569/day · 729/week · 1168/month"``.
  */
 export function formatActiveNodeStatsText({ stats }) {
-  const parts = [
-    `${Number(stats?.day) || 0}/day`,
-    `${Number(stats?.week) || 0}/week`,
-    `${Number(stats?.month) || 0}/month`
-  ];
-  return parts.join(' · ');
+  const day = Number(stats?.day) || 0;
+  const week = Number(stats?.week) || 0;
+  return `${day} nodes today · ${week} this week`;
+}
+
+/**
+ * Render the active-node vital sign as markup with the day figure promoted.
+ *
+ * The day count is the page's proof of life (SPEC UX11, audit D-026): it is
+ * wrapped in a styleable ``<strong>`` so CSS can lift it to ``--fg`` while
+ * the week figure stays muted. Counts are numeric-coerced, so the markup
+ * needs no escaping.
+ *
+ * @param {{stats: ?{day: number, week: number}}} params Active node stats.
+ * @returns {string} HTML for the meta-row vital-sign line.
+ */
+export function formatActiveNodeStatsHtml({ stats }) {
+  const day = Number(stats?.day) || 0;
+  const week = Number(stats?.week) || 0;
+  return (
+    `<strong class="meta-active-nodes__today">${day} nodes today</strong>` +
+    ` · ${week} this week`
+  );
 }
