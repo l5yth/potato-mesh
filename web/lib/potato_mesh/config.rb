@@ -707,16 +707,73 @@ module PotatoMesh
 
     # Retrieve the default radio channel label.
     #
-    # @return [String] channel name from configuration.
+    # Deprecated alias (SPEC UX12): the operator-facing terminology moved from
+    # channel to preset, so this now resolves the Meshtastic preset chain
+    # (+MESHTASTIC_PRESET+ → legacy +CHANNEL+ → default). Every wire/JSON
+    # consumer keeps its +channel+ key; only the value's provenance changed.
+    #
+    # @return [String] resolved Meshtastic preset label.
     def channel
-      fetch_string("CHANNEL", DEFAULT_CHANNEL)
+      meshtastic_preset
     end
 
     # Retrieve the default radio frequency description.
     #
-    # @return [String] frequency identifier.
+    # Deprecated alias (SPEC UX12) resolving the Meshtastic frequency chain
+    # (+MESHTASTIC_FREQ+ → legacy +FREQUENCY+ → default).
+    #
+    # @return [String] resolved Meshtastic frequency identifier.
     def frequency
-      fetch_string("FREQUENCY", DEFAULT_FREQUENCY)
+      meshtastic_freq
+    end
+
+    # Retrieve the Meshtastic radio preset advertised as the join setting.
+    #
+    # Resolution order (SPEC UX12): +MESHTASTIC_PRESET+, then the deprecated
+    # +CHANNEL+ variable as fallback, then {DEFAULT_CHANNEL}. An unset
+    # Meshtastic pair therefore always renders defaults — a stock instance
+    # keeps today's advertised strings.
+    #
+    # @return [String] Meshtastic preset label (e.g. +MediumFast+).
+    def meshtastic_preset
+      fetch_string("MESHTASTIC_PRESET", fetch_string("CHANNEL", DEFAULT_CHANNEL))
+    end
+
+    # Retrieve the Meshtastic radio frequency advertised as the join setting.
+    #
+    # Resolution order (SPEC UX12): +MESHTASTIC_FREQ+, then the deprecated
+    # +FREQUENCY+ variable as fallback, then {DEFAULT_FREQUENCY}.
+    #
+    # @return [String] Meshtastic frequency identifier (e.g. +869MHz+).
+    def meshtastic_freq
+      fetch_string("MESHTASTIC_FREQ", fetch_string("FREQUENCY", DEFAULT_FREQUENCY))
+    end
+
+    # Retrieve the MeshCore radio preset advertised as the join setting.
+    #
+    # No default (SPEC UX12): the MeshCore join line is hidden until the
+    # operator configures both MeshCore values.
+    #
+    # @return [String, nil] MeshCore preset label, or +nil+ when unset.
+    def meshcore_preset
+      fetch_string("MESHCORE_PRESET", nil)
+    end
+
+    # Retrieve the MeshCore radio frequency advertised as the join setting.
+    #
+    # @return [String, nil] MeshCore frequency identifier, or +nil+ when unset.
+    def meshcore_freq
+      fetch_string("MESHCORE_FREQ", nil)
+    end
+
+    # Whether the MeshCore join line is fully configured.
+    #
+    # Both values are required (SPEC UX12): a preset without a frequency (or
+    # vice versa) is not a joinable setting and stays hidden.
+    #
+    # @return [Boolean] true when both MeshCore join values are set.
+    def meshcore_join_configured?
+      !meshcore_preset.nil? && !meshcore_freq.nil?
     end
 
     # Retrieve the Meshtastic PSK used for decrypting channel messages.

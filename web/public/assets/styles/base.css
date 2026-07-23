@@ -39,6 +39,13 @@
   --announcement-bg: #3b2500;
   --announcement-fg: #ffd184;
   --announcement-border: #a56a00;
+  --danger: #ff6b6b;
+  /* Alias layer (SPEC UX3): names consumed by the federation styles resolve
+     to the canonical tokens instead of silently failing (audit D-009). */
+  --border: var(--line);
+  --surface: var(--bg2);
+  --table-header-bg: var(--table-head-bg);
+  --hover-bg: var(--row-alt);
   --pad: 16px;
 }
 
@@ -489,7 +496,7 @@ h1 {
 }
 
 .meta {
-  color: #555;
+  color: var(--muted);
   margin-bottom: 12px;
 }
 
@@ -534,7 +541,7 @@ h1 {
   border: 0;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .site-header {
     margin-bottom: 4px;
   }
@@ -569,7 +576,7 @@ h1 {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #eee;
+  background: #444;
   font-size: 12px;
 }
 
@@ -581,6 +588,7 @@ h1 {
   border-radius: 8px;
   overflow: hidden;
   display: block;
+  border-color: #444;
 }
 
 .map-panel.is-fullscreen,
@@ -646,16 +654,16 @@ h1 {
 #map[data-map-status="placeholder"] {
   background: repeating-linear-gradient(
     135deg,
-    rgba(0, 0, 0, 0.02),
-    rgba(0, 0, 0, 0.02) 12px,
-    rgba(0, 0, 0, 0.04) 12px,
-    rgba(0, 0, 0, 0.04) 24px
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.08) 12px,
+    rgba(255, 255, 255, 0.12) 12px,
+    rgba(255, 255, 255, 0.12) 24px
   );
 }
 
 #map .map-placeholder-message {
   text-align: center;
-  color: #555;
+  color: #ddd;
   font-size: 14px;
   line-height: 1.5;
   padding: 0 16px;
@@ -672,9 +680,6 @@ h1 {
   margin-top: 4px;
 }
 
-body.dark #map .map-placeholder-message {
-  color: #ddd;
-}
 
 #map .map-status-message {
   position: absolute;
@@ -688,36 +693,22 @@ body.dark #map .map-placeholder-message {
   backdrop-filter: blur(6px);
   pointer-events: none;
   border: 1px solid rgba(0, 0, 0, 0.15);
-  background: rgba(255, 255, 255, 0.9);
-  color: #333;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  z-index: 1200;
-}
-
-body.dark #map[data-map-status="placeholder"] {
-  background: repeating-linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.02),
-    rgba(255, 255, 255, 0.02) 12px,
-    rgba(255, 255, 255, 0.06) 12px,
-    rgba(255, 255, 255, 0.06) 24px
-  );
-}
-
-body.dark #map .map-status-message {
-  border-color: rgba(255, 255, 255, 0.16);
   background: rgba(0, 0, 0, 0.65);
   color: #eee;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 1200;
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
-body.dark .map-toolbar button {
+
+
+.map-toolbar button {
   background: rgba(36, 36, 36, 0.88);
   color: #f1f1f1;
   border: 1px solid rgba(255, 255, 255, 0.25);
 }
 
-body.dark .map-toolbar button:hover {
+.map-toolbar button:hover {
   background: rgba(52, 52, 52, 0.9);
 }
 
@@ -736,7 +727,7 @@ td {
 th {
   position: sticky;
   top: 0;
-  background: #fafafa;
+  background: #222;
 }
 
 .mono {
@@ -950,7 +941,9 @@ body.view-chat .page-shell {
   flex-direction: column;
   overflow: hidden;
   font-size: 12px;
-  background: var(--bg2);
+  background: #222;
+  border-color: #444;
+  color: #eee;
 }
 
 .chat-panel.chat-panel--full {
@@ -981,6 +974,7 @@ body.view-chat .page-shell {
   align-items: stretch;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
+  border-bottom-color: rgba(255, 255, 255, 0.18);
 }
 
 .chat-tablist {
@@ -1002,12 +996,13 @@ body.view-chat .page-shell {
   white-space: nowrap;
   border: none;
   background: transparent;
-  color: inherit;
+  color: #ddd;
   padding: 6px 8px;
   border-radius: 6px 6px 0 0;
   cursor: pointer;
   font-size: 12px;
   transition: background-color 120ms ease, color 120ms ease;
+  border-color: transparent;
 }
 
 /* Scroll arrow buttons flanking the tab list */
@@ -1016,11 +1011,11 @@ body.view-chat .page-shell {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  background: var(--bg2);
+  width: 28px;
+  background: #1a1a1a;
   border: none;
   cursor: pointer;
-  color: var(--text-muted, #666);
+  color: #aaa;
   font-size: 10px;
   padding: 0;
   z-index: 1;
@@ -1028,7 +1023,7 @@ body.view-chat .page-shell {
 }
 
 .chat-tab-scroll-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .chat-tab-scroll-btn[hidden] {
@@ -1067,13 +1062,14 @@ body.view-chat .page-shell {
 }
 
 .chat-tab:is(:focus-visible, :hover) {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .chat-tab.is-active {
-  background: var(--bg2);
+  background: #222;
   color: var(--accent);
   border-bottom: 2px solid var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .chat-tabpanels {
@@ -1093,13 +1089,13 @@ body.view-chat .page-shell {
 
 .chat-empty {
   margin: 12px 0;
-  color: var(--muted);
+  color: #888;
   font-style: italic;
 }
 
 .chat-entry-node {
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  color: #555;
+  color: var(--muted);
 }
 
 .chat-entry-copy {
@@ -1107,18 +1103,20 @@ body.view-chat .page-shell {
 }
 
 .chat-entry-reply {
-  color: var(--muted);
+  color: #999;
   font-style: italic;
   margin-right: 4px;
 }
 
 .chat-entry-msg {
   font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: #bbb;
 }
 
 .chat-entry-date {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-weight: bold;
+  color: #bbb;
 }
 
 .short-name {
@@ -1133,17 +1131,18 @@ body.view-chat .page-shell {
 
 .short-info-overlay {
   position: absolute;
-  background: #fff;
-  color: #111;
+  background: #1c1c1c;
+  color: #eee;
   border: 1px solid #ccc;
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   padding: 8px 10px 10px;
   font-size: 11px;
   line-height: 1.4;
   min-width: 200px;
   max-width: 240px;
   z-index: 20000;
+  border-color: #444;
 }
 
 .short-info-overlay[hidden] {
@@ -1165,7 +1164,7 @@ body.view-chat .page-shell {
 }
 
 .short-info-overlay .short-info-close:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .short-info-sats {
@@ -1188,12 +1187,9 @@ body.view-chat .page-shell {
 
 .short-info-sats__glyph {
   display: block;
-  filter: grayscale(1);
-}
-
-body.dark .short-info-sats__glyph {
   filter: invert(1) grayscale(1);
 }
+
 
 .short-info-sats__count {
   font-family: inherit;
@@ -1237,7 +1233,7 @@ body.dark .short-info-sats__glyph {
   top: 12px;
   right: 12px;
   border: none;
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.08);
   color: inherit;
   font-size: 18px;
   width: 32px;
@@ -1252,7 +1248,7 @@ body.dark .short-info-sats__glyph {
 }
 
 .node-detail-overlay__close:hover {
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.18);
 }
 
 .node-detail-overlay__content {
@@ -1268,21 +1264,11 @@ body.dark .short-info-sats__glyph {
 }
 
 .node-detail-overlay__status--error {
-  color: #c62828;
+  color: var(--danger);
 }
 
-body.dark .node-detail-overlay__dialog {
-  background: var(--bg2);
-  color: var(--fg);
-}
 
-body.dark .node-detail-overlay__close {
-  background: rgba(255, 255, 255, 0.08);
-}
 
-body.dark .node-detail-overlay__close:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
 
 .charts-page {
   padding: 0 0 var(--pad);
@@ -1316,7 +1302,7 @@ body.dark .node-detail-overlay__close:hover {
 }
 
 .charts-page__status--error {
-  color: #c62828;
+  color: var(--danger);
 }
 
 .node-detail {
@@ -1410,13 +1396,10 @@ body.dark .node-detail-overlay__close:hover {
 }
 
 .node-detail__chart-grid-line {
-  stroke: rgba(12, 15, 18, 0.08);
+  stroke: rgba(255, 255, 255, 0.15);
   stroke-width: 1;
 }
 
-body.dark .node-detail__chart-grid-line {
-  stroke: rgba(255, 255, 255, 0.15);
-}
 
 .node-detail__chart-point {
   stroke: none;
@@ -1477,7 +1460,7 @@ body.dark .node-detail__chart-grid-line {
 }
 
 .node-detail__error {
-  color: #b00020;
+  color: var(--danger);
 }
 
 .node-detail__content {
@@ -1627,25 +1610,23 @@ body.dark .node-detail__chart-grid-line {
 }
 
 .filter-clear:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
-body.dark .filter-clear:hover {
   background: rgba(255, 255, 255, 0.12);
 }
 
+
 .filter-clear:focus-visible {
-  outline: 2px solid #4a90e2;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 button:not(.chat-tab):not(.sort-button) {
   padding: 6px 10px;
   border: 1px solid #ccc;
-  background: #fff;
+  background: #333;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--fg);
+  color: #eee;
+  border-color: #444;
 }
 
 .icon-button {
@@ -1662,13 +1643,14 @@ button:not(.chat-tab):not(.sort-button) {
   width: 32px;
   height: 32px;
   border: 1px solid #ccc;
-  background: #fff;
+  background: #333;
   border-radius: 6px;
   cursor: pointer;
+  border-color: #444;
 }
 
 .protocol-toggle-btn[aria-pressed="true"] {
-  background: #f0f0f0;
+  background: #2a2a2a;
 }
 
 .protocol-toggle-icon {
@@ -1677,7 +1659,7 @@ button:not(.chat-tab):not(.sort-button) {
 }
 
 button:not(.chat-tab):not(.sort-button):hover {
-  background: #f6f6f6;
+  background: #444;
 }
 
 .sort-button {
@@ -1697,7 +1679,7 @@ button:not(.chat-tab):not(.sort-button):hover {
 }
 
 .sort-button:focus-visible {
-  outline: 2px solid #4a90e2;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1707,10 +1689,11 @@ button:not(.chat-tab):not(.sort-button):hover {
   gap: 4px;
   cursor: pointer;
   user-select: none;
+  color: inherit;
 }
 
 .sort-header:focus-visible {
-  outline: 2px solid #4a90e2;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1725,7 +1708,7 @@ th[aria-sort] .sort-indicator {
 
 label {
   font-size: 14px;
-  color: #333;
+  color: #ddd;
 }
 
 input[type="text"] {
@@ -1769,15 +1752,16 @@ input[type="radio"] {
 
 .legend {
   position: relative;
-  background: #fff;
-  color: var(--fg);
+  background: #333;
+  color: #eee;
   padding: 8px 10px 10px;
   border: 1px solid #ccc;
   border-radius: 8px;
   font-size: 12px;
   line-height: 18px;
   min-width: 160px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  border-color: #444;
 }
 
 .legend-header {
@@ -1848,18 +1832,18 @@ input[type="radio"] {
 }
 
 .legend-item:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .legend-item:focus-visible {
-  outline: 2px solid #4a90e2;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 .legend-item[aria-pressed="true"] {
-  border-color: #2a6bc5;
-  background: rgba(58, 123, 213, 0.32);
-  color: #0e3a8a;
+  border-color: #70b3f0;
+  background: rgba(91, 155, 213, 0.48);
+  color: #c8e8ff;
   font-weight: 600;
 }
 
@@ -1890,7 +1874,9 @@ input[type="radio"] {
 
 .legend-toggle-button {
   font-size: 12px;
-  color: var(--fg);
+  color: #eee;
+  background: #333;
+  border-color: #444;
 }
 
 #map .leaflet-tile-pane,
@@ -1918,9 +1904,9 @@ input[type="radio"] {
 
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
-  background: #fff;
-  color: #333;
-  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.4);
+  background: #333;
+  color: #eee;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.8);
 }
 
 #nodes {
@@ -1939,8 +1925,9 @@ input[type="radio"] {
   inset-block-end: 0;
   inset-inline: 0;
   box-sizing: border-box;
-  background: #fafafa;
-  border-top: 1px solid #ddd;
+  background: #222;
+  border-top: 1px solid #444;
+  color: #eee;
   font-size: 12px;
   z-index: 4100;
 }
@@ -2105,180 +2092,51 @@ input[type="radio"] {
 }
 
 @media (max-width: 659px) {
-  .nodes-col--battery,
+  /* Curated mobile survivors (SPEC UX9): Protocol/Short/Long/Last Seen/
+     Battery. Role hides; Battery is the operator's column. */
+  .nodes-col--role,
   .nodes-col--channel-util,
   .nodes-col--hw-model {
     display: none;
   }
 }
 
-body.dark .pill {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.protocol-toggle-btn:hover {
   background: #444;
 }
 
-body.dark #map {
-  border-color: #444;
-}
 
-body.dark .chat-panel {
-  border-color: #444;
-  background: #222;
-  color: #eee;
-}
 
-body.dark .chat-tablist-wrapper {
-  border-bottom-color: rgba(255, 255, 255, 0.18);
-}
 
-body.dark .chat-tab-scroll-btn {
-  background: #1a1a1a;
-  color: #aaa;
-}
 
-body.dark .chat-tab-scroll-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
 
-body.dark .chat-tab {
-  color: #ddd;
-  background: transparent;
-  border-color: transparent;
-}
 
-body.dark .chat-tab:is(:focus-visible, :hover) {
-  background: rgba(255, 255, 255, 0.1);
-}
 
-body.dark .chat-tab.is-active {
-  background: #222;
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-body.dark .chat-empty {
-  color: #888;
-}
-
-body.dark th {
-  background: #222;
-}
-
-body.dark button:not(.chat-tab):not(.sort-button) {
-  background: #333;
-  border-color: #444;
-  color: #eee;
-}
-
-body.dark button:not(.chat-tab):not(.sort-button):hover {
+.legend-toggle-button:hover {
   background: #444;
 }
 
-body.dark .protocol-toggle-btn {
-  background: #333;
-  border-color: #444;
-}
 
-body.dark .protocol-toggle-btn:hover {
-  background: #444;
-}
 
-body.dark .protocol-toggle-btn[aria-pressed="true"] {
-  background: #2a2a2a;
-}
 
-body.dark .sort-button {
-  background: none;
-  border: none;
-  color: inherit;
-}
 
-body.dark .sort-header {
-  color: inherit;
-}
 
-body.dark .sort-button:hover {
-  background: none;
-}
 
-body.dark label {
-  color: #ddd;
-}
 
-body.dark .legend {
-  background: #333;
-  border-color: #444;
-  color: #eee;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-}
-
-body.dark .legend-toggle-button {
-  background: #333;
-  border-color: #444;
-  color: #eee;
-}
-
-body.dark .legend-toggle-button:hover {
-  background: #444;
-}
-
-body.dark .legend-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-body.dark .legend-item[aria-pressed="true"] {
-  border-color: #70b3f0;
-  background: rgba(91, 155, 213, 0.48);
-  color: #c8e8ff;
-  font-weight: 600;
-}
-
-body.dark .leaflet-popup-content-wrapper,
-body.dark .leaflet-popup-tip {
-  background: #333;
-  color: #eee;
-  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.8);
-}
-
-body.dark footer {
-  background: #222;
-  border-top-color: #444;
-  color: #eee;
-}
-
-body.dark a {
-  color: #9bd;
-}
-
-body.dark .chat-entry-node {
-  color: #777;
-}
-
-body.dark .chat-entry-msg {
-  color: #bbb;
-}
-
-body.dark .chat-entry-reply {
-  color: #999;
-}
-
-body.dark .short-name {
-  color: #555;
-}
-
-body.dark .chat-entry-date {
-  color: #bbb;
-}
-
-body.dark .short-info-overlay {
-  background: #1c1c1c;
-  border-color: #444;
-  color: #eee;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
-}
-
-body.dark .short-info-overlay .short-info-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
 
 /* ===========================
    Federation Page Styles
@@ -2604,4 +2462,282 @@ body.dark .short-info-overlay .short-info-close:hover {
   .live-flash-wave {
     animation: none;
   }
+
+  /* Motion the LV9 gate never covered (SPEC UX11, audit D-036): Leaflet's
+     zoom easing and the chat tab strip's smooth scrolling. */
+  .leaflet-zoom-anim .leaflet-zoom-animated {
+    transition: none !important;
+  }
+
+  .chat-tablist {
+    scroll-behavior: auto;
+  }
+}
+
+/* ===========================
+   UX audit remediation (SPEC UX2–UX14)
+   =========================== */
+
+/* Degenerate-state voice (UX4, D-001): the noscript notice and the
+   server-rendered waiting row must read as "waiting", not as a broken UI. */
+.noscript-notice {
+  margin: 0;
+  padding: 10px var(--pad);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg);
+}
+
+.nodes-empty-row td {
+  color: var(--muted);
+  padding: 16px 8px;
+  font-style: italic;
+}
+
+/* Absent table values render the overlay's muted dash (UX4, D-020). */
+.cell-empty {
+  color: var(--muted);
+}
+
+/* Freshness buckets (UX5, D-005): stale rows dim, live rows carry a 3 px
+   accent rule on their first cell; text stays fully readable via opacity on
+   the cells, not the row background. */
+#nodes tbody tr[data-age="stale"] > td {
+  opacity: 0.55;
+}
+
+#nodes tbody tr[data-age="live"] > td:first-child {
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+/* Row affordance (UX9, D-017): rows respond to hover and read as clickable;
+   the waiting and disclosure rows opt out. */
+#nodes tbody tr:not(.node-extra):not(.nodes-empty-row):hover > td {
+  background: var(--hover-bg);
+  cursor: pointer;
+}
+
+/* Numeric columns (UX9, D-023): right-aligned tabular mono so vertical
+   comparison works; headers share the alignment. */
+#nodes td.num,
+#nodes th.num {
+  text-align: right;
+}
+
+#nodes td.num {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Grouped header row (UX9, D-006): quiet group scent above the columns. */
+.nodes-group-header th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: #222;
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  text-align: left;
+  position: static;
+}
+
+.nodes-group-header th:first-child {
+  border-left: none;
+}
+
+/* Mobile disclosure column (UX9, D-007): hidden while every column fits,
+   revealed as soon as the first responsive tier hides data. */
+.nodes-col--more {
+  width: 32px;
+  min-width: 32px;
+  text-align: center;
+  display: none;
+  padding-inline: 2px;
+}
+
+@media (max-width: 1679px) {
+  .nodes-col--more {
+    display: table-cell;
+  }
+}
+
+.node-extra-toggle {
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.node-extra > td {
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+}
+
+.node-extra__list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 6px 0;
+}
+
+.node-extra__list dt {
+  color: var(--muted);
+}
+
+.node-extra__list dd {
+  margin: 0;
+}
+
+/* Join strip (UX12, D-002): the radio settings a newcomer needs, quiet but
+   always present in the meta row; truncates gracefully when space runs out. */
+.join-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.join-line__entry {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.join-line__proto {
+  color: var(--fg);
+}
+
+.join-line__more {
+  flex: none;
+}
+
+/* Live/paused control (UX6, D-010): visible text state — accent while the
+   stream is live, muted while frozen. */
+#autorefreshToggle {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+#autorefreshToggle[aria-pressed="false"] {
+  color: var(--accent);
+}
+
+#autorefreshToggle[aria-pressed="true"] {
+  color: var(--muted);
+}
+
+/* Promoted day count in the vital-sign line (UX11, D-026). */
+.meta-active-nodes__today {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* MeshCore square marker chips (UX7, D-013): shape encodes protocol. */
+.node-marker-chip {
+  background: transparent;
+  border: none;
+}
+
+.node-marker-chip__fill {
+  display: block;
+  box-sizing: border-box;
+  border: 1px solid rgba(0, 0, 0, 0.7);
+}
+
+/* Legend line-style key (UX7, D-014). */
+.legend-line-sample {
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+/* Colocated hub (UX11, D-031): 32 px hit box centring the 16 px glyph. */
+.colocated-spider-hub {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Region selector behind a compact toggle (UX11, D-029). */
+.instance-selector {
+  gap: 6px;
+}
+
+.instance-selector-toggle {
+  font-size: 16px;
+}
+
+/* Site title clamp (UX11, D-015): long instance names shrink and ellipsize
+   instead of colliding with the nav or the hamburger. */
+.site-title {
+  font-size: clamp(18px, 2.2vw, 28px);
+}
+
+.site-title-text {
+  max-width: 40vw;
+}
+
+/* Chat hanging indent (UX11, D-033): wrapped log lines hang under their
+   text column instead of restarting at x=0. */
+.chat-entry-msg,
+.chat-entry-node {
+  padding-left: 8ch;
+  text-indent: -8ch;
+}
+
+/* Chat date dividers separate days spatially (UX11, D-040). */
+.chat-entry-date {
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  margin-top: 6px;
+}
+
+/* Mobile chat channel navigation is the dropdown alone (UX11, D-025):
+   the fiddly 12 px tab strip and its 28 px arrows hide ≤ 900 px. */
+@media (max-width: 900px) {
+  .chat-tablist,
+  .chat-tab-scroll-btn {
+    display: none;
+  }
+}
+
+/* Announcement banner wraps on narrow screens (UX11, D-030). */
+@media (max-width: 600px) {
+  .announcement-banner {
+    height: auto;
+    max-height: 4.8em;
+  }
+
+  .announcement-banner__content {
+    white-space: normal;
+  }
+}
+
+/* Federation table: coordinates fold away on narrow viewports (UX9, D-032). */
+@media (max-width: 1319px) {
+  .instances-col--latitude,
+  .instances-col--longitude {
+    display: none;
+  }
+}
+
+/* Zebra striping for the nodes table is class-driven (SPEC UX9): the hidden
+   disclosure rows occupy nth-child slots, so structural even/odd would stop
+   alternating visible rows. :where() keeps the neutralizer's specificity
+   below the class-driven stripe and the disclosure row's card background. */
+#nodes tbody :where(tr:nth-child(even)) > td {
+  background: none;
+}
+
+#nodes tbody tr.row-alt > td {
+  background: var(--row-alt);
+}
+
+#nodes tbody tr.node-extra > td {
+  background: var(--card);
 }

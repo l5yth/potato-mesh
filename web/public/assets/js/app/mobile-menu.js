@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-const MOBILE_MENU_MEDIA_QUERY = '(max-width: 900px)';
+// 1100 px (SPEC UX11, audit D-015): between ~900 and ~1250 px the full nav
+// collides with long site names, so the hamburger takes over earlier.
+const MOBILE_MENU_MEDIA_QUERY = '(max-width: 1100px)';
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',

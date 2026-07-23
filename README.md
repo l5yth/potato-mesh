@@ -93,8 +93,12 @@ The web app can be configured with environment variables (defaults shown):
 | `API_TOKEN` | _required_ | Shared secret that authorizes ingestors and API clients making `POST` requests. |
 | `INSTANCE_DOMAIN` | _auto-detected_ | Public hostname (optionally with port) used for metadata, federation, and generated API links. |
 | `SITE_NAME` | `"PotatoMesh Demo"` | Title and header displayed in the UI. |
-| `CHANNEL` | `"#LongFast"` | Default channel name displayed in the UI. |
-| `FREQUENCY` | `"915MHz"` | Default frequency description displayed in the UI. |
+| `MESHTASTIC_PRESET` | `"#LongFast"` | Meshtastic radio preset shown in the join strip, meta description, and federation directory (e.g. `MediumFast`). |
+| `MESHTASTIC_FREQ` | `"915MHz"` | Meshtastic frequency shown alongside the preset. |
+| `MESHCORE_PRESET` | _unset_ | MeshCore radio preset for the join strip; the MeshCore line is hidden until both `MESHCORE_*` values are set. |
+| `MESHCORE_FREQ` | _unset_ | MeshCore frequency for the join strip. |
+| `CHANNEL` | `"#LongFast"` | **Deprecated** — legacy alias still honoured as the fallback for `MESHTASTIC_PRESET`. |
+| `FREQUENCY` | `"915MHz"` | **Deprecated** — legacy alias still honoured as the fallback for `MESHTASTIC_FREQ`. |
 | `CONTACT_LINK` | `"#potatomesh:dod.ngo"` | Chat link or Matrix alias rendered in the footer and overlays. |
 | `ANNOUNCEMENT` | _unset_ | Optional announcement banner text rendered above the header on every page. |
 | `MAP_CENTER` | `38.761944,-27.090833` | Latitude and longitude that centre the map on load. |

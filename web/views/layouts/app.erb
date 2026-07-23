@@ -138,6 +138,12 @@
   data-private-mode="<%= private_mode ? "true" : "false" %>"
 >
   <div class="<%= shell_classes.join(" ") %>">
+    <noscript>
+      <p class="noscript-notice">
+        This dashboard needs JavaScript to render live mesh data.
+        The raw data is available at <a href="/api/nodes">/api/nodes</a>.
+      </p>
+    </noscript>
     <% if show_header %>
       <% if announcement_markup && !announcement_markup.empty? %>
         <div class="announcement-banner" role="status" aria-live="polite">
@@ -155,9 +161,18 @@
           <% if federation_nav_enabled %>
             <div class="header-federation">
               <div class="instance-selector">
+                <button
+                  id="instanceSelectToggle"
+                  class="icon-button instance-selector-toggle"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="instanceSelect"
+                  aria-label="Choose another region"
+                  title="Choose another region"
+                >🌐</button>
                 <label class="visually-hidden" for="instanceSelect">Select a region</label>
-                <select id="instanceSelect" class="instance-select" aria-label="Select instance region">
-                  <option value=""><%= Rack::Utils.escape_html("Select region ...") %></option>
+                <select id="instanceSelect" class="instance-select" aria-label="Select instance region" hidden>
+                  <option value=""><%= Rack::Utils.escape_html("Other regions…") %></option>
                 </select>
               </div>
             </div>
@@ -169,13 +184,9 @@
             <a href="/map" class="site-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
             <a href="/chat" class="site-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="site-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
-            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
+            <a href="/charts" class="site-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="site-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
-            <% end %>
-            <% static_pages.each do |sp| %>
-              <% sp_active = view_mode.to_s == "page_#{sp.slug}" %>
-              <a href="/pages/<%= Rack::Utils.escape_path(sp.slug) %>" class="site-nav__link<%= sp_active ? " is-active" : "" %>"<%= sp_active ? ' aria-current="page"' : "" %>><%= Rack::Utils.escape_html(sp.title) %></a>
             <% end %>
           </nav>
           <button
@@ -204,13 +215,9 @@
             <a href="/map" class="mobile-nav__link<%= view_mode == :map ? " is-active" : "" %>"<%= view_mode == :map ? ' aria-current="page"' : "" %>>Map</a>
             <a href="/chat" class="mobile-nav__link<%= view_mode == :chat ? " is-active" : "" %>"<%= view_mode == :chat ? ' aria-current="page"' : "" %>>Chat</a>
             <a href="<%= nodes_nav_href %>" class="mobile-nav__link<%= nodes_nav_active ? " is-active" : "" %>"<%= nodes_nav_active ? ' aria-current="page"' : "" %>>Nodes</a>
-            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>><img src="/assets/img/meshtastic.svg" alt="" width="13" height="13" class="protocol-icon protocol-icon--meshtastic nav-protocol-icon" aria-hidden="true" loading="lazy" decoding="async" /> Charts</a>
+            <a href="/charts" class="mobile-nav__link<%= view_mode == :charts ? " is-active" : "" %>"<%= view_mode == :charts ? ' aria-current="page"' : "" %>>Charts</a>
             <% if federation_nav_enabled %>
               <a href="/federation" class="mobile-nav__link js-federation-nav<%= view_mode == :federation ? " is-active" : "" %>" data-federation-label="Federation"<%= view_mode == :federation ? ' aria-current="page"' : "" %>>Federation</a>
-            <% end %>
-            <% static_pages.each do |sp| %>
-              <% sp_active = view_mode.to_s == "page_#{sp.slug}" %>
-              <a href="/pages/<%= Rack::Utils.escape_path(sp.slug) %>" class="mobile-nav__link<%= sp_active ? " is-active" : "" %>"<%= sp_active ? ' aria-current="page"' : "" %>><%= Rack::Utils.escape_html(sp.title) %></a>
             <% end %>
           </nav>
         </div>
@@ -232,7 +239,19 @@
           <img src="/assets/img/meshtastic.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
         </button>
         <span id="footerActiveNodes" class="meta-active-nodes"></span>
-        <button id="autorefreshToggle" type="button" aria-label="Pause auto-refresh" aria-pressed="false" title="Pause or resume automatic data refresh">⏸</button>
+        <%# Join strip (SPEC UX12): the radio settings a newcomer needs, from
+            resolved preset config — MeshCore only when fully configured. %>
+        <div class="join-line">
+          <span class="join-line__entry"><span class="join-line__proto">Meshtastic</span> · <%= Rack::Utils.escape_html(sanitized_channel) %> · <%= Rack::Utils.escape_html(sanitized_frequency) %></span>
+          <% if meshcore_join_line = (sanitized_meshcore_preset && sanitized_meshcore_freq ? [sanitized_meshcore_preset, sanitized_meshcore_freq] : nil) %>
+            <span class="join-line__separator" aria-hidden="true">|</span>
+            <span class="join-line__entry"><span class="join-line__proto">MeshCore</span> · <%= Rack::Utils.escape_html(meshcore_join_line[0]) %> · <%= Rack::Utils.escape_html(meshcore_join_line[1]) %></span>
+          <% end %>
+          <% if (about_page = static_pages.find { |sp| sp.slug == "about" }) %>
+            <a class="join-line__more" href="/pages/<%= Rack::Utils.escape_path(about_page.slug) %>">details</a>
+          <% end %>
+        </div>
+        <button id="autorefreshToggle" type="button" aria-label="Pause auto-refresh" aria-pressed="false" title="Pause or resume automatic data refresh">● live</button>
       </div>
     <% end %>
 
@@ -251,7 +270,7 @@
     </main>
 
     <% if show_footer %>
-      <%= erb :"shared/_footer", locals: { site_name: site_name, version: version, contact_link: contact_link, contact_link_url: contact_link_url, slim: footer_slim } %>
+      <%= erb :"shared/_footer", locals: { site_name: site_name, version: version, contact_link: contact_link, contact_link_url: contact_link_url, slim: footer_slim, static_pages: static_pages, current_view_mode: view_mode } %>
     <% end %>
   </div>
 

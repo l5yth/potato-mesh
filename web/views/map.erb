@@ -14,5 +14,8 @@
   limitations under the License.
 -->
 <section class="full-screen-section full-screen-section--map">
-  <%= erb :"shared/_map_panel", locals: { full_screen: true, legend_collapsed: true } %>
+  <%# Legend expanded by default on the dedicated map view (SPEC UX8): the
+      colour encodings must be decodable in place; small viewports collapse
+      via the legend media query. %>
+  <%= erb :"shared/_map_panel", locals: { full_screen: true, legend_collapsed: false } %>
 </section>

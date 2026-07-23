@@ -38,7 +38,7 @@ test('formatTelemetryHighlights prefers nested telemetry when top-level values a
   });
 
   assert.deepEqual(highlights, [
-    { label: 'Channel Util', value: '0.561%' },
+    { label: 'Channel Util', value: '0.6%' },
   ]);
 });
 

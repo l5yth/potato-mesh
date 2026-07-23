@@ -24,13 +24,22 @@ test('resolveLegendVisibility hides when a default collapse is requested', () =>
   assert.equal(resolveLegendVisibility({ defaultCollapsed: true, mediaQueryMatches: true }), false);
 });
 
-test('resolveLegendVisibility hides for dashboard and map views', () => {
+test('resolveLegendVisibility always hides on the cramped dashboard', () => {
   assert.equal(
     resolveLegendVisibility({ defaultCollapsed: false, mediaQueryMatches: false, viewMode: 'dashboard' }),
     false
   );
+});
+
+// SPEC UX8 (audit D-011): the dedicated map view honours the template default
+// — expanded on desktop, collapsed on small viewports.
+test('resolveLegendVisibility expands the map view on desktop', () => {
   assert.equal(
     resolveLegendVisibility({ defaultCollapsed: false, mediaQueryMatches: false, viewMode: 'map' }),
+    true
+  );
+  assert.equal(
+    resolveLegendVisibility({ defaultCollapsed: false, mediaQueryMatches: true, viewMode: 'map' }),
     false
   );
 });

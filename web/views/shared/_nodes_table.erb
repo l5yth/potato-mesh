@@ -15,31 +15,49 @@
 -->
 <div id="nodes-table" class="nodes-table-wrapper">
   <table id="nodes">
+    <caption class="visually-hidden">Nodes heard, most recent first</caption>
     <thead>
+      <%# Grouped header (SPEC UX9): column classes surface in the header;
+          colspans are kept in sync with the responsive tiers by JS. %>
+      <tr class="nodes-group-header">
+        <th data-group="Identity" colspan="4" scope="colgroup">Identity</th>
+        <th data-group="Radio" colspan="2" scope="colgroup">Radio</th>
+        <th data-group="Activity" colspan="2" scope="colgroup">Activity</th>
+        <th data-group="Health" colspan="4" scope="colgroup">Health</th>
+        <th data-group="Utilization" colspan="2" scope="colgroup">Utilization</th>
+        <th data-group="Environment" colspan="3" scope="colgroup">Environment</th>
+        <th data-group="Position" colspan="4" scope="colgroup">Position</th>
+        <th class="nodes-col nodes-col--more" rowspan="2" scope="col"><span class="visually-hidden">Details</span></th>
+      </tr>
       <tr>
-        <th class="nodes-col nodes-col--protocol" aria-label="Protocol"></th>
-        <th class="nodes-col nodes-col--node-id"><button type="button" class="sort-button" data-sort-key="node_id" data-sort-label="Node ID">Node ID <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--short-name"><button type="button" class="sort-button" data-sort-key="short_name" data-sort-label="Short Name">Short <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--long-name"><button type="button" class="sort-button" data-sort-key="long_name" data-sort-label="Long Name">Long Name <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--frequency"><button type="button" class="sort-button" data-sort-key="lora_freq" data-sort-label="Modem Frequency">Frequency <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--modem-preset"><button type="button" class="sort-button" data-sort-key="modem_preset" data-sort-label="LoRa Preset">LoRa Preset <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--last-seen"><button type="button" class="sort-button" data-sort-key="last_heard" data-sort-label="Last Seen">Last Seen <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--role"><button type="button" class="sort-button" data-sort-key="role" data-sort-label="Role">Role <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--hw-model"><button type="button" class="sort-button" data-sort-key="hw_model" data-sort-label="Hardware Model">HW Model <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--battery"><button type="button" class="sort-button" data-sort-key="battery_level" data-sort-label="Battery Level">Battery <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--voltage"><button type="button" class="sort-button" data-sort-key="voltage" data-sort-label="Voltage">Voltage <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--uptime"><button type="button" class="sort-button" data-sort-key="uptime_seconds" data-sort-label="Uptime">Uptime <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--channel-util"><button type="button" class="sort-button" data-sort-key="channel_utilization" data-sort-label="Channel Utilization">Channel Util <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--air-util-tx"><button type="button" class="sort-button" data-sort-key="air_util_tx" data-sort-label="Air Utilization (Tx)">Air Util Tx <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--temperature"><button type="button" class="sort-button" data-sort-key="temperature" data-sort-label="Temperature">Temperature <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--humidity"><button type="button" class="sort-button" data-sort-key="relative_humidity" data-sort-label="Humidity">Humidity <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--pressure"><button type="button" class="sort-button" data-sort-key="barometric_pressure" data-sort-label="Barometric Pressure">Pressure <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--latitude"><button type="button" class="sort-button" data-sort-key="latitude" data-sort-label="Latitude">Latitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--longitude"><button type="button" class="sort-button" data-sort-key="longitude" data-sort-label="Longitude">Longitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--altitude"><button type="button" class="sort-button" data-sort-key="altitude" data-sort-label="Altitude">Altitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
-        <th class="nodes-col nodes-col--last-position"><button type="button" class="sort-button" data-sort-key="position_time" data-sort-label="Last Position">Last Position <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--protocol" scope="col" aria-label="Protocol"></th>
+        <th class="nodes-col nodes-col--node-id" scope="col"><button type="button" class="sort-button" data-sort-key="node_id" data-sort-label="Node ID">Node ID <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--short-name" scope="col"><button type="button" class="sort-button" data-sort-key="short_name" data-sort-label="Short Name">Short <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--long-name" scope="col"><button type="button" class="sort-button" data-sort-key="long_name" data-sort-label="Long Name">Long Name <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--frequency num" scope="col"><button type="button" class="sort-button" data-sort-key="lora_freq" data-sort-label="Modem Frequency">Frequency <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--modem-preset" scope="col"><button type="button" class="sort-button" data-sort-key="modem_preset" data-sort-label="LoRa Preset">LoRa Preset <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--last-seen" scope="col"><button type="button" class="sort-button" data-sort-key="last_heard" data-sort-label="Last Seen">Last Seen <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--role" scope="col"><button type="button" class="sort-button" data-sort-key="role" data-sort-label="Role">Role <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--hw-model" scope="col"><button type="button" class="sort-button" data-sort-key="hw_model" data-sort-label="Hardware Model">HW Model <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--battery num" scope="col"><button type="button" class="sort-button" data-sort-key="battery_level" data-sort-label="Battery Level">Battery % <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--voltage num" scope="col"><button type="button" class="sort-button" data-sort-key="voltage" data-sort-label="Voltage">Voltage V <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--uptime num" scope="col"><button type="button" class="sort-button" data-sort-key="uptime_seconds" data-sort-label="Uptime">Uptime <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--channel-util num" scope="col"><button type="button" class="sort-button" data-sort-key="channel_utilization" data-sort-label="Channel Utilization">Channel Util <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--air-util-tx num" scope="col"><button type="button" class="sort-button" data-sort-key="air_util_tx" data-sort-label="Air Utilization (Tx)">Air Util Tx <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--temperature num" scope="col"><button type="button" class="sort-button" data-sort-key="temperature" data-sort-label="Temperature">Temperature <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--humidity num" scope="col"><button type="button" class="sort-button" data-sort-key="relative_humidity" data-sort-label="Humidity">Humidity <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--pressure num" scope="col"><button type="button" class="sort-button" data-sort-key="barometric_pressure" data-sort-label="Barometric Pressure">Pressure <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--latitude num" scope="col"><button type="button" class="sort-button" data-sort-key="latitude" data-sort-label="Latitude">Latitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--longitude num" scope="col"><button type="button" class="sort-button" data-sort-key="longitude" data-sort-label="Longitude">Longitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--altitude num" scope="col"><button type="button" class="sort-button" data-sort-key="altitude" data-sort-label="Altitude">Altitude <span class="sort-indicator" aria-hidden="true"></span></button></th>
+        <th class="nodes-col nodes-col--last-position" scope="col"><button type="button" class="sort-button" data-sort-key="position_time" data-sort-label="Last Position">Last Position <span class="sort-indicator" aria-hidden="true"></span></button></th>
       </tr>
     </thead>
-    <tbody></tbody>
+    <tbody>
+      <%# Server-rendered waiting row (SPEC UX4): visible pre-boot, with JS
+          disabled, and while the mesh is genuinely silent; the render path
+          removes it once nodes exist. %>
+      <tr class="nodes-empty-row"><td colspan="22">No nodes heard yet — waiting for the first ingestor report.</td></tr>
+    </tbody>
   </table>
 </div>
