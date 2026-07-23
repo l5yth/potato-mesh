@@ -695,3 +695,43 @@ decision is contradicted.
 | **RF7** | **Store + API only; UI display deferred.** v1 ends at the JSON API — no dashboard rendering of the new metrics (chat hover, node popup, topology view from `path` are tracked follow-ups). Closes #762 for MeshCore at the data layer. | interview |
 | **RF8** | **Engineering bar (D9).** All new/changed units ship with 100% unit tests (including: RF1 hops normalization edge cases, RF2 join-absent fallback, RF3 malformed-advert tolerance, RF4 read-modify-write/skip/error paths, RF5 no-op), full PDoc/RDoc, the exact Apache header, `black`/`rufo` clean; every existing suite stays green. | CLAUDE.md |
 
+---
+
+## Feature: Live relative-time tick (dynamic timers)
+
+Makes every rendered relative-time field count up in real time between data
+refreshes — "last seen 4s" becomes 5s, 6s, … without waiting for the next
+fetch — so a displayed age is never stale. Pure display-side ticking of the
+strings the existing formatters already produce; frontend-only (vanilla JS), no
+API/DB/ingestor change. Integrates with
+`web/public/assets/js/app/main/format-utils.js` (`timeAgo`), the node-table and
+map-overlay render paths in `main.js`, the node-detail table
+(`node-page/single-node-table.js` via
+`node-page-charts/display-formatters.js#formatRelativeSeconds`), the federation
+instances table (`federation-page.js`), and a new shared ticker module under
+`web/public/assets/js/app/main/`.
+
+**Conflict check.** *PS5/PS7 (poll removed; fetch is event-driven)* —
+**consistent**: the ticker is a pure presentation clock — no fetch, no cadence
+change, no cache write (FC2 untouched). *VF1 (poll-era "last updated" control
+removed)* — **consistent**: no global timestamp control returns; ticking is
+per-field on data ages. *VF4/VF6, LV1/LV2, CR-A1 (fades on already-rendered
+DOM; idle tick materializes 0)* — **extends (guarded)**: the tick mutates age
+text in place only and never re-renders rows/markers/chat entries, so fades are
+never restarted or truncated. *LD-A2/LD-A3/CL-A3 (scroll + open-overlay
+survival)* — **consistent**: in-place text writes cannot reset scroll or close
+overlays; an open popup's age ticking extends LD-A3's spirit. *D7 (fixed
+stack)* / *D8 (stable contract)* — **consistent**: vanilla JS, no new
+dependency, nothing enters `/version`, `data-app-config`, or any `/api/*`
+shape. *Invariants I/II/IV* — **consistent**: no network egress at all,
+displays only already-fetched data, ages tick identically for every protocol.
+No existing decision is contradicted or amended.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **RT1** | **Live-ticking ages, display-only.** Every rendered relative-time field — the node-table "last seen" / "last position" cells, the marker short-info overlay's "Last seen" line, the node-detail (`/n/:id`) last-seen / last-position rows, and the federation instances "last update" column — counts up in real time between data refreshes. **Amended in-interview:** the marker overlay (`openShortInfoOverlay`) previously displayed *no* time field (the "Last seen" popup builder `buildMapPopupHtml` is runtime-dead, reachable only from tests), so the overlay **gains** a "Last seen" line — new visible content, sourced from the `lastHeard` already in its payload, ticking while the overlay is open; the legacy popup builder is wired with tick markup for completeness. The tick is a presentation clock only: it triggers **no** fetch, alters no refresh cadence (PS5/PS7), and never touches the data cache (FC2). | interview (amended) |
+| **RT2** | **One shared ~1 s ticker; in-place text mutation only.** A single shared interval drives all registered fields: each tick re-evaluates the age string with the **unchanged** existing formatters (`timeAgo` / `formatRelativeSeconds`) and writes the DOM **only when the string changed** (so "3d 4h" fields update rarely, "4s" fields every second). The ticker mutates existing text in place and never re-renders rows, markers, or chat entries — preserving CR-A1 (idle materializes 0), LD-A2/CL-A3 (scroll), LD-A3 (open overlays), and the LV1/LV2 fade timers. **Amended in-build:** the federation page's local formatter turned out to be a *distinct format* (`5m ago` — coarse, suffixed), not a duplicate of `timeAgo`; it is hoisted **verbatim** into shared `format-utils.js` as `timeAgoSuffixed` (one definition repo-wide) and registered as the ticker's `ago-suffixed` variant — RT4's format preservation wins over literal consolidation. | interview (amended) |
+| **RT3** | **Wall-clock truth: independent of pause; idle when hidden.** Ages keep ticking regardless of the `#autorefreshToggle` play/pause state — the toggle pauses *data* updates (PS5), not the clock. When the tab is hidden the ticker idles (no background work) and snaps every field to its correct value the moment the tab becomes visible again. | interview |
+| **RT4** | **Format & contract unchanged.** The output format stays exactly today's (`4s`, `3m 12s`, `5h 2m`, `3d 4h`; empty/invalid timestamps keep rendering exactly as today). Frontend-only: no API, `/version`, or `data-app-config` change (D8), vanilla JS with no new dependency (D7), protocol-neutral (Invariant IV), no network egress and no new data exposure (Invariants I/II). | interview |
+| **RT5** | **Engineering bar (D9).** The ticker module and every touched render path ship with 100% unit tests, full JSDoc, the exact Apache header, and clean linters; all existing suites stay green. Existing formatter specs (`format-utils.test.js`, display-formatter tests) remain valid unchanged — the format is untouched; render-path specs are **updated** only where fields gain tick registration. | CLAUDE.md |
+

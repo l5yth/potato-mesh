@@ -74,6 +74,7 @@ import {
 import { renderNodeDetailHtml } from './node-page/detail-html.js';
 import {
   fetchNodeDetailHtml,
+  getNodeDetailRelativeTimeTicker,
   initializeNodeDetailPage,
   normalizeNodeReference,
   parseReferencePayload,
@@ -82,6 +83,7 @@ import {
 
 export {
   fetchNodeDetailHtml,
+  getNodeDetailRelativeTimeTicker,
   initializeNodeDetailPage,
   renderTelemetryCharts,
 };

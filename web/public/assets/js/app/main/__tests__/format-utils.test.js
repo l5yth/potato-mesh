@@ -32,6 +32,7 @@ import {
   resolveTimestampSeconds,
   shortInfoValueOrDash,
   timeAgo,
+  timeAgoSuffixed,
   timeHum,
   toFiniteNumber,
 } from '../format-utils.js';
@@ -402,4 +403,37 @@ test('parseNodeNumericRef coerces other inputs via Number()', () => {
 
 test('parseNodeNumericRef returns null for unparseable non-string inputs', () => {
   assert.equal(parseNodeNumericRef({}), null);
+});
+
+// ---------------------------------------------------------------------------
+// timeAgoSuffixed (the federation page's historical coarse format, SPEC RT4)
+// ---------------------------------------------------------------------------
+
+test('timeAgoSuffixed renders single-unit ages with an ago suffix', () => {
+  const now = 1_000_000;
+  assert.equal(timeAgoSuffixed(now - 4, now), '4s ago');
+  assert.equal(timeAgoSuffixed(now - 300, now), '5m ago'); // no seconds component
+  assert.equal(timeAgoSuffixed(now - 3 * 3600, now), '3h ago');
+  assert.equal(timeAgoSuffixed(now - 2 * 86400, now), '2d ago');
+});
+
+test('timeAgoSuffixed returns empty for missing or non-positive timestamps', () => {
+  assert.equal(timeAgoSuffixed(null), '');
+  assert.equal(timeAgoSuffixed(undefined), '');
+  assert.equal(timeAgoSuffixed(''), '');
+  assert.equal(timeAgoSuffixed('not-a-number'), '');
+  assert.equal(timeAgoSuffixed(0), '');
+  assert.equal(timeAgoSuffixed(-5), '');
+});
+
+test('timeAgoSuffixed clamps future timestamps to 0s ago', () => {
+  const now = 1_000_000;
+  assert.equal(timeAgoSuffixed(now + 120, now), '0s ago');
+});
+
+test('timeAgoSuffixed accepts numeric strings and defaults to the wall clock', () => {
+  const now = 1_000_000;
+  assert.equal(timeAgoSuffixed(String(now - 90), now), '1m ago');
+  // 1d 1h ago is stable at "1d ago" for any plausible test runtime.
+  assert.equal(timeAgoSuffixed(Date.now() / 1000 - 90_000), '1d ago');
 });

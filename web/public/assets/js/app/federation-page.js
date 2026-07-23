@@ -25,6 +25,28 @@ import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
 import { meshcoreIconHtml, meshtasticIconHtml } from './protocol-helpers.js';
 import { createBasemapLayer } from './basemap-config.js';
+import { timeAgoSuffixed } from './main/format-utils.js';
+import {
+  startRelativeTimeTicker,
+  tickAttributes,
+  TICK_FORMAT_AGO_SUFFIXED,
+} from './main/relative-time-ticker.js';
+
+/**
+ * The page's shared relative-time ticker handle (SPEC RT1/RT2); a re-init
+ * stops the previous ticker so exactly one clock drives the page.
+ */
+let relativeTimeTicker = null;
+
+/**
+ * Expose the page's ticker handle for unit tests (SPEC RT5).
+ *
+ * @returns {?{tick: Function, stop: Function, running: Function}} The live
+ *   ticker handle, or null before {@link initializeFederationPage} ran.
+ */
+export function getFederationRelativeTimeTicker() {
+  return relativeTimeTicker;
+}
 
 /**
  * Escape HTML special characters to prevent XSS.
@@ -57,21 +79,22 @@ function fmtCoords(v, d = 5) {
 }
 
 /**
- * Convert a Unix timestamp to a human-readable relative time string.
+ * Build the instances-table "last update" cell with live-tick opt-in markup.
  *
- * @param {number|null|undefined} unixSec Unix timestamp in seconds.
- * @param {number} nowSec Current timestamp in seconds.
- * @returns {string} Relative time string or empty string.
+ * The cell carries ``data-ts-ago`` (plus the ``ago-suffixed`` variant marker)
+ * so the shared relative-time ticker keeps the age counting up in place
+ * between refreshes (SPEC RT1/RT2), preserving the page's historical
+ * ``5m ago`` format verbatim (RT4). An instance without a usable timestamp
+ * renders today's plain empty cell.
+ *
+ * @param {Object} instance Federation instance row payload.
+ * @param {number} nowSec Reference timestamp in seconds for the initial text.
+ * @returns {string} ``<td>`` HTML fragment.
  */
-function timeAgo(unixSec, nowSec = Date.now() / 1000) {
-  if (unixSec == null || unixSec === '') return '';
-  const ts = Number(unixSec);
-  if (!Number.isFinite(ts) || ts <= 0) return '';
-  const diff = Math.max(0, Math.floor(nowSec - ts));
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+function lastUpdateCellHtml(instance, nowSec) {
+  const lastUpdate = instance.last_update ?? instance.lastUpdateTime;
+  const attrs = tickAttributes(lastUpdate, TICK_FORMAT_AGO_SUFFIXED);
+  return `<td class="instances-col instances-col--last-update mono"${attrs ? ' ' + attrs : ''}>${timeAgoSuffixed(lastUpdate, nowSec)}</td>`;
 }
 
 /**
@@ -506,7 +529,7 @@ export async function initializeFederationPage(options = {}) {
         <td class="instances-col instances-col--meshtastic-nodes mono">${mtNodesText}</td>
         <td class="instances-col instances-col--latitude mono">${fmtCoords(instance.latitude)}</td>
         <td class="instances-col instances-col--longitude mono">${fmtCoords(instance.longitude)}</td>
-        <td class="instances-col instances-col--last-update mono">${timeAgo(instance.last_update ?? instance.lastUpdateTime, nowSec)}</td>
+        ${lastUpdateCellHtml(instance, nowSec)}
       `;
 
       frag.appendChild(tr);
@@ -748,4 +771,10 @@ export async function initializeFederationPage(options = {}) {
     attachSortHandlers(() => renderTableRows(instances, nowSec));
     renderTableRows(instances, nowSec);
   }
+
+  // One shared presentation clock keeps the "last update" ages counting up
+  // in place (SPEC RT1/RT2); re-initialisation replaces the previous ticker
+  // so the page never runs two clocks.
+  if (relativeTimeTicker) relativeTimeTicker.stop();
+  relativeTimeTicker = startRelativeTimeTicker({ documentRef: document });
 }

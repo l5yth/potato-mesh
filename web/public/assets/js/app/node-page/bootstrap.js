@@ -27,6 +27,7 @@ import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { buildNeighborRoleIndex } from './role-index.js';
 import { buildTraceRoleIndex } from './traces.js';
 import { renderNodeDetailHtml } from './detail-html.js';
+import { startRelativeTimeTicker } from '../main/relative-time-ticker.js';
 
 const RENDER_WAIT_INTERVAL_MS = 20;
 const RENDER_WAIT_TIMEOUT_MS = 500;
@@ -146,6 +147,22 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
 }
 
 /**
+ * The node-detail page's shared relative-time ticker handle (SPEC RT1/RT2);
+ * a re-init stops the previous ticker so exactly one clock drives the page.
+ */
+let relativeTimeTicker = null;
+
+/**
+ * Expose the page's ticker handle for unit tests (SPEC RT5).
+ *
+ * @returns {?{tick: Function, stop: Function, running: Function}} The live
+ *   ticker handle, or null before {@link initializeNodeDetailPage} rendered.
+ */
+export function getNodeDetailRelativeTimeTicker() {
+  return relativeTimeTicker;
+}
+
+/**
  * Initialise the node detail page by hydrating the DOM with fetched data.
  *
  * @param {{
@@ -199,6 +216,11 @@ export async function initializeNodeDetailPage(options = {}) {
       privateMode,
     });
     root.innerHTML = html;
+    // One shared presentation clock keeps the rendered last-seen /
+    // last-position ages counting up in place (SPEC RT1/RT2); re-initialising
+    // replaces the previous ticker so the page never runs two clocks.
+    if (relativeTimeTicker) relativeTimeTicker.stop();
+    relativeTimeTicker = startRelativeTimeTicker({ documentRef });
     return true;
   } catch (error) {
     console.error('Failed to render node detail page', error);

@@ -3129,3 +3129,87 @@ and advert handling — new subscriptions must not disturb existing handlers),
 `store_telemetry_packet` host gate). The frontend is intentionally untouched
 (TM-A1 unchanged); `tests/` fixtures are unmodified so CI replay (C2) is
 unaffected.
+
+---
+
+## Feature: Live relative-time tick (dynamic timers)
+
+Maps to SPEC decisions **RT1–RT5**. Every rendered relative-time field — the
+node-table "last seen" / "last position" cells, an open map popup/tooltip
+"Last seen" line, the node-detail (`/n/:id`) last-seen / last-position rows,
+and the federation instances "last update" column — counts up in real time
+between data refreshes instead of holding the value stamped at render. The
+core is a new shared ticker module
+(`web/public/assets/js/app/main/relative-time-ticker.js`); the wired surfaces
+are `main.js` (table + map overlays), `node-page/single-node-table.js`, and
+`federation-page.js`. Frontend-only: no server, API, or ingestor change, so
+all checks are JS unit suites run at the repo root.
+
+### RT-A1 — Shared ticker: ~1 s cadence, write-on-change, hidden-tab idle — RT2, RT3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/relative-time-ticker.test.js )
+```
+**Expected:** pass. One shared ~1 s interval drives every registered field: a
+tick recomputes the age string with the **existing** formatters and writes the
+DOM **only when the string changed** (a field still reading `3d 4h` is not
+rewritten); opt-in is attribute-based (`data-ts-ago`), so double-registration
+is impossible by construction — removing the attribute (or the element) stops
+its writes, and stopping the ticker clears the interval. While the
+document is hidden the ticker idles (no writes); on `visibilitychange` back to
+visible every field snaps to its correct current value in one pass. The ticker
+never consults the auto-refresh play/pause toggle — pausing data updates does
+not stop the clock (RT3) — and it performs no fetch of any kind (RT1).
+
+### RT-A2 — Dashboard ages tick in place: table cells + open map overlays — RT1, RT2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-relative-time.test.js )
+```
+**Expected:** pass. With node-table rows rendered, advancing the clock ~1 s
+updates the "last seen" / "last position" cell text (e.g. `4s` → `5s`) **in
+place** — the row and cell element identities are unchanged (no
+re-materialization), and an open marker popup/tooltip's "Last seen:" line
+ticks while it stays open. Ticks issue **zero** network requests and
+materialize **zero** chat entries (CR-A1 posture preserved).
+
+### RT-A3 — Node-detail + federation ages tick; one shared formatter home — RT1, RT2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/node-page.test.js \
+                       public/assets/js/app/__tests__/federation-page.test.js )
+```
+**Expected:** pass. The node-detail last-seen / last-position cells and the
+federation "last update" cell carry the tick opt-in markup (`data-ts-ago` +
+their format variant) and each page arms the shared ticker on init.
+`federation-page.js` no longer defines its own local relative-time formatter:
+its historical **distinct** format (`5m ago` — coarse, suffixed; *not* the
+dashboard's `5m 0s`) is hoisted verbatim into `main/format-utils.js` as
+`timeAgoSuffixed` (one definition repo-wide, RT2) and preserved exactly (RT4)
+via the ticker's `ago-suffixed` variant.
+
+### RT-A4 — Format unchanged — RT4
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/format-utils.test.js )
+```
+**Expected:** pass **with the pre-existing expectations unchanged** — the
+suite's original format fixtures (`50s`, `2m 5s`, `1h 1m`, `1d 1h`, the
+empty-string cases for missing/invalid timestamps; SPEC RT4's `4s` / `3m 12s`
+/ `5h 2m` / `3d 4h` are canonical examples of the same branches) still hold
+verbatim: the diff to this suite deletes or edits **zero** assertions (it only
+adds `timeAgoSuffixed` coverage). The feature adds no format branch; only
+*when* the strings are recomputed changes.
+
+### RT-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and explicitly required
+to remain green: **CR-A1** (`main-chat-render-incremental.test.js` — an idle
+tick still materializes 0 entries; the ticker must never re-render), **LD-A2**
+(channel-tab scroll) and **CL-A3** (chat vertical scroll — in-place text writes
+must not reset either), **LD-A3** (`marker-overlay-preservation.test.js` — an
+open overlay survives refreshes *and* ticking), **LV-A1/LV-A2** (`flash.test.js`
+/ `main-flash.test.js` — a tick write must never restart or truncate a
+role-colour fade), **TM-A1** (`snapshot-aggregator.test.js` — the node-table
+render path gains only tick registration), and **B1** (all suites). No
+Ruby/Python/Rust/Flutter surface is touched, so `rspec`, the Python suite
+(**C2**), `cargo test`, and `flutter test` are unaffected by construction —
+`rspec` is still run to prove it.
