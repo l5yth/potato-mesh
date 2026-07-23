@@ -18,7 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDomEnvironment } from './dom-environment.js';
-import { initializeFederationPage } from '../federation-page.js';
+import { getFederationRelativeTimeTicker, initializeFederationPage } from '../federation-page.js';
 import { roleColors } from '../role-helpers.js';
 
 function createBasicFederationPageHarness() {
@@ -246,6 +246,18 @@ const fetchImpl = async () => ({
     assert.match(secondRowHtml, /d ago/);
     assert.deepEqual(mapFitBoundsCalls[0][0], [[10.12345, -20.98765]]);
     assert.equal(circleMarkerCalls[0].options.fillColor, roleColors.CLIENT_HIDDEN);
+
+    // The "last update" cell opts into the shared live tick (SPEC RT1/RT2)
+    // with the page's historical "ago" format preserved (RT4)...
+    assert.match(
+      firstRowHtml,
+      /instances-col--last-update mono" data-ts-ago="\d+" data-ts-format="ago-suffixed">\d+m ago</,
+    );
+    // ...and the page arms exactly one shared ticker.
+    const ticker = getFederationRelativeTimeTicker();
+    assert.ok(ticker, 'ticker handle exposed after init');
+    assert.equal(ticker.running(), true);
+    ticker.stop();
   } catch (error) {
     console.error('federation sorting test error', error);
     throw error;

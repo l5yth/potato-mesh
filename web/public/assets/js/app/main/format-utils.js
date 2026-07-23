@@ -123,6 +123,29 @@ export function timeAgo(unixSec, nowSec = Date.now() / 1000) {
 }
 
 /**
+ * Return a coarse relative time string with an ``ago`` suffix, e.g. ``5m ago``.
+ *
+ * This is the federation page's historical format (single unit, ``ago``
+ * suffix, empty for non-positive timestamps) — deliberately distinct from
+ * {@link timeAgo} and preserved verbatim (SPEC RT4). Hoisted here from
+ * ``federation-page.js`` so the repo keeps one definition (SPEC RT2).
+ *
+ * @param {number|string|null|undefined} unixSec Unix timestamp in seconds.
+ * @param {number} [nowSec] Reference timestamp in seconds.
+ * @returns {string} Relative time string or empty string.
+ */
+export function timeAgoSuffixed(unixSec, nowSec = Date.now() / 1000) {
+  if (unixSec == null || unixSec === '') return '';
+  const ts = Number(unixSec);
+  if (!Number.isFinite(ts) || ts <= 0) return '';
+  const diff = Math.max(0, Math.floor(nowSec - ts));
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+/**
  * Convert arbitrary values to finite numbers when possible.
  *
  * @param {*} value Raw value.

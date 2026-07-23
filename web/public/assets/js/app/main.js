@@ -144,6 +144,7 @@ import {
   timeHum,
   toFiniteNumber,
 } from './main/format-utils.js';
+import { startRelativeTimeTicker, tickAttributes } from './main/relative-time-ticker.js';
 import {
   applyNodeNameFallback,
   buildNodePlaceholder,
@@ -199,6 +200,30 @@ import { createEventStream } from './main/event-stream.js';
 import { flashNodeTargets, flashMessageTargets, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
+
+/**
+ * Build the node-table row's two timestamp cells ("last seen" and
+ * "last position") with live-tick opt-in markup (SPEC RT1/RT2).
+ *
+ * Each cell carries ``data-ts-ago`` so the shared relative-time ticker keeps
+ * its age counting up in place between data refreshes; a node without the
+ * respective timestamp renders today's plain empty cell (no attribute).
+ * Module-level and pure so the emitted markup is directly unit-testable.
+ *
+ * @param {Object} node Node payload rendered into the row.
+ * @param {number} nowSec Reference timestamp in seconds for the initial text.
+ * @returns {{lastSeen: string, lastPosition: string}} ``<td>`` HTML fragments.
+ */
+export function buildNodeRowTimestampCellsHtml(node, nowSec) {
+  const lastPositionTime = toFiniteNumber(node.position_time ?? node.positionTime);
+  const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
+  const lastSeenAttrs = tickAttributes(node.last_heard);
+  const lastPositionAttrs = tickAttributes(lastPositionTime);
+  return {
+    lastSeen: `<td class="nodes-col nodes-col--last-seen"${lastSeenAttrs ? ' ' + lastSeenAttrs : ''}>${timeAgo(node.last_heard, nowSec)}</td>`,
+    lastPosition: `<td class="mono nodes-col nodes-col--last-position"${lastPositionAttrs ? ' ' + lastPositionAttrs : ''}>${lastPositionCell}</td>`,
+  };
+}
 
 /**
  * Entry point for the interactive dashboard. Wires up event listeners,
@@ -2180,7 +2205,8 @@ export function initializeApp(config) {
 
     const lastHeardNum = Number(node?.last_heard);
     if (Number.isFinite(lastHeardNum) && lastHeardNum > 0) {
-      lines.push(`Last seen: ${timeAgo(lastHeardNum, nowSec)}`);
+      // The age ticks in place while the popup is open (RT1/RT2).
+      lines.push(`Last seen: <span ${tickAttributes(lastHeardNum)}>${timeAgo(lastHeardNum, nowSec)}</span>`);
     }
 
     const uptimeNum = Number(node?.uptime_seconds);
@@ -2352,6 +2378,21 @@ export function initializeApp(config) {
     if (!overlayInfo.role || overlayInfo.role === '') {
       overlayInfo.role = 'CLIENT';
     }
+    overlayStack.render(target, buildShortInfoOverlayHtml(overlayInfo));
+  }
+
+  /**
+   * Build the short-info overlay's HTML body for a normalized overlay payload.
+   *
+   * Extracted from {@link openShortInfoOverlay} so the markup — notably the
+   * live-ticking "Last seen" line added by SPEC RT1 (amended) — is directly
+   * unit-testable without a rendered overlay stack.
+   *
+   * @param {Object} overlayInfo Normalized overlay payload
+   *   (see {@link normalizeOverlaySource}), with ``role`` already defaulted.
+   * @returns {string} HTML string rendered into the overlay body.
+   */
+  function buildShortInfoOverlayHtml(overlayInfo) {
     const lines = [];
     const longNameLink = renderNodeLongNameLink(overlayInfo.longName, overlayInfo.nodeId, {
       protocol: overlayInfo.protocol,
@@ -2408,10 +2449,16 @@ export function initializeApp(config) {
     for (const entry of telemetryEntries) {
       lines.push(`${escapeHtml(entry.label)}: ${escapeHtml(entry.value)}`);
     }
+    // "Last seen" line (SPEC RT1, amended): sourced from the payload's
+    // lastHeard and ticking in place while the overlay is open (data-ts-ago).
+    const lastHeardNum = toFiniteNumber(overlayInfo.lastHeard);
+    if (lastHeardNum != null && lastHeardNum > 0) {
+      lines.push(`Last seen: <span ${tickAttributes(lastHeardNum)}>${timeAgo(lastHeardNum, Date.now() / 1000)}</span>`);
+    }
     if (neighborLineHtml) {
       lines.push(neighborLineHtml);
     }
-    overlayStack.render(target, lines.join('<br/>'));
+    return lines.join('<br/>');
   }
 
   /**
@@ -3743,8 +3790,8 @@ export function initializeApp(config) {
       if (tr.style && typeof tr.style.setProperty === 'function') {
         tr.style.setProperty('--flash-role-color', getRoleFlashColor(n.role, n.protocol));
       }
-      const lastPositionTime = toFiniteNumber(n.position_time ?? n.positionTime);
-      const lastPositionCell = lastPositionTime != null ? timeAgo(lastPositionTime, nowSec) : '';
+      // Timestamp cells opt into the shared live tick via data-ts-ago (RT1/RT2).
+      const timestampCells = buildNodeRowTimestampCellsHtml(n, nowSec);
       const latitudeDisplay = fmtCoords(n.latitude);
       const longitudeDisplay = fmtCoords(n.longitude);
       const nodeDisplayName = getNodeDisplayNameForOverlay(n);
@@ -3762,7 +3809,7 @@ export function initializeApp(config) {
         <td class="nodes-col nodes-col--long-name">${longNameHtml}</td>
         <td class="nodes-col nodes-col--frequency">${loraFrequencyDisplay}</td>
         <td class="nodes-col nodes-col--modem-preset">${modemPresetDisplay}</td>
-        <td class="nodes-col nodes-col--last-seen">${timeAgo(n.last_heard, nowSec)}</td>
+        ${timestampCells.lastSeen}
         <td class="nodes-col nodes-col--role">${escapeHtml(n.role || "CLIENT")}</td>
         <td class="nodes-col nodes-col--hw-model">${escapeHtml(fmtHw(n.hw_model))}</td>
         <td class="nodes-col nodes-col--battery">${fmtAlt(n.battery_level, "%")}</td>
@@ -3776,7 +3823,7 @@ export function initializeApp(config) {
         <td class="nodes-col nodes-col--latitude">${latitudeDisplay}</td>
         <td class="nodes-col nodes-col--longitude">${longitudeDisplay}</td>
         <td class="nodes-col nodes-col--altitude">${fmtAlt(n.altitude, "m")}</td>
-        <td class="mono nodes-col nodes-col--last-position">${lastPositionCell}</td>`;
+        ${timestampCells.lastPosition}`;
 
       enhanceCoordinateCell({
         cell: tr.querySelector('.nodes-col--latitude'),
@@ -4980,6 +5027,12 @@ export function initializeApp(config) {
     });
   }
 
+  // One shared presentation clock keeps every data-ts-ago field counting up
+  // between data refreshes (SPEC RT1/RT2): no fetch, no refresh-cadence change,
+  // in-place text writes only. It ignores the play/pause toggle and idles
+  // while the tab is hidden (RT3).
+  const relativeTimeTicker = startRelativeTimeTicker({ documentRef: document });
+
   /**
    * Inner closures exposed for unit tests. Production callers should ignore
    * this return value.
@@ -4989,6 +5042,10 @@ export function initializeApp(config) {
   return {
     _testUtils: {
       buildMapPopupHtml,
+      /** Short-info overlay HTML builder — carries the RT1 "Last seen" tick line. */
+      buildShortInfoOverlayHtml,
+      /** The app's shared relative-time ticker handle (SPEC RT1–RT3). */
+      relativeTimeTicker,
       normalizeOverlaySource,
       createAnnouncementEntry,
       createMessageChatEntry,
@@ -5045,13 +5102,14 @@ export function initializeApp(config) {
         }
         await liveRefreshPromise;
       },
-      /** Stop the auto-refresh timer and close the live stream (test teardown). */
+      /** Stop the auto-refresh timer, live stream, and relative-time ticker (test teardown). */
       stopAutoRefresh: () => {
         if (refreshTimer) {
           clearInterval(refreshTimer);
           refreshTimer = null;
         }
         stopLiveUpdates();
+        relativeTimeTicker.stop();
       },
       /** Inject mock count span elements for legend protocol count tests. */
       _setProtocolCountElements(mc, mt) {

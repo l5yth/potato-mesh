@@ -17,7 +17,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { initializeNodeDetailPage, fetchNodeDetailHtml, __testUtils } from '../node-page.js';
+import {
+  initializeNodeDetailPage,
+  fetchNodeDetailHtml,
+  getNodeDetailRelativeTimeTicker,
+  __testUtils,
+} from '../node-page.js';
 import { getRoleColor, getRoleKey, translateRoleId } from '../role-helpers.js';
 
 const {
@@ -371,6 +376,29 @@ test('renderSingleNodeTable renders a condensed table for the node', () => {
   assert.equal(html.includes('52.52000'), true);
   assert.equal(html.includes('1m 40s'), true);
   assert.equal(html.includes('2m 30s'), true);
+});
+
+test('renderSingleNodeTable timestamp cells opt into the live tick (SPEC RT1/RT2)', () => {
+  const html = renderSingleNodeTable(
+    { nodeId: '!abcd', lastHeard: 9_900, positionTime: 9_850 },
+    short => `<span>${short}</span>`,
+    10_000,
+  );
+  assert.equal(
+    html.includes('<td class="nodes-col nodes-col--last-seen" data-ts-ago="9900" data-ts-format="relative">1m 40s</td>'),
+    true,
+  );
+  assert.equal(
+    html.includes('<td class="mono nodes-col nodes-col--last-position" data-ts-ago="9850" data-ts-format="relative">2m 30s</td>'),
+    true,
+  );
+});
+
+test('renderSingleNodeTable without timestamps renders plain static cells (SPEC RT4)', () => {
+  const html = renderSingleNodeTable({ nodeId: '!abcd' }, short => `<span>${short}</span>`, 10_000);
+  assert.equal(html.includes('<td class="nodes-col nodes-col--last-seen"></td>'), true);
+  assert.equal(html.includes('<td class="mono nodes-col nodes-col--last-position"></td>'), true);
+  assert.equal(html.includes('data-ts-ago'), false);
 });
 
 test('renderTelemetryCharts renders condensed scatter charts when telemetry exists', () => {
@@ -1095,6 +1123,8 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   };
   const documentStub = {
     querySelector: selector => (selector === '#nodeDetail' ? element : null),
+    // Lets the page arm its relative-time ticker against this stub (RT1/RT2).
+    querySelectorAll: () => [],
   };
   const refreshImpl = async reference => {
     assert.equal(reference.nodeId, '!node');
@@ -1145,6 +1175,11 @@ test('initializeNodeDetailPage hydrates the container with node data', async () 
   assert.equal(element.innerHTML.includes('Neighbors'), true);
   assert.equal(element.innerHTML.includes('Messages'), true);
   assert.equal(element.innerHTML.includes('ALLY-API'), true);
+  // A successful render arms the page's shared relative-time ticker (RT2).
+  const ticker = getNodeDetailRelativeTimeTicker();
+  assert.ok(ticker, 'ticker handle exposed after init');
+  assert.equal(ticker.running(), true);
+  ticker.stop();
 });
 
 test('initializeNodeDetailPage removes legacy filter controls when supported', async () => {

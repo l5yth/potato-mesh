@@ -18,6 +18,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { setupApp, setupAppWithOptions } from './main-app-test-helpers.js';
+import { TICK_INTERVAL_MS } from '../main/relative-time-ticker.js';
 
 const NOW = 1_700_000_000;
 
@@ -261,8 +262,16 @@ test('restartAutoRefresh does not start a timer when refreshMs is 0', () => {
   globalThis.setInterval = (...args) => { calls.push(args); return origSetInterval(...args); };
   try {
     const { cleanup } = setupApp(); // uses refreshMs: 0
-    // restartAutoRefresh is called during init; no timer should have been started.
-    assert.equal(calls.length, 0, 'setInterval should not be called with refreshMs=0');
+    // restartAutoRefresh is called during init; no refresh timer should have
+    // been started. The only interval armed at boot is the shared
+    // relative-time ticker (SPEC RT2), identified by its 1 s cadence.
+    const refreshCalls = calls.filter(args => args[1] !== TICK_INTERVAL_MS);
+    assert.equal(refreshCalls.length, 0, 'setInterval should not be called with refreshMs=0');
+    assert.equal(
+      calls.filter(args => args[1] === TICK_INTERVAL_MS).length,
+      1,
+      'the shared relative-time ticker is armed at boot (RT2)'
+    );
     cleanup();
   } finally {
     globalThis.setInterval = origSetInterval;
@@ -282,8 +291,14 @@ test('restartAutoRefresh starts a timer when refreshMs > 0', () => {
 
   try {
     const { cleanup } = setupAppWithOptions({ configOverrides: { refreshMs: 30_000 } });
-    assert.equal(timers.length, 1, 'setInterval should be called once during init');
-    assert.equal(timers[0].ms, 30_000, 'interval should match configured refreshMs');
+    // Boot arms exactly one refresh timer plus the relative-time ticker (RT2).
+    const refreshTimers = timers.filter(t => t.ms === 30_000);
+    assert.equal(refreshTimers.length, 1, 'one refresh timer should be started during init');
+    assert.equal(
+      timers.filter(t => t.ms === TICK_INTERVAL_MS).length,
+      1,
+      'the relative-time ticker runs alongside the refresh timer'
+    );
     cleanup();
   } finally {
     globalThis.setInterval = origSetInterval;
@@ -298,21 +313,30 @@ test('restartAutoRefresh clears the existing timer before starting a new one', (
   const origClearInterval = globalThis.clearInterval;
   globalThis.setInterval = (fn, ms) => {
     const id = Symbol('timer');
-    timers.push(id);
+    timers.push({ id, ms });
     return id;
   };
   globalThis.clearInterval = id => { cleared.push(id); };
 
   try {
     const { testUtils, cleanup } = setupAppWithOptions({ configOverrides: { refreshMs: 30_000 } });
-    // One timer started during init.
-    assert.equal(timers.length, 1);
+    // One refresh timer started during init (the 1 s interval is the ticker).
+    const refreshTimers = () => timers.filter(t => t.ms === 30_000);
+    assert.equal(refreshTimers().length, 1);
+    const firstRefreshId = refreshTimers()[0].id;
 
-    // Calling restartAutoRefresh again must clear the first timer and start a new one.
+    // Calling restartAutoRefresh again must clear the first refresh timer and
+    // start a new one — without touching the relative-time ticker (RT3: the
+    // presentation clock is independent of the data-refresh lifecycle).
     testUtils.restartAutoRefresh();
-    assert.equal(cleared.length, 1, 'existing timer should be cleared');
-    assert.equal(cleared[0], timers[0], 'the original timer id should be cleared');
-    assert.equal(timers.length, 2, 'a new timer should be started');
+    assert.equal(cleared.length, 1, 'existing refresh timer should be cleared');
+    assert.equal(cleared[0], firstRefreshId, 'the original refresh timer id should be cleared');
+    assert.equal(refreshTimers().length, 2, 'a new refresh timer should be started');
+    assert.equal(
+      timers.filter(t => t.ms === TICK_INTERVAL_MS).length,
+      1,
+      'the ticker interval is untouched by a refresh restart'
+    );
     cleanup();
   } finally {
     globalThis.setInterval = origSetInterval;

@@ -39,6 +39,7 @@ import {
 } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { renderRoleAwareBadge } from './badge.js';
+import { tickAttributes, TICK_FORMAT_RELATIVE } from '../main/relative-time-ticker.js';
 
 /**
  * Render a condensed node table containing a single entry.
@@ -83,8 +84,14 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
   const latitude = formatCoordinate(node.latitude ?? node.lat);
   const longitude = formatCoordinate(node.longitude ?? node.lon);
   const altitude = fmtAlt(node.altitude ?? node.alt, 'm');
-  const lastSeen = formatRelativeSeconds(node.lastHeard ?? node.last_heard, referenceSeconds);
-  const lastPosition = formatRelativeSeconds(node.positionTime ?? node.position_time, referenceSeconds);
+  const lastSeenTs = numberOrNull(node.lastHeard ?? node.last_heard);
+  const lastPositionTs = numberOrNull(node.positionTime ?? node.position_time);
+  const lastSeen = formatRelativeSeconds(lastSeenTs, referenceSeconds);
+  const lastPosition = formatRelativeSeconds(lastPositionTs, referenceSeconds);
+  // Both timestamp cells opt into the shared live tick (SPEC RT1/RT2) with
+  // this page's formatRelativeSeconds output preserved verbatim (RT4).
+  const lastSeenAttrs = tickAttributes(lastSeenTs, TICK_FORMAT_RELATIVE);
+  const lastPositionAttrs = tickAttributes(lastPositionTs, TICK_FORMAT_RELATIVE);
 
   return `
     <div class="nodes-table-wrapper">
@@ -116,7 +123,7 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
             <td class="mono nodes-col nodes-col--node-id">${escapeHtml(nodeId)}</td>
             <td class="nodes-col nodes-col--short-name">${badgeHtml}</td>
             <td class="nodes-col nodes-col--long-name">${longNameLink}</td>
-            <td class="nodes-col nodes-col--last-seen">${escapeHtml(lastSeen)}</td>
+            <td class="nodes-col nodes-col--last-seen"${lastSeenAttrs ? ' ' + lastSeenAttrs : ''}>${escapeHtml(lastSeen)}</td>
             <td class="nodes-col nodes-col--role">${escapeHtml(role)}</td>
             <td class="nodes-col nodes-col--hw-model">${escapeHtml(hardware)}</td>
             <td class="nodes-col nodes-col--battery">${escapeHtml(battery ?? '')}</td>
@@ -130,7 +137,7 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
             <td class="nodes-col nodes-col--latitude">${escapeHtml(latitude)}</td>
             <td class="nodes-col nodes-col--longitude">${escapeHtml(longitude)}</td>
             <td class="nodes-col nodes-col--altitude">${escapeHtml(altitude ?? '')}</td>
-            <td class="mono nodes-col nodes-col--last-position">${escapeHtml(lastPosition)}</td>
+            <td class="mono nodes-col nodes-col--last-position"${lastPositionAttrs ? ' ' + lastPositionAttrs : ''}>${escapeHtml(lastPosition)}</td>
           </tr>
         </tbody>
       </table>
