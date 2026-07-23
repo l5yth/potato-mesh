@@ -140,6 +140,16 @@ raise ``ValueError`` at import and prevent the service from starting."""
 INGESTOR_NODE_ID = os.environ.get("INGESTOR_NODE_ID", "").strip() or None
 """Optional ``!xxxxxxxx`` host node id used for the ingestor heartbeat in UDP mode."""
 
+RX_ONLY = os.environ.get("RX_ONLY") == "1"
+"""Receive-only mode: forbid every ingestor-initiated mesh transmission.
+
+Some operators run listening posts where any TX is undesired.  When set, the
+ingestor never transmits on the mesh: currently this disables the MeshCore
+contact telemetry/status polls (the only ingestor-initiated RF traffic), and
+any future TX feature must honour it too.  Local companion-link reads (host
+self-telemetry, contact roster, channel queries) are not transmissions and
+continue to work."""
+
 MESHCORE_TELEMETRY_POLL_SECONDS = int(
     os.environ.get("MESHCORE_TELEMETRY_POLL_SECONDS", "300").strip() or "300"
 )

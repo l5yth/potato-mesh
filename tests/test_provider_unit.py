@@ -1735,8 +1735,9 @@ def test_telemetry_event_callbacks_ingest(monkeypatch):
     assert captured[2]["decoded"]["telemetry"]["deviceMetrics"] == {"voltage": 3.9}
 
 
-def test_next_poll_contact_round_robin(monkeypatch):
-    """Contact polling walks the roster in stable order and wraps."""
+def test_next_poll_contact_round_robin_with_cooldown(monkeypatch):
+    """Contact polling walks the roster in stable order, then idles until a
+    contact's 24 h cooldown expires instead of wrapping immediately."""
     second_key = "bbccddeeff00" + "11" * 26
     mc_tel, iface, _stub, _captured = _telemetry_env(
         monkeypatch,
@@ -1746,11 +1747,58 @@ def test_next_poll_contact_round_robin(monkeypatch):
         ],
     )
     state: dict = {}
-    picks = [mc_tel._next_poll_contact(iface, state)["public_key"] for _ in range(3)]
-    assert picks == [_TEST_CONTACT_KEY, second_key, _TEST_CONTACT_KEY]
+    first = mc_tel._next_poll_contact(iface, state)
+    second = mc_tel._next_poll_contact(iface, state)
+    assert [first["public_key"], second["public_key"]] == [
+        _TEST_CONTACT_KEY,
+        second_key,
+    ]
+    # Both contacts were just stamped — the roster is fully fresh, so the
+    # tick has nothing to send.
+    assert mc_tel._next_poll_contact(iface, state) is None
+
+    # Aging one contact past the cooldown makes it eligible again.
+    state["last_polled"][second_key] -= mc_tel._TELEMETRY_NODE_COOLDOWN_SECONDS + 1
+    assert mc_tel._next_poll_contact(iface, state)["public_key"] == second_key
 
     empty = _MeshcoreInterface(target=None)
     assert mc_tel._next_poll_contact(empty, {}) is None
+
+
+def test_next_poll_contact_prunes_departed_roster_entries(monkeypatch):
+    """Cooldown stamps for contacts no longer in the roster are dropped."""
+    mc_tel, iface, _stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "A"}]
+    )
+    state = {"last_polled": {"departed" + "00" * 26: 123.0}}
+    picked = mc_tel._next_poll_contact(iface, state)
+    assert picked["public_key"] == _TEST_CONTACT_KEY
+    assert set(state["last_polled"]) == {_TEST_CONTACT_KEY}
+
+
+def test_poll_contact_telemetry_honours_cooldown_across_ticks(monkeypatch):
+    """With shared state, a second tick inside the cooldown sends nothing."""
+    import types
+
+    mc_tel, iface, stub, captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    requests = {"count": 0}
+
+    class _Commands:
+        async def req_telemetry_sync(self, contact):
+            requests["count"] += 1
+            return [{"type": "temperature", "value": 21.5}]
+
+        async def req_status_sync(self, contact):
+            return None
+
+    mc = types.SimpleNamespace(commands=_Commands())
+    state: dict = {}
+    asyncio.run(mc_tel._poll_contact_telemetry(mc, iface, stub, state))
+    asyncio.run(mc_tel._poll_contact_telemetry(mc, iface, stub, state))
+    assert requests["count"] == 1
+    assert len(captured) == 1
 
 
 def test_poll_self_telemetry_ingests_and_swallows_errors(monkeypatch):
@@ -1922,6 +1970,61 @@ def test_telemetry_poll_loop_disabled_and_ticking(monkeypatch):
     asyncio.run(_drive())
     assert calls["self"] == 1  # immediate first self tick
     assert calls["contact"] >= 1  # first on-air poll after one interval
+
+
+def test_telemetry_poll_loop_rx_only_disables_on_air_polls(monkeypatch):
+    """RX_ONLY forbids ingestor TX: contact polls stop, local self reads stay."""
+    import types
+
+    mc_tel, iface, stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    iface.host_node_id = "!deadbeef"
+    import data.mesh_ingestor as _mesh_pkg
+
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+    monkeypatch.setattr(mc_tel.config, "RX_ONLY", True)
+
+    calls = {"self": 0, "contact": 0}
+
+    class _Commands:
+        async def get_bat(self):
+            calls["self"] += 1
+            return types.SimpleNamespace(payload={"level": 4100})
+
+        async def get_self_telemetry(self):
+            return types.SimpleNamespace(payload={"lpp": []})
+
+        async def req_telemetry_sync(self, contact):
+            calls["contact"] += 1
+            return None
+
+        async def req_status_sync(self, contact):
+            return None
+
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_SELF_TELEMETRY_SECONDS", 3600)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_TELEMETRY_POLL_SECONDS", 1)
+
+    async def _drive():
+        task = asyncio.create_task(
+            mc_tel._telemetry_poll_loop(
+                types.SimpleNamespace(commands=_Commands()), iface
+            )
+        )
+        await asyncio.sleep(1.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_drive())
+    assert calls["self"] == 1  # companion-link reads are not transmissions
+    assert calls["contact"] == 0  # no on-air request under RX_ONLY
+
+    # RX_ONLY with self polling also disabled → the loop exits immediately.
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_SELF_TELEMETRY_SECONDS", 0)
+    asyncio.run(mc_tel._telemetry_poll_loop(types.SimpleNamespace(), iface))
 
 
 def test_on_channel_msg_queues_packet(monkeypatch):

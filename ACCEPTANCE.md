@@ -3108,7 +3108,12 @@ resulting packets flow through `store_packet_dict` → `store_telemetry_packet`
 with `protocol="meshcore"`. The poll loop honours
 `MESHCORE_TELEMETRY_POLL_SECONDS` (0 disables contact polling) and
 `MESHCORE_SELF_TELEMETRY_SECONDS`, one on-air request at a time (local LoRa
-only — no broker, Invariant I).
+only — no broker, Invariant I). Each contact is additionally capped by a
+fixed 24 h per-node cooldown (stamped at the poll attempt; an all-fresh
+roster tick transmits nothing, and departed contacts are pruned from the
+stamp table). `RX_ONLY=1` forbids every ingestor-initiated transmission:
+contact polls stop entirely while the airtime-free companion-link self reads
+continue.
 
 ### TI-R1 — Regression: prior acceptance still holds
 ```bash

@@ -26,7 +26,7 @@ link (no airtime).  Every reading is normalised into the canonical telemetry
 packet shape and flows through the shared
 :func:`~data.mesh_ingestor.handlers.store_telemetry_packet` pipeline with
 ``protocol="meshcore"``, preserving protocol parity (SPEC Invariant IV) and
-the local-LoRa apex (no broker, Invariant I).
+the local-LoRa apex (Invariant I).
 """
 
 from __future__ import annotations
@@ -38,6 +38,17 @@ from collections.abc import Mapping
 from ... import config
 from .interface import _MeshcoreInterface
 from .messages import _derive_message_id
+
+_TELEMETRY_NODE_COOLDOWN_SECONDS: int = 24 * 60 * 60
+"""Minimum seconds between telemetry polls of the same contact.
+
+The 300-second poll tick bounds *total* airtime, but on a small roster the
+round-robin would revisit each node every ``roster_size × interval`` — far
+more often than telemetry freshness needs.  This per-node cooldown caps every
+contact at one poll per 24 h (counted from the poll attempt, so unreachable
+nodes are not hammered either); when every contact is fresh the tick sends
+nothing.  Deliberately a constant, not an environment knob."""
+
 
 _LPP_TYPE_NAMES: dict[int, str] = {
     101: "illuminance",
@@ -297,22 +308,45 @@ def _make_telemetry_handlers(iface: _MeshcoreInterface, handlers: object) -> dic
 
 
 def _next_poll_contact(iface: _MeshcoreInterface, state: dict) -> dict | None:
-    """Pick the next roster contact for a telemetry poll, round-robin.
+    """Pick the next roster contact due for a telemetry poll, round-robin.
+
+    Contacts polled within :data:`_TELEMETRY_NODE_COOLDOWN_SECONDS` are
+    skipped; the returned contact is stamped as polled immediately (before the
+    request is sent), so failed or timed-out polls honour the cooldown too.
+    Departed roster entries are pruned from the stamp table so a long-running
+    process cannot accumulate stale state.
 
     Parameters:
         iface: Active MeshCore interface holding the contact snapshot.
-        state: Mutable poll-loop state carrying the ``cursor`` position.
+        state: Mutable poll-loop state carrying the ``cursor`` position and
+            the per-contact ``last_polled`` monotonic stamps.
 
     Returns:
-        The next contact dict, or ``None`` when the roster is empty.
+        The next due contact dict, or ``None`` when the roster is empty or
+        every contact is still inside its cooldown window.
     """
     with iface._contacts_lock:
         contacts = [iface._contacts[key] for key in sorted(iface._contacts)]
     if not contacts:
         return None
-    cursor = state.get("cursor", 0) % len(contacts)
-    state["cursor"] = cursor + 1
-    return contacts[cursor]
+    last_polled = state.setdefault("last_polled", {})
+    roster_keys = {contact.get("public_key") for contact in contacts}
+    for key in list(last_polled):
+        if key not in roster_keys:
+            del last_polled[key]
+    now = time.monotonic()
+    cursor = state.get("cursor", 0)
+    for offset in range(len(contacts)):
+        index = (cursor + offset) % len(contacts)
+        contact = contacts[index]
+        key = contact.get("public_key")
+        stamp = last_polled.get(key)
+        if stamp is not None and now - stamp < _TELEMETRY_NODE_COOLDOWN_SECONDS:
+            continue
+        state["cursor"] = index + 1
+        last_polled[key] = now
+        return contact
+    return None
 
 
 async def _poll_self_telemetry(mc, iface: _MeshcoreInterface, handlers: object) -> None:
@@ -416,8 +450,12 @@ async def _telemetry_poll_loop(mc, iface: _MeshcoreInterface) -> None:
     Cadence comes from :data:`~data.mesh_ingestor.config` —
     ``MESHCORE_SELF_TELEMETRY_SECONDS`` (local, no airtime; ``<= 0`` disables)
     and ``MESHCORE_TELEMETRY_POLL_SECONDS`` (one on-air request per interval;
-    ``<= 0`` disables).  The loop wakes once per second-granularity deadline
-    rather than busy-polling.
+    ``<= 0`` disables), with each contact additionally capped by the fixed
+    per-node cooldown (:data:`_TELEMETRY_NODE_COOLDOWN_SECONDS`).  ``RX_ONLY``
+    forbids every ingestor-initiated transmission, so it disables the on-air
+    contact polls regardless of the poll interval; the self reads are local
+    companion-link commands and stay active.  The loop wakes once per
+    second-granularity deadline rather than busy-polling.
 
     Parameters:
         mc: Connected MeshCore instance.
@@ -426,7 +464,7 @@ async def _telemetry_poll_loop(mc, iface: _MeshcoreInterface) -> None:
     from ... import handlers as _handlers
 
     self_interval = config.MESHCORE_SELF_TELEMETRY_SECONDS
-    poll_interval = config.MESHCORE_TELEMETRY_POLL_SECONDS
+    poll_interval = 0 if config.RX_ONLY else config.MESHCORE_TELEMETRY_POLL_SECONDS
     if self_interval <= 0 and poll_interval <= 0:
         return
 
