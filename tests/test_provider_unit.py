@@ -1492,6 +1492,541 @@ def _setup_channel_msg_handlers(monkeypatch, *, contacts=None):
     return captured, upserted, iface, hmap
 
 
+def test_event_handlers_cover_telemetry_events(monkeypatch):
+    """Regression guard for TI-A3: the MeshCore event-handler map subscribes
+    the telemetry surfaces (contact telemetry pulls, status responses, and the
+    host radio's battery event) instead of dropping them unhandled."""
+    _, _, _, hmap = _setup_channel_msg_handlers(monkeypatch)
+    missing = {"TELEMETRY_RESPONSE", "STATUS_RESPONSE", "BATTERY"} - set(hmap)
+    assert not missing, f"telemetry events not subscribed: {sorted(missing)}"
+
+
+# ---------------------------------------------------------------------------
+# MeshCore telemetry collection (TI-A3)
+# ---------------------------------------------------------------------------
+
+_TEST_CONTACT_KEY = "aabbccddeeff" + "00" * 26
+"""Full 32-byte public key (hex) for the telemetry test contact."""
+
+
+def _telemetry_module():
+    """Return the MeshCore telemetry module under test."""
+    import data.mesh_ingestor.protocols.meshcore.telemetry as mc_tel
+
+    return mc_tel
+
+
+def _telemetry_env(monkeypatch, *, contacts=None, frozen_time=1_700_000_000):
+    """Build the patched environment for MeshCore telemetry tests.
+
+    Parameters:
+        monkeypatch: pytest monkeypatch fixture.
+        contacts: Optional contact dicts pre-registered on the interface.
+        frozen_time: Wall-clock second ``time.time`` is pinned to.
+
+    Returns:
+        Tuple ``(mc_tel, iface, stub, captured)`` — module under test, the
+        interface, the stubbed handlers module, and the captured packet list.
+    """
+    import time as _time
+
+    mc_tel = _telemetry_module()
+    captured: list = []
+    stub = _make_stub_handlers_module()
+    stub.store_packet_dict = lambda pkt: captured.append(pkt)
+    monkeypatch.setattr(mc_tel.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_time, "time", lambda: frozen_time)
+    iface = _MeshcoreInterface(target=None)
+    for contact in contacts or []:
+        iface._update_contact(contact)
+    return mc_tel, iface, stub, captured
+
+
+def test_lpp_entry_parts_accepts_names_codes_and_rejects_junk():
+    """LPP entries resolve by name string or numeric code; junk is rejected."""
+    mc_tel = _telemetry_module()
+    assert mc_tel._lpp_entry_parts({"type": "Temperature", "value": 21.5}) == (
+        "temperature",
+        21.5,
+    )
+    assert mc_tel._lpp_entry_parts({"type": 116, "value": 3.9}) == ("voltage", 3.9)
+    assert mc_tel._lpp_entry_parts({"type": 999, "value": 1.0}) == (None, 1.0)
+    assert mc_tel._lpp_entry_parts({"type": "  ", "value": 1.0}) == (None, 1.0)
+    assert mc_tel._lpp_entry_parts({"type": None, "value": 1.0}) == (None, 1.0)
+    assert mc_tel._lpp_entry_parts({"type": "voltage", "value": True}) == (
+        "voltage",
+        None,
+    )
+    assert mc_tel._lpp_entry_parts({"type": "voltage", "value": "n/a"}) == (
+        "voltage",
+        None,
+    )
+
+
+def test_lpp_to_telemetry_section_maps_device_and_environment(monkeypatch):
+    """Battery-style readings map to deviceMetrics, sensors to environmentMetrics."""
+    mc_tel = _telemetry_module()
+    monkeypatch.setattr(mc_tel.config, "_debug_log", lambda *_a, **_k: None)
+    section = mc_tel._lpp_to_telemetry_section(
+        [
+            {"channel": 1, "type": "voltage", "value": 4.05},
+            {"channel": 1, "type": "percentage", "value": 87},
+            {"channel": 2, "type": "temperature", "value": 21.5},
+            {"channel": 2, "type": "humidity", "value": 40.2},
+            {"channel": 2, "type": "barometer", "value": 1013.2},
+            {"channel": 3, "type": "illuminance", "value": 120.0},
+            {"channel": 3, "type": "current", "value": 0.12},
+            {"channel": 9, "type": "gps", "value": {"lat": 1}},
+            "not-a-mapping",
+        ]
+    )
+    assert section == {
+        "deviceMetrics": {"voltage": 4.05, "batteryLevel": 87.0},
+        "environmentMetrics": {
+            "temperature": 21.5,
+            "relativeHumidity": 40.2,
+            "barometricPressure": 1013.2,
+            "lux": 120.0,
+            # LPP current arrives in amps and is scaled to the column's
+            # milliamp convention (Meshtastic EnvironmentMetrics unit).
+            "current": 120.0,
+        },
+    }
+
+
+def test_lpp_to_telemetry_section_rejects_empty_and_non_lists(monkeypatch):
+    """Unusable LPP inputs yield None (nothing queued downstream)."""
+    mc_tel = _telemetry_module()
+    monkeypatch.setattr(mc_tel.config, "_debug_log", lambda *_a, **_k: None)
+    assert mc_tel._lpp_to_telemetry_section(None) is None
+    assert mc_tel._lpp_to_telemetry_section({"type": "temperature"}) is None
+    assert mc_tel._lpp_to_telemetry_section([]) is None
+    assert mc_tel._lpp_to_telemetry_section([{"type": "gps", "value": 1.0}]) is None
+
+
+def test_lpp_duplicate_types_keep_first_reading(monkeypatch):
+    """setdefault semantics: the first reading of a type wins within a packet."""
+    mc_tel = _telemetry_module()
+    monkeypatch.setattr(mc_tel.config, "_debug_log", lambda *_a, **_k: None)
+    section = mc_tel._lpp_to_telemetry_section(
+        [
+            {"type": "temperature", "value": 21.5},
+            {"type": "temperature", "value": 99.0},
+        ]
+    )
+    assert section == {"environmentMetrics": {"temperature": 21.5}}
+
+
+def test_millivolts_to_volts_bounds():
+    """mV gauges convert to volts; non-positive and junk values are rejected."""
+    mc_tel = _telemetry_module()
+    assert mc_tel._millivolts_to_volts(4056) == 4.056
+    assert mc_tel._millivolts_to_volts(0) is None
+    assert mc_tel._millivolts_to_volts(-5) is None
+    assert mc_tel._millivolts_to_volts(True) is None
+    assert mc_tel._millivolts_to_volts("4056") is None
+
+
+def test_status_to_telemetry_section_maps_battery_and_uptime():
+    """STATUS_RESPONSE bat/uptime map to deviceMetrics voltage/uptimeSeconds."""
+    mc_tel = _telemetry_module()
+    assert mc_tel._status_to_telemetry_section({"bat": 4056, "uptime": 3600}) == {
+        "deviceMetrics": {"voltage": 4.056, "uptimeSeconds": 3600}
+    }
+    assert mc_tel._status_to_telemetry_section({"bat": 4056}) == {
+        "deviceMetrics": {"voltage": 4.056}
+    }
+    assert mc_tel._status_to_telemetry_section({"uptime": 0, "bat": 0}) is None
+    assert mc_tel._status_to_telemetry_section({"uptime": True}) is None
+    assert mc_tel._status_to_telemetry_section("junk") is None
+
+
+def test_resolve_event_node_id_roster_host_and_unknown(monkeypatch):
+    """pubkey_pre resolves via roster, then host prefix, else None."""
+    mc_tel, iface, _stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    roster_id = iface.lookup_node_id(_TEST_CONTACT_KEY[:12])
+    assert mc_tel._resolve_event_node_id(iface, _TEST_CONTACT_KEY[:12]) == roster_id
+
+    iface.host_node_id = "!deadbeef"
+    iface._self_info_payload = {"public_key": "FFEE" + "11" * 30}
+    assert mc_tel._resolve_event_node_id(iface, "ffee1111") == "!deadbeef"
+
+    assert mc_tel._resolve_event_node_id(iface, "0123456789ab") is None
+    assert mc_tel._resolve_event_node_id(iface, "") is None
+    assert mc_tel._resolve_event_node_id(iface, None) is None
+
+
+def test_queue_meshcore_telemetry_packet_shape(monkeypatch):
+    """Queued packets carry the canonical shape, protocol stamp, and stable id."""
+    mc_tel, iface, stub, captured = _telemetry_env(monkeypatch)
+    seen = []
+    stub._mark_packet_seen = lambda: seen.append(True)
+
+    queued = mc_tel._queue_meshcore_telemetry(
+        stub, "!11223344", {"deviceMetrics": {"voltage": 4.05}}, "battery"
+    )
+    assert queued is True
+    assert seen == [True]
+    packet = captured[0]
+    assert packet["protocol"] == "meshcore"
+    assert packet["from_id"] == "!11223344"
+    assert packet["decoded"]["portnum"] == "TELEMETRY_APP"
+    assert packet["decoded"]["telemetry"]["deviceMetrics"] == {"voltage": 4.05}
+    assert packet["decoded"]["telemetry"]["time"] == 1_700_000_000
+    assert isinstance(packet["id"], int) and 0 <= packet["id"] < (1 << 53)
+
+    # Same node/kind/second → identical id (web-side PRIMARY KEY collapse).
+    mc_tel._queue_meshcore_telemetry(
+        stub, "!11223344", {"deviceMetrics": {"voltage": 4.06}}, "battery"
+    )
+    assert captured[1]["id"] == packet["id"]
+    # A different kind in the same second must not collide.
+    mc_tel._queue_meshcore_telemetry(
+        stub, "!11223344", {"deviceMetrics": {"voltage": 4.06}}, "status"
+    )
+    assert captured[2]["id"] != packet["id"]
+
+
+def test_queue_meshcore_telemetry_skips_incomplete(monkeypatch):
+    """Missing node id or empty section queues nothing."""
+    mc_tel, _iface, stub, captured = _telemetry_env(monkeypatch)
+    assert (
+        mc_tel._queue_meshcore_telemetry(stub, None, {"deviceMetrics": {}}, "x")
+        is False
+    )
+    assert mc_tel._queue_meshcore_telemetry(stub, "!11223344", None, "x") is False
+    assert captured == []
+
+
+def test_telemetry_event_callbacks_ingest(monkeypatch):
+    """The three event callbacks resolve the node and queue telemetry."""
+    mc_tel, iface, stub, captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    iface.host_node_id = "!deadbeef"
+    handlers_map = mc_tel._make_telemetry_handlers(iface, stub)
+
+    asyncio.run(
+        handlers_map["TELEMETRY_RESPONSE"](
+            _FakeEvt(
+                {
+                    "pubkey_pre": _TEST_CONTACT_KEY[:12],
+                    "lpp": [{"type": "temperature", "value": 21.5}],
+                }
+            )
+        )
+    )
+    asyncio.run(
+        handlers_map["STATUS_RESPONSE"](
+            _FakeEvt({"pubkey_pre": _TEST_CONTACT_KEY[:12], "bat": 4056})
+        )
+    )
+    asyncio.run(handlers_map["BATTERY"](_FakeEvt({"level": 3900})))
+    asyncio.run(handlers_map["BATTERY"](_FakeEvt({})))  # no gauge → skipped
+
+    assert len(captured) == 3
+    assert captured[0]["decoded"]["telemetry"]["environmentMetrics"] == {
+        "temperature": 21.5
+    }
+    assert captured[1]["decoded"]["telemetry"]["deviceMetrics"] == {"voltage": 4.056}
+    assert captured[2]["from_id"] == "!deadbeef"
+    assert captured[2]["decoded"]["telemetry"]["deviceMetrics"] == {"voltage": 3.9}
+
+
+def test_next_poll_contact_round_robin_with_cooldown(monkeypatch):
+    """Contact polling walks the roster in stable order, then idles until a
+    contact's 24 h cooldown expires instead of wrapping immediately."""
+    second_key = "bbccddeeff00" + "11" * 26
+    mc_tel, iface, _stub, _captured = _telemetry_env(
+        monkeypatch,
+        contacts=[
+            {"public_key": _TEST_CONTACT_KEY, "adv_name": "A"},
+            {"public_key": second_key, "adv_name": "B"},
+        ],
+    )
+    state: dict = {}
+    first = mc_tel._next_poll_contact(iface, state)
+    second = mc_tel._next_poll_contact(iface, state)
+    assert [first["public_key"], second["public_key"]] == [
+        _TEST_CONTACT_KEY,
+        second_key,
+    ]
+    # Both contacts were just stamped — the roster is fully fresh, so the
+    # tick has nothing to send.
+    assert mc_tel._next_poll_contact(iface, state) is None
+
+    # Aging one contact past the cooldown makes it eligible again.
+    state["last_polled"][second_key] -= mc_tel._TELEMETRY_NODE_COOLDOWN_SECONDS + 1
+    assert mc_tel._next_poll_contact(iface, state)["public_key"] == second_key
+
+    empty = _MeshcoreInterface(target=None)
+    assert mc_tel._next_poll_contact(empty, {}) is None
+
+
+def test_next_poll_contact_prunes_departed_roster_entries(monkeypatch):
+    """Cooldown stamps for contacts no longer in the roster are dropped."""
+    mc_tel, iface, _stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "A"}]
+    )
+    state = {"last_polled": {"departed" + "00" * 26: 123.0}}
+    picked = mc_tel._next_poll_contact(iface, state)
+    assert picked["public_key"] == _TEST_CONTACT_KEY
+    assert set(state["last_polled"]) == {_TEST_CONTACT_KEY}
+
+
+def test_poll_contact_telemetry_honours_cooldown_across_ticks(monkeypatch):
+    """With shared state, a second tick inside the cooldown sends nothing."""
+    import types
+
+    mc_tel, iface, stub, captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    requests = {"count": 0}
+
+    class _Commands:
+        async def req_telemetry_sync(self, contact):
+            requests["count"] += 1
+            return [{"type": "temperature", "value": 21.5}]
+
+        async def req_status_sync(self, contact):
+            return None
+
+    mc = types.SimpleNamespace(commands=_Commands())
+    state: dict = {}
+    asyncio.run(mc_tel._poll_contact_telemetry(mc, iface, stub, state))
+    asyncio.run(mc_tel._poll_contact_telemetry(mc, iface, stub, state))
+    assert requests["count"] == 1
+    assert len(captured) == 1
+
+
+def test_poll_self_telemetry_ingests_and_swallows_errors(monkeypatch):
+    """Self polling queues battery + sensor packets; command errors are logged."""
+    import types
+
+    mc_tel, iface, stub, captured = _telemetry_env(monkeypatch)
+    iface.host_node_id = "!deadbeef"
+
+    class _Commands:
+        async def get_bat(self):
+            return types.SimpleNamespace(payload={"level": 4100})
+
+        async def get_self_telemetry(self):
+            return types.SimpleNamespace(
+                payload={"lpp": [{"type": "temperature", "value": 22.0}]}
+            )
+
+    mc = types.SimpleNamespace(commands=_Commands())
+    asyncio.run(mc_tel._poll_self_telemetry(mc, iface, stub))
+    assert len(captured) == 2
+
+    class _BrokenCommands:
+        async def get_bat(self):
+            raise RuntimeError("no battery command")
+
+        async def get_self_telemetry(self):
+            raise RuntimeError("no telemetry command")
+
+    captured.clear()
+    asyncio.run(
+        mc_tel._poll_self_telemetry(
+            types.SimpleNamespace(commands=_BrokenCommands()), iface, stub
+        )
+    )
+    assert captured == []
+
+
+def test_poll_contact_telemetry_paths(monkeypatch):
+    """Contact polling ingests LPP, falls back to status, and survives errors."""
+    import types
+
+    mc_tel, iface, stub, captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+
+    def _mc(
+        telemetry_result=None,
+        telemetry_error=None,
+        status_result=None,
+        status_error=None,
+    ):
+        class _Commands:
+            async def req_telemetry_sync(self, contact):
+                if telemetry_error:
+                    raise telemetry_error
+                return telemetry_result
+
+            async def req_status_sync(self, contact):
+                if status_error:
+                    raise status_error
+                return status_result
+
+        return types.SimpleNamespace(commands=_Commands())
+
+    # LPP success → one packet, no status fallback needed.
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(telemetry_result=[{"type": "temperature", "value": 21.5}]),
+            iface,
+            stub,
+            {},
+        )
+    )
+    assert len(captured) == 1
+
+    # Empty LPP → status fallback ingests battery.
+    captured.clear()
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(telemetry_result=None, status_result={"bat": 4056}), iface, stub, {}
+        )
+    )
+    assert len(captured) == 1
+    assert captured[0]["decoded"]["telemetry"]["deviceMetrics"]["voltage"] == 4.056
+
+    # Telemetry request error → logged, no status attempt, nothing queued.
+    captured.clear()
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(telemetry_error=RuntimeError("timeout")), iface, stub, {}
+        )
+    )
+    assert captured == []
+
+    # Status fallback error → logged, nothing queued.
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(status_error=RuntimeError("timeout")), iface, stub, {}
+        )
+    )
+    assert captured == []
+
+    # Empty roster → no-op.
+    empty = _MeshcoreInterface(target=None)
+    asyncio.run(mc_tel._poll_contact_telemetry(_mc(), empty, stub, {}))
+    assert captured == []
+
+    # A roster entry whose public key is too short to derive a node id is
+    # skipped before any on-air request.
+    unresolvable = _MeshcoreInterface(target=None)
+    unresolvable._update_contact({"public_key": "abcd", "adv_name": "Ghost"})
+    asyncio.run(mc_tel._poll_contact_telemetry(_mc(), unresolvable, stub, {}))
+    assert captured == []
+
+
+def test_telemetry_poll_loop_disabled_and_ticking(monkeypatch):
+    """The poll loop exits when disabled and fires both poll kinds when enabled."""
+    import types
+
+    mc_tel, iface, stub, captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    iface.host_node_id = "!deadbeef"
+    import data.mesh_ingestor as _mesh_pkg
+
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+
+    # Both cadences disabled → the loop returns immediately.
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_SELF_TELEMETRY_SECONDS", 0)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_TELEMETRY_POLL_SECONDS", 0)
+    asyncio.run(mc_tel._telemetry_poll_loop(types.SimpleNamespace(), iface))
+
+    # Enabled: run the loop as a task, let the immediate self tick and the
+    # (shortened) contact tick fire, then cancel.
+    calls = {"self": 0, "contact": 0}
+
+    class _Commands:
+        async def get_bat(self):
+            calls["self"] += 1
+            return types.SimpleNamespace(payload={"level": 4100})
+
+        async def get_self_telemetry(self):
+            return types.SimpleNamespace(payload={"lpp": []})
+
+        async def req_telemetry_sync(self, contact):
+            calls["contact"] += 1
+            return [{"type": "temperature", "value": 21.5}]
+
+        async def req_status_sync(self, contact):
+            return None
+
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_SELF_TELEMETRY_SECONDS", 3600)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_TELEMETRY_POLL_SECONDS", 1)
+
+    async def _drive():
+        task = asyncio.create_task(
+            mc_tel._telemetry_poll_loop(
+                types.SimpleNamespace(commands=_Commands()), iface
+            )
+        )
+        await asyncio.sleep(1.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_drive())
+    assert calls["self"] == 1  # immediate first self tick
+    assert calls["contact"] >= 1  # first on-air poll after one interval
+
+
+def test_telemetry_poll_loop_rx_only_disables_on_air_polls(monkeypatch):
+    """RX_ONLY forbids ingestor TX: contact polls stop, local self reads stay."""
+    import types
+
+    mc_tel, iface, stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    iface.host_node_id = "!deadbeef"
+    import data.mesh_ingestor as _mesh_pkg
+
+    monkeypatch.setattr(_mesh_pkg, "handlers", stub)
+    monkeypatch.setattr(mc_tel.config, "RX_ONLY", True)
+
+    calls = {"self": 0, "contact": 0}
+
+    class _Commands:
+        async def get_bat(self):
+            calls["self"] += 1
+            return types.SimpleNamespace(payload={"level": 4100})
+
+        async def get_self_telemetry(self):
+            return types.SimpleNamespace(payload={"lpp": []})
+
+        async def req_telemetry_sync(self, contact):
+            calls["contact"] += 1
+            return None
+
+        async def req_status_sync(self, contact):
+            return None
+
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_SELF_TELEMETRY_SECONDS", 3600)
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_TELEMETRY_POLL_SECONDS", 1)
+
+    async def _drive():
+        task = asyncio.create_task(
+            mc_tel._telemetry_poll_loop(
+                types.SimpleNamespace(commands=_Commands()), iface
+            )
+        )
+        await asyncio.sleep(1.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_drive())
+    assert calls["self"] == 1  # companion-link reads are not transmissions
+    assert calls["contact"] == 0  # no on-air request under RX_ONLY
+
+    # RX_ONLY with self polling also disabled → the loop exits immediately.
+    monkeypatch.setattr(mc_tel.config, "MESHCORE_SELF_TELEMETRY_SECONDS", 0)
+    asyncio.run(mc_tel._telemetry_poll_loop(types.SimpleNamespace(), iface))
+
+
 def test_on_channel_msg_queues_packet(monkeypatch):
     """on_channel_msg must call store_packet_dict with the correct packet fields."""
     import asyncio
@@ -3331,6 +3866,10 @@ def _make_fake_meshcore_mod(
             "CONTACT_DELETED",
             "RX_LOG_DATA",
             "DISCONNECTED",
+            # Telemetry surfaces subscribed since TI-A3.
+            "TELEMETRY_RESPONSE",
+            "STATUS_RESPONSE",
+            "BATTERY",
             "CONNECTED",
             "ACK",
             "OK",

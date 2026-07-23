@@ -18,7 +18,16 @@ module PotatoMesh
   module App
     module DataProcessing
       # Allowed values for the +telemetry_type+ discriminator column.
-      VALID_TELEMETRY_TYPES = %w[device environment power air_quality].freeze
+      VALID_TELEMETRY_TYPES = %w[
+        device
+        environment
+        power
+        air_quality
+        local_stats
+        health
+        host
+        traffic
+      ].freeze
 
       # Half-window (seconds) for the meshcore content-level message dedup
       # in +insert_message+ and the matching one-shot backfill.  Two

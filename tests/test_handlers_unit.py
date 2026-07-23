@@ -811,6 +811,193 @@ class TestStoreTelemetryPacket:
         assert "telemetry_type" not in payload
 
 
+class TestExtendedTelemetryExtraction:
+    """Regression guards for TI-A1: every Meshtastic telemetry family is
+    extracted at ingest instead of being dropped (power, air-quality, health,
+    local/host/traffic stats, and the repeated one-wire probe list)."""
+
+    def _queued_payload(self, telemetry, pkt_id=3001):
+        """Run ``store_telemetry_packet`` for *telemetry* and return the queued
+        POST payload dict.
+
+        Parameters:
+            telemetry: The decoded ``telemetry`` section for the packet.
+            pkt_id: Packet id to stamp on the synthetic packet.
+
+        Returns:
+            The payload queued to ``/api/telemetry``.
+        """
+        import data.mesh_ingestor.queue as q
+
+        sent = []
+        original = q._queue_post_json
+        q._queue_post_json = lambda path, payload, *, priority, **kw: sent.append(
+            (path, payload)
+        )
+        try:
+            pkt = {
+                "id": pkt_id,
+                "rxTime": 1_700_000_000,
+                "fromId": "!aabbccdd",
+                "decoded": {"portnum": "TELEMETRY_APP", "telemetry": telemetry},
+            }
+            handlers.store_telemetry_packet(pkt, pkt["decoded"])
+        finally:
+            q._queue_post_json = original
+        assert sent, "telemetry packet was not queued at all"
+        return sent[0][1]
+
+    def test_power_metrics_extracted(self):
+        """PowerMetrics channel readings survive into the queued payload."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "powerMetrics": {
+                    "ch1Voltage": 3.94,
+                    "ch1Current": 121.5,
+                    "ch3Voltage": 11.9,
+                    "ch8Current": 0.25,
+                },
+            }
+        )
+        assert payload.get("telemetry_type") == "power"
+        assert payload.get("ch1_voltage") == 3.94
+        assert payload.get("ch1_current") == 121.5
+        assert payload.get("ch3_voltage") == 11.9
+        assert payload.get("ch8_current") == 0.25
+
+    def test_air_quality_metrics_extracted(self):
+        """AirQualityMetrics PM / particle / CO2 / VOC readings are extracted."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "airQualityMetrics": {
+                    "pm25Standard": 8,
+                    "pm10Environmental": 5,
+                    "pm40Standard": 3,
+                    "particles03um": 1200,
+                    "particles40um": 40,
+                    "co2": 700,
+                    "co2Temperature": 24.5,
+                    "formFormaldehyde": 0.03,
+                    "pmVocIdx": 110.0,
+                    "particlesTps": 1.5,
+                },
+            }
+        )
+        assert payload.get("telemetry_type") == "air_quality"
+        assert payload.get("pm25_standard") == 8
+        assert payload.get("pm10_environmental") == 5
+        assert payload.get("pm40_standard") == 3
+        assert payload.get("particles_03um") == 1200
+        assert payload.get("particles_40um") == 40
+        assert payload.get("co2") == 700
+        assert payload.get("co2_temperature") == 24.5
+        assert payload.get("form_formaldehyde") == 0.03
+        assert payload.get("pm_voc_idx") == 110.0
+        assert payload.get("particles_tps") == 1.5
+
+    def test_health_metrics_extracted(self):
+        """HealthMetrics values map to dedicated columns; body temperature
+        never masquerades as the ambient ``temperature`` metric."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "healthMetrics": {"heartBpm": 72, "spO2": 97, "temperature": 36.6},
+            }
+        )
+        assert payload.get("telemetry_type") == "health"
+        assert payload.get("heart_bpm") == 72
+        assert payload.get("spo2") == 97
+        assert payload.get("health_temperature") == 36.6
+        assert "temperature" not in payload
+
+    def test_local_stats_extracted(self):
+        """LocalStats counters are extracted; the shared uptime / utilisation
+        fields reuse the existing columns."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "localStats": {
+                    "uptimeSeconds": 3600,
+                    "channelUtilization": 12.5,
+                    "airUtilTx": 3.2,
+                    "numPacketsTx": 10,
+                    "numPacketsRx": 42,
+                    "numRxDupe": 2,
+                    "heapTotalBytes": 200_000,
+                    "heapFreeBytes": 80_000,
+                    "noiseFloor": -95,
+                },
+            }
+        )
+        assert payload.get("telemetry_type") == "local_stats"
+        assert payload.get("uptime_seconds") == 3600
+        assert payload.get("channel_utilization") == 12.5
+        assert payload.get("air_util_tx") == 3.2
+        assert payload.get("num_packets_tx") == 10
+        assert payload.get("num_packets_rx") == 42
+        assert payload.get("num_rx_dupe") == 2
+        assert payload.get("heap_total_bytes") == 200_000
+        assert payload.get("heap_free_bytes") == 80_000
+        assert payload.get("noise_floor") == -95
+
+    def test_host_metrics_extracted(self):
+        """HostMetrics gauges (including the free-text user string) survive."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "hostMetrics": {
+                    "uptimeSeconds": 86_400,
+                    "freememBytes": 1_048_576,
+                    "diskfree1Bytes": 2**33,
+                    "load1": 35,
+                    "load15": 12,
+                    "userString": "potato",
+                },
+            }
+        )
+        assert payload.get("telemetry_type") == "host"
+        assert payload.get("uptime_seconds") == 86_400
+        assert payload.get("freemem_bytes") == 1_048_576
+        assert payload.get("diskfree1_bytes") == 2**33
+        assert payload.get("load1") == 35
+        assert payload.get("load15") == 12
+        assert payload.get("user_string") == "potato"
+
+    def test_traffic_stats_extracted(self):
+        """TrafficManagementStats counters are extracted."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "trafficManagementStats": {
+                    "packetsInspected": 100,
+                    "rateLimitDrops": 3,
+                    "routerHopsPreserved": 7,
+                },
+            }
+        )
+        assert payload.get("telemetry_type") == "traffic"
+        assert payload.get("packets_inspected") == 100
+        assert payload.get("rate_limit_drops") == 3
+        assert payload.get("router_hops_preserved") == 7
+
+    def test_one_wire_temperature_extracted(self):
+        """The repeated one-wire probe list is preserved as a float list."""
+        payload = self._queued_payload(
+            {
+                "time": 1_700_000_000,
+                "environmentMetrics": {
+                    "temperature": 21.5,
+                    "oneWireTemperature": [20.0, 21.25],
+                },
+            }
+        )
+        assert payload.get("telemetry_type") == "environment"
+        assert payload.get("temperature") == 21.5
+        assert payload.get("one_wire_temperature") == [20.0, 21.25]
+
+
 # ---------------------------------------------------------------------------
 # store_nodeinfo_packet
 # ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ from .messages import (
     _synthetic_node_dict,
 )
 from .position import _store_meshcore_position
+from .telemetry import _make_telemetry_handlers
 
 
 def _process_self_info(
@@ -420,4 +421,7 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         "CONTACT_DELETED": on_contact_deleted,
         "RX_LOG_DATA": on_rx_log_data,
         "DISCONNECTED": on_disconnected,
+        # Telemetry surfaces (TI-A3): contact/self telemetry pulls, status
+        # responses, and the host battery event.
+        **_make_telemetry_handlers(iface, _handlers),
     }

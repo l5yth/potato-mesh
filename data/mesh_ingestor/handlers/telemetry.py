@@ -34,15 +34,201 @@ from .position import base64_payload
 from .radio import _apply_radio_metadata, _apply_radio_metadata_to_nodes
 
 _VALID_TELEMETRY_TYPES: frozenset[str] = frozenset(
-    {"device", "environment", "power", "air_quality"}
+    {
+        "device",
+        "environment",
+        "power",
+        "air_quality",
+        "local_stats",
+        "health",
+        "host",
+        "traffic",
+    }
 )
 """Allowed discriminator values for the ``telemetry_type`` field.
 
 Meshtastic uses a protobuf ``oneof`` so only one metric sub-object can be
-populated per packet.  Values outside this set indicate a firmware version
-that added a new type not yet handled here; those are logged and dropped to
-avoid persisting unexpected data shapes.
+populated per packet.  One value per ``Telemetry.variant`` member (TI-A1).
+Values outside this set indicate a firmware version that added a new type not
+yet handled here; those are logged and dropped to avoid persisting unexpected
+data shapes.
 """
+
+
+def _coerce_str(value) -> str | None:
+    """Coerce a free-text metric (e.g. ``HostMetrics.userString``) to a
+    trimmed string, or ``None`` when blank or not text."""
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
+def _coerce_float_list(value) -> list[float] | None:
+    """Coerce a repeated float metric (``EnvironmentMetrics.oneWireTemperature``)
+    to a list of finite floats, or ``None`` when nothing usable remains."""
+    if not isinstance(value, (list, tuple)):
+        return None
+    floats = [f for f in (_coerce_float(item) for item in value) if f is not None]
+    return floats or None
+
+
+def _family_fields(family_camel: str, family_snake: str, fields) -> tuple:
+    """Expand ``(payload_key, coercer, camel_name)`` triples into full metric
+    definitions probing the family sub-object under both key spellings.
+
+    Parameters:
+        family_camel: camelCase sub-object key as decoded from protobuf JSON
+            (e.g. ``"powerMetrics"``).
+        family_snake: snake_case twin accepted for defensive compatibility.
+        fields: Iterable of ``(payload_key, coercer, camel_name)`` triples.
+
+    Returns:
+        Tuple of ``(payload_key, coercer, candidate_paths)`` definitions.
+    """
+    return tuple(
+        (
+            key,
+            coercer,
+            (
+                f"{family_camel}.{camel}",
+                f"{family_camel}.{key}",
+                f"{family_snake}.{key}",
+            ),
+        )
+        for key, coercer, camel in fields
+    )
+
+
+def _power_channel_fields() -> tuple:
+    """Build the 16 ``PowerMetrics`` channel definitions (``ch1``–``ch8``,
+    voltage + current per channel)."""
+    fields = []
+    for ch in range(1, 9):
+        for kind, camel_kind in (("voltage", "Voltage"), ("current", "Current")):
+            fields.append((f"ch{ch}_{kind}", _coerce_float, f"ch{ch}{camel_kind}"))
+    return _family_fields("powerMetrics", "power_metrics", fields)
+
+
+_EXTENDED_METRIC_FIELDS: tuple = (
+    _power_channel_fields()
+    + _family_fields(
+        "airQualityMetrics",
+        "air_quality_metrics",
+        (
+            ("pm10_standard", _coerce_int, "pm10Standard"),
+            ("pm25_standard", _coerce_int, "pm25Standard"),
+            ("pm100_standard", _coerce_int, "pm100Standard"),
+            ("pm40_standard", _coerce_int, "pm40Standard"),
+            ("pm10_environmental", _coerce_int, "pm10Environmental"),
+            ("pm25_environmental", _coerce_int, "pm25Environmental"),
+            ("pm100_environmental", _coerce_int, "pm100Environmental"),
+            ("particles_03um", _coerce_int, "particles03um"),
+            ("particles_05um", _coerce_int, "particles05um"),
+            ("particles_10um", _coerce_int, "particles10um"),
+            ("particles_25um", _coerce_int, "particles25um"),
+            ("particles_40um", _coerce_int, "particles40um"),
+            ("particles_50um", _coerce_int, "particles50um"),
+            ("particles_100um", _coerce_int, "particles100um"),
+            ("particles_tps", _coerce_float, "particlesTps"),
+            ("co2", _coerce_int, "co2"),
+            ("co2_temperature", _coerce_float, "co2Temperature"),
+            ("co2_humidity", _coerce_float, "co2Humidity"),
+            ("form_formaldehyde", _coerce_float, "formFormaldehyde"),
+            ("form_humidity", _coerce_float, "formHumidity"),
+            ("form_temperature", _coerce_float, "formTemperature"),
+            ("pm_temperature", _coerce_float, "pmTemperature"),
+            ("pm_humidity", _coerce_float, "pmHumidity"),
+            ("pm_voc_idx", _coerce_float, "pmVocIdx"),
+            ("pm_nox_idx", _coerce_float, "pmNoxIdx"),
+        ),
+    )
+    + _family_fields(
+        "healthMetrics",
+        "health_metrics",
+        (
+            ("heart_bpm", _coerce_int, "heartBpm"),
+            ("spo2", _coerce_int, "spO2"),
+            # Body temperature is deliberately kept apart from the ambient
+            # ``temperature`` column so a chest strap never reads as weather.
+            ("health_temperature", _coerce_float, "temperature"),
+        ),
+    )
+    + _family_fields(
+        "localStats",
+        "local_stats",
+        (
+            ("num_packets_tx", _coerce_int, "numPacketsTx"),
+            ("num_packets_rx", _coerce_int, "numPacketsRx"),
+            ("num_packets_rx_bad", _coerce_int, "numPacketsRxBad"),
+            ("num_online_nodes", _coerce_int, "numOnlineNodes"),
+            ("num_total_nodes", _coerce_int, "numTotalNodes"),
+            ("num_rx_dupe", _coerce_int, "numRxDupe"),
+            ("num_tx_relay", _coerce_int, "numTxRelay"),
+            ("num_tx_relay_canceled", _coerce_int, "numTxRelayCanceled"),
+            ("heap_total_bytes", _coerce_int, "heapTotalBytes"),
+            ("heap_free_bytes", _coerce_int, "heapFreeBytes"),
+            ("num_tx_dropped", _coerce_int, "numTxDropped"),
+            ("noise_floor", _coerce_int, "noiseFloor"),
+        ),
+    )
+    + _family_fields(
+        "hostMetrics",
+        "host_metrics",
+        (
+            ("freemem_bytes", _coerce_int, "freememBytes"),
+            ("diskfree1_bytes", _coerce_int, "diskfree1Bytes"),
+            ("diskfree2_bytes", _coerce_int, "diskfree2Bytes"),
+            ("diskfree3_bytes", _coerce_int, "diskfree3Bytes"),
+            ("load1", _coerce_int, "load1"),
+            ("load5", _coerce_int, "load5"),
+            ("load15", _coerce_int, "load15"),
+            ("user_string", _coerce_str, "userString"),
+        ),
+    )
+    + _family_fields(
+        "trafficManagementStats",
+        "traffic_management_stats",
+        (
+            ("packets_inspected", _coerce_int, "packetsInspected"),
+            ("position_dedup_drops", _coerce_int, "positionDedupDrops"),
+            ("nodeinfo_cache_hits", _coerce_int, "nodeinfoCacheHits"),
+            ("rate_limit_drops", _coerce_int, "rateLimitDrops"),
+            ("unknown_packet_drops", _coerce_int, "unknownPacketDrops"),
+            ("hop_exhausted_packets", _coerce_int, "hopExhaustedPackets"),
+            ("router_hops_preserved", _coerce_int, "routerHopsPreserved"),
+        ),
+    )
+    + _family_fields(
+        "environmentMetrics",
+        "environment_metrics",
+        (("one_wire_temperature", _coerce_float_list, "oneWireTemperature"),),
+    )
+)
+"""Extended metric definitions for the telemetry families beyond the original
+device/environment pair (TI-A1): ``(payload_key, coercer, candidate_paths)``
+per field.  Candidate paths are dotted ``_first`` lookups into the decoded
+telemetry section."""
+
+
+def _extract_extended_metrics(telemetry_section: Mapping) -> dict:
+    """Extract every non-None extended-family metric from *telemetry_section*.
+
+    Parameters:
+        telemetry_section: Decoded ``Telemetry`` dict (the packet's
+            ``decoded["telemetry"]`` mapping).
+
+    Returns:
+        Mapping of snake_case payload key → coerced value, containing only the
+        fields actually present in the packet, so absent fields are omitted
+        from the POST body rather than sent as null.
+    """
+    metrics: dict = {}
+    for payload_key, coercer, candidates in _EXTENDED_METRIC_FIELDS:
+        value = coercer(_first(telemetry_section, *candidates, default=None))
+        if value is not None:
+            metrics[payload_key] = value
+    return metrics
 
 
 def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
@@ -120,6 +306,14 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
     _aq = telemetry_section.get("airQualityMetrics") or telemetry_section.get(
         "air_quality_metrics"
     )
+    _ls = telemetry_section.get("localStats") or telemetry_section.get("local_stats")
+    _hm = telemetry_section.get("healthMetrics") or telemetry_section.get(
+        "health_metrics"
+    )
+    _ho = telemetry_section.get("hostMetrics") or telemetry_section.get("host_metrics")
+    _tm = telemetry_section.get("trafficManagementStats") or telemetry_section.get(
+        "traffic_management_stats"
+    )
     # Priority order matters: deviceMetrics is checked first because the device
     # sub-object also carries a voltage field that overlaps with powerMetrics.
     # Meshtastic uses a protobuf oneof so only one sub-object can be populated per
@@ -132,6 +326,14 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         telemetry_type = "power"
     elif isinstance(_aq, Mapping):
         telemetry_type = "air_quality"
+    elif isinstance(_ls, Mapping):
+        telemetry_type = "local_stats"
+    elif isinstance(_hm, Mapping):
+        telemetry_type = "health"
+    elif isinstance(_ho, Mapping):
+        telemetry_type = "host"
+    elif isinstance(_tm, Mapping):
+        telemetry_type = "traffic"
     else:
         telemetry_type = None
 
@@ -190,6 +392,9 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
             "channel_utilization",
             "deviceMetrics.channelUtilization",
             "deviceMetrics.channel_utilization",
+            # LocalStats repeats the utilisation gauges; reuse the column.
+            "localStats.channelUtilization",
+            "local_stats.channel_utilization",
             default=None,
         )
     )
@@ -200,6 +405,8 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
             "air_util_tx",
             "deviceMetrics.airUtilTx",
             "deviceMetrics.air_util_tx",
+            "localStats.airUtilTx",
+            "local_stats.air_util_tx",
             default=None,
         )
     )
@@ -210,6 +417,11 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
             "uptime_seconds",
             "deviceMetrics.uptimeSeconds",
             "deviceMetrics.uptime_seconds",
+            # LocalStats and HostMetrics both report an uptime gauge.
+            "localStats.uptimeSeconds",
+            "local_stats.uptime_seconds",
+            "hostMetrics.uptimeSeconds",
+            "host_metrics.uptime_seconds",
             default=None,
         )
     )
@@ -503,6 +715,10 @@ def store_telemetry_packet(packet: Mapping, decoded: Mapping) -> None:
         telemetry_payload["soil_moisture"] = soil_moisture
     if soil_temperature is not None:
         telemetry_payload["soil_temperature"] = soil_temperature
+    # Extended families (power / air-quality / health / local / host / traffic
+    # stats and the one-wire probe list) are table-driven; only present fields
+    # are added, matching the conditional style above (TI-A1).
+    telemetry_payload.update(_extract_extended_metrics(telemetry_section))
     if telemetry_type is not None:
         telemetry_payload["telemetry_type"] = telemetry_type
 

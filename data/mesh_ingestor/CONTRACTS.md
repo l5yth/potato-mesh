@@ -145,10 +145,44 @@ Single telemetry payload:
 - Packet: `channel` (int), `portnum` (string|nil), `bitfield` (int|nil), `hop_limit` (int|nil)
 - RF: `snr` (float|nil), `rssi` (int|nil)
 - Raw: `payload_b64` (string; may be empty string when unknown)
-- Metrics: many optional snake_case keys (`battery_level`, `voltage`, `temperature`, etc.)
-- Subtype: `telemetry_type` (string|nil) — optional discriminator identifying which Meshtastic protobuf oneof was set; one of `"device"`, `"environment"`, `"power"`, or `"air_quality"`. Ingestors that detect the subtype SHOULD include this field; omit rather than send `null` when unknown. The web app infers the type from metric-field presence when absent, so old ingestors remain compatible.
+- Metrics: many optional snake_case keys, one per stored column. Device:
+  `battery_level`, `voltage`, `channel_utilization`, `air_util_tx`,
+  `uptime_seconds`. Environment: `temperature`, `relative_humidity`,
+  `barometric_pressure`, `gas_resistance`, `current`, `iaq`, `distance`,
+  `lux`/`white_lux`/`ir_lux`/`uv_lux`, `wind_direction`/`wind_speed`/
+  `wind_gust`/`wind_lull`, `weight`, `radiation`, `rainfall_1h`/`rainfall_24h`,
+  `soil_moisture`/`soil_temperature`, and `one_wire_temperature`
+  (list[float], stored as a JSON array). Power (TI-A1/A2): `ch1_voltage` …
+  `ch8_voltage`, `ch1_current` … `ch8_current`. Air quality:
+  `pm10_standard`/`pm25_standard`/`pm100_standard`/`pm40_standard`,
+  `pm10_environmental`/`pm25_environmental`/`pm100_environmental`,
+  `particles_03um`/`particles_05um`/`particles_10um`/`particles_25um`/
+  `particles_40um`/`particles_50um`/`particles_100um`, `particles_tps`,
+  `co2`/`co2_temperature`/`co2_humidity`,
+  `form_formaldehyde`/`form_humidity`/`form_temperature`,
+  `pm_temperature`/`pm_humidity`/`pm_voc_idx`/`pm_nox_idx`. Health:
+  `heart_bpm`, `spo2`, `health_temperature` (body temperature — deliberately
+  distinct from the ambient `temperature`). Local stats: `num_packets_tx`,
+  `num_packets_rx`, `num_packets_rx_bad`, `num_online_nodes`,
+  `num_total_nodes`, `num_rx_dupe`, `num_tx_relay`, `num_tx_relay_canceled`,
+  `heap_total_bytes`, `heap_free_bytes`, `num_tx_dropped`, `noise_floor`
+  (plus the shared `uptime_seconds`/`channel_utilization`/`air_util_tx`).
+  Host: `freemem_bytes`, `diskfree1_bytes`/`diskfree2_bytes`/
+  `diskfree3_bytes`, `load1`/`load5`/`load15`, `user_string` (string).
+  Traffic: `packets_inspected`, `position_dedup_drops`,
+  `nodeinfo_cache_hits`, `rate_limit_drops`, `unknown_packet_drops`,
+  `hop_exhausted_packets`, `router_hops_preserved`. The web app also accepts
+  each family nested as a sub-object (`device_metrics`, `environment_metrics`,
+  `power_metrics`, `air_quality_metrics`, `local_stats`, `health_metrics`,
+  `host_metrics`, `traffic_management_stats`) with camelCase or snake_case
+  field names; nested family objects are consulted for **values**, not only
+  for type inference. All metric additions are additive (D8) — absent keys
+  are simply omitted, never sent as `null`.
+- Subtype: `telemetry_type` (string|nil) — optional discriminator identifying which Meshtastic protobuf oneof was set; one of `"device"`, `"environment"`, `"power"`, `"air_quality"`, `"local_stats"`, `"health"`, `"host"`, or `"traffic"` (the last four added additively for the LocalStats / HealthMetrics / HostMetrics / TrafficManagementStats variants, TI-A1). Ingestors that detect the subtype SHOULD include this field; omit rather than send `null` when unknown. The web app infers the type from metric-field presence when absent, so old ingestors remain compatible.
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
+
+**MeshCore telemetry sourcing (TI-A3).** MeshCore exposes other nodes' telemetry only as on-air *pull* requests (there is no unsolicited telemetry broadcast the companion library surfaces), so the MeshCore provider collects it three ways and normalises every reading into this same payload shape with `protocol="meshcore"`: (1) **host self-telemetry** over the local companion link (`get_bat` → battery millivolts as `voltage`; `get_self_telemetry` → the host's CayenneLPP sensor list), no LoRa airtime, cadence `MESHCORE_SELF_TELEMETRY_SECONDS` (default 3600 s, matching the host-telemetry suppression window; `<= 0` disables); (2) **round-robin contact polling** (`req_telemetry_sync`, falling back to `req_status_sync` when a node reports no sensors) at one on-air request per `MESHCORE_TELEMETRY_POLL_SECONDS` (default 300 s; `<= 0` disables) regardless of roster size, with each contact additionally capped at **one poll per 24 h** (a fixed per-node cooldown, stamped at the poll attempt so unreachable nodes are not hammered; when every contact is fresh the tick transmits nothing) — and `RX_ONLY=1` forbids these on-air polls entirely (receive-only ingestors; the local self reads in (1) are unaffected); (3) **unsolicited/tag-matched events** (`TELEMETRY_RESPONSE`, `STATUS_RESPONSE`, `BATTERY`) whenever the radio surfaces them. CayenneLPP types map to canonical keys (`temperature`, `humidity`→`relative_humidity`, `barometer`→`barometric_pressure`, `voltage`, `current` — scaled A→mA to match the Meshtastic column convention, `illuminance`→`lux`, `percentage`→`battery_level`); status `bat`/`level` millivolt gauges map to `voltage` (V). MeshCore assigns no firmware packet id, so the record `id` is the deterministic 53-bit fingerprint of *(node id, receive second, source kind)* — re-reads of the same source in the same second collapse into one row via the `telemetry.id` upsert.
 
 #### `POST /api/neighbors`
 

@@ -317,6 +317,230 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   end
 
   # ---------------------------------------------------------------------------
+  # insert_telemetry (extended metric families — TI-A2)
+  # ---------------------------------------------------------------------------
+  describe "#insert_telemetry — extended metric families" do
+    include_context "with isolated db"
+
+    # Insert +payload+ and return the stored telemetry row as a Hash.
+    #
+    # @param payload [Hash] inbound telemetry payload.
+    # @return [Hash] stored row for the payload's id.
+    def stored_row(payload)
+      db = open_db
+      dp.insert_telemetry(db, payload)
+      row = db.execute("SELECT * FROM telemetry WHERE id = ?", [payload["id"]]).first
+      db.close
+      row
+    end
+
+    it "stores power metric values from power_metrics" do
+      row = stored_row(
+        "id" => 91_001,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "power_metrics" => { "ch1Voltage" => 3.94, "ch2Current" => 121.5 },
+      )
+      expect(row["telemetry_type"]).to eq("power")
+      expect(row["ch1_voltage"]).to eq(3.94)
+      expect(row["ch2_current"]).to eq(121.5)
+    end
+
+    it "stores air quality metric values from air_quality_metrics" do
+      row = stored_row(
+        "id" => 91_002,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "air_quality_metrics" => { "pm25Standard" => 8, "co2" => 700 },
+      )
+      expect(row["telemetry_type"]).to eq("air_quality")
+      expect(row["pm25_standard"]).to eq(8)
+      expect(row["co2"]).to eq(700)
+    end
+
+    it "stores health metric values under dedicated columns" do
+      row = stored_row(
+        "id" => 91_003,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "health_metrics" => { "heartBpm" => 72, "spO2" => 97, "temperature" => 36.6 },
+      )
+      expect(row["telemetry_type"]).to eq("health")
+      expect(row["heart_bpm"]).to eq(72)
+      expect(row["spo2"]).to eq(97)
+      expect(row["health_temperature"]).to eq(36.6)
+      expect(row["temperature"]).to be_nil
+    end
+
+    it "accepts the diagnostics telemetry_type values and counters" do
+      row = stored_row(
+        "id" => 91_004,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "telemetry_type" => "local_stats",
+        "local_stats" => { "numPacketsRx" => 42, "noiseFloor" => -95 },
+      )
+      expect(row["telemetry_type"]).to eq("local_stats")
+      expect(row["num_packets_rx"]).to eq(42)
+      expect(row["noise_floor"]).to eq(-95)
+    end
+
+    it "stores host metrics including the user string" do
+      row = stored_row(
+        "id" => 91_005,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "host_metrics" => { "freememBytes" => 1_048_576, "load1" => 35, "userString" => "potato" },
+      )
+      expect(row["telemetry_type"]).to eq("host")
+      expect(row["freemem_bytes"]).to eq(1_048_576)
+      expect(row["load1"]).to eq(35)
+      expect(row["user_string"]).to eq("potato")
+    end
+
+    it "stores one_wire_temperature as a JSON array" do
+      row = stored_row(
+        "id" => 91_006,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "environment_metrics" => { "temperature" => 21.5, "oneWireTemperature" => [20.0, 21.25] },
+      )
+      expect(row["telemetry_type"]).to eq("environment")
+      expect(row["temperature"]).to eq(21.5)
+      expect(JSON.parse(row["one_wire_temperature"])).to eq([20.0, 21.25])
+    end
+
+    it "never leaks a flat ambient temperature into health_temperature" do
+      # The exact shape the Python ingestor posts for every EnvironmentMetrics
+      # packet (flat snake_case keys): ambient temperature must stay out of
+      # the body-temperature column even though their camelCase twins collide.
+      row = stored_row(
+        "id" => 91_009,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "temperature" => 21.5,
+        "relative_humidity" => 40.2,
+        "telemetry_type" => "environment",
+      )
+      expect(row["temperature"]).to eq(21.5)
+      expect(row["health_temperature"]).to be_nil
+    end
+
+    it "still reads body temperature from the nested health_metrics object" do
+      row = stored_row(
+        "id" => 91_010,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "health_metrics" => { "temperature" => 36.6 },
+      )
+      expect(row["health_temperature"]).to eq(36.6)
+      expect(row["temperature"]).to be_nil
+    end
+
+    it "infers the local_stats type from the sub-object when no type is sent" do
+      row = stored_row(
+        "id" => 91_008,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "local_stats" => { "numPacketsTx" => 10 },
+      )
+      expect(row["telemetry_type"]).to eq("local_stats")
+      expect(row["num_packets_tx"]).to eq(10)
+    end
+
+    it "stores the traffic management counters" do
+      row = stored_row(
+        "id" => 91_007,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "traffic_management_stats" => { "packetsInspected" => 100, "rateLimitDrops" => 3 },
+      )
+      expect(row["telemetry_type"]).to eq("traffic")
+      expect(row["packets_inspected"]).to eq(100)
+      expect(row["rate_limit_drops"]).to eq(3)
+    end
+
+    it "round-trips every extended metric column from flat snake_case keys" do
+      # Data-driven over the full definition list: one synthetic value per
+      # column, typed to its coercion strategy, exactly as the Python ingestor
+      # posts them (flat snake_case). Guards every INSERT/upsert list entry.
+      defs = PotatoMesh::App::DataProcessing::EXTENDED_TELEMETRY_METRIC_DEFINITIONS
+      payload = { "id" => 91_100, "node_id" => "!11223344", "rx_time" => now }
+      expected = {}
+      defs.each_with_index do |(column, type, _key_map), index|
+        value = case type
+          when :float then 1.5 + index
+          when :integer then 100 + index
+          when :string then "value-#{index}"
+          when :float_array then [1.0 + index, 2.0 + index]
+          end
+        payload[column] = value
+        expected[column] = type == :float_array ? JSON.generate(value) : value
+      end
+      row = stored_row(payload)
+      expected.each do |column, value|
+        expect(row[column]).to eq(value), "column #{column} did not round-trip"
+      end
+    end
+
+    it "keeps stored extended values when an upsert carries NULL for them" do
+      db = open_db
+      dp.insert_telemetry(
+        db,
+        {
+          "id" => 91_200, "node_id" => "!11223344", "rx_time" => now,
+          "power_metrics" => { "ch1Voltage" => 3.94 },
+        },
+      )
+      dp.insert_telemetry(
+        db,
+        {
+          "id" => 91_200, "node_id" => "!11223344", "rx_time" => now + 1,
+          "device_metrics" => { "batteryLevel" => 80 },
+        },
+      )
+      row = db.execute("SELECT ch1_voltage, battery_level FROM telemetry WHERE id = 91200").first
+      db.close
+      expect(row["ch1_voltage"]).to eq(3.94)
+      expect(row["battery_level"]).to eq(80.0)
+    end
+
+    it "treats blank user strings and junk one-wire lists as absent" do
+      row = stored_row(
+        "id" => 91_300,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "host_metrics" => { "userString" => "   ", "load1" => 12 },
+        "environment_metrics" => { "oneWireTemperature" => ["junk"] },
+      )
+      expect(row["user_string"]).to be_nil
+      expect(row["one_wire_temperature"]).to be_nil
+      expect(row["load1"]).to eq(12)
+    end
+
+    it "filters junk entries out of a mixed one-wire list" do
+      row = stored_row(
+        "id" => 91_301,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "environment_metrics" => { "oneWireTemperature" => ["junk", 20.0, nil, 21.25] },
+      )
+      expect(JSON.parse(row["one_wire_temperature"])).to eq([20.0, 21.25])
+    end
+
+    it "ignores a non-array one_wire_temperature value" do
+      row = stored_row(
+        "id" => 91_302,
+        "node_id" => "!11223344",
+        "rx_time" => now,
+        "environment_metrics" => { "temperature" => 21.5, "oneWireTemperature" => "20.0" },
+      )
+      expect(row["one_wire_temperature"]).to be_nil
+      expect(row["temperature"]).to eq(21.5)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # upsert_node — Bug 1: lastHeard = 0 must not be stored as 0
   # ---------------------------------------------------------------------------
   describe "#upsert_node — last_heard zero handling" do
