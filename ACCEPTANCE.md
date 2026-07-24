@@ -2748,6 +2748,16 @@ filter exists). **Supersedes the CSS/JS half of DM-A2**; the Ruby/contract half 
 DM-A2 still holds.
 
 ### HT-A3 — Per-tile 1000 ms timeout swaps HOT→CARTO — HT3
+
+> **⚠️ Superseded by SB-A1 / SB-A5** (§ *Feature: Dual stacked basemap layers (HOT
+> over CARTO, no timeout)*). The per-tile timeout-and-swap mechanism this criterion
+> checks was **removed by design**: HOT and CARTO now load as two always-on stacked
+> layers with **no** per-tile deadline, so `main/fallback-tile-layer.js` **and its
+> test are deleted** and the command below no longer resolves. **SB-A1** (no
+> `FALLBACK_TIMEOUT_MS` / `fallback-tile-layer` symbols remain) and **SB-A5** (both
+> layers feed one liveness policy) are the authoritative checks. Retained for
+> historical context only — do not run the command below.
+
 ```bash
 ( cd web && node --test public/assets/js/app/main/__tests__/fallback-tile-layer.test.js )
 ```
@@ -2760,6 +2770,17 @@ within 1000 ms is swapped to CARTO on timeout; (d) a swapped tile is marked
 The 1000 ms threshold is a single named constant (the source of truth).
 
 ### HT-A4 — Offline placeholder only when BOTH providers fail (dashboard) — HT4
+
+> **⚠️ Superseded by SB-A5** (§ *Feature: Dual stacked basemap layers*). The
+> fallback ladder is **preserved but re-expressed**: with two independent layers
+> the single `tile-failure-policy` is now fed by **both** (any `tileload` from
+> either latches "alive"; offline fires only on a comprehensive dual outage), and
+> `main/fallback-tile-layer.js` is deleted — so the command below no longer
+> resolves. **SB-A5** (`tile-failure-policy.test.js` + the new
+> `main-app-map-init.test.js`) is the authoritative check; the federation map still
+> keeps no offline tier. Retained for historical context only — do not run the
+> command below.
+
 ```bash
 ( cd web && node --test public/assets/js/app/main/__tests__/fallback-tile-layer.test.js \
                        public/assets/js/app/main/__tests__/tile-failure-policy.test.js )
@@ -2835,6 +2856,19 @@ makes fallback rare (2500 ms) **and** blends the two providers to one dark look
 from the repo root.
 
 ### BL-A1 — Graceful 2500 ms timeout + colored Voyager fallback + shared filter
+
+> **⚠️ Timeout half superseded by SB-A1; blend half by SB-A3/SB-A4** (§ *Feature:
+> Dual stacked basemap layers*). There is **no longer a per-tile timeout**:
+> `FALLBACK_TIMEOUT_MS` is **deleted with the mechanism**, so assertion (1) below
+> (`=== 2500`) **no longer exists** — the rewritten `basemap-blend.test.js` command
+> still passes but now verifies only the *colored-Voyager source* and the *shared
+> per-layer filter* (assertions (2)/(3) below), plus the single pane veil. The
+> Voyager source and the shared filter remain valid and are now the authoritative
+> checks under **SB-A3** (shared filter on both `.leaflet-layer.map-tiles-hot` /
+> `-fallback`) and **SB-A4** (single `.leaflet-tile-pane` `opacity: 0.5625`);
+> **SB-A1** covers the absence of the timeout constant. Read assertion (1) below as
+> historical only.
+
 ```bash
 ( cd web && node --test public/assets/js/app/__tests__/basemap-blend.test.js )
 ```
@@ -2859,6 +2893,16 @@ the Voyager fallback URL from the one shared basemap module. **Supersedes the
 still the primary basemap on both maps).
 
 ### BL-R1 — Regression: prior acceptance still holds
+
+> **⚠️ Superseded by SB-R1** (§ *Feature: Dual stacked basemap layers*). This
+> clause predates the two-layer redesign and describes state that has since
+> changed — `fallback-tile-layer.test.js` is now **deleted** (not "updated"), and
+> the per-tile swap mechanism HT-A3 checked is **gone**. **SB-R1 is the current
+> regression authority** (it re-runs `npm test` + `rspec` and enumerates every
+> amended prior criterion, including these). The command below still holds — both
+> suites stay green — so it is safe to run; only the per-criterion prose beneath is
+> historical.
+
 ```bash
 ( cd web && npm test ) && ( cd web && bundle exec rspec )
 ```
@@ -3213,3 +3257,165 @@ render path gains only tick registration), and **B1** (all suites). No
 Ruby/Python/Rust/Flutter surface is touched, so `rspec`, the Python suite
 (**C2**), `cargo test`, and `flutter test` are unaffected by construction —
 `rspec` is still run to prove it.
+---
+
+## Feature: Dual stacked basemap layers (HOT over CARTO, no timeout)
+
+Maps to SPEC decisions **SB1–SB8**. The two-layer factory lives in
+`web/public/assets/js/app/basemap-config.js`; the shared dark filter and the
+single pane-dimming veil in `web/public/assets/styles/base.css`; the dashboard
+policy wiring in `web/public/assets/js/app/main.js`; the federation wiring in
+`web/public/assets/js/app/federation-page.js`. The prior per-tile timeout+swap
+module (`web/public/assets/js/app/main/fallback-tile-layer.js`) and its test are
+**removed**. Run JS checks from `web/`, shell checks from the repo root.
+
+### SB-A1 — Two always-on stacked layers from one factory; no timeout — SB1
+```bash
+( cd web && node --test public/assets/js/app/__tests__/basemap-config.test.js )
+git grep -nE "tile\.openstreetmap\.fr/hot" -- web/public/assets/js/app/basemap-config.js
+git grep -nE "rastertiles/voyager" -- web/public/assets/js/app/basemap-config.js
+git grep -nE "FALLBACK_TIMEOUT_MS|fallback-tile-layer|wireTileFallback|buildFallbackTileUrl|prefersRetinaTiles" -- web/public/assets/js
+```
+**Expected:** the unit suite passes; the first grep prints the **HOT** URL
+(`{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png`) and the second the **CARTO
+Voyager** URL (`{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png`)
+from the **one** shared `basemap-config.js`. The **fourth grep prints nothing** —
+the per-tile timeout constant, the retired `fallback-tile-layer` module, and its
+helpers (`wireTileFallback` / `buildFallbackTileUrl` / `prefersRetinaTiles`) are
+gone. `createBasemapLayer(L)` returns the **base + overlay pair** (CARTO base
+`className:'map-tiles-fallback'` `zIndex:1` `detectRetina:true`; HOT overlay
+`className:'map-tiles-hot'` `zIndex:2` `maxZoom:19`), each a plain `L.tileLayer`
+(no `TileLayer.extend` subclass), and `createBasemapLayer(null)` degrades to a
+null-ish/empty result the callers guard. **Amends the URL/mechanism half of
+HT-A1 and supersedes HT-A3** (there is no per-tile swap to exercise); the
+HOT-primary intent survives as HOT being the opaque top layer.
+
+### SB-A2 — HOT overlay opaque over CARTO; Leaflet-native per-tile fade kept — SB2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/basemap-config.test.js )
+git grep -nE "fadeAnimation\s*:\s*false" -- web/public/assets/js
+```
+**Expected:** the unit suite asserts the HOT overlay option set carries **no**
+layer-opacity reduction (HOT renders opaque, `zIndex:2`, above the CARTO base
+`zIndex:1`), so a loaded HOT tile fully covers the CARTO cell beneath it. The
+grep prints **nothing** — `fadeAnimation` is never disabled, so Leaflet's native
+~200 ms per-tile opacity fade drives the CARTO→HOT dissolve, and no competing
+custom tile-opacity transition is introduced to fight it. A slow HOT tile shows
+the already-present CARTO tile underneath rather than a blank cell.
+
+### SB-A3 — Shared dark filter on the per-layer containers (blend) — SB3
+```bash
+( cd web && node --test public/assets/js/app/__tests__/basemap-blend.test.js )
+git grep -niE "tile_filters|DEFAULT_TILE_FILTER|map_tile_filter|tileFilters|resolveTileFilter|applyFiltersToAllTiles|--map-tile" -- web/lib web/public/assets/js web/public/assets/styles web/views
+```
+**Expected:** the blend suite passes — `base.css` applies the **same**
+`grayscale(1) invert(1) brightness(0.9) contrast(1.08)` filter (with its
+`-webkit-` twin) to **both** `.map-tiles-hot` and `.map-tiles-fallback`, in one
+rule, and the CARTO fallback filter equals the HOT filter (never `none`). The
+second grep prints **nothing**: the removed per-theme Ruby/JS/`data-app-config`
+tile-filter machinery stays removed (the filter is one static CSS constant). The
+selectors now target the layer **containers** (`#map .leaflet-layer.map-tiles-hot`
+/ `.map-tiles-fallback`) rather than individual `<img>` tiles, because with no
+per-tile swap Leaflet stamps the `className` on the layer container. **Amends the
+filter-selector half of HT-A2 / BL-A1(3)**; the filter *value* and its single-rule
+home are unchanged.
+
+### SB-A4 — Single pane dimming veil; brightness parity — SB4
+```bash
+git grep -nE "leaflet-tile-pane" -- web/public/assets/styles/base.css
+git grep -nE "\.leaflet-tile\.map-tiles\b" -- web/public/assets/styles/base.css
+```
+**Expected:** the first prints a single `#map .leaflet-tile-pane { opacity: 0.5625 }`
+rule (`0.5625 = 0.75 × 0.75`, the effective brightness the single pre-SB layer
+rendered at). The second prints **nothing** — the former
+`#map .leaflet-tile.map-tiles { opacity: 0.75 }` selector and the bare `map-tiles`
+container class are gone (the filter now sits on the `.leaflet-layer.map-tiles-hot`
+/ `.leaflet-layer.map-tiles-fallback` per-layer containers, never on
+`.leaflet-tile.map-tiles`). (The grep is anchored to `.leaflet-tile.map-tiles` on
+purpose — a bare `\.map-tiles\b` would false-match at the hyphen inside the
+surviving `.map-tiles-hot` / `-fallback` class names.)
+Dimming once at the pane makes brightness independent of the layer count, so the
+two stacked layers (and the offline placeholder as a possible third) composite to
+today's look.
+
+### SB-A5 — One liveness policy fed by both layers; dual-outage-only offline — SB5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/tile-failure-policy.test.js )
+( cd web && node --test public/assets/js/app/__tests__/main-app-map-init.test.js )
+```
+**Expected:** both pass. The Leaflet-free policy (`main/tile-failure-policy.js`,
+unchanged) is wired on the dashboard so that a `tileload` from **either** layer
+latches the basemap "alive" and `activateOfflineTiles` fires **only** when the
+initial viewport produced zero successes across **both** layers: with HOT down
+but CARTO up (or vice-versa) the map stays live and the placeholder never shows;
+only a both-providers outage reaches it, and the offline switch removes **both**
+online layers. The federation map keeps **no** kill-basemap/offline logic
+(unchanged from DM3/HT5). **Extends HT-A4** (the ladder's top rung is now two
+parallel providers).
+
+### SB-A6 — Always-on dual egress documented; no phone-home — SB6
+```bash
+git grep -niE "carto|cartocdn|openstreetmap\.fr|both (tile )?providers|two CDNs|third-party tile" -- README.md
+git grep -niE "\bapi[_-]?key\b|\btoken\b|\banalytics\b|\bcookie\b" -- web/public/assets/js/app/basemap-config.js
+```
+**Expected:** the README documents, operator-visibly, that **both** basemap CDNs
+(HOT + CARTO) are requested on every viewport (the doubled third-party tile
+egress is disclosed, not silent). The second grep prints **nothing**:
+`basemap-config.js` sends no API key, token, cookie, or analytics parameter to
+either CDN — only `{z}/{x}/{y}` tile coordinates — so D11 (no phone-home) holds.
+(The alternatives are `\b`-anchored on purpose — an un-anchored `cookie` would
+false-match the doc word *cookieless*, which asserts the very absence being
+checked.)
+Both providers keep `attributionControl:false` (no attribution overlay; reaffirms
+HT-A6/DM-A5). The basemap hosts are raster CDNs, not brokers (apex A1 holds;
+`guard-edits.py` untriggered — no manifest change).
+
+### SB-A7 — Stack & contract untouched; both maps share the factory — SB7
+```bash
+git grep -nE "createBasemapLayer" -- web/public/assets/js/app/main.js web/public/assets/js/app/federation-page.js
+git grep -nE "tileFilters|map-tile" -- web/lib/potato_mesh/application/helpers/config_helpers.rb
+```
+**Expected:** the first prints `createBasemapLayer` called from **both**
+`main.js` and `federation-page.js` (one shared factory owns the whole basemap on
+both maps; HT5/BL4 preserved). The second prints **nothing** — no tile config
+leaks into `/version` or `data-app-config`; the filter, pane opacity, and layer
+z-indices are frontend constants, so there is no contract change and no version
+bump (D7/D8). Native Leaflet only — two `L.tileLayer`s, no custom subclass, no
+new dependency or build step.
+
+### SB-A8 — Retired module gone; suites green; exact headers — SB8
+```bash
+test ! -e web/public/assets/js/app/main/fallback-tile-layer.js && echo "module removed"
+test ! -e web/public/assets/js/app/main/__tests__/fallback-tile-layer.test.js && echo "test removed"
+( cd web && npm test )
+head -n 15 web/public/assets/js/app/basemap-config.js
+```
+**Expected:** both `echo`s print (the retired module **and** its test are deleted
+together — never left dangling); `npm test` is fully green with the JS coverage
+floor held; the header check shows the exact Apache block with
+`Copyright © 2025-26 l5yth & contributors`. Every new/changed unit ships full
+JSDoc and clean linters (`black`/`rufo` untouched — no Python/Ruby change).
+
+### SB-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly amended and required to
+stay green: **HT-A1** (HOT is still the top/primary-visible basemap on both maps;
+its URL half holds — only the CARTO-as-per-tile-fallback framing is amended to
+CARTO-as-base-layer), **HT-A2 / BL-A1** (the shared dark filter is unchanged in
+value and still one static `base.css` rule — only the selector granularity moves
+from per-tile to per-layer; the removed Ruby/contract `tileFilters` machinery
+stays removed; offline tiles stay unfiltered), **HT-A3** (superseded — the
+per-tile swap mechanism it checked no longer exists; the checkerboard it guarded
+against is removed structurally), **BL-A1(1)** (the `FALLBACK_TIMEOUT_MS === 2500`
+assertion is **deleted with the constant** — there is no timeout), **BL-A2** (no
+`dark_all` reference; Voyager remains the CARTO source). Still green unchanged:
+**HT-A4 / SB-A5** (fallback ladder → offline last tier), **HT-A5 / SB-A7** (one
+shared factory on both maps), **HT-A6 / SB-A6** (no attribution), **HT-A7 /
+DM-A4** (apex/contract untouched), **A1** (no broker — the basemap hosts are
+raster CDNs), **B1** (all suites), and **B4** (exact Apache header on the changed
+`basemap-config.js` / `basemap-config.test.js` / `basemap-blend.test.js`). No
+Ruby/Python/Rust/Flutter production surface is touched, so `rspec` (run above),
+the Python suite, `cargo test`, and `flutter test` are unaffected by construction.
+

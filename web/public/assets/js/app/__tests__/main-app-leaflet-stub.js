@@ -44,6 +44,12 @@ export function makeLeafletStub() {
     markers: [],
     divIcons: [],
     layerGroups: [],
+    // Basemap tile layers created via ``L.tileLayer`` — the stacked CARTO base
+    // and HOT overlay (``createBasemapLayer``), in creation order — so map-init
+    // tests can grab them and fire ``tileload`` / ``tileerror`` / ``load``.
+    tileLayers: [],
+    // Offline placeholder layers created via ``L.gridLayer``.
+    gridLayers: [],
     domEventStopPropagation: 0
   };
 
@@ -135,30 +141,80 @@ export function makeLeafletStub() {
   }
 
   /**
-   * Construct a tile-layer stub.  ``initializeApp`` registers
-   * ``tileload`` / ``load`` / ``tileerror`` handlers but never fires them in
-   * the test environment, so the stub just stores the registration for
-   * completeness.
+   * Construct a tile-layer stub (without recording it).  ``initializeApp``
+   * registers ``tileload`` / ``load`` / ``tileerror`` handlers on it; the stub
+   * stores each registration and exposes ``_fire`` so a test can drive those
+   * handlers deterministically (a real Leaflet runtime is what would otherwise
+   * fire them). ``addTo`` registers the layer with the map so the
+   * offline-fallback path's ``hasLayer`` / ``removeLayer`` sees it.
    *
    * @param {string} url Tile URL template (ignored).
    * @param {Object} [options] Tile options.
    * @returns {Object} Tile-layer stub.
    */
-  function makeTileLayer(url, options) {
+  function makeTileLayerObject(url, options) {
     const tile = {
       _url: url,
       _events: new Map(),
+      _map: null,
       options: options || {},
-      addTo() {
+      addTo(target) {
+        tile._map = target || null;
+        // Register with the map so ``map.hasLayer`` / ``removeLayer`` (exercised
+        // by the offline-fallback path) can see this layer.
+        if (target && typeof target.addLayer === 'function') target.addLayer(tile);
         return tile;
       },
       on(event, handler) {
         if (!tile._events.has(event)) tile._events.set(event, []);
         tile._events.get(event).push(handler);
         return tile;
+      },
+      /**
+       * Test helper: synchronously invoke every handler registered for ``event``.
+       * Production main.js registers ``tileload`` / ``tileerror`` / ``load`` but
+       * a real Leaflet runtime is what would fire them; this lets a map-init test
+       * drive those branches deterministically.
+       *
+       * @param {string} event Event name.
+       * @param {*} [payload] Optional event payload.
+       * @returns {Object} The tile stub (chainable).
+       */
+      _fire(event, payload) {
+        (tile._events.get(event) || []).slice().forEach((handler) => handler(payload));
+        return tile;
       }
     };
     return tile;
+  }
+
+  /**
+   * ``L.tileLayer`` factory: build a tile-layer stub and record it in
+   * ``recorded.tileLayers`` (creation order) so map-init tests can retrieve the
+   * stacked CARTO base and HOT overlay.
+   *
+   * @param {string} url Tile URL template.
+   * @param {Object} [options] Tile options.
+   * @returns {Object} Tile-layer stub.
+   */
+  function makeTileLayer(url, options) {
+    const tile = makeTileLayerObject(url, options);
+    recorded.tileLayers.push(tile);
+    return tile;
+  }
+
+  /**
+   * ``L.gridLayer`` factory: build the offline placeholder layer stub and record
+   * it in ``recorded.gridLayers``. Kept separate from ``recorded.tileLayers`` so
+   * the basemap layer count stays exactly two.
+   *
+   * @param {Object} [options] Grid-layer options.
+   * @returns {Object} Grid-layer stub (reuses the tile-layer shape).
+   */
+  function makeGridLayer(options) {
+    const layer = makeTileLayerObject(undefined, options);
+    recorded.gridLayers.push(layer);
+    return layer;
   }
 
   /**
@@ -209,6 +265,20 @@ export function makeLeafletStub() {
     let zoom = 14;
     const eventHandlers = new Map();
     const map = {
+      // Layers added via ``layer.addTo(map)``; ``hasLayer`` / ``removeLayer``
+      // back the offline-fallback swap in ``activateOfflineTiles``.
+      _layers: new Set(),
+      addLayer(layer) {
+        map._layers.add(layer);
+        return map;
+      },
+      hasLayer(layer) {
+        return map._layers.has(layer);
+      },
+      removeLayer(layer) {
+        map._layers.delete(layer);
+        return map;
+      },
       _setZoom(value) {
         zoom = value;
       },
@@ -252,6 +322,7 @@ export function makeLeafletStub() {
       return stub._map;
     },
     tileLayer: makeTileLayer,
+    gridLayer: makeGridLayer,
     TileLayer: makeTileLayerClass(),
     layerGroup: makeLayerGroup,
     circleMarker(latLng, options) {

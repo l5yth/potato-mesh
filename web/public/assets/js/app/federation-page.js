@@ -607,9 +607,14 @@ export async function initializeFederationPage(options = {}) {
     map = leaflet.map(mapContainer, { worldCopyJump: true, attributionControl: false });
     map.setView([config.mapCenter.lat, config.mapCenter.lon], initialZoom);
 
-    // Shared HOT-primary basemap with per-tile CARTO fallback (see
-    // ``./basemap-config.js``); identical to the dashboard map.
-    createBasemapLayer(leaflet).addTo(map);
+    // Shared stacked basemap — CARTO Voyager base under an opaque HOT overlay
+    // (see ``./basemap-config.js``); identical to the dashboard map. Add the
+    // base first, then the overlay on top. The federation map keeps no
+    // kill-basemap/offline logic (a tile that fails on both providers simply
+    // stays blank here), unchanged from the dashboard-only offline tier.
+    const basemap = createBasemapLayer(leaflet);
+    basemap.base.addTo(map);
+    basemap.overlay.addTo(map);
 
     markersLayer = leaflet.layerGroup().addTo(map);
   }

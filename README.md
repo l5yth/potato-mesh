@@ -164,6 +164,26 @@ well-known document is staged in
 
 The database can be found in `$XDG_DATA_HOME/potato-mesh`.
 
+### Map Basemap & Tile Egress
+
+The node map is drawn with two third-party raster tile CDNs stacked and loaded
+**together on every viewport**: an OpenStreetMap France **HOT**
+(`openstreetmap.fr/hot`) overlay on top of a **CARTO Voyager**
+(`basemaps.cartocdn.com`) base, both greyed by the same dark filter so they blend
+into one look. Loading both at once (rather than the previous per-tile
+fallback-after-a-timeout) is deliberate: a slow HOT tile simply shows the
+already-present CARTO tile underneath instead of leaving a blank or checkerboard
+cell, so there is no fallback deadline to tune.
+
+The trade-off is that map tiles are fetched from **two** third-party CDNs on every
+pan/zoom, not one. Both providers are keyless and cookieless: the browser sends
+only standard `{z}/{x}/{y}` tile coordinates (plus the request's own IP/`Referer`,
+inherent to any CDN fetch) — no API key, credential, cookie, analytics beacon, or
+node/mesh identifier. Tiles are fetched **browser→CDN** directly; PotatoMesh
+proxies nothing and receives no tile telemetry, so the local-LoRa-only and
+no-phone-home posture is unaffected. Operators who must avoid third-party tile
+egress entirely should front the map with their own tile cache/proxy.
+
 ### Custom Pages
 
 Instance operators can publish static content pages (contact details, mesh

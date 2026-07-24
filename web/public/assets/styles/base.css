@@ -1893,25 +1893,33 @@ input[type="radio"] {
   color: var(--fg);
 }
 
-#map .leaflet-tile-pane,
-#map .leaflet-layer,
-#map .leaflet-tile.map-tiles {
-  opacity: 0.75;
+/*
+ * Single dimming veil over the whole tile pane. `0.5625 = 0.75 × 0.75` is the
+ * *effective* brightness the map rendered at before the basemap became two
+ * stacked layers (the pane and each layer were each dimmed 0.75, multiplying).
+ * Dimming once at the pane — with the layers themselves left opaque — makes the
+ * result independent of how many layers are in the pane (the CARTO base, the HOT
+ * overlay, and, on the dashboard, a possible offline placeholder), so the stack
+ * composites to exactly that same brightness.
+ */
+#map .leaflet-tile-pane {
+  opacity: 0.5625;
 }
 
 /*
  * Both basemap providers are natively colourful, light-background raster maps
- * (HOT primary, CARTO Voyager fallback). This one static filter greys and
- * inverts them to match the dark UI, applied identically to primary HOT tiles
- * (`.map-tiles-hot`) and to per-tile CARTO fallback tiles (`.map-tiles-fallback`)
- * so a viewport mixing both providers renders as one coherent dark basemap
- * instead of a light/dark checkerboard. Leaflet stamps the layer's `className`
- * on the tile container, so these per-tile classes (added by
- * `main/fallback-tile-layer.js`) are what carry the filter. Offline placeholder
- * tiles carry neither class and stay unfiltered.
+ * (HOT overlay over a CARTO Voyager base). This one static filter greys and
+ * inverts them to match the dark UI, applied identically to the HOT layer
+ * (`.map-tiles-hot`) and the CARTO base layer (`.map-tiles-fallback`) so a
+ * viewport mixing an arrived HOT tile and a not-yet-arrived cell (CARTO showing
+ * through) renders as one coherent dark basemap instead of a light/dark
+ * checkerboard. Leaflet stamps a layer's `className` on its container
+ * (`.leaflet-layer`), and `filter` on the container greys that provider's whole
+ * tile set as a group — so these per-layer classes carry the filter. Offline
+ * placeholder tiles carry neither class and stay unfiltered.
  */
-#map .leaflet-tile.map-tiles-hot,
-#map .leaflet-tile.map-tiles-fallback {
+#map .leaflet-layer.map-tiles-hot,
+#map .leaflet-layer.map-tiles-fallback {
   filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
   -webkit-filter: grayscale(1) invert(1) brightness(0.9) contrast(1.08);
 }
