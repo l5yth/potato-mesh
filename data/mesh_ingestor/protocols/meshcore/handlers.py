@@ -24,6 +24,7 @@ from .decode import (
     _advert_to_node_dict,
     _contact_to_node_dict,
     _derive_modem_preset,
+    _rx_advert_position_time,
     _rx_advert_to_node_dict,
     _self_info_to_node_dict,
 )
@@ -373,7 +374,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 node_id,
                 lat,
                 lon,
-                payload.get("recv_time"),
+                # Sender-side advert timestamp, so every flood copy of one
+                # advert collapses to a single position row (SPEC MR5).
+                _rx_advert_position_time(payload),
                 _handlers.host_node_id(),
             )
         _handlers._mark_packet_seen()

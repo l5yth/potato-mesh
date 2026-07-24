@@ -2639,6 +2639,123 @@ def test_on_rx_log_data_malformed_advert_tolerated(monkeypatch):
     assert captured == [] and upserted == []
 
 
+# ---------------------------------------------------------------------------
+# RX-log advert position dedup — MeshCore duplicate reconciliation (MR-A3)
+# ---------------------------------------------------------------------------
+
+
+def _rx_advert_frame(**overrides):
+    """Build a full RX-log ADVERT frame with sender-side ``adv_timestamp``."""
+    frame = {
+        "payload_typename": "ADVERT",
+        "adv_key": "ae46e493" + "00" * 28,
+        "adv_name": "Flood Node",
+        "adv_type": 1,
+        "adv_lat": 52.498481,
+        "adv_lon": 13.475442,
+        "adv_timestamp": 1_784_803_284,
+        "recv_time": 1_784_803_284,
+        "snr": -11.5,
+        "rssi": -124,
+        "path_len": 5,
+    }
+    frame.update(overrides)
+    return frame
+
+
+def test_on_rx_log_data_advert_position_time_uses_sender_adv_timestamp(monkeypatch):
+    """The position store must be keyed on the advert's sender-side timestamp.
+
+    Every flood copy of one advert carries the same ``adv_timestamp`` but its
+    own receiver-side ``recv_time``; keying the position on ``recv_time`` mints
+    one row per copy (and per ingestor) instead of deduplicating (MR-A3).
+    """
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore.handlers as _handlers_mod
+
+    _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    positions: list = []
+    monkeypatch.setattr(
+        _handlers_mod,
+        "_store_meshcore_position",
+        lambda *args: positions.append(args),
+    )
+
+    for offset in (0, 3, 5, 17):
+        asyncio.run(
+            hmap["RX_LOG_DATA"](
+                _FakeEvt(_rx_advert_frame(recv_time=1_784_803_284 + offset))
+            )
+        )
+
+    assert len(positions) == 4
+    # Third positional argument is position_time: identical sender-side
+    # adv_timestamp for every copy, never the per-copy recv_time.
+    assert [args[3] for args in positions] == [1_784_803_284] * 4
+
+
+def test_on_rx_log_data_advert_flood_copies_collapse_to_one_position_id(monkeypatch):
+    """Four flood copies of one advert must queue a single position identity."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    for offset in (0, 3, 5, 17):
+        asyncio.run(
+            hmap["RX_LOG_DATA"](
+                _FakeEvt(_rx_advert_frame(recv_time=1_784_803_284 + offset))
+            )
+        )
+
+    position_ids = {p["id"] for route, p in posted if route == "/api/positions"}
+    assert len(position_ids) == 1
+
+
+def test_on_rx_log_data_advert_position_falls_back_to_recv_time(monkeypatch):
+    """Absent or zero ``adv_timestamp`` degrades to the receiver-side time."""
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore.handlers as _handlers_mod
+
+    _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    positions: list = []
+    monkeypatch.setattr(
+        _handlers_mod,
+        "_store_meshcore_position",
+        lambda *args: positions.append(args),
+    )
+
+    frame = _rx_advert_frame(recv_time=1_784_803_300)
+    del frame["adv_timestamp"]
+    asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt(frame)))
+    asyncio.run(
+        hmap["RX_LOG_DATA"](
+            _FakeEvt(_rx_advert_frame(adv_timestamp=0, recv_time=1_784_803_301))
+        )
+    )
+
+    assert [args[3] for args in positions] == [1_784_803_300, 1_784_803_301]
+
+
+def test_rx_advert_to_node_dict_position_time_uses_adv_timestamp():
+    """The node-row position anchor is the advert's own timestamp, while
+    ``lastHeard`` stays the receiver-side reception time."""
+    from data.mesh_ingestor.protocols.meshcore import _rx_advert_to_node_dict
+
+    node = _rx_advert_to_node_dict(
+        _rx_advert_frame(adv_timestamp=1_784_803_284, recv_time=1_784_803_301)
+    )
+
+    assert node["lastHeard"] == 1_784_803_301
+    assert node["position"]["time"] == 1_784_803_284
+
+
 def test_on_channel_msg_id_identical_across_ingestors_with_different_rosters(
     monkeypatch,
 ):

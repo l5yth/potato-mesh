@@ -181,7 +181,8 @@ module PotatoMesh
                  battery_level, voltage, last_heard, first_heard,
                  uptime_seconds, channel_utilization, air_util_tx,
                  position_time, location_source, precision_bits,
-                 latitude, longitude, altitude, lora_freq, modem_preset, protocol
+                 latitude, longitude, altitude, lora_freq, modem_preset, protocol,
+                 synthetic
           FROM nodes
         SQL
         sql += "    WHERE #{where_clauses.join(" AND ")}\n" if where_clauses.any?
@@ -224,6 +225,10 @@ module PotatoMesh
           # redundant ISO twin (pos_time_iso / position_time_iso) is not emitted.
           pb = r["precision_bits"]
           r["precision_bits"] = pb.to_i if pb
+          # Name-derived placeholder marker (SPEC MR4).  Emitted as a boolean
+          # only when set, so +compact_api_row+ drops it from real nodes rather
+          # than adding a "synthetic": false to every row.
+          r["synthetic"] = r["synthetic"].to_i.zero? ? nil : true
         end
         rows.map { |row| compact_api_row(row) }
       ensure

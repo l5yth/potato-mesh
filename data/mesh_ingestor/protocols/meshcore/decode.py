@@ -108,15 +108,19 @@ def _rx_advert_to_node_dict(frame: dict) -> dict:
     Parameters:
         frame: Parsed RX-log frame from the ``meshcore`` library.  Relevant
             keys: ``adv_key`` (64-hex public key), ``adv_name``, ``adv_type``
-            (``ADV_TYPE_*``), ``adv_lat``/``adv_lon``, ``recv_time``, ``snr``,
-            ``rssi``, and ``path_len`` (hops travelled; RX-log frames carry a
-            plain count, never the 255 message-sync sentinel).
+            (``ADV_TYPE_*``), ``adv_lat``/``adv_lon``, ``adv_timestamp``,
+            ``recv_time``, ``snr``, ``rssi``, and ``path_len`` (hops travelled;
+            RX-log frames carry a plain count, never the 255 message-sync
+            sentinel).
 
     Returns:
         Node dict compatible with the ``POST /api/nodes`` payload format,
         carrying top-level ``snr`` / ``rssi`` / ``hopsAway`` signal fields.
         ``longName`` is included only when the advert carried a name, so a
-        name-less advert never churns an existing richer record.
+        name-less advert never churns an existing richer record.  ``lastHeard``
+        is the receiver-side reception time, while the position anchor is the
+        advert's own sender-side ``adv_timestamp`` (SPEC MR5) so every flood
+        copy of one advert resolves to a single position.
     """
     pub_key = frame.get("adv_key", "")
     node_id = _meshcore_node_id(pub_key)
@@ -145,8 +149,37 @@ def _rx_advert_to_node_dict(frame: dict) -> dict:
     lat = frame.get("adv_lat")
     lon = frame.get("adv_lon")
     if lat is not None and lon is not None and (lat or lon):
-        node["position"] = {"latitude": lat, "longitude": lon, "time": heard}
+        node["position"] = {
+            "latitude": lat,
+            "longitude": lon,
+            "time": _rx_advert_position_time(frame),
+        }
     return node
+
+
+def _rx_advert_position_time(frame: dict) -> int:
+    """Return the position timestamp for an RX-log ``ADVERT`` frame.
+
+    One advert reaches the radio several times over different flood paths (and
+    again through every co-operating ingestor), each copy carrying its own
+    receiver-side ``recv_time``.  Keying the position on that receiver clock
+    mints a distinct row per copy, defeating the ``(node, position_time)``
+    de-duplication the web app performs.  The advert's own ``adv_timestamp`` is
+    sender-side and therefore identical across every copy, so it is the correct
+    anchor (SPEC MR5).
+
+    Parameters:
+        frame: Parsed RX-log ``ADVERT`` frame.
+
+    Returns:
+        The sender-side ``adv_timestamp`` when the parser reported a usable
+        one, else the receiver-side ``recv_time``, else the current time.
+    """
+    adv_timestamp = frame.get("adv_timestamp")
+    if isinstance(adv_timestamp, int) and not isinstance(adv_timestamp, bool):
+        if adv_timestamp > 0:
+            return adv_timestamp
+    return frame.get("recv_time") or int(time.time())
 
 
 def _derive_modem_preset(sf: object, bw: object, cr: object) -> str | None:

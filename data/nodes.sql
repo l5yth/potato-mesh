@@ -44,7 +44,12 @@ CREATE TABLE IF NOT EXISTS nodes (
   lora_freq          INTEGER,
   modem_preset       TEXT,
   protocol           TEXT NOT NULL DEFAULT 'meshtastic',
-  synthetic          BOOLEAN NOT NULL DEFAULT 0
+  synthetic          BOOLEAN NOT NULL DEFAULT 0,
+  -- Newest time this node was heard via a key-authenticated record (a
+  -- non-synthetic upsert carrying its public key).  Name-inferred paths
+  -- (message touches, chat placeholders) never write it; NULL means no keyed
+  -- evidence has been recorded since the column shipped (SPEC MR1).
+  last_advert_heard  INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_last_heard ON nodes(last_heard);
