@@ -24,6 +24,7 @@ from .decode import (
     _advert_to_node_dict,
     _contact_to_node_dict,
     _derive_modem_preset,
+    _rx_advert_position_time,
     _rx_advert_to_node_dict,
     _self_info_to_node_dict,
 )
@@ -125,12 +126,17 @@ def _process_contacts(
         lat = contact.get("adv_lat")
         lon = contact.get("adv_lon")
         if lat is not None and lon is not None and (lat or lon):
+            last_advert = contact.get("last_advert")
+            # Roster replay, not a live reception: stamp rx_time from the
+            # contact's real last_advert so the web app does not warm a
+            # long-dead contact's last_heard to now (issue #853, SPEC RS1).
             _store_meshcore_position(
                 node_id,
                 lat,
                 lon,
-                contact.get("last_advert"),
+                last_advert,
                 handlers.host_node_id(),
+                rx_time=last_advert,
             )
     handlers._mark_packet_seen()
 
@@ -154,12 +160,17 @@ def _process_contact_update(
     lat = contact.get("adv_lat")
     lon = contact.get("adv_lon")
     if lat is not None and lon is not None and (lat or lon):
+        last_advert = contact.get("last_advert")
+        # Roster replay, not a live reception: stamp rx_time from the contact's
+        # real last_advert so the web app does not warm a long-dead contact's
+        # last_heard to now (issue #853, SPEC RS1).
         _store_meshcore_position(
             node_id,
             lat,
             lon,
-            contact.get("last_advert"),
+            last_advert,
             handlers.host_node_id(),
+            rx_time=last_advert,
         )
     handlers._mark_packet_seen()
     config._debug_log(
@@ -373,7 +384,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 node_id,
                 lat,
                 lon,
-                payload.get("recv_time"),
+                # Sender-side advert timestamp, so every flood copy of one
+                # advert collapses to a single position row (SPEC MR5).
+                _rx_advert_position_time(payload),
                 _handlers.host_node_id(),
             )
         _handlers._mark_packet_seen()

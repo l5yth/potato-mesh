@@ -3257,6 +3257,7 @@ render path gains only tick registration), and **B1** (all suites). No
 Ruby/Python/Rust/Flutter surface is touched, so `rspec`, the Python suite
 (**C2**), `cargo test`, and `flutter test` are unaffected by construction —
 `rspec` is still run to prove it.
+
 ---
 
 ## Feature: Dual stacked basemap layers (HOT over CARTO, no timeout)
@@ -3419,3 +3420,145 @@ raster CDNs), **B1** (all suites), and **B4** (exact Apache header on the change
 Ruby/Python/Rust/Flutter production surface is touched, so `rspec` (run above),
 the Python suite, `cargo test`, and `flutter test` are unaffected by construction.
 
+---
+
+## Bugfix: MeshCore duplicate-node reconciliation (stale same-name identities)
+
+Maps to SPEC decisions **MR1–MR6**. One physical node had surfaced as three
+rows (`!ae46e493` live real, `!25ee3330` retired real still name-resolved by a
+stale roster, `!f0b61f1e` name-derived synthetic): the #755/#803 merge
+deadlocked on the absolute same-name-real ambiguity guard, duplicate message
+copies granted the retired identity eternal `last_heard` liveness, and one
+advert flood minted four position rows. Reproduced deterministically before
+fixing; the checks below are the regression captures.
+
+### MR-A1 — Keyed-evidence tracking (`nodes.last_advert_heard`) — MR1
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb -e "keyed-evidence tracking" )
+```
+**Expected:** pass. A non-synthetic upsert carrying `user.publicKey` records
+its own heard time in `last_advert_heard` and advances it forward-only; a
+message touch (`touch_node_last_seen`) advances `last_heard` but **never** the
+evidence column; a synthetic placeholder upsert records no evidence (`NULL`).
+
+### MR-A2 — Positive-staleness merge ambiguity, both directions — MR2
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb \
+    -e "stale keyed evidence" -e "fresh keyed evidence" -e "evidence-fresh real" \
+    -e "legacy row" -e "no evidence either way" )
+```
+**Expected:** pass. `merge_synthetic_nodes` absorbs the synthetic although a
+same-name real row exists that is positively stale — both when its
+`last_advert_heard` is old and when it is a **legacy row** whose only signal is
+an old `position_time` (the production shape), in each case even though message
+touches polluted that row's `last_heard` to "now". It still **refuses** when the
+rival is evidence-fresh, and — critically — when the rival has **no evidence
+either way** (`NULL` / `NULL`, the state of every row right after the
+migration): absence of evidence is never treated as staleness.
+`merge_into_real_node` folds the synthetic into the survivor when the other
+candidate is positively stale, and still refuses when both are live. The retired
+real row itself is never deleted (retention stays the only expiry authority).
+
+### MR-A3 — Duplicate-copy sender resolution (no steal, no phantom liveness) — MR3
+```bash
+( cd web && bundle exec rspec spec/data_processing_spec.rb \
+    -e "duplicate-copy sender resolution" -e "ConstraintException recovery" )
+```
+**Expected:** pass. For MeshCore copies of one message (same id, divergent
+`from_id`): two evidence-fresh reals keep the **existing** attribution (no
+last-writer-wins); a stale-keyed copy neither steals attribution from an
+evidence-fresh real nor advances its own node's `last_heard` (the reception is
+credited to the resolved winner instead); a keyed real copy still upgrades a
+synthetic-attributed row; and a nil/blank/unknown sender ranks 0 (never
+supersedes). The **same rank rule holds on the `ConstraintException` insert-race
+fallback** — the path MR3 names as "where two ingestors' copies meet" — in both
+hash- and array-row DB modes, and a Meshtastic message keeps last-writer-wins
+(the rule is MeshCore-scoped).
+
+### MR-A4 — One advert flood → one position identity — MR5
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "adv_timestamp or flood or falls_back_to_recv" )
+```
+**Expected:** pass. Four RX-log copies of one advert (same `adv_key` +
+`adv_timestamp`, distinct `recv_time`) hand the **sender-side** timestamp to
+the position store and collapse to a single `/api/positions` id;
+`_rx_advert_to_node_dict` anchors `position.time` on `adv_timestamp` while
+`lastHeard` stays receiver-side; absent/zero `adv_timestamp` degrades to
+`recv_time`.
+
+### MR-A5 — `synthetic` flag on the node API — MR4
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "synthetic flag" )
+```
+**Expected:** pass. `GET /api/nodes/:id` and `GET /api/nodes` emit
+`synthetic: true` on placeholder rows and omit the key entirely on real rows
+(compact convention, no `synthetic: false` noise).
+
+### MR-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. At risk and explicitly required
+to remain green: **MC-A1/MC-A2** (#803 placeholder naming/repair — unchanged
+paths), the **#755/#756** merge and dedup suites (`database_spec.rb`,
+`data_processing_spec.rb` — the pre-existing "refuses when two reals share the
+long_name" examples stay green because raw-seeded rows carry no keyed evidence
+and two-candidate/zero-fresh ambiguity still refuses), **LH-A1/LH-A2**
+(last-heard carry through both merge helpers), **A4e/RF3** (RX-advert node
+upserts — only the position anchor moved), **MD-A1/MW-A1** (message dedup
+fingerprint untouched), and **B1** (all suites). MC-R1's wording "the merge
+helpers are unchanged" is **superseded** by SPEC MR2 for the ambiguity bound;
+everything else it protects still holds.
+
+---
+
+## Bugfix: MeshCore roster sync must not warm `last_heard` (issue #853)
+
+Maps to SPEC decision **RS1**. Loading the MeshCore contact roster
+(`ensure_contacts()` at launch and on every reconnect; `auto_update_contacts`
+re-fetches on adverts) re-POSTed each positioned contact's position with
+`rx_time = now`, and the web folds `rx_time` into `last_heard` via `MAX`
+(`update_node_from_position`), so a contact that was actually last heard months
+ago was stamped **active** on every sync — a long-dead node reappearing in the
+7-day list. The node-upsert path already used the contact's real `last_advert`
+(MR1's stated intent); only the position path violated it. Fix is ingestor-side:
+the two roster-sync callers stamp the position `rx_time` from the contact's
+`last_advert`, so `last_heard = MAX(last_advert, last_advert) = last_advert`.
+Genuinely-live paths (self-info, RX-log adverts) keep `rx_time = now`.
+
+### RS-A1 — Roster-sync positions carry the contact's real reception time
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "rx_time_uses_last_advert or honours_rx_time_override or defaults_rx_time_to_now" )
+```
+**Expected:** pass. `_process_contacts` (bulk) and `_process_contact_update`
+(per-contact `NEW_CONTACT`/`NEXT_CONTACT`) queue `/api/positions` with
+`rx_time == last_advert` (not the wall clock), so the web-side
+`last_heard = MAX(rx_time, position_time)` resolves to `last_advert` rather than
+`now`. `_store_meshcore_position` accepts an explicit `rx_time` override and,
+absent one, still defaults to the wall clock (live-path behavior unchanged).
+
+### RS-A2 — Live advert paths still stamp `now` (fix is roster-scoped)
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "rx_log_data_advert_position_rx_time_is_now or self_info" )
+```
+**Expected:** pass. An on-air RX-log `ADVERT` (`on_rx_log_data`) and the host
+`SELF_INFO` position keep `rx_time = now` — they are genuinely-live receptions,
+so their `last_heard` must still advance to now. Only the roster-replay paths
+change; MR5's sender-side `position_time` anchor for RX-log adverts is untouched.
+
+### RS-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ )
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+remain green: **A4e/RF3** and **MR-A4/MR5** (RX-log advert node upserts and the
+`adv_timestamp` position anchor — the RX path keeps `rx_time = now`), the
+existing `_store_meshcore_position` / `_process_contacts` /
+`_process_contact_update` position specs (updated to assert the roster
+`rx_time`, not removed), and **C2** (`test_mesh.py` end-to-end). No web/DB/API
+shape changes, so the Ruby and JS suites are unaffected by construction.

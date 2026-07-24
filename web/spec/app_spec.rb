@@ -6203,6 +6203,44 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /api/nodes synthetic flag (SPEC MR4)" do
+    # A caller must be able to distinguish a name-derived placeholder from a
+    # key-backed node.  The flag is emitted compact-style: `synthetic: true`
+    # on placeholder rows, absent on real rows (matching the API's existing
+    # nil/blank compaction; no `synthetic: false` noise on every node).
+    it "marks synthetic placeholder rows and omits the key on real rows" do
+      clear_database
+      now = Time.now.to_i
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, role, last_heard, first_heard, protocol, synthetic) VALUES(?,?,?,?,?,?,?,?)",
+          ["!f0b61f1e", "", "Synth Node", "COMPANION", now - 60, now - 60, "meshcore", 1],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, role, last_heard, first_heard, protocol, synthetic) VALUES(?,?,?,?,?,?,?,?)",
+          ["!ae46e493", "ae46", "Real Node", "COMPANION", now - 30, now - 30, "meshcore", 0],
+        )
+      end
+
+      get "/api/nodes/!f0b61f1e"
+      expect(last_response).to be_ok
+      synth_row = JSON.parse(last_response.body)
+      expect(synth_row["synthetic"]).to eq(true)
+
+      get "/api/nodes/!ae46e493"
+      expect(last_response).to be_ok
+      real_row = JSON.parse(last_response.body)
+      expect(real_row).not_to have_key("synthetic")
+
+      get "/api/nodes"
+      expect(last_response).to be_ok
+      listed = JSON.parse(last_response.body)
+      flags = listed.to_h { |row| [row["node_id"], row["synthetic"]] }
+      expect(flags["!f0b61f1e"]).to eq(true)
+      expect(flags["!ae46e493"]).to be_nil
+    end
+  end
+
   describe "GET /api/nodes" do
     # Regression-style coverage for SPEC BP1-BP6: more than MAX_QUERY_LIMIT
     # nodes inside the seven-day window must all remain reachable by paging

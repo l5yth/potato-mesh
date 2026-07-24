@@ -34,6 +34,8 @@ def _store_meshcore_position(
     lon: float,
     position_time: int | None,
     ingestor: str | None,
+    *,
+    rx_time: int | None = None,
 ) -> None:
     """Enqueue a ``POST /api/positions`` for a MeshCore contact's advertised position.
 
@@ -54,8 +56,16 @@ def _store_meshcore_position(
         position_time: Unix timestamp from the contact's ``last_advert`` field,
             or ``None`` to fall back to the current wall-clock time.
         ingestor: Canonical node ID of the host ingestor, or ``None``.
+        rx_time: Reception time to stamp on the position, or ``None`` for the
+            current wall clock.  The web app folds ``rx_time`` into the node's
+            ``last_heard`` via ``MAX(rx_time, position_time)``, so a **roster
+            replay** must pass the contact's real ``last_advert`` here — not
+            ``now`` — or a long-dead contact is warmed back to active on every
+            sync (issue #853, SPEC RS1).  Genuinely-live receptions (host
+            self-info, on-air RX-log adverts) leave this ``None`` so their
+            ``last_heard`` correctly advances to now.
     """
-    rx_time = int(time.time())
+    rx_time = int(time.time()) if rx_time is None else int(rx_time)
     normalized_lat, normalized_lon = _normalize_lat_lon(lat, lon)
     if normalized_lat is None and normalized_lon is None:
         # Both axes collapsed to the sentinel zero; abandon the advertisement

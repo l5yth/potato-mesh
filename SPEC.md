@@ -800,3 +800,82 @@ No invariant is contradicted.
 | **SB7** | **Stack & contract untouched (reaffirms D7/D8, HT5/BL4).** Native Leaflet only — two `L.tileLayer`s, **no** custom subclass, no new package or build step (D7). The dark filter, the pane opacity, and the layer z-indices are frontend constants; none enters `/version`, `data-app-config`, or any `/api/*` shape, so there is no contract change and no version bump (D8). The whole basemap still lives behind the one shared `createBasemapLayer` factory called by both maps (HT5/BL4), and it is protocol-neutral (Invariant IV). | proposed |
 | **SB8** | **Engineering bar (D9).** The new/changed frontend units — the `createBasemapLayer` factory (now returning the base+overlay pair) and the layer-option constants — ship with **100% unit tests**, full JSDoc, the exact Apache header, and clean linters; all existing suites stay green. Retired-module tests are **deleted, not left dangling**: `main/__tests__/fallback-tile-layer.test.js` is removed with its module. `__tests__/basemap-blend.test.js`, `__tests__/basemap-config.test.js`, `__tests__/federation-page.test.js`, `__tests__/config.test.js`, and the leaflet-stub map-init harness are **retargeted** to the two-layer wiring. **BL-A1** (which asserted `FALLBACK_TIMEOUT_MS === 2500`) and **HT-A3** (the per-tile swap mechanism) are **amended**, not silently broken. | D9 + proposed |
 
+---
+
+## Bugfix: MeshCore duplicate-node reconciliation (stale same-name identities)
+
+One physical MeshCore node surfaced as **three** dashboard rows: its live
+pubkey-derived row, a *retired* pubkey-derived row (an old keypair still present
+in ≥1 community roster), and the name-derived synthetic placeholder. Root
+causes, confirmed by deterministic reproduction: (a) the #755/#803 synthetic
+merge deadlocks as soon as a **second** same-name real row exists, because its
+ambiguity guard is absolute and unbounded in time; (b) duplicate message copies
+from co-operating ingestors overwrite `messages.from_id` last-writer-wins and
+bump their own `from_id` node's `last_heard`, so a retired identity that any
+stale roster still name-resolves receives eternal liveness and never ages out;
+(c) RX-log advert positions are keyed on receiver-side `recv_time`, so one
+advert flood mints one position row per copy and per ingestor. Integrates with
+`web/lib/potato_mesh/application/data_processing/{node_writes,messages}.rb`,
+`application/database.rb` (migration + #755 startup backfill),
+`application/queries/node_queries.rb`,
+`data/mesh_ingestor/protocols/meshcore/{handlers,decode}.py`, and
+`data/mesh_ingestor/CONTRACTS.md`.
+
+**Conflict check against existing decisions.** *MC-A1 / #755 machinery* —
+**amended, not silently overridden** (MR2): the documented "never merge when two
+same-name reals exist" rule gains a keyed-evidence freshness bound; the
+single-candidate base semantics are untouched. *RF3 (RX-log adverts)* —
+**extends** (MR5): only the position-time anchor moves from receiver-side to
+sender-side; the node mapping, `lastHeard`, and signal metrics are unchanged.
+*RF5 / retention* — **consistent**: no new deletion path; a retired identity
+simply stops receiving phantom liveness and ages out of the 7-day views while
+`retention.rb` remains the only data-expiry authority. *D8 (stable contract)* —
+**extends**: `nodes.last_advert_heard` (internal), the `synthetic` response
+field (MR4), and the sender-side position anchor are all additive; no version
+bump. *Invariant II (privacy)* — **consistent**: `synthetic: true` reveals only
+that a row is a name-derived placeholder (derived from public chat text); no
+new data class is exposed and opt-out/`PRIVATE` gates are untouched. *Invariant
+IV (parity)* — **consistent**: the evidence column is written by one
+protocol-neutral rule (any keyed, non-synthetic record); the resolution rules
+are scoped to MeshCore only because the synthetic-placeholder mechanism is
+MeshCore's own; Meshtastic behavior is byte-identical. *Apex I* — untouched.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **MR1** | **Keyed-evidence column.** Additive `nodes.last_advert_heard INTEGER` records the newest time a node was heard via a **key-authenticated record** — any non-synthetic upsert carrying `user.publicKey` (MeshCore contact/advert/self-info; Meshtastic NodeInfo with a key) — using the record's own heard time (sender-side `last_advert` for roster contacts, reception time for RX-log adverts), advancing forward-only. Name-inferred paths (message touches, chat placeholders) never write it. Written by a **separate, unguarded** statement, not a column in the main upsert: that upsert skips any record older than the stored `last_heard`, so a node whose `last_heard` was pushed to "now" by message touches would otherwise never record evidence from its own (sender-side-stamped, hence older) adverts — the exact situation the column exists to resolve. The migration seeds **no backfill**; every live device re-arms on its next advert/roster snapshot. | interview |
+| **MR2** | **Positive-staleness merge ambiguity (amends #755/#803 guard).** A same-name real row stops creating merge **ambiguity** only once it is *positively known* to be retired: `COALESCE(last_advert_heard, position_time)` **exists and** is older than `now − four_weeks_seconds`. **Absence of evidence is never staleness** — a `NULL` (a row predating the column; a node that has not re-advertised) keeps blocking exactly as today, so the post-migration window, and any quiet node, cannot be mis-merged. `position_time` is the legacy fallback signal because a MeshCore position is only ever written from a key-authenticated record (roster contact, advert, self-info) and never from chat text, making it valid historical keyed evidence. `merge_synthetic_nodes` bails when a not-positively-stale *other* real exists; `merge_into_real_node` folds into the survivor when all rivals but one are positively stale (≥2 live, or unknown rivals, keep refusing); the #755 startup backfill applies the same predicate. Single-candidate semantics are unchanged. The retired row itself is never deleted by the merge. *Accepted limitation:* a live node with a stale GPS fix and no evidence yet looks retired until its next advert (one advert cycle, self-healing); a retired identity that never stored a position stays "unknown" and keeps blocking, awaiting manual resolution. | interview |
+| **MR3** | **Duplicate-copy sender resolution (MeshCore).** When a MeshCore message copy arrives for an existing row with a different `from_id`, the ids are ranked — live-or-unproven real (2) > positively-stale real (1) > synthetic/unknown (0), using the same predicate as MR2 — and the incoming id replaces the stored one only on a **strictly higher** rank (ties keep the existing id; the empty/missing-`from_id` fill is unchanged). Applied on both collapse paths: the primary `id`-PK update **and** the `ConstraintException` insert-race fallback, which is precisely where two ingestors' copies meet. The sender-side ensure/touch block targets the **resolved winner**, so a losing copy grants no liveness to its own node — a retired identity's `last_heard` freezes and it ages out of the 7-day views naturally. Meshtastic message handling is byte-identical. | interview |
+| **MR4** | **`synthetic` exposed on the node API.** `GET /api/nodes` and `GET /api/nodes/:id` emit `synthetic: true` on name-derived placeholder rows and omit the key on real rows (matching the API's compact nil/blank convention — no `synthetic: false` noise). Additive per D8; documented in `CONTRACTS.md`. | interview |
+| **MR5** | **Sender-side position anchor for RX-log adverts (extends RF3).** The RX-advert path keys positions on the advert's own `adv_timestamp` (exposed by the `meshcore` library parser), falling back to `recv_time` when absent/zero, for both the `POST /api/positions` record and the node-row `position.time` anchor; `lastHeard` stays receiver-side. All flood copies of one advert — across paths **and** across ingestors — collapse to a single position identity, restoring the documented dedup intent; no grace window is needed. | interview + code |
+| **MR6** | **Engineering bar (D9).** Every touched unit ships with unit tests (evidence tracking, both merge directions incl. retained refusals, rank-resolution cases, adv-timestamp keying + fallback, API flag), full RDoc/PDoc, Apache headers, `black`/`rufo` clean; all suites stay green. | CLAUDE.md |
+
+
+---
+
+## Bugfix: MeshCore roster sync must not warm `last_heard` (issue #853)
+
+Loading the MeshCore contact roster re-stamped every positioned contact's
+`last_heard` to the sync wall-clock, so a node last actually heard months ago
+reappeared as **active**. `ensure_contacts()` runs at launch and on every
+reconnect (and `auto_update_contacts` re-fetches on adverts); each positioned
+contact then POSTed `/api/positions` with `rx_time = now`, and the web folds
+`rx_time` into `last_heard` via `MAX` (`update_node_from_position`). The
+node-upsert path already used the contact's real `last_advert` (MR1's stated
+intent); only the position path violated it. Integrates with
+`data/mesh_ingestor/protocols/meshcore/{position,handlers}.py`.
+
+**Conflict check.** *MR1 (roster contacts anchor on `last_advert`)* — **extends**:
+this brings the position path into line with the principle MR1 already stated
+for the node-upsert path; nothing in MR1 changes. *MR5 (RX-log advert position
+anchor)* — **consistent**: the RX-advert path is a genuinely-live reception and
+keeps `rx_time = now`; only its `position_time` uses `adv_timestamp`, unchanged.
+*RF5 / retention* — **consistent**: no new deletion; a dead contact simply stops
+being warmed and ages out of the 7-day window. *D8 (stable contract)* —
+**consistent**: no `/api/*` shape change (the `rx_time` field already exists);
+the web side is untouched. *Apex I / Invariant IV* — untouched (local RX only,
+protocol-neutral position handling).
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **RS1** | **Roster-sync positions carry the contact's real reception time.** `_store_meshcore_position` gains an explicit `rx_time` override (default = wall clock). The two roster-sync callers — `_process_contacts` (bulk `CONTACTS`) and `_process_contact_update` (`NEW_CONTACT`/`NEXT_CONTACT`) — pass the contact's `last_advert` as that `rx_time`, so the web-side `last_heard = MAX(rx_time, position_time)` resolves to `last_advert` rather than `now`. A live `NEW_CONTACT` has `last_advert ≈ now`, so it is unaffected; only genuinely-old roster contacts get a truthful old `last_heard`. The **genuinely-live** position paths — host `SELF_INFO` and on-air RX-log `ADVERT` (`on_rx_log_data`) — keep `rx_time = now` (their `last_heard` must advance). Ingestor-side only; the web `update_node_from_position` `MAX` logic is correct for real packets and is left unchanged. | interview + code |
+| **RS2** | **Engineering bar (D9).** The changed position helper and roster handlers ship with unit tests (roster `rx_time = last_advert`; `rx_time` override; live self-info / RX-advert still `now`), full PDoc, Apache headers, `black`-clean; all suites stay green. | CLAUDE.md |

@@ -102,6 +102,7 @@ from .decode import (  # noqa: E402
     _advert_to_node_dict,
     _contact_to_node_dict,
     _derive_modem_preset,
+    _rx_advert_position_time,
     _rx_advert_to_node_dict,
     _self_info_to_node_dict,
 )
@@ -173,6 +174,7 @@ __all__ = [
     "_pubkey_prefix_to_node_id",
     "_record_meshcore_message",
     "_run_meshcore",
+    "_rx_advert_position_time",
     "_rx_advert_to_node_dict",
     "_self_info_to_node_dict",
     "_store_meshcore_position",

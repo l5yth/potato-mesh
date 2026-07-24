@@ -1382,6 +1382,62 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   end
 
   # ---------------------------------------------------------------------------
+  # upsert_node — keyed-evidence tracking (MeshCore duplicate reconciliation,
+  # SPEC MR1): last_advert_heard records the newest key-authenticated record
+  # time so the merge guards can tell a live same-name real node from a stale
+  # one that only message touches keep refreshing.
+  # ---------------------------------------------------------------------------
+  describe "#upsert_node — keyed-evidence tracking" do
+    include_context "with isolated db"
+
+    let(:now) { Time.now.to_i }
+
+    it "records and advances last_advert_heard for keyed non-synthetic upserts" do
+      db = open_db
+      dp.upsert_node(db, "!evid0001", {
+        "lastHeard" => now - 500,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Evie", "shortName" => "ev", "publicKey" => "ff" * 32 },
+      }, protocol: "meshcore")
+      expect(db.get_first_value("SELECT last_advert_heard FROM nodes WHERE node_id = '!evid0001'")).to eq(now - 500)
+
+      dp.upsert_node(db, "!evid0001", {
+        "lastHeard" => now - 100,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Evie", "shortName" => "ev", "publicKey" => "ff" * 32 },
+      }, protocol: "meshcore")
+      expect(db.get_first_value("SELECT last_advert_heard FROM nodes WHERE node_id = '!evid0001'")).to eq(now - 100)
+    ensure
+      db&.close
+    end
+
+    it "does not advance keyed evidence from message touches or synthetic upserts" do
+      db = open_db
+      dp.upsert_node(db, "!evid0002", {
+        "lastHeard" => now - 500,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Evan", "shortName" => "ev", "publicKey" => "ee" * 32 },
+      }, protocol: "meshcore")
+
+      # A message touch advances last_heard but is name-inferred, not
+      # key-authenticated — the evidence column must not move.
+      dp.touch_node_last_seen(db, "!evid0002", rx_time: now)
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = '!evid0002'")).to eq(now)
+      expect(db.get_first_value("SELECT last_advert_heard FROM nodes WHERE node_id = '!evid0002'")).to eq(now - 500)
+
+      # A synthetic placeholder upsert carries no key: no evidence either.
+      dp.upsert_node(db, "!evid0003", {
+        "lastHeard" => now,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Evan Synth", "shortName" => "", "role" => "COMPANION", "synthetic" => true },
+      }, protocol: "meshcore")
+      expect(db.get_first_value("SELECT last_advert_heard FROM nodes WHERE node_id = '!evid0003'")).to be_nil
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # merge_synthetic_nodes
   # ---------------------------------------------------------------------------
   describe "#merge_synthetic_nodes" do
@@ -1442,6 +1498,146 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       )
       dp.merge_synthetic_nodes(db, real_id, "Rupert")
       expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [real_id])).to eq(now)
+    ensure
+      db&.close
+    end
+
+    # MeshCore duplicate reconciliation (SPEC MR2): a same-name real row whose
+    # keyed evidence is stale — e.g. a retired keypair that only name-inferred
+    # message touches keep "alive" — must not deadlock the synthetic merge.
+    it "absorbs the synthetic despite a same-name real row with stale keyed evidence" do
+      db = open_db
+      stale_real = "!25ee3330"
+      fresh_real = "!ae46e493"
+      synth_id = "!f0b61f1e"
+      name = "Afri @l5yth \u{1F336}"
+
+      # Retired identity: keyed upsert long ago, then last_heard polluted to
+      # "now" by a name-resolved message copy (the production failure mode).
+      dp.upsert_node(db, stale_real, {
+        "lastHeard" => now - 60 * 86_400,
+        "protocol" => "meshcore",
+        "user" => { "longName" => name, "shortName" => "25ee", "role" => "COMPANION", "publicKey" => "25ee3330" + "00" * 28 },
+      }, protocol: "meshcore")
+      dp.touch_node_last_seen(db, stale_real, rx_time: now, source: :message)
+
+      dp.upsert_node(db, fresh_real, {
+        "lastHeard" => now - 60,
+        "protocol" => "meshcore",
+        "user" => { "longName" => name, "shortName" => "ae46", "role" => "COMPANION", "publicKey" => "ae46e493" + "00" * 28 },
+      }, protocol: "meshcore")
+
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, name, "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [91, now, "2026-07-21T19:55:26Z", synth_id, "^all", "meshcore"],
+      )
+
+      dp.merge_synthetic_nodes(db, fresh_real, name)
+
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 91").first[0]).to eq(fresh_real)
+      # The stale real row itself is left alone: retention stays the only
+      # data-expiry authority.
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [stale_real]).first).not_to be_nil
+    ensure
+      db&.close
+    end
+
+    # The production shape (potatomesh.net): the retired row predates the
+    # evidence column, so its only positive staleness signal is the
+    # position_time left by its last real advert.  A MeshCore position is only
+    # ever written from a key-authenticated record, so it is valid historical
+    # evidence — and it is what distinguishes a retired identity from a node we
+    # simply know nothing about yet.
+    it "treats an old position_time as positive staleness for a legacy row" do
+      db = open_db
+      retired = "!25ee3330"
+      live = "!ae46e493"
+      synth_id = "!f0b61f1e"
+      name = "Afri @l5yth \u{1F336}"
+
+      # Legacy row: no last_advert_heard at all, last real fix long ago, and a
+      # last_heard polluted to "now" by name-resolved message touches.
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard,public_key,position_time) " \
+        "VALUES (?,?,?,?,?,?,?,?)",
+        [retired, name, "meshcore", 0, now, now - 90 * 86_400, "25ee3330" + "00" * 28, now - 90 * 86_400],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, name, "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [93, now, "2026-07-21T20:18:07Z", synth_id, "^all", "meshcore"],
+      )
+
+      # The live device adverts: its own upsert stamps fresh keyed evidence and
+      # fires the forward merge.
+      dp.upsert_node(db, live, {
+        "lastHeard" => now - 30,
+        "protocol" => "meshcore",
+        "user" => { "longName" => name, "shortName" => "ae46", "role" => "COMPANION", "publicKey" => "ae46e493" + "00" * 28 },
+      }, protocol: "meshcore")
+
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 93").first[0]).to eq(live)
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [retired]).first).not_to be_nil
+    ensure
+      db&.close
+    end
+
+    # Absence of evidence is not evidence of absence (SPEC MR2): a rival we know
+    # nothing about — no keyed evidence and no position history, the state of
+    # every row right after the migration — must keep blocking, or the very
+    # first upsert after a deploy could mis-attribute a placeholder.
+    it "keeps refusing when the rival has no evidence either way" do
+      db = open_db
+      unknown_rival = "!unknwn01"
+      claimant = "!claimnt1"
+      synth_id = "!synthunk"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard,public_key) VALUES (?,?,?,?,?,?,?)",
+        [unknown_rival, "Unproven", "meshcore", 0, now - 200, now - 200, "ab" * 32],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Unproven", "meshcore", 1, now, now],
+      )
+
+      dp.merge_synthetic_nodes(db, claimant, "Unproven")
+
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
+    ensure
+      db&.close
+    end
+
+    # Guard retention (SPEC MR2): with two evidence-fresh same-name reals the
+    # ambiguity is genuine and the merge must still refuse.
+    it "still refuses when a second same-name real row has fresh keyed evidence" do
+      db = open_db
+      real_a = "!fresh00a"
+      real_b = "!fresh00b"
+      synth_id = "!synthfr1"
+      %w[aa bb].zip([real_a, real_b]).each do |key_byte, node_id|
+        dp.upsert_node(db, node_id, {
+          "lastHeard" => now - 30,
+          "protocol" => "meshcore",
+          "user" => { "longName" => "Twin", "shortName" => key_byte, "role" => "COMPANION", "publicKey" => key_byte * 32 },
+        }, protocol: "meshcore")
+      end
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Twin", "meshcore", 1, now, now],
+      )
+
+      dp.merge_synthetic_nodes(db, real_a, "Twin")
+
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
     ensure
       db&.close
     end
@@ -1578,6 +1774,195 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       )
       dp.merge_into_real_node(db, synth_id, "Quinn")
       expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [real_id])).to eq(now)
+    ensure
+      db&.close
+    end
+
+    # MeshCore duplicate reconciliation (SPEC MR2): when two same-name reals
+    # exist but only one has fresh keyed evidence, the synthetic folds into
+    # the evidence-fresh one instead of deadlocking.
+    it "folds into the evidence-fresh real when the other candidate is stale" do
+      db = open_db
+      stale_real = "!stalerl1"
+      fresh_real = "!freshrl1"
+      synth_id = "!synthrl1"
+
+      dp.upsert_node(db, stale_real, {
+        "lastHeard" => now - 60 * 86_400,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Ronda", "shortName" => "st", "role" => "COMPANION", "publicKey" => "cc" * 32 },
+      }, protocol: "meshcore")
+      dp.touch_node_last_seen(db, stale_real, rx_time: now, source: :message)
+      dp.upsert_node(db, fresh_real, {
+        "lastHeard" => now - 30,
+        "protocol" => "meshcore",
+        "user" => { "longName" => "Ronda", "shortName" => "fr", "role" => "COMPANION", "publicKey" => "dd" * 32 },
+      }, protocol: "meshcore")
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Ronda", "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [92, now, "2026-07-21T20:18:07Z", synth_id, "^all", "meshcore"],
+      )
+
+      dp.merge_into_real_node(db, synth_id, "Ronda")
+
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      expect(db.execute("SELECT from_id FROM messages WHERE id = 92").first[0]).to eq(fresh_real)
+    ensure
+      db&.close
+    end
+
+    # Guard retention (SPEC MR2): both candidates evidence-fresh -> genuine
+    # ambiguity, the reverse merge still refuses.
+    it "still refuses when both same-name real candidates have fresh keyed evidence" do
+      db = open_db
+      synth_id = "!synthrl2"
+      %w[a1 b2].each_with_index do |key_byte, i|
+        dp.upsert_node(db, "!freshr#{i}x", {
+          "lastHeard" => now - 30,
+          "protocol" => "meshcore",
+          "user" => { "longName" => "Rivals", "shortName" => key_byte, "role" => "COMPANION", "publicKey" => key_byte * 32 },
+        }, protocol: "meshcore")
+      end
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Rivals", "meshcore", 1, now, now],
+      )
+
+      dp.merge_into_real_node(db, synth_id, "Rivals")
+
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
+    ensure
+      db&.close
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # insert_message — meshcore duplicate-copy sender resolution (SPEC MR3).
+  #
+  # Co-operating ingestors post the same channel message with divergent
+  # from_id values (each roster resolves the sender name independently: the
+  # real key, a retired key, or a name-derived synthetic).  The losing copy
+  # must neither steal the attribution (last-writer-wins) nor feed liveness
+  # to its own node.  Message texts here carry no "Name:" prefix so the
+  # sender-placeholder machinery stays out of the way and the resolution rule
+  # is observed in isolation.
+  # ---------------------------------------------------------------------------
+  describe "#insert_message — meshcore duplicate-copy sender resolution" do
+    include_context "with isolated db"
+
+    let(:now) { Time.now.to_i }
+
+    # Seed a keyed (synthetic=0) meshcore node whose evidence age is
+    # controlled by +heard+.
+    def seed_keyed_node(db, node_id, name, key_byte, heard)
+      dp.upsert_node(db, node_id, {
+        "lastHeard" => heard,
+        "protocol" => "meshcore",
+        "user" => { "longName" => name, "shortName" => key_byte, "role" => "COMPANION", "publicKey" => key_byte * 32 },
+      }, protocol: "meshcore")
+    end
+
+    def duplicate_copy(from_id, rx_time)
+      {
+        "id" => 7001,
+        "rx_time" => rx_time,
+        "from_id" => from_id,
+        "to_id" => "^all",
+        "channel" => 3,
+        "text" => "copy without a sender prefix",
+        "portnum" => "TEXT_MESSAGE_APP",
+        "protocol" => "meshcore",
+        "ingestor" => "!634069bc",
+      }
+    end
+
+    it "keeps the existing attribution when two evidence-fresh reals disagree" do
+      db = open_db
+      seed_keyed_node(db, "!duporig1", "Dup Twin A", "1a", now - 40)
+      seed_keyed_node(db, "!dupothr1", "Dup Twin B", "2b", now - 40)
+
+      dp.insert_message(db, duplicate_copy("!duporig1", now - 10))
+      dp.insert_message(db, duplicate_copy("!dupothr1", now))
+
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7001")).to eq("!duporig1")
+    ensure
+      db&.close
+    end
+
+    it "does not let a stale-keyed copy steal attribution or liveness from a fresh real" do
+      db = open_db
+      stale_real = "!dupstal2"
+      fresh_real = "!dupfrsh2"
+      seed_keyed_node(db, stale_real, "Dup Old", "3c", now - 60 * 86_400)
+      seed_keyed_node(db, fresh_real, "Dup New", "4d", now - 40)
+
+      dp.insert_message(db, duplicate_copy(fresh_real, now - 10))
+      dp.insert_message(db, duplicate_copy(stale_real, now))
+
+      # Attribution stays on the evidence-fresh identity...
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7001")).to eq(fresh_real)
+      # ...the losing copy's node gains no liveness (it must age out)...
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [stale_real])).to eq(now - 60 * 86_400)
+      # ...and the surviving sender is the one credited with the reception.
+      expect(db.get_first_value("SELECT last_heard FROM nodes WHERE node_id = ?", [fresh_real])).to eq(now)
+    ensure
+      db&.close
+    end
+
+    it "upgrades a synthetic-attributed row when a keyed real copy arrives" do
+      db = open_db
+      synth_id = "!dupsyn3a"
+      real_id = "!dupreal3"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Dup Up", "meshcore", 1, now - 50, now - 50],
+      )
+      seed_keyed_node(db, real_id, "Dup Up", "5e", now - 40)
+
+      dp.insert_message(db, duplicate_copy(synth_id, now - 10))
+      dp.insert_message(db, duplicate_copy(real_id, now))
+
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7001")).to eq(real_id)
+    ensure
+      db&.close
+    end
+
+    # The rank-based resolution is MeshCore-specific: a firmware-assigned
+    # Meshtastic sender keeps the historical last-writer-wins overwrite, so the
+    # rule never changes attribution for the other protocol.
+    it "ranks a nil, blank, or unknown sender id as zero and never supersedes on it" do
+      db = open_db
+      expect(dp.meshcore_sender_rank(db, nil)).to eq(0)
+      expect(dp.meshcore_sender_rank(db, "   ")).to eq(0)
+      expect(dp.meshcore_sender_rank(db, "!deadbeef")).to eq(0)
+      # A rank-0 incoming id can never exceed a rank-0 (nil) incumbent.
+      expect(dp.meshcore_sender_supersedes?(db, nil, "!deadbeef")).to be(false)
+    ensure
+      db&.close
+    end
+
+    it "keeps last-writer-wins for a meshtastic message with a differing sender" do
+      db = open_db
+      first_sender = "!aaaa1111"
+      second_sender = "!bbbb2222"
+      base = {
+        "id" => 7101,
+        "rx_time" => now,
+        "to_id" => "!dddd4444",
+        "channel" => 0,
+        "text" => "meshtastic copy",
+        "portnum" => "TEXT_MESSAGE_APP",
+        "protocol" => "meshtastic",
+        "ingestor" => "!634069bc",
+      }
+      dp.insert_message(db, base.merge("from_id" => first_sender))
+      dp.insert_message(db, base.merge("from_id" => second_sender))
+
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 7101")).to eq(second_sender)
     ensure
       db&.close
     end
@@ -2448,6 +2833,86 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       expect(db.get_first_value("SELECT text FROM messages WHERE id = 9002")).to eq("decrypted")
       expect(db.get_first_value("SELECT lora_freq FROM messages WHERE id = 9002")).to eq(869525)
       expect(db.get_first_value("SELECT modem_preset FROM messages WHERE id = 9002")).to eq("MEDIUM_SLOW")
+    ensure
+      db&.close
+    end
+
+    # SPEC MR3 names the insert-race fallback as "precisely where two ingestors'
+    # copies meet", so the sender-resolution rule must hold on this path too, in
+    # both DB result modes.  Force the fallback the same way as above: seed the
+    # row, then stub the existing-row SELECT to nil so the INSERT trips the PK.
+    def stub_missing_existing_row(db)
+      allow(db).to receive(:get_first_row).and_wrap_original do |original, sql, *args|
+        if sql.include?("SELECT from_id, to_id, text, encrypted, lora_freq")
+          nil
+        else
+          original.call(sql, *args)
+        end
+      end
+    end
+
+    # Two hex node ids so canonical normalisation keeps them verbatim; a synth
+    # (rank 0) and a key-backed real (rank 2) so the copies disagree by evidence.
+    let(:synth_sender) { "!5a5a5a5a" }
+    let(:real_sender) { "!ee11ee11" }
+
+    def seed_rank_nodes(db)
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_sender, "Synth Placeholder", "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard,public_key,last_advert_heard) " \
+        "VALUES (?,?,?,?,?,?,?,?)",
+        [real_sender, "Real Contact", "meshcore", 0, now, now, "ee" * 32, now],
+      )
+    end
+
+    def meshcore_copy(id, from_id)
+      { "id" => id, "to_id" => "^all", "channel" => 3, "text" => "shared", "protocol" => "meshcore", "from_id" => from_id }
+    end
+
+    it "promotes the better-evidenced meshcore sender on the constraint fallback" do
+      db = open_db
+      seed_rank_nodes(db)
+      fb_harness.insert_message(db, meshcore_copy(9201, synth_sender))
+      stub_missing_existing_row(db)
+
+      fb_harness.insert_message(db, meshcore_copy(9201, real_sender))
+
+      # Incoming real (rank 2) supersedes the stored synthetic (rank 0).
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 9201")).to eq(real_sender)
+    ensure
+      db&.close
+    end
+
+    it "keeps the incumbent meshcore sender when the fallback copy is weaker (array-row DB)" do
+      # Raw handle → results_as_hash = false, so the fallback reads the row by
+      # positional index: exercises the non-Hash arm of the existing-row reads.
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      seed_rank_nodes(db)
+      fb_harness.insert_message(db, meshcore_copy(9202, real_sender))
+      stub_missing_existing_row(db)
+
+      fb_harness.insert_message(db, meshcore_copy(9202, synth_sender))
+
+      # Incoming synthetic (rank 0) does NOT displace the stored real (rank 2).
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 9202")).to eq(real_sender)
+    ensure
+      db&.close
+    end
+
+    it "skips fallback from_id handling when the racing copy carries no sender" do
+      db = open_db
+      fb_harness.insert_message(db, meshcore_copy(9203, real_sender))
+      stub_missing_existing_row(db)
+
+      fb_harness.insert_message(db, { "id" => 9203, "to_id" => "^all", "channel" => 3, "text" => "senderless", "protocol" => "meshcore" })
+
+      # No incoming sender → the stored attribution is untouched, and the text
+      # still reconciles through the fallback.
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 9203")).to eq(real_sender)
+      expect(db.get_first_value("SELECT text FROM messages WHERE id = 9203")).to eq("senderless")
     ensure
       db&.close
     end

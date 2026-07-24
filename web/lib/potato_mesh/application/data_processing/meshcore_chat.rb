@@ -84,6 +84,52 @@ module PotatoMesh
         "!" + Digest::SHA256.hexdigest(trimmed)[0, 8]
       end
 
+      # Rank a candidate MeshCore sender id by the strength of its identity
+      # evidence (SPEC MR3).
+      #
+      # Co-operating ingestors post the same physical message with divergent
+      # +from_id+ values, because each resolves the sender against its own
+      # roster: the live public key, a *retired* key some roster still holds,
+      # or — with no roster hit at all — a name-derived synthetic. Ranking lets
+      # the id-PK collapse keep the best-evidenced attribution instead of
+      # last-writer-wins, and keeps a retired identity from being handed
+      # liveness it no longer earns.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param node_id [String, nil] candidate sender id.
+      # @return [Integer] 2 for a real node that is live or unproven (absence of
+      #   evidence never demotes — see
+      #   {DataProcessing.positively_stale_sql}), 1 for a real node positively
+      #   known to be retired, 0 for a synthetic placeholder or an id with no
+      #   node row at all.
+      def meshcore_sender_rank(db, node_id)
+        node_id = string_or_nil(node_id)
+        return 0 unless node_id
+
+        stale = db.get_first_value(
+          "SELECT #{DataProcessing.positively_stale_sql("nodes")} FROM nodes " \
+          "WHERE node_id = ? AND synthetic = 0 LIMIT 1",
+          [DataProcessing.evidence_cutoff, node_id],
+        )
+        return 0 if stale.nil?
+
+        stale.to_i.zero? ? 2 : 1
+      end
+
+      # Resolve which of two competing sender ids a MeshCore message keeps.
+      #
+      # The incoming id wins only on a *strictly* higher rank, so equal-evidence
+      # rivals never flip the attribution back and forth as duplicate copies
+      # arrive (SPEC MR3).
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param existing_from_id [String, nil] id already stored on the row.
+      # @param incoming_from_id [String] id carried by the copy being applied.
+      # @return [Boolean] true when the incoming id should replace the stored one.
+      def meshcore_sender_supersedes?(db, existing_from_id, incoming_from_id)
+        meshcore_sender_rank(db, incoming_from_id) > meshcore_sender_rank(db, existing_from_id)
+      end
+
       # Create or repair the MeshCore chat placeholder node for a display name.
       #
       # The node is upserted as a synthetic (+synthetic=1+) COMPANION named
