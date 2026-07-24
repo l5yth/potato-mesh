@@ -3511,3 +3511,54 @@ upserts — only the position anchor moved), **MD-A1/MW-A1** (message dedup
 fingerprint untouched), and **B1** (all suites). MC-R1's wording "the merge
 helpers are unchanged" is **superseded** by SPEC MR2 for the ambiguity bound;
 everything else it protects still holds.
+
+---
+
+## Bugfix: MeshCore roster sync must not warm `last_heard` (issue #853)
+
+Maps to SPEC decision **RS1**. Loading the MeshCore contact roster
+(`ensure_contacts()` at launch and on every reconnect; `auto_update_contacts`
+re-fetches on adverts) re-POSTed each positioned contact's position with
+`rx_time = now`, and the web folds `rx_time` into `last_heard` via `MAX`
+(`update_node_from_position`), so a contact that was actually last heard months
+ago was stamped **active** on every sync — a long-dead node reappearing in the
+7-day list. The node-upsert path already used the contact's real `last_advert`
+(MR1's stated intent); only the position path violated it. Fix is ingestor-side:
+the two roster-sync callers stamp the position `rx_time` from the contact's
+`last_advert`, so `last_heard = MAX(last_advert, last_advert) = last_advert`.
+Genuinely-live paths (self-info, RX-log adverts) keep `rx_time = now`.
+
+### RS-A1 — Roster-sync positions carry the contact's real reception time
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "rx_time_uses_last_advert or honours_rx_time_override or defaults_rx_time_to_now" )
+```
+**Expected:** pass. `_process_contacts` (bulk) and `_process_contact_update`
+(per-contact `NEW_CONTACT`/`NEXT_CONTACT`) queue `/api/positions` with
+`rx_time == last_advert` (not the wall clock), so the web-side
+`last_heard = MAX(rx_time, position_time)` resolves to `last_advert` rather than
+`now`. `_store_meshcore_position` accepts an explicit `rx_time` override and,
+absent one, still defaults to the wall clock (live-path behavior unchanged).
+
+### RS-A2 — Live advert paths still stamp `now` (fix is roster-scoped)
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "rx_log_data_advert_position_rx_time_is_now or self_info" )
+```
+**Expected:** pass. An on-air RX-log `ADVERT` (`on_rx_log_data`) and the host
+`SELF_INFO` position keep `rx_time = now` — they are genuinely-live receptions,
+so their `last_heard` must still advance to now. Only the roster-replay paths
+change; MR5's sender-side `position_time` anchor for RX-log adverts is untouched.
+
+### RS-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ )
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+remain green: **A4e/RF3** and **MR-A4/MR5** (RX-log advert node upserts and the
+`adv_timestamp` position anchor — the RX path keeps `rx_time = now`), the
+existing `_store_meshcore_position` / `_process_contacts` /
+`_process_contact_update` position specs (updated to assert the roster
+`rx_time`, not removed), and **C2** (`test_mesh.py` end-to-end). No web/DB/API
+shape changes, so the Ruby and JS suites are unaffected by construction.

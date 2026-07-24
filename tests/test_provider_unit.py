@@ -1240,6 +1240,48 @@ def test_store_meshcore_position_equator_fix_preserved(monkeypatch):
     assert payload["longitude"] == pytest.approx(13.5)
 
 
+def test_store_meshcore_position_defaults_rx_time_to_now(monkeypatch):
+    """With no override, rx_time is the wall clock (unchanged live-path behavior)."""
+    import time as _time
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(payload),
+    )
+
+    before = int(_time.time())
+    _store_meshcore_position("!aabbccdd", 51.5, -0.1, 1700001234, None)
+    after = int(_time.time())
+
+    assert before <= posted[0]["rx_time"] <= after
+
+
+def test_store_meshcore_position_honours_rx_time_override(monkeypatch):
+    """An explicit rx_time overrides the wall clock so a replayed roster position
+    is stamped with its real reception time, not now (issue #853)."""
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append(payload),
+    )
+
+    _store_meshcore_position(
+        "!aabbccdd", 51.5, -0.1, 1700001234, None, rx_time=1699990000
+    )
+
+    payload = posted[0]
+    assert payload["rx_time"] == 1699990000
+    assert payload["rx_iso"] == "2023-11-14T19:26:40Z"
+    # position_time is independent of the rx override.
+    assert payload["position_time"] == 1700001234
+
+
 # ---------------------------------------------------------------------------
 # _MeshcoreInterface contact management
 # ---------------------------------------------------------------------------
@@ -2570,6 +2612,46 @@ def test_on_rx_log_data_advert_upserts_node_and_position(monkeypatch):
     assert positions[0][1] == 52.516274 and positions[0][2] == 13.405612
 
 
+def test_on_rx_log_data_advert_position_rx_time_is_now(monkeypatch):
+    """An on-air RX-log ADVERT is a live reception: its position POST keeps
+    rx_time = now (so last_heard advances), while position_time stays the
+    sender-side adv_timestamp (MR5).  The #853 roster fix must not touch it."""
+    import asyncio
+    import time as _time
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    _captured, _upserted, _iface, hmap = _setup_channel_msg_handlers(monkeypatch)
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    before = int(_time.time())
+    asyncio.run(
+        hmap["RX_LOG_DATA"](
+            _FakeEvt(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_key": "511617e3" + "00" * 28,
+                    "adv_name": "BER Drachentoeter",
+                    "adv_type": 2,
+                    "adv_lat": 52.516274,
+                    "adv_lon": 13.405612,
+                    "adv_timestamp": 1_758_000_000,
+                    "recv_time": 1_758_000_021,
+                }
+            )
+        )
+    )
+    after = int(_time.time())
+
+    pos = [p for r, p in posted if r == "/api/positions"][0]
+    assert before <= pos["rx_time"] <= after  # live reception → now
+    assert pos["position_time"] == 1_758_000_000  # sender-side anchor (MR5)
+
+
 def test_on_rx_log_data_advert_without_position_skips_position_store(monkeypatch):
     """No adv_lat/adv_lon on the advert -> node upsert only, no position POST."""
     import asyncio
@@ -3269,6 +3351,43 @@ def test_process_self_info_queues_position_when_advertised(monkeypatch):
     assert position_posts[0]["ingestor"] == "!ingestor1"
 
 
+def test_process_self_info_position_rx_time_is_now(monkeypatch):
+    """The host's own SELF_INFO position is a live reading, so its rx_time stays
+    the wall clock — the #853 roster fix is scoped to peer contacts, not self."""
+    import time as _time
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        _mod._ingestors, "queue_ingestor_heartbeat", lambda *_a, **_k: True
+    )
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    stub = _make_stub_handlers_module()
+    stub.host_node_id = lambda: "!ingestor1"
+
+    before = int(_time.time())
+    _process_self_info(
+        {
+            "public_key": "aabbccdd" + "00" * 28,
+            "name": "Host",
+            "adv_lat": 51.5,
+            "adv_lon": -0.1,
+        },
+        _MeshcoreInterface(target=None),
+        stub,
+    )
+    after = int(_time.time())
+
+    pos = [p for r, p in posted if r == "/api/positions"][0]
+    assert before <= pos["rx_time"] <= after
+
+
 def test_process_self_info_skips_position_when_latlon_absent(monkeypatch):
     """_process_self_info must not POST to /api/positions when lat/lon are absent."""
     import data.mesh_ingestor.protocols.meshcore as _mod
@@ -3649,6 +3768,44 @@ def test_process_contacts_only_posts_positions_for_located_contacts(monkeypatch)
     assert position_posts[0]["node_id"] == "!aabbccdd"
 
 
+def test_process_contacts_position_rx_time_uses_last_advert(monkeypatch):
+    """Bulk roster sync must stamp the position rx_time from the contact's real
+    last_advert, not the wall clock, so a long-dead contact is not warmed to
+    "now" (issue #853).  On the web side last_heard = MAX(rx_time, position_time),
+    so a now-valued rx_time silently resurrects the node."""
+    import time as _time
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    stub = _make_stub_handlers_module()
+    iface = _MeshcoreInterface(target=None)
+    old_advert = int(_time.time()) - 90 * 86_400  # 90 days dead
+    pub_key = "25ee3330" + "00" * 28
+    _process_contacts(
+        {
+            pub_key: {
+                "public_key": pub_key,
+                "adv_name": "Afri",
+                "adv_lat": 52.498207,
+                "adv_lon": 13.47964,
+                "last_advert": old_advert,
+            }
+        },
+        iface,
+        stub,
+    )
+
+    pos = [p for r, p in posted if r == "/api/positions"][0]
+    assert pos["position_time"] == old_advert
+    assert pos["rx_time"] == old_advert
+
+
 # ---------------------------------------------------------------------------
 # _process_contact_update
 # ---------------------------------------------------------------------------
@@ -3721,6 +3878,42 @@ def test_process_contact_update_queues_position_when_latlon_present(monkeypatch)
     assert position_posts[0]["node_id"] == "!aabbccdd"
     assert position_posts[0]["latitude"] == pytest.approx(52.0)
     assert position_posts[0]["position_time"] == 1700005678
+
+
+def test_process_contact_update_position_rx_time_uses_last_advert(monkeypatch):
+    """A single NEW_CONTACT / NEXT_CONTACT roster entry must stamp the position
+    rx_time from last_advert, not now (issue #853) — the per-contact roster path
+    warms last_heard the same way the bulk path does."""
+    import time as _time
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    stub = _make_stub_handlers_module()
+    iface = _MeshcoreInterface(target=None)
+    old_advert = int(_time.time()) - 120 * 86_400
+    pub_key = "25ee3330" + "00" * 28
+    _process_contact_update(
+        {
+            "public_key": pub_key,
+            "adv_name": "Afri",
+            "adv_lat": 52.498207,
+            "adv_lon": 13.47964,
+            "last_advert": old_advert,
+        },
+        iface,
+        stub,
+    )
+
+    pos = [p for r, p in posted if r == "/api/positions"][0]
+    assert pos["position_time"] == old_advert
+    assert pos["rx_time"] == old_advert
 
 
 def test_process_contact_update_skips_position_when_no_latlon(monkeypatch):

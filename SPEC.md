@@ -849,3 +849,33 @@ MeshCore's own; Meshtastic behavior is byte-identical. *Apex I* — untouched.
 | **MR5** | **Sender-side position anchor for RX-log adverts (extends RF3).** The RX-advert path keys positions on the advert's own `adv_timestamp` (exposed by the `meshcore` library parser), falling back to `recv_time` when absent/zero, for both the `POST /api/positions` record and the node-row `position.time` anchor; `lastHeard` stays receiver-side. All flood copies of one advert — across paths **and** across ingestors — collapse to a single position identity, restoring the documented dedup intent; no grace window is needed. | interview + code |
 | **MR6** | **Engineering bar (D9).** Every touched unit ships with unit tests (evidence tracking, both merge directions incl. retained refusals, rank-resolution cases, adv-timestamp keying + fallback, API flag), full RDoc/PDoc, Apache headers, `black`/`rufo` clean; all suites stay green. | CLAUDE.md |
 
+
+---
+
+## Bugfix: MeshCore roster sync must not warm `last_heard` (issue #853)
+
+Loading the MeshCore contact roster re-stamped every positioned contact's
+`last_heard` to the sync wall-clock, so a node last actually heard months ago
+reappeared as **active**. `ensure_contacts()` runs at launch and on every
+reconnect (and `auto_update_contacts` re-fetches on adverts); each positioned
+contact then POSTed `/api/positions` with `rx_time = now`, and the web folds
+`rx_time` into `last_heard` via `MAX` (`update_node_from_position`). The
+node-upsert path already used the contact's real `last_advert` (MR1's stated
+intent); only the position path violated it. Integrates with
+`data/mesh_ingestor/protocols/meshcore/{position,handlers}.py`.
+
+**Conflict check.** *MR1 (roster contacts anchor on `last_advert`)* — **extends**:
+this brings the position path into line with the principle MR1 already stated
+for the node-upsert path; nothing in MR1 changes. *MR5 (RX-log advert position
+anchor)* — **consistent**: the RX-advert path is a genuinely-live reception and
+keeps `rx_time = now`; only its `position_time` uses `adv_timestamp`, unchanged.
+*RF5 / retention* — **consistent**: no new deletion; a dead contact simply stops
+being warmed and ages out of the 7-day window. *D8 (stable contract)* —
+**consistent**: no `/api/*` shape change (the `rx_time` field already exists);
+the web side is untouched. *Apex I / Invariant IV* — untouched (local RX only,
+protocol-neutral position handling).
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **RS1** | **Roster-sync positions carry the contact's real reception time.** `_store_meshcore_position` gains an explicit `rx_time` override (default = wall clock). The two roster-sync callers — `_process_contacts` (bulk `CONTACTS`) and `_process_contact_update` (`NEW_CONTACT`/`NEXT_CONTACT`) — pass the contact's `last_advert` as that `rx_time`, so the web-side `last_heard = MAX(rx_time, position_time)` resolves to `last_advert` rather than `now`. A live `NEW_CONTACT` has `last_advert ≈ now`, so it is unaffected; only genuinely-old roster contacts get a truthful old `last_heard`. The **genuinely-live** position paths — host `SELF_INFO` and on-air RX-log `ADVERT` (`on_rx_log_data`) — keep `rx_time = now` (their `last_heard` must advance). Ingestor-side only; the web `update_node_from_position` `MAX` logic is correct for real packets and is left unchanged. | interview + code |
+| **RS2** | **Engineering bar (D9).** The changed position helper and roster handlers ship with unit tests (roster `rx_time = last_advert`; `rx_time` override; live self-info / RX-advert still `now`), full PDoc, Apache headers, `black`-clean; all suites stay green. | CLAUDE.md |
