@@ -735,3 +735,68 @@ No existing decision is contradicted or amended.
 | **RT4** | **Format & contract unchanged.** The output format stays exactly today's (`4s`, `3m 12s`, `5h 2m`, `3d 4h`; empty/invalid timestamps keep rendering exactly as today). Frontend-only: no API, `/version`, or `data-app-config` change (D8), vanilla JS with no new dependency (D7), protocol-neutral (Invariant IV), no network egress and no new data exposure (Invariants I/II). | interview |
 | **RT5** | **Engineering bar (D9).** The ticker module and every touched render path ship with 100% unit tests, full JSDoc, the exact Apache header, and clean linters; all existing suites stay green. Existing formatter specs (`format-utils.test.js`, display-formatter tests) remain valid unchanged — the format is untouched; render-path specs are **updated** only where fields gain tick registration. | CLAUDE.md |
 
+---
+
+## Feature: Dual stacked basemap layers (HOT over CARTO, no timeout)
+
+Replaces the per-tile HOT→CARTO *timeout-and-swap* basemap (HT1–HT3, BL1–BL3)
+with **two always-on, simultaneously-loaded tile layers**: CARTO Voyager as the
+bottom **base** layer and OpenStreetMap France **HOT** as the opaque **overlay**
+on top. Both are requested at once on every viewport; a HOT tile paints over the
+CARTO cell beneath it as it arrives (a per-tile fade), so a slow HOT tile shows
+the already-present CARTO tile in the meantime rather than a blank cell or a
+deadline-driven fallback. This structurally eliminates the light/dark
+checkerboard the timeout mechanism produced: there is no per-tile deadline to
+miss, both providers wear the *same* dark filter, and the two layers composite to
+one coherent dark basemap. HOT was observed to time out so often that the
+2500 ms per-tile deadline (BL1) was still insufficient and the map routinely
+checkerboarded; stacking the layers removes the deadline entirely. The custom
+per-tile fallback tile layer (`main/fallback-tile-layer.js`) and its timeout
+constant are retired. Frontend-only (vanilla JS `basemap-config.js`, `base.css`,
+README doc line); no API/DB/ingestor change and no Ruby `tile_filters` /
+`data-app-config` return.
+
+**Conflict check.** *HT1 (CARTO "never the primary", only a per-tile fallback
+source)* — **contradicts → amended** (SB1: CARTO is a permanent base layer under
+HOT). *HT3 (per-tile 1000 ms→CARTO swap) / BL1 (raised to 2500 ms)* —
+**contradicts → amended** (SB1: the per-tile deadline and swap mechanism are
+deleted, not re-tuned). *HT2 (dark filter on the per-tile class `.map-tiles-hot`,
+CARTO exempt) / BL3 (fallback shares HOT's filter, per-tile)* — **amended** (SB3:
+the identical filter *value* now sits on the per-**layer** containers
+`.map-tiles-hot` / `.map-tiles-fallback`, because with no per-tile swap Leaflet
+stamps the class on the layer container, not each `<img>`; both providers stay
+filtered, as BL3 already established). *HT4 / DM3 (offline placeholder is the last
+tier)* — **extends** (SB5: the single liveness policy is now fed by *both* layers;
+the placeholder fires only when the whole viewport fails on both providers).
+*HT5 / BL4 (one shared `createBasemapLayer` factory on both maps)* —
+**consistent** (SB1: the factory still owns the whole basemap and both maps call
+it; it now returns two layers instead of one). *HT6 / DM5 (no attribution)* —
+**reaffirmed** (SB7). *BL2 (colored Voyager fallback source)* — **reaffirmed**
+(SB1 keeps the Voyager URL). *HT7 (common-case egress is HOT-only; CARTO fetched
+only on a HOT-tile failure)* — **contradicts → amended** (SB6: both CDNs are
+requested on every viewport, so third-party tile egress is now two CDNs, not one;
+still keyless, cookieless, no credential/analytics/identifier — D11 holds).
+*Apex I* — **consistent**: HOT and CARTO are raster tile CDNs, not MQTT/cloud
+brokers; no manifest/dependency change (`guard-edits.py` untriggered); tiles are
+browser→CDN as before. *Invariant II / D11 (no phone-home)* — **consistent under
+the SB6 amendment**: egress doubles to a second keyless CDN but carries no
+per-operator credential, cookie, analytics beacon, or user/mesh identifier — only
+tile coordinates. *Invariant IV (parity)* — **consistent**: the basemap is
+protocol-neutral, identical for Meshtastic and MeshCore and on both maps.
+*D7 (fixed stack)* — **consistent**: native Leaflet `L.tileLayer` × 2, no new
+package or build step (the custom subclass is *removed*). *D8 (stable contract)* —
+**consistent**: filter, opacity, and z-index are frontend constants; nothing
+enters `/version`, `data-app-config`, or any `/api/*` shape, so no version bump.
+No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **SB1** | **Two always-on stacked layers from one factory (amends HT1, HT3, BL1).** The shared `createBasemapLayer(L)` (in `basemap-config.js`) returns **two** native `L.tileLayer` instances — a CARTO **Voyager** base (`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png`, `subdomains:'abcd'`, `detectRetina:true`, `crossOrigin:'anonymous'`, `className:'map-tiles-fallback'`, `zIndex:1`) and a **HOT** overlay (`https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png`, `subdomains:'abc'`, `maxZoom:19`, `crossOrigin:'anonymous'`, `className:'map-tiles-hot'`, `zIndex:2`) — both added to **both** the dashboard (`main.js`) and federation (`federation-page.js`) maps. Both are fetched simultaneously on every viewport; there is **no** per-tile deadline or swap. The custom `main/fallback-tile-layer.js` (its `FALLBACK_TIMEOUT_MS`, `wireTileFallback`, `buildFallbackTileUrl`, `HOT_TILE_CLASS`/`FALLBACK_TILE_CLASS`) and `basemap-config.js`'s `prefersRetinaTiles` are **retired** — CARTO retina is handled by Leaflet's native `detectRetina`. The tile **URLs** are unchanged from BL2. **Amends HT1** (CARTO becomes a permanent base layer, not merely a per-tile fallback source) and **HT3/BL1** (the timeout mechanism is deleted, not re-tuned). | interview |
+| **SB2** | **HOT opaque on top; per-tile dissolve via Leaflet-native fade.** The HOT overlay renders at full layer opacity (1) so a loaded HOT tile completely covers the CARTO cell beneath it. Each HOT tile fades in 0→1 over Leaflet's built-in tile-fade (~200 ms, `fadeAnimation` left **enabled** — the app does not disable it and adds **no** competing custom opacity transition that would fight Leaflet's inline tile-opacity management), so the CARTO→HOT handover reads as a dissolve rather than a pop, and a slow HOT tile shows the already-present CARTO tile underneath meanwhile. Because HOT always paints over CARTO where it arrives, and both wear the same dark filter (SB3), a viewport mixing arrived-HOT and not-yet-arrived (CARTO-showing) cells never reads as a checkerboard. | interview |
+| **SB3** | **Shared dark filter on the per-layer containers (amends HT2/BL3 selector; value unchanged).** The single-source-of-truth filter `grayscale(1) invert(1) brightness(0.9) contrast(1.08)` (identical value to BL3, with its `-webkit-` twin) is applied in one `base.css` rule to the two layer containers `#map .leaflet-layer.map-tiles-hot, #map .leaflet-layer.map-tiles-fallback`. With no per-tile swap, Leaflet stamps each layer's `className` on its **container** (`.leaflet-layer`), and `filter` on a container greys that provider's whole tile set as one group; both providers therefore converge to the same dark look. The removed per-theme machinery is **not** restored: no Ruby `tile_filters`/`DEFAULT_TILE_FILTER_*`, no `frontend_app_config`/`data-app-config` `tileFilters`, no JS `resolveTileFilter`/`applyFiltersToAllTiles`/MutationObserver, no `--map-tile*-filter` custom property. Offline placeholder tiles carry neither class and stay unfiltered. **Amends HT2/BL3** (per-tile → per-layer selector; the filter *value* and its single-rule home are unchanged). | interview |
+| **SB4** | **Single pane dimming veil (brightness parity).** Tile dimming collapses to one rule `#map .leaflet-tile-pane { opacity: 0.5625 }`; `.leaflet-layer` returns to opacity 1 and the former `#map .leaflet-tile.map-tiles { opacity: 0.75 }` selector is removed (the `map-tiles` container class is gone). `0.5625 = 0.75 × 0.75` is the *effective* brightness the single pre-SB layer rendered at (pane 0.75 × layer 0.75), so the two stacked layers composite to **exactly today's** brightness. Dimming once at the pane makes the result independent of how many layers are in the tile pane — including when the offline placeholder (SB5) is added as a third. | interview |
+| **SB5** | **One liveness policy fed by both layers (extends HT4/DM3).** A single `createTileFailurePolicy` instance (`main/tile-failure-policy.js`, unchanged) receives `tileload` / `tileerror` / `load` from **both** layers on the dashboard: a `tileload` from **either** provider latches the basemap "alive", and `activateOfflineTiles` fires only when the whole initial viewport produced **zero** successful tiles across both layers (comprehensive dual outage). Thus HOT-down/CARTO-up **and** CARTO-down/HOT-up each keep a working map; only a both-providers outage reaches the offline placeholder. The offline switch removes **both** online layers. The offline `GridLayer` tier stays **dashboard-only** (the federation map keeps no kill-basemap logic, unchanged from DM3/HT5). **Extends HT4/DM3** (the ladder's top rung is now two parallel providers instead of one primary-with-fallback). | interview |
+| **SB6** | **Always-on dual egress; privacy posture (amends HT7).** Both keyless, cookieless raster-tile CDNs (HOT `openstreetmap.fr`, CARTO `cartocdn.com`) are now requested on **every** viewport — HT3's "CARTO only on a HOT-tile failure" conditionality is gone — so third-party tile egress is **two** CDNs rather than one, and CARTO now sees each viewer's IP/`Referer` on every pan/zoom rather than only on a HOT failure. Neither CDN receives a credential, cookie, analytics beacon, API key, or any user/mesh/operator identifier — only standard `{z}/{x}/{y}` tile coordinates — so **D11 (no phone-home) holds**: the bar is telemetry, which neither provider is sent. The doubled egress is documented **operator-visibly** in the README (a deliberate, disclosed trade-off, not silent). Reaffirms HT6/DM5 (no attribution) and Apex I (raster CDNs, not brokers; `guard-edits.py` untriggered). **Amends HT7** (which banked on common-case HOT-only egress). | interview |
+| **SB7** | **Stack & contract untouched (reaffirms D7/D8, HT5/BL4).** Native Leaflet only — two `L.tileLayer`s, **no** custom subclass, no new package or build step (D7). The dark filter, the pane opacity, and the layer z-indices are frontend constants; none enters `/version`, `data-app-config`, or any `/api/*` shape, so there is no contract change and no version bump (D8). The whole basemap still lives behind the one shared `createBasemapLayer` factory called by both maps (HT5/BL4), and it is protocol-neutral (Invariant IV). | proposed |
+| **SB8** | **Engineering bar (D9).** The new/changed frontend units — the `createBasemapLayer` factory (now returning the base+overlay pair) and the layer-option constants — ship with **100% unit tests**, full JSDoc, the exact Apache header, and clean linters; all existing suites stay green. Retired-module tests are **deleted, not left dangling**: `main/__tests__/fallback-tile-layer.test.js` is removed with its module. `__tests__/basemap-blend.test.js`, `__tests__/basemap-config.test.js`, `__tests__/federation-page.test.js`, `__tests__/config.test.js`, and the leaflet-stub map-init harness are **retargeted** to the two-layer wiring. **BL-A1** (which asserted `FALLBACK_TIMEOUT_MS === 2500`) and **HT-A3** (the per-tile swap mechanism) are **amended**, not silently broken. | D9 + proposed |
+

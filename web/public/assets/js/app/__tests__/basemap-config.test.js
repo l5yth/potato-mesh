@@ -14,6 +14,18 @@
  * limitations under the License.
  */
 
+/**
+ * Unit tests for the shared stacked-basemap factory.
+ *
+ * The basemap is two always-on native Leaflet tile layers — a CARTO Voyager base
+ * and an opaque HOT overlay stacked on top — built once by
+ * {@link createBasemapLayer} and shared by both maps. These tests lock the URLs,
+ * the per-layer options (classes, subdomains, retina, z-index stacking), and the
+ * ``{ base, overlay }`` / ``null`` factory contract.
+ *
+ * @module __tests__/basemap-config
+ */
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -22,87 +34,78 @@ import {
   HOT_TILE_OPTIONS,
   CARTO_TILE_URL,
   CARTO_TILE_OPTIONS,
-  FALLBACK_TIMEOUT_MS,
-  prefersRetinaTiles,
   createBasemapLayer,
 } from '../basemap-config.js';
-import {
-  HOT_TILE_CLASS,
-  FALLBACK_TILE_CLASS,
-} from '../main/fallback-tile-layer.js';
-import {
-  makeLeafletTileLayerStub,
-  withImgDocument,
-} from '../main/__tests__/tile-test-helpers.js';
 
-test('HOT is the primary tile source; CARTO is retained for the fallback', () => {
+/**
+ * Build a minimal Leaflet stub whose ``tileLayer(url, options)`` records its
+ * arguments, mirroring the shape ``createBasemapLayer`` consumes. ``calls``
+ * captures every constructed layer in order for assertions.
+ *
+ * @returns {{tileLayer: Function, calls: Array<{url: string, options: Object}>}}
+ *   The stub and its call log.
+ */
+function makeLeafletStub() {
+  const calls = [];
+  return {
+    calls,
+    tileLayer(url, options) {
+      const layer = { _url: url, options: options || {} };
+      calls.push(layer);
+      return layer;
+    },
+  };
+}
+
+test('HOT is the overlay tile source with the dark-filter class and top z-index', () => {
   assert.match(HOT_TILE_URL, /tile\.openstreetmap\.fr\/hot/);
   assert.equal(HOT_TILE_OPTIONS.subdomains, 'abc');
   assert.equal(HOT_TILE_OPTIONS.crossOrigin, 'anonymous');
   assert.equal(HOT_TILE_OPTIONS.maxZoom, 19);
+  assert.equal(HOT_TILE_OPTIONS.className, 'map-tiles-hot');
+  assert.equal(HOT_TILE_OPTIONS.zIndex, 2);
+});
+
+test('CARTO Voyager is the base tile source with the dark-filter class and bottom z-index', () => {
   assert.match(CARTO_TILE_URL, /basemaps\.cartocdn\.com\/rastertiles\/voyager/);
   assert.equal(CARTO_TILE_OPTIONS.subdomains, 'abcd');
   assert.equal(CARTO_TILE_OPTIONS.detectRetina, true);
-  assert.equal(FALLBACK_TIMEOUT_MS, 2500);
+  assert.equal(CARTO_TILE_OPTIONS.crossOrigin, 'anonymous');
+  assert.equal(CARTO_TILE_OPTIONS.maxZoom, 19);
+  assert.equal(CARTO_TILE_OPTIONS.className, 'map-tiles-fallback');
+  assert.equal(CARTO_TILE_OPTIONS.zIndex, 1);
 });
 
-test('prefersRetinaTiles reflects the device pixel ratio', () => {
-  const previous = globalThis.devicePixelRatio;
-  try {
-    globalThis.devicePixelRatio = 2;
-    assert.equal(prefersRetinaTiles(), true);
-    globalThis.devicePixelRatio = 1;
-    assert.equal(prefersRetinaTiles(), false);
-    globalThis.devicePixelRatio = undefined;
-    assert.equal(prefersRetinaTiles(), false);
-  } finally {
-    globalThis.devicePixelRatio = previous;
-  }
+test('the HOT overlay stacks above the CARTO base (opaque coverage)', () => {
+  // The overlay must sit above the base so a loaded (opaque) HOT tile covers the
+  // CARTO tile beneath it; neither layer reduces its own opacity (dimming is the
+  // single pane veil in base.css, SB4).
+  assert.ok(HOT_TILE_OPTIONS.zIndex > CARTO_TILE_OPTIONS.zIndex);
+  assert.equal(HOT_TILE_OPTIONS.opacity, undefined);
+  assert.equal(CARTO_TILE_OPTIONS.opacity, undefined);
 });
 
 test('createBasemapLayer returns null when Leaflet is unavailable', () => {
   assert.equal(createBasemapLayer(null), null);
+  assert.equal(createBasemapLayer(undefined), null);
+  assert.equal(createBasemapLayer({}), null);
 });
 
-test('createBasemapLayer builds the HOT-primary layer with CARTO fallback wiring', () => {
-  const previous = globalThis.devicePixelRatio;
-  const doc = withImgDocument();
-  try {
-    globalThis.devicePixelRatio = 1; // non-retina fallback
-    const L = makeLeafletTileLayerStub();
-    const layer = createBasemapLayer(L);
-    assert.ok(layer);
-    assert.equal(layer._url, HOT_TILE_URL);
-    assert.equal(layer.options, HOT_TILE_OPTIONS);
-    const tile = layer.createTile({ x: 2, y: 1, z: 6 }, () => {});
-    assert.equal(tile.classList.contains(HOT_TILE_CLASS), true);
-    // (2 + 1) % 3 = 0 -> 'a' HOT
-    assert.equal(tile.src, 'https://a.tile.openstreetmap.fr/hot/6/2/1.png');
-    tile.dispatch('error'); // fall back
-    // (2 + 1) % 4 = 3 -> 'd' CARTO, non-retina
-    assert.equal(
-      tile.src,
-      'https://d.basemaps.cartocdn.com/rastertiles/voyager/6/2/1.png'
-    );
-    assert.equal(tile.classList.contains(FALLBACK_TILE_CLASS), true);
-  } finally {
-    globalThis.devicePixelRatio = previous;
-    doc.restore();
-  }
-});
+test('createBasemapLayer builds the CARTO base + HOT overlay pair', () => {
+  const L = makeLeafletStub();
+  const layers = createBasemapLayer(L);
 
-test('createBasemapLayer requests @2x CARTO fallback tiles on HiDPI displays', () => {
-  const previous = globalThis.devicePixelRatio;
-  const doc = withImgDocument();
-  try {
-    globalThis.devicePixelRatio = 3;
-    const L = makeLeafletTileLayerStub();
-    const layer = createBasemapLayer(L);
-    const tile = layer.createTile({ x: 0, y: 0, z: 2 }, () => {});
-    tile.dispatch('error');
-    assert.match(tile.src, /@2x\.png$/);
-  } finally {
-    globalThis.devicePixelRatio = previous;
-    doc.restore();
-  }
+  assert.ok(layers);
+  assert.deepEqual(Object.keys(layers).sort(), ['base', 'overlay']);
+
+  // Base is CARTO Voyager with its options; overlay is HOT with its options.
+  assert.equal(layers.base._url, CARTO_TILE_URL);
+  assert.equal(layers.base.options, CARTO_TILE_OPTIONS);
+  assert.equal(layers.overlay._url, HOT_TILE_URL);
+  assert.equal(layers.overlay.options, HOT_TILE_OPTIONS);
+
+  // Both are built via L.tileLayer (native layers, no custom subclass), base first.
+  assert.equal(L.calls.length, 2);
+  assert.equal(L.calls[0]._url, CARTO_TILE_URL);
+  assert.equal(L.calls[1]._url, HOT_TILE_URL);
 });

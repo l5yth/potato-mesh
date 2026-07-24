@@ -934,7 +934,10 @@ export function initializeApp(config) {
   let mapStatusEl = null;
   let map = null;
   let mapCenterLatLng = null;
-  let tiles = null;
+  // The online basemap is a ``{ base, overlay }`` pair of stacked tile layers
+  // (CARTO Voyager base + HOT overlay) from ``createBasemapLayer``; ``null``
+  // until the map initializes, or when Leaflet is absent.
+  let basemapLayers = null;
   let offlineTiles = null;
   let usingOfflineTiles = false;
   const MAX_DISTANCE_KM = Number.isFinite(config.maxDistanceKm) && config.maxDistanceKm > 0
@@ -1359,13 +1362,13 @@ export function initializeApp(config) {
 
 
   // --- Map setup ---
-  // The basemap is HOT (primary, dark-filtered via the ``.map-tiles-hot`` CSS
-  // rule) with a per-tile CARTO fallback, built by the shared
-  // ``createBasemapLayer`` factory (see ``./basemap-config.js`` and
-  // ``./main/fallback-tile-layer.js``). A HOT tile that errors or is slow
-  // (>2.5s) is individually swapped to CARTO Voyager (greyed by the same dark
-  // filter as HOT, so the two providers blend); only a tile that fails on both
-  // providers reaches the offline placeholder wired below.
+  // The basemap is two always-on stacked layers built by the shared
+  // ``createBasemapLayer`` factory (see ``./basemap-config.js``): a CARTO
+  // Voyager base under an opaque HOT overlay, both dark-filtered by the same
+  // ``.map-tiles-fallback`` / ``.map-tiles-hot`` CSS rule so they blend. Both
+  // load at once, so a slow HOT tile shows the already-present CARTO tile in the
+  // meantime (no blank cell, no checkerboard, no per-tile deadline). Only a tile
+  // that fails on *both* providers reaches the offline placeholder wired below.
 
   if (hasLeaflet) {
     mapCenterLatLng = L.latLng(MAP_CENTER_COORDS.lat, MAP_CENTER_COORDS.lon);
@@ -1429,8 +1432,12 @@ export function initializeApp(config) {
       }
       return;
     }
-    if (tiles && map.hasLayer(tiles)) {
-      map.removeLayer(tiles);
+    if (basemapLayers) {
+      for (const layer of [basemapLayers.base, basemapLayers.overlay]) {
+        if (layer && map.hasLayer(layer)) {
+          map.removeLayer(layer);
+        }
+      }
     }
     usingOfflineTiles = true;
     offlineTiles.addTo(map);
@@ -1444,40 +1451,51 @@ export function initializeApp(config) {
   if (hasLeaflet && mapContainer && !isFederationView && !mapAlreadyInitialized) {
     map = L.map(mapContainer, { worldCopyJump: true, attributionControl: false });
     showMapStatus('Loading map tiles…');
-    tiles = createBasemapLayer(L);
+    basemapLayers = createBasemapLayer(L);
     const tileFailurePolicy = createTileFailurePolicy();
     const OFFLINE_TILES_MESSAGE =
       'Map tiles unavailable. Showing offline placeholder basemap.';
 
-    tiles.on('tileload', () => {
-      // The first successful tile latches the basemap "alive": from here on,
-      // isolated tile errors are tolerated and never swap in the offline layer.
-      tileFailurePolicy.recordTileLoad();
-      hideMapStatus();
-    });
+    // The two providers are independent layers, so the liveness policy is fed by
+    // BOTH: a ``tileload`` from either latches the basemap "alive", and the
+    // offline placeholder fires only when the whole viewport fails on both.
+    const basemapTileLayers = [basemapLayers.base, basemapLayers.overlay];
+    for (const layer of basemapTileLayers) {
+      layer.on('tileload', () => {
+        // The first successful tile (from either provider) latches the basemap
+        // "alive": from here on, isolated tile errors are tolerated and never
+        // swap in the offline layer.
+        tileFailurePolicy.recordTileLoad();
+        hideMapStatus();
+      });
 
-    tiles.on('tileerror', () => {
-      // Leaflet emits ``tileerror`` only when a tile failed on BOTH HOT and its
-      // CARTO fallback (see ``main/fallback-tile-layer.js``). A single such error
-      // still does not kill the basemap (DM3); the offline placeholder fires only
-      // once the policy judges the basemap comprehensively unreachable.
-      if (tileFailurePolicy.recordTileError()) {
-        activateOfflineTiles(OFFLINE_TILES_MESSAGE);
-      }
-    });
+      layer.on('tileerror', () => {
+        // A single tile error still does not kill the basemap (DM3); the offline
+        // placeholder fires only once the policy judges the basemap
+        // comprehensively unreachable — and only while no tile from EITHER
+        // provider has yet loaded.
+        if (tileFailurePolicy.recordTileError()) {
+          activateOfflineTiles(OFFLINE_TILES_MESSAGE);
+        }
+      });
 
-    tiles.on('load', () => {
-      // The current viewport finished loading. If not a single tile succeeded,
-      // the provider is unreachable — fall back; otherwise the basemap is up.
-      if (tileFailurePolicy.recordLayerLoad()) {
-        activateOfflineTiles(OFFLINE_TILES_MESSAGE);
-        return;
-      }
-      usingOfflineTiles = false;
-      hideMapStatus();
-    });
+      layer.on('load', () => {
+        // A provider's viewport finished loading. If not a single tile has
+        // succeeded across both layers, the basemap is unreachable — fall back;
+        // otherwise it is up.
+        if (tileFailurePolicy.recordLayerLoad()) {
+          activateOfflineTiles(OFFLINE_TILES_MESSAGE);
+          return;
+        }
+        usingOfflineTiles = false;
+        hideMapStatus();
+      });
+    }
 
-    tiles.addTo(map);
+    // Add the base first, then the opaque overlay on top (z-index also enforces
+    // this ordering in ``basemap-config.js``).
+    basemapLayers.base.addTo(map);
+    basemapLayers.overlay.addTo(map);
 
     const initialBounds = computeBoundingBox(
       MAP_CENTER_COORDS,
