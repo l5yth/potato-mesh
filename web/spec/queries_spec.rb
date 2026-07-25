@@ -1263,6 +1263,86 @@ RSpec.describe PotatoMesh::App::Queries do
     end
   end
 
+  describe "#query_packets_per_hour" do
+    before do
+      with_db { |db| db.execute("DELETE FROM ingestor_activity") }
+    end
+
+    after do
+      with_db { |db| db.execute("DELETE FROM ingestor_activity") }
+    end
+
+    def seed_activity(rows)
+      with_db do |db|
+        rows.each do |ingestor_id, at, packets, protocol|
+          db.execute(
+            "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+            [ingestor_id, at, packets, protocol],
+          )
+        end
+      end
+    end
+
+    it "returns all zeros when there is no activity" do
+      expect(queries.query_packets_per_hour(now: now)).to eq(
+        "total" => 0, "meshcore" => 0, "meshtastic" => 0, "reticulum" => 0,
+      )
+    end
+
+    it "takes the MAX per protocol of each ingestor's 24h total over 24" do
+      seed_activity(
+        [
+          # meshcore ingestor A: 1200 over the window (two heartbeats).
+          ["!coreaaaa", now - 100, 700, "meshcore"],
+          ["!coreaaaa", now - 3700, 500, "meshcore"],
+          # meshcore ingestor B: 900 — the quieter vantage must not inflate MAX.
+          ["!corebbbb", now - 200, 900, "meshcore"],
+          # meshtastic ingestor C: 720.
+          ["!tastcccc", now - 300, 720, "meshtastic"],
+        ],
+      )
+      result = queries.query_packets_per_hour(now: now)
+      expect(result["meshcore"]).to eq(50) # MAX(1200, 900) / 24
+      expect(result["meshtastic"]).to eq(30) # 720 / 24
+      expect(result["total"]).to eq(50) # MAX over every ingestor = 1200 / 24
+      expect(result["reticulum"]).to eq(0)
+    end
+
+    it "reports zero for a protocol with no active ingestor" do
+      seed_activity([["!coreaaaa", now - 100, 240, "meshcore"]])
+      result = queries.query_packets_per_hour(now: now)
+      expect(result["meshcore"]).to eq(10) # 240 / 24
+      expect(result["meshtastic"]).to eq(0)
+      expect(result["reticulum"]).to eq(0)
+    end
+
+    it "excludes activity older than the 24h window" do
+      seed_activity(
+        [
+          ["!coreaaaa", now - 100, 480, "meshcore"],        # inside → counts
+          ["!coreaaaa", now - 90_000, 100_000, "meshcore"], # >24h → excluded
+        ],
+      )
+      expect(queries.query_packets_per_hour(now: now)["meshcore"]).to eq(20) # 480 / 24
+    end
+
+    it "keeps reticulum a zero stub even when reticulum activity exists" do
+      seed_activity([["!reti0001", now - 100, 720, "reticulum"]])
+      result = queries.query_packets_per_hour(now: now)
+      # The reticulum scope is always emitted as zero (forward-looking stub)…
+      expect(result["reticulum"]).to eq(0)
+      # …but a reticulum ingestor still contributes to the protocol-agnostic
+      # total (MAX across every ingestor).
+      expect(result["total"]).to eq(30) # 720 / 24
+    end
+
+    it "rounds the hourly rate to the nearest integer" do
+      seed_activity([["!coreaaaa", now - 100, 100, "meshcore"]])
+      # 100 / 24 = 4.166… → 4
+      expect(queries.query_packets_per_hour(now: now)["meshcore"]).to eq(4)
+    end
+  end
+
   describe "#query_telemetry_buckets" do
     it "clamps oversized window_seconds to the 28-day visibility cap" do
       huge_window = PotatoMesh::Config.four_weeks_seconds * 50

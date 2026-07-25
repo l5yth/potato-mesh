@@ -110,7 +110,7 @@ module PotatoMesh
       def init_db
         FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
-        %w[nodes messages positions telemetry neighbors instances traces ingestors].each do |schema|
+        %w[nodes messages positions telemetry neighbors instances traces ingestors ingestor_activity].each do |schema|
           sql_file = File.expand_path("../../../../data/#{schema}.sql", __dir__)
           db.execute_batch(File.read(sql_file))
         end
@@ -536,6 +536,17 @@ module PotatoMesh
             db.execute("ALTER TABLE ingestors ADD COLUMN protocol TEXT NOT NULL DEFAULT 'meshtastic'")
             db.execute("UPDATE ingestors SET protocol = 'meshtastic' WHERE protocol IS NULL OR TRIM(protocol) = ''")
           end
+        end
+
+        # The per-heartbeat activity time-series (SPEC MA3) is a standalone,
+        # append-only table; older installations gain it here without any data
+        # backfill (the moving average simply starts populating from the next
+        # heartbeat that carries a `packets` count).
+        activity_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ingestor_activity'").flatten
+        if activity_tables.empty?
+          activity_schema = File.expand_path("../../../../data/ingestor_activity.sql", __dir__)
+          db.execute_batch(File.read(activity_schema))
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(

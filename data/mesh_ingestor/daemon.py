@@ -24,7 +24,7 @@ import time
 
 from pubsub import pub
 
-from . import config, handlers, ingestors, interfaces, queue
+from . import announce, config, handlers, ingestors, interfaces, queue
 from .mesh_protocol import MeshProtocol
 from .utils import _retry_dict_snapshot
 
@@ -265,6 +265,7 @@ class _DaemonState:
     ingestor_announcement_sent: bool = False
     announced_target: bool = False
     last_self_node_report: float | None = None
+    last_announce: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +575,39 @@ def _try_send_self_node(state: _DaemonState) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Periodic activity-announcement helper
+# ---------------------------------------------------------------------------
+
+
+def _process_announcements(state: _DaemonState) -> float | None:
+    """Run the periodic activity-announcement cycle when scheduled (SPEC MA6-MA8).
+
+    Delegates the transmit gate (``RX_ONLY``), the per-instance fail-closed
+    privacy check, the >=24h post-start delay, and the 24h cadence to
+    :func:`~data.mesh_ingestor.announce.maybe_run_announcements`, which dogfeeds
+    each configured instance's own API for the numbers it announces. A no-op
+    until the interface is connected (the announcement needs a live radio to
+    transmit).
+
+    Parameters:
+        state: Current daemon loop state (provides the provider, interface, and
+            the last-announce timestamp).
+
+    Returns:
+        The updated ``last_announce`` timestamp for :class:`_DaemonState`.
+    """
+
+    if state.iface is None:
+        return state.last_announce
+    return announce.maybe_run_announcements(
+        state.provider,
+        state.iface,
+        start_time=ingestors.ingestor_start_time(),
+        last_announce=state.last_announce,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Loop iteration helper
 # ---------------------------------------------------------------------------
 
@@ -610,6 +644,7 @@ def _loop_iteration(state: _DaemonState) -> bool:
         or _now - state.last_self_node_report >= config._SELF_NODE_REPORT_INTERVAL_SECS
     ):
         _try_send_self_node(state)
+    state.last_announce = _process_announcements(state)
     state.retry_delay = max(0.0, config._RECONNECT_INITIAL_DELAY_SECS)
     return False
 
@@ -727,6 +762,7 @@ __all__ = [
     "_event_wait_allows_default_timeout",
     "_is_ble_interface",
     "_node_items_snapshot",
+    "_process_announcements",
     "_process_ingestor_heartbeat",
     "_subscribe_receive_topics",
     "_try_connect",

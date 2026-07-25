@@ -830,6 +830,33 @@ def test_loop_iteration_full_pass_returns_false(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _process_announcements
+# ---------------------------------------------------------------------------
+
+
+def test_process_announcements_noop_without_iface():
+    """Returns the unchanged last_announce when no interface is connected."""
+    state = _make_state(iface=None, last_announce=123.0)
+    assert daemon._process_announcements(state) == 123.0
+
+
+def test_process_announcements_delegates_when_connected(monkeypatch):
+    """Delegates to announce.maybe_run_announcements with the daemon's provider,
+    interface, ingestor start time, and last_announce, and returns its result."""
+    calls = []
+
+    def _fake(provider, iface, *, start_time, last_announce):
+        calls.append((provider, iface, start_time, last_announce))
+        return 999.0
+
+    monkeypatch.setattr(daemon.announce, "maybe_run_announcements", _fake)
+    monkeypatch.setattr(daemon.ingestors, "ingestor_start_time", lambda: 555)
+    state = _make_state(iface="IFACE", provider="PROV", last_announce=None)
+    assert daemon._process_announcements(state) == 999.0
+    assert calls == [("PROV", "IFACE", 555, None)]
+
+
+# ---------------------------------------------------------------------------
 # PROTOCOL env-var selection
 # ---------------------------------------------------------------------------
 

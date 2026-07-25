@@ -67,6 +67,8 @@ module PotatoMesh
                      SQL
         end
 
+        record_ingestor_activity(db, node_id, last_seen_time, payload["packets"], protocol)
+
         true
       rescue SQLite3::SQLException => e
         warn_log(
@@ -77,6 +79,41 @@ module PotatoMesh
           error_message: e.message,
         )
         false
+      end
+
+      # Append a per-heartbeat activity row for the moving-average time-series
+      # (SPEC MA2/MA3), called after the ingestor liveness upsert.
+      #
+      # A missing, non-numeric, or negative +packets+ value records **no** row:
+      # the field is additive, so older ingestors that never send it simply
+      # contribute nothing to the time-series. A failure here is logged and
+      # swallowed rather than propagated — the supplementary activity write must
+      # never sink a heartbeat whose liveness upsert has already committed.
+      #
+      # @param db [SQLite3::Database] open database handle.
+      # @param ingestor_id [String] canonical ingestor node id.
+      # @param at [Integer] heartbeat timestamp used as the activity bucket time.
+      # @param raw_packets [Object] the payload's +packets+ value (may be nil).
+      # @param protocol [String] the ingestor's declared protocol.
+      # @return [void]
+      def record_ingestor_activity(db, ingestor_id, at, raw_packets, protocol)
+        packets = coerce_integer(raw_packets)
+        return if packets.nil? || packets.negative?
+
+        with_busy_retry do
+          db.execute(
+            "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES(?,?,?,?)",
+            [ingestor_id, at, packets, protocol],
+          )
+        end
+      rescue SQLite3::SQLException => e
+        warn_log(
+          "Failed to record ingestor activity",
+          context: "data_processing.ingestors",
+          node_id: ingestor_id,
+          error_class: e.class.name,
+          error_message: e.message,
+        )
       end
     end
   end

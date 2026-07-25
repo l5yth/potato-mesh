@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 import time
 
-from .. import config
+from .. import activity, config
 from ..serialization import _canonical_node_id
 
 # ---------------------------------------------------------------------------
@@ -182,10 +182,17 @@ def last_packet_monotonic() -> float | None:
 
 
 def _mark_packet_seen() -> None:
-    """Record that a packet has been processed by updating the monotonic clock."""
+    """Record that a packet has been processed.
+
+    Updates the monotonic activity clock (used for inactivity-reconnect) and
+    increments the merged mesh-activity counter (SPEC MA1) so that *every*
+    received frame — including one a downstream handler later ignores or fails
+    to store — is counted here, before any dispatch or drop decision.
+    """
 
     global _last_packet_monotonic
     _last_packet_monotonic = time.monotonic()
+    activity.record_packet()
 
 
 __all__ = [

@@ -218,6 +218,9 @@ Heartbeat payload:
 - `version` (string)
 - Optional: `lora_freq`, `modem_preset`
 - Optional: `protocol` (string; e.g. `"meshtastic"`, `"meshcore"`) — declares the mesh backend for this ingestor; defaults to `"meshtastic"` when absent
+- Optional: `packets` (int ≥ 0) — **mesh-activity delta (SPEC MA1/MA2).** The merged count of *every* frame this ingestor handled since its previous heartbeat: all received frames (including ignored / errored / unimplemented) **plus** its own transmissions (announcement + MeshCore telemetry polls), counted at the earliest receive/transmit seam so nothing is under-reported. It is a **per-interval delta** (reset on each send), **not** a since-boot cumulative. Additive and backward-compatible: an absent or negative value records no activity, so pre-feature ingestors are unaffected.
+
+**Mesh-activity time-series (SPEC MA3).** Each heartbeat carrying a non-negative `packets` value appends one **append-only** row to the `ingestor_activity` table (`ingestor_id`, `at`, `packets`, `protocol`; `data/ingestor_activity.sql`); the `ingestors` snapshot row is upserted as before. Each ingestor's contribution is stored separately (never pre-summed) so a packets/hour moving average is computable across time × protocol × multiple ingestors. The row is best-effort — a failed activity insert never sinks the liveness heartbeat (still `201`). Rows are pruned by the retention worker on `at`. The read-side aggregate is served by `GET /api/stats` (`packets_per_hour`, below).
 
 **Protocol propagation**: all event records (`messages`, `positions`, `telemetry`, `traces`, `neighbors`) that reference this ingestor via their `ingestor` field inherit its `protocol` value at write time when no explicit per-record `protocol` stamp is present. Per-record stamps take precedence — the ingestor heartbeat default only kicks in when the per-record field is absent or malformed.
 
@@ -303,6 +306,7 @@ do **not** accept `before`.
   "meshcore":   { "nodes": {…}, "messages": {…}, "telemetry": {…} },
   "meshtastic": { "nodes": {…}, "messages": {…}, "telemetry": {…} },
   "reticulum":  { "nodes": {…}, "messages": {…}, "telemetry": {…} },  // stub: always 0
+  "packets_per_hour": { "total": 50, "meshcore": 50, "meshtastic": 30, "reticulum": 0 },
   "sampled": false
 }
 ```
@@ -320,6 +324,17 @@ do **not** accept `before`.
 - **Privacy.** Every metric honors the node opt-out marker. When `PRIVATE=1`, all
   `messages` counts are forced to `0` (mirroring the disabled message API);
   `nodes`/`telemetry` counts remain.
+- **`packets_per_hour`** (additive, SPEC MA4/MA5) is a flat top-level map keyed
+  `{ total, meshcore, meshtastic, reticulum }` carrying the 24-hour packets/hour
+  moving average as a rounded integer. It is aggregated **MAX-per-protocol**:
+  `MAX` over that protocol's ingestors of *(the ingestor's `packets` total in the
+  last 24 h ÷ 24)* — a single radio hears ≤ what is actually transmitted, so the
+  busiest vantage is the best dedup-free estimate of air traffic and never
+  double-counts a frame heard by two radios. `total` is the same MAX over **every**
+  ingestor regardless of protocol; `reticulum` is the always-zero forward-looking
+  stub. Unlike `messages`, it is **not** privacy-gated (packets are a public
+  aggregate, no message content). Additive to the 0.7.x `/api/stats` tree — no
+  version bump; the ingestor dogfeeds it for the activity announcement (MA6).
 - **`sampled`** is unchanged: always `false` (the counts are exact, not sampled).
 
 ### GET /api/events live-update stream (SSE)

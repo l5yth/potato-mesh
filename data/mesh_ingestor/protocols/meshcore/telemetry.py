@@ -35,7 +35,7 @@ import asyncio
 import time
 from collections.abc import Mapping
 
-from ... import config
+from ... import activity, config
 from .interface import _MeshcoreInterface
 from .messages import _derive_message_id
 
@@ -401,7 +401,12 @@ async def _poll_contact_telemetry(
     Falls back to a status request when the telemetry pull yields nothing, so
     sensor-less nodes still report battery/uptime.  One contact per call keeps
     airtime bounded to a single request per poll interval regardless of roster
-    size; the meshcore library serialises mesh requests internally.
+    size; the meshcore library serialises mesh requests internally.  Both ends
+    of the attempt emit a ``meshcore.telemetry.poll`` debug line — one when the
+    request is initiated, one when neither the telemetry nor the status request
+    returned usable data — because ``req_*_sync`` return ``None`` on timeout
+    without raising, which would otherwise leave an unanswered poll
+    indistinguishable from a disabled poll loop.
 
     Parameters:
         mc: Connected MeshCore instance.
@@ -415,7 +420,16 @@ async def _poll_contact_telemetry(
     node_id = iface.lookup_node_id((contact.get("public_key") or "")[:12])
     if node_id is None:
         return
+    # Log before the request goes out: req_*_sync return None on timeout without
+    # raising, so an unanswered poll is otherwise silent.
+    config._debug_log(
+        "MeshCore contact telemetry poll initiated",
+        context="meshcore.telemetry.poll",
+        node_id=node_id,
+    )
     try:
+        # An on-air pull is an ingestor transmission — count it (SPEC MA1).
+        activity.record_tx()
         lpp = await mc.commands.req_telemetry_sync(contact)
     except Exception as exc:
         config._debug_log(
@@ -430,6 +444,8 @@ async def _poll_contact_telemetry(
     ):
         return
     try:
+        # The status fallback is a second on-air pull — count it too (MA1).
+        activity.record_tx()
         status = await mc.commands.req_status_sync(contact)
     except Exception as exc:
         config._debug_log(
@@ -439,8 +455,14 @@ async def _poll_contact_telemetry(
             error=str(exc),
         )
         return
-    _queue_meshcore_telemetry(
+    if _queue_meshcore_telemetry(
         handlers, node_id, _status_to_telemetry_section(status), "status"
+    ):
+        return
+    config._debug_log(
+        "MeshCore contact telemetry poll returned no data",
+        context="meshcore.telemetry.poll",
+        node_id=node_id,
     )
 
 

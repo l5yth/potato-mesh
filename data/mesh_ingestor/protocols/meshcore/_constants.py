@@ -35,6 +35,15 @@ deferred until contacts have been fetched so that the daemon's first
 (issue #788).
 """
 
+_ANNOUNCE_SEND_TIMEOUT_SECS: float = 15.0
+"""Seconds to wait for an activity announcement (``send_chan_msg``) to complete.
+
+The announcement is scheduled from the daemon's synchronous thread onto the
+MeshCore asyncio loop via ``run_coroutine_threadsafe``; this bounds the blocking
+wait on that cross-thread future so a wedged radio cannot stall the daemon loop
+(SPEC MA6/MA9).
+"""
+
 _DEFAULT_BAUDRATE: int = 115200
 """Default baud rate for MeshCore serial connections."""
 

@@ -51,6 +51,7 @@ module PotatoMesh
         ["telemetry", "rx_time"],
         ["traces", "rx_time"],
         ["ingestors", "last_seen_time"],
+        ["ingestor_activity", "at"],
         ["nodes", "last_heard"],
       ].freeze
 
