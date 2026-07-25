@@ -3569,3 +3569,413 @@ existing `_store_meshcore_position` / `_process_contacts` /
 `_process_contact_update` position specs (updated to assert the roster
 `rx_time`, not removed), and **C2** (`test_mesh.py` end-to-end). No web/DB/API
 shape changes, so the Ruby and JS suites are unaffected by construction.
+
+---
+
+## Bugfix: Frontend design & UX audit remediation (D-001…D-040)
+
+Maps to SPEC decisions **UX1–UX15**. The executable guards live in
+`web/spec/ux_audit_spec.rb` (server-rendered markup), the JS unit files named
+below (behaviour), and grep checks (stylesheet state). Every check below was
+written **before** the fix and demonstrated failing against the unfixed tree
+(Phase 2 of the bugfix protocol); D-039 is deliberately absent (rejected, UX1).
+Unless noted, run rspec/node commands from `web/`.
+
+### UX-A1 — Token integrity & WCAG text contrast — UX2, UX3
+```bash
+( cd web && node --test public/assets/js/app/__tests__/role-badge-contrast.test.js )
+grep -nE -- '--border:|--surface:|--table-header-bg:|--hover-bg:|--danger:' web/public/assets/styles/base.css
+git grep -nE '#4a90e2|#c62828|#b00020|body\.dark a \{' -- web/public/assets/styles/base.css
+```
+**Expected:** the JS suite passes — for **every** role in **both** protocol
+palettes, `renderShortHtml` emits an inline text colour whose WCAG contrast on
+the badge background is ≥ 4.5:1 (the no-short `#ccc` badge included). The first
+grep prints all five token definitions inside `:root`; the second prints **no
+output** (no hardcoded focus-ring blue, no sub-AA error reds, no second link
+accent).
+
+### UX-A2 — Degenerate states have a voice — UX4
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "degenerate-state" )
+( cd web && node --test public/assets/js/app/main/__tests__/table-empty-state.test.js )
+awk '/^#map\[data-map-status="placeholder"\]/,/^}/' web/public/assets/styles/base.css
+```
+**Expected:** rspec passes — the layout ships one `<noscript>` block naming
+`/api/nodes`, and the server HTML of `/` contains
+`<tr class="nodes-empty-row">` with the waiting message. The JS suite passes —
+`renderTable` keeps/restores the empty row for an empty node set, removes it
+once nodes render, and formats null telemetry cells as a muted `—` (dash) —
+distinct from `''`. The stripe grep finds the placeholder gradient at ≥ 8 %
+white.
+
+### UX-A3 — Age buckets on rows & markers — UX5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/age-bucket.test.js )
+grep -nE 'data-age="stale"|data-age="live"' web/public/assets/styles/base.css
+```
+**Expected:** pass. `nodeAgeBucket` returns `live` < 3 h, `today` < 24 h,
+`stale` otherwise; `renderTable` stamps `data-age`/`data-age-ts` on each row;
+the shared RT2 tick refreshes the bucket attribute write-on-change
+(`updateAgeBucketElements`); markers receive bucket-scaled `fillOpacity`
+(.85/.55/.30). CSS dims stale rows and accent-rules live rows.
+
+### UX-A4 — Live/paused is visible text — UX6
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/autorefresh-control.test.js )
+```
+**Expected:** pass. The control renders `● live` while streaming and
+`❚❚ paused HH:MM` (pause-moment timestamp) when paused; aria-label/pressed
+semantics preserved.
+
+### UX-A5 — Protocol shape channel & legend line key — UX7
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/node-marker.test.js )
+( cd web && node --test public/assets/js/app/main/__tests__/legend-line-samples.test.js )
+```
+**Expected:** the marker-factory suite passes — MeshCore nodes produce a square
+`L.divIcon` chip (role-coloured), Meshtastic nodes stay `L.circleMarker`, both
+carrying identical interaction wiring; the legend's neighbor/trace toggles
+carry an inline line sample (solid vs `6 6`-dashed) so the two line encodings
+are keyed.
+
+### UX-A6 — Legend defaults & honest toggle label — UX8
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "legend" )
+( cd web && node --test public/assets/js/app/__tests__/legend-toggle-label.test.js )
+```
+**Expected:** pass. `/map` renders `data-legend-collapsed="false"` (dashboard
+stays `true`; ≤ 659 px collapses at init); the toggle text is exactly
+`Hide legend` / `Show legend` with ` (filters active)` appended **only** when
+role filters are active.
+
+### UX-A7 — Nodes-table IA: groups, tiers, affordance, semantics — UX9
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "table IA" )
+( cd web && node --test public/assets/js/app/main/__tests__/nodes-table-ia.test.js )
+awk '/max-width: 659px/,/^}/' web/public/assets/styles/base.css
+```
+**Expected:** rspec passes — `_nodes_table.erb` carries a visually-hidden
+`<caption>`, `scope="col"` on every header, and the grouped second header row;
+`index.erb` exposes visually-hidden section `h2`s; `_instances_table.erb`
+carries caption/scope with priority column order and lat/lon tier classes. The
+JS suite passes — group colspans track hidden tiers, the `+` disclosure row
+lists hidden fields, row hover/click follows the long-name link, numeric cells
+carry the `num` class. The awk block shows `.nodes-col--role` hidden at
+≤ 659 px and `.nodes-col--battery` **not** hidden.
+
+### UX-A8 — Number honesty — UX10
+```bash
+( cd web && node --test public/assets/js/app/__tests__/telemetry-format-honesty.test.js )
+```
+**Expected:** pass. Utilisation formats to 1 decimal (`1.7%`); battery > 100
+renders `100% ⚡`; |voltage| < 0.01 V renders the dash; existing formatter
+behaviour otherwise unchanged.
+
+### UX-A9 — Shell economics — UX11
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "shell" )
+( cd web && node --test public/assets/js/app/__tests__/shell-counts.test.js \
+             public/assets/js/app/main/__tests__/colocated-hub-icon.test.js )
+grep -nE 'clamp\(18px|max-width: 1100px|order: 2;|max-height: 4\.8em|scroll-behavior: auto|width: 28px' web/public/assets/styles/base.css
+```
+**Expected:** rspec passes — static pages render in the footer links row and in
+**neither** nav; the Charts links carry no protocol icon; the region selector
+sits behind the compact 🌐 toggle with `Other regions…` as its placeholder
+option. The JS suite passes — the week count is **not** appended to the
+h1/document title; the meta line reads `N nodes today · M this week`; the
+federation nav count carries a `title` tooltip; the colocated-hub icon hit area
+is 32 px. The grep finds the title clamp, the 1100 px nav breakpoint, the
+mobile map-first `order`, the announcement wrap cap, the reduced-motion scroll
+override, and the 28 px tab arrows.
+
+### UX-A10 — Preset config migration & join strip — UX12
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "join strip" -e "preset config" )
+```
+**Expected:** pass. `Config.meshtastic_preset`/`meshtastic_freq` resolve
+`MESHTASTIC_PRESET`/`MESHTASTIC_FREQ` → deprecated `CHANNEL`/`FREQUENCY` →
+defaults (`#LongFast`, `915MHz` — the pre-existing constants, so a stock
+instance keeps today's advertised strings); `Config.meshcore_preset`/`meshcore_freq`
+render the MeshCore join line only when both are set. The meta row renders the
+`join-line` strip; the federation table header says **Preset** (sort key and
+wire keys unchanged: `channel` carries the resolved preset — FS1/BF3 intact).
+README documents the deprecation.
+
+### UX-A11 — Keyboard/AT map equivalence — UX14
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "map equivalence" )
+```
+**Expected:** pass. Every `#map` region carries `aria-describedby` naming a
+visually-hidden note that points keyboard users at the nodes table/page.
+
+### UX-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+stay green: **LD-A2** (horizontal tab scroll — desktop strip untouched),
+**RT-A1/RT-A2** (the shared tick — the age-bucket pass must not break
+write-on-change or hidden-tab idling), **LV-A***/**VF-A*** (flash/fade target
+rows/markers — `data-node-row` hooks and marker wiring preserved across the
+square-chip factory), **HT-A***/**DM-A*** (basemap untouched), **A4c**
+(protocol-aware chat naming), and **FS-A2/FS-A4** (the signed federation wire —
+`channel` key unchanged). View specs asserting the old nav/title/⏸ markup are
+updated, not removed.
+
+---
+
+## Bugfix: UX audit follow-up (design review remediation)
+
+Maps to SPEC decisions **FU1–FU13**. Presentation-layer only; run JS checks
+from `web/`, rspec from `web/`, greps from the repo root.
+
+### FU-A1 — Chat badge sits in its colour box — FU1
+```bash
+git grep -nE "text-indent: 0" -- web/public/assets/styles/base.css
+git grep -nE "chat-entry-msg, .chat-entry-node\)\s*$|:where\(.short-name" -- web/public/assets/styles/base.css
+```
+**Expected:** `base.css` carries a `:where(.chat-entry-msg, .chat-entry-node) :where(.short-name, .protocol-icon, .chat-entry-reply) { text-indent: 0 }`
+reset, so the inline badge/icon/reply no longer inherit the hanging indent.
+
+### FU-A2 — Region toggle is 🌍, greyscale-until-open — FU2
+```bash
+git grep -nF "🌍" -- web/views/layouts/app.erb
+git grep -nE "instance-selector-toggle|grayscale\(1\)|aria-expanded=.true.\]" -- web/public/assets/styles/base.css
+```
+**Expected:** `app.erb` renders the 🌍 glyph (no 🌐); `base.css` dims the toggle
+with `filter: grayscale(1); opacity: .72` and restores `filter: none` on
+`:hover` / `[aria-expanded="true"]`, with an accent border frame when open.
+
+### FU-A3 — MeshCore marker is an equal-area diamond — FU3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/node-marker.test.js )
+git grep -nE "radius \* 1\.78" -- web/public/assets/js/app/main/node-marker.js
+git grep -nE "rotate\(45deg\)|border-radius: 3px" -- web/public/assets/styles/base.css
+```
+**Expected:** the marker suite passes with `iconSize` `[16, 16]` at radius 9;
+`node-marker.js` sizes the chip `round(radius * 1.78)`; `base.css` rotates the
+`.node-marker-chip__fill` 45° with rounded corners and keeps the container
+`overflow: visible`.
+
+### FU-A4 — Join strip → footer; counts → toggles; `details` dropped — FU4
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "follow-up 04" )
+( cd web && node --test public/assets/js/app/__tests__/main-update-counts.test.js )
+git grep -nE "footer-join" -- web/views/shared/_footer.erb
+git grep -nE "protocolToggleMeshcoreCount|protocol-toggle-count" -- web/views/layouts/app.erb
+git grep -nE "join-line__more|class=\"join-line\"" -- web/views/layouts/app.erb
+```
+**Expected:** rspec + the JS suite pass; `_footer.erb` renders the `footer-join`
+strip; `app.erb` carries the two `protocol-toggle-count` spans; the **last grep
+prints nothing** — the join strip and its `details` link are gone from the meta
+row. `updateProtocolToggleCounts` fills the toggles from the 7-day per-protocol
+figure.
+
+### FU-A5 — Legend dash sample inks both ends — FU5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/legend-line-samples.test.js )
+git grep -nE "stroke-dasharray=.6 2." -- web/public/assets/js/app/main/legend-line-samples.js
+```
+**Expected:** the suite passes; the trace **sample** uses `6 2`. The on-map
+traceroute polylines are untouched (still `6 6`).
+
+### FU-A6 — Condensed nodes table — FU6
+```bash
+git grep -nE "#nodes tbody td" -- web/public/assets/styles/base.css
+git grep -nE "#nodes .nodes-empty-row td" -- web/public/assets/styles/base.css
+```
+**Expected:** `#nodes tbody td { padding: 3px 8px; line-height: 1.35 }` (with
+`#nodes thead th` 5/8 and the group row 3/8); the waiting row keeps `12px 8px`
+via the id-scoped `#nodes .nodes-empty-row td` selector.
+
+### FU-A7 — Disclosure row lists only reported fields, keeping honest zeros — FU7
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/nodes-table-ia.test.js )
+git grep -nE "filterReportedFields|isReportedField" -- web/public/assets/js/app/main.js web/public/assets/js/app/main/nodes-table-ia.js
+```
+**Expected:** the suite passes — `isReportedField` keeps `0.0%` / `0 V` (honest
+zeros) and drops `''` / `—`; an all-absent set renders one
+`node-extra__empty` "No additional fields reported." line; `main.js` wraps the
+15 entries in `filterReportedFields`.
+
+### FU-A8 — Footer chrome on every route — FU8
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "opaque footer" )
+git grep -nE "app-footer--slim" -- web/public/assets/styles/base.css web/views
+git grep -nE "box-shadow: 0 -8px 24px" -- web/public/assets/styles/base.css
+```
+**Expected:** rspec passes (Charts + Federation render `class="app-footer"` and
+**not** `app-footer--slim`); the **second grep prints nothing** — the slim
+variant and its `slim` local are gone; `.app-footer` gains the lift shadow.
+
+### FU-A9 — Chat hang is the real prefix width — FU9
+```bash
+git grep -nE "padding-left: 19ch|text-indent: -19ch" -- web/public/assets/styles/base.css
+```
+**Expected:** both lines are present (the old `8ch` is gone), so wrapped chat
+lines hang under the message column.
+
+### FU-A10 — Both nodes-table header rows pin — FU10
+```bash
+git grep -nE "nodes-group-header th" -- web/public/assets/styles/base.css
+git grep -nE "thead tr:not\(.nodes-group-header\) th" -- web/public/assets/styles/base.css
+```
+**Expected:** `.nodes-group-header th` is `position: sticky; top: 0` (was
+`static`) with a 24 px border-box height; the column row pins at `top: 24px`.
+
+### FU-A11 — Badge meets the 44 px touch floor — FU11
+```bash
+git grep -nE "pointer: coarse" -- web/public/assets/styles/base.css
+git grep -nE "min-width: 44px|min-height: 44px" -- web/public/assets/styles/base.css
+```
+**Expected:** a `@media (pointer: coarse)` block gives
+`.short-name[data-node-info]::after` a ≥ 44 px transparent hit box; fine
+pointers keep the tight target (no unconditional rule).
+
+### FU-A12 — Legend columns share a top baseline — FU12
+```bash
+git grep -nE "legend-column--bottom" -- web/public/assets/styles/base.css web/public/assets/js/app/main.js
+```
+**Expected:** **prints nothing** — the bottom-align modifier is gone from both
+the stylesheet and the legend builder, so both columns top-align.
+
+### FU-R1 — Regression: prior acceptance still holds — FU13
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly amended and required to
+stay green: **UX-A5** (D-013/D-014 — the marker is now a diamond and the dash
+sample `6 2`, but the shape channel and the neighbor/trace key survive),
+**UX-A7** (the nodes-table IA — group colspans, disclosure row, sticky header
+all still hold under the density/filter/pin changes), **UX-A9** (shell — the
+region toggle, chat indent and footer links survive their tweaks), and
+**UX-A10** (the join strip still renders from the resolved preset config, now
+in the footer; the `channel` wire key is unchanged). No Python/Rust/Flutter
+surface is touched, so `pytest`, `cargo test`, and `flutter test` are
+unaffected by construction.
+
+---
+
+## Bugfix: Post-deploy design review (detail view, footer, marker recency)
+
+Maps to SPEC decisions **PD1–PD5**. Each check below was written **before** the
+fix and demonstrated failing against `992d6bb` (the deployed audit tree). Run
+node/rspec from `web/`, greps from the repo root.
+
+### PD-A1 — /nodes/:id is a spec sheet: nothing hidden, absent reads as dash — PD1
+```bash
+( cd web && node --test public/assets/js/app/__tests__/node-page.test.js )
+git grep -nE 'class="[^"]*nodes-col|<table' -- web/public/assets/js/app/node-page/single-node-table.js
+git grep -nE "node-detail-sheet|node-detail__row|—|&mdash;" -- web/public/assets/js/app/node-page/single-node-table.js
+```
+**Expected:** the node-page suite passes; the **second grep prints nothing** —
+the detail view emits no `<table>` and **no applied** `.nodes-col--*` class
+(so no column is `display:none`'d on a single-record page, and no disclosure
+column is needed; a JSDoc comment may still name the retired classes to explain
+the fix — the grep is anchored to `class="…nodes-col` on purpose so a doc
+mention does not read as a defect); the third grep shows the spec-sheet markup
+and the muted dash it renders for absent telemetry (fixing the blank-cell half).
+The detail render reflows to one column on mobile with every field legible.
+
+### PD-A2 — Footer tiers with dot separators; no dangling em-dash — PD2
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "footer dot separators" )
+git grep -nE "footer-separator" -- web/views/shared/_footer.erb
+git grep -nE "footer-links-row|flex-basis: 100%" -- web/public/assets/styles/base.css
+```
+**Expected:** rspec passes — every `.footer-separator` renders `·` (never `—`),
+so the em-dash the wrapping links row stranded on line one is gone; the links
+become their own footer tier (`flex-basis: 100%`) so the wrap is intentional,
+and the chat label is shortened to `chat:` (the instance name is already the
+title and logo). The `≤600px` stack rule is unchanged.
+
+### PD-A3 — Marker stacking: three freshness panes, role orders within — PD3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/age-bucket.test.js )
+( cd web && node --test public/assets/js/app/__tests__/main-app-map-init.test.js )
+git grep -nE "createPane|freshnessPaneForBucket" -- web/public/assets/js/app/main.js
+```
+**Expected:** both suites pass — `freshnessPaneForBucket` maps `live`/`today`/
+`stale` to three distinct panes (unknown → stale); `main.js` creates the three
+panes with ascending z-index (stale < today < live) and assigns every marker —
+circle **and** chip — its bucket's pane, so recency is the coarse stacking
+channel and the existing `getRoleRenderPriority` ladder orders within each pane.
+A live Meshtastic circle now paints over a stale MeshCore chip (the pre-fix
+protocol split had every chip top every circle).
+
+### PD-A4 — Sticky group-header offset is guarded, not a bare magic number — PD4
+```bash
+awk '/^\.nodes-group-header th \{/,/^}/' web/public/assets/styles/base.css | grep -nE "white-space: nowrap|height: 24px"
+```
+**Expected:** the group-header rule pins its height **and** sets
+`white-space: nowrap`, so a longer label / translation / narrow tier cannot wrap
+the group row and overlap the column row pinned at `top: 24px` (an explanatory
+comment names the coupling).
+
+### PD-R1 — Regression: prior acceptance still holds — PD5
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly at risk and required to
+stay green: **UX-A3/UX-A5** (marker fill-opacity buckets and the protocol shape
+channel survive the pane assignment), **UX-A7** (the `#nodes` dashboard table IA
+is untouched — only the detail view changes), **FU-A4/UX-A10** (the footer join
+strip still renders from the resolved preset config), and the node-page tick
+specs (RT1/RT2 timestamps) updated to the spec-sheet markup, not removed. No
+Python/Rust/Flutter surface is touched.
+
+---
+
+## Bugfix: Legend shape key & chat log overflow
+
+Maps to SPEC decisions **LC1–LC4**. Each check below was written **before** the
+fix and demonstrated failing against `80d3ca6`. Run node/rspec from `web/`,
+greps from the repo root.
+
+### LC-A1 — Legend swatches carry the marker shape — LC1
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-filter.test.js )
+git grep -nE "legend-swatch--diamond|legend-swatch--circle" -- web/public/assets/js/app/main.js web/public/assets/styles/base.css
+```
+**Expected:** the filter suite passes — `buildRoleButtons` stamps each swatch
+with its protocol's marker shape (MeshCore → `legend-swatch--diamond`,
+Meshtastic → `legend-swatch--circle`), so the panel keys the shape channel the
+map uses. `base.css` sizes the diamond as an equal-area rotated square (the
+map's `side = radius × 1.78`) with the marker's 1px ring + 3px corner in a
+16px slot so the diagonal never clips the label.
+
+### LC-A2 — Legend pressed state actually paints — LC2
+```bash
+git grep -nE 'button\.legend-item\[aria-pressed="true"\]' -- web/public/assets/styles/base.css
+git grep -nE '^\.legend-item\[aria-pressed="true"\]' -- web/public/assets/styles/base.css
+```
+**Expected:** the first grep prints the rule (the `button`-prefixed selector,
+specificity (0,2,1), outranks the `button:not(.chat-tab):not(.sort-button)`
+reset that previously flattened every chip to `#333`); the **second grep prints
+nothing** — the bare `.legend-item[aria-pressed="true"]` selector (0,2,0), which
+the reset overrode, is gone. Pressed role chips now paint their selected blue.
+
+### LC-A3 — Chat log never scrolls horizontally — LC3
+```bash
+awk '/^\.chat-entry-msg,/,/^}/' web/public/assets/styles/base.css | grep -nE "overflow-wrap: anywhere"
+git grep -nE "overflow-x: hidden" -- web/public/assets/styles/base.css | grep -i chat || echo "no chat overflow-x:hidden (correct)"
+```
+**Expected:** the chat hanging-indent rule (`.chat-entry-msg, .chat-entry-node`)
+carries `overflow-wrap: anywhere`, so an unbreakable token (long hex, URL, or
+39-char long name) wraps under the 19ch hang instead of forcing the panel into a
+horizontal scroll container. `anywhere` (not `break-word`) also lowers the
+entry's min-content width, so it can never demand more width than the panel —
+and no `overflow-x: hidden` is added on the panel (which would only mask the
+next regression).
+
+### LC-R1 — Regression: prior acceptance still holds — LC4
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and required to stay
+green: **UX-A5/UX-A6** (the legend line-sample key and toggle-label behaviour
+survive the swatch-shape change), **FU-A2** (the region toggle) and **UX-A9**
+(chat hanging indent — the `overflow-wrap` addition rides the same D-033 rule),
+and the `buildRoleButtons` filter specs (swatch/dataset/compound-key behaviour
+unchanged). No Ruby/Python/Rust/Flutter surface is touched.

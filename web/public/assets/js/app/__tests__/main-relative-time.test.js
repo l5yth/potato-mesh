@@ -78,7 +78,12 @@ test('node-row cells accept the camelCase position alias', () => {
 test('nodes without timestamps render today\'s plain static cells (RT4)', () => {
   const cells = buildNodeRowTimestampCellsHtml({}, NOW);
   assert.equal(cells.lastSeen, '<td class="nodes-col nodes-col--last-seen"></td>');
-  assert.equal(cells.lastPosition, '<td class="mono nodes-col nodes-col--last-position"></td>');
+  // SPEC UX4 (audit D-020): an absent position renders the muted dash, with
+  // no tick attribute for the shared ticker to rewrite.
+  assert.equal(
+    cells.lastPosition,
+    '<td class="mono nodes-col nodes-col--last-position"><span class="cell-empty">—</span></td>',
+  );
   const junk = buildNodeRowTimestampCellsHtml({ last_heard: 'nope', position_time: 'junk' }, NOW);
   assert.ok(!junk.lastSeen.includes(TICK_TIMESTAMP_ATTRIBUTE));
   assert.ok(!junk.lastPosition.includes(TICK_TIMESTAMP_ATTRIBUTE));

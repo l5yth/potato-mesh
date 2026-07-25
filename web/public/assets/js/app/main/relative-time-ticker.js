@@ -41,6 +41,7 @@
 
 import { timeAgo, timeAgoSuffixed } from './format-utils.js';
 import { formatRelativeSeconds } from '../node-page-charts/display-formatters.js';
+import { updateAgeBucketElements } from './age-bucket.js';
 
 /** Attribute holding a field's unix timestamp (seconds); its presence opts the element in. */
 export const TICK_TIMESTAMP_ATTRIBUTE = 'data-ts-ago';
@@ -206,7 +207,15 @@ export function startRelativeTimeTicker(options = {}) {
   let handle = null;
   let stopped = false;
 
-  const tick = () => updateTickingElements(documentRef, now());
+  // One shared pass per tick: the text fields (RT2), then the freshness
+  // buckets (SPEC UX5 — an explicit RT2 extension: an *attribute* rewrite,
+  // still write-on-change, never a re-render). The returned count stays the
+  // text-write count so RT-era instrumentation keeps its meaning.
+  const tick = () => {
+    const written = updateTickingElements(documentRef, now());
+    updateAgeBucketElements(documentRef, now());
+    return written;
+  };
   const hidden = () => documentRef.hidden === true;
 
   /** Arm the interval unless already armed, stopped, or hidden. */

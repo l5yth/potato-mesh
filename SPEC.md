@@ -879,3 +879,169 @@ protocol-neutral position handling).
 | --- | --- | --- |
 | **RS1** | **Roster-sync positions carry the contact's real reception time.** `_store_meshcore_position` gains an explicit `rx_time` override (default = wall clock). The two roster-sync callers — `_process_contacts` (bulk `CONTACTS`) and `_process_contact_update` (`NEW_CONTACT`/`NEXT_CONTACT`) — pass the contact's `last_advert` as that `rx_time`, so the web-side `last_heard = MAX(rx_time, position_time)` resolves to `last_advert` rather than `now`. A live `NEW_CONTACT` has `last_advert ≈ now`, so it is unaffected; only genuinely-old roster contacts get a truthful old `last_heard`. The **genuinely-live** position paths — host `SELF_INFO` and on-air RX-log `ADVERT` (`on_rx_log_data`) — keep `rx_time = now` (their `last_heard` must advance). Ingestor-side only; the web `update_node_from_position` `MAX` logic is correct for real packets and is left unchanged. | interview + code |
 | **RS2** | **Engineering bar (D9).** The changed position helper and roster handlers ship with unit tests (roster `rx_time = last_advert`; `rx_time` override; live self-info / RX-advert still `now`), full PDoc, Apache headers, `black`-clean; all suites stay green. | CLAUDE.md |
+
+---
+
+## Bugfix: Frontend design & UX audit remediation (D-001…D-040)
+
+Remediates the 2026-07-22 design/UX audit of the dashboard frontend: 39 of its
+40 findings reproduced deterministically against source, live server HTML, and
+computed WCAG contrast (D-039 — "sort indicators invisible until first click" —
+did **not** reproduce: `sortState` initialises to `last_heard`/`desc` and
+`updateSortIndicators()` runs at init, so it is rejected). No finding violated
+an existing SPEC decision or acceptance criterion — the contract was silent on
+empty states, accessibility, contrast, information architecture, and visual
+encoding; this section closes that gap. The maintainer gates from the audit are
+ratified as contract: the map is the landing thesis, static pages belong to a
+secondary tier, **dark-only is identity**, operator-facing theme tokens are in
+scope, and the reduced mobile table is legitimate but must be curated.
+
+**Conflict check against existing decisions.** *DM7 (dead light palette
+collapsed)* — **extends**: the remaining light *component* literals + their
+`body.dark` overrides (explicitly left by DM7) are now folded to single dark
+rules; rendered appearance unchanged. *VF5/LV1–LV9 (flash/fade/wave,
+reduced-motion)* — **consistent/extends**: `prefers-reduced-motion` additionally
+gates Leaflet zoom easing and the chat-tablist smooth scroll (motion LV9 never
+covered). *RT1–RT4 (relative-time tick)* — **extends RT2**: the shared ~1 s
+tick additionally refreshes row age-bucket attributes (write-on-change, no
+re-render; markers stamp their bucket at render only — a deliberate VF3-style
+boundary). *LD-A2 (horizontal tab scroll preserved)* / *LV8 (tab dropdown)* —
+**consistent**: the strip keeps its scroll behaviour on desktop; ≤900 px the
+strip is hidden and LV8's dropdown is the sole channel navigation. *Invariant
+IV (parity)* — **extends**: MeshCore/Meshtastic gain a shape channel (square vs
+circle markers) — differentiation, not privilege; both remain equally legible
+and equally featured. *FS1–FS6 (signed federation wire)* — **consistent**: the
+CHANNEL→preset migration (UX12) keeps every wire/JSON **key** unchanged
+(`channel` now carries the resolved preset string), so no third signature
+break. *D8 (stable contract)* — **consistent**: no `/api/*` shape change;
+`/version` keys unchanged (values follow UX12 resolution). *Apex I / privacy
+II* — untouched: presentation-layer only, no dependency, no egress.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **UX1** | **Audit ratified; D-039 rejected.** The 39 reproduced findings are defects to fix; D-039 is dropped as not-reproduced (init stamps the default ▼). Line-number evidence re-based after #851. | audit + review |
+| **UX2** | **Accessibility floor: WCAG 2.1 AA contrast (1.4.3) for UI text.** Role-badge text colour is computed from the badge background's luminance (both palettes, all roles ≥ 4.5:1; kills the one-off `meshcoreRoleTextColors` map); chat log entries render `--muted`; errors render a new `--danger: #ff6b6b` token (≥ 4.5:1 on `--bg`); links use the single `--accent` (the `body.dark a { color:#9bd }` override is deleted); the four `#4a90e2` focus-ring literals become `var(--accent)`. | interview |
+| **UX3** | **Token aliases, not a rename.** `:root` gains `--border: var(--line)`, `--surface: var(--bg2)`, `--table-header-bg: var(--table-head-bg)`, `--hover-bg: var(--row-alt)` (fixing the federation table's undefined-token borders/sticky header) plus `--danger`. The audit's full `--pm-*` operator-theming rename is **deferred** to a follow-up feature. | interview |
+| **UX4** | **Degenerate states speak.** The layout ships a `<noscript>` notice; the nodes table ships a server-rendered `nodes-empty-row` ("No nodes heard yet — waiting for the first ingestor report.") that JS removes once nodes render and restores when the set is empty; empty table cells render a muted `—` dash (overlay parity); the empty-map placeholder stripes rise to 8–12 % white and always show the placeholder message when no positions exist. | interview |
+| **UX5** | **Freshness is visible state.** Rows and markers carry an age bucket — `live` (< 3 h), `today` (< 24 h), `stale` — stamped at render; CSS dims stale rows and accent-rules live rows; markers scale `fillOpacity` .85/.55/.30 by bucket. Buckets on rows refresh via the shared RT2 tick (attribute write-on-change; extends RT2). Markers restamp on data refresh only. | interview |
+| **UX6** | **Live/paused is legible.** The `#autorefreshToggle` becomes a text-bearing control: `● live` while streaming, `❚❚ paused HH:MM` when paused (timestamp = pause moment). Same element/id, aria semantics kept. | interview |
+| **UX7** | **Protocol shape channel + line key.** MeshCore markers render as square chips (`L.divIcon`), Meshtastic stays circular — colour keeps encoding role, shape encodes protocol (colourblind-safe). The legend's existing neighbor/trace toggle buttons gain 24 px line samples (solid = neighbor, dashed = traceroute), closing the missing-key gap without new controls. | interview |
+| **UX8** | **Legend defaults honest.** `/map` renders the legend expanded on desktop (collapsed ≤ 659 px and on the dashboard); the toggle label reads `Hide legend` / `Show legend` with a suffix **only** when role filters are active (mirrors the aria gating). | interview |
+| **UX9** | **Table IA curated.** Nodes table: a grouped second header row (Identity · Radio · Activity · Health · Utilization · Environment · Position) whose colspans are JS-maintained across the responsive tiers; ≤ 659 px survivors become Protocol/Short/Long/Last Seen/**Battery** (Role hides); a per-row `+` disclosure reveals the hidden fields as a definition list; rows get a hover state and a whole-row click that follows the long-name link; numeric columns right-align in the mono face with `tabular-nums` and the unit-bearing headers name their units (`Battery %`, `Voltage V`); `thead` was already sticky (the pre-existing bare `th` rule) and the fold gives it a solid background; both tables gain visually-hidden `<caption>`s and `scope="col"`; the dashboard gains visually-hidden section `h2`s. Federation table: Preset terminology (UX12), priority column order (Name · Domain · Preset · Frequency · Active …), lat/lon behind responsive tiers. | interview |
+| **UX10** | **Number honesty.** Utilisation renders 1 decimal; battery > 100 renders `100% ⚡` (powered sentinel); voltage with \|V\| < 0.01 renders the dash. | interview |
+| **UX11** | **Shell economics.** Site title clamps (`clamp(18px, 2.2vw, 28px)`, 40 vw ellipsis); the hamburger breakpoint rises to 1100 px; static pages move from both navs to the footer links row; the `(week)` count leaves the h1/tab title — the meta line becomes `N nodes today · M this week` with the day figure in `--fg`; the federation nav count gains a `title` tooltip; the Charts nav drops its protocol icon; the region selector collapses behind a compact 🌐 toggle; the announcement banner wraps to ≤ 3 lines under 600 px; the colocated-hub hit area grows to 32 px (16 px visual); chat ≤ 900 px shows the LV8 dropdown only (28 px arrows on desktop); chat entries get an 8ch hanging indent; `Select region ...` becomes `Other regions…`. | interview |
+| **UX12** | **Join surface + preset config migration (deprecating, fallback-compatible).** New env vars `MESHTASTIC_PRESET` (default `#LongFast` — the pre-existing `DEFAULT_CHANNEL` constant, so stock instances keep today's advertised strings) + `MESHTASTIC_FREQ` (default `915MHz`) and `MESHCORE_PRESET` + `MESHCORE_FREQ` (both empty ⇒ MeshCore line hidden). `CHANNEL`/`FREQUENCY` are **deprecated but honoured as fallbacks** for the Meshtastic pair. A `join-line` strip in the meta row renders `Meshtastic · <preset> · <freq>` (+ `MeshCore · <preset> · <freq>` when configured), linking to the About page when one exists. Terminology moves channel→preset everywhere operator-facing (federation table header **Preset**); every wire/JSON **key** (`channel` in `/version`, `data-app-config`, the signed federation payload) is unchanged and now carries the resolved Meshtastic preset string — no signature or contract break (FS1/BF3/D8 hold). README documents the migration. | interview |
+| **UX13** | **Map-first mobile landing, CSS only — found already implemented.** The audited route-swap was rejected (impossible viewport-conditionally server-side); the agreed CSS mechanism turned out to already ship: the ≤ 1024 px media block orders the chat panel after the map (`.chat-panel { order: 2 }`), so the mobile dashboard paints map-first today. Verified against source during the fix; no change was needed and the audit's D-004 evidence is corrected accordingly. Desktop order, routes, and bookmarks unchanged. | interview + review |
+| **UX14** | **Keyboard/AT equivalence declared.** `#map` gains `aria-describedby` pointing to a visually-hidden note naming the nodes table as the keyboard-accessible equivalent (markers stay pointer-driven — Leaflet focus retrofit rejected); tables/captions/scope per UX9. | interview |
+| **UX15** | **Engineering bar (D9).** Every change ships with 100 % unit tests (JS `node:test`, RSpec), full JSDoc/RDoc, the exact Apache header, `rufo`-clean formatting; all existing suites stay green; view specs asserting moved markup are updated, not deleted. | CLAUDE.md |
+
+---
+
+## Bugfix: UX audit follow-up (design review remediation)
+
+Remediates a Claude-Design review of the shipped UX-audit dashboard (8 numbered
+fixes plus 4 smaller "also spotted" items), each traced to a concrete
+`base.css` / `web/views/` / `assets/js/app/` cause. It is presentation-layer
+only: no dependency, no egress, no `/api/*`, `/version`, or `data-app-config`
+change, so **all four apex invariants and D7/D8 hold** by construction. Protocol
+parity (Invariant IV) is preserved — FU3 keeps the MeshCore-diamond /
+Meshtastic-circle distinction as differentiation, not privilege.
+
+**Conflict check against existing decisions.** *UX7/D-013 (MeshCore square chip,
+`2 × radius`)* — **amended** (FU3: equal-area rotated diamond at
+`round(radius × 1.78)`; a raw `2r` square out-weighed the circle ~27 %). *UX7/
+D-014 (legend dash sample `6 6`)* — **amended** (FU5: the 24 px **sample** uses
+`6 2` so it inks both ends; the on-map traces stay `6 6`). *UX11/D-033 (chat
+hang `8ch`)* — **amended** (FU1/FU9: hang is `19ch` — the real prefix width —
+and inline badge/icon/reply descendants zero the inherited `text-indent`). *UX11/
+D-029 (region toggle 🌐)* — **amended** (FU2: 🌍, greyscale-until-open). *UX12/
+D-002 (join strip in the meta row with a `details` link)* — **amended** (FU4:
+the strip moves to the footer beside the About link and the redundant `details`
+link is dropped). *UX11/D-026 (meta day/week line)* — **extends** (FU4: the line
+is unchanged; per-protocol counts are added to the two toggle buttons). *UX9/
+D-006/D-007/D-017 (nodes table)* — **extends** (FU6 condenses row density, FU7
+lists only reported fields in the disclosure row, FU10 pins both header rows).
+*UX8 (legend defaults)* — **extends** (FU12: columns top-align; no default
+change). *Footer slim variant* — **retired** (FU8). No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **FU1** | **Chat badge sits in its colour box.** `text-indent` is inherited, so the D-033 hang re-applied to the inline-block `.short-name` / `.protocol-icon` / `.chat-entry-reply` inside `.chat-entry-msg`/`-node`. A `:where(...) :where(...)` reset zeros it on those descendants at specificity 0. | review |
+| **FU2** | **Region toggle reads as a place.** The glyph is 🌍 (was 🌐, a generic "web" mark); the button is greyscale/dimmed by default and returns to full colour + an accent frame on hover and `[aria-expanded="true"]` — the colour is the open-state feedback the toggle lacked. No JS change (`aria-expanded` already flips). | review |
+| **FU3** | **MeshCore marker is an equal-area diamond (amends UX7/D-013).** The chip is sized `round(radius × 1.78)` (16 px at radius 9 ≈ the circle's `πr²`), rotated 45° and corner-rounded in `base.css`; the rotation is CSS-only so the divIcon box and anchor are unchanged and the container keeps `overflow: visible`. | review |
+| **FU4** | **Join strip → footer; counts → toggles; `details` dropped (amends UX12/D-002, extends UX11/D-026).** The `.join-line` moves from the meta row to `_footer.erb` (rendered from the `Sanitizer` preset helpers, MeshCore entry only when both values are set). The two otherwise-unlabelled protocol toggles gain a per-protocol count span filled from the same 7-day figure as the legend column counts. The `details` link is removed — the footer's About link is beside the strip now. Every wire/JSON key is untouched (FS1/D8 hold). | review |
+| **FU5** | **Legend dash sample inks both ends (amends UX7/D-014).** `legendLineSampleSvg('trace')` uses `stroke-dasharray="6 2"`, which tiles the 22 px sample exactly (6+2+6+2+6); the map traceroutes keep `6 6`. | review |
+| **FU6** | **Condensed nodes table.** Row density is scoped to `#nodes` (`thead th` 5/8, `tbody td` 3/8 + `line-height 1.35`, group row 3/8), taking rows from ~30 px to ~20 px without shrinking the 12 px type; the waiting row keeps a roomy 12/8 via an id-scoped selector that outranks the tight rule. | review |
+| **FU7** | **Disclosure row lists only reported fields (extends UX9).** `filterReportedFields` drops null/empty/em-dash fields but **keeps honest zeros** (a `0 %` util or `0 V` is a real reading — UX10 number-honesty); an all-absent set falls back to one muted "No additional fields reported." line. | review + interview |
+| **FU8** | **Footer chrome on every route.** The transparent `.app-footer--slim` variant (and its full-screen padding reset) is deleted and the `slim` local dropped; the still-`position: fixed` footer now paints opaque with a lift shadow on Charts / Federation / `/pages/*` instead of floating over body copy. Geometry is unchanged (it was already fixed), so no content is newly occluded. | review |
+| **FU9** | **Chat hang is the real prefix width (amends UX11/D-033).** The `[HH:MM:SS][freq][MF]` prefix is 19 characters, so the hanging indent is `19ch` — wrapped lines land under the message column instead of mid-timestamp. | review |
+| **FU10** | **Both nodes-table header rows pin (extends UX9).** The group row becomes `position: sticky; top: 0` (was `static`) with a fixed 24 px border-box height; the column row pins at `top: 24px`, so the grouped header no longer scrolls away leaving the column row unbacked. | review |
+| **FU11** | **Badge meets the 44 px touch floor.** On `pointer: coarse`, a transparent centred `::after` lifts the `.short-name[data-node-info]` hit box to 44 px without changing its look; fine pointers keep the tight target so dense chat lines do not cross-capture clicks. | review |
+| **FU12** | **Legend columns share a top baseline (extends UX8).** `legend-column--bottom` is removed so the shorter MeshCore column top-aligns with Meshtastic; the two protocol titles sit on one line. | review |
+| **FU13** | **Engineering bar (D9).** Every change ships with 100 % unit coverage on new/changed lines (JS `node:test`, RSpec), full JSDoc/RDoc, the exact Apache header, `rufo`-clean specs; all existing suites stay green; view/JS specs asserting moved markup are updated, not deleted. | CLAUDE.md |
+
+---
+
+## Bugfix: Post-deploy design review (detail view, footer, marker recency)
+
+Answers four post-deploy asks against `992d6bb` (the deployed audit tree): three
+real gaps the audit left behind and one feature with a trade-off. Presentation
+layer only — no dependency, no egress, no `/api/*`, `/version`, or
+`data-app-config` change, so **all four apex invariants and D7/D8 hold**.
+Protocol parity (Invariant IV) is preserved: PD3 gives both protocols the same
+freshness-pane treatment.
+
+**Conflict check against existing decisions.** *UX9/D-007 (disclosure — mobile
+loses nothing) and UX4/D-020 (muted dash)* — **extended to `/nodes/:id`** (PD1):
+those were `#nodes`-scoped and never reached the detail table, which reused the
+global `.nodes-col--*` hide rules and lost columns with no disclosure. *FU4/FU8
+(static pages → footer)* — **regression fixed** (PD2): the enlarged
+single-`inline-flex` links row wrapped and stranded a separator; the links become
+their own tier and separators become dots. *`getRoleRenderPriority` render order
+(role-major z-order; MeshCore "companion above infrastructure")* — **amended**
+(PD3): **recency becomes the coarse stacking channel** and role the fine one, so
+a live low-priority node now paints over a stale high-priority one — the map
+answers "what is alive now", not "where is the infrastructure". The ladder is
+**preserved but subordinated** to freshness (it still orders within a pane), and
+the pre-existing protocol pane-split (every MeshCore chip painting over every
+Meshtastic circle, because `divIcon`→`markerPane` sits above `circleMarker`→
+`overlayPane`) narrows to within-a-bucket, since both marker types now share the
+three freshness panes. *FU10 (sticky group-header `24px` offset)* — **hardened**
+(PD4). No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **PD1** | **The `/nodes/:id` detail view is a spec sheet, not a table (extends UX9/UX4).** `single-node-table.js` renders a grouped `<dt>/<dd>` spec sheet (Activity · Health · Utilization · Environment · Position) reusing `.node-detail__row`; it carries **no** `.nodes-col--*` classes, so nothing is `display:none`'d on a single-record page and no disclosure column is needed; absent telemetry renders the muted `.cell-empty` dash (fixing the blank-cell half). It reflows to one column ≤ 659 px with no horizontal scroll. Identity and the long name live in the page header (`detail-html.js`) and are not repeated; the pointless self-link to the current page is dropped. The one-record table's whole cost (18 columns of horizontal scroll) bought nothing — a table compares rows, and there is one row. | review |
+| **PD2** | **Footer is two intentional tiers with dot separators (fixes an FU4/FU8 regression).** `.footer-links` becomes its own tier (`flex-basis: 100%`) so the row can no longer strand the version→links separator on line one; every `.footer-separator` is `·` at `margin: 0 5px; color: var(--muted)` (a dot wants more air, less weight than an em dash); the chat label shortens to `chat:` (the instance name is already the title and logo). The `≤ 600px` stack rule is unchanged. | review |
+| **PD3** | **Marker stacking: recency-major via three freshness panes (amends the role-priority z-order).** The map creates three Leaflet panes — `markers-stale` < `markers-today` < `markers-live` (ascending z-index) — and every marker, **circle and chip**, is assigned its `nodeAgeBucket` pane (`freshnessPaneForBucket`). Freshness is the coarse channel; the existing `getRoleRenderPriority` ladder still orders **within** a pane. A live Meshtastic circle now paints over a stale MeshCore chip. This **inverts** the old guarantee (a stale ROUTER drops below a live CLIENT, and MeshCore's "companion above infrastructure" holds only within a bucket) — the deliberate trade for a liveness dashboard; role keeps its own untouched colour/shape channel. It also **narrows** the pre-existing protocol pane-split (chips no longer unconditionally top circles — only within one bucket). No representation change, so `circleMarker` performance is kept. | interview + review |
+| **PD4** | **Sticky group-header offset hardened (FU10).** The group row's `height: 24px` and the column row's `top: 24px` are a coupled pair; `white-space: nowrap` on `.nodes-group-header th` stops a longer label / translation / narrow tier from wrapping the group row and overlapping the two sticky rows. A comment names the coupling. | review |
+| **PD5** | **Engineering bar (D9).** Each fix shipped with a fail-first check (Phase 2), 100 % coverage on new/changed lines, full JSDoc, the exact Apache header, `rufo`/`black`-clean; all prior suites stay green; specs asserting the old detail table / footer markup are updated, not deleted. | CLAUDE.md |
+
+---
+
+## Bugfix: Legend shape key & chat log overflow
+
+Two deployed-CSS defects and one legend-key gap from a final frontend review.
+Presentation layer only — no dependency, no egress, no `/api/*`, `/version`, or
+`data-app-config` change; all four apex invariants and D7/D8 hold. Protocol
+parity (Invariant IV) is preserved: the legend keys both protocols' shapes
+equally.
+
+**Conflict check.** *UX7 (marker shape channel; the neighbor/trace line key)* —
+**extended** (LC1): the legend now also keys the role-swatch shape (circle vs
+diamond), the channel the map used but the panel never keyed; the swatch is the
+marker at legend size (same `nodeMarkerShapeForProtocol` mapping, same
+`side = radius × 1.78` area rule, same ring + 3px corner). *Legend filter visual
+feedback* — **fixed** (LC2): the pressed-state rule existed but a lower
+specificity than the global button reset meant it never painted. *UX11/D-033
+(chat hanging indent)* — **extended** (LC3): wrapped lines already hung at 19ch,
+but unbreakable tokens were never broken, so the panel scrolled sideways;
+`overflow-wrap: anywhere` on the same rule closes it. No invariant is
+contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **LC1** | **Legend swatches key the marker shape (extends UX7).** `buildRoleButtons` stamps each swatch `legend-swatch--diamond` (MeshCore) or `legend-swatch--circle` (Meshtastic) from `nodeMarkerShapeForProtocol` — one source of truth with the map. `base.css` renders the circle at 12px and the diamond as an equal-area 11px square rotated 45° (the map's `side = radius × 1.78`) with the chip's 3px corners, both carrying the marker's `1px rgba(0,0,0,.7)` ring, in a 16px slot so the diagonal never clips the label. The swatch is the marker at legend size, not a second drawing of it. Freshness (opacity) is deliberately **not** keyed (the recommended shapes-only option). | review |
+| **LC2** | **Legend pressed state paints (specificity fix).** A role chip is a `<button>`; the reset `button:not(.chat-tab):not(.sort-button)` (0,2,1) outranked the bare `.legend-item[aria-pressed="true"]` (0,2,0), so every chip computed to `#333` and only `font-weight` distinguished selected from filtered. The selector is now `button.legend-item[aria-pressed="true"]` (0,2,1), which wins on source order — the selected blue paints. | review |
+| **LC3** | **Chat log never scrolls horizontally (extends UX11/D-033).** `.chat-tabpanel` is `overflow-y: auto`, so its x-axis is a scroll container; nothing broke long tokens. `overflow-wrap: anywhere` on `.chat-entry-msg, .chat-entry-node` wraps unbreakable tokens under the 19ch hang and lowers the entry's min-content width so it can never exceed the panel. `anywhere`, not `break-word`; no `overflow-x: hidden` (which would only mask the next regression). | review |
+| **LC4** | **Engineering bar (D9).** Each fix shipped with a fail-first check (Phase 2), full JSDoc/comments, the exact Apache header, clean linters; all prior suites stay green; the `buildRoleButtons` filter specs gain the swatch-shape assertion, none removed. | CLAUDE.md |

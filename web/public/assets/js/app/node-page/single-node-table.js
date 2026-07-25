@@ -15,13 +15,12 @@
  */
 
 /**
- * Render a one-row table summarising the selected node's metrics.
+ * Render the selected node's metrics as a grouped spec sheet.
  *
  * @module node-page/single-node-table
  */
 
 import { escapeHtml } from '../utils.js';
-import { renderNodeLongNameLink } from '../node-rendering.js';
 import {
   fmtAlt,
   fmtHumidity,
@@ -38,45 +37,55 @@ import {
   formatVoltage,
 } from '../node-page-charts.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
-import { renderRoleAwareBadge } from './badge.js';
+import { formatTableCell } from '../main/table-cell-format.js';
 import { tickAttributes, TICK_FORMAT_RELATIVE } from '../main/relative-time-ticker.js';
 
 /**
- * Render a condensed node table containing a single entry.
+ * Render one `<dt>/<dd>` field, substituting the muted dash for absent values
+ * (SPEC PD1) and carrying optional live-tick attributes on the `<dd>`.
+ *
+ * @param {string} label Field label (already safe static text).
+ * @param {*} value Formatted display value, or nullish/empty when absent.
+ * @param {string} [ddAttrs] Extra attributes for the `<dd>` (e.g. tick hooks).
+ * @returns {string} `<dt>…</dt><dd>…</dd>` markup.
+ */
+function specField(label, value, ddAttrs = '') {
+  const valueHtml = formatTableCell(escapeHtml(value == null ? '' : String(value)));
+  return `<dt>${label}</dt><dd${ddAttrs ? ' ' + ddAttrs : ''}>${valueHtml}</dd>`;
+}
+
+/**
+ * Render the selected node's metrics as a grouped spec sheet.
+ *
+ * A single-record view is a spec sheet, not a table (SPEC PD1, Post-Deploy
+ * review 01): the one-row 18-column table reused the `#nodes` responsive-hide
+ * `.nodes-col--*` classes, so on smaller viewports columns were `display:none`'d
+ * with no disclosure row to recover them — data loss on the page whose only job
+ * is that node — and absent telemetry rendered as an indistinguishable blank.
+ * The spec sheet groups every field as `<dt>/<dd>` (reusing `.node-detail__row`),
+ * hides nothing, reflows to one column on mobile with no horizontal scroll, and
+ * renders the muted dash for absent values. Identity and the long name live in
+ * the page header (`detail-html.js`) and are not repeated here; Activity (Last
+ * Seen, Role) stays because the header does not carry it.
  *
  * @param {Object} node Normalised node payload.
- * @param {Function} renderShortHtml Badge rendering implementation.
- * @param {number} [referenceSeconds] Optional reference timestamp for relative metrics.
- * @returns {string} HTML markup for the node table or an empty string.
+ * @param {Function} renderShortHtml Badge renderer (validated for the shared
+ *   call signature; the badge itself now lives in the page header).
+ * @param {number} [referenceSeconds] Optional reference timestamp for relative
+ *   metrics.
+ * @returns {string} HTML markup for the node spec sheet, or an empty string.
  */
 export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = Date.now() / 1000) {
   if (!node || typeof node !== 'object' || typeof renderShortHtml !== 'function') {
     return '';
   }
-  const nodeId = stringOrNull(node.nodeId ?? node.node_id) ?? '';
-  const shortName = stringOrNull(node.shortName ?? node.short_name) ?? null;
-  const longName = stringOrNull(node.longName ?? node.long_name);
-  const protocol = stringOrNull(node.protocol) ?? null;
-  const longNameLink = renderNodeLongNameLink(longName, nodeId, { protocol });
+
   const role = stringOrNull(node.role) ?? 'CLIENT';
-  const numericId = numberOrNull(node.nodeNum ?? node.node_num ?? node.num);
-  const badgeSource = node.rawSources?.node && typeof node.rawSources.node === 'object'
-    ? node.rawSources.node
-    : node;
-  const badgeHtml = renderRoleAwareBadge(renderShortHtml, {
-    shortName,
-    longName,
-    role,
-    identifier: nodeId || null,
-    numericId,
-    source: badgeSource,
-  });
   const hardware = formatHardwareModel(node.hwModel ?? node.hw_model);
   const battery = formatBattery(node.battery ?? node.battery_level);
   const voltage = formatVoltage(node.voltage ?? node.voltageReading);
   const uptime = formatDurationSeconds(node.uptime ?? node.uptime_seconds ?? node.uptimeSeconds);
-  const channelUtil = node.channel_utilization ?? node.channelUtilization ?? null;
-  const channel = fmtTx(channelUtil, 3);
+  const channel = fmtTx(node.channel_utilization ?? node.channelUtilization ?? null, 3);
   const airUtil = fmtTx(node.airUtil ?? node.air_util_tx ?? node.airUtilTx ?? null, 3);
   const temperature = fmtTemperature(node.temperature ?? node.temp);
   const humidity = fmtHumidity(node.humidity ?? node.relative_humidity ?? node.relativeHumidity);
@@ -88,59 +97,49 @@ export function renderSingleNodeTable(node, renderShortHtml, referenceSeconds = 
   const lastPositionTs = numberOrNull(node.positionTime ?? node.position_time);
   const lastSeen = formatRelativeSeconds(lastSeenTs, referenceSeconds);
   const lastPosition = formatRelativeSeconds(lastPositionTs, referenceSeconds);
-  // Both timestamp cells opt into the shared live tick (SPEC RT1/RT2) with
-  // this page's formatRelativeSeconds output preserved verbatim (RT4).
+  // Both timestamp fields opt into the shared live tick (SPEC RT1/RT2) with this
+  // page's formatRelativeSeconds output preserved verbatim (RT4).
   const lastSeenAttrs = tickAttributes(lastSeenTs, TICK_FORMAT_RELATIVE);
   const lastPositionAttrs = tickAttributes(lastPositionTs, TICK_FORMAT_RELATIVE);
 
-  return `
-    <div class="nodes-table-wrapper">
-      <table class="nodes-detail-table" aria-label="Selected node details">
-        <thead>
-          <tr>
-            <th class="nodes-col nodes-col--node-id">Node ID</th>
-            <th class="nodes-col nodes-col--short-name">Short</th>
-            <th class="nodes-col nodes-col--long-name">Long Name</th>
-            <th class="nodes-col nodes-col--last-seen">Last Seen</th>
-            <th class="nodes-col nodes-col--role">Role</th>
-            <th class="nodes-col nodes-col--hw-model">HW Model</th>
-            <th class="nodes-col nodes-col--battery">Battery</th>
-            <th class="nodes-col nodes-col--voltage">Voltage</th>
-            <th class="nodes-col nodes-col--uptime">Uptime</th>
-            <th class="nodes-col nodes-col--channel-util">Channel Util</th>
-            <th class="nodes-col nodes-col--air-util-tx">Air Util Tx</th>
-            <th class="nodes-col nodes-col--temperature">Temperature</th>
-            <th class="nodes-col nodes-col--humidity">Humidity</th>
-            <th class="nodes-col nodes-col--pressure">Pressure</th>
-            <th class="nodes-col nodes-col--latitude">Latitude</th>
-            <th class="nodes-col nodes-col--longitude">Longitude</th>
-            <th class="nodes-col nodes-col--altitude">Altitude</th>
-            <th class="nodes-col nodes-col--last-position">Last Position</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="mono nodes-col nodes-col--node-id">${escapeHtml(nodeId)}</td>
-            <td class="nodes-col nodes-col--short-name">${badgeHtml}</td>
-            <td class="nodes-col nodes-col--long-name">${longNameLink}</td>
-            <td class="nodes-col nodes-col--last-seen"${lastSeenAttrs ? ' ' + lastSeenAttrs : ''}>${escapeHtml(lastSeen)}</td>
-            <td class="nodes-col nodes-col--role">${escapeHtml(role)}</td>
-            <td class="nodes-col nodes-col--hw-model">${escapeHtml(hardware)}</td>
-            <td class="nodes-col nodes-col--battery">${escapeHtml(battery ?? '')}</td>
-            <td class="nodes-col nodes-col--voltage">${escapeHtml(voltage ?? '')}</td>
-            <td class="nodes-col nodes-col--uptime">${escapeHtml(uptime)}</td>
-            <td class="nodes-col nodes-col--channel-util">${escapeHtml(channel ?? '')}</td>
-            <td class="nodes-col nodes-col--air-util-tx">${escapeHtml(airUtil ?? '')}</td>
-            <td class="nodes-col nodes-col--temperature">${escapeHtml(temperature ?? '')}</td>
-            <td class="nodes-col nodes-col--humidity">${escapeHtml(humidity ?? '')}</td>
-            <td class="nodes-col nodes-col--pressure">${escapeHtml(pressure ?? '')}</td>
-            <td class="nodes-col nodes-col--latitude">${escapeHtml(latitude)}</td>
-            <td class="nodes-col nodes-col--longitude">${escapeHtml(longitude)}</td>
-            <td class="nodes-col nodes-col--altitude">${escapeHtml(altitude ?? '')}</td>
-            <td class="mono nodes-col nodes-col--last-position"${lastPositionAttrs ? ' ' + lastPositionAttrs : ''}>${escapeHtml(lastPosition)}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  `;
+  // Grouped by the same seven groups the nodes table uses (SPEC UX9); Identity
+  // and the long name are in the page header, so the sheet omits them.
+  const groups = [
+    ['Activity', [
+      specField('Last Seen', lastSeen, lastSeenAttrs),
+      specField('Role', role),
+    ]],
+    ['Health', [
+      specField('Battery', battery),
+      specField('Voltage', voltage),
+      specField('Uptime', uptime),
+      specField('HW Model', hardware),
+    ]],
+    ['Utilization', [
+      specField('Channel Util', channel),
+      specField('Air Util Tx', airUtil),
+    ]],
+    ['Environment', [
+      specField('Temperature', temperature),
+      specField('Humidity', humidity),
+      specField('Pressure', pressure),
+    ]],
+    ['Position', [
+      specField('Latitude', latitude),
+      specField('Longitude', longitude),
+      specField('Altitude', altitude),
+      specField('Last Position', lastPosition, lastPositionAttrs),
+    ]],
+  ];
+
+  const groupsHtml = groups
+    .map(([title, fields]) =>
+      `<section class="node-detail-sheet__group">` +
+      `<h3 class="node-detail-sheet__group-title">${title}</h3>` +
+      `<dl class="node-detail__row">${fields.join('')}</dl>` +
+      `</section>`,
+    )
+    .join('');
+
+  return `<div class="node-detail-sheet" aria-label="Selected node details">${groupsHtml}</div>`;
 }

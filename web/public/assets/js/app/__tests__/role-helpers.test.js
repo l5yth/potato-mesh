@@ -25,8 +25,8 @@ import {
   getRoleRenderPriority,
   getRoleColors,
   getRoleTextColor,
+  getContrastTextColor,
   meshcoreRoleColors,
-  meshcoreRoleTextColors,
   meshcoreRoleRenderOrder,
   meshtasticRoleRenderOrder,
   roleColors,
@@ -136,19 +136,27 @@ test('getRoleColor falls back to CLIENT color for unknown meshcore role', () => 
   assert.equal(getRoleColor('UNKNOWN_ROLE', 'meshcore'), roleColors.CLIENT);
 });
 
-test('getRoleTextColor returns light grey for meshcore COMPANION', () => {
-  assert.equal(getRoleTextColor('COMPANION', 'meshcore'), meshcoreRoleTextColors.COMPANION);
+// SPEC UX2 (audit D-008): text colour is computed from the badge background's
+// luminance — light text on dark fills, dark text on light fills — for every
+// role of both palettes (the old one-role COMPANION override is gone).
+test('getRoleTextColor picks light text for dark meshcore fills', () => {
+  assert.equal(getRoleTextColor('COMPANION', 'meshcore'), '#ffffff');
+  assert.equal(getRoleTextColor('SENSOR', 'meshcore'), '#ffffff');
 });
 
-test('getRoleTextColor returns null for meshcore roles without override', () => {
-  assert.equal(getRoleTextColor('REPEATER', 'meshcore'), null);
-  assert.equal(getRoleTextColor('ROOM_SERVER', 'meshcore'), null);
-  assert.equal(getRoleTextColor('SENSOR', 'meshcore'), null);
+test('getRoleTextColor picks dark text for light fills', () => {
+  assert.equal(getRoleTextColor('REPEATER', 'meshcore'), '#111418');
+  assert.equal(getRoleTextColor('CLIENT', 'meshtastic'), '#111418');
 });
 
-test('getRoleTextColor returns null for meshtastic roles', () => {
-  assert.equal(getRoleTextColor('CLIENT', 'meshtastic'), null);
-  assert.equal(getRoleTextColor('ROUTER', null), null);
+test('getRoleTextColor always returns a colour (never null)', () => {
+  assert.equal(typeof getRoleTextColor('ROUTER', null), 'string');
+  assert.equal(typeof getRoleTextColor('ROOM_SERVER', 'meshcore'), 'string');
+});
+
+test('getContrastTextColor flips at the luminance midpoint', () => {
+  assert.equal(getContrastTextColor('#ffffff'), '#111418');
+  assert.equal(getContrastTextColor('#000000'), '#ffffff');
 });
 
 

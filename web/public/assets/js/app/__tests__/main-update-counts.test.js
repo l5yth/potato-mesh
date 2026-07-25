@@ -138,6 +138,57 @@ test('updateLegendProtocolCounts works when only meshtasticCountEl is present', 
 });
 
 // ---------------------------------------------------------------------------
+// updateProtocolToggleCounts (audit follow-up 04)
+// ---------------------------------------------------------------------------
+
+test('updateProtocolToggleCounts is a no-op when the count elements are absent', () => {
+  const { testUtils, cleanup } = setupApp();
+  try {
+    assert.doesNotThrow(() => {
+      testUtils.updateProtocolToggleCounts({ meshcore: { week: 3 }, meshtastic: { week: 4 } });
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('updateProtocolToggleCounts writes the 7-day per-protocol counts onto the toggles', () => {
+  const { testUtils, env, cleanup } = setupAppWithOptions({
+    extraElements: ['protocolToggleMeshcoreCount', 'protocolToggleMeshtasticCount'],
+  });
+  try {
+    const mc = env.document.getElementById('protocolToggleMeshcoreCount');
+    const mt = env.document.getElementById('protocolToggleMeshtasticCount');
+    testUtils.updateProtocolToggleCounts({
+      week: 140,
+      meshcore: { hour: 1, day: 120, week: 123, month: 200 },
+      meshtastic: { hour: 1, day: 20, week: 17, month: 40 },
+    });
+    // The toggle count mirrors the legend's 7-day figure so the same protocol
+    // shows the same number in both places.
+    assert.equal(mc.textContent, '123');
+    assert.equal(mt.textContent, '17');
+  } finally {
+    cleanup();
+  }
+});
+
+test('updateProtocolToggleCounts defaults missing per-protocol data to zero', () => {
+  const { testUtils, env, cleanup } = setupAppWithOptions({
+    extraElements: ['protocolToggleMeshcoreCount', 'protocolToggleMeshtasticCount'],
+  });
+  try {
+    const mc = env.document.getElementById('protocolToggleMeshcoreCount');
+    const mt = env.document.getElementById('protocolToggleMeshtasticCount');
+    testUtils.updateProtocolToggleCounts({ week: 5 });
+    assert.equal(mc.textContent, '0');
+    assert.equal(mt.textContent, '0');
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
 // updateFooterStats
 // ---------------------------------------------------------------------------
 
@@ -160,13 +211,18 @@ test('updateFooterStats populates the active-stats element when present', () => 
     const el = env.document.getElementById('footerActiveNodes');
     testUtils.updateFooterStats({ day: 10, week: 20, month: 30, sampled: false });
 
+    // SPEC UX11 (audit D-026): worded vital sign with the day figure promoted.
     assert.ok(
-      el.textContent.includes('/day'),
-      `expected footerActiveNodes to contain "/day", got: ${el.textContent}`,
+      el.innerHTML.includes('10 nodes today'),
+      `expected footerActiveNodes to contain "10 nodes today", got: ${el.innerHTML}`,
     );
     assert.ok(
-      el.textContent.includes('10/day'),
-      `expected footerActiveNodes to contain "10/day", got: ${el.textContent}`,
+      el.innerHTML.includes('meta-active-nodes__today'),
+      `expected the day segment to be styleable, got: ${el.innerHTML}`,
+    );
+    assert.ok(
+      el.innerHTML.includes('20 this week'),
+      `expected footerActiveNodes to contain "20 this week", got: ${el.innerHTML}`,
     );
   } finally {
     cleanup();

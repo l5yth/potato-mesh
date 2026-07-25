@@ -140,3 +140,19 @@ test('a layer load after a successful tile keeps the online basemap', () => {
     assert.ok(map.hasLayer(overlay));
   });
 });
+
+// Post-Deploy review 04: freshness is the coarse marker-stacking channel, so
+// the map creates three panes (stale below, live on top). The role ladder still
+// orders within a pane; both circle and chip markers are assigned by bucket.
+test('three freshness marker panes are created with ascending z-index (SPEC PD3)', () => {
+  withMapInit(({ leaflet }) => {
+    const panes = leaflet._recorded.panes;
+    const names = panes.map(pane => pane.name);
+    for (const expected of ['markers-stale', 'markers-today', 'markers-live']) {
+      assert.ok(names.includes(expected), `pane ${expected} is created`);
+    }
+    const zOf = name => Number(panes.find(pane => pane.name === name).style.zIndex);
+    assert.ok(zOf('markers-stale') < zOf('markers-today'), 'stale stacks below today');
+    assert.ok(zOf('markers-today') < zOf('markers-live'), 'today stacks below live');
+  });
+});

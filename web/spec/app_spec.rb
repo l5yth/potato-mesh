@@ -1406,8 +1406,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "renders the federation instance selector when federation is enabled" do
       get "/"
 
+      # SPEC UX11 (audit D-029/D-038): the selector sits behind a compact
+      # toggle and the placeholder names the action.
       expect(last_response.body).to include('id="instanceSelect"')
-      expect(last_response.body).to include("Select region ...")
+      expect(last_response.body).to include('id="instanceSelectToggle"')
+      expect(last_response.body).to include("Other regions…")
     end
 
     it "omits the instance selector when private mode is active" do
@@ -1504,13 +1507,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).not_to include('id="metaRow"')
     end
 
-    it "renders the slim footer on the federation page" do
+    it "renders the opaque footer chrome on the federation page" do
       allow(PotatoMesh::Config).to receive(:federation_enabled?).and_return(true)
 
       get "/federation"
 
       expect(last_response).to be_ok
-      expect(last_response.body).to include('class="app-footer app-footer--slim"')
+      # Audit follow-up 08: the transparent slim variant is retired; every route
+      # uses the one opaque footer chrome so it never floats over body copy.
+      expect(last_response.body).to include('class="app-footer"')
+      expect(last_response.body).not_to include("app-footer--slim")
     end
   end
 
@@ -1555,14 +1561,16 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /charts" do
-    it "renders the charts page with the slim footer but without meta-controls" do
+    it "renders the charts page with the opaque footer but without meta-controls" do
       get "/charts"
 
       expect(last_response).to be_ok
       expect(last_response.body).to include("initializeChartsPage")
       expect(last_response.body).not_to include('id="metaRow"')
       expect(last_response.body).not_to include('id="filterInput"')
-      expect(last_response.body).to include('class="app-footer app-footer--slim"')
+      # Audit follow-up 08: no more slim footer variant.
+      expect(last_response.body).to include('class="app-footer"')
+      expect(last_response.body).not_to include("app-footer--slim")
     end
   end
 

@@ -27,7 +27,12 @@
 
 import { escapeHtml } from '../utils.js';
 import { collectTelemetryMetrics } from '../short-info-telemetry.js';
-import { getRoleColor, getRoleTextColor, normalizeRole } from '../role-helpers.js';
+import {
+  getContrastTextColor,
+  getRoleColor,
+  getRoleTextColor,
+  normalizeRole,
+} from '../role-helpers.js';
 
 /**
  * Render a short name badge with role-based styling.
@@ -66,7 +71,8 @@ export function renderShortHtml(short, role, longName, nodeData = null) {
     infoAttr = attrParts.join('');
   }
   if (!short) {
-    return `<span class="short-name" style="background:#ccc"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
+    const fallbackText = getContrastTextColor('#ccc');
+    return `<span class="short-name" style="background:#ccc;color:${fallbackText}"${titleAttr}${infoAttr}>&nbsp;?&nbsp;</span>`;
   }
   // Pad the label for the badge.  For plain-ASCII names that are already
   // 4 characters (meshtastic always stores exactly 4) no padding is added.
