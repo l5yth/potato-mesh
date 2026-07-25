@@ -14,7 +14,15 @@
 # limitations under the License.
 
 ARG TARGETOS=linux
-ARG PYTHON_VERSION=3.12.6
+# This pin is bounded on both sides (DK-A2 Rust-drift caveat):
+#   lower — the resolved Alpine base must ship Rust >= cryptography's MSRV,
+#           because armv7 publishes no wheel and compiles the Rust core from
+#           source: 3.12.10-alpine -> Alpine 3.22 -> Rust 1.87 >= crypto 49's 1.83.
+#   upper — Docker Hub published no `windowsservercore-ltsc2022` base past
+#           3.12.10, and production-windows below reuses this same ARG.
+# Raise the floor by bumping here; if crypto's MSRV ever outruns the Alpine that
+# 3.12.10 resolves to, split this ARG per stage rather than 404 the Windows base.
+ARG PYTHON_VERSION=3.12.10
 
 # Linux production image
 FROM python:${PYTHON_VERSION}-alpine AS production-linux
