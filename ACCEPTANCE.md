@@ -2665,7 +2665,14 @@ Rust-drift caveat, so the next failure of this class is recognised quickly: a
 future `cryptography` bump may require a newer Rust than the pinned Alpine
 release ships; the failure mode is this same job failing with a Rust version
 error, and the remedies are bumping `PYTHON_VERSION` (newer Alpine) or capping
-`cryptography` in `data/requirements.txt`.
+`cryptography` in `data/requirements.txt`. This drift was first hit at v0.7.3
+(run 30155699130): `cryptography` 49.0.0 requires rustc 1.83, but the then-pinned
+`3.12.6-alpine` (Alpine 3.20) ships Rust 1.78 — fixed by bumping `PYTHON_VERSION`
+to `3.12.10` (`-alpine` → Alpine 3.22 → Rust 1.87), keeping `cryptography`
+current. That bump is bounded above: Docker Hub published no
+`windowsservercore-ltsc2022` base past 3.12.10 and the `production-windows` stage
+shares this ARG, so a further bump must split the ARG per stage (or cap
+`cryptography`) rather than 404 the Windows base.
 
 ### DK-R1 — Regression: prior acceptance still holds
 ```bash
