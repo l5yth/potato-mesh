@@ -415,6 +415,29 @@ test('buildRoleButtons creates swatch child with background color', () => {
   });
 });
 
+test('buildRoleButtons swatches carry the marker shape per protocol (Legend & Chat Fix A)', () => {
+  withApp((t) => {
+    t.legendRoleButtons.clear();
+    const colMc = document.createElement('div');
+    const colMt = document.createElement('div');
+    t.buildRoleButtons(colMc, { REPEATER: '#B8C4D4' }, 'meshcore');
+    t.buildRoleButtons(colMt, { CLIENT: '#f3ef74' }, 'meshtastic');
+    // The swatch is the marker at legend size: a diamond keys MeshCore, a circle
+    // keys Meshtastic — the protocol/shape channel the map uses but the panel
+    // never keyed. (Every swatch was previously an identical rounded square.)
+    const mcSwatch = t.legendRoleButtons.get('meshcore:REPEATER').childNodes[0];
+    const mtSwatch = t.legendRoleButtons.get('meshtastic:CLIENT').childNodes[0];
+    assert.ok(
+      String(mcSwatch.className).includes('legend-swatch--diamond'),
+      'MeshCore swatch keys the diamond shape',
+    );
+    assert.ok(
+      String(mtSwatch.className).includes('legend-swatch--circle'),
+      'Meshtastic swatch keys the circle shape',
+    );
+  });
+});
+
 test('buildRoleButtons creates label child with role text', () => {
   withApp((t) => {
     t.legendRoleButtons.clear();

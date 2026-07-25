@@ -216,7 +216,7 @@ import {
   pauseTimestampText,
   applyAutorefreshControlState,
 } from './main/autorefresh-control.js';
-import { createNodeMarker } from './main/node-marker.js';
+import { createNodeMarker, nodeMarkerShapeForProtocol } from './main/node-marker.js';
 import { colocatedHubIconDefinition } from './main/colocated-hub-icon.js';
 import { syncNodesEmptyRow } from './main/table-empty-state.js';
 import { formatTableCell } from './main/table-cell-format.js';
@@ -1890,7 +1890,11 @@ export function initializeApp(config) {
       item.dataset.role = role;
       item.dataset.protocol = protocol;
       const swatch = document.createElement('span');
-      swatch.className = 'legend-swatch';
+      // The swatch is the marker at legend size (Legend & Chat Fix): shape keys
+      // protocol exactly as the map does — a rotated diamond for MeshCore
+      // (`nodeMarkerShapeForProtocol` → 'square'), a circle for everything else.
+      const swatchShape = nodeMarkerShapeForProtocol(protocol) === 'square' ? 'diamond' : 'circle';
+      swatch.className = `legend-swatch legend-swatch--${swatchShape}`;
       item.appendChild(swatch);
       swatch.style.background = color;
       swatch.setAttribute('aria-hidden', 'true');

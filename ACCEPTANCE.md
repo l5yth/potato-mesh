@@ -3924,3 +3924,58 @@ is untouched — only the detail view changes), **FU-A4/UX-A10** (the footer joi
 strip still renders from the resolved preset config), and the node-page tick
 specs (RT1/RT2 timestamps) updated to the spec-sheet markup, not removed. No
 Python/Rust/Flutter surface is touched.
+
+---
+
+## Bugfix: Legend shape key & chat log overflow
+
+Maps to SPEC decisions **LC1–LC4**. Each check below was written **before** the
+fix and demonstrated failing against `80d3ca6`. Run node/rspec from `web/`,
+greps from the repo root.
+
+### LC-A1 — Legend swatches carry the marker shape — LC1
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-filter.test.js )
+git grep -nE "legend-swatch--diamond|legend-swatch--circle" -- web/public/assets/js/app/main.js web/public/assets/styles/base.css
+```
+**Expected:** the filter suite passes — `buildRoleButtons` stamps each swatch
+with its protocol's marker shape (MeshCore → `legend-swatch--diamond`,
+Meshtastic → `legend-swatch--circle`), so the panel keys the shape channel the
+map uses. `base.css` sizes the diamond as an equal-area rotated square (the
+map's `side = radius × 1.78`) with the marker's 1px ring + 3px corner in a
+16px slot so the diagonal never clips the label.
+
+### LC-A2 — Legend pressed state actually paints — LC2
+```bash
+git grep -nE 'button\.legend-item\[aria-pressed="true"\]' -- web/public/assets/styles/base.css
+git grep -nE '^\.legend-item\[aria-pressed="true"\]' -- web/public/assets/styles/base.css
+```
+**Expected:** the first grep prints the rule (the `button`-prefixed selector,
+specificity (0,2,1), outranks the `button:not(.chat-tab):not(.sort-button)`
+reset that previously flattened every chip to `#333`); the **second grep prints
+nothing** — the bare `.legend-item[aria-pressed="true"]` selector (0,2,0), which
+the reset overrode, is gone. Pressed role chips now paint their selected blue.
+
+### LC-A3 — Chat log never scrolls horizontally — LC3
+```bash
+awk '/^\.chat-entry-msg,/,/^}/' web/public/assets/styles/base.css | grep -nE "overflow-wrap: anywhere"
+git grep -nE "overflow-x: hidden" -- web/public/assets/styles/base.css | grep -i chat || echo "no chat overflow-x:hidden (correct)"
+```
+**Expected:** the chat hanging-indent rule (`.chat-entry-msg, .chat-entry-node`)
+carries `overflow-wrap: anywhere`, so an unbreakable token (long hex, URL, or
+39-char long name) wraps under the 19ch hang instead of forcing the panel into a
+horizontal scroll container. `anywhere` (not `break-word`) also lowers the
+entry's min-content width, so it can never demand more width than the panel —
+and no `overflow-x: hidden` is added on the panel (which would only mask the
+next regression).
+
+### LC-R1 — Regression: prior acceptance still holds — LC4
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. At risk and required to stay
+green: **UX-A5/UX-A6** (the legend line-sample key and toggle-label behaviour
+survive the swatch-shape change), **FU-A2** (the region toggle) and **UX-A9**
+(chat hanging indent — the `overflow-wrap` addition rides the same D-033 rule),
+and the `buildRoleButtons` filter specs (swatch/dataset/compound-key behaviour
+unchanged). No Ruby/Python/Rust/Flutter surface is touched.

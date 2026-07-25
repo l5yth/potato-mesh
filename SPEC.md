@@ -1016,3 +1016,32 @@ three freshness panes. *FU10 (sticky group-header `24px` offset)* — **hardened
 | **PD3** | **Marker stacking: recency-major via three freshness panes (amends the role-priority z-order).** The map creates three Leaflet panes — `markers-stale` < `markers-today` < `markers-live` (ascending z-index) — and every marker, **circle and chip**, is assigned its `nodeAgeBucket` pane (`freshnessPaneForBucket`). Freshness is the coarse channel; the existing `getRoleRenderPriority` ladder still orders **within** a pane. A live Meshtastic circle now paints over a stale MeshCore chip. This **inverts** the old guarantee (a stale ROUTER drops below a live CLIENT, and MeshCore's "companion above infrastructure" holds only within a bucket) — the deliberate trade for a liveness dashboard; role keeps its own untouched colour/shape channel. It also **narrows** the pre-existing protocol pane-split (chips no longer unconditionally top circles — only within one bucket). No representation change, so `circleMarker` performance is kept. | interview + review |
 | **PD4** | **Sticky group-header offset hardened (FU10).** The group row's `height: 24px` and the column row's `top: 24px` are a coupled pair; `white-space: nowrap` on `.nodes-group-header th` stops a longer label / translation / narrow tier from wrapping the group row and overlapping the two sticky rows. A comment names the coupling. | review |
 | **PD5** | **Engineering bar (D9).** Each fix shipped with a fail-first check (Phase 2), 100 % coverage on new/changed lines, full JSDoc, the exact Apache header, `rufo`/`black`-clean; all prior suites stay green; specs asserting the old detail table / footer markup are updated, not deleted. | CLAUDE.md |
+
+---
+
+## Bugfix: Legend shape key & chat log overflow
+
+Two deployed-CSS defects and one legend-key gap from a final frontend review.
+Presentation layer only — no dependency, no egress, no `/api/*`, `/version`, or
+`data-app-config` change; all four apex invariants and D7/D8 hold. Protocol
+parity (Invariant IV) is preserved: the legend keys both protocols' shapes
+equally.
+
+**Conflict check.** *UX7 (marker shape channel; the neighbor/trace line key)* —
+**extended** (LC1): the legend now also keys the role-swatch shape (circle vs
+diamond), the channel the map used but the panel never keyed; the swatch is the
+marker at legend size (same `nodeMarkerShapeForProtocol` mapping, same
+`side = radius × 1.78` area rule, same ring + 3px corner). *Legend filter visual
+feedback* — **fixed** (LC2): the pressed-state rule existed but a lower
+specificity than the global button reset meant it never painted. *UX11/D-033
+(chat hanging indent)* — **extended** (LC3): wrapped lines already hung at 19ch,
+but unbreakable tokens were never broken, so the panel scrolled sideways;
+`overflow-wrap: anywhere` on the same rule closes it. No invariant is
+contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **LC1** | **Legend swatches key the marker shape (extends UX7).** `buildRoleButtons` stamps each swatch `legend-swatch--diamond` (MeshCore) or `legend-swatch--circle` (Meshtastic) from `nodeMarkerShapeForProtocol` — one source of truth with the map. `base.css` renders the circle at 12px and the diamond as an equal-area 11px square rotated 45° (the map's `side = radius × 1.78`) with the chip's 3px corners, both carrying the marker's `1px rgba(0,0,0,.7)` ring, in a 16px slot so the diagonal never clips the label. The swatch is the marker at legend size, not a second drawing of it. Freshness (opacity) is deliberately **not** keyed (the recommended shapes-only option). | review |
+| **LC2** | **Legend pressed state paints (specificity fix).** A role chip is a `<button>`; the reset `button:not(.chat-tab):not(.sort-button)` (0,2,1) outranked the bare `.legend-item[aria-pressed="true"]` (0,2,0), so every chip computed to `#333` and only `font-weight` distinguished selected from filtered. The selector is now `button.legend-item[aria-pressed="true"]` (0,2,1), which wins on source order — the selected blue paints. | review |
+| **LC3** | **Chat log never scrolls horizontally (extends UX11/D-033).** `.chat-tabpanel` is `overflow-y: auto`, so its x-axis is a scroll container; nothing broke long tokens. `overflow-wrap: anywhere` on `.chat-entry-msg, .chat-entry-node` wraps unbreakable tokens under the 19ch hang and lowers the entry's min-content width so it can never exceed the panel. `anywhere`, not `break-word`; no `overflow-x: hidden` (which would only mask the next regression). | review |
+| **LC4** | **Engineering bar (D9).** Each fix shipped with a fail-first check (Phase 2), full JSDoc/comments, the exact Apache header, clean linters; all prior suites stay green; the `buildRoleButtons` filter specs gain the swatch-shape assertion, none removed. | CLAUDE.md |

@@ -1902,18 +1902,47 @@ input[type="radio"] {
   outline-offset: 2px;
 }
 
-.legend-item[aria-pressed="true"] {
+/* The `button` prefix is required (Legend & Chat Fix): a role chip is a
+   <button>, and the reset `button:not(.chat-tab):not(.sort-button)` is
+   specificity (0,2,1). The bare `.legend-item[aria-pressed="true"]` is (0,2,0)
+   and lost to it, so the selected state never painted (every chip computed to
+   #333, only font-weight surviving). `button.legend-item[aria-pressed="true"]`
+   is (0,2,1) and, later in source, wins. */
+button.legend-item[aria-pressed="true"] {
   border-color: #70b3f0;
   background: rgba(91, 155, 213, 0.48);
   color: #c8e8ff;
   font-weight: 600;
 }
 
+/* Role swatch = the marker at legend size (Legend & Chat Fix): colour keys
+   role, shape keys protocol. Both carry the marker's 1px ring; the shape
+   variants below add the circle / rotated-diamond geometry. */
 .legend-swatch {
   display: inline-block;
+  box-sizing: border-box;
+  flex: 0 0 auto;
   width: 12px;
   height: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.7);
   border-radius: 2px;
+}
+
+/* Meshtastic — the circle marker at legend size. */
+.legend-swatch--circle {
+  border-radius: 50%;
+}
+
+/* MeshCore — the rotated-diamond chip at legend size. Equal optical area to the
+   circle (the map's `side = radius × 1.78` → an 11px square ≈ a 12px circle),
+   rotated 45° with the chip's 3px corners. The 2px side margin gives it a 16px
+   slot so the ~15.6px diagonal never clips the label. */
+.legend-swatch--diamond {
+  width: 11px;
+  height: 11px;
+  margin: 0 2px;
+  border-radius: 3px;
+  transform: rotate(45deg);
 }
 
 .protocol-icon {
@@ -2852,6 +2881,15 @@ input[type="radio"] {
 .chat-entry-node {
   padding-left: 19ch;
   text-indent: -19ch;
+  /* Break unbreakable tokens (Legend & Chat Fix): `.chat-tabpanel` is
+     `overflow-y: auto`, so its x-axis computes to `auto` — a horizontal scroll
+     container. Nothing else in base.css breaks long tokens, so one hex payload,
+     long URL, or 39-char long name overflows the panel. `anywhere` (not
+     `break-word`) also lowers the entry's min-content width, so it can never
+     demand more width than the panel — wrapped fragments continue under the
+     19ch hang. No `overflow-x: hidden`, which would only mask the next
+     regression. */
+  overflow-wrap: anywhere;
 }
 
 /* text-indent is inherited, so the hanging indent re-applies to the inline
