@@ -124,7 +124,6 @@
    main_classes << "page-main--full-screen" if full_screen_view
    show_header = true
    show_footer = !full_screen_view || %i[charts federation].include?(view_mode) || page_view
-   footer_slim = %i[charts federation].include?(view_mode) || page_view
    show_filter_input = !(%i[node_detail charts federation].include?(view_mode) || page_view)
    show_meta_row = !(%i[node_detail charts federation].include?(view_mode) || page_view)
    nodes_nav_href = "/nodes"
@@ -169,7 +168,7 @@
                   aria-controls="instanceSelect"
                   aria-label="Choose another region"
                   title="Choose another region"
-                >🌐</button>
+                >🌍</button>
                 <label class="visually-hidden" for="instanceSelect">Select a region</label>
                 <select id="instanceSelect" class="instance-select" aria-label="Select instance region" hidden>
                   <option value=""><%= Rack::Utils.escape_html("Other regions…") %></option>
@@ -232,25 +231,20 @@
             <button type="button" id="filterClear" class="filter-clear" aria-label="Clear filter" hidden>&times;</button>
           </div>
         <% end %>
+        <%# Protocol toggles carry the live per-protocol count (audit follow-up
+            04): the two icon buttons were unlabelled, so a count both names them
+            and states the MeshCore/Meshtastic split. JS fills the counts. %>
         <button id="protocolToggleMeshcore" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide MeshCore nodes" aria-pressed="false" title="Toggle MeshCore node visibility" hidden>
           <img src="/assets/img/meshcore.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
+          <span id="protocolToggleMeshcoreCount" class="protocol-toggle-count" aria-hidden="true"></span>
         </button>
         <button id="protocolToggleMeshtastic" type="button" class="icon-button protocol-toggle-btn" aria-label="Hide Meshtastic nodes" aria-pressed="false" title="Toggle Meshtastic node visibility" hidden>
           <img src="/assets/img/meshtastic.svg" alt="" width="20" height="20" aria-hidden="true" class="protocol-toggle-icon" loading="lazy" decoding="async" />
+          <span id="protocolToggleMeshtasticCount" class="protocol-toggle-count" aria-hidden="true"></span>
         </button>
         <span id="footerActiveNodes" class="meta-active-nodes"></span>
-        <%# Join strip (SPEC UX12): the radio settings a newcomer needs, from
-            resolved preset config — MeshCore only when fully configured. %>
-        <div class="join-line">
-          <span class="join-line__entry"><span class="join-line__proto">Meshtastic</span> · <%= Rack::Utils.escape_html(sanitized_channel) %> · <%= Rack::Utils.escape_html(sanitized_frequency) %></span>
-          <% if meshcore_join_line = (sanitized_meshcore_preset && sanitized_meshcore_freq ? [sanitized_meshcore_preset, sanitized_meshcore_freq] : nil) %>
-            <span class="join-line__separator" aria-hidden="true">|</span>
-            <span class="join-line__entry"><span class="join-line__proto">MeshCore</span> · <%= Rack::Utils.escape_html(meshcore_join_line[0]) %> · <%= Rack::Utils.escape_html(meshcore_join_line[1]) %></span>
-          <% end %>
-          <% if (about_page = static_pages.find { |sp| sp.slug == "about" }) %>
-            <a class="join-line__more" href="/pages/<%= Rack::Utils.escape_path(about_page.slug) %>">details</a>
-          <% end %>
-        </div>
+        <%# The join strip moved to the footer (audit follow-up 04), freeing the
+            meta row for the per-minute vital signs. %>
         <button id="autorefreshToggle" type="button" aria-label="Pause auto-refresh" aria-pressed="false" title="Pause or resume automatic data refresh">● live</button>
       </div>
     <% end %>
@@ -270,7 +264,7 @@
     </main>
 
     <% if show_footer %>
-      <%= erb :"shared/_footer", locals: { site_name: site_name, version: version, contact_link: contact_link, contact_link_url: contact_link_url, slim: footer_slim, static_pages: static_pages, current_view_mode: view_mode } %>
+      <%= erb :"shared/_footer", locals: { site_name: site_name, version: version, contact_link: contact_link, contact_link_url: contact_link_url, static_pages: static_pages, current_view_mode: view_mode } %>
     <% end %>
   </div>
 

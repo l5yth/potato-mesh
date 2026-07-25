@@ -3722,3 +3722,135 @@ square-chip factory), **HT-A***/**DM-A*** (basemap untouched), **A4c**
 (protocol-aware chat naming), and **FS-A2/FS-A4** (the signed federation wire —
 `channel` key unchanged). View specs asserting the old nav/title/⏸ markup are
 updated, not removed.
+
+---
+
+## Bugfix: UX audit follow-up (design review remediation)
+
+Maps to SPEC decisions **FU1–FU13**. Presentation-layer only; run JS checks
+from `web/`, rspec from `web/`, greps from the repo root.
+
+### FU-A1 — Chat badge sits in its colour box — FU1
+```bash
+git grep -nE "text-indent: 0" -- web/public/assets/styles/base.css
+git grep -nE "chat-entry-msg, .chat-entry-node\)\s*$|:where\(.short-name" -- web/public/assets/styles/base.css
+```
+**Expected:** `base.css` carries a `:where(.chat-entry-msg, .chat-entry-node) :where(.short-name, .protocol-icon, .chat-entry-reply) { text-indent: 0 }`
+reset, so the inline badge/icon/reply no longer inherit the hanging indent.
+
+### FU-A2 — Region toggle is 🌍, greyscale-until-open — FU2
+```bash
+git grep -nF "🌍" -- web/views/layouts/app.erb
+git grep -nE "instance-selector-toggle|grayscale\(1\)|aria-expanded=.true.\]" -- web/public/assets/styles/base.css
+```
+**Expected:** `app.erb` renders the 🌍 glyph (no 🌐); `base.css` dims the toggle
+with `filter: grayscale(1); opacity: .72` and restores `filter: none` on
+`:hover` / `[aria-expanded="true"]`, with an accent border frame when open.
+
+### FU-A3 — MeshCore marker is an equal-area diamond — FU3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/node-marker.test.js )
+git grep -nE "radius \* 1\.78" -- web/public/assets/js/app/main/node-marker.js
+git grep -nE "rotate\(45deg\)|border-radius: 3px" -- web/public/assets/styles/base.css
+```
+**Expected:** the marker suite passes with `iconSize` `[16, 16]` at radius 9;
+`node-marker.js` sizes the chip `round(radius * 1.78)`; `base.css` rotates the
+`.node-marker-chip__fill` 45° with rounded corners and keeps the container
+`overflow: visible`.
+
+### FU-A4 — Join strip → footer; counts → toggles; `details` dropped — FU4
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "follow-up 04" )
+( cd web && node --test public/assets/js/app/__tests__/main-update-counts.test.js )
+git grep -nE "footer-join" -- web/views/shared/_footer.erb
+git grep -nE "protocolToggleMeshcoreCount|protocol-toggle-count" -- web/views/layouts/app.erb
+git grep -nE "join-line__more|class=\"join-line\"" -- web/views/layouts/app.erb
+```
+**Expected:** rspec + the JS suite pass; `_footer.erb` renders the `footer-join`
+strip; `app.erb` carries the two `protocol-toggle-count` spans; the **last grep
+prints nothing** — the join strip and its `details` link are gone from the meta
+row. `updateProtocolToggleCounts` fills the toggles from the 7-day per-protocol
+figure.
+
+### FU-A5 — Legend dash sample inks both ends — FU5
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/legend-line-samples.test.js )
+git grep -nE "stroke-dasharray=.6 2." -- web/public/assets/js/app/main/legend-line-samples.js
+```
+**Expected:** the suite passes; the trace **sample** uses `6 2`. The on-map
+traceroute polylines are untouched (still `6 6`).
+
+### FU-A6 — Condensed nodes table — FU6
+```bash
+git grep -nE "#nodes tbody td" -- web/public/assets/styles/base.css
+git grep -nE "#nodes .nodes-empty-row td" -- web/public/assets/styles/base.css
+```
+**Expected:** `#nodes tbody td { padding: 3px 8px; line-height: 1.35 }` (with
+`#nodes thead th` 5/8 and the group row 3/8); the waiting row keeps `12px 8px`
+via the id-scoped `#nodes .nodes-empty-row td` selector.
+
+### FU-A7 — Disclosure row lists only reported fields, keeping honest zeros — FU7
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/nodes-table-ia.test.js )
+git grep -nE "filterReportedFields|isReportedField" -- web/public/assets/js/app/main.js web/public/assets/js/app/main/nodes-table-ia.js
+```
+**Expected:** the suite passes — `isReportedField` keeps `0.0%` / `0 V` (honest
+zeros) and drops `''` / `—`; an all-absent set renders one
+`node-extra__empty` "No additional fields reported." line; `main.js` wraps the
+15 entries in `filterReportedFields`.
+
+### FU-A8 — Footer chrome on every route — FU8
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "opaque footer" )
+git grep -nE "app-footer--slim" -- web/public/assets/styles/base.css web/views
+git grep -nE "box-shadow: 0 -8px 24px" -- web/public/assets/styles/base.css
+```
+**Expected:** rspec passes (Charts + Federation render `class="app-footer"` and
+**not** `app-footer--slim`); the **second grep prints nothing** — the slim
+variant and its `slim` local are gone; `.app-footer` gains the lift shadow.
+
+### FU-A9 — Chat hang is the real prefix width — FU9
+```bash
+git grep -nE "padding-left: 19ch|text-indent: -19ch" -- web/public/assets/styles/base.css
+```
+**Expected:** both lines are present (the old `8ch` is gone), so wrapped chat
+lines hang under the message column.
+
+### FU-A10 — Both nodes-table header rows pin — FU10
+```bash
+git grep -nE "nodes-group-header th" -- web/public/assets/styles/base.css
+git grep -nE "thead tr:not\(.nodes-group-header\) th" -- web/public/assets/styles/base.css
+```
+**Expected:** `.nodes-group-header th` is `position: sticky; top: 0` (was
+`static`) with a 24 px border-box height; the column row pins at `top: 24px`.
+
+### FU-A11 — Badge meets the 44 px touch floor — FU11
+```bash
+git grep -nE "pointer: coarse" -- web/public/assets/styles/base.css
+git grep -nE "min-width: 44px|min-height: 44px" -- web/public/assets/styles/base.css
+```
+**Expected:** a `@media (pointer: coarse)` block gives
+`.short-name[data-node-info]::after` a ≥ 44 px transparent hit box; fine
+pointers keep the tight target (no unconditional rule).
+
+### FU-A12 — Legend columns share a top baseline — FU12
+```bash
+git grep -nE "legend-column--bottom" -- web/public/assets/styles/base.css web/public/assets/js/app/main.js
+```
+**Expected:** **prints nothing** — the bottom-align modifier is gone from both
+the stylesheet and the legend builder, so both columns top-align.
+
+### FU-R1 — Regression: prior acceptance still holds — FU13
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly amended and required to
+stay green: **UX-A5** (D-013/D-014 — the marker is now a diamond and the dash
+sample `6 2`, but the shape channel and the neighbor/trace key survive),
+**UX-A7** (the nodes-table IA — group colspans, disclosure row, sticky header
+all still hold under the density/filter/pin changes), **UX-A9** (shell — the
+region toggle, chat indent and footer links survive their tweaks), and
+**UX-A10** (the join strip still renders from the resolved preset config, now
+in the footer; the `channel` wire key is unchanged). No Python/Rust/Flutter
+surface is touched, so `pytest`, `cargo test`, and `flutter test` are
+unaffected by construction.

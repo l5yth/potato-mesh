@@ -224,6 +224,7 @@ import {
   hiddenColumnsForWidth,
   syncGroupHeaderColspans,
   nodeExtraRowParts,
+  filterReportedFields,
   rowActivationHref,
 } from './main/nodes-table-ia.js';
 import { legendLineSampleSvg } from './main/legend-line-samples.js';
@@ -278,6 +279,8 @@ export function initializeApp(config) {
   const autorefreshToggle = document.getElementById('autorefreshToggle');
   const protocolToggleMeshcore = document.getElementById('protocolToggleMeshcore');
   const protocolToggleMeshtastic = document.getElementById('protocolToggleMeshtastic');
+  const protocolToggleMeshcoreCount = document.getElementById('protocolToggleMeshcoreCount');
+  const protocolToggleMeshtasticCount = document.getElementById('protocolToggleMeshtasticCount');
   const filterInput = document.getElementById('filterInput');
   const filterClearButton = document.getElementById('filterClear');
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
@@ -1932,8 +1935,11 @@ export function initializeApp(config) {
 
       const itemsContainer = L.DomUtil.create('div', 'legend-items legend-items--columns', div);
 
-      // --- MeshCore column (left, bottom-aligned) ---
-      const meshcoreCol = L.DomUtil.create('div', 'legend-column legend-column--bottom', itemsContainer);
+      // --- MeshCore column (left) ---
+      // Both columns top-align (audit follow-up d): bottom-aligning the shorter
+      // MeshCore column dropped its header below Meshtastic's, reading as a
+      // layout bug. Top baselines put the two protocol titles on one line.
+      const meshcoreCol = L.DomUtil.create('div', 'legend-column', itemsContainer);
       meshcoreColEl = meshcoreCol;
       const meshcoreColHeader = L.DomUtil.create('div', 'legend-column-header', meshcoreCol);
       meshcoreColHeader.appendChild(buildMeshcoreIconImg());
@@ -3979,8 +3985,11 @@ export function initializeApp(config) {
       // Hidden-field disclosure row (SPEC UX9): the `+` cell reveals every
       // field the smallest responsive tier hides, so the mobile view loses
       // nothing permanently. Values reuse the display strings computed above.
+      // Only fields that actually reported are listed (audit follow-up 07):
+      // `filterReportedFields` drops null/empty/dash values but keeps honest
+      // zeros, and an all-absent set falls back to a single muted line.
       const extraParts = nodeExtraRowParts(
-        [
+        filterReportedFields([
           { label: 'Node ID', valueHtml: formatTableCell(escapeHtml(n.node_id || '')) },
           { label: 'Frequency', valueHtml: formatTableCell(loraFrequencyDisplay) },
           { label: 'LoRa Preset', valueHtml: formatTableCell(modemPresetDisplay) },
@@ -3996,7 +4005,7 @@ export function initializeApp(config) {
           { label: 'Latitude', valueHtml: formatTableCell(latitudeDisplay) },
           { label: 'Longitude', valueHtml: formatTableCell(longitudeDisplay) },
           { label: 'Altitude', valueHtml: formatTableCell(fmtAlt(n.altitude, 'm')) },
-        ],
+        ]),
         NODES_TABLE_TOTAL_COLUMNS,
       );
       const extraTr = document.createElement('tr');
@@ -4797,6 +4806,7 @@ export function initializeApp(config) {
       const visibleStats = adjustStatsForHiddenProtocols(stats);
       updateTitleCount(visibleStats);
       updateLegendProtocolCounts(stats);
+      updateProtocolToggleCounts(stats);
       updateFooterStats(visibleStats);
       applyProtocolVisibility(stats);
     });
@@ -5149,6 +5159,26 @@ export function initializeApp(config) {
   }
 
   /**
+   * Update the meta-row protocol toggle buttons with per-protocol active node
+   * counts (audit follow-up 04). Uses the same 7-day active figure as the
+   * legend column counts, so the same protocol shows the same number in both
+   * places; the count both labels the otherwise-unnamed icon button and states
+   * the MeshCore/Meshtastic split.
+   *
+   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}}} stats
+   *   Stats from /api/stats.
+   * @returns {void}
+   */
+  function updateProtocolToggleCounts(stats) {
+    if (protocolToggleMeshcoreCount) {
+      protocolToggleMeshcoreCount.textContent = String(stats?.meshcore?.week ?? 0);
+    }
+    if (protocolToggleMeshtasticCount) {
+      protocolToggleMeshtasticCount.textContent = String(stats?.meshtastic?.week ?? 0);
+    }
+  }
+
+  /**
    * Update the footer active-node stats element with day/week/month counts.
    *
    * @param {{day: number, week: number, month: number, sampled: boolean}} stats Stats from /api/stats.
@@ -5232,6 +5262,7 @@ export function initializeApp(config) {
       legendProtocolButtons,
       updateTitleCount,
       updateLegendProtocolCounts,
+      updateProtocolToggleCounts,
       updateFooterStats,
       applyProtocolVisibility,
       restartAutoRefresh,

@@ -1129,6 +1129,29 @@ body.view-chat .page-shell {
   cursor: pointer;
 }
 
+/* Touch target (audit follow-up c): the badge opens the node overlay on tap
+   but is only ~15 px tall in the 12 px chat panel — under the 44 px mobile
+   floor. On coarse pointers a transparent, centred ::after lifts the hit box
+   to 44 px without changing the badge's look; fine pointers (mouse) keep the
+   tight target so dense chat lines don't cross-capture clicks. */
+@media (pointer: coarse) {
+  .short-name[data-node-info] {
+    position: relative;
+  }
+
+  .short-name[data-node-info]::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
+
 .short-info-overlay {
   position: absolute;
   background: #1c1c1c;
@@ -1640,13 +1663,30 @@ button:not(.chat-tab):not(.sort-button) {
 }
 
 .protocol-toggle-btn {
-  width: 32px;
+  width: auto;
+  min-width: 32px;
   height: 32px;
+  gap: 4px;
+  padding: 0 6px;
   border: 1px solid #ccc;
   background: #333;
   border-radius: 6px;
   cursor: pointer;
   border-color: #444;
+}
+
+/* Per-protocol node count on the toggle (audit follow-up 04). Mirrors the
+   legend column count (7-day active) so the same protocol shows the same
+   number in both places. Hidden when empty so a countless button stays 32px. */
+.protocol-toggle-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--fg);
+}
+
+.protocol-toggle-count:empty {
+  display: none;
 }
 
 .protocol-toggle-btn[aria-pressed="true"] {
@@ -1796,10 +1836,6 @@ input[type="radio"] {
   min-width: 0;
 }
 
-.legend-column--bottom {
-  justify-content: flex-end;
-}
-
 .legend-protocol-count {
   font-weight: 400;
   opacity: 0.7;
@@ -1938,6 +1974,10 @@ input[type="radio"] {
   color: #eee;
   font-size: 12px;
   z-index: 4100;
+  /* Lift the fixed footer over long scrolling pages (audit follow-up 08): the
+     opaque chrome now renders on every route, so a soft top shadow separates
+     it from body copy that scrolls beneath it. */
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .app-footer .footer-content {
@@ -1974,21 +2014,10 @@ input[type="radio"] {
   color: inherit;
 }
 
-/* Slim footer variant used on Charts and Federation pages — floats like the
-   dashboard footer but with a transparent background and no border. */
-.app-footer--slim {
-  background: transparent;
-  border-top: none;
-}
-
-/* Cancel the extra block padding that .page-shell--full-screen injects on
-   .app-footer — slim footers use the same visual height as the dashboard. */
-.page-shell--full-screen .app-footer--slim {
-  padding-top: 0;
-  padding-bottom: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
+/* The slim (transparent, borderless) footer variant is retired (audit
+   follow-up 08): it left the still-`position: fixed` footer floating without a
+   background over the scrolling body copy on Charts, Federation and /pages/*.
+   Every route now uses the one opaque `.app-footer` chrome above. */
 
 .meta-active-nodes {
   font-size: 0.85em;
@@ -2496,10 +2525,34 @@ input[type="radio"] {
   color: var(--fg);
 }
 
+/* Condensed nodes table (audit follow-up 06): the generic `th, td` padding is
+   shadowed by the unscoped `thead th` / `tbody td` 8px rules, so row density is
+   scoped to #nodes here — ~20px rows instead of 30px (a third more nodes per
+   screen) without shrinking the 12px type. */
+#nodes thead th {
+  padding: 5px 8px;
+}
+
+#nodes tbody td {
+  padding: 3px 8px;
+  line-height: 1.35;
+}
+
+#nodes .nodes-group-header th {
+  padding: 3px 8px;
+}
+
+/* The waiting row keeps generous padding. It is inside #nodes tbody, so the
+   tight `#nodes tbody td` rule above would otherwise apply — an id-scoped
+   selector is needed to outrank it (a bare `.nodes-empty-row td` class would
+   lose to the id). */
 .nodes-empty-row td {
   color: var(--muted);
-  padding: 16px 8px;
   font-style: italic;
+}
+
+#nodes .nodes-empty-row td {
+  padding: 12px 8px;
 }
 
 /* Absent table values render the overlay's muted dash (UX4, D-020). */
@@ -2537,7 +2590,13 @@ input[type="radio"] {
   font-variant-numeric: tabular-nums;
 }
 
-/* Grouped header row (UX9, D-006): quiet group scent above the columns. */
+/* Grouped header row (UX9, D-006): quiet group scent above the columns.
+   Both header rows pin (audit follow-up b): the base `th` rule already sticks
+   the column row at top:0, so the group row must stick too — otherwise it
+   scrolls away and leaves the column row floating unbacked on the /nodes page.
+   The group row pins at the top and the column row just beneath it. The group
+   th uses border-box + a fixed height so the column row's offset is exact
+   despite the page's non-global box-sizing. */
 .nodes-group-header th {
   font-size: 11px;
   font-weight: 600;
@@ -2548,7 +2607,17 @@ input[type="radio"] {
   border-bottom: 1px solid var(--line);
   border-left: 1px solid var(--line);
   text-align: left;
-  position: static;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  height: 24px;
+}
+
+/* Column header row pins directly below the 24px group row. */
+#nodes thead tr:not(.nodes-group-header) th {
+  top: 24px;
+  z-index: 2;
 }
 
 .nodes-group-header th:first-child {
@@ -2598,8 +2667,16 @@ input[type="radio"] {
   margin: 0;
 }
 
-/* Join strip (UX12, D-002): the radio settings a newcomer needs, quiet but
-   always present in the meta row; truncates gracefully when space runs out. */
+/* Disclosure-row fallback when a node reported none of the hidden fields
+   (audit follow-up 07). */
+.node-extra__empty {
+  margin: 6px 0;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Join strip (UX12, D-002; audit follow-up 04): the radio settings a newcomer
+   needs, moved from the meta row to the footer. */
 .join-line {
   display: flex;
   align-items: center;
@@ -2621,8 +2698,18 @@ input[type="radio"] {
   color: var(--fg);
 }
 
-.join-line__more {
-  flex: none;
+/* Footer placement: centre the strip and let it wrap on narrow viewports
+   rather than clipping the way the single-line meta row did. */
+.footer-join {
+  justify-content: center;
+  flex-wrap: wrap;
+  overflow: visible;
+  white-space: normal;
+  padding: 6px var(--pad) 0;
+}
+
+.footer-join .join-line__entry {
+  overflow: visible;
 }
 
 /* Live/paused control (UX6, D-010): visible text state — accent while the
@@ -2646,16 +2733,22 @@ input[type="radio"] {
   font-weight: 600;
 }
 
-/* MeshCore square marker chips (UX7, D-013): shape encodes protocol. */
+/* MeshCore marker chips (UX7, D-013; audit follow-up 03): shape encodes
+   protocol. The fill is a round(radius × 1.78) square rotated 45° into an
+   equal-area diamond with rounded corners; the rotated diagonal exceeds the
+   divIcon box, so the container keeps overflow visible. */
 .node-marker-chip {
   background: transparent;
   border: none;
+  overflow: visible;
 }
 
 .node-marker-chip__fill {
   display: block;
   box-sizing: border-box;
   border: 1px solid rgba(0, 0, 0, 0.7);
+  border-radius: 3px;
+  transform: rotate(45deg);
 }
 
 /* Legend line-style key (UX7, D-014). */
@@ -2676,8 +2769,30 @@ input[type="radio"] {
   gap: 6px;
 }
 
+/* Region toggle (audit follow-up 02): 🌍 reads as a place where the old 🌐 read
+   as a generic "web" glyph. It sits greyscale/dimmed by default so it stays out
+   of the header's colour budget, then returns to full colour on hover and while
+   open — the colour is the open-state feedback the toggle otherwise lacked
+   (aria-expanded already flips, so no JS change). The transparent border gives
+   the open state an accent frame. */
 .instance-selector-toggle {
-  font-size: 16px;
+  font-size: 17px;
+  filter: grayscale(1);
+  opacity: 0.72;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: filter 140ms ease, opacity 140ms ease;
+}
+
+.instance-selector-toggle:hover,
+.instance-selector-toggle[aria-expanded="true"] {
+  filter: none;
+  opacity: 1;
+}
+
+.instance-selector-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--input-bg);
 }
 
 /* Site title clamp (UX11, D-015): long instance names shrink and ellipsize
@@ -2690,12 +2805,23 @@ input[type="radio"] {
   max-width: 40vw;
 }
 
-/* Chat hanging indent (UX11, D-033): wrapped log lines hang under their
-   text column instead of restarting at x=0. */
+/* Chat hanging indent (UX11, D-033; audit follow-up a): the line prefix
+   `[HH:MM:SS][freq][MF]` is 19 characters, so the hang is 19ch — wrapped log
+   lines land under the message column instead of mid-timestamp (the old 8ch
+   stopped inside the clock). */
 .chat-entry-msg,
 .chat-entry-node {
-  padding-left: 8ch;
-  text-indent: -8ch;
+  padding-left: 19ch;
+  text-indent: -19ch;
+}
+
+/* text-indent is inherited, so the hanging indent re-applies to the inline
+   badge, protocol icon and reply prefix nested in the line and shoves them out
+   of their colour box (audit follow-up 01). Zero it back on those descendants;
+   :where() keeps the reset at specificity 0 so nothing has to fight it. */
+:where(.chat-entry-msg, .chat-entry-node)
+  :where(.short-name, .protocol-icon, .chat-entry-reply) {
+  text-indent: 0;
 }
 
 /* Chat date dividers separate days spatially (UX11, D-040). */

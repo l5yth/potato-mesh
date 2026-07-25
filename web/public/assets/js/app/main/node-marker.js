@@ -18,10 +18,10 @@
  * Protocol-shaped node markers (SPEC UX7, audit D-013).
  *
  * Colour keeps encoding *role*; shape now encodes *protocol*: MeshCore nodes
- * render as square `L.divIcon` chips while Meshtastic (and anything unknown)
- * keeps the circular `L.circleMarker`. Differentiation, not privilege
- * (Invariant IV): both shapes carry identical interaction wiring and equal
- * visual weight — the shape channel simply makes the two mesh populations
+ * render as equal-area rotated-diamond `L.divIcon` chips while Meshtastic (and
+ * anything unknown) keeps the circular `L.circleMarker`. Differentiation, not
+ * privilege (Invariant IV): both shapes carry identical interaction wiring and
+ * equal visual weight — the shape channel simply makes the two mesh populations
  * distinguishable where an 8° hue offset could not.
  *
  * @module main/node-marker
@@ -40,11 +40,13 @@ export function nodeMarkerShapeForProtocol(protocol) {
 /**
  * Create the Leaflet marker for a node.
  *
- * Circle markers receive the familiar `circleMarker` style options; square
+ * Circle markers receive the familiar `circleMarker` style options; MeshCore
  * chips are built from a `divIcon` whose inline style carries the same role
- * colour and bucket fill opacity, sized `2 × radius` so both shapes cover the
- * same footprint. Both returned markers expose the standard Leaflet
- * interaction surface (`on`, `bindPopup`, `bindTooltip`, …).
+ * colour and bucket fill opacity, sized `round(radius × 1.78)` so the chip —
+ * rotated 45° into a diamond and corner-rounded by `base.css` — covers ≈ the
+ * circle's `πr²` optical area (a raw `2 × radius` square reads ~27 % heavier).
+ * Both returned markers expose the standard Leaflet interaction surface
+ * (`on`, `bindPopup`, `bindTooltip`, …).
  *
  * @param {Object} L Leaflet namespace.
  * @param {*} latlng Marker position (Leaflet lat/lng form).
@@ -70,7 +72,13 @@ export function createNodeMarker(L, latlng, options) {
       ...(pane ? { pane } : {}),
     });
   }
-  const size = Math.round(radius * 2);
+  // Equal-area sizing (audit follow-up 03): a `2 × radius` square out-weighs
+  // the circle it replaces by ~27 %. `radius × 1.78` (16 px at radius 9) lands
+  // the 45°-rotated, corner-rounded chip at ≈ the circle's πr² footprint. The
+  // rotation is CSS-only, so the divIcon box stays `size × size` and the anchor
+  // is unchanged; the rotated diagonal (~22.6 px) shows via the chip's
+  // `overflow: visible`.
+  const size = Math.round(radius * 1.78);
   const icon = L.divIcon({
     className: 'node-marker-chip',
     html:

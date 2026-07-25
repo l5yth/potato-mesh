@@ -31,6 +31,8 @@ import {
   syncGroupHeaderColspans,
   buildNodeExtraRowHtml,
   nodeExtraRowParts,
+  isReportedField,
+  filterReportedFields,
   rowActivationHref,
 } from '../nodes-table-ia.js';
 
@@ -94,6 +96,47 @@ test('the disclosure row renders hidden fields as a definition list', () => {
   assert.ok(html.includes('<dt>Battery</dt>'));
   assert.ok(html.includes('<dd>83%</dd>'));
   assert.ok(html.includes('<dd>3.9V</dd>'));
+});
+
+test('isReportedField keeps real readings and honest zeros, drops blanks/dashes', () => {
+  // Real readings, including honest zeros (audit follow-up 07 decision: a 0%
+  // channel util or 0 V is a genuine reading, not an absence).
+  assert.equal(isReportedField({ label: 'Battery', valueHtml: '83%' }), true);
+  assert.equal(isReportedField({ label: 'Channel Util', valueHtml: '0.0%' }), true);
+  assert.equal(isReportedField({ label: 'Voltage', valueHtml: '0 V' }), true);
+  assert.equal(isReportedField({ label: 'Altitude', valueHtml: '<span>0 m</span>' }), true);
+  // Absences: empty string and the muted em-dash placeholder, with or without tags.
+  assert.equal(isReportedField({ label: 'Uptime', valueHtml: '' }), false);
+  assert.equal(
+    isReportedField({ label: 'Uptime', valueHtml: '<span class="cell-empty">—</span>' }),
+    false,
+  );
+  assert.equal(isReportedField({ label: 'Uptime', valueHtml: '  —  ' }), false);
+  assert.equal(isReportedField({}), false, 'a missing value is unreported');
+  assert.equal(isReportedField(null), false, 'a null entry is unreported');
+  assert.equal(isReportedField(undefined), false, 'an undefined entry is unreported');
+});
+
+test('filterReportedFields keeps only the fields that reported', () => {
+  const kept = filterReportedFields([
+    { label: 'Voltage', valueHtml: '4.02 V' },
+    { label: 'Uptime', valueHtml: '<span class="cell-empty">—</span>' },
+    { label: 'Channel Util', valueHtml: '0.0%' },
+  ]);
+  assert.deepEqual(
+    kept.map(entry => entry.label),
+    ['Voltage', 'Channel Util'],
+    'dashes drop out, honest zeros stay',
+  );
+  assert.deepEqual(filterReportedFields(null), [], 'non-arrays yield an empty list');
+});
+
+test('the disclosure row falls back to one muted line when nothing reported', () => {
+  const parts = nodeExtraRowParts([], 22);
+  assert.ok(parts.innerHtml.includes('colspan="22"'));
+  assert.ok(!parts.innerHtml.includes('<dl'), 'no empty definition list is emitted');
+  assert.ok(parts.innerHtml.includes('node-extra__empty'));
+  assert.ok(parts.innerHtml.includes('No additional fields reported.'));
 });
 
 /**

@@ -934,3 +934,48 @@ II* — untouched: presentation-layer only, no dependency, no egress.
 | **UX13** | **Map-first mobile landing, CSS only — found already implemented.** The audited route-swap was rejected (impossible viewport-conditionally server-side); the agreed CSS mechanism turned out to already ship: the ≤ 1024 px media block orders the chat panel after the map (`.chat-panel { order: 2 }`), so the mobile dashboard paints map-first today. Verified against source during the fix; no change was needed and the audit's D-004 evidence is corrected accordingly. Desktop order, routes, and bookmarks unchanged. | interview + review |
 | **UX14** | **Keyboard/AT equivalence declared.** `#map` gains `aria-describedby` pointing to a visually-hidden note naming the nodes table as the keyboard-accessible equivalent (markers stay pointer-driven — Leaflet focus retrofit rejected); tables/captions/scope per UX9. | interview |
 | **UX15** | **Engineering bar (D9).** Every change ships with 100 % unit tests (JS `node:test`, RSpec), full JSDoc/RDoc, the exact Apache header, `rufo`-clean formatting; all existing suites stay green; view specs asserting moved markup are updated, not deleted. | CLAUDE.md |
+
+---
+
+## Bugfix: UX audit follow-up (design review remediation)
+
+Remediates a Claude-Design review of the shipped UX-audit dashboard (8 numbered
+fixes plus 4 smaller "also spotted" items), each traced to a concrete
+`base.css` / `web/views/` / `assets/js/app/` cause. It is presentation-layer
+only: no dependency, no egress, no `/api/*`, `/version`, or `data-app-config`
+change, so **all four apex invariants and D7/D8 hold** by construction. Protocol
+parity (Invariant IV) is preserved — FU3 keeps the MeshCore-diamond /
+Meshtastic-circle distinction as differentiation, not privilege.
+
+**Conflict check against existing decisions.** *UX7/D-013 (MeshCore square chip,
+`2 × radius`)* — **amended** (FU3: equal-area rotated diamond at
+`round(radius × 1.78)`; a raw `2r` square out-weighed the circle ~27 %). *UX7/
+D-014 (legend dash sample `6 6`)* — **amended** (FU5: the 24 px **sample** uses
+`6 2` so it inks both ends; the on-map traces stay `6 6`). *UX11/D-033 (chat
+hang `8ch`)* — **amended** (FU1/FU9: hang is `19ch` — the real prefix width —
+and inline badge/icon/reply descendants zero the inherited `text-indent`). *UX11/
+D-029 (region toggle 🌐)* — **amended** (FU2: 🌍, greyscale-until-open). *UX12/
+D-002 (join strip in the meta row with a `details` link)* — **amended** (FU4:
+the strip moves to the footer beside the About link and the redundant `details`
+link is dropped). *UX11/D-026 (meta day/week line)* — **extends** (FU4: the line
+is unchanged; per-protocol counts are added to the two toggle buttons). *UX9/
+D-006/D-007/D-017 (nodes table)* — **extends** (FU6 condenses row density, FU7
+lists only reported fields in the disclosure row, FU10 pins both header rows).
+*UX8 (legend defaults)* — **extends** (FU12: columns top-align; no default
+change). *Footer slim variant* — **retired** (FU8). No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **FU1** | **Chat badge sits in its colour box.** `text-indent` is inherited, so the D-033 hang re-applied to the inline-block `.short-name` / `.protocol-icon` / `.chat-entry-reply` inside `.chat-entry-msg`/`-node`. A `:where(...) :where(...)` reset zeros it on those descendants at specificity 0. | review |
+| **FU2** | **Region toggle reads as a place.** The glyph is 🌍 (was 🌐, a generic "web" mark); the button is greyscale/dimmed by default and returns to full colour + an accent frame on hover and `[aria-expanded="true"]` — the colour is the open-state feedback the toggle lacked. No JS change (`aria-expanded` already flips). | review |
+| **FU3** | **MeshCore marker is an equal-area diamond (amends UX7/D-013).** The chip is sized `round(radius × 1.78)` (16 px at radius 9 ≈ the circle's `πr²`), rotated 45° and corner-rounded in `base.css`; the rotation is CSS-only so the divIcon box and anchor are unchanged and the container keeps `overflow: visible`. | review |
+| **FU4** | **Join strip → footer; counts → toggles; `details` dropped (amends UX12/D-002, extends UX11/D-026).** The `.join-line` moves from the meta row to `_footer.erb` (rendered from the `Sanitizer` preset helpers, MeshCore entry only when both values are set). The two otherwise-unlabelled protocol toggles gain a per-protocol count span filled from the same 7-day figure as the legend column counts. The `details` link is removed — the footer's About link is beside the strip now. Every wire/JSON key is untouched (FS1/D8 hold). | review |
+| **FU5** | **Legend dash sample inks both ends (amends UX7/D-014).** `legendLineSampleSvg('trace')` uses `stroke-dasharray="6 2"`, which tiles the 22 px sample exactly (6+2+6+2+6); the map traceroutes keep `6 6`. | review |
+| **FU6** | **Condensed nodes table.** Row density is scoped to `#nodes` (`thead th` 5/8, `tbody td` 3/8 + `line-height 1.35`, group row 3/8), taking rows from ~30 px to ~20 px without shrinking the 12 px type; the waiting row keeps a roomy 12/8 via an id-scoped selector that outranks the tight rule. | review |
+| **FU7** | **Disclosure row lists only reported fields (extends UX9).** `filterReportedFields` drops null/empty/em-dash fields but **keeps honest zeros** (a `0 %` util or `0 V` is a real reading — UX10 number-honesty); an all-absent set falls back to one muted "No additional fields reported." line. | review + interview |
+| **FU8** | **Footer chrome on every route.** The transparent `.app-footer--slim` variant (and its full-screen padding reset) is deleted and the `slim` local dropped; the still-`position: fixed` footer now paints opaque with a lift shadow on Charts / Federation / `/pages/*` instead of floating over body copy. Geometry is unchanged (it was already fixed), so no content is newly occluded. | review |
+| **FU9** | **Chat hang is the real prefix width (amends UX11/D-033).** The `[HH:MM:SS][freq][MF]` prefix is 19 characters, so the hanging indent is `19ch` — wrapped lines land under the message column instead of mid-timestamp. | review |
+| **FU10** | **Both nodes-table header rows pin (extends UX9).** The group row becomes `position: sticky; top: 0` (was `static`) with a fixed 24 px border-box height; the column row pins at `top: 24px`, so the grouped header no longer scrolls away leaving the column row unbacked. | review |
+| **FU11** | **Badge meets the 44 px touch floor.** On `pointer: coarse`, a transparent centred `::after` lifts the `.short-name[data-node-info]` hit box to 44 px without changing its look; fine pointers keep the tight target so dense chat lines do not cross-capture clicks. | review |
+| **FU12** | **Legend columns share a top baseline (extends UX8).** `legend-column--bottom` is removed so the shorter MeshCore column top-aligns with Meshtastic; the two protocol titles sit on one line. | review |
+| **FU13** | **Engineering bar (D9).** Every change ships with 100 % unit coverage on new/changed lines (JS `node:test`, RSpec), full JSDoc/RDoc, the exact Apache header, `rufo`-clean specs; all existing suites stay green; view/JS specs asserting moved markup are updated, not deleted. | CLAUDE.md |

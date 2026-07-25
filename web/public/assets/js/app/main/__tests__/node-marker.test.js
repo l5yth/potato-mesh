@@ -15,8 +15,10 @@
  */
 
 // Regression guard for audit finding D-013 (SPEC UX7 / ACCEPTANCE UX-A5):
-// protocol must be a shape channel — MeshCore renders square divIcon chips,
-// Meshtastic keeps circular markers; colour keeps encoding role for both.
+// protocol must be a shape channel — MeshCore renders equal-area rotated-diamond
+// divIcon chips (sized round(radius × 1.78); the 45° rotation + corner rounding
+// live in base.css), Meshtastic keeps circular markers; colour keeps encoding
+// role for both.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -77,7 +79,7 @@ test('meshtastic nodes stay L.circleMarker with the given style', () => {
   assert.equal(calls[0].options.fillOpacity, 0.85);
 });
 
-test('meshcore nodes render as square divIcon chips in the role colour', () => {
+test('meshcore nodes render as equal-area diamond divIcon chips in the role colour', () => {
   const { L, calls } = leafletStub();
   createNodeMarker(L, [52.5, 13.4], {
     protocol: 'meshcore',
@@ -99,7 +101,16 @@ test('meshcore nodes render as square divIcon chips in the role colour', () => {
     String(divIconCall.options.html).includes('0.55'),
     'chip html carries the bucket fill opacity',
   );
-  assert.deepEqual(divIconCall.options.iconSize, [18, 18], 'chip hit box is 2 × radius');
+  assert.deepEqual(
+    divIconCall.options.iconSize,
+    [16, 16],
+    'chip box is round(radius × 1.78) = 16 at radius 9 — equal optical area to the circle',
+  );
+  assert.deepEqual(divIconCall.options.iconAnchor, [8, 8], 'anchor stays box-centred');
+  assert.ok(
+    String(divIconCall.options.html).includes('width:16px;height:16px;'),
+    'chip fill span is sized to match the box',
+  );
   const markerCall = calls.find(call => call.kind === 'marker');
   assert.ok(markerCall, 'the chip is placed via L.marker');
   assert.deepEqual(markerCall.latlng, [52.5, 13.4]);

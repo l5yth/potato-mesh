@@ -224,11 +224,43 @@ export function syncGroupHeaderColspans(groupRow, groups, isColumnVisible) {
 export const NODES_TABLE_TOTAL_COLUMNS = 22;
 
 /**
+ * Decide whether a hidden field actually reported a value.
+ *
+ * A field counts as reported when its rendered value is neither empty nor the
+ * muted em-dash placeholder ({@link module:main/table-cell-format}'s absent
+ * marker). Honest zeros — `0%`, `0 V`, a real `0` reading — are kept; only
+ * null/empty/dash fields are dropped (audit follow-up 07: a MeshCore repeater
+ * otherwise showed eleven dashes in its disclosure row).
+ *
+ * @param {{label: string, valueHtml: string}} entry Formatted hidden field.
+ * @returns {boolean} True when the field carries a real reading.
+ */
+export function isReportedField(entry) {
+  const text = String((entry && entry.valueHtml) ?? '')
+    .replace(/<[^>]*>/g, '')
+    .trim();
+  return text !== '' && text !== '—' && text !== '&mdash;';
+}
+
+/**
+ * Keep only the hidden fields that reported a value.
+ *
+ * @see isReportedField
+ * @param {Array<{label: string, valueHtml: string}>} entries All hidden fields.
+ * @returns {Array<{label: string, valueHtml: string}>} Reported fields only.
+ */
+export function filterReportedFields(entries) {
+  return (Array.isArray(entries) ? entries : []).filter(isReportedField);
+}
+
+/**
  * Build the class and cell markup of the hidden-fields disclosure row.
  *
  * Split from {@link buildNodeExtraRowHtml} so render paths that create the
  * `<tr>` element themselves (setting `hidden` as a property) can reuse the
- * identical inner markup.
+ * identical inner markup. When `entries` is empty the row falls back to a
+ * single muted "No additional fields reported." line rather than an empty
+ * definition list (audit follow-up 07).
  *
  * @param {Array<{label: string, valueHtml: string}>} entries Hidden fields as
  *   pre-formatted label/value pairs (values already escaped by the caller's
@@ -237,14 +269,15 @@ export const NODES_TABLE_TOTAL_COLUMNS = 22;
  * @returns {{className: string, innerHtml: string}} Row parts.
  */
 export function nodeExtraRowParts(entries, columnCount) {
-  const items = entries
-    .map(entry => `<dt>${entry.label}</dt><dd>${entry.valueHtml}</dd>`)
-    .join('');
+  const list = Array.isArray(entries) ? entries : [];
+  const body = list.length
+    ? `<dl class="node-extra__list">${list
+        .map(entry => `<dt>${entry.label}</dt><dd>${entry.valueHtml}</dd>`)
+        .join('')}</dl>`
+    : '<p class="node-extra__empty">No additional fields reported.</p>';
   return {
     className: 'node-extra',
-    innerHtml:
-      `<td colspan="${columnCount}">` +
-      `<dl class="node-extra__list">${items}</dl></td>`,
+    innerHtml: `<td colspan="${columnCount}">${body}</td>`,
   };
 }
 

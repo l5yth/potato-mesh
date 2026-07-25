@@ -157,6 +157,27 @@ RSpec.describe "UX audit remediation markup" do
     end
   end
 
+  describe "join strip moved to the footer (audit follow-up 04)" do
+    it "renders the join strip in the footer and drops the redundant details link" do
+      html = body_of("/")
+      # The strip now carries its footer-placement class and still names the
+      # resolved preset — it lives in the footer, next to the About link.
+      expect(html).to include("footer-join")
+      expect(html).to include("join-line")
+      expect(html).to include("#LongFast")
+      # The `details` link (its About-page shortcut) is gone: the footer's own
+      # About link sits right beside the strip.
+      expect(html).not_to include("join-line__more")
+    end
+
+    it "labels the two protocol toggles with per-protocol count elements" do
+      html = body_of("/")
+      expect(html).to include('id="protocolToggleMeshcoreCount"')
+      expect(html).to include('id="protocolToggleMeshtasticCount"')
+      expect(html).to include("protocol-toggle-count")
+    end
+  end
+
   describe "preset config resolution (UX12)" do
     it "prefers MESHTASTIC_PRESET/MESHTASTIC_FREQ over the deprecated pair (preset config)" do
       within_env(

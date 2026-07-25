@@ -143,7 +143,7 @@ export function buildInstanceUrl(domain) {
 /**
  * Wire the compact region toggle (SPEC UX11, audit D-029).
  *
- * The header shows a small 🌐 button; activating it reveals the region
+ * The header shows a small 🌍 button; activating it reveals the region
  * `<select>` on demand instead of spending 220 px of every header on a
  * traveler-only task. Missing elements (federation off, tests without the
  * toggle) leave the selector in its server-rendered state.
