@@ -50,6 +50,9 @@ export function makeLeafletStub() {
     tileLayers: [],
     // Offline placeholder layers created via ``L.gridLayer``.
     gridLayers: [],
+    // Custom panes created via ``map.createPane`` — the three freshness marker
+    // panes (SPEC PD3), in creation order, each with its assigned z-index.
+    panes: [],
     domEventStopPropagation: 0
   };
 
@@ -278,6 +281,18 @@ export function makeLeafletStub() {
       removeLayer(layer) {
         map._layers.delete(layer);
         return map;
+      },
+      // Custom panes (SPEC PD3 freshness marker panes). ``createPane`` returns a
+      // minimal element whose ``style`` the caller sets ``zIndex`` on.
+      _panes: new Map(),
+      createPane(name) {
+        const paneEl = { style: {}, _name: name };
+        map._panes.set(name, paneEl);
+        recorded.panes.push({ name, style: paneEl.style });
+        return paneEl;
+      },
+      getPane(name) {
+        return map._panes.get(name) || null;
       },
       _setZoom(value) {
         zoom = value;

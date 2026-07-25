@@ -117,3 +117,41 @@ export function updateAgeBucketElements(documentRef, nowSec) {
 export function markerFillOpacityForBucket(bucket) {
   return BUCKET_FILL_OPACITY[bucket] ?? BUCKET_FILL_OPACITY.stale;
 }
+
+/** Leaflet pane name per freshness bucket (SPEC PD3, Post-Deploy review 04). */
+const MARKER_PANE_BY_BUCKET = Object.freeze({
+  live: 'markers-live',
+  today: 'markers-today',
+  stale: 'markers-stale',
+});
+
+/**
+ * The three freshness marker panes in ascending z-order (stale below, live on
+ * top), for the map to create at setup. Base `markerPane` is 600, so these sit
+ * just above it and below Leaflet's tooltip (650) / popup (700) panes.
+ *
+ * @type {ReadonlyArray<{pane: string, zIndex: number}>}
+ */
+export const MARKER_FRESHNESS_PANES = Object.freeze([
+  Object.freeze({ pane: MARKER_PANE_BY_BUCKET.stale, zIndex: 601 }),
+  Object.freeze({ pane: MARKER_PANE_BY_BUCKET.today, zIndex: 602 }),
+  Object.freeze({ pane: MARKER_PANE_BY_BUCKET.live, zIndex: 603 }),
+]);
+
+/**
+ * Map a freshness bucket to the Leaflet marker pane that stacks it (SPEC PD3).
+ *
+ * Freshness is the coarse stacking channel: the three panes carry ascending
+ * z-index (stale below, live on top), so a live node paints over a stale one
+ * regardless of protocol or role — and, because both circle markers and chip
+ * divIcons are assigned by bucket, the pre-fix protocol split (every chip above
+ * every circle) narrows to one bucket at a time. The `getRoleRenderPriority`
+ * ladder still orders markers within a pane. An unknown bucket falls to the
+ * stale pane — an unknown age reads as silence, not life.
+ *
+ * @param {string} [bucket] Bucket name from {@link nodeAgeBucket}.
+ * @returns {string} Leaflet pane name.
+ */
+export function freshnessPaneForBucket(bucket) {
+  return MARKER_PANE_BY_BUCKET[bucket] ?? MARKER_PANE_BY_BUCKET.stale;
+}

@@ -178,6 +178,16 @@ RSpec.describe "UX audit remediation markup" do
     end
   end
 
+  describe "footer dot separators (Post-Deploy 02·03)" do
+    it "renders footer-separator elements as dots, not em dashes" do
+      html = body_of("/")
+      # The links row separators become dots; the dangling em-dash that the
+      # wrapping .footer-links box stranded on line one is gone.
+      expect(html).to match(%r{<span class="footer-separator"[^>]*>·</span>})
+      expect(html).not_to match(%r{<span class="footer-separator"[^>]*>—</span>})
+    end
+  end
+
   describe "preset config resolution (UX12)" do
     it "prefers MESHTASTIC_PRESET/MESHTASTIC_FREQ over the deprecated pair (preset config)" do
       within_env(

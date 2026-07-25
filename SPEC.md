@@ -979,3 +979,40 @@ change). *Footer slim variant* — **retired** (FU8). No invariant is contradict
 | **FU11** | **Badge meets the 44 px touch floor.** On `pointer: coarse`, a transparent centred `::after` lifts the `.short-name[data-node-info]` hit box to 44 px without changing its look; fine pointers keep the tight target so dense chat lines do not cross-capture clicks. | review |
 | **FU12** | **Legend columns share a top baseline (extends UX8).** `legend-column--bottom` is removed so the shorter MeshCore column top-aligns with Meshtastic; the two protocol titles sit on one line. | review |
 | **FU13** | **Engineering bar (D9).** Every change ships with 100 % unit coverage on new/changed lines (JS `node:test`, RSpec), full JSDoc/RDoc, the exact Apache header, `rufo`-clean specs; all existing suites stay green; view/JS specs asserting moved markup are updated, not deleted. | CLAUDE.md |
+
+---
+
+## Bugfix: Post-deploy design review (detail view, footer, marker recency)
+
+Answers four post-deploy asks against `992d6bb` (the deployed audit tree): three
+real gaps the audit left behind and one feature with a trade-off. Presentation
+layer only — no dependency, no egress, no `/api/*`, `/version`, or
+`data-app-config` change, so **all four apex invariants and D7/D8 hold**.
+Protocol parity (Invariant IV) is preserved: PD3 gives both protocols the same
+freshness-pane treatment.
+
+**Conflict check against existing decisions.** *UX9/D-007 (disclosure — mobile
+loses nothing) and UX4/D-020 (muted dash)* — **extended to `/nodes/:id`** (PD1):
+those were `#nodes`-scoped and never reached the detail table, which reused the
+global `.nodes-col--*` hide rules and lost columns with no disclosure. *FU4/FU8
+(static pages → footer)* — **regression fixed** (PD2): the enlarged
+single-`inline-flex` links row wrapped and stranded a separator; the links become
+their own tier and separators become dots. *`getRoleRenderPriority` render order
+(role-major z-order; MeshCore "companion above infrastructure")* — **amended**
+(PD3): **recency becomes the coarse stacking channel** and role the fine one, so
+a live low-priority node now paints over a stale high-priority one — the map
+answers "what is alive now", not "where is the infrastructure". The ladder is
+**preserved but subordinated** to freshness (it still orders within a pane), and
+the pre-existing protocol pane-split (every MeshCore chip painting over every
+Meshtastic circle, because `divIcon`→`markerPane` sits above `circleMarker`→
+`overlayPane`) narrows to within-a-bucket, since both marker types now share the
+three freshness panes. *FU10 (sticky group-header `24px` offset)* — **hardened**
+(PD4). No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **PD1** | **The `/nodes/:id` detail view is a spec sheet, not a table (extends UX9/UX4).** `single-node-table.js` renders a grouped `<dt>/<dd>` spec sheet (Activity · Health · Utilization · Environment · Position) reusing `.node-detail__row`; it carries **no** `.nodes-col--*` classes, so nothing is `display:none`'d on a single-record page and no disclosure column is needed; absent telemetry renders the muted `.cell-empty` dash (fixing the blank-cell half). It reflows to one column ≤ 659 px with no horizontal scroll. Identity and the long name live in the page header (`detail-html.js`) and are not repeated; the pointless self-link to the current page is dropped. The one-record table's whole cost (18 columns of horizontal scroll) bought nothing — a table compares rows, and there is one row. | review |
+| **PD2** | **Footer is two intentional tiers with dot separators (fixes an FU4/FU8 regression).** `.footer-links` becomes its own tier (`flex-basis: 100%`) so the row can no longer strand the version→links separator on line one; every `.footer-separator` is `·` at `margin: 0 5px; color: var(--muted)` (a dot wants more air, less weight than an em dash); the chat label shortens to `chat:` (the instance name is already the title and logo). The `≤ 600px` stack rule is unchanged. | review |
+| **PD3** | **Marker stacking: recency-major via three freshness panes (amends the role-priority z-order).** The map creates three Leaflet panes — `markers-stale` < `markers-today` < `markers-live` (ascending z-index) — and every marker, **circle and chip**, is assigned its `nodeAgeBucket` pane (`freshnessPaneForBucket`). Freshness is the coarse channel; the existing `getRoleRenderPriority` ladder still orders **within** a pane. A live Meshtastic circle now paints over a stale MeshCore chip. This **inverts** the old guarantee (a stale ROUTER drops below a live CLIENT, and MeshCore's "companion above infrastructure" holds only within a bucket) — the deliberate trade for a liveness dashboard; role keeps its own untouched colour/shape channel. It also **narrows** the pre-existing protocol pane-split (chips no longer unconditionally top circles — only within one bucket). No representation change, so `circleMarker` performance is kept. | interview + review |
+| **PD4** | **Sticky group-header offset hardened (FU10).** The group row's `height: 24px` and the column row's `top: 24px` are a coupled pair; `white-space: nowrap` on `.nodes-group-header th` stops a longer label / translation / narrow tier from wrapping the group row and overlapping the two sticky rows. A comment names the coupling. | review |
+| **PD5** | **Engineering bar (D9).** Each fix shipped with a fail-first check (Phase 2), 100 % coverage on new/changed lines, full JSDoc, the exact Apache header, `rufo`/`black`-clean; all prior suites stay green; specs asserting the old detail table / footer markup are updated, not deleted. | CLAUDE.md |

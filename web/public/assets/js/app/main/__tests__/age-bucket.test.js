@@ -31,6 +31,7 @@ import {
   ageBucketAttributes,
   updateAgeBucketElements,
   markerFillOpacityForBucket,
+  freshnessPaneForBucket,
 } from '../age-bucket.js';
 
 const NOW = 1_700_000_000;
@@ -118,4 +119,17 @@ test('marker fill opacity maps buckets to .85/.55/.30', () => {
   assert.equal(markerFillOpacityForBucket('today'), 0.55);
   assert.equal(markerFillOpacityForBucket('stale'), 0.3);
   assert.equal(markerFillOpacityForBucket('unknown'), 0.3);
+});
+
+// Post-Deploy review 04: freshness must become the coarse stacking channel, so
+// each bucket maps to its own Leaflet pane. Recency-major z-order across panes;
+// the role ladder still orders within a pane. Fails until the mapping exists.
+test('freshnessPaneForBucket maps each bucket to a distinct marker pane, unknown → stale', () => {
+  const live = freshnessPaneForBucket('live');
+  const today = freshnessPaneForBucket('today');
+  const stale = freshnessPaneForBucket('stale');
+  assert.ok(live && today && stale, 'every bucket resolves a pane name');
+  assert.equal(new Set([live, today, stale]).size, 3, 'the three buckets use three distinct panes');
+  assert.equal(freshnessPaneForBucket('nonsense'), stale, 'an unknown age falls to the stale pane');
+  assert.equal(freshnessPaneForBucket(), stale, 'a missing bucket falls to the stale pane');
 });

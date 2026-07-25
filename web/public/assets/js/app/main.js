@@ -208,6 +208,8 @@ import {
   nodeAgeBucket,
   markerFillOpacityForBucket,
   updateAgeBucketElements,
+  freshnessPaneForBucket,
+  MARKER_FRESHNESS_PANES,
 } from './main/age-bucket.js';
 import {
   autorefreshControlState,
@@ -1624,6 +1626,19 @@ export function initializeApp(config) {
     // dashed white "leader" lines are visible against neighbour/trace overlays
     // but never sit on top of the marker glyphs themselves.
     spiderLinesLayer = L.layerGroup().addTo(map);
+    // Freshness marker panes (SPEC PD3): three panes stack node markers by age
+    // bucket — stale below, live on top — so recency is the coarse channel and
+    // a live node paints over a stale one across protocols. Both circle and
+    // chip markers are assigned by bucket, so the pre-fix protocol split (every
+    // chip above every circle) narrows to one bucket. Created before any marker
+    // so each marker's `pane` option resolves; the role ladder still orders
+    // within a pane.
+    if (typeof map.createPane === 'function') {
+      for (const { pane, zIndex } of MARKER_FRESHNESS_PANES) {
+        const paneEl = map.createPane(pane);
+        if (paneEl && paneEl.style) paneEl.style.zIndex = String(zIndex);
+      }
+    }
     markersLayer = L.layerGroup().addTo(map);
     // Hub badges render on top of the marker glyphs so the click target is
     // always reachable, even when a stale marker happens to share the exact
@@ -4527,13 +4542,17 @@ export function initializeApp(config) {
       const markerLatLng = useOffset ? projectColocatedOffsetLatLng(lat, lon, dx, dy) : [lat, lon];
 
       const color = getRoleColor(n.role, n.protocol);
-      // Shape encodes protocol, colour keeps encoding role, and fill opacity
-      // encodes the freshness bucket (SPEC UX5/UX7).
+      const bucket = nodeAgeBucket(n.last_heard, Date.now() / 1000);
+      // Shape encodes protocol, colour keeps encoding role, fill opacity encodes
+      // the freshness bucket (SPEC UX5/UX7), and the bucket's Leaflet pane
+      // stacks the marker by recency (SPEC PD3) — the role ladder still orders
+      // within the pane.
       const marker = createNodeMarker(L, markerLatLng, {
         protocol: n.protocol,
         color,
         radius: 9,
-        fillOpacity: markerFillOpacityForBucket(nodeAgeBucket(n.last_heard, Date.now() / 1000))
+        fillOpacity: markerFillOpacityForBucket(bucket),
+        pane: freshnessPaneForBucket(bucket),
       });
 
       // Draw a faint dotted leader line from each fanned-out marker back to

@@ -1585,6 +1585,32 @@ body.view-chat .page-shell {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
+/* Node detail spec sheet (SPEC PD1, Post-Deploy review 01): a single-record
+   view is a spec sheet, not a table — grouped dt/dd (reusing .node-detail__row),
+   nothing hidden, no horizontal scroll, reflowing to one column on mobile. */
+.node-detail-sheet {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 40px;
+}
+
+.node-detail-sheet__group-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 5px;
+}
+
+@media (max-width: 659px) {
+  .node-detail-sheet {
+    grid-template-columns: 1fr;
+  }
+}
+
 .node-detail__list li {
   margin-bottom: 4px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -1994,16 +2020,23 @@ input[type="radio"] {
   box-sizing: border-box;
 }
 
+/* Dot separators (Post-Deploy review 03): a dot wants a touch more air and less
+   weight than an em dash. */
 .app-footer .footer-separator {
-  margin: 0 4px;
+  margin: 0 5px;
+  color: var(--muted);
 }
 
+/* The links are their own footer tier (Post-Deploy review 02): flex-basis 100%
+   drops them onto their own line inside the wrapping .footer-content, so the row
+   can no longer strand the version→links separator at the end of line one. */
 .app-footer .footer-links {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
   justify-content: center;
+  flex-basis: 100%;
 }
 
 .app-footer .footer-brand {
@@ -2611,10 +2644,16 @@ input[type="radio"] {
   top: 0;
   z-index: 3;
   box-sizing: border-box;
+  /* The 24px height and the column row's `top: 24px` below are a coupled pair
+     (Post-Deploy review, "fragile"): keep the group row exactly one line tall
+     so the two sticky rows can never overlap. `white-space: nowrap` stops a
+     longer label, a translation, or a narrow tier from wrapping the group row
+     and breaking that invariant. */
   height: 24px;
+  white-space: nowrap;
 }
 
-/* Column header row pins directly below the 24px group row. */
+/* Column header row pins directly below the 24px group row (see above). */
 #nodes thead tr:not(.nodes-group-header) th {
   top: 24px;
   z-index: 2;

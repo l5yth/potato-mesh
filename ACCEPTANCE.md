@@ -3854,3 +3854,73 @@ region toggle, chat indent and footer links survive their tweaks), and
 in the footer; the `channel` wire key is unchanged). No Python/Rust/Flutter
 surface is touched, so `pytest`, `cargo test`, and `flutter test` are
 unaffected by construction.
+
+---
+
+## Bugfix: Post-deploy design review (detail view, footer, marker recency)
+
+Maps to SPEC decisions **PD1–PD5**. Each check below was written **before** the
+fix and demonstrated failing against `992d6bb` (the deployed audit tree). Run
+node/rspec from `web/`, greps from the repo root.
+
+### PD-A1 — /nodes/:id is a spec sheet: nothing hidden, absent reads as dash — PD1
+```bash
+( cd web && node --test public/assets/js/app/__tests__/node-page.test.js )
+git grep -nE 'class="[^"]*nodes-col|<table' -- web/public/assets/js/app/node-page/single-node-table.js
+git grep -nE "node-detail-sheet|node-detail__row|—|&mdash;" -- web/public/assets/js/app/node-page/single-node-table.js
+```
+**Expected:** the node-page suite passes; the **second grep prints nothing** —
+the detail view emits no `<table>` and **no applied** `.nodes-col--*` class
+(so no column is `display:none`'d on a single-record page, and no disclosure
+column is needed; a JSDoc comment may still name the retired classes to explain
+the fix — the grep is anchored to `class="…nodes-col` on purpose so a doc
+mention does not read as a defect); the third grep shows the spec-sheet markup
+and the muted dash it renders for absent telemetry (fixing the blank-cell half).
+The detail render reflows to one column on mobile with every field legible.
+
+### PD-A2 — Footer tiers with dot separators; no dangling em-dash — PD2
+```bash
+( cd web && bundle exec rspec spec/ux_audit_spec.rb -e "footer dot separators" )
+git grep -nE "footer-separator" -- web/views/shared/_footer.erb
+git grep -nE "footer-links-row|flex-basis: 100%" -- web/public/assets/styles/base.css
+```
+**Expected:** rspec passes — every `.footer-separator` renders `·` (never `—`),
+so the em-dash the wrapping links row stranded on line one is gone; the links
+become their own footer tier (`flex-basis: 100%`) so the wrap is intentional,
+and the chat label is shortened to `chat:` (the instance name is already the
+title and logo). The `≤600px` stack rule is unchanged.
+
+### PD-A3 — Marker stacking: three freshness panes, role orders within — PD3
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/age-bucket.test.js )
+( cd web && node --test public/assets/js/app/__tests__/main-app-map-init.test.js )
+git grep -nE "createPane|freshnessPaneForBucket" -- web/public/assets/js/app/main.js
+```
+**Expected:** both suites pass — `freshnessPaneForBucket` maps `live`/`today`/
+`stale` to three distinct panes (unknown → stale); `main.js` creates the three
+panes with ascending z-index (stale < today < live) and assigns every marker —
+circle **and** chip — its bucket's pane, so recency is the coarse stacking
+channel and the existing `getRoleRenderPriority` ladder orders within each pane.
+A live Meshtastic circle now paints over a stale MeshCore chip (the pre-fix
+protocol split had every chip top every circle).
+
+### PD-A4 — Sticky group-header offset is guarded, not a bare magic number — PD4
+```bash
+awk '/^\.nodes-group-header th \{/,/^}/' web/public/assets/styles/base.css | grep -nE "white-space: nowrap|height: 24px"
+```
+**Expected:** the group-header rule pins its height **and** sets
+`white-space: nowrap`, so a longer label / translation / narrow tier cannot wrap
+the group row and overlap the column row pinned at `top: 24px` (an explanatory
+comment names the coupling).
+
+### PD-R1 — Regression: prior acceptance still holds — PD5
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** every prior check still passes. Explicitly at risk and required to
+stay green: **UX-A3/UX-A5** (marker fill-opacity buckets and the protocol shape
+channel survive the pane assignment), **UX-A7** (the `#nodes` dashboard table IA
+is untouched — only the detail view changes), **FU-A4/UX-A10** (the footer join
+strip still renders from the resolved preset config), and the node-page tick
+specs (RT1/RT2 timestamps) updated to the spec-sheet markup, not removed. No
+Python/Rust/Flutter surface is touched.
