@@ -24,6 +24,8 @@
  * @module main/nodes-table-ia
  */
 
+import { EMPTY_CELL_HTML } from './table-cell-format.js';
+
 /**
  * Ordered column groups for the grouped header row. Columns appear exactly
  * once, in their template order, so contiguous colspans are well defined.
@@ -236,10 +238,21 @@ export const NODES_TABLE_TOTAL_COLUMNS = 22;
  * @returns {boolean} True when the field carries a real reading.
  */
 export function isReportedField(entry) {
-  const text = String((entry && entry.valueHtml) ?? '')
-    .replace(/<[^>]*>/g, '')
-    .trim();
-  return text !== '' && text !== '—' && text !== '&mdash;';
+  const valueHtml = String((entry && entry.valueHtml) ?? '').trim();
+  // Compare against the absent marker directly rather than stripping tags with
+  // `/<[^>]*>/` (CodeQL flags a single-pass tag strip as an *incomplete*
+  // multi-character sanitizer — it can leave a bare `<script`). No stripping is
+  // needed here: the absent value is exactly `table-cell-format`'s
+  // EMPTY_CELL_HTML (or a bare em-dash / `&mdash;`), this result only classifies
+  // the field — it is never rendered — and each field's own `valueHtml` is
+  // HTML-escaped by its caller before it reaches the DOM. Honest zeros
+  // (`0%`, `0 V`) are kept.
+  return (
+    valueHtml !== '' &&
+    valueHtml !== EMPTY_CELL_HTML &&
+    valueHtml !== '—' &&
+    valueHtml !== '&mdash;'
+  );
 }
 
 /**

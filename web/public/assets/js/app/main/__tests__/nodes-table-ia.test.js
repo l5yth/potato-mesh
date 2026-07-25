@@ -112,9 +112,24 @@ test('isReportedField keeps real readings and honest zeros, drops blanks/dashes'
     false,
   );
   assert.equal(isReportedField({ label: 'Uptime', valueHtml: '  —  ' }), false);
+  assert.equal(
+    isReportedField({ label: 'Uptime', valueHtml: '&mdash;' }),
+    false,
+    'the HTML-entity em-dash is also treated as absent',
+  );
   assert.equal(isReportedField({}), false, 'a missing value is unreported');
   assert.equal(isReportedField(null), false, 'a null entry is unreported');
   assert.equal(isReportedField(undefined), false, 'an undefined entry is unreported');
+});
+
+test('isReportedField classifies without stripping tags (CodeQL sanitization guard)', () => {
+  // Regression guard for CodeQL js/incomplete-multi-character-sanitization: the
+  // classifier must NOT run a single-pass `/<[^>]*>/` tag strip (which can leave
+  // a bare `<script`). It compares against the absent marker directly, so
+  // markup-only content classifies as reported instead of collapsing to empty —
+  // if a strip were reintroduced this would flip to false. The value is only
+  // classified here, never rendered; callers escape valueHtml before the DOM.
+  assert.equal(isReportedField({ valueHtml: '<span></span>' }), true);
 });
 
 test('filterReportedFields keeps only the fields that reported', () => {
