@@ -4040,24 +4040,29 @@ older than the configured window (≥ 24 h), so the table cannot grow unbounded.
 ( cd web && bundle exec rspec spec/queries_spec.rb -e "packets_per_hour" )
 ```
 **Expected:** pass. With two `meshcore` ingestors reporting different 24 h packet
-totals, `packets_per_hour.meshcore` = `MAX(total_A, total_B) ÷ 24` — the busiest
-single vantage, so the quieter ingestor and any overlap never inflate it. `total`
-is the `MAX` across **all** ingestors regardless of protocol; a protocol with no
-active ingestor reads `0`. Rows older than 24 h do not contribute.
+totals, the meshcore rate = `MAX(total_A, total_B) ÷ 24` — the busiest single
+vantage, so the quieter ingestor and any overlap never inflate it (`total` is the
+`MAX` across **all** ingestors regardless of protocol; a protocol with no active
+ingestor reads `0`; rows older than 24 h do not contribute). `query_packets_per_hour`
+returns these per-protocol rates, which the `GET /api/stats` route folds into each
+scope as `<scope>.packets.hour` (MA-A5).
 
-### MA-A5 — `/api/stats` exposes `packets_per_hour` additively — MA5
+### MA-A5 — `/api/stats` exposes packets as an additive `<scope>.packets.hour` metric — MA5
 ```bash
 curl -s http://127.0.0.1:41447/api/stats \
-  | python3 -c 'import sys,json; d=json.load(sys.stdin); p=d["packets_per_hour"]; \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); \
 SC=("total","meshcore","meshtastic","reticulum"); \
-print(all(isinstance(p[s],(int,float)) for s in SC) and p["reticulum"]==0 \
-and set(SC).issubset(d) and all(m in d["total"] for m in ("nodes","messages","telemetry")))'
+print("packets_per_hour" not in d \
+and all(isinstance(d[s]["packets"]["hour"],(int,float)) for s in SC) \
+and d["reticulum"]["packets"]["hour"]==0 \
+and all(m in d["total"] for m in ("nodes","messages","telemetry","packets")))'
 ```
-**Expected:** prints `True` — the response carries an additive top-level
-`packets_per_hour` map keyed `{total, meshcore, meshtastic, reticulum}`
-(`reticulum` a `0` stub), **and** the pre-existing scope × metric × window tree
-(S1: each scope still carrying `nodes`/`messages`/`telemetry`) is unchanged and
-still present. No version bump — **S-A1** still passes.
+**Expected:** prints `True` — each scope carries an additive `packets` metric with
+a single `hour` window (`<scope>.packets.hour`, the MA4 rate; `reticulum` a `0`
+stub), the old top-level `packets_per_hour` map is **gone**, **and** the
+pre-existing scope × metric × window tree (S1: each scope still carrying
+`nodes`/`messages`/`telemetry`) is unchanged and still present. No version bump —
+**S-A1** still passes.
 
 ### MA-A6 — Announcement content is dogfed from the instance API — MA6
 ```bash
@@ -4066,7 +4071,7 @@ still present. No version bump — **S-A1** still passes.
 **Expected:** pass. The announcement string is exactly
 `"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. https://<domain>"`,
 where `<N>` = the target's `GET /api/stats` `<protocol>.nodes.day` and `<M>` =
-`GET /api/stats` `packets_per_hour.<protocol>` — both fetched over HTTP from
+`GET /api/stats` `<protocol>.packets.hour` — both fetched over HTTP from
 `<domain>`, never computed from the ingestor's local counters — and the rendered
 line is truncated to the protocol's character limit. `<domain>` = the configured
 `INSTANCE_DOMAIN`.
@@ -4113,7 +4118,7 @@ and `send_channel_announcement` is **not** a required member.
 git grep -nE 'packets|ingestor_activity|packets_per_hour' -- data/mesh_ingestor/CONTRACTS.md
 ```
 **Expected:** the additive heartbeat `packets` field, the `ingestor_activity`
-schema, and the `GET /api/stats` `packets_per_hour` addition are all documented in
+schema, and the `GET /api/stats` `<scope>.packets.hour` addition are all documented in
 `CONTRACTS.md` (Layer C source of truth). The engineering bar (100 % tests/docs/
 headers/lint) is enforced by Layer **B** (B1–B5); behavior is covered by
 MA-A1…MA-A9.
@@ -4127,8 +4132,8 @@ MA-A1…MA-A9.
 remain green: **A1a/A1b** (apex — the new ingestor→instance GET and the LoRa
 announcement add no broker term or dependency); **A4b** (MeshProtocol isinstance
 conformance — send stays optional/duck-typed, MA9); **S-A1** (the `/api/stats`
-scope × metric × window tree is unchanged; `packets_per_hour` is an additive
-sibling — no version bump, so `test_version_sync.py` is unaffected); **A2a/A2b**
+scope × metric × window tree is unchanged; `packets.hour` is an additive metric
+under each scope — no version bump, so `test_version_sync.py` is unaffected); **A2a/A2b**
 (privacy — the message API still 404s under `PRIVATE`, and the announcement
 fail-closes on the same flag, MA7); **C2** (`tests/test_mesh.py` — the
 `POST /api/ingestors` `packets` field is additive and old payloads still validate);

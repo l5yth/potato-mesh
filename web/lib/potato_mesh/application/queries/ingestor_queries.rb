@@ -29,7 +29,10 @@ module PotatoMesh
       PACKETS_PER_HOUR_DIVISOR = PACKETS_PER_HOUR_WINDOW_SECONDS / 3600.0
 
       # Compute the mesh-wide packets/hour moving average per protocol scope
-      # (SPEC MA4/MA5), aggregated **MAX-per-protocol** across ingestors.
+      # (SPEC MA4/MA5), aggregated **MAX-per-protocol** across ingestors. The
+      # +GET /api/stats+ route folds each rate into its scope as the additive
+      # +<scope>.packets.hour+ metric; this method returns the flat per-scope
+      # rate map that assembly consumes.
       #
       # A single radio can only hear ≤ what is actually transmitted, so the
       # busiest single vantage is the best dedup-free estimate of unique air

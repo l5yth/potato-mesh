@@ -131,21 +131,23 @@ class TestDogfeedFetchActivity:
     """Tests for :func:`announce.fetch_activity` (MA6)."""
 
     def test_dogfeed_reads_nodes_and_packets_per_hour(self, monkeypatch):
-        """Returns ``(<protocol>.nodes.day, packets_per_hour.<protocol>)``."""
+        """Returns ``(<protocol>.nodes.day, <protocol>.packets.hour)``."""
         _install_fake_http(
             monkeypatch,
             {
                 "https://mesh.example/api/stats": {
-                    "meshcore": {"nodes": {"day": 12, "hour": 3}},
-                    "meshtastic": {"nodes": {"day": 99}},
-                    "packets_per_hour": {"meshcore": 50, "meshtastic": 30},
+                    "meshcore": {
+                        "nodes": {"day": 12, "hour": 3},
+                        "packets": {"hour": 50},
+                    },
+                    "meshtastic": {"nodes": {"day": 99}, "packets": {"hour": 30}},
                 },
             },
         )
         assert announce.fetch_activity("https://mesh.example", "meshcore") == (12, 50)
 
-    def test_dogfeed_returns_none_on_malformed_shape(self, monkeypatch):
-        """A response missing the packets_per_hour map yields ``None``."""
+    def test_dogfeed_returns_none_when_packets_section_missing(self, monkeypatch):
+        """A scope present but lacking a ``packets`` sub-object yields ``None``."""
         _install_fake_http(
             monkeypatch,
             {"https://mesh.example/api/stats": {"meshcore": {"nodes": {"day": 1}}}},
@@ -158,8 +160,7 @@ class TestDogfeedFetchActivity:
             monkeypatch,
             {
                 "https://mesh.example/api/stats": {
-                    "meshcore": {},
-                    "packets_per_hour": {"meshcore": 50},
+                    "meshcore": {"packets": {"hour": 50}},
                 },
             },
         )
@@ -171,8 +172,25 @@ class TestDogfeedFetchActivity:
             monkeypatch,
             {
                 "https://mesh.example/api/stats": {
-                    "meshcore": {"nodes": {"day": "lots"}},
-                    "packets_per_hour": {"meshcore": 50},
+                    "meshcore": {
+                        "nodes": {"day": "lots"},
+                        "packets": {"hour": 50},
+                    },
+                },
+            },
+        )
+        assert announce.fetch_activity("https://mesh.example", "meshcore") is None
+
+    def test_dogfeed_returns_none_on_non_numeric_packets(self, monkeypatch):
+        """A valid node count but a non-numeric packets/hour yields ``None``."""
+        _install_fake_http(
+            monkeypatch,
+            {
+                "https://mesh.example/api/stats": {
+                    "meshcore": {
+                        "nodes": {"day": 5},
+                        "packets": {"hour": "lots"},
+                    },
                 },
             },
         )

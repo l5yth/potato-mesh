@@ -6710,7 +6710,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/stats" do
-    it "exposes the additive packets_per_hour MAX-per-protocol map" do
+    it "exposes the MA4 packets/hour rate as an additive <scope>.packets.hour metric" do
       clear_database
       now = reference_time.to_i
       allow(Time).to receive(:now).and_return(reference_time)
@@ -6737,12 +6737,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
-      pph = payload["packets_per_hour"]
-      expect(pph.keys).to contain_exactly("total", "meshcore", "meshtastic", "reticulum")
-      expect(pph["meshcore"]).to eq(50)
-      expect(pph["meshtastic"]).to eq(30)
-      expect(pph["total"]).to eq(50) # MAX over every ingestor = 1200 / 24
-      expect(pph["reticulum"]).to eq(0)
+      # Opt 3 shape: the MA4 rate is folded into each scope as packets.hour;
+      # no top-level packets_per_hour map remains.
+      expect(payload).not_to have_key("packets_per_hour")
+      expect(payload["meshcore"]["packets"]).to eq("hour" => 50)
+      expect(payload["meshtastic"]["packets"]).to eq("hour" => 30)
+      expect(payload["total"]["packets"]).to eq("hour" => 50) # MAX over every ingestor = 1200/24
+      expect(payload["reticulum"]["packets"]).to eq("hour" => 0)
       # The additive field leaves the S1 scope × metric × window tree intact.
       expect(payload["sampled"]).to eq(false)
       expect(payload["total"]).to have_key("nodes")
