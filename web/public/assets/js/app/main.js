@@ -31,6 +31,8 @@ export {
   formatActiveNodeStatsHtml,
 };
 
+import { createMeshActivityCard } from './map-activity-card.js';
+
 import {
   normalizeNodeNameValue,
   buildNodeDetailHref,
@@ -1673,6 +1675,7 @@ export function initializeApp(config) {
   let meshtasticCountEl = null;
   let meshcoreColEl = null;
   let meshtasticColEl = null;
+  let meshActivityCard = null;
   let legendToggleButton = null;
   let legendVisible = true;
 
@@ -2021,6 +2024,20 @@ export function initializeApp(config) {
       return wrapper;
     };
     legendControl.addTo(map);
+
+    // Mesh activity card (SPEC MA-F1): a bottom-left overlay mirroring the roles
+    // legend at bottom-right; populated from /api/stats packets rates in
+    // applyFilter's stats callback and rebased by the protocol toggles.
+    const meshActivityControl = L.control({ position: 'bottomleft' });
+    meshActivityControl.onAdd = function () {
+      const wrapper = L.DomUtil.create('div', 'map-activity-outer');
+      meshActivityCard = createMeshActivityCard();
+      wrapper.appendChild(meshActivityCard.element);
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+      return wrapper;
+    };
+    meshActivityControl.addTo(map);
 
     const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
     const initialLegendVisible = resolveLegendVisibility({
@@ -4832,6 +4849,12 @@ export function initializeApp(config) {
       updateProtocolToggleCounts(stats);
       updateFooterStats(visibleStats);
       applyProtocolVisibility(stats);
+      // Mesh activity card reads the raw per-protocol rates and rebases itself
+      // against the hidden-protocol set (SPEC MA-F4); a toggle re-runs
+      // applyFilter, so this refreshes the card on both data and toggle changes.
+      if (meshActivityCard) {
+        meshActivityCard.render({ packets: stats && stats.packets, hiddenProtocols });
+      }
     });
   }
 

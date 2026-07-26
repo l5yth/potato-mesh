@@ -16,6 +16,7 @@ on the map toggles, an equal-area diamond MeshCore marker, a condensed nodes
 table, and reported-only disclosure rows.
 
 ### Features
+* Web: "Mesh activity" map card — bottom-left overlay showing packets/h (total + per-protocol split) from `/api/stats`, toggle-reactive and hidden when idle; the 24 h sparkline is a placeholder pending the activity time-series endpoint (SPEC MA-F1…MA-F6)
 * Web: join strip renders the radio settings newcomers need; new `MESHTASTIC_PRESET`/`MESHTASTIC_FREQ` + `MESHCORE_PRESET`/`MESHCORE_FREQ` env vars (`CHANNEL`/`FREQUENCY` deprecated but honoured)
 * Web: node freshness buckets (live/today/stale) on table rows and map markers, riding the shared relative-time tick
 * Web: MeshCore nodes render as equal-area diamond map chips — shape encodes protocol, colour keeps encoding role

@@ -1830,6 +1830,145 @@ input[type="radio"] {
   border-color: #444;
 }
 
+/* Mesh activity card (SPEC MA-F1…MA-F6): a bottom-left map overlay, sibling to
+   the roles legend at bottom-right. Chrome matches .legend so the two map
+   corners read as a pair; the sparkline is an explicit placeholder (MA-F5). */
+.map-activity-outer {
+  /* Reset Leaflet control chrome so only the inner card carries styling. */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.map-activity-card {
+  background: #333;
+  color: #eee;
+  padding: 8px 10px 10px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  min-width: 178px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+.map-activity-card--hidden {
+  display: none;
+}
+
+.map-activity-card__header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.map-activity-card__pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: mesh-activity-pulse 2.4s ease-in-out infinite;
+}
+
+.map-activity-card__title {
+  font-size: 13px;
+}
+
+.map-activity-card__total {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.map-activity-card__total-value {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 26px;
+  line-height: 26px;
+  font-weight: 600;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-activity-card__total-unit {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.map-activity-card__spark {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.map-activity-card__spark-area {
+  fill: rgba(95, 168, 255, 0.18);
+}
+
+.map-activity-card__spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.map-activity-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.map-activity-card__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.map-activity-card__row-name {
+  flex: 1 1 auto;
+  color: #ccc;
+}
+
+.map-activity-card__row-bar {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.map-activity-card__row-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.map-activity-card__row-rate {
+  min-width: 30px;
+  text-align: right;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+
+@keyframes mesh-activity-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-activity-card__pulse {
+    animation: none;
+  }
+}
+
 .legend-header {
   display: flex;
   align-items: center;

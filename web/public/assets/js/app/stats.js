@@ -81,13 +81,43 @@ function normaliseProtocolBucket(bucket) {
 }
 
 /**
+ * Extract the per-scope packets/hour rates from the payload's
+ * ``<scope>.packets.hour`` metric (SPEC MA5) into a flat rate bag.
+ *
+ * Returns null when ``total.packets.hour`` is absent or non-finite (e.g. a
+ * pre-MA5 instance), so the mesh-activity card can hide rather than render a
+ * bogus 0. ``meshcore``/``meshtastic`` are included only when present.
+ *
+ * @param {*} payload Candidate JSON object from the stats endpoint.
+ * @returns {{total: number, meshcore?: number, meshtastic?: number}|null} Rates or null.
+ */
+function normalisePacketsRates(payload) {
+  const readHourRate = scope => {
+    const hour = Number(payload?.[scope]?.packets?.hour);
+    return Number.isFinite(hour) ? Math.max(0, Math.trunc(hour)) : null;
+  };
+  const total = readHourRate('total');
+  if (total === null) {
+    return null;
+  }
+  const rates = { total };
+  const meshcore = readHourRate('meshcore');
+  const meshtastic = readHourRate('meshtastic');
+  if (meshcore !== null) rates.meshcore = meshcore;
+  if (meshtastic !== null) rates.meshtastic = meshtastic;
+  return rates;
+}
+
+/**
  * Parse and validate the ``/api/stats`` payload (0.7.0 scope → metric → window
  * shape) into the flat node-count snapshot the dashboard renders.
  *
  * Node counts are read from ``total.nodes`` and the per-protocol
  * ``<protocol>.nodes`` sub-buckets; the other metrics (messages/telemetry) are
- * not surfaced in the header. The browser only ever calls its own same-version
- * instance, so only the current shape is parsed.
+ * not surfaced in the header. The per-scope ``packets.hour`` rate (SPEC MA5) is
+ * attached as ``result.packets`` for the mesh-activity map card when present.
+ * The browser only ever calls its own same-version instance, so only the
+ * current shape is parsed.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
  * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}|null} Normalized stats or null.
@@ -108,6 +138,8 @@ export function normaliseActiveNodeStatsPayload(payload) {
   const meshtastic = normaliseProtocolBucket(payload.meshtastic?.nodes);
   if (meshcore) result.meshcore = meshcore;
   if (meshtastic) result.meshtastic = meshtastic;
+  const packets = normalisePacketsRates(payload);
+  if (packets) result.packets = packets;
   return result;
 }
 

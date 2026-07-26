@@ -4139,3 +4139,57 @@ under each scope — no version bump, so `test_version_sync.py` is unaffected); 
 fail-closes on the same flag, MA7); **C2** (`tests/test_mesh.py` — the
 `POST /api/ingestors` `packets` field is additive and old payloads still validate);
 and **B1** (all suites). No `/api/*` response shape is broken by construction.
+
+---
+
+## Feature: Mesh activity map card (frontend)
+
+Maps to SPEC decisions **MA-F1…MA-F6**. The card logic lives in
+`web/public/assets/js/app/map-activity-card.js` (DOM-building, 100 % unit-tested)
+and the packets parsing in `web/public/assets/js/app/stats.js`; `main.js` wires a
+Leaflet `bottomleft` control and renders it from the `/api/stats` stats callback.
+Behaviour is verified by the JS unit suite.
+
+### MA-FA1 — Card renders the total + per-protocol rows from `/api/stats` — MA-F1/MA-F2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/map-activity-card.test.js \
+                       public/assets/js/app/__tests__/stats.test.js )
+```
+**Expected:** pass. `stats.js` attaches `stats.packets = { total, meshcore, meshtastic }`
+from the payload's `<scope>.packets.hour`; `buildMeshActivityModel({total,meshtastic,meshcore})`
+returns the total plus one row per protocol (Meshtastic then MeshCore), each with a
+`barPct` sized to the busiest visible protocol; `renderMeshActivityCardHtml` emits the
+total, a `packets/h` unit, both protocol icons, and the row rates.
+
+### MA-FA2 — Reticulum is never rendered — MA-F2
+**Expected (covered by the MA-FA1 suite):** `buildMeshActivityModel` with a `reticulum`
+rate present still returns only `meshtastic`/`meshcore` rows — reticulum is absent from
+the card (forward-looking zero stub, S6).
+
+### MA-FA3 — Zero / absent activity unmounts the card — MA-F3
+**Expected (covered by the MA-FA1 suite):** a `0` total, all-zero protocol rates, or an
+absent `packets` payload yield `model.visible === false`; `createMeshActivityCard().render(...)`
+then adds `.map-activity-card--hidden`, sets `hidden`, and empties the element.
+
+### MA-FA4 — A hidden protocol drops its row and rebases the total — MA-F4
+**Expected (covered by the MA-FA1 suite):** `buildMeshActivityModel({total:120,
+meshtastic:76, meshcore:44}, new Set(['meshcore']))` returns only the Meshtastic row with
+`total === 76` (the sum of the *visible* protocols), and `card.render(...)` sets the
+aria-label to `"Mesh activity: 76 packets per hour"` — the same rebasing the node counts
+already do (Invariant IV parity). Hiding both protocols unmounts the card.
+
+### MA-FA5 — Sparkline is a marked placeholder — MA-F5
+**Expected (covered by the MA-FA1 suite):** `renderMeshActivityCardHtml` emits an SVG
+carrying `data-placeholder="true"`, and `placeholderSparklinePaths()` is deterministic
+(identical across calls). The card never presents the sparkline as live history; real
+history is the tracked F2 follow-up.
+
+### MA-FR1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test )
+```
+**Expected:** every prior check still passes. Frontend/read-side only: no `/api/*`
+response shape changes (so **S-A1**, **MA-A5**, **C2** are untouched), and the packets
+figures are the same public aggregate MA5 already exposes (privacy **A2**/**S-A4**
+unchanged). The stats consumer (`stats.js`) gains `packets` parsing additively — the
+existing `normaliseActiveNodeStatsPayload` node-count assertions are unchanged, not removed.

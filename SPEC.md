@@ -1103,3 +1103,36 @@ contradicted.
 | **MA8** | **Default channel/scope + 24 h cadence.** The announcement is broadcast on the protocol's **default channel and scope** — Meshtastic channel `CHANNEL_INDEX` (default `0`) via the interface text-send; MeshCore its public/default channel — honoring existing `ALLOWED_CHANNELS`/`HIDDEN_CHANNELS` intent. After the initial ≥ 24 h wait it repeats **every 24 h**, per configured instance domain (an ingestor with several `INSTANCE_DOMAIN` targets announces each with its own numbers and link). TX volume is negligible (~1 frame/day/domain). | proposed |
 | **MA9** | **Optional duck-typed provider send.** Transmission is exposed as a new **optional** provider method (e.g. `send_channel_announcement(iface, text)`) accessed via `getattr(provider, …, None)` — mirroring the existing optional `self_node_item` extension — so the `@runtime_checkable MeshProtocol` interface and its `A4b` isinstance conformance are unchanged, and a provider that cannot transmit (or a receive-only transport) simply omits it. Both `meshtastic` and `meshcore` providers implement it; neither protocol is privileged. | interview |
 | **MA10** | **Engineering bar (D9).** Every new/changed unit ships with 100 % unit tests (counter increment across RX families + TX; heartbeat delta + reset; activity-table write + retention; MAX-aggregation math incl. multi-ingestor; the `/api/stats` field; the four announcement gates incl. fail-closed privacy and the 24 h wait; per-protocol send), full PDoc/RDoc, Apache headers, `black`/`rufo` clean; `pytest`/`rspec`/`npm test` stay green; `CONTRACTS.md` documents the additive heartbeat field, the activity schema, and the `/api/stats` addition. | CLAUDE.md |
+
+---
+
+## Feature: Mesh activity map card (frontend)
+
+Surfaces the MA5 `<scope>.packets.hour` rate on the dashboard as a "Mesh
+activity" card in the map's bottom-left corner (the recommended treatment from
+the imported Claude-Design review, option 1a). Frontend/read-side only:
+integrates with `web/public/assets/js/app/stats.js` (parses the new `packets`
+rates), a new `web/public/assets/js/app/map-activity-card.js` module, the map
+setup + stats callback in `web/public/assets/js/app/main.js`, and
+`web/public/assets/styles/base.css`. Consumes the existing `GET /api/stats` with
+**no** API/DB/ingestor change.
+
+**Conflict check against existing decisions.** *Invariant I (apex)* —
+**consistent**: a read-side consumer of the existing local API; no broker,
+dependency, or egress. *Invariant II (privacy)* — **consistent**: packets are a
+public aggregate (no message content), already un-gated by `PRIVATE` (MA5); the
+card shows only rates the API already returns. *Invariant IV (parity)* —
+**extends**: both protocols render identically and either can be toggled; neither
+is privileged. *D8 (contract) / §3.3 (POST-only intake)* — **consistent**: no new
+endpoint or shape; the card reads `<scope>.packets.hour` as it ships. *AV3
+(cache-busting)* — **consistent**: the new module self-registers in the automatic
+import map. No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **MA-F1** | **Placement & source.** A "Mesh activity" card renders as a Leaflet control at the map's **bottom-left** (mirroring the roles legend bottom-right) on the dashboard and `/map`. Its figures come from `GET /api/stats` `<scope>.packets.hour` (parsed by `stats.js` into `stats.packets = { total, meshcore, meshtastic }`); on a stats-fetch failure the local-count fallback carries no packets, so the card simply hides. Recommended design option 1a / treatment A ("Signal card"). | interview + design |
+| **MA-F2** | **Content.** A pulsing live-dot + "Mesh activity" label; the big tabular **total** packets/h; the placeholder sparkline (MA-F5); and one row per protocol (Meshtastic, then MeshCore) carrying the protocol icon, label, a share-bar sized to the busiest visible protocol, and the tabular rate. **`reticulum` is never rendered** (forward-looking zero stub, S6). | design |
+| **MA-F3** | **Zero-state unmount.** The card is hidden entirely (`.map-activity-card--hidden`, `hidden`, emptied) whenever the visible total is `0` or the payload carries no packet rates — the map's one free corner is never occupied by an empty card. | interview + design |
+| **MA-F4** | **Toggle-reactive rebasing (Invariant IV parity).** A protocol hidden via the meta-row protocol toggle (the existing `hiddenProtocols` set) drops its row and rebases the displayed total to the **sum of the visible** protocol rates — the same treatment for both protocols, identical to how the node counts already rebase. Toggling re-runs `applyFilter`, which re-renders the card; hiding **all** protocols unmounts it. | interview + code |
+| **MA-F5** | **Sparkline is an explicit placeholder.** The 24-hour sparkline renders a **deterministic illustrative curve** carrying `data-placeholder="true"` and an in-code comment — it is **not** live history and never claims to be. Real history is deferred to a follow-up (an `ingestor_activity` time-series endpoint, bucketed like `/api/telemetry/aggregated`), tracked as feature **F2**, which also unblocks the `/charts` figures (design option 1c). | interview |
+| **MA-F6** | **Engineering bar (D9) & scope.** Frontend/read-side only — no API/DB/ingestor change (D8, §3.3), apex (I) untouched. The DOM-building logic lives in `map-activity-card.js` at **100 % unit coverage** (JSDoc, Apache header); `main.js` holds only the Leaflet-control wiring + the one render call in the stats callback (integration-only, matching the sibling legend control). The module self-registers in the cache-busting import map (AV3). `npm test` stays green; no Ruby/Python change. | CLAUDE.md |

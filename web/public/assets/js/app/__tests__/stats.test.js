@@ -187,6 +187,56 @@ test('normaliseActiveNodeStatsPayload returns null for null/non-object input', (
 });
 
 // ---------------------------------------------------------------------------
+// per-scope packets rates (SPEC MA5) — feeds the mesh-activity map card
+// ---------------------------------------------------------------------------
+
+test('normaliseActiveNodeStatsPayload attaches per-scope packets rates', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 120 } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 44 } },
+    meshtastic: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 76 } },
+    sampled: false,
+  });
+  assert.deepEqual(result.packets, { total: 120, meshcore: 44, meshtastic: 76 });
+});
+
+test('normaliseActiveNodeStatsPayload omits packets when total.packets is absent', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 } },
+    sampled: false,
+  });
+  assert.equal(result.packets, undefined);
+});
+
+test('normaliseActiveNodeStatsPayload omits packets when the total rate is non-finite', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 'lots' } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 44 } },
+    sampled: false,
+  });
+  assert.equal(result.packets, undefined);
+});
+
+test('normaliseActiveNodeStatsPayload keeps only the protocol rates that are present', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 90 } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 } },
+    meshtastic: { nodes: { hour: 1, day: 1, week: 1, month: 1 } },
+    sampled: false,
+  });
+  assert.deepEqual(result.packets, { total: 90 });
+});
+
+test('normaliseActiveNodeStatsPayload clamps negative and truncates float packet rates', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 12.9 } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: -3 } },
+    sampled: false,
+  });
+  assert.deepEqual(result.packets, { total: 12, meshcore: 0 });
+});
+
+// ---------------------------------------------------------------------------
 // fetchActiveNodeStats
 // ---------------------------------------------------------------------------
 
