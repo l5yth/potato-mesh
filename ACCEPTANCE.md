@@ -4178,11 +4178,13 @@ meshtastic:76, meshcore:44}, new Set(['meshcore']))` returns only the Meshtastic
 aria-label to `"Mesh activity: 76 packets per hour"` — the same rebasing the node counts
 already do (Invariant IV parity). Hiding both protocols unmounts the card.
 
-### MA-FA5 — Sparkline is a marked placeholder — MA-F5
-**Expected (covered by the MA-FA1 suite):** `renderMeshActivityCardHtml` emits an SVG
-carrying `data-placeholder="true"`, and `placeholderSparklinePaths()` is deterministic
-(identical across calls). The card never presents the sparkline as live history; real
-history is the tracked F2 follow-up.
+### MA-FA5 — Sparkline (superseded by F2-A2) — MA-F5
+**Superseded by F2-A2 (and SPEC F2-4).** F1 shipped the sparkline as a deterministic
+placeholder (`data-placeholder="true"`); F2 replaced it with the real 24 h series from
+`/api/stats/activity`. The card now emits **no** `data-placeholder` and draws the
+sparkline only when real data is present — verified by **F2-A2** (and the MA-FA1 suite,
+which now asserts `data-placeholder` is *absent*). Retained for provenance; the live
+requirement is F2-A2.
 
 ### MA-FR1 — Regression: prior acceptance still holds
 ```bash

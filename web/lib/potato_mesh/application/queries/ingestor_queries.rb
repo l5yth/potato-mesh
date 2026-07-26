@@ -71,14 +71,18 @@ module PotatoMesh
           per_protocol_max[protocol] = [per_protocol_max[protocol], row["total"].to_i].max
         end
 
+        # +total+ sums the per-protocol MAX vantages: distinct protocols ride
+        # distinct frequencies/channels, so their frames never overlap in the air
+        # and add rather than dedup (a same-protocol frame heard by two radios is
+        # still deduped by the per-protocol MAX above). The sum is over the
+        # *rounded* per-protocol rates, so +total+ always equals the sum of the
+        # exposed +<protocol>.packets.hour+ values (SPEC MA4, matching
+        # +query_activity_buckets+); rounding after the raw sum could drift ±1.
+        rates = per_protocol_max.transform_values { |packets| packets_per_hour_rate(packets) }
         {
-          # +total+ sums the per-protocol MAX vantages: distinct protocols ride
-          # distinct frequencies/channels, so their frames never overlap in the
-          # air and add rather than dedup (a same-protocol frame heard by two
-          # radios is still deduped by the per-protocol MAX above).
-          "total" => packets_per_hour_rate(per_protocol_max.values.sum),
-          "meshcore" => packets_per_hour_rate(per_protocol_max["meshcore"]),
-          "meshtastic" => packets_per_hour_rate(per_protocol_max["meshtastic"]),
+          "total" => rates.values.sum,
+          "meshcore" => rates["meshcore"] || 0,
+          "meshtastic" => rates["meshtastic"] || 0,
           "reticulum" => 0,
         }
       ensure

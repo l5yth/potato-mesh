@@ -1341,6 +1341,21 @@ RSpec.describe PotatoMesh::App::Queries do
       # 100 / 24 = 4.166… → 4
       expect(queries.query_packets_per_hour(now: now)["meshcore"]).to eq(4)
     end
+
+    it "sums the rounded per-protocol rates so total == meshcore + meshtastic" do
+      # 1210 / 24 = 50.4 → 50; 730 / 24 = 30.4 → 30. Rounding after the raw sum
+      # would give round(1940 / 24) = 81, which would not equal the exposed 50 + 30.
+      seed_activity(
+        [
+          ["!coreaaaa", now - 100, 1210, "meshcore"],
+          ["!tastbbbb", now - 100, 730, "meshtastic"],
+        ],
+      )
+      result = queries.query_packets_per_hour(now: now)
+      expect(result["meshcore"]).to eq(50)
+      expect(result["meshtastic"]).to eq(30)
+      expect(result["total"]).to eq(80) # 50 + 30, not round(1940 / 24) = 81
+    end
   end
 
   describe "#query_activity_buckets" do
