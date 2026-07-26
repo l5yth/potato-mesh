@@ -1957,6 +1957,118 @@ def test_poll_contact_telemetry_paths(monkeypatch):
     assert captured == []
 
 
+def test_poll_contact_telemetry_counts_tx(monkeypatch):
+    """Each on-air poll request counts as a transmission (SPEC MA1).
+
+    The stubbed handlers' ``_mark_packet_seen`` is a no-op, so the merged
+    activity counter moves only via the ``activity.record_tx()`` calls inside
+    ``_poll_contact_telemetry`` — one per on-air request. This pins the exact
+    TX count for the telemetry pull, the status fallback, an error path, and
+    the no-contact short-circuit.
+    """
+    import types
+
+    import data.mesh_ingestor.activity as activity
+
+    mc_tel, iface, stub, _captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+
+    def _mc(
+        telemetry_result=None,
+        telemetry_error=None,
+        status_result=None,
+        status_error=None,
+    ):
+        class _Commands:
+            async def req_telemetry_sync(self, contact):
+                if telemetry_error:
+                    raise telemetry_error
+                return telemetry_result
+
+            async def req_status_sync(self, contact):
+                if status_error:
+                    raise status_error
+                return status_result
+
+        return types.SimpleNamespace(commands=_Commands())
+
+    # LPP success → exactly one on-air request (telemetry pull), no fallback.
+    activity.take_packet_count()  # drain any activity from earlier tests
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(telemetry_result=[{"type": "temperature", "value": 21.5}]),
+            iface,
+            stub,
+            {},
+        )
+    )
+    assert activity.take_packet_count() == 1
+
+    # Empty telemetry → status fallback: two on-air requests counted.
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(telemetry_result=None, status_result={"bat": 4056}), iface, stub, {}
+        )
+    )
+    assert activity.take_packet_count() == 2
+
+    # Telemetry request raises → the attempt is still counted (one TX), no fallback.
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            _mc(telemetry_error=RuntimeError("timeout")), iface, stub, {}
+        )
+    )
+    assert activity.take_packet_count() == 1
+
+    # No resolvable contact → returns before any request → nothing counted.
+    empty = _MeshcoreInterface(target=None)
+    asyncio.run(mc_tel._poll_contact_telemetry(_mc(), empty, stub, {}))
+    assert activity.take_packet_count() == 0
+
+
+def test_poll_contact_telemetry_logs_initiation_and_empty_result(monkeypatch):
+    """Each poll logs initiation; an all-empty poll also logs 'returned no data'.
+
+    ``req_telemetry_sync``/``req_status_sync`` return ``None`` on timeout without
+    raising, so these two ``meshcore.telemetry.poll`` debug lines are the only
+    signal separating an unanswered on-air poll from a disabled poll loop.
+    """
+    import types
+
+    mc_tel, iface, stub, captured = _telemetry_env(
+        monkeypatch, contacts=[{"public_key": _TEST_CONTACT_KEY, "adv_name": "Sensor"}]
+    )
+    logs: list = []
+    monkeypatch.setattr(
+        mc_tel.config,
+        "_debug_log",
+        lambda message, **meta: logs.append((message, meta)),
+    )
+
+    class _Silent:
+        async def req_telemetry_sync(self, contact):
+            return None
+
+        async def req_status_sync(self, contact):
+            return None
+
+    asyncio.run(
+        mc_tel._poll_contact_telemetry(
+            types.SimpleNamespace(commands=_Silent()), iface, stub, {}
+        )
+    )
+
+    assert captured == []
+    node_id = iface.lookup_node_id(_TEST_CONTACT_KEY[:12])
+    assert [message for message, _meta in logs] == [
+        "MeshCore contact telemetry poll initiated",
+        "MeshCore contact telemetry poll returned no data",
+    ]
+    assert all(meta["context"] == "meshcore.telemetry.poll" for _msg, meta in logs)
+    assert all(meta["node_id"] == node_id for _msg, meta in logs)
+
+
 def test_telemetry_poll_loop_disabled_and_ticking(monkeypatch):
     """The poll loop exits when disabled and fires both poll kinds when enabled."""
     import types
@@ -4884,3 +4996,119 @@ def test_run_meshcore_autoadd_set_rejected_logs_warning(monkeypatch):
         and kw.get("autoadd_config") == 0x01
         for _msg, kw in logs
     )
+
+
+# ---------------------------------------------------------------------------
+# send_channel_announcement (SPEC MA6/MA9): optional duck-typed provider TX
+# ---------------------------------------------------------------------------
+
+
+def test_send_channel_announcement_meshtastic_sends_and_counts():
+    """Meshtastic sends on CHANNEL_INDEX and counts the transmission (MA1)."""
+    import data.mesh_ingestor.activity as activity
+    import data.mesh_ingestor.config as config
+
+    calls = []
+
+    class _Iface:
+        def sendText(self, text, channelIndex=0):
+            calls.append((text, channelIndex))
+
+    activity.take_packet_count()  # drain
+    MeshtasticProvider().send_channel_announcement(_Iface(), "hello mesh")
+    assert calls == [("hello mesh", config.CHANNEL_INDEX)]
+    assert activity.take_packet_count() == 1
+
+
+def test_send_channel_announcement_meshtastic_noop_without_sendtext():
+    """An interface lacking sendText is a no-op that counts no TX."""
+    import data.mesh_ingestor.activity as activity
+
+    activity.take_packet_count()
+    MeshtasticProvider().send_channel_announcement(object(), "hi")
+    assert activity.take_packet_count() == 0
+
+
+def test_send_channel_announcement_meshcore_sends_and_counts():
+    """MeshCore schedules send_chan_msg on its loop and counts the TX (MA1)."""
+    import asyncio as _asyncio
+    import threading as _threading
+    import types as _types
+    import data.mesh_ingestor.activity as activity
+    import data.mesh_ingestor.config as config
+
+    iface = _MeshcoreInterface(target=None)
+    sent = []
+
+    class _Commands:
+        async def send_chan_msg(self, chan, msg, timestamp=None):
+            sent.append((chan, msg))
+            return _types.SimpleNamespace()
+
+    iface._mc = _types.SimpleNamespace(commands=_Commands())
+
+    loop = _asyncio.new_event_loop()
+    thread = _threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    iface._loop = loop
+    try:
+        activity.take_packet_count()  # drain
+        MeshcoreProvider().send_channel_announcement(iface, "hello mesh")
+        assert sent == [(config.CHANNEL_INDEX, "hello mesh")]
+        assert activity.take_packet_count() == 1
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+        loop.close()
+
+
+def test_send_channel_announcement_meshcore_noop_guards():
+    """No-op (no TX) for a wrong iface type or a missing/closed loop or handle."""
+    import asyncio as _asyncio
+    import types as _types
+    import data.mesh_ingestor.activity as activity
+
+    provider = MeshcoreProvider()
+    activity.take_packet_count()  # drain
+
+    # Wrong interface type.
+    provider.send_channel_announcement(object(), "x")
+    # Missing mc / loop (fresh interface).
+    provider.send_channel_announcement(_MeshcoreInterface(target=None), "x")
+    # Closed loop.
+    closed = _MeshcoreInterface(target=None)
+    loop = _asyncio.new_event_loop()
+    loop.close()
+    closed._mc = _types.SimpleNamespace(commands=_types.SimpleNamespace())
+    closed._loop = loop
+    provider.send_channel_announcement(closed, "x")
+
+    assert activity.take_packet_count() == 0
+
+
+def test_send_channel_announcement_is_optional_MeshProtocol_member():
+    """The send method is an optional duck-typed extension: both providers expose
+    it and still satisfy MeshProtocol, but it is NOT a required member — a minimal
+    conforming provider without it still passes isinstance (MA9 / A4b)."""
+    assert hasattr(MeshtasticProvider(), "send_channel_announcement")
+    assert hasattr(MeshcoreProvider(), "send_channel_announcement")
+    assert isinstance(MeshtasticProvider(), MeshProtocol)
+    assert isinstance(MeshcoreProvider(), MeshProtocol)
+
+    class _Minimal:
+        name = "minimal"
+
+        def subscribe(self):
+            return []
+
+        def connect(self, *, active_candidate):
+            return (None, None, None)
+
+        def extract_host_node_id(self, iface):
+            return None
+
+        def node_snapshot_items(self, iface):
+            return []
+
+    assert isinstance(_Minimal(), MeshProtocol)
+    assert not hasattr(_Minimal(), "send_channel_announcement")

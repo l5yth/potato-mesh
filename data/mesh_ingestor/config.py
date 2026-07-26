@@ -144,9 +144,9 @@ RX_ONLY = os.environ.get("RX_ONLY") == "1"
 """Receive-only mode: forbid every ingestor-initiated mesh transmission.
 
 Some operators run listening posts where any TX is undesired.  When set, the
-ingestor never transmits on the mesh: currently this disables the MeshCore
-contact telemetry/status polls (the only ingestor-initiated RF traffic), and
-any future TX feature must honour it too.  Local companion-link reads (host
+ingestor never transmits on the mesh: this disables the MeshCore contact
+telemetry/status polls and the periodic activity announcement (SPEC MA7), the
+only ingestor-initiated RF traffic.  Local companion-link reads (host
 self-telemetry, contact roster, channel queries) are not transmissions and
 continue to work."""
 

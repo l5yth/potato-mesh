@@ -32,4 +32,6 @@ if ! .venv/bin/python -c "import sys; exit(0 if '.venv' in sys.prefix else 1)" 2
 fi
 .venv/bin/python -m pip install -U pip
 .venv/bin/python -m pip install -r "$(dirname "$0")/requirements.txt"
-exec .venv/bin/python mesh.py
+
+# -u keeps stdout unbuffered
+exec .venv/bin/python -u mesh.py

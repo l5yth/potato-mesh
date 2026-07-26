@@ -208,6 +208,37 @@ RSpec.describe PotatoMesh::App::Retention do
       expect(removed["ingestors"]).to eq(1)
     end
 
+    it "prunes ingestor_activity rows past the retention window" do
+      fresh = now - 100
+      stale = now - PotatoMesh::Config.year_seconds - 86_400
+
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      begin
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!fffff001", fresh, 42, "meshtastic"],
+        )
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!aaaaa001", stale, 7, "meshcore"],
+        )
+      ensure
+        db&.close
+      end
+
+      removed = harness_class.purge_old_data!(now: now)
+      expect(removed["ingestor_activity"]).to eq(1)
+
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
+      begin
+        remaining =
+          db.execute("SELECT ingestor_id FROM ingestor_activity ORDER BY ingestor_id").flatten
+        expect(remaining).to eq(["!fffff001"])
+      ensure
+        db&.close
+      end
+    end
+
     it "keeps every row when the database is empty" do
       removed = harness_class.purge_old_data!(now: now)
       expect(removed.values.uniq).to eq([0])

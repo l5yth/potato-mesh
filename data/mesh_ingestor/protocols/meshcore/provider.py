@@ -20,8 +20,8 @@ import asyncio
 import sys
 import threading
 
-from ... import config
-from ._constants import _CONNECT_TIMEOUT_SECS
+from ... import activity, config
+from ._constants import _ANNOUNCE_SEND_TIMEOUT_SECS, _CONNECT_TIMEOUT_SECS
 from .decode import _self_info_to_node_dict
 from .identity import _meshcore_node_id
 from .interface import _MeshcoreInterface
@@ -200,3 +200,40 @@ class MeshcoreProvider:
         if self_item is not None:
             items.append(self_item)
         return items
+
+    def send_channel_announcement(self, iface: object, text: str) -> None:
+        """Broadcast an activity announcement on the default channel (SPEC MA6/MA9).
+
+        Schedules ``send_chan_msg`` on channel
+        :data:`~data.mesh_ingestor.config.CHANNEL_INDEX` onto the MeshCore
+        asyncio loop (which the provider runs in a background thread) via
+        :func:`asyncio.run_coroutine_threadsafe`, blocking up to
+        :data:`_ANNOUNCE_SEND_TIMEOUT_SECS` for completion, and counts the
+        transmission toward the merged activity total (MA1). This is an
+        **optional**, duck-typed provider method (not a formal
+        :class:`~data.mesh_ingestor.mesh_protocol.MeshProtocol` member); the
+        daemon resolves it via ``getattr`` and skips it when absent. It is a
+        no-op when the interface has no live event loop / handle.
+
+        Parameters:
+            iface: Active :class:`_MeshcoreInterface`.
+            text: Announcement string to transmit.
+        """
+
+        if not isinstance(iface, _MeshcoreInterface):
+            return
+        mc = getattr(iface, "_mc", None)
+        loop = getattr(iface, "_loop", None)
+        if mc is None or loop is None or loop.is_closed():
+            return
+        activity.record_tx()
+        future = asyncio.run_coroutine_threadsafe(
+            mc.commands.send_chan_msg(config.CHANNEL_INDEX, text), loop
+        )
+        future.result(timeout=_ANNOUNCE_SEND_TIMEOUT_SECS)
+        config._debug_log(
+            "MeshCore activity announcement transmitted",
+            context="meshcore.tx",
+            channel=config.CHANNEL_INDEX,
+            chars=len(text),
+        )

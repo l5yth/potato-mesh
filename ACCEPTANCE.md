@@ -3979,3 +3979,157 @@ survive the swatch-shape change), **FU-A2** (the region toggle) and **UX-A9**
 (chat hanging indent — the `overflow-wrap` addition rides the same D-033 rule),
 and the `buildRoleButtons` filter specs (swatch/dataset/compound-key behaviour
 unchanged). No Ruby/Python/Rust/Flutter surface is touched.
+
+---
+
+## Feature: Mesh activity reporting & announcements
+
+Maps to SPEC decisions **MA1–MA10**. Each ingestor counts **every** frame it
+handles (all RX, incl. ignored/errored/unimplemented, plus its own TX) as one
+merged `packets` figure, appends the per-interval delta to its hourly
+`POST /api/ingestors` heartbeat (MA1–MA2); the web app persists a per-ingestor
+`ingestor_activity` time-series (MA3) from which `GET /api/stats` derives a
+`MAX`-per-protocol 24 h packets/hour moving average (MA4–MA5). Each ingestor then
+periodically broadcasts a one-line activity summary — numbers **dogfed from the
+target instance's own API** — on its protocol's default channel (MA6), gated by
+`RX_ONLY` (reused as the transmit gate), the target's `/version` privacy flag
+(fail-closed), and a ≥ 24 h post-start delay (MA7–MA8), via an **optional**
+duck-typed provider send
+that leaves `MeshProtocol` conformance intact (MA9). Unless a check says
+otherwise, start the server in **public** mode
+(`API_TOKEN=acctest PRIVATE=0 FEDERATION=0 bundle exec ruby app.rb`).
+
+### MA-A1 — Every frame is counted, including drops; TX too — MA1
+```bash
+( . .venv/bin/activate && pytest -q tests/test_activity_unit.py -k "count" )
+```
+**Expected:** pass. The merged `packets` counter increments once per received
+frame at the earliest seam (`handlers/_state._mark_packet_seen`) — verified for a
+**stored** packet, an **ignored** packet (`unsupported-port` / `no-message-payload`),
+and an **errored** packet (one that raises inside `store_packet_dict`) — and once
+per ingestor **transmission** (the announcement send and a MeshCore
+telemetry/status poll). The count is taken *before* any drop/dispatch decision, so
+no receive or transmit path bypasses it ("we don't want to under-report").
+
+### MA-A2 — Heartbeat carries a per-interval delta that resets — MA2
+```bash
+( . .venv/bin/activate && pytest -q tests/test_activity_unit.py -k "heartbeat_delta" )
+( . .venv/bin/activate && pytest -q tests/test_mesh.py -k "ingestor" )
+```
+**Expected:** pass. `queue_ingestor_heartbeat` includes `packets` = frames counted
+since the previous heartbeat and **zeroes** the running counter afterward: two
+heartbeats bracketing N then M frames report N then M (never N then N+M). A
+heartbeat with no traffic sends `0` (or omits the field). A pre-feature payload
+without `packets` is still accepted by `POST /api/ingestors` (additive, D8).
+
+### MA-A3 — Activity time-series: append per heartbeat, pruned by retention — MA3
+```bash
+( cd web && bundle exec rspec spec/activity_spec.rb )
+( cd web && bundle exec rspec spec/retention_spec.rb -e "ingestor_activity" )
+git grep -nE 'ingestor_activity' -- data/ingestor_activity.sql web/lib
+```
+**Expected:** pass, and the grep shows a new **append-only** `ingestor_activity`
+table (`ingestor_id`, `at`, `packets`, `protocol`, index on `at`). Each
+`POST /api/ingestors` carrying `packets` appends exactly one row (the `ingestors`
+snapshot row is still upserted, one per node); two ingestors of one protocol write
+**independent** rows (not pre-summed). The retention worker deletes activity rows
+older than the configured window (≥ 24 h), so the table cannot grow unbounded.
+
+### MA-A4 — MAX-per-protocol packets/hour over 24 h — MA4
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "packets_per_hour" )
+```
+**Expected:** pass. With two `meshcore` ingestors reporting different 24 h packet
+totals, `packets_per_hour.meshcore` = `MAX(total_A, total_B) ÷ 24` — the busiest
+single vantage, so the quieter ingestor and any overlap never inflate it. `total`
+is the `MAX` across **all** ingestors regardless of protocol; a protocol with no
+active ingestor reads `0`. Rows older than 24 h do not contribute.
+
+### MA-A5 — `/api/stats` exposes `packets_per_hour` additively — MA5
+```bash
+curl -s http://127.0.0.1:41447/api/stats \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); p=d["packets_per_hour"]; \
+SC=("total","meshcore","meshtastic","reticulum"); \
+print(all(isinstance(p[s],(int,float)) for s in SC) and p["reticulum"]==0 \
+and set(SC).issubset(d) and all(m in d["total"] for m in ("nodes","messages","telemetry")))'
+```
+**Expected:** prints `True` — the response carries an additive top-level
+`packets_per_hour` map keyed `{total, meshcore, meshtastic, reticulum}`
+(`reticulum` a `0` stub), **and** the pre-existing scope × metric × window tree
+(S1: each scope still carrying `nodes`/`messages`/`telemetry`) is unchanged and
+still present. No version bump — **S-A1** still passes.
+
+### MA-A6 — Announcement content is dogfed from the instance API — MA6
+```bash
+( . .venv/bin/activate && pytest -q tests/test_announce_unit.py -k "message or dogfeed" )
+```
+**Expected:** pass. The announcement string is exactly
+`"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. https://<domain>"`,
+where `<N>` = the target's `GET /api/stats` `<protocol>.nodes.day` and `<M>` =
+`GET /api/stats` `packets_per_hour.<protocol>` — both fetched over HTTP from
+`<domain>`, never computed from the ingestor's local counters — and the rendered
+line is truncated to the protocol's character limit. `<domain>` = the configured
+`INSTANCE_DOMAIN`.
+
+### MA-A7 — Announcement gates: RX_ONLY, privacy fail-closed, 24 h — MA7
+```bash
+( . .venv/bin/activate && pytest -q tests/test_announce_unit.py \
+    -k "gate or private or rx_only or elapsed" )
+```
+**Expected:** pass. **No** announcement is sent when any gate fails: `RX_ONLY=1`
+(the **reused** receive-only flag — its existing MeshCore-poll TX suppression now
+also covers the announcement, so it is the sole opt-out; no separate `ENABLE_TX`
+env exists); the target `/version` reports `private_mode: true`; the `/version`
+fetch **errors or is unparseable** (fail-closed — treated as private/skip); or
+`< 24 h` have elapsed since ingestor start. With `RX_ONLY` unset (the default
+`0`), `private_mode: false`, and `≥ 24 h` elapsed, exactly one announcement per
+24 h per domain is transmitted.
+
+### MA-A8 — Default channel/scope + 24 h cadence — MA8
+```bash
+( . .venv/bin/activate && pytest -q tests/test_announce_unit.py \
+    -k "channel or cadence or interval or domains" )
+```
+**Expected:** pass. The announcement is sent on Meshtastic channel `CHANNEL_INDEX`
+(default `0`) / MeshCore's public channel; the first fires no earlier than 24 h
+post-start and subsequent ones no more often than every 24 h; an ingestor with
+several `INSTANCE_DOMAIN` targets announces each once per cycle with that domain's
+own numbers and link.
+
+### MA-A9 — Send is optional and duck-typed; MeshProtocol conformance intact — MA9
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py \
+    -k "send_channel_announcement or MeshProtocol" )
+```
+**Expected:** pass. Both `MeshtasticProvider` and `MeshcoreProvider` expose
+`send_channel_announcement(...)`; the announce scheduler resolves it via
+`getattr(provider, "send_channel_announcement", None)` and **no-ops when absent**
+(e.g. a receive-only transport). The `@runtime_checkable MeshProtocol` interface is
+unchanged — **A4b**'s `isinstance(provider, MeshProtocol)` conformance still passes
+and `send_channel_announcement` is **not** a required member.
+
+### MA-A10 — Additive contract is documented — MA10 / D8
+```bash
+git grep -nE 'packets|ingestor_activity|packets_per_hour' -- data/mesh_ingestor/CONTRACTS.md
+```
+**Expected:** the additive heartbeat `packets` field, the `ingestor_activity`
+schema, and the `GET /api/stats` `packets_per_hour` addition are all documented in
+`CONTRACTS.md` (Layer C source of truth). The engineering bar (100 % tests/docs/
+headers/lint) is enforced by Layer **B** (B1–B5); behavior is covered by
+MA-A1…MA-A9.
+
+### MA-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ )
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. At risk and explicitly required to
+remain green: **A1a/A1b** (apex — the new ingestor→instance GET and the LoRa
+announcement add no broker term or dependency); **A4b** (MeshProtocol isinstance
+conformance — send stays optional/duck-typed, MA9); **S-A1** (the `/api/stats`
+scope × metric × window tree is unchanged; `packets_per_hour` is an additive
+sibling — no version bump, so `test_version_sync.py` is unaffected); **A2a/A2b**
+(privacy — the message API still 404s under `PRIVATE`, and the announcement
+fail-closes on the same flag, MA7); **C2** (`tests/test_mesh.py` — the
+`POST /api/ingestors` `packets` field is additive and old payloads still validate);
+and **B1** (all suites). No `/api/*` response shape is broken by construction.

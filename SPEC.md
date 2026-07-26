@@ -1045,3 +1045,61 @@ contradicted.
 | **LC2** | **Legend pressed state paints (specificity fix).** A role chip is a `<button>`; the reset `button:not(.chat-tab):not(.sort-button)` (0,2,1) outranked the bare `.legend-item[aria-pressed="true"]` (0,2,0), so every chip computed to `#333` and only `font-weight` distinguished selected from filtered. The selector is now `button.legend-item[aria-pressed="true"]` (0,2,1), which wins on source order — the selected blue paints. | review |
 | **LC3** | **Chat log never scrolls horizontally (extends UX11/D-033).** `.chat-tabpanel` is `overflow-y: auto`, so its x-axis is a scroll container; nothing broke long tokens. `overflow-wrap: anywhere` on `.chat-entry-msg, .chat-entry-node` wraps unbreakable tokens under the 19ch hang and lowers the entry's min-content width so it can never exceed the panel. `anywhere`, not `break-word`; no `overflow-x: hidden` (which would only mask the next regression). | review |
 | **LC4** | **Engineering bar (D9).** Each fix shipped with a fail-first check (Phase 2), full JSDoc/comments, the exact Apache header, clean linters; all prior suites stay green; the `buildRoleButtons` filter specs gain the swatch-shape assertion, none removed. | CLAUDE.md |
+
+---
+
+## Feature: Mesh activity reporting & announcements
+
+Turns each ingestor from a pure listener into a reporter **and** an announcer.
+(1) **Reporting:** every ingestor counts *every* frame it handles — all received
+frames (including ignored / errored / unimplemented) plus its own transmissions —
+as one merged `packets` figure and appends the per-interval delta to its hourly
+`POST /api/ingestors` heartbeat; the web app persists a per-ingestor activity
+time-series so a **packets/hour moving average** is computable across
+time × protocol × multiple ingestors. (2) **Announcing** ("we stop listening and
+start talking"): each ingestor periodically broadcasts a one-line activity summary
+on its protocol's default channel, drawing the numbers **back from the target
+instance's own API** (dogfeeding, so one radio's partial view never
+under-represents the mesh). Integrates with
+`data/mesh_ingestor/handlers/_state.py` (RX/TX counting seam), `ingestors.py`
+(heartbeat payload), `config.py` (reuse `RX_ONLY`), `daemon.py`
+(announce schedule), `mesh_protocol.py` + `protocols/{meshtastic,meshcore,meshtastic_udp}`
+(optional send), a new announce + instance-stats-GET module, `data/ingestors.sql`
+plus a new `data/ingestor_activity.sql` table,
+`web/lib/potato_mesh/application/routes/{ingest,api}.rb`, the query + retention
+layers, and `data/mesh_ingestor/CONTRACTS.md`.
+
+**Conflict check against existing decisions.** *Invariant I (apex / local-LoRa)*
+— **consistent, extends §4.2**: the announcement is a LoRa transmission on the
+local aether and the dogfeed is an HTTP GET to the ingestor's *own* instance; no
+MQTT/broker/cloud dependency or connection is added (A1 stays clean), and ingestor
+TX already exists (`RX_ONLY`, MeshCore telemetry polls), so this widens an existing
+capability rather than crossing the apex line. *Invariant II (privacy)* —
+**extends**: a new gate suppresses the announcement unless the target instance
+reports non-private, read authoritatively from its `/version` and **fail-closed**
+on any fetch error; only public aggregates (active nodes, packet rate) are ever
+announced. *Invariant III (federation) & §5 (no analytics / phone-home)* —
+**consistent, new authorized behavior**: the announcement publishes an *unsigned
+public activity line on the community's local mesh* — not the signed federation
+wire, not cloud egress, not third-party analytics — and is opt-out via
+`RX_ONLY=1`. *Invariant IV (parity & pluggability)* — **extends**: sending is an
+*optional, duck-typed* provider capability, not a new formal `MeshProtocol` member,
+so the `A4b` conformance contract and every existing provider are untouched; both
+protocols announce identically. *D8 (stable contract)* — **extends**: the heartbeat
+`packets` field, the `/api/stats` `packets_per_hour` map, and the activity table
+are all additive; no version bump. *§3.3 (web is POST-only intake)* —
+**consistent**: the dogfeed is a read; no new ingest path. No invariant is
+contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **MA1** | **Merged packet counter — count everything, at the earliest seam.** Each ingestor maintains one merged `packets` counter incremented on **every received frame** — *all of them, including ignored / errored / unimplemented / unsupported-port packets* — counted at the earliest common receive seam (`handlers/_state._mark_packet_seen`, already invoked by both the Meshtastic `on_receive` path and every MeshCore handler/telemetry path *before* any dispatch or filtering), **plus every ingestor-initiated transmission** (the announcement itself and the existing MeshCore telemetry/status polls). RX and TX are deliberately **merged** into a single figure (no separate breakdown). "We don't want to under-report" is satisfied at source: counting precedes every drop/ignore decision. A build-phase check confirms each protocol's RX entry funnels through the seam so no family is missed. | interview |
+| **MA2** | **Heartbeat carries the per-interval delta.** `POST /api/ingestors` gains an additive optional `packets` field = frames counted since the previous heartbeat (a per-interval **delta**, not a since-boot cumulative), reset to zero each time a heartbeat is queued. Per-interval deltas map one-to-one onto time-series rows and are restart-safe (a reboot simply starts a fresh interval). Absent ⇒ treated as `0`, so pre-feature ingestors and the existing `tests/test_mesh.py` fixtures are unaffected (D8). | interview |
+| **MA3** | **Per-ingestor activity time-series (the moving-average schema).** A new append-only table `ingestor_activity` (`ingestor_id TEXT`, `at INTEGER`, `packets INTEGER`, `protocol TEXT`, indexed on `at`) records one row per heartbeat delta. This is the schema that makes a packets/hour moving average computable while distinguishing **multiple protocols and multiple ingestors per protocol** (each ingestor's contribution is kept separate rather than pre-summed). The `ingestors` snapshot table (one row per node) is unchanged. Rows are pruned by the existing retention worker (window ≥ the 24 h the announcement needs; sized with the other activity floors). | proposed |
+| **MA4** | **Aggregation = MAX per protocol (dedup-free "in the air").** The mesh-wide packets/hour for a protocol is `MAX` over that protocol's ingestors of *(that ingestor's total `packets` reported in the last 24 h ÷ 24)*. A single radio can only hear ≤ what is actually transmitted, so the busiest single vantage is the best dedup-free estimate of unique air traffic and can never double-count a frame heard by two radios (true per-frame dedup is impossible anyway — ignored/errored frames carry no id). The fixed `÷ 24` denominator (not ÷ elapsed) keeps the rate stable and avoids divide-by-small spikes; an ingestor with < 24 h of data simply reads lower and ramps up (moot in practice — the announcement fires only ≥ 24 h after start, MA7). *Accepted limitation:* MAX under-estimates the true union when different radios are busiest in different hours. | interview |
+| **MA5** | **Exposure via an additive `/api/stats` field.** `GET /api/stats` gains a top-level additive `packets_per_hour` map — `{ total, meshcore, meshtastic, reticulum }` — carrying the MA4 24 h MAX-aggregated moving average (`reticulum` a forward-looking `0` stub, consistent with S6; `total` is the MAX across all ingestors regardless of protocol). The existing scope × metric × window tree (S1) is untouched, so this needs **no** version bump. The announcement's active-node figure reuses the existing `<protocol>.nodes.day` count (already deduped by `node_id`); only packets/hour is new. | proposed |
+| **MA6** | **Announcement content, drawn from the instance's own API (dogfeeding).** Each ingestor broadcasts, for its own configured protocol, a single line formatted to that protocol's character limit: `"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. https://<domain>"`. `<N>` and `<M>` are fetched **from the target instance** (`GET /api/stats` → `<protocol>.nodes.day` and `packets_per_hour.<protocol>`), never computed from the ingestor's local view — because one ingestor may not see the whole mesh. `<domain>` is the configured `INSTANCE_DOMAIN`. Reporting (MA1–MA4) is independent and continues regardless of announcement state. | interview |
+| **MA7** | **Announcement is triple-gated.** An announcement is transmitted only when **all** hold: (a) `RX_ONLY` is unset — the **reused** receive-only flag (default `0`) is the single transmit gate; `RX_ONLY=1` forbids *every* ingestor TX (the MeshCore polls and the announcement alike), so it is the sole opt-out and **no separate `ENABLE_TX` env is added**; (b) the target instance reports **non-private** — the ingestor GETs `<domain>/version` and honors `config.private_mode`, re-checked every cycle, and **fails closed** (skips) on any fetch/parse error, so a privacy signal is never missed (Invariant II); (c) **≥ 24 h have elapsed since ingestor start** — so the first numbers are accurate over a full window and restarts cannot spam the channel. | interview |
+| **MA8** | **Default channel/scope + 24 h cadence.** The announcement is broadcast on the protocol's **default channel and scope** — Meshtastic channel `CHANNEL_INDEX` (default `0`) via the interface text-send; MeshCore its public/default channel — honoring existing `ALLOWED_CHANNELS`/`HIDDEN_CHANNELS` intent. After the initial ≥ 24 h wait it repeats **every 24 h**, per configured instance domain (an ingestor with several `INSTANCE_DOMAIN` targets announces each with its own numbers and link). TX volume is negligible (~1 frame/day/domain). | proposed |
+| **MA9** | **Optional duck-typed provider send.** Transmission is exposed as a new **optional** provider method (e.g. `send_channel_announcement(iface, text)`) accessed via `getattr(provider, …, None)` — mirroring the existing optional `self_node_item` extension — so the `@runtime_checkable MeshProtocol` interface and its `A4b` isinstance conformance are unchanged, and a provider that cannot transmit (or a receive-only transport) simply omits it. Both `meshtastic` and `meshcore` providers implement it; neither protocol is privileged. | interview |
+| **MA10** | **Engineering bar (D9).** Every new/changed unit ships with 100 % unit tests (counter increment across RX families + TX; heartbeat delta + reset; activity-table write + retention; MAX-aggregation math incl. multi-ingestor; the `/api/stats` field; the four announcement gates incl. fail-closed privacy and the 24 h wait; per-protocol send), full PDoc/RDoc, Apache headers, `black`/`rufo` clean; `pytest`/`rspec`/`npm test` stay green; `CONTRACTS.md` documents the additive heartbeat field, the activity schema, and the `/api/stats` addition. | CLAUDE.md |

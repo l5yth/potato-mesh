@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pubsub import pub
 
-from .. import config, daemon as _daemon, handlers, interfaces
+from .. import activity, config, daemon as _daemon, handlers, interfaces
 from ..utils import _retry_dict_snapshot
 
 
@@ -95,6 +95,32 @@ class MeshtasticProvider:
             )
             return []
         return result
+
+    def send_channel_announcement(self, iface: object, text: str) -> None:
+        """Broadcast an activity announcement on the default channel (SPEC MA6/MA9).
+
+        Sends *text* on channel :data:`~data.mesh_ingestor.config.CHANNEL_INDEX`
+        via the Meshtastic interface and counts the transmission toward the
+        merged activity total (MA1). This is an **optional**, duck-typed provider
+        method (not a formal :class:`MeshProtocol` member); the daemon resolves
+        it via ``getattr`` and skips it when absent.
+
+        Parameters:
+            iface: Active Meshtastic interface exposing ``sendText``.
+            text: Announcement string to transmit.
+        """
+
+        send_text = getattr(iface, "sendText", None)
+        if not callable(send_text):
+            return
+        activity.record_tx()
+        send_text(text, channelIndex=config.CHANNEL_INDEX)
+        config._debug_log(
+            "Meshtastic activity announcement transmitted",
+            context="meshtastic.tx",
+            channel=config.CHANNEL_INDEX,
+            chars=len(text),
+        )
 
 
 __all__ = ["MeshtasticProvider"]

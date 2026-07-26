@@ -108,6 +108,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM positions")
       db.execute("DELETE FROM telemetry")
       db.execute("DELETE FROM ingestors")
+      db.execute("DELETE FROM ingestor_activity")
     end
     ensure_self_instance_record!
   end
@@ -6709,6 +6710,45 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "GET /api/stats" do
+    it "exposes the additive packets_per_hour MAX-per-protocol map" do
+      clear_database
+      now = reference_time.to_i
+      allow(Time).to receive(:now).and_return(reference_time)
+
+      with_db do |db|
+        # meshcore: busiest ingestor 1200 pkts/24h ⇒ 50/h; a quieter second
+        # ingestor of the same protocol must not inflate the MAX.
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!core0001", now - 100, 1200, "meshcore"],
+        )
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!core0002", now - 100, 720, "meshcore"],
+        )
+        # meshtastic: 720 pkts/24h ⇒ 30/h.
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!tast0001", now - 100, 720, "meshtastic"],
+        )
+      end
+
+      get "/api/stats"
+
+      expect(last_response).to be_ok
+      payload = JSON.parse(last_response.body)
+      pph = payload["packets_per_hour"]
+      expect(pph.keys).to contain_exactly("total", "meshcore", "meshtastic", "reticulum")
+      expect(pph["meshcore"]).to eq(50)
+      expect(pph["meshtastic"]).to eq(30)
+      expect(pph["total"]).to eq(50) # MAX over every ingestor = 1200 / 24
+      expect(pph["reticulum"]).to eq(0)
+      # The additive field leaves the S1 scope × metric × window tree intact.
+      expect(payload["sampled"]).to eq(false)
+      expect(payload["total"]).to have_key("nodes")
+      expect(payload).not_to have_key("active_nodes")
+    end
+
     it "returns exact SQL-backed activity counts with per-protocol breakdowns" do
       clear_database
       now = reference_time.to_i

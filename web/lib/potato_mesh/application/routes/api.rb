@@ -115,9 +115,16 @@ module PotatoMesh
             content_type :json
             priv = private_mode? ? 1 : 0
             cached = PotatoMesh::App::ApiCache.fetch("api:stats:#{priv}", ttl_seconds: 15) do
-              # Scope → metric → window tree (SPEC S1). +sampled+ stays last and
+              # Scope → metric → window tree (SPEC S1) plus the additive
+              # +packets_per_hour+ moving-average map (SPEC MA5); both are drawn
+              # from independent read-side queries. +sampled+ stays last and
               # +false+ for backward continuity with the prior payload.
-              query_active_node_stats.merge("sampled" => false).to_json
+              query_active_node_stats
+                .merge(
+                  "packets_per_hour" => query_packets_per_hour,
+                  "sampled" => false,
+                )
+                .to_json
             end
 
             etag cached[:etag], kind: :weak

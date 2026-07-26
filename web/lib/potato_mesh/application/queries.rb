@@ -16,6 +16,7 @@
 
 require_relative "queries/common"
 require_relative "queries/node_queries"
+require_relative "queries/ingestor_queries"
 require_relative "queries/chat_queries"
 require_relative "queries/telemetry_queries"
 require_relative "queries/federation_queries"

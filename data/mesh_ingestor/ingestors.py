@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .. import VERSION as INGESTOR_VERSION
-from . import config, queue
+from . import activity, config, queue
 from .serialization import _canonical_node_id
 
 HEARTBEAT_INTERVAL_SECS = 60 * 60
@@ -108,12 +108,17 @@ def queue_ingestor_heartbeat(
     if not force and last is not None and now - last < interval:
         return False
 
+    # Drain the merged activity counter only once we are committed to sending
+    # (past every early-return guard above), so a suppressed heartbeat never
+    # discards an interval's packet count.  The value is the per-interval delta
+    # since the previous heartbeat (SPEC MA2); ``take_packet_count`` resets it.
     payload = {
         "node_id": canonical,
         "start_time": STATE.start_time,
         "last_seen_time": now,
         "version": INGESTOR_VERSION,
         "protocol": getattr(config, "PROTOCOL", "meshtastic") or "meshtastic",
+        "packets": activity.take_packet_count(),
     }
     if getattr(config, "LORA_FREQ", None) is not None:
         payload["lora_freq"] = config.LORA_FREQ
