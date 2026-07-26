@@ -6709,8 +6709,71 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /api/stats/activity" do
+    it "serves a snake_case-param packets/hour time-series" do
+      clear_database
+      now = reference_time.to_i
+      allow(Time).to receive(:now).and_return(reference_time)
+      with_db do |db|
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!core0001", now - 100, 3600, "meshcore"],
+        )
+        db.execute(
+          "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+          ["!tast0001", now - 100, 1800, "meshtastic"],
+        )
+      end
+
+      get "/api/stats/activity?window_seconds=86400&bucket_seconds=3600"
+
+      expect(last_response).to be_ok
+      series = JSON.parse(last_response.body)
+      expect(series).to be_an(Array)
+      expect(series.length).to eq(1)
+      bucket = series.first
+      expect(bucket).to have_key("bucket_start")
+      expect(bucket).to have_key("bucket_end")
+      expect(bucket["meshcore"]).to eq(3600)
+      expect(bucket["meshtastic"]).to eq(1800)
+      expect(bucket["total"]).to eq(5400) # SUM across protocols
+    end
+
+    it "bypasses the cache when since is provided" do
+      clear_database
+      get "/api/stats/activity?window_seconds=86400&bucket_seconds=3600&since=#{Time.now.to_i - 3600}"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to be_an(Array)
+    end
+
+    it "defaults to a 24h/1h window when no params are given" do
+      clear_database
+      get "/api/stats/activity"
+      expect(last_response).to be_ok
+      expect(JSON.parse(last_response.body)).to be_an(Array)
+    end
+
+    it "rejects a non-positive window_seconds" do
+      get "/api/stats/activity?window_seconds=0&bucket_seconds=3600"
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "window_seconds must be positive")
+    end
+
+    it "rejects a non-positive bucket_seconds" do
+      get "/api/stats/activity?window_seconds=86400&bucket_seconds=0"
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "bucket_seconds must be positive")
+    end
+
+    it "rejects a bucket too small for the requested window" do
+      get "/api/stats/activity?window_seconds=86400&bucket_seconds=1"
+      expect(last_response.status).to eq(400)
+      expect(JSON.parse(last_response.body)).to eq("error" => "bucket_seconds too small for requested window")
+    end
+  end
+
   describe "GET /api/stats" do
-    it "exposes the additive packets_per_hour MAX-per-protocol map" do
+    it "exposes the MA4 packets/hour rate as an additive <scope>.packets.hour metric" do
       clear_database
       now = reference_time.to_i
       allow(Time).to receive(:now).and_return(reference_time)
@@ -6737,12 +6800,13 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       expect(last_response).to be_ok
       payload = JSON.parse(last_response.body)
-      pph = payload["packets_per_hour"]
-      expect(pph.keys).to contain_exactly("total", "meshcore", "meshtastic", "reticulum")
-      expect(pph["meshcore"]).to eq(50)
-      expect(pph["meshtastic"]).to eq(30)
-      expect(pph["total"]).to eq(50) # MAX over every ingestor = 1200 / 24
-      expect(pph["reticulum"]).to eq(0)
+      # Opt 3 shape: the MA4 rate is folded into each scope as packets.hour;
+      # no top-level packets_per_hour map remains.
+      expect(payload).not_to have_key("packets_per_hour")
+      expect(payload["meshcore"]["packets"]).to eq("hour" => 50)
+      expect(payload["meshtastic"]["packets"]).to eq("hour" => 30)
+      expect(payload["total"]["packets"]).to eq("hour" => 80) # SUM of per-protocol MAX = (1200+720)/24
+      expect(payload["reticulum"]["packets"]).to eq("hour" => 0)
       # The additive field leaves the S1 scope × metric × window tree intact.
       expect(payload["sampled"]).to eq(false)
       expect(payload["total"]).to have_key("nodes")

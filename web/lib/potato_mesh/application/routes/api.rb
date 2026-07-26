@@ -115,21 +115,78 @@ module PotatoMesh
             content_type :json
             priv = private_mode? ? 1 : 0
             cached = PotatoMesh::App::ApiCache.fetch("api:stats:#{priv}", ttl_seconds: 15) do
-              # Scope → metric → window tree (SPEC S1) plus the additive
-              # +packets_per_hour+ moving-average map (SPEC MA5); both are drawn
-              # from independent read-side queries. +sampled+ stays last and
+              # Scope → metric → window tree (SPEC S1). The MA4 packets/hour
+              # moving average is folded in as an additive +packets+ metric under
+              # each scope (+<scope>.packets.hour+, SPEC MA5) — a single +hour+
+              # window because it is a rate, not a windowed count. Both figures
+              # come from independent read-side queries. +sampled+ stays last and
               # +false+ for backward continuity with the prior payload.
-              query_active_node_stats
-                .merge(
-                  "packets_per_hour" => query_packets_per_hour,
-                  "sampled" => false,
-                )
-                .to_json
+              stats = query_active_node_stats
+              rates = query_packets_per_hour
+              stats.each do |scope, metrics|
+                metrics["packets"] = { "hour" => rates[scope] || 0 }
+              end
+              stats.merge("sampled" => false).to_json
             end
 
             etag cached[:etag], kind: :weak
             api_cache_control
             cached[:value]
+          end
+
+          # Mesh-activity packets/hour time-series (SPEC F2). Mirrors
+          # +/api/telemetry/aggregated+ but over the +ingestor_activity+ table,
+          # with **snake_case** window/bucket params (the API norm; the older
+          # +/aggregated+ camelCase params are the BP9 wart, migrated separately).
+          app.get "/api/stats/activity" do
+            content_type :json
+            default_window = PotatoMesh::App::Queries::DEFAULT_ACTIVITY_WINDOW_SECONDS
+            default_bucket = PotatoMesh::App::Queries::DEFAULT_ACTIVITY_BUCKET_SECONDS
+
+            window_seconds = if params.key?("window_seconds")
+                coerce_integer(params["window_seconds"])
+              else
+                default_window
+              end
+            bucket_seconds = if params.key?("bucket_seconds")
+                coerce_integer(params["bucket_seconds"])
+              else
+                default_bucket
+              end
+
+            if window_seconds.nil? || window_seconds <= 0
+              halt 400, { error: "window_seconds must be positive" }.to_json
+            end
+            if bucket_seconds.nil? || bucket_seconds <= 0
+              halt 400, { error: "bucket_seconds must be positive" }.to_json
+            end
+
+            # Clamp the window to the 28-day visibility floor so a caller cannot
+            # reach past the retention cap (C4); the query repeats the clamp.
+            window_seconds = clamp_window_seconds(window_seconds)
+
+            bucket_count = (window_seconds.to_f / bucket_seconds).ceil
+            if bucket_count > PotatoMesh::App::Queries::MAX_QUERY_LIMIT
+              halt 400, { error: "bucket_seconds too small for requested window" }.to_json
+            end
+
+            since = params["since"]
+            since_val = coerce_integer(since) || 0
+
+            if since_val > 0
+              json_body = query_activity_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
+              etag Digest::MD5.hexdigest(json_body), kind: :weak
+              api_cache_control(max_age: 30)
+              json_body
+            else
+              cache_key = "api:stats_activity:#{window_seconds}:#{bucket_seconds}"
+              cached = PotatoMesh::App::ApiCache.fetch(cache_key, ttl_seconds: 60) do
+                query_activity_buckets(window_seconds: window_seconds, bucket_seconds: bucket_seconds, since: since).to_json
+              end
+              etag cached[:etag], kind: :weak
+              api_cache_control(max_age: 30)
+              cached[:value]
+            end
           end
 
           app.get "/api/nodes/:id" do

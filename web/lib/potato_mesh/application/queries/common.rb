@@ -20,6 +20,11 @@ module PotatoMesh
       MAX_QUERY_LIMIT = 1000
       DEFAULT_TELEMETRY_WINDOW_SECONDS = 86_400
       DEFAULT_TELEMETRY_BUCKET_SECONDS = 300
+      # Defaults for the mesh-activity packets/hour time-series (SPEC F2): a
+      # 24 h window in 1 h buckets (the map card's sparkline default; the
+      # /charts figure overrides to 7 d / 2 h).
+      DEFAULT_ACTIVITY_WINDOW_SECONDS = 86_400
+      DEFAULT_ACTIVITY_BUCKET_SECONDS = 3_600
       PROTOCOL_CLAUSE = "protocol = ?".freeze
       TELEMETRY_ZERO_INVALID_COLUMNS = %w[battery_level voltage].freeze
       TELEMETRY_AGGREGATE_COLUMNS =

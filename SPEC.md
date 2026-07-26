@@ -1086,7 +1086,7 @@ wire, not cloud egress, not third-party analytics — and is opt-out via
 *optional, duck-typed* provider capability, not a new formal `MeshProtocol` member,
 so the `A4b` conformance contract and every existing provider are untouched; both
 protocols announce identically. *D8 (stable contract)* — **extends**: the heartbeat
-`packets` field, the `/api/stats` `packets_per_hour` map, and the activity table
+`packets` field, the `/api/stats` `<scope>.packets.hour` metric, and the activity table
 are all additive; no version bump. *§3.3 (web is POST-only intake)* —
 **consistent**: the dogfeed is a read; no new ingest path. No invariant is
 contradicted.
@@ -1096,10 +1096,110 @@ contradicted.
 | **MA1** | **Merged packet counter — count everything, at the earliest seam.** Each ingestor maintains one merged `packets` counter incremented on **every received frame** — *all of them, including ignored / errored / unimplemented / unsupported-port packets* — counted at the earliest common receive seam (`handlers/_state._mark_packet_seen`, already invoked by both the Meshtastic `on_receive` path and every MeshCore handler/telemetry path *before* any dispatch or filtering), **plus every ingestor-initiated transmission** (the announcement itself and the existing MeshCore telemetry/status polls). RX and TX are deliberately **merged** into a single figure (no separate breakdown). "We don't want to under-report" is satisfied at source: counting precedes every drop/ignore decision. A build-phase check confirms each protocol's RX entry funnels through the seam so no family is missed. | interview |
 | **MA2** | **Heartbeat carries the per-interval delta.** `POST /api/ingestors` gains an additive optional `packets` field = frames counted since the previous heartbeat (a per-interval **delta**, not a since-boot cumulative), reset to zero each time a heartbeat is queued. Per-interval deltas map one-to-one onto time-series rows and are restart-safe (a reboot simply starts a fresh interval). Absent ⇒ treated as `0`, so pre-feature ingestors and the existing `tests/test_mesh.py` fixtures are unaffected (D8). | interview |
 | **MA3** | **Per-ingestor activity time-series (the moving-average schema).** A new append-only table `ingestor_activity` (`ingestor_id TEXT`, `at INTEGER`, `packets INTEGER`, `protocol TEXT`, indexed on `at`) records one row per heartbeat delta. This is the schema that makes a packets/hour moving average computable while distinguishing **multiple protocols and multiple ingestors per protocol** (each ingestor's contribution is kept separate rather than pre-summed). The `ingestors` snapshot table (one row per node) is unchanged. Rows are pruned by the existing retention worker (window ≥ the 24 h the announcement needs; sized with the other activity floors). | proposed |
-| **MA4** | **Aggregation = MAX per protocol (dedup-free "in the air").** The mesh-wide packets/hour for a protocol is `MAX` over that protocol's ingestors of *(that ingestor's total `packets` reported in the last 24 h ÷ 24)*. A single radio can only hear ≤ what is actually transmitted, so the busiest single vantage is the best dedup-free estimate of unique air traffic and can never double-count a frame heard by two radios (true per-frame dedup is impossible anyway — ignored/errored frames carry no id). The fixed `÷ 24` denominator (not ÷ elapsed) keeps the rate stable and avoids divide-by-small spikes; an ingestor with < 24 h of data simply reads lower and ramps up (moot in practice — the announcement fires only ≥ 24 h after start, MA7). *Accepted limitation:* MAX under-estimates the true union when different radios are busiest in different hours. | interview |
-| **MA5** | **Exposure via an additive `/api/stats` field.** `GET /api/stats` gains a top-level additive `packets_per_hour` map — `{ total, meshcore, meshtastic, reticulum }` — carrying the MA4 24 h MAX-aggregated moving average (`reticulum` a forward-looking `0` stub, consistent with S6; `total` is the MAX across all ingestors regardless of protocol). The existing scope × metric × window tree (S1) is untouched, so this needs **no** version bump. The announcement's active-node figure reuses the existing `<protocol>.nodes.day` count (already deduped by `node_id`); only packets/hour is new. | proposed |
-| **MA6** | **Announcement content, drawn from the instance's own API (dogfeeding).** Each ingestor broadcasts, for its own configured protocol, a single line formatted to that protocol's character limit: `"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. https://<domain>"`. `<N>` and `<M>` are fetched **from the target instance** (`GET /api/stats` → `<protocol>.nodes.day` and `packets_per_hour.<protocol>`), never computed from the ingestor's local view — because one ingestor may not see the whole mesh. `<domain>` is the configured `INSTANCE_DOMAIN`. Reporting (MA1–MA4) is independent and continues regardless of announcement state. | interview |
+| **MA4** | **Aggregation = MAX per protocol; `total` = SUM across protocols (dedup-free "in the air").** The mesh-wide packets/hour for a protocol is `MAX` over that protocol's ingestors of *(that ingestor's total `packets` reported in the last 24 h ÷ 24)*. A single radio can only hear ≤ what is actually transmitted, so the busiest single vantage is the best dedup-free estimate of unique air traffic and can never double-count a frame heard by two radios (true per-frame dedup is impossible anyway — ignored/errored frames carry no id). The **`total`** rate is the **SUM** of the per-protocol rates — different protocols ride different frequencies/channels, so their frames never overlap in the air and add rather than dedup. **Amended pre-release:** `total` first shipped as a MAX over *every* ingestor regardless of protocol, which under-counted it to the single busiest protocol (e.g. meshcore 44 + meshtastic 76 rendered as 76, not 120); corrected to the cross-protocol SUM. The fixed `÷ 24` denominator (not ÷ elapsed) keeps the rate stable and avoids divide-by-small spikes; an ingestor with < 24 h of data simply reads lower and ramps up (moot in practice — the announcement fires only ≥ 24 h after start, MA7). *Accepted limitation:* the per-protocol MAX under-estimates the true union when different radios are busiest in different hours. | interview |
+| **MA5** | **Exposure as an additive per-scope `packets` metric.** `GET /api/stats` exposes the MA4 24 h MAX-aggregated moving average under each scope as `<scope>.packets.hour` — a `packets` metric carrying a single `hour` window (it is a rate, not a windowed count, so no day/week/month keys), consistent with the S1 `scope → metric → window` layout. `reticulum.packets.hour` is a forward-looking `0` stub (S6); `total.packets.hour` is the **SUM** of the per-protocol rates (MA4). The rest of the S1 tree is untouched, so this needs **no** version bump. The announcement's active-node figure reuses the existing `<protocol>.nodes.day` count (already deduped by `node_id`); only packets/hour is new. **Amended pre-release:** the field originally shipped (unreleased, on `main`) as a top-level `packets_per_hour: { total, meshcore, meshtastic, reticulum }` map; it is superseded here by the per-scope `packets.hour` form for consistency with the S1 tree. Because it was merged but **not yet in any tagged release** and is **not** on the signed federation wire, the reshape carries **no** version bump, federation-compat fallback, or signature break — only the in-repo `announce.py` dogfeed reader (MA6) and the specs/docs move with it. | proposed (amended) |
+| **MA6** | **Announcement content, drawn from the instance's own API (dogfeeding).** Each ingestor broadcasts, for its own configured protocol, a single line formatted to that protocol's character limit: `"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. https://<domain>"`. `<N>` and `<M>` are fetched **from the target instance** (`GET /api/stats` → `<protocol>.nodes.day` and `<protocol>.packets.hour`), never computed from the ingestor's local view — because one ingestor may not see the whole mesh. `<domain>` is the configured `INSTANCE_DOMAIN`. Reporting (MA1–MA4) is independent and continues regardless of announcement state. | interview |
 | **MA7** | **Announcement is triple-gated.** An announcement is transmitted only when **all** hold: (a) `RX_ONLY` is unset — the **reused** receive-only flag (default `0`) is the single transmit gate; `RX_ONLY=1` forbids *every* ingestor TX (the MeshCore polls and the announcement alike), so it is the sole opt-out and **no separate `ENABLE_TX` env is added**; (b) the target instance reports **non-private** — the ingestor GETs `<domain>/version` and honors `config.private_mode`, re-checked every cycle, and **fails closed** (skips) on any fetch/parse error, so a privacy signal is never missed (Invariant II); (c) **≥ 24 h have elapsed since ingestor start** — so the first numbers are accurate over a full window and restarts cannot spam the channel. | interview |
 | **MA8** | **Default channel/scope + 24 h cadence.** The announcement is broadcast on the protocol's **default channel and scope** — Meshtastic channel `CHANNEL_INDEX` (default `0`) via the interface text-send; MeshCore its public/default channel — honoring existing `ALLOWED_CHANNELS`/`HIDDEN_CHANNELS` intent. After the initial ≥ 24 h wait it repeats **every 24 h**, per configured instance domain (an ingestor with several `INSTANCE_DOMAIN` targets announces each with its own numbers and link). TX volume is negligible (~1 frame/day/domain). | proposed |
 | **MA9** | **Optional duck-typed provider send.** Transmission is exposed as a new **optional** provider method (e.g. `send_channel_announcement(iface, text)`) accessed via `getattr(provider, …, None)` — mirroring the existing optional `self_node_item` extension — so the `@runtime_checkable MeshProtocol` interface and its `A4b` isinstance conformance are unchanged, and a provider that cannot transmit (or a receive-only transport) simply omits it. Both `meshtastic` and `meshcore` providers implement it; neither protocol is privileged. | interview |
 | **MA10** | **Engineering bar (D9).** Every new/changed unit ships with 100 % unit tests (counter increment across RX families + TX; heartbeat delta + reset; activity-table write + retention; MAX-aggregation math incl. multi-ingestor; the `/api/stats` field; the four announcement gates incl. fail-closed privacy and the 24 h wait; per-protocol send), full PDoc/RDoc, Apache headers, `black`/`rufo` clean; `pytest`/`rspec`/`npm test` stay green; `CONTRACTS.md` documents the additive heartbeat field, the activity schema, and the `/api/stats` addition. | CLAUDE.md |
+
+---
+
+## Feature: Mesh activity map card (frontend)
+
+Surfaces the MA5 `<scope>.packets.hour` rate on the dashboard as a "Mesh
+activity" card in the map's bottom-left corner (the recommended treatment from
+the imported Claude-Design review, option 1a). Frontend/read-side only:
+integrates with `web/public/assets/js/app/stats.js` (parses the new `packets`
+rates), a new `web/public/assets/js/app/map-activity-card.js` module, the map
+setup + stats callback in `web/public/assets/js/app/main.js`, and
+`web/public/assets/styles/base.css`. Consumes the existing `GET /api/stats` with
+**no** API/DB/ingestor change.
+
+**Conflict check against existing decisions.** *Invariant I (apex)* —
+**consistent**: a read-side consumer of the existing local API; no broker,
+dependency, or egress. *Invariant II (privacy)* — **consistent**: packets are a
+public aggregate (no message content), already un-gated by `PRIVATE` (MA5); the
+card shows only rates the API already returns. *Invariant IV (parity)* —
+**extends**: both protocols render identically and either can be toggled; neither
+is privileged. *D8 (contract) / §3.3 (POST-only intake)* — **consistent**: no new
+endpoint or shape; the card reads `<scope>.packets.hour` as it ships. *AV3
+(cache-busting)* — **consistent**: the new module self-registers in the automatic
+import map. No invariant is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **MA-F1** | **Placement & source.** A "Mesh activity" card renders as a Leaflet control at the map's **bottom-left** (mirroring the roles legend bottom-right) on the dashboard and `/map`. Its figures come from `GET /api/stats` `<scope>.packets.hour` (parsed by `stats.js` into `stats.packets = { total, meshcore, meshtastic }`); on a stats-fetch failure the local-count fallback carries no packets, so the card simply hides. Recommended design option 1a / treatment A ("Signal card"). | interview + design |
+| **MA-F2** | **Content.** A pulsing live-dot + "Mesh activity" label; the big tabular **total** packets/h; the placeholder sparkline (MA-F5); and one row per protocol (Meshtastic, then MeshCore) carrying the protocol icon, label, a share-bar sized to the busiest visible protocol, and the tabular rate. **`reticulum` is never rendered** (forward-looking zero stub, S6). | design |
+| **MA-F3** | **Zero-state unmount.** The card is hidden entirely (`.map-activity-card--hidden`, `hidden`, emptied) whenever the visible total is `0` or the payload carries no packet rates — the map's one free corner is never occupied by an empty card. | interview + design |
+| **MA-F4** | **Toggle-reactive rebasing (Invariant IV parity).** A protocol hidden via the meta-row protocol toggle (the existing `hiddenProtocols` set) drops its row and rebases the displayed total to the **sum of the visible** protocol rates — the same treatment for both protocols, identical to how the node counts already rebase. Toggling re-runs `applyFilter`, which re-renders the card; hiding **all** protocols unmounts it. | interview + code |
+| **MA-F5** | **Sparkline (superseded by F2-4).** As first shipped in F1 the 24-hour sparkline was a **deterministic placeholder** (`data-placeholder="true"`), never claiming to be live. **Superseded by F2-4:** it now renders the real 24 h `total` series from `GET /api/stats/activity`, and is simply **omitted** when that series is unavailable — the card never shows a fake curve. | interview |
+| **MA-F6** | **Engineering bar (D9) & scope.** Frontend/read-side only — no API/DB/ingestor change (D8, §3.3), apex (I) untouched. The DOM-building logic lives in `map-activity-card.js` at **100 % unit coverage** (JSDoc, Apache header); `main.js` holds only the Leaflet-control wiring + the one render call in the stats callback (integration-only, matching the sibling legend control). The module self-registers in the cache-busting import map (AV3). `npm test` stays green; no Ruby/Python change. | CLAUDE.md |
+
+---
+
+## Feature: Mesh activity time-series (F2)
+
+Adds a bucketed packets/hour time-series over `ingestor_activity` so the map
+card's 24 h sparkline (MA-F5) and a protocol-aware `/charts` figure render on
+real history instead of a placeholder. Backend: `GET /api/stats/activity` +
+`query_activity_buckets` (`web/lib/potato_mesh/application/queries/ingestor_queries.rb`)
++ the route in `application/routes/api.rb`. Frontend: `map-activity-card.js`
+(real sparkline) and `charts-page.js` + `views/charts.erb` (the new figure).
+Read-side, additive; no ingest or DB-schema change.
+
+**Conflict check.** *Apex I / §3.3* — **consistent**: a read of the existing
+local DB; no broker, egress, or ingest path. *Privacy II* — **consistent**:
+packets are a public aggregate (no message content), un-gated like MA5. *Parity
+IV* — **extends**: the series and the chart are per-protocol and equal, and the
+`/charts` intro stops naming a single protocol. *D8* — **extends**: a new
+additive endpoint (snake_case params, no version bump); the camelCase
+`/aggregated` params remain BP9's separate migration. No invariant is
+contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **F2-1** | **New `GET /api/stats/activity`.** Bucketed packets/hour series over `ingestor_activity`, mirroring `/api/telemetry/aggregated` (window clamped to the 28-day floor, bucket count capped at `MAX_QUERY_LIMIT`, `ApiCache`), but with **snake_case** `window_seconds`/`bucket_seconds` params — the API norm. Returns `[{ bucket_start, bucket_end, total, meshcore, meshtastic }, …]` ascending. The lone camelCase params on `/aggregated` stay the tracked BP9 migration, not folded in here. | interview |
+| **F2-2** | **Per-bucket aggregation mirrors MA4.** Within each bucket, per protocol = **MAX** over that protocol's ingestors of their summed packets; `total` = **SUM** across protocols; each ÷ (`bucket_seconds`/3600) to a packets/hour rate. `reticulum` folds into `total` but emits no series (consistent with `query_packets_per_hour`). | interview + code |
+| **F2-3** | **No new retention.** `ingestor_activity` is already retained a year; the 28-day API clamp is the only ceiling. The card requests **24 h / 1 h** buckets, the `/charts` figure **7 d / 2 h**. | code |
+| **F2-4** | **Card real sparkline.** The MA-F5 placeholder is replaced by the real 24 h series from `/api/stats/activity`, fetched on a slower cadence with its own short cache (the trend moves slowly — not every refresh). On fetch failure the sparkline is omitted but the live total/rows (from `/api/stats`) still render — the card never regresses to a fake curve. | interview |
+| **F2-5** | **Charts page — protocol-aware, all-protocol.** A "Mesh activity" figure (packets/h per protocol, 7 d) is added to `/charts` **between** the channel-utilization and environmental figures. The intro no longer names "Meshtastic": the aggregated telemetry (`query_telemetry_buckets`) already carries **all** protocols (MeshCore telemetry included since the telemetry pull shipped) — the prior wording mislabelled all-protocol data. Invariant IV. | interview |
+| **F2-6** | **Engineering bar (D9).** 100 % unit tests (rspec for `query_activity_buckets` + the route; node --test for the card sparkline + charts figure), full RDoc/JSDoc, Apache headers, `rufo`/`black` clean; `CONTRACTS.md` documents the new endpoint; all suites stay green. | CLAUDE.md |
+
+---
+
+## Bugfix: Neighbor/trace legend toggles highlight when visible
+
+The neighbor-line and trace-line legend toggles set `aria-pressed="true"` when their
+lines were **hidden**, so `button.legend-item[aria-pressed="true"]` (the selected/
+highlighted style, LC2) painted them highlighted while the lines were off — reversed
+relative to the role chips, which highlight when a role is **visible**. Fixed in
+`web/public/assets/js/app/main.js` (`updateNeighborLinesToggleState` /
+`updateTraceLinesToggleState`). Presentation-only; no data/API change.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **NT1** | The neighbor/trace line toggles set `aria-pressed="true"` when their lines are **visible** (highlighted = shown), consistent with the role chips (LC2) and the meta-row protocol toggles; previously reversed (pressed when hidden). Presentation-only, no data/API change. | review |
+
+---
+
+## Bugfix: Mesh activity design-review remediation
+
+A Claude-Design review of the shipped F1/F2 work against the 1a/1c/1d design. The
+card, the real-data sparkline, and the toggle rebasing all matched or bettered the
+design; this section remediates the one regression and the mobile/charts
+divergences it found. Presentation + read-side only; no API/DB change.
+**Conflict check:** **fixes** an MA-F3 regression and **extends** MA-F4/MA-F5/F2-4
+(the sparkline now rebases with the toggles); consistent with all invariants.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **MR1** | **Idle card stays hidden on mobile (MA-F3 regression fix).** The mobile media query set `.map-activity-card { display: flex }`, which outranked `.map-activity-card--hidden { display: none }` (equal specificity, later rule) and the `[hidden]` attribute, so an idle card painted an empty pill over the map. `.map-activity-card--hidden { display: none }` is re-declared inside the media query. | review |
+| **MR2** | **Mobile strip is a full-width caption (design 1d).** Below the mobile breakpoint the bottom-left Leaflet control spans the map (`left: 0; right: 0`, 8px inset) at ≥ 32px tall with the protocol split pushed to the far edge (`margin-left: auto`), so it reads as a map caption rather than a content-width corner pill. | review |
+| **MR3** | **Mobile breakpoint aligned to the app band.** The strip triggers at ≤ 659px (the app's mobile band, UX9), not a one-off 640px. | review |
+| **MR4** | **Sparkline headroom.** `sparklinePathsFromSeries` scales to `max × 1.15`, so the busiest hour's vertex sits below the box edge and the 1.5px stroke is never clipped. | review |
+| **MR5** | **Sparkline rebases with the toggles.** The curve is the sum of the **visible** protocols per bucket (from `/api/stats/activity`'s per-protocol fields), so it agrees with the headline total once a protocol is toggled off — previously the number rebased but the curve stayed all-protocol. Extends MA-F4 / F2-4. | review |
+| **MR6** | **Card is a labelled `group`.** The card root carries `role="group"` so its `aria-label` is announced (a bare div's is not); children stay readable, unlike `role="img"`. | review |
+| **MR7** | **`/charts` intro is protocol-neutral.** The all-protocol "Network telemetry trends" heading no longer carries the single Meshtastic badge (`charts.erb`), matching the de-scoped copy (F2-5). | review |
+| **MR8** | **Utilization second-axis (design 1c) explicitly out of scope.** The packets/h right-hand axis overlay on the channel-utilization chart was **not** built — the standalone "Mesh activity" figure (F2-5) is the shipped scope; recorded so the design is not re-litigated. | review |

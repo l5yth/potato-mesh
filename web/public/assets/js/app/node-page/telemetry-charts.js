@@ -33,10 +33,12 @@ import { stringOrNull } from '../value-helpers.js';
  * exist.
  *
  * @param {Object} node Normalised node payload.
- * @param {{ nowMs?: number, chartOptions?: Object }} [options] Rendering options.
+ * @param {{ nowMs?: number, chartOptions?: Object, insertBefore?: Object }} [options]
+ *   Rendering options. ``insertBefore`` maps a chart spec id to HTML injected
+ *   immediately before that spec's figure (SPEC F2-5); default none.
  * @returns {string} Chart grid markup or an empty string.
  */
-export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions = {} } = {}) {
+export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions = {}, insertBefore = {} } = {}) {
   const telemetrySource = node?.rawSources?.telemetry;
   const snapshotHistory = Array.isArray(node?.rawSources?.telemetrySnapshots) && node.rawSources.telemetrySnapshots.length > 0
     ? node.rawSources.telemetrySnapshots
@@ -60,16 +62,39 @@ export function renderTelemetryCharts(node, { nowMs = Date.now(), chartOptions =
     return '';
   }
   const isAggregated = snapshotHistory == null && aggregatedSnapshots != null;
-  const charts = TELEMETRY_CHART_SPECS
-    .map(spec => renderTelemetryChart(spec, entries, nowMs, { ...chartOptions, isAggregated }))
-    .filter(chart => stringOrNull(chart));
-  if (charts.length === 0) {
+  const rendered = TELEMETRY_CHART_SPECS
+    .map(spec => ({
+      specId: spec.id,
+      html: renderTelemetryChart(spec, entries, nowMs, { ...chartOptions, isAggregated }),
+    }))
+    .filter(chart => stringOrNull(chart.html));
+  if (rendered.length === 0) {
     return '';
+  }
+  // Optional caller-supplied figures keyed by the spec id they precede (SPEC
+  // F2-5: /charts injects the Mesh-activity figure before ``environment``).
+  const injections = insertBefore && typeof insertBefore === 'object' ? insertBefore : {};
+  const used = new Set();
+  const parts = [];
+  for (const chart of rendered) {
+    const injected = stringOrNull(injections[chart.specId]);
+    if (injected && !used.has(chart.specId)) {
+      parts.push(injected);
+      used.add(chart.specId);
+    }
+    parts.push(chart.html);
+  }
+  // Any injection whose target spec did not render is appended rather than
+  // silently dropped.
+  for (const [specId, html] of Object.entries(injections)) {
+    if (!used.has(specId) && stringOrNull(html)) {
+      parts.push(html);
+    }
   }
   return `
     <section class="node-detail__charts">
       <div class="node-detail__charts-grid">
-        ${charts.join('')}
+        ${parts.join('')}
       </div>
     </section>
   `;

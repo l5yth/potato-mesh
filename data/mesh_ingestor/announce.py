@@ -121,7 +121,7 @@ def fetch_activity(
 
     These are the mesh-wide numbers the announcement quotes (SPEC MA6):
     ``active_nodes`` = ``<protocol>.nodes.day`` and ``packets_per_hour`` =
-    ``packets_per_hour.<protocol>``.
+    ``<protocol>.packets.hour`` (the MA4 rate exposed under each scope).
 
     Parameters:
         instance_url: Base URL of the PotatoMesh instance.
@@ -137,17 +137,19 @@ def fetch_activity(
     if not isinstance(data, dict):
         return None
     scope = data.get(protocol)
-    packets_map = data.get("packets_per_hour")
-    if not isinstance(scope, dict) or not isinstance(packets_map, dict):
+    if not isinstance(scope, dict):
         return None
     nodes = scope.get("nodes")
-    if not isinstance(nodes, dict):
+    packets = scope.get("packets")
+    if not isinstance(nodes, dict) or not isinstance(packets, dict):
         return None
     active_nodes = nodes.get("day")
-    packets = packets_map.get(protocol)
-    if not isinstance(active_nodes, int) or not isinstance(packets, (int, float)):
+    packets_per_hour = packets.get("hour")
+    if not isinstance(active_nodes, int) or not isinstance(
+        packets_per_hour, (int, float)
+    ):
         return None
-    return int(active_nodes), packets
+    return int(active_nodes), packets_per_hour
 
 
 def protocol_display_name(protocol: str | None) -> str:

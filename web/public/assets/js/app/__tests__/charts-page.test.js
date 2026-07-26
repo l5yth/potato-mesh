@@ -108,6 +108,36 @@ test('initializeChartsPage renders the telemetry charts when snapshots are avail
   assert.equal(/^\d{2}$/.test(label), true);
 });
 
+test('initializeChartsPage injects the mesh-activity figure before the environmental charts', async () => {
+  const container = { innerHTML: '' };
+  const documentStub = {
+    getElementById(id) {
+      return id === 'chartsPage' ? container : null;
+    },
+  };
+  const nowSec = 1_700_000_000;
+  const fetchImpl = async url => {
+    if (url.includes('/api/stats/activity')) {
+      return createResponse(200, [
+        { bucket_start: nowSec - 7200, meshtastic: 20, meshcore: 10 },
+        { bucket_start: nowSec, meshtastic: 30, meshcore: 20 },
+      ]);
+    }
+    return createResponse(200, [
+      { bucket_start: nowSec, bucket_seconds: 300, aggregates: { temperature: { avg: 22 } } },
+    ]);
+  };
+  let receivedOptions = null;
+  const renderCharts = (node, options) => {
+    receivedOptions = options;
+    return '<section class="node-detail__charts">Charts</section>';
+  };
+  await initializeChartsPage({ document: documentStub, fetchImpl, renderCharts });
+  assert.ok(receivedOptions.insertBefore, 'insertBefore option is passed');
+  assert.ok(receivedOptions.insertBefore.environment, 'activity figure keyed to environment');
+  assert.match(receivedOptions.insertBefore.environment, /Mesh activity/);
+});
+
 test('initializeChartsPage shows an error message when fetching fails', async () => {
   const container = { innerHTML: '' };
   const documentStub = {

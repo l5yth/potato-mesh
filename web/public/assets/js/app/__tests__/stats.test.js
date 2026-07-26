@@ -21,6 +21,8 @@ import {
   computeLocalActiveNodeStats,
   normaliseActiveNodeStatsPayload,
   fetchActiveNodeStats,
+  fetchActivitySeries,
+  normaliseActivitySeries,
   formatActiveNodeStatsText,
 } from '../stats.js';
 
@@ -187,6 +189,56 @@ test('normaliseActiveNodeStatsPayload returns null for null/non-object input', (
 });
 
 // ---------------------------------------------------------------------------
+// per-scope packets rates (SPEC MA5) — feeds the mesh-activity map card
+// ---------------------------------------------------------------------------
+
+test('normaliseActiveNodeStatsPayload attaches per-scope packets rates', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 120 } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 44 } },
+    meshtastic: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 76 } },
+    sampled: false,
+  });
+  assert.deepEqual(result.packets, { total: 120, meshcore: 44, meshtastic: 76 });
+});
+
+test('normaliseActiveNodeStatsPayload omits packets when total.packets is absent', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 } },
+    sampled: false,
+  });
+  assert.equal(result.packets, undefined);
+});
+
+test('normaliseActiveNodeStatsPayload omits packets when the total rate is non-finite', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 'lots' } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: 44 } },
+    sampled: false,
+  });
+  assert.equal(result.packets, undefined);
+});
+
+test('normaliseActiveNodeStatsPayload keeps only the protocol rates that are present', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 90 } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 } },
+    meshtastic: { nodes: { hour: 1, day: 1, week: 1, month: 1 } },
+    sampled: false,
+  });
+  assert.deepEqual(result.packets, { total: 90 });
+});
+
+test('normaliseActiveNodeStatsPayload clamps negative and truncates float packet rates', () => {
+  const result = normaliseActiveNodeStatsPayload({
+    total: { nodes: { hour: 1, day: 2, week: 3, month: 4 }, packets: { hour: 12.9 } },
+    meshcore: { nodes: { hour: 1, day: 1, week: 1, month: 1 }, packets: { hour: -3 } },
+    sampled: false,
+  });
+  assert.deepEqual(result.packets, { total: 12, meshcore: 0 });
+});
+
+// ---------------------------------------------------------------------------
 // fetchActiveNodeStats
 // ---------------------------------------------------------------------------
 
@@ -312,4 +364,79 @@ test('formatActiveNodeStatsText emits the worded day/week vital sign', () => {
 test('formatActiveNodeStatsText handles missing or null stats gracefully', () => {
   const text = formatActiveNodeStatsText({ stats: null });
   assert.equal(text, '0 nodes today · 0 this week', 'defaults to zero counts for null stats');
+});
+
+// ---------------------------------------------------------------------------
+// activity time-series (SPEC F2-4) — feeds the map-card sparkline
+// ---------------------------------------------------------------------------
+
+test('normaliseActivitySeries keeps oldest-first per-protocol rates, clamped and truncated', () => {
+  const series = normaliseActivitySeries([
+    { bucket_start: 1, meshcore: 10, meshtastic: 20.9 },
+    { bucket_start: 2, meshcore: -4, meshtastic: 5 }, // meshcore clamped to 0
+    { bucket_start: 3, meshcore: 7 }, // meshtastic absent → 0
+    { bucket_start: 4, meshtastic: 3 }, // meshcore absent → 0
+    { bucket_start: 5, total: 99 }, // no per-protocol values → skipped
+    null, // falsy bucket → skipped
+    'nope', // non-object → skipped
+  ]);
+  assert.deepEqual(series, [
+    { meshcore: 10, meshtastic: 20 },
+    { meshcore: 0, meshtastic: 5 },
+    { meshcore: 7, meshtastic: 0 },
+    { meshcore: 0, meshtastic: 3 },
+  ]);
+});
+
+test('normaliseActivitySeries returns null for non-arrays or all-unusable input', () => {
+  assert.equal(normaliseActivitySeries(null), null);
+  assert.equal(normaliseActivitySeries({}), null);
+  assert.equal(normaliseActivitySeries([]), null);
+  assert.equal(normaliseActivitySeries([{ total: 5 }]), null); // total ignored; no protocol fields
+});
+
+test('fetchActivitySeries returns the normalised per-protocol series on success', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    return { ok: true, async json() { return [{ meshcore: 2, meshtastic: 5 }, { meshcore: 3, meshtastic: 8 }]; } };
+  };
+  const series = await fetchActivitySeries({ fetchImpl });
+  assert.deepEqual(series, [{ meshcore: 2, meshtastic: 5 }, { meshcore: 3, meshtastic: 8 }]);
+  assert.match(calls[0], /\/api\/stats\/activity\?window_seconds=86400&bucket_seconds=3600/);
+});
+
+test('fetchActivitySeries fails soft to null on non-OK, error, and empty payloads', async () => {
+  assert.equal(await fetchActivitySeries({ fetchImpl: async () => ({ ok: false, status: 500 }) }), null);
+  assert.equal(await fetchActivitySeries({ fetchImpl: async () => { throw new Error('down'); } }), null);
+  assert.equal(
+    await fetchActivitySeries({ fetchImpl: async () => ({ ok: true, async json() { return []; } }) }),
+    null
+  );
+});
+
+test('fetchActivitySeries caches the result for repeated calls with the same fetchImpl', async () => {
+  let hits = 0;
+  const fetchImpl = async () => {
+    hits += 1;
+    return { ok: true, async json() { return [{ meshcore: 1, meshtastic: 2 }]; } };
+  };
+  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [{ meshcore: 1, meshtastic: 2 }]);
+  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [{ meshcore: 1, meshtastic: 2 }]);
+  assert.equal(hits, 1, 'the second call is served from cache');
+});
+
+test('fetchActivitySeries coalesces concurrent calls into one request', async () => {
+  let hits = 0;
+  const fetchImpl = async () => {
+    hits += 1;
+    return { ok: true, async json() { return [{ meshcore: 3, meshtastic: 4 }]; } };
+  };
+  const [a, b] = await Promise.all([
+    fetchActivitySeries({ fetchImpl }),
+    fetchActivitySeries({ fetchImpl }),
+  ]);
+  assert.deepEqual(a, [{ meshcore: 3, meshtastic: 4 }]);
+  assert.deepEqual(b, [{ meshcore: 3, meshtastic: 4 }]);
+  assert.equal(hits, 1, 'concurrent callers share one in-flight request');
 });

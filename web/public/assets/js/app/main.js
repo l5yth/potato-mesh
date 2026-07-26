@@ -20,6 +20,7 @@ import {
   computeLocalActiveNodeStats,
   normaliseActiveNodeStatsPayload,
   fetchActiveNodeStats,
+  fetchActivitySeries,
   formatActiveNodeStatsText,
   formatActiveNodeStatsHtml,
 } from './stats.js';
@@ -30,6 +31,8 @@ export {
   formatActiveNodeStatsText,
   formatActiveNodeStatsHtml,
 };
+
+import { createMeshActivityCard } from './map-activity-card.js';
 
 import {
   normalizeNodeNameValue,
@@ -1673,6 +1676,7 @@ export function initializeApp(config) {
   let meshtasticCountEl = null;
   let meshcoreColEl = null;
   let meshtasticColEl = null;
+  let meshActivityCard = null;
   let legendToggleButton = null;
   let legendVisible = true;
 
@@ -1735,9 +1739,10 @@ export function initializeApp(config) {
     // The toggle doubles as the legend key for the solid neighbor-line style
     // (SPEC UX7, audit D-014).
     neighborLinesToggleButton.innerHTML = `${legendLineSampleSvg('neighbor')} ${label}`;
-    // aria-pressed reflects whether the user has *activated* the toggle (i.e. lines are
-    // currently hidden). When lines are visible (default), the button is unpressed.
-    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'false' : 'true');
+    // aria-pressed marks the *selected* (highlighted) state, consistent with the
+    // role chips (button.legend-item[aria-pressed="true"]): the toggle is pressed
+    // when its lines are visible, unpressed when hidden. (Previously reversed.)
+    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -1771,8 +1776,10 @@ export function initializeApp(config) {
     // The toggle doubles as the legend key for the dashed traceroute style
     // (SPEC UX7, audit D-014).
     traceLinesToggleButton.innerHTML = `${legendLineSampleSvg('trace')} ${label}`;
-    // aria-pressed reflects whether the user has *activated* the toggle (lines hidden).
-    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'false' : 'true');
+    // aria-pressed marks the *selected* (highlighted) state, consistent with the
+    // role chips: pressed when its lines are visible, unpressed when hidden.
+    // (Previously reversed.)
+    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -2021,6 +2028,20 @@ export function initializeApp(config) {
       return wrapper;
     };
     legendControl.addTo(map);
+
+    // Mesh activity card (SPEC MA-F1): a bottom-left overlay mirroring the roles
+    // legend at bottom-right; populated from /api/stats packets rates in
+    // applyFilter's stats callback and rebased by the protocol toggles.
+    const meshActivityControl = L.control({ position: 'bottomleft' });
+    meshActivityControl.onAdd = function () {
+      const wrapper = L.DomUtil.create('div', 'map-activity-outer');
+      meshActivityCard = createMeshActivityCard();
+      wrapper.appendChild(meshActivityCard.element);
+      L.DomEvent.disableClickPropagation(wrapper);
+      L.DomEvent.disableScrollPropagation(wrapper);
+      return wrapper;
+    };
+    meshActivityControl.addTo(map);
 
     const legendMediaQuery = window.matchMedia('(max-width: 1024px)');
     const initialLegendVisible = resolveLegendVisibility({
@@ -4832,6 +4853,18 @@ export function initializeApp(config) {
       updateProtocolToggleCounts(stats);
       updateFooterStats(visibleStats);
       applyProtocolVisibility(stats);
+      // Mesh activity card reads the raw per-protocol rates and rebases itself
+      // against the hidden-protocol set (SPEC MA-F4); a toggle re-runs
+      // applyFilter, so this refreshes the card on both data and toggle changes.
+      if (meshActivityCard) {
+        meshActivityCard.render({ packets: stats && stats.packets, hiddenProtocols });
+        // The 24h sparkline series is fetched separately (cached ~5 min, F2-4);
+        // setSeries repaints the card when it resolves, and null on failure just
+        // omits the sparkline.
+        void fetchActivitySeries({}).then(series => {
+          if (meshActivityCard) meshActivityCard.setSeries(series);
+        });
+      }
     });
   }
 

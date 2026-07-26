@@ -16,12 +16,19 @@ on the map toggles, an equal-area diamond MeshCore marker, a condensed nodes
 table, and reported-only disclosure rows.
 
 ### Features
+* Web: `GET /api/stats/activity` — bucketed packets/hour time-series over `ingestor_activity` (snake_case `window_seconds`/`bucket_seconds`), feeding the map-card sparkline and a protocol-aware `/charts` figure (SPEC F2)
+* Web: `/charts` gains a protocol-aware "Mesh activity" figure (packets/h per protocol, 7 d) between the channel-utilization and environmental charts; the aggregated-telemetry intro is de-scoped from "Meshtastic" to all protocols (SPEC F2-5)
+* Web: mesh-activity map card collapses to a compact caption strip on phones (≤ 640 px) so it no longer covers a small map (design 1d)
+* Web: "Mesh activity" map card — bottom-left overlay showing packets/h (total + per-protocol split) from `/api/stats`, toggle-reactive and hidden when idle, with a 24 h sparkline drawn from `/api/stats/activity` (SPEC MA-F1…MA-F6, F2-4)
 * Web: join strip renders the radio settings newcomers need; new `MESHTASTIC_PRESET`/`MESHTASTIC_FREQ` + `MESHCORE_PRESET`/`MESHCORE_FREQ` env vars (`CHANNEL`/`FREQUENCY` deprecated but honoured)
 * Web: node freshness buckets (live/today/stale) on table rows and map markers, riding the shared relative-time tick
 * Web: MeshCore nodes render as equal-area diamond map chips — shape encodes protocol, colour keeps encoding role
 * Web: nodes table gains grouped headers, curated mobile columns (Battery survives), a per-row disclosure of hidden fields, row hover/click, numeric alignment, captions/scopes
 
 ### Fixes
+* Web: mesh-activity card — idle card no longer paints an empty pill over the map on phones (≤659px), the mobile strip spans the map as a caption, the sparkline gains headroom and rebases with the protocol toggles, the card is a labelled `role="group"`, and the /charts intro heading drops the single-protocol badge (design-review remediation, SPEC MR1–MR8)
+* Web: neighbor/trace line legend toggles highlight when their lines are visible (was reversed — highlighted when hidden), matching the role chips (SPEC NT1)
+* Web/data: `GET /api/stats` exposes the mesh-activity packets/hour rate as `<scope>.packets.hour` (folded into the S1 scope→metric→window tree) rather than a top-level `packets_per_hour` map, and `total.packets.hour` now **sums** the per-protocol rates instead of taking a single MAX vantage (distinct protocols never share the air, so they add); the ingestor announcement dogfeed reads the new path (SPEC MA4/MA5, pre-release amendment of the merged-but-unreleased #859)
 * Web: WCAG AA text contrast — role-badge text computed by background luminance; chat log entries, error text, links, and focus rings tokenised (`--danger`, single `--accent`)
 * Web: federation table's undefined CSS tokens aliased — row borders and the sticky header render again
 * Web: legend expanded by default on /map, honest toggle label (filter suffix only when filters are active), line-style key on the neighbor/trace toggles; fixed the malformed `data-legend-collapsed` attribute

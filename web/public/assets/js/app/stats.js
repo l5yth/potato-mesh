@@ -81,13 +81,43 @@ function normaliseProtocolBucket(bucket) {
 }
 
 /**
+ * Extract the per-scope packets/hour rates from the payload's
+ * ``<scope>.packets.hour`` metric (SPEC MA5) into a flat rate bag.
+ *
+ * Returns null when ``total.packets.hour`` is absent or non-finite (e.g. a
+ * pre-MA5 instance), so the mesh-activity card can hide rather than render a
+ * bogus 0. ``meshcore``/``meshtastic`` are included only when present.
+ *
+ * @param {*} payload Candidate JSON object from the stats endpoint.
+ * @returns {{total: number, meshcore?: number, meshtastic?: number}|null} Rates or null.
+ */
+function normalisePacketsRates(payload) {
+  const readHourRate = scope => {
+    const hour = Number(payload?.[scope]?.packets?.hour);
+    return Number.isFinite(hour) ? Math.max(0, Math.trunc(hour)) : null;
+  };
+  const total = readHourRate('total');
+  if (total === null) {
+    return null;
+  }
+  const rates = { total };
+  const meshcore = readHourRate('meshcore');
+  const meshtastic = readHourRate('meshtastic');
+  if (meshcore !== null) rates.meshcore = meshcore;
+  if (meshtastic !== null) rates.meshtastic = meshtastic;
+  return rates;
+}
+
+/**
  * Parse and validate the ``/api/stats`` payload (0.7.0 scope → metric → window
  * shape) into the flat node-count snapshot the dashboard renders.
  *
  * Node counts are read from ``total.nodes`` and the per-protocol
  * ``<protocol>.nodes`` sub-buckets; the other metrics (messages/telemetry) are
- * not surfaced in the header. The browser only ever calls its own same-version
- * instance, so only the current shape is parsed.
+ * not surfaced in the header. The per-scope ``packets.hour`` rate (SPEC MA5) is
+ * attached as ``result.packets`` for the mesh-activity map card when present.
+ * The browser only ever calls its own same-version instance, so only the
+ * current shape is parsed.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
  * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}|null} Normalized stats or null.
@@ -108,6 +138,8 @@ export function normaliseActiveNodeStatsPayload(payload) {
   const meshtastic = normaliseProtocolBucket(payload.meshtastic?.nodes);
   if (meshcore) result.meshcore = meshcore;
   if (meshtastic) result.meshtastic = meshtastic;
+  const packets = normalisePacketsRates(payload);
+  if (packets) result.packets = packets;
   return result;
 }
 
@@ -216,4 +248,92 @@ export function formatActiveNodeStatsHtml({ stats }) {
     `<strong class="meta-active-nodes__today">${day} nodes today</strong>` +
     ` · ${week} this week`
   );
+}
+
+// Module-level cache for the activity time-series. The 24 h trend moves slowly,
+// so a longer TTL keeps the map card from re-fetching it on every filter/refresh.
+const ACTIVITY_SERIES_CACHE_TTL_MS = 300_000;
+const ACTIVITY_SERIES_WINDOW_SECONDS = 86_400;
+const ACTIVITY_SERIES_BUCKET_SECONDS = 3_600;
+let activitySeriesCache = null;
+let activitySeriesFetchPromise = null;
+let activitySeriesFetchImpl = null;
+
+/**
+ * Reduce a ``/api/stats/activity`` payload to the per-bucket **per-protocol**
+ * rates the mesh-activity sparkline draws (SPEC F2-4). Keeping the protocols
+ * split (rather than pre-summing to a total) lets the card rebase the curve
+ * with the meta-row toggles, exactly like the headline number.
+ *
+ * @param {*} payload Candidate JSON (array of bucket objects).
+ * @returns {Array<{meshcore: number, meshtastic: number}>|null} Oldest-first
+ *   per-protocol packets/hour, or null when there is nothing usable.
+ */
+export function normaliseActivitySeries(payload) {
+  if (!Array.isArray(payload)) {
+    return null;
+  }
+  const series = [];
+  for (const bucket of payload) {
+    if (!bucket || typeof bucket !== 'object') {
+      continue;
+    }
+    const meshcore = Number(bucket.meshcore);
+    const meshtastic = Number(bucket.meshtastic);
+    if (Number.isFinite(meshcore) || Number.isFinite(meshtastic)) {
+      series.push({
+        meshcore: Number.isFinite(meshcore) ? Math.max(0, Math.trunc(meshcore)) : 0,
+        meshtastic: Number.isFinite(meshtastic) ? Math.max(0, Math.trunc(meshtastic)) : 0,
+      });
+    }
+  }
+  return series.length > 0 ? series : null;
+}
+
+/**
+ * Fetch the 24-hour packets/hour total series for the map-card sparkline
+ * (SPEC F2) with a long-lived cache. Fails soft to null on any error so the
+ * card simply omits the sparkline (F2-4) rather than throwing.
+ *
+ * @param {{fetchImpl?: Function}} [params] Fetch parameters.
+ * @returns {Promise<Array<number>|null>} Total series, or null.
+ */
+export async function fetchActivitySeries({ fetchImpl = fetch } = {}) {
+  const nowMs = Date.now();
+  if (activitySeriesCache?.fetchImpl === fetchImpl && activitySeriesCache.expiresAt > nowMs) {
+    return activitySeriesCache.series;
+  }
+  if (activitySeriesFetchPromise && activitySeriesFetchImpl === fetchImpl) {
+    return activitySeriesFetchPromise;
+  }
+
+  activitySeriesFetchImpl = fetchImpl;
+  activitySeriesFetchPromise = (async () => {
+    try {
+      const url =
+        `/api/stats/activity?window_seconds=${ACTIVITY_SERIES_WINDOW_SECONDS}` +
+        `&bucket_seconds=${ACTIVITY_SERIES_BUCKET_SECONDS}`;
+      const response = await fetchImpl(url, { cache: 'default' });
+      if (!response?.ok) {
+        return null;
+      }
+      const series = normaliseActivitySeries(await response.json());
+      activitySeriesCache = {
+        fetchImpl,
+        expiresAt: Date.now() + ACTIVITY_SERIES_CACHE_TTL_MS,
+        series,
+      };
+      return series;
+    } catch (error) {
+      console.debug('Failed to fetch /api/stats/activity; sparkline omitted.', error);
+      return null;
+    }
+  })();
+
+  try {
+    return await activitySeriesFetchPromise;
+  } finally {
+    activitySeriesFetchPromise = null;
+    activitySeriesFetchImpl = null;
+  }
 }

@@ -4040,24 +4040,30 @@ older than the configured window (≥ 24 h), so the table cannot grow unbounded.
 ( cd web && bundle exec rspec spec/queries_spec.rb -e "packets_per_hour" )
 ```
 **Expected:** pass. With two `meshcore` ingestors reporting different 24 h packet
-totals, `packets_per_hour.meshcore` = `MAX(total_A, total_B) ÷ 24` — the busiest
-single vantage, so the quieter ingestor and any overlap never inflate it. `total`
-is the `MAX` across **all** ingestors regardless of protocol; a protocol with no
-active ingestor reads `0`. Rows older than 24 h do not contribute.
+totals, the meshcore rate = `MAX(total_A, total_B) ÷ 24` — the busiest single
+vantage, so the quieter ingestor and any overlap never inflate it. `total` is the
+**SUM** of the per-protocol rates (distinct protocols never share the air, so they
+add — e.g. meshcore + meshtastic), a protocol with no active ingestor reads `0`,
+and rows older than 24 h do not contribute. `query_packets_per_hour` returns these
+per-protocol rates, which the `GET /api/stats` route folds into each scope as
+`<scope>.packets.hour` (MA-A5).
 
-### MA-A5 — `/api/stats` exposes `packets_per_hour` additively — MA5
+### MA-A5 — `/api/stats` exposes packets as an additive `<scope>.packets.hour` metric — MA5
 ```bash
 curl -s http://127.0.0.1:41447/api/stats \
-  | python3 -c 'import sys,json; d=json.load(sys.stdin); p=d["packets_per_hour"]; \
+  | python3 -c 'import sys,json; d=json.load(sys.stdin); \
 SC=("total","meshcore","meshtastic","reticulum"); \
-print(all(isinstance(p[s],(int,float)) for s in SC) and p["reticulum"]==0 \
-and set(SC).issubset(d) and all(m in d["total"] for m in ("nodes","messages","telemetry")))'
+print("packets_per_hour" not in d \
+and all(isinstance(d[s]["packets"]["hour"],(int,float)) for s in SC) \
+and d["reticulum"]["packets"]["hour"]==0 \
+and all(m in d["total"] for m in ("nodes","messages","telemetry","packets")))'
 ```
-**Expected:** prints `True` — the response carries an additive top-level
-`packets_per_hour` map keyed `{total, meshcore, meshtastic, reticulum}`
-(`reticulum` a `0` stub), **and** the pre-existing scope × metric × window tree
-(S1: each scope still carrying `nodes`/`messages`/`telemetry`) is unchanged and
-still present. No version bump — **S-A1** still passes.
+**Expected:** prints `True` — each scope carries an additive `packets` metric with
+a single `hour` window (`<scope>.packets.hour`, the MA4 rate; `reticulum` a `0`
+stub), the old top-level `packets_per_hour` map is **gone**, **and** the
+pre-existing scope × metric × window tree (S1: each scope still carrying
+`nodes`/`messages`/`telemetry`) is unchanged and still present. No version bump —
+**S-A1** still passes.
 
 ### MA-A6 — Announcement content is dogfed from the instance API — MA6
 ```bash
@@ -4066,7 +4072,7 @@ still present. No version bump — **S-A1** still passes.
 **Expected:** pass. The announcement string is exactly
 `"<Protocol> activity in the last 24h: <N> active nodes, <M> packets/hour. https://<domain>"`,
 where `<N>` = the target's `GET /api/stats` `<protocol>.nodes.day` and `<M>` =
-`GET /api/stats` `packets_per_hour.<protocol>` — both fetched over HTTP from
+`GET /api/stats` `<protocol>.packets.hour` — both fetched over HTTP from
 `<domain>`, never computed from the ingestor's local counters — and the rendered
 line is truncated to the protocol's character limit. `<domain>` = the configured
 `INSTANCE_DOMAIN`.
@@ -4113,7 +4119,7 @@ and `send_channel_announcement` is **not** a required member.
 git grep -nE 'packets|ingestor_activity|packets_per_hour' -- data/mesh_ingestor/CONTRACTS.md
 ```
 **Expected:** the additive heartbeat `packets` field, the `ingestor_activity`
-schema, and the `GET /api/stats` `packets_per_hour` addition are all documented in
+schema, and the `GET /api/stats` `<scope>.packets.hour` addition are all documented in
 `CONTRACTS.md` (Layer C source of truth). The engineering bar (100 % tests/docs/
 headers/lint) is enforced by Layer **B** (B1–B5); behavior is covered by
 MA-A1…MA-A9.
@@ -4127,9 +4133,159 @@ MA-A1…MA-A9.
 remain green: **A1a/A1b** (apex — the new ingestor→instance GET and the LoRa
 announcement add no broker term or dependency); **A4b** (MeshProtocol isinstance
 conformance — send stays optional/duck-typed, MA9); **S-A1** (the `/api/stats`
-scope × metric × window tree is unchanged; `packets_per_hour` is an additive
-sibling — no version bump, so `test_version_sync.py` is unaffected); **A2a/A2b**
+scope × metric × window tree is unchanged; `packets.hour` is an additive metric
+under each scope — no version bump, so `test_version_sync.py` is unaffected); **A2a/A2b**
 (privacy — the message API still 404s under `PRIVATE`, and the announcement
 fail-closes on the same flag, MA7); **C2** (`tests/test_mesh.py` — the
 `POST /api/ingestors` `packets` field is additive and old payloads still validate);
 and **B1** (all suites). No `/api/*` response shape is broken by construction.
+
+---
+
+## Feature: Mesh activity map card (frontend)
+
+Maps to SPEC decisions **MA-F1…MA-F6**. The card logic lives in
+`web/public/assets/js/app/map-activity-card.js` (DOM-building, 100 % unit-tested)
+and the packets parsing in `web/public/assets/js/app/stats.js`; `main.js` wires a
+Leaflet `bottomleft` control and renders it from the `/api/stats` stats callback.
+Behaviour is verified by the JS unit suite.
+
+### MA-FA1 — Card renders the total + per-protocol rows from `/api/stats` — MA-F1/MA-F2
+```bash
+( cd web && node --test public/assets/js/app/__tests__/map-activity-card.test.js \
+                       public/assets/js/app/__tests__/stats.test.js )
+```
+**Expected:** pass. `stats.js` attaches `stats.packets = { total, meshcore, meshtastic }`
+from the payload's `<scope>.packets.hour`; `buildMeshActivityModel({total,meshtastic,meshcore})`
+returns the total plus one row per protocol (Meshtastic then MeshCore), each with a
+`barPct` sized to the busiest visible protocol; `renderMeshActivityCardHtml` emits the
+total, a `packets/h` unit, both protocol icons, and the row rates.
+
+### MA-FA2 — Reticulum is never rendered — MA-F2
+**Expected (covered by the MA-FA1 suite):** `buildMeshActivityModel` with a `reticulum`
+rate present still returns only `meshtastic`/`meshcore` rows — reticulum is absent from
+the card (forward-looking zero stub, S6).
+
+### MA-FA3 — Zero / absent activity unmounts the card — MA-F3
+**Expected (covered by the MA-FA1 suite):** a `0` total, all-zero protocol rates, or an
+absent `packets` payload yield `model.visible === false`; `createMeshActivityCard().render(...)`
+then adds `.map-activity-card--hidden`, sets `hidden`, and empties the element.
+
+### MA-FA4 — A hidden protocol drops its row and rebases the total — MA-F4
+**Expected (covered by the MA-FA1 suite):** `buildMeshActivityModel({total:120,
+meshtastic:76, meshcore:44}, new Set(['meshcore']))` returns only the Meshtastic row with
+`total === 76` (the sum of the *visible* protocols), and `card.render(...)` sets the
+aria-label to `"Mesh activity: 76 packets per hour"` — the same rebasing the node counts
+already do (Invariant IV parity). Hiding both protocols unmounts the card.
+
+### MA-FA5 — Sparkline (superseded by F2-A2) — MA-F5
+**Superseded by F2-A2 (and SPEC F2-4).** F1 shipped the sparkline as a deterministic
+placeholder (`data-placeholder="true"`); F2 replaced it with the real 24 h series from
+`/api/stats/activity`. The card now emits **no** `data-placeholder` and draws the
+sparkline only when real data is present — verified by **F2-A2** (and the MA-FA1 suite,
+which now asserts `data-placeholder` is *absent*). Retained for provenance; the live
+requirement is F2-A2.
+
+### MA-FR1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test )
+```
+**Expected:** every prior check still passes. Frontend/read-side only: no `/api/*`
+response shape changes (so **S-A1**, **MA-A5**, **C2** are untouched), and the packets
+figures are the same public aggregate MA5 already exposes (privacy **A2**/**S-A4**
+unchanged). The stats consumer (`stats.js`) gains `packets` parsing additively — the
+existing `normaliseActiveNodeStatsPayload` node-count assertions are unchanged, not removed.
+
+---
+
+## Feature: Mesh activity time-series (F2)
+
+Maps to SPEC decisions **F2-1…F2-6**. The bucket query lives in
+`ingestor_queries.rb` (`query_activity_buckets`) and the route in
+`application/routes/api.rb`; the sparkline + charts wiring is JS. Behaviour is
+verified by the Ruby and JS unit suites.
+
+### F2-A1 — `/api/stats/activity` serves a snake_case packets/hour series — F2-1/F2-2
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "query_activity_buckets" \
+                               spec/app_spec.rb -e "/api/stats/activity" )
+```
+**Expected:** pass. `GET /api/stats/activity?window_seconds=&bucket_seconds=` returns an
+ascending array of `{ bucket_start, bucket_end, total, meshcore, meshtastic }`; each
+protocol's value is the MAX over that protocol's ingestors of their summed `packets` in
+the bucket ÷ the bucket's hour-span, and `total` is the SUM across protocols (MA4).
+`reticulum` folds into `total` with no series key. A non-positive
+`window_seconds`/`bucket_seconds`, or a bucket count over `MAX_QUERY_LIMIT`, is a `400`;
+the window is clamped to the 28-day floor. Params are **snake_case** (no camelCase).
+
+### F2-A2 — The map card draws its 24h sparkline from `/api/stats/activity` — F2-4
+```bash
+( cd web && node --test public/assets/js/app/__tests__/map-activity-card.test.js \
+                       public/assets/js/app/__tests__/stats.test.js )
+```
+**Expected:** pass. `fetchActivitySeries` GETs
+`/api/stats/activity?window_seconds=86400&bucket_seconds=3600`, caches it, and fails
+soft to `null` (non-OK / network error / empty). `sparklinePathsFromSeries` maps a
+≥2-point total series to an SVG path (null otherwise). The card is stateful:
+`render(rates)` and `setSeries(series)` each repaint from the last-known other; the
+sparkline appears only once a real series arrives (no `data-placeholder`, no fake
+curve) and is omitted on failure while the live total/rows still render.
+
+### F2-A3 — `/charts` shows a protocol-aware Mesh activity figure — F2-5
+```bash
+( cd web && node --test public/assets/js/app/__tests__/mesh-activity-chart.test.js \
+                       public/assets/js/app/__tests__/node-page.test.js \
+                       public/assets/js/app/__tests__/charts-page.test.js )
+```
+**Expected:** pass. `renderMeshActivityChart` draws a two-line (Meshtastic `#8856a7`,
+MeshCore `#3182bd`) packets/hour figure with an **"Activity (pkt/h)"** y-axis, fed by
+`fetchActivityChartBuckets` (`/api/stats/activity`, 7 d / 2 h; fails soft to `[]`).
+`renderTelemetryCharts` accepts an `insertBefore` map that places the figure
+immediately before the `environment` spec — i.e. **between** the channel-utilization
+and environmental figures — and `initializeChartsPage` wires it there. The `/charts`
+intro no longer names a single protocol (the aggregate is all-protocol).
+
+---
+
+## Bugfix: Neighbor/trace legend toggles highlight when visible
+
+Maps to SPEC decision **NT1**.
+
+### NT-A1 — Neighbor/trace toggles are pressed when their lines are visible — NT1
+```bash
+git grep -nE "aria-pressed', neighborLinesVisible \? 'true'|aria-pressed', traceLinesVisible \? 'true'" \
+  -- web/public/assets/js/app/main.js
+```
+**Expected:** both matches present — the neighbor- and trace-line legend toggles set
+`aria-pressed` to `'true'` when their lines are **visible** (`…Visible ? 'true' : 'false'`),
+so the highlighted state (`button.legend-item[aria-pressed="true"]`, LC2) marks *shown*
+lines, consistent with the role chips and the meta-row protocol toggles. Previously
+reversed (pressed when hidden).
+
+---
+
+## Bugfix: Mesh activity design-review remediation
+
+Maps to SPEC decisions **MR1…MR8**.
+
+### MR-A1 — Sparkline rebasing, headroom, and card role — MR4/MR5/MR6
+```bash
+( cd web && node --test public/assets/js/app/__tests__/map-activity-card.test.js \
+                       public/assets/js/app/__tests__/stats.test.js )
+```
+**Expected:** pass. `normaliseActivitySeries` returns per-bucket `{meshcore, meshtastic}`
+(not a pre-summed total); `buildMeshActivityModel` sums only the **visible** protocols
+for the sparkline, so toggling a protocol changes the curve (a rebasing test asserts the
+paths differ); `sparklinePathsFromSeries` scales to `max × 1.15` (headroom); and
+`createMeshActivityCard` sets `role="group"` on the card root.
+
+### MR-A2 — Idle card stays hidden on mobile + protocol-neutral intro — MR1/MR3/MR7
+```bash
+grep -n 'max-width: 659px' web/public/assets/styles/base.css
+awk '/max-width: 659px/{f=1} f&&/map-activity-card--hidden \{/{print "  re-declared --hidden in media block"; exit}' web/public/assets/styles/base.css
+git grep -n 'meshtastic.svg' -- web/views/charts.erb
+```
+**Expected:** the `≤659px` media query exists; `.map-activity-card--hidden { display: none }`
+is re-declared inside it (so an idle card cannot paint an empty pill over the map,
+restoring MA-F3 on phones — the `awk` prints its confirmation line); and the last command
+prints **nothing** — the `/charts` intro heading no longer references `meshtastic.svg`.
