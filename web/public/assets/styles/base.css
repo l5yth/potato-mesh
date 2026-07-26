@@ -1969,10 +1969,20 @@ input[type="radio"] {
   }
 }
 
-/* Mesh activity card → compact ticker on phones (design 1d): the full card eats
-   ~a third of a small map, so collapse it to a single-line strip that reads as
-   a caption (pulse dot · total · per-protocol icons + rates). */
-@media (max-width: 640px) {
+/* Mesh activity card → full-width caption strip on phones (design 1d): the full
+   card covers ~a third of a small map, so span the map width (8px inset) with
+   the protocol split pushed to the far edge, so it reads as a map caption
+   rather than covering it. 659px matches the app's mobile band (UX9). */
+@media (max-width: 659px) {
+  /* Span the full map width instead of the content-width Leaflet corner. Only
+     the activity card lives bottom-left, so this scopes cleanly to it. */
+  .leaflet-bottom.leaflet-left {
+    left: 0;
+    right: 0;
+  }
+  .map-activity-outer {
+    margin: 0 8px 8px !important;
+  }
   .map-activity-card {
     display: flex;
     flex-wrap: wrap;
@@ -1980,7 +1990,15 @@ input[type="radio"] {
     gap: 4px 8px;
     padding: 4px 9px;
     min-width: 0;
+    min-height: 32px;
     line-height: 1.4;
+  }
+  /* Keep the hidden state hidden: re-declared *after* the flex rule so it wins
+     on source order (equal specificity), since an author `display` also beats
+     the UA sheet's `[hidden]`. Without this the idle card paints an empty pill
+     over the map, breaking MA-F3. */
+  .map-activity-card--hidden {
+    display: none;
   }
   .map-activity-card__header,
   .map-activity-card__total {
@@ -2000,6 +2018,7 @@ input[type="radio"] {
   .map-activity-card__rows {
     flex-direction: row;
     gap: 8px;
+    margin-left: auto; /* push the protocol split to the far edge (caption) */
   }
   .map-activity-card__row {
     gap: 3px;

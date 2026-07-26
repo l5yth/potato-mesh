@@ -4259,3 +4259,31 @@ git grep -nE "aria-pressed', neighborLinesVisible \? 'true'|aria-pressed', trace
 so the highlighted state (`button.legend-item[aria-pressed="true"]`, LC2) marks *shown*
 lines, consistent with the role chips and the meta-row protocol toggles. Previously
 reversed (pressed when hidden).
+
+---
+
+## Bugfix: Mesh activity design-review remediation
+
+Maps to SPEC decisions **MR1…MR8**.
+
+### MR-A1 — Sparkline rebasing, headroom, and card role — MR4/MR5/MR6
+```bash
+( cd web && node --test public/assets/js/app/__tests__/map-activity-card.test.js \
+                       public/assets/js/app/__tests__/stats.test.js )
+```
+**Expected:** pass. `normaliseActivitySeries` returns per-bucket `{meshcore, meshtastic}`
+(not a pre-summed total); `buildMeshActivityModel` sums only the **visible** protocols
+for the sparkline, so toggling a protocol changes the curve (a rebasing test asserts the
+paths differ); `sparklinePathsFromSeries` scales to `max × 1.15` (headroom); and
+`createMeshActivityCard` sets `role="group"` on the card root.
+
+### MR-A2 — Idle card stays hidden on mobile + protocol-neutral intro — MR1/MR3/MR7
+```bash
+grep -n 'max-width: 659px' web/public/assets/styles/base.css
+awk '/max-width: 659px/{f=1} f&&/map-activity-card--hidden \{/{print "  re-declared --hidden in media block"; exit}' web/public/assets/styles/base.css
+git grep -n 'meshtastic.svg' -- web/views/charts.erb
+```
+**Expected:** the `≤659px` media query exists; `.map-activity-card--hidden { display: none }`
+is re-declared inside it (so an idle card cannot paint an empty pill over the map,
+restoring MA-F3 on phones — the `awk` prints its confirmation line); and the last command
+prints **nothing** — the `/charts` intro heading no longer references `meshtastic.svg`.

@@ -63,10 +63,27 @@ test('buildMeshActivityModel sums visible protocols and sizes bars to the busies
   assert.equal(model.spark, null); // no series supplied
 });
 
-test('buildMeshActivityModel attaches a sparkline when a series is present', () => {
-  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), [10, 20, 30]);
+test('buildMeshActivityModel attaches a sparkline from the visible per-protocol series', () => {
+  const series = [
+    { meshcore: 5, meshtastic: 10 },
+    { meshcore: 8, meshtastic: 12 },
+  ];
+  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), series);
   assert.ok(model.spark);
   assert.match(model.spark.line, /^M1 /);
+});
+
+test('buildMeshActivityModel rebases the sparkline with the protocol toggles', () => {
+  const series = [
+    { meshcore: 90, meshtastic: 10 },
+    { meshcore: 10, meshtastic: 90 },
+  ];
+  const all = buildMeshActivityModel({ meshcore: 10, meshtastic: 90 }, new Set(), series);
+  const mtOnly = buildMeshActivityModel({ meshtastic: 90 }, new Set(['meshcore']), series);
+  assert.ok(all.spark && mtOnly.spark);
+  // All-visible sums to a flat [100,100]; meshcore-hidden rises [10,90] — the
+  // curve rebases with the toggle just like the headline total.
+  assert.notEqual(all.spark.line, mtOnly.spark.line);
 });
 
 test('buildMeshActivityModel never renders reticulum', () => {
@@ -105,7 +122,10 @@ test('buildMeshActivityModel hides when packets are absent or malformed', () => 
 
 test('renderMeshActivityCardHtml emits total/rows/icons; sparkline only with a series', () => {
   const withSpark = renderMeshActivityCardHtml(
-    buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), [10, 20])
+    buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), [
+      { meshcore: 5, meshtastic: 10 },
+      { meshcore: 8, meshtastic: 12 },
+    ])
   );
   assert.match(withSpark, /map-activity-card__total-value">120</);
   assert.match(withSpark, /packets\/h/);
@@ -134,6 +154,7 @@ test('createMeshActivityCard renders, adds the sparkline via setSeries, hides on
   const env = createDomEnvironment();
   try {
     const card = createMeshActivityCard(env.document);
+    assert.equal(card.element.getAttribute('role'), 'group');
     assert.equal(card.element.classList.contains('map-activity-card--hidden'), true);
 
     // Live rates → visible, no sparkline yet.
@@ -146,7 +167,7 @@ test('createMeshActivityCard renders, adds the sparkline via setSeries, hides on
     assert.doesNotMatch(card.element.innerHTML, /map-activity-card__spark/);
 
     // Series arrives → repaint with the sparkline, rates preserved.
-    assert.equal(card.setSeries([10, 20, 30]), true);
+    assert.equal(card.setSeries([{ meshcore: 5, meshtastic: 10 }, { meshcore: 8, meshtastic: 12 }]), true);
     assert.match(card.element.innerHTML, /map-activity-card__spark-line/);
     assert.match(card.element.innerHTML, /map-activity-card__total-value">120</);
 
@@ -163,7 +184,7 @@ test('createMeshActivityCard setSeries before rates stays hidden until rates arr
   const env = createDomEnvironment();
   try {
     const card = createMeshActivityCard(env.document);
-    assert.equal(card.setSeries([10, 20]), false); // nothing to show without rates
+    assert.equal(card.setSeries([{ meshcore: 5, meshtastic: 10 }, { meshcore: 8, meshtastic: 12 }]), false); // nothing to show without rates
     assert.equal(card.element.classList.contains('map-activity-card--hidden'), true);
     assert.equal(
       card.render({ packets: { total: 50, meshtastic: 50 }, hiddenProtocols: new Set() }),

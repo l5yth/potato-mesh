@@ -260,25 +260,34 @@ let activitySeriesFetchPromise = null;
 let activitySeriesFetchImpl = null;
 
 /**
- * Reduce a ``/api/stats/activity`` payload to the per-bucket total series the
- * mesh-activity sparkline draws (SPEC F2-4).
+ * Reduce a ``/api/stats/activity`` payload to the per-bucket **per-protocol**
+ * rates the mesh-activity sparkline draws (SPEC F2-4). Keeping the protocols
+ * split (rather than pre-summing to a total) lets the card rebase the curve
+ * with the meta-row toggles, exactly like the headline number.
  *
  * @param {*} payload Candidate JSON (array of bucket objects).
- * @returns {Array<number>|null} Oldest-first total packets/hour, or null when
- *   there is nothing usable.
+ * @returns {Array<{meshcore: number, meshtastic: number}>|null} Oldest-first
+ *   per-protocol packets/hour, or null when there is nothing usable.
  */
 export function normaliseActivitySeries(payload) {
   if (!Array.isArray(payload)) {
     return null;
   }
-  const totals = [];
+  const series = [];
   for (const bucket of payload) {
-    const total = Number(bucket?.total);
-    if (Number.isFinite(total)) {
-      totals.push(Math.max(0, Math.trunc(total)));
+    if (!bucket || typeof bucket !== 'object') {
+      continue;
+    }
+    const meshcore = Number(bucket.meshcore);
+    const meshtastic = Number(bucket.meshtastic);
+    if (Number.isFinite(meshcore) || Number.isFinite(meshtastic)) {
+      series.push({
+        meshcore: Number.isFinite(meshcore) ? Math.max(0, Math.trunc(meshcore)) : 0,
+        meshtastic: Number.isFinite(meshtastic) ? Math.max(0, Math.trunc(meshtastic)) : 0,
+      });
     }
   }
-  return totals.length > 0 ? totals : null;
+  return series.length > 0 ? series : null;
 }
 
 /**

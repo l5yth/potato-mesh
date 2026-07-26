@@ -1181,3 +1181,25 @@ relative to the role chips, which highlight when a role is **visible**. Fixed in
 | # | Decision | Source |
 | --- | --- | --- |
 | **NT1** | The neighbor/trace line toggles set `aria-pressed="true"` when their lines are **visible** (highlighted = shown), consistent with the role chips (LC2) and the meta-row protocol toggles; previously reversed (pressed when hidden). Presentation-only, no data/API change. | review |
+
+---
+
+## Bugfix: Mesh activity design-review remediation
+
+A Claude-Design review of the shipped F1/F2 work against the 1a/1c/1d design. The
+card, the real-data sparkline, and the toggle rebasing all matched or bettered the
+design; this section remediates the one regression and the mobile/charts
+divergences it found. Presentation + read-side only; no API/DB change.
+**Conflict check:** **fixes** an MA-F3 regression and **extends** MA-F4/MA-F5/F2-4
+(the sparkline now rebases with the toggles); consistent with all invariants.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **MR1** | **Idle card stays hidden on mobile (MA-F3 regression fix).** The mobile media query set `.map-activity-card { display: flex }`, which outranked `.map-activity-card--hidden { display: none }` (equal specificity, later rule) and the `[hidden]` attribute, so an idle card painted an empty pill over the map. `.map-activity-card--hidden { display: none }` is re-declared inside the media query. | review |
+| **MR2** | **Mobile strip is a full-width caption (design 1d).** Below the mobile breakpoint the bottom-left Leaflet control spans the map (`left: 0; right: 0`, 8px inset) at ≥ 32px tall with the protocol split pushed to the far edge (`margin-left: auto`), so it reads as a map caption rather than a content-width corner pill. | review |
+| **MR3** | **Mobile breakpoint aligned to the app band.** The strip triggers at ≤ 659px (the app's mobile band, UX9), not a one-off 640px. | review |
+| **MR4** | **Sparkline headroom.** `sparklinePathsFromSeries` scales to `max × 1.15`, so the busiest hour's vertex sits below the box edge and the 1.5px stroke is never clipped. | review |
+| **MR5** | **Sparkline rebases with the toggles.** The curve is the sum of the **visible** protocols per bucket (from `/api/stats/activity`'s per-protocol fields), so it agrees with the headline total once a protocol is toggled off — previously the number rebased but the curve stayed all-protocol. Extends MA-F4 / F2-4. | review |
+| **MR6** | **Card is a labelled `group`.** The card root carries `role="group"` so its `aria-label` is announced (a bare div's is not); children stay readable, unlike `role="img"`. | review |
+| **MR7** | **`/charts` intro is protocol-neutral.** The all-protocol "Network telemetry trends" heading no longer carries the single Meshtastic badge (`charts.erb`), matching the de-scoped copy (F2-5). | review |
+| **MR8** | **Utilization second-axis (design 1c) explicitly out of scope.** The packets/h right-hand axis overlay on the channel-utilization chart was **not** built — the standalone "Mesh activity" figure (F2-5) is the shipped scope; recorded so the design is not re-litigated. | review |

@@ -86,7 +86,9 @@ export function sparklinePathsFromSeries(totals) {
   const left = 1;
   const top = 2;
   const bottom = 24;
-  const max = totals.reduce((peak, value) => Math.max(peak, value), 0);
+  // 15% headroom above the series max so the busiest hour's vertex sits below
+  // the top edge and the 1.5px stroke is never clipped (F2 review).
+  const max = totals.reduce((peak, value) => Math.max(peak, value), 0) * 1.15;
   const last = totals.length - 1;
   const points = totals.map((value, index) => {
     const x = round2(left + (index * width) / last);
@@ -114,6 +116,30 @@ function coerceRate(value) {
 }
 
 /**
+ * Sum the **visible** protocols' packets/hour in each sparkline bucket, so the
+ * curve rebases with the meta-row toggles exactly like the headline total does
+ * (F2 review — otherwise the number and the curve measure different things once
+ * a protocol is toggled off).
+ *
+ * @param {?Array<{meshcore?: number, meshtastic?: number}>} series Per-bucket
+ *   per-protocol rates from ``/api/stats/activity``.
+ * @param {Set<string>} hidden Protocols the user has toggled off.
+ * @returns {Array<number>|null} Per-bucket visible totals, or null.
+ */
+function visibleSeriesTotals(series, hidden) {
+  if (!Array.isArray(series)) return null;
+  return series.map(bucket => {
+    let sum = 0;
+    for (const entry of PROTOCOL_ROWS) {
+      if (hidden.has(entry.protocol)) continue;
+      const value = Number(bucket?.[entry.protocol]);
+      if (Number.isFinite(value) && value >= 0) sum += value;
+    }
+    return sum;
+  });
+}
+
+/**
  * Derive the render model from the packet rates, hidden-protocol set, and the
  * sparkline series.
  *
@@ -123,12 +149,14 @@ function coerceRate(value) {
  * rebases it, MA-F4), and each row's bar is sized relative to the busiest
  * visible protocol. The card is visible only when at least one protocol row
  * survives and the total is greater than 0 (MA-F3). ``spark`` is the sparkline
- * paths from the total series, or null when absent (F2-4).
+ * paths over the **visible** protocols' per-bucket sum, or null when absent
+ * (F2-4) — so the curve rebases with the toggles just like the total.
  *
  * @param {?{total?: number, meshcore?: number, meshtastic?: number}} packets
  *   Per-scope packets/hour rates from ``/api/stats`` (``stats.packets``).
  * @param {?Set<string>} hiddenProtocols Protocols the user has toggled off.
- * @param {?Array<number>} series Per-bucket total packets/hour for the sparkline.
+ * @param {?Array<{meshcore?: number, meshtastic?: number}>} series Per-bucket
+ *   per-protocol packets/hour for the sparkline.
  * @returns {{visible: boolean, total: number, rows: Array<{label: string, iconSrc: string, rate: number, barPct: number}>, spark: ({line: string, area: string}|null)}}
  *   The render model.
  */
@@ -152,7 +180,7 @@ export function buildMeshActivityModel(packets, hiddenProtocols, series) {
     visible: rows.length > 0 && total > 0,
     total,
     rows,
-    spark: sparklinePathsFromSeries(series),
+    spark: sparklinePathsFromSeries(visibleSeriesTotals(series, hidden)),
   };
 }
 
@@ -221,6 +249,9 @@ export function createMeshActivityCard(doc = globalThis.document) {
   }
   const element = doc.createElement('div');
   element.classList.add('map-activity-card');
+  // A labelled `group` so the aria-label is announced (a bare div's label is
+  // not); children stay readable, unlike role="img" (F2 review).
+  element.setAttribute('role', 'group');
 
   let lastPackets = null;
   let lastHidden = null;
