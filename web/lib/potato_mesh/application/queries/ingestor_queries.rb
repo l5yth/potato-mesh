@@ -92,6 +92,82 @@ module PotatoMesh
       def packets_per_hour_rate(total_packets)
         (total_packets / PACKETS_PER_HOUR_DIVISOR).round
       end
+
+      # Aggregate mesh-wide packets/hour into ascending time buckets (SPEC F2).
+      #
+      # Each bucket carries the packets/hour rate per protocol, computed the
+      # same way as the live {#query_packets_per_hour} (SPEC MA4): per protocol,
+      # +MAX+ over that protocol's ingestors of their summed packets in the
+      # bucket; +total+ is the +SUM+ across protocols; each is divided by the
+      # bucket's hour-span to a rate. Only +meshcore+/+meshtastic+ are emitted
+      # as keys (reticulum still contributes to +total+ but has no series yet,
+      # mirroring {#query_packets_per_hour}). The window is clamped to the
+      # 28-day visibility floor (C4); the route pre-validates the bucket count
+      # against +MAX_QUERY_LIMIT+ and this query caps the row count too.
+      #
+      # @param window_seconds [Integer] span to include, in seconds.
+      # @param bucket_seconds [Integer] bucket width, in seconds.
+      # @param since [Integer] extra lower-bound timestamp (unix seconds).
+      # @param now [Integer] reference unix timestamp (exposed for tests).
+      # @param db [SQLite3::Database, nil] optional open handle to reuse.
+      # @return [Array<Hash>] ascending buckets, each +{ "bucket_start",
+      #   "bucket_end", "total", "meshcore", "meshtastic" }+ with integer
+      #   packets/hour rates.
+      def query_activity_buckets(window_seconds:, bucket_seconds:, since: 0, now: Time.now.to_i, db: nil)
+        window = coerce_integer(window_seconds) || DEFAULT_ACTIVITY_WINDOW_SECONDS
+        window = DEFAULT_ACTIVITY_WINDOW_SECONDS if window <= 0
+        window = clamp_window_seconds(window) || DEFAULT_ACTIVITY_WINDOW_SECONDS
+        bucket = coerce_integer(bucket_seconds) || DEFAULT_ACTIVITY_BUCKET_SECONDS
+        bucket = DEFAULT_ACTIVITY_BUCKET_SECONDS if bucket <= 0
+
+        handle = db || open_database(readonly: true)
+        handle.results_as_hash = true
+        reference_now = coerce_integer(now) || Time.now.to_i
+        since_threshold = normalize_since_threshold(since, floor: reference_now - window)
+
+        rows = with_busy_retry do
+          handle.execute(<<~SQL, [bucket, bucket, since_threshold, MAX_QUERY_LIMIT])
+            SELECT bucket_start, p, MAX(ingestor_total) AS protocol_max
+            FROM (
+              SELECT ((at / ?) * ?) AS bucket_start, protocol AS p, ingestor_id,
+                     SUM(packets) AS ingestor_total
+              FROM ingestor_activity
+              WHERE at >= ?
+              GROUP BY bucket_start, p, ingestor_id
+            )
+            GROUP BY bucket_start, p
+            ORDER BY bucket_start ASC
+            LIMIT ?
+          SQL
+        end
+
+        hours = bucket / 3600.0
+        buckets = {}
+        order = []
+        rows.each do |row|
+          bucket_start = coerce_integer(row["bucket_start"])
+          next unless bucket_start
+          entry = buckets[bucket_start]
+          unless entry
+            entry = {
+              "bucket_start" => bucket_start,
+              "bucket_end" => bucket_start + bucket,
+              "total" => 0,
+              "meshcore" => 0,
+              "meshtastic" => 0,
+            }
+            buckets[bucket_start] = entry
+            order << bucket_start
+          end
+          rate = ((coerce_integer(row["protocol_max"]) || 0) / hours).round
+          entry["total"] += rate
+          protocol = row["p"]
+          entry[protocol] = rate if entry.key?(protocol)
+        end
+        order.map { |key| buckets[key] }
+      ensure
+        handle&.close unless db
+      end
     end
   end
 end

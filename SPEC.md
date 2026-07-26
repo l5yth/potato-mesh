@@ -1136,3 +1136,33 @@ import map. No invariant is contradicted.
 | **MA-F4** | **Toggle-reactive rebasing (Invariant IV parity).** A protocol hidden via the meta-row protocol toggle (the existing `hiddenProtocols` set) drops its row and rebases the displayed total to the **sum of the visible** protocol rates — the same treatment for both protocols, identical to how the node counts already rebase. Toggling re-runs `applyFilter`, which re-renders the card; hiding **all** protocols unmounts it. | interview + code |
 | **MA-F5** | **Sparkline is an explicit placeholder.** The 24-hour sparkline renders a **deterministic illustrative curve** carrying `data-placeholder="true"` and an in-code comment — it is **not** live history and never claims to be. Real history is deferred to a follow-up (an `ingestor_activity` time-series endpoint, bucketed like `/api/telemetry/aggregated`), tracked as feature **F2**, which also unblocks the `/charts` figures (design option 1c). | interview |
 | **MA-F6** | **Engineering bar (D9) & scope.** Frontend/read-side only — no API/DB/ingestor change (D8, §3.3), apex (I) untouched. The DOM-building logic lives in `map-activity-card.js` at **100 % unit coverage** (JSDoc, Apache header); `main.js` holds only the Leaflet-control wiring + the one render call in the stats callback (integration-only, matching the sibling legend control). The module self-registers in the cache-busting import map (AV3). `npm test` stays green; no Ruby/Python change. | CLAUDE.md |
+
+---
+
+## Feature: Mesh activity time-series (F2)
+
+Adds a bucketed packets/hour time-series over `ingestor_activity` so the map
+card's 24 h sparkline (MA-F5) and a protocol-aware `/charts` figure render on
+real history instead of a placeholder. Backend: `GET /api/stats/activity` +
+`query_activity_buckets` (`web/lib/potato_mesh/application/queries/ingestor_queries.rb`)
++ the route in `application/routes/api.rb`. Frontend: `map-activity-card.js`
+(real sparkline) and `charts-page.js` + `views/charts.erb` (the new figure).
+Read-side, additive; no ingest or DB-schema change.
+
+**Conflict check.** *Apex I / §3.3* — **consistent**: a read of the existing
+local DB; no broker, egress, or ingest path. *Privacy II* — **consistent**:
+packets are a public aggregate (no message content), un-gated like MA5. *Parity
+IV* — **extends**: the series and the chart are per-protocol and equal, and the
+`/charts` intro stops naming a single protocol. *D8* — **extends**: a new
+additive endpoint (snake_case params, no version bump); the camelCase
+`/aggregated` params remain BP9's separate migration. No invariant is
+contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **F2-1** | **New `GET /api/stats/activity`.** Bucketed packets/hour series over `ingestor_activity`, mirroring `/api/telemetry/aggregated` (window clamped to the 28-day floor, bucket count capped at `MAX_QUERY_LIMIT`, `ApiCache`), but with **snake_case** `window_seconds`/`bucket_seconds` params — the API norm. Returns `[{ bucket_start, bucket_end, total, meshcore, meshtastic }, …]` ascending. The lone camelCase params on `/aggregated` stay the tracked BP9 migration, not folded in here. | interview |
+| **F2-2** | **Per-bucket aggregation mirrors MA4.** Within each bucket, per protocol = **MAX** over that protocol's ingestors of their summed packets; `total` = **SUM** across protocols; each ÷ (`bucket_seconds`/3600) to a packets/hour rate. `reticulum` folds into `total` but emits no series (consistent with `query_packets_per_hour`). | interview + code |
+| **F2-3** | **No new retention.** `ingestor_activity` is already retained a year; the 28-day API clamp is the only ceiling. The card requests **24 h / 1 h** buckets, the `/charts` figure **7 d / 2 h**. | code |
+| **F2-4** | **Card real sparkline.** The MA-F5 placeholder is replaced by the real 24 h series from `/api/stats/activity`, fetched on a slower cadence with its own short cache (the trend moves slowly — not every refresh). On fetch failure the sparkline is omitted but the live total/rows (from `/api/stats`) still render — the card never regresses to a fake curve. | interview |
+| **F2-5** | **Charts page — protocol-aware, all-protocol.** A "Mesh activity" figure (packets/h per protocol, 7 d) is added to `/charts` **between** the channel-utilization and environmental figures. The intro no longer names "Meshtastic": the aggregated telemetry (`query_telemetry_buckets`) already carries **all** protocols (MeshCore telemetry included since the telemetry pull shipped) — the prior wording mislabelled all-protocol data. Invariant IV. | interview |
+| **F2-6** | **Engineering bar (D9).** 100 % unit tests (rspec for `query_activity_buckets` + the route; node --test for the card sparkline + charts figure), full RDoc/JSDoc, Apache headers, `rufo`/`black` clean; `CONTRACTS.md` documents the new endpoint; all suites stay green. | CLAUDE.md |

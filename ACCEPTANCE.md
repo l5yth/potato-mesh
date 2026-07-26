@@ -4193,3 +4193,25 @@ response shape changes (so **S-A1**, **MA-A5**, **C2** are untouched), and the p
 figures are the same public aggregate MA5 already exposes (privacy **A2**/**S-A4**
 unchanged). The stats consumer (`stats.js`) gains `packets` parsing additively — the
 existing `normaliseActiveNodeStatsPayload` node-count assertions are unchanged, not removed.
+
+---
+
+## Feature: Mesh activity time-series (F2)
+
+Maps to SPEC decisions **F2-1…F2-6**. The bucket query lives in
+`ingestor_queries.rb` (`query_activity_buckets`) and the route in
+`application/routes/api.rb`; the sparkline + charts wiring is JS. Behaviour is
+verified by the Ruby and JS unit suites.
+
+### F2-A1 — `/api/stats/activity` serves a snake_case packets/hour series — F2-1/F2-2
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "query_activity_buckets" \
+                               spec/app_spec.rb -e "/api/stats/activity" )
+```
+**Expected:** pass. `GET /api/stats/activity?window_seconds=&bucket_seconds=` returns an
+ascending array of `{ bucket_start, bucket_end, total, meshcore, meshtastic }`; each
+protocol's value is the MAX over that protocol's ingestors of their summed `packets` in
+the bucket ÷ the bucket's hour-span, and `total` is the SUM across protocols (MA4).
+`reticulum` folds into `total` with no series key. A non-positive
+`window_seconds`/`bucket_seconds`, or a bucket count over `MAX_QUERY_LIMIT`, is a `400`;
+the window is clamped to the 28-day floor. Params are **snake_case** (no camelCase).

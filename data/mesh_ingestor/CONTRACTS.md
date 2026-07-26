@@ -341,6 +341,27 @@ do **not** accept `before`.
   announcement (MA6).
 - **`sampled`** is unchanged: always `false` (the counts are exact, not sampled).
 
+### GET /api/stats/activity packets/hour time-series (SPEC F2)
+
+A bucketed packets/hour series over `ingestor_activity`, feeding the mesh-activity
+map-card sparkline and the `/charts` activity figure. **snake_case** params (the
+API norm): `window_seconds` (default 86 400, clamped to the 28-day floor) and
+`bucket_seconds` (default 3 600); a bucket count over `MAX_QUERY_LIMIT` is a `400`.
+An optional `since` bypasses the response cache.
+
+```jsonc
+[
+  { "bucket_start": 1785000000, "bucket_end": 1785003600, "total": 120, "meshcore": 44, "meshtastic": 76 },
+  …
+]
+```
+
+Each bucket's per-protocol value is the **MAX** over that protocol's ingestors of
+their summed `packets` in the bucket, ÷ the bucket's hour-span → a packets/hour
+rate; `total` is the **SUM** across protocols (matching the live
+`<scope>.packets.hour`, SPEC MA4). `reticulum` folds into `total` but has no series
+key. Buckets are ascending by `bucket_start`. Additive, read-side — no version bump.
+
 ### GET /api/events live-update stream (SSE)
 
 A read-only **Server-Sent Events** stream (`text/event-stream`) that pushes thin

@@ -1343,6 +1343,88 @@ RSpec.describe PotatoMesh::App::Queries do
     end
   end
 
+  describe "#query_activity_buckets" do
+    before { with_db { |db| db.execute("DELETE FROM ingestor_activity") } }
+    after { with_db { |db| db.execute("DELETE FROM ingestor_activity") } }
+
+    def seed_activity_rows(rows)
+      with_db do |db|
+        rows.each do |ingestor_id, at, packets, protocol|
+          db.execute(
+            "INSERT INTO ingestor_activity(ingestor_id, at, packets, protocol) VALUES (?,?,?,?)",
+            [ingestor_id, at, packets, protocol],
+          )
+        end
+      end
+    end
+
+    it "returns an empty series when there is no activity" do
+      expect(
+        queries.query_activity_buckets(window_seconds: 86_400, bucket_seconds: 3_600, now: now)
+      ).to eq([])
+    end
+
+    it "computes MAX-per-protocol rates and a SUM total per 1h bucket" do
+      at = now - 100
+      seed_activity_rows(
+        [
+          ["!coreaaaa", at, 1200, "meshcore"], # busiest meshcore vantage
+          ["!corebbbb", at, 900, "meshcore"],  # quieter — MAX must ignore
+          ["!tastcccc", at, 720, "meshtastic"],
+        ],
+      )
+      series = queries.query_activity_buckets(window_seconds: 86_400, bucket_seconds: 3_600, now: now)
+      expect(series.length).to eq(1)
+      bucket = series.first
+      expect(bucket["bucket_start"]).to eq((at / 3_600) * 3_600)
+      expect(bucket["bucket_end"]).to eq((at / 3_600) * 3_600 + 3_600)
+      expect(bucket["meshcore"]).to eq(1200)
+      expect(bucket["meshtastic"]).to eq(720)
+      expect(bucket["total"]).to eq(1920) # SUM across protocols
+    end
+
+    it "divides each bucket's packet total by its hour span" do
+      seed_activity_rows([["!coreaaaa", now - 100, 88, "meshcore"]])
+      series = queries.query_activity_buckets(window_seconds: 86_400, bucket_seconds: 7_200, now: now)
+      expect(series.first["meshcore"]).to eq(44) # 88 / 2h
+    end
+
+    it "orders buckets ascending and excludes activity outside the window" do
+      seed_activity_rows(
+        [
+          ["!coreaaaa", now - 7_400, 60, "meshcore"],       # older bucket, in window
+          ["!coreaaaa", now - 100, 120, "meshcore"],        # newer bucket
+          ["!coreaaaa", now - 200_000, 999_999, "meshcore"], # > 24h → excluded
+        ],
+      )
+      series = queries.query_activity_buckets(window_seconds: 86_400, bucket_seconds: 3_600, now: now)
+      starts = series.map { |bucket| bucket["bucket_start"] }
+      expect(series.length).to eq(2)
+      expect(starts).to eq(starts.sort)
+    end
+
+    it "folds reticulum into the total but emits no reticulum series" do
+      seed_activity_rows(
+        [
+          ["!coreaaaa", now - 100, 3_600, "meshcore"],
+          ["!retiaaaa", now - 100, 1_800, "reticulum"],
+        ],
+      )
+      bucket = queries.query_activity_buckets(window_seconds: 86_400, bucket_seconds: 3_600, now: now).first
+      expect(bucket["meshcore"]).to eq(3600)
+      expect(bucket).not_to have_key("reticulum")
+      expect(bucket["total"]).to eq(3600 + 1800)
+    end
+
+    it "falls back to defaults for non-positive or missing window/bucket" do
+      seed_activity_rows([["!coreaaaa", now - 100, 3_600, "meshcore"]])
+      from_zero = queries.query_activity_buckets(window_seconds: 0, bucket_seconds: 0, now: now)
+      from_nil = queries.query_activity_buckets(window_seconds: nil, bucket_seconds: nil, now: now)
+      expect(from_zero.first["meshcore"]).to eq(3600) # 24h/1h defaults
+      expect(from_nil.first["meshcore"]).to eq(3600)
+    end
+  end
+
   describe "#query_telemetry_buckets" do
     it "clamps oversized window_seconds to the 28-day visibility cap" do
       huge_window = PotatoMesh::Config.four_weeks_seconds * 50
