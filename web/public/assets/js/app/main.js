@@ -20,6 +20,7 @@ import {
   computeLocalActiveNodeStats,
   normaliseActiveNodeStatsPayload,
   fetchActiveNodeStats,
+  fetchActivitySeries,
   formatActiveNodeStatsText,
   formatActiveNodeStatsHtml,
 } from './stats.js';
@@ -4854,6 +4855,12 @@ export function initializeApp(config) {
       // applyFilter, so this refreshes the card on both data and toggle changes.
       if (meshActivityCard) {
         meshActivityCard.render({ packets: stats && stats.packets, hiddenProtocols });
+        // The 24h sparkline series is fetched separately (cached ~5 min, F2-4);
+        // setSeries repaints the card when it resolves, and null on failure just
+        // omits the sparkline.
+        void fetchActivitySeries({}).then(series => {
+          if (meshActivityCard) meshActivityCard.setSeries(series);
+        });
       }
     });
   }

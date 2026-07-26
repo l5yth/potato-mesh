@@ -249,3 +249,82 @@ export function formatActiveNodeStatsHtml({ stats }) {
     ` · ${week} this week`
   );
 }
+
+// Module-level cache for the activity time-series. The 24 h trend moves slowly,
+// so a longer TTL keeps the map card from re-fetching it on every filter/refresh.
+const ACTIVITY_SERIES_CACHE_TTL_MS = 300_000;
+const ACTIVITY_SERIES_WINDOW_SECONDS = 86_400;
+const ACTIVITY_SERIES_BUCKET_SECONDS = 3_600;
+let activitySeriesCache = null;
+let activitySeriesFetchPromise = null;
+let activitySeriesFetchImpl = null;
+
+/**
+ * Reduce a ``/api/stats/activity`` payload to the per-bucket total series the
+ * mesh-activity sparkline draws (SPEC F2-4).
+ *
+ * @param {*} payload Candidate JSON (array of bucket objects).
+ * @returns {Array<number>|null} Oldest-first total packets/hour, or null when
+ *   there is nothing usable.
+ */
+export function normaliseActivitySeries(payload) {
+  if (!Array.isArray(payload)) {
+    return null;
+  }
+  const totals = [];
+  for (const bucket of payload) {
+    const total = Number(bucket?.total);
+    if (Number.isFinite(total)) {
+      totals.push(Math.max(0, Math.trunc(total)));
+    }
+  }
+  return totals.length > 0 ? totals : null;
+}
+
+/**
+ * Fetch the 24-hour packets/hour total series for the map-card sparkline
+ * (SPEC F2) with a long-lived cache. Fails soft to null on any error so the
+ * card simply omits the sparkline (F2-4) rather than throwing.
+ *
+ * @param {{fetchImpl?: Function}} [params] Fetch parameters.
+ * @returns {Promise<Array<number>|null>} Total series, or null.
+ */
+export async function fetchActivitySeries({ fetchImpl = fetch } = {}) {
+  const nowMs = Date.now();
+  if (activitySeriesCache?.fetchImpl === fetchImpl && activitySeriesCache.expiresAt > nowMs) {
+    return activitySeriesCache.series;
+  }
+  if (activitySeriesFetchPromise && activitySeriesFetchImpl === fetchImpl) {
+    return activitySeriesFetchPromise;
+  }
+
+  activitySeriesFetchImpl = fetchImpl;
+  activitySeriesFetchPromise = (async () => {
+    try {
+      const url =
+        `/api/stats/activity?window_seconds=${ACTIVITY_SERIES_WINDOW_SECONDS}` +
+        `&bucket_seconds=${ACTIVITY_SERIES_BUCKET_SECONDS}`;
+      const response = await fetchImpl(url, { cache: 'default' });
+      if (!response?.ok) {
+        return null;
+      }
+      const series = normaliseActivitySeries(await response.json());
+      activitySeriesCache = {
+        fetchImpl,
+        expiresAt: Date.now() + ACTIVITY_SERIES_CACHE_TTL_MS,
+        series,
+      };
+      return series;
+    } catch (error) {
+      console.debug('Failed to fetch /api/stats/activity; sparkline omitted.', error);
+      return null;
+    }
+  })();
+
+  try {
+    return await activitySeriesFetchPromise;
+  } finally {
+    activitySeriesFetchPromise = null;
+    activitySeriesFetchImpl = null;
+  }
+}

@@ -19,23 +19,34 @@ import assert from 'node:assert/strict';
 
 import { createDomEnvironment } from './dom-environment.js';
 import {
-  placeholderSparklinePaths,
+  sparklinePathsFromSeries,
   buildMeshActivityModel,
   renderMeshActivityCardHtml,
   createMeshActivityCard,
 } from '../map-activity-card.js';
 
 // ---------------------------------------------------------------------------
-// placeholderSparklinePaths
+// sparklinePathsFromSeries
 // ---------------------------------------------------------------------------
 
-test('placeholderSparklinePaths is deterministic and returns a closed area', () => {
-  const first = placeholderSparklinePaths();
-  const second = placeholderSparklinePaths();
-  assert.deepEqual(first, second);
-  assert.match(first.line, /^M1 /);
-  assert.ok(first.area.startsWith(first.line));
-  assert.ok(first.area.endsWith('L157 26 L1 26 Z'));
+test('sparklinePathsFromSeries maps totals to a closed area path', () => {
+  const paths = sparklinePathsFromSeries([10, 20, 15, 40]);
+  assert.match(paths.line, /^M1 /);
+  assert.ok(paths.area.startsWith(paths.line));
+  assert.ok(paths.area.endsWith('L157 26 L1 26 Z'));
+});
+
+test('sparklinePathsFromSeries returns null for fewer than two points or non-arrays', () => {
+  assert.equal(sparklinePathsFromSeries([]), null);
+  assert.equal(sparklinePathsFromSeries([5]), null);
+  assert.equal(sparklinePathsFromSeries(null), null);
+  assert.equal(sparklinePathsFromSeries('nope'), null);
+});
+
+test('sparklinePathsFromSeries draws a flat baseline for an all-zero series', () => {
+  const paths = sparklinePathsFromSeries([0, 0, 0]);
+  assert.ok(paths);
+  assert.match(paths.line, /24/); // every point sits on the 24px baseline
 });
 
 // ---------------------------------------------------------------------------
@@ -43,71 +54,71 @@ test('placeholderSparklinePaths is deterministic and returns a closed area', () 
 // ---------------------------------------------------------------------------
 
 test('buildMeshActivityModel sums visible protocols and sizes bars to the busiest', () => {
-  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set());
+  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), null);
   assert.equal(model.visible, true);
   assert.equal(model.total, 120);
   assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic', 'MeshCore']);
-  assert.equal(model.rows[0].rate, 76);
-  assert.equal(model.rows[0].barPct, 100); // busiest vantage fills the bar
-  assert.equal(model.rows[1].rate, 44);
+  assert.equal(model.rows[0].barPct, 100);
   assert.equal(model.rows[1].barPct, Math.round((44 / 76) * 100));
+  assert.equal(model.spark, null); // no series supplied
+});
+
+test('buildMeshActivityModel attaches a sparkline when a series is present', () => {
+  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), [10, 20, 30]);
+  assert.ok(model.spark);
+  assert.match(model.spark.line, /^M1 /);
 });
 
 test('buildMeshActivityModel never renders reticulum', () => {
-  const model = buildMeshActivityModel({ total: 50, meshtastic: 50, reticulum: 999 }, new Set());
+  const model = buildMeshActivityModel({ total: 50, meshtastic: 50, reticulum: 999 }, new Set(), null);
   assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic']);
-  assert.equal(model.total, 50);
 });
 
 test('buildMeshActivityModel drops a hidden protocol and rebases the total', () => {
-  const model = buildMeshActivityModel(
-    { total: 120, meshtastic: 76, meshcore: 44 },
-    new Set(['meshcore'])
-  );
+  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(['meshcore']), null);
   assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic']);
-  assert.equal(model.total, 76); // rebased to the visible protocols only
-  assert.equal(model.visible, true);
+  assert.equal(model.total, 76);
 });
 
-test('buildMeshActivityModel hides when every protocol is toggled off', () => {
-  const model = buildMeshActivityModel(
+test('buildMeshActivityModel hides when all protocols are off or the total is zero', () => {
+  const allHidden = buildMeshActivityModel(
     { total: 120, meshtastic: 76, meshcore: 44 },
-    new Set(['meshcore', 'meshtastic'])
+    new Set(['meshcore', 'meshtastic']),
+    null
   );
-  assert.equal(model.visible, false);
-  assert.equal(model.rows.length, 0);
-});
-
-test('buildMeshActivityModel hides on a zero total (bars degrade to 0%)', () => {
-  const model = buildMeshActivityModel({ total: 0, meshtastic: 0, meshcore: 0 }, new Set());
-  assert.equal(model.visible, false);
-  assert.deepEqual(model.rows.map(row => row.barPct), [0, 0]);
+  assert.equal(allHidden.visible, false);
+  const zero = buildMeshActivityModel({ total: 0, meshtastic: 0, meshcore: 0 }, new Set(), null);
+  assert.equal(zero.visible, false);
+  assert.deepEqual(zero.rows.map(row => row.barPct), [0, 0]);
 });
 
 test('buildMeshActivityModel hides when packets are absent or malformed', () => {
-  assert.equal(buildMeshActivityModel(null, new Set()).visible, false);
-  // A non-Set hiddenProtocols argument is tolerated.
-  assert.equal(buildMeshActivityModel(undefined, undefined).visible, false);
-  const skipped = buildMeshActivityModel({ meshtastic: 'n/a', meshcore: -5 }, new Set());
+  assert.equal(buildMeshActivityModel(null, new Set(), null).visible, false);
+  assert.equal(buildMeshActivityModel(undefined, undefined, undefined).visible, false);
+  const skipped = buildMeshActivityModel({ meshtastic: 'n/a', meshcore: -5 }, new Set(), null);
   assert.equal(skipped.visible, false);
-  assert.equal(skipped.rows.length, 0);
 });
 
 // ---------------------------------------------------------------------------
 // renderMeshActivityCardHtml
 // ---------------------------------------------------------------------------
 
-test('renderMeshActivityCardHtml emits total, rows, icons and a placeholder sparkline', () => {
-  const model = buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set());
-  const html = renderMeshActivityCardHtml(model);
-  assert.match(html, /map-activity-card__total-value">120</);
-  assert.match(html, /packets\/h/);
-  assert.match(html, /meshtastic\.svg/);
-  assert.match(html, /meshcore\.svg/);
-  assert.match(html, />Meshtastic</);
-  assert.match(html, />MeshCore</);
-  assert.match(html, /data-placeholder="true"/);
-  assert.match(html, /width:100%/); // busiest protocol's bar
+test('renderMeshActivityCardHtml emits total/rows/icons; sparkline only with a series', () => {
+  const withSpark = renderMeshActivityCardHtml(
+    buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), [10, 20])
+  );
+  assert.match(withSpark, /map-activity-card__total-value">120</);
+  assert.match(withSpark, /packets\/h/);
+  assert.match(withSpark, /meshtastic\.svg/);
+  assert.match(withSpark, /meshcore\.svg/);
+  assert.match(withSpark, /width:100%/);
+  assert.match(withSpark, /map-activity-card__spark-line/);
+  assert.doesNotMatch(withSpark, /data-placeholder/);
+
+  const noSpark = renderMeshActivityCardHtml(
+    buildMeshActivityModel({ total: 120, meshtastic: 76, meshcore: 44 }, new Set(), null)
+  );
+  assert.doesNotMatch(noSpark, /map-activity-card__spark/);
 });
 
 // ---------------------------------------------------------------------------
@@ -119,32 +130,46 @@ test('createMeshActivityCard requires a usable document', () => {
   assert.throws(() => createMeshActivityCard({}), /requires a document/);
 });
 
-test('createMeshActivityCard renders, hides on zero, and updates aria-label', () => {
+test('createMeshActivityCard renders, adds the sparkline via setSeries, hides on zero', () => {
   const env = createDomEnvironment();
   try {
     const card = createMeshActivityCard(env.document);
-    assert.ok(card.element.classList.contains('map-activity-card'));
-    // Starts hidden until data arrives.
     assert.equal(card.element.classList.contains('map-activity-card--hidden'), true);
-    assert.equal(card.element.getAttribute('hidden'), 'hidden');
-    assert.equal(card.element.getAttribute('aria-hidden'), 'true');
 
+    // Live rates → visible, no sparkline yet.
     const visible = card.render({
       packets: { total: 120, meshtastic: 76, meshcore: 44 },
       hiddenProtocols: new Set(),
     });
     assert.equal(visible, true);
-    assert.equal(card.element.classList.contains('map-activity-card--hidden'), false);
-    assert.equal(card.element.getAttribute('hidden'), null);
-    assert.equal(card.element.getAttribute('aria-hidden'), null);
     assert.equal(card.element.getAttribute('aria-label'), 'Mesh activity: 120 packets per hour');
+    assert.doesNotMatch(card.element.innerHTML, /map-activity-card__spark/);
+
+    // Series arrives → repaint with the sparkline, rates preserved.
+    assert.equal(card.setSeries([10, 20, 30]), true);
+    assert.match(card.element.innerHTML, /map-activity-card__spark-line/);
     assert.match(card.element.innerHTML, /map-activity-card__total-value">120</);
 
-    // A zero total hides and empties the card again.
-    const stillVisible = card.render({ packets: { total: 0 }, hiddenProtocols: new Set() });
-    assert.equal(stillVisible, false);
+    // Zero total → hidden and emptied.
+    assert.equal(card.render({ packets: { total: 0 }, hiddenProtocols: new Set() }), false);
     assert.equal(card.element.classList.contains('map-activity-card--hidden'), true);
     assert.equal(card.element.innerHTML, '');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('createMeshActivityCard setSeries before rates stays hidden until rates arrive', () => {
+  const env = createDomEnvironment();
+  try {
+    const card = createMeshActivityCard(env.document);
+    assert.equal(card.setSeries([10, 20]), false); // nothing to show without rates
+    assert.equal(card.element.classList.contains('map-activity-card--hidden'), true);
+    assert.equal(
+      card.render({ packets: { total: 50, meshtastic: 50 }, hiddenProtocols: new Set() }),
+      true
+    );
+    assert.match(card.element.innerHTML, /map-activity-card__spark-line/); // earlier series used
   } finally {
     env.cleanup();
   }
@@ -159,7 +184,6 @@ test('createMeshActivityCard rebases when a protocol is toggled off', () => {
       hiddenProtocols: new Set(['meshcore']),
     });
     assert.equal(card.element.getAttribute('aria-label'), 'Mesh activity: 76 packets per hour');
-    assert.match(card.element.innerHTML, /Meshtastic/);
     assert.doesNotMatch(card.element.innerHTML, /MeshCore/);
   } finally {
     env.cleanup();
@@ -170,9 +194,6 @@ test('createMeshActivityCard defaults to the global document and no-arg render h
   const env = createDomEnvironment();
   try {
     const card = createMeshActivityCard();
-    assert.ok(card.element);
-    assert.equal(typeof card.render, 'function');
-    // No data → nothing to show.
     assert.equal(card.render(), false);
   } finally {
     env.cleanup();

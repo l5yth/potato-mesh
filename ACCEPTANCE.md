@@ -4215,3 +4215,16 @@ the bucket ÷ the bucket's hour-span, and `total` is the SUM across protocols (M
 `reticulum` folds into `total` with no series key. A non-positive
 `window_seconds`/`bucket_seconds`, or a bucket count over `MAX_QUERY_LIMIT`, is a `400`;
 the window is clamped to the 28-day floor. Params are **snake_case** (no camelCase).
+
+### F2-A2 — The map card draws its 24h sparkline from `/api/stats/activity` — F2-4
+```bash
+( cd web && node --test public/assets/js/app/__tests__/map-activity-card.test.js \
+                       public/assets/js/app/__tests__/stats.test.js )
+```
+**Expected:** pass. `fetchActivitySeries` GETs
+`/api/stats/activity?window_seconds=86400&bucket_seconds=3600`, caches it, and fails
+soft to `null` (non-OK / network error / empty). `sparklinePathsFromSeries` maps a
+≥2-point total series to an SVG path (null otherwise). The card is stateful:
+`render(rates)` and `setSeries(series)` each repaint from the last-known other; the
+sparkline appears only once a real series arrives (no `data-placeholder`, no fake
+curve) and is omitted on failure while the live total/rows still render.

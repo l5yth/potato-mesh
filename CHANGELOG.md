@@ -17,7 +17,7 @@ table, and reported-only disclosure rows.
 
 ### Features
 * Web: `GET /api/stats/activity` — bucketed packets/hour time-series over `ingestor_activity` (snake_case `window_seconds`/`bucket_seconds`), feeding the map-card sparkline and a protocol-aware `/charts` figure (SPEC F2)
-* Web: "Mesh activity" map card — bottom-left overlay showing packets/h (total + per-protocol split) from `/api/stats`, toggle-reactive and hidden when idle; the 24 h sparkline is a placeholder pending the activity time-series endpoint (SPEC MA-F1…MA-F6)
+* Web: "Mesh activity" map card — bottom-left overlay showing packets/h (total + per-protocol split) from `/api/stats`, toggle-reactive and hidden when idle, with a 24 h sparkline drawn from `/api/stats/activity` (SPEC MA-F1…MA-F6, F2-4)
 * Web: join strip renders the radio settings newcomers need; new `MESHTASTIC_PRESET`/`MESHTASTIC_FREQ` + `MESHCORE_PRESET`/`MESHCORE_FREQ` env vars (`CHANNEL`/`FREQUENCY` deprecated but honoured)
 * Web: node freshness buckets (live/today/stale) on table rows and map markers, riding the shared relative-time tick
 * Web: MeshCore nodes render as equal-area diamond map chips — shape encodes protocol, colour keeps encoding role

@@ -21,6 +21,8 @@ import {
   computeLocalActiveNodeStats,
   normaliseActiveNodeStatsPayload,
   fetchActiveNodeStats,
+  fetchActivitySeries,
+  normaliseActivitySeries,
   formatActiveNodeStatsText,
 } from '../stats.js';
 
@@ -362,4 +364,72 @@ test('formatActiveNodeStatsText emits the worded day/week vital sign', () => {
 test('formatActiveNodeStatsText handles missing or null stats gracefully', () => {
   const text = formatActiveNodeStatsText({ stats: null });
   assert.equal(text, '0 nodes today · 0 this week', 'defaults to zero counts for null stats');
+});
+
+// ---------------------------------------------------------------------------
+// activity time-series (SPEC F2-4) — feeds the map-card sparkline
+// ---------------------------------------------------------------------------
+
+test('normaliseActivitySeries extracts oldest-first totals, clamps and truncates', () => {
+  const totals = normaliseActivitySeries([
+    { bucket_start: 1, total: 10 },
+    { bucket_start: 2, total: 20.9 },
+    { bucket_start: 3, total: -4 }, // clamped to 0
+    { bucket_start: 4 }, // no total → skipped
+    'nope', // non-object → skipped
+  ]);
+  assert.deepEqual(totals, [10, 20, 0]);
+});
+
+test('normaliseActivitySeries returns null for non-arrays or all-unusable input', () => {
+  assert.equal(normaliseActivitySeries(null), null);
+  assert.equal(normaliseActivitySeries({}), null);
+  assert.equal(normaliseActivitySeries([]), null);
+  assert.equal(normaliseActivitySeries([{ total: 'x' }]), null);
+});
+
+test('fetchActivitySeries returns the normalised series on success', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    return { ok: true, async json() { return [{ total: 5 }, { total: 8 }]; } };
+  };
+  const series = await fetchActivitySeries({ fetchImpl });
+  assert.deepEqual(series, [5, 8]);
+  assert.match(calls[0], /\/api\/stats\/activity\?window_seconds=86400&bucket_seconds=3600/);
+});
+
+test('fetchActivitySeries fails soft to null on non-OK, error, and empty payloads', async () => {
+  assert.equal(await fetchActivitySeries({ fetchImpl: async () => ({ ok: false, status: 500 }) }), null);
+  assert.equal(await fetchActivitySeries({ fetchImpl: async () => { throw new Error('down'); } }), null);
+  assert.equal(
+    await fetchActivitySeries({ fetchImpl: async () => ({ ok: true, async json() { return []; } }) }),
+    null
+  );
+});
+
+test('fetchActivitySeries caches the result for repeated calls with the same fetchImpl', async () => {
+  let hits = 0;
+  const fetchImpl = async () => {
+    hits += 1;
+    return { ok: true, async json() { return [{ total: 1 }, { total: 2 }]; } };
+  };
+  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [1, 2]);
+  assert.deepEqual(await fetchActivitySeries({ fetchImpl }), [1, 2]);
+  assert.equal(hits, 1, 'the second call is served from cache');
+});
+
+test('fetchActivitySeries coalesces concurrent calls into one request', async () => {
+  let hits = 0;
+  const fetchImpl = async () => {
+    hits += 1;
+    return { ok: true, async json() { return [{ total: 3 }, { total: 4 }]; } };
+  };
+  const [a, b] = await Promise.all([
+    fetchActivitySeries({ fetchImpl }),
+    fetchActivitySeries({ fetchImpl }),
+  ]);
+  assert.deepEqual(a, [3, 4]);
+  assert.deepEqual(b, [3, 4]);
+  assert.equal(hits, 1, 'concurrent callers share one in-flight request');
 });

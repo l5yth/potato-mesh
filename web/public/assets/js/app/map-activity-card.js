@@ -15,27 +15,31 @@
  */
 
 /**
- * "Mesh activity" map-overlay card (SPEC MA-F1…MA-F6).
+ * "Mesh activity" map-overlay card (SPEC MA-F1…MA-F6, F2-4).
  *
  * Renders the mesh-wide packets/hour rate — the total and its per-protocol
  * split — as a small card pinned to the map's bottom-left corner (mirroring the
- * roles legend bottom-right). The figures come from ``/api/stats``'s
- * ``<scope>.packets.hour`` metric (parsed by {@link module:stats}); this module
- * only turns a ``{total, meshcore, meshtastic}`` rate bag plus the current
- * hidden-protocol set into DOM.
+ * roles legend bottom-right). The live figures come from ``/api/stats``'s
+ * ``<scope>.packets.hour`` metric; the 24-hour sparkline comes from the
+ * ``/api/stats/activity`` time-series (SPEC F2). This module turns those two
+ * inputs into DOM.
  *
  * Behaviour:
  * - ``reticulum`` is never rendered — only ``meshtastic`` and ``meshcore`` have
  *   rows (MA-F2).
- * - The card hides entirely when the visible total is 0, or when the payload
- *   carries no packet rates (MA-F3).
+ * - The card hides entirely when the visible total is 0 or the payload carries
+ *   no packet rates (MA-F3).
  * - A protocol hidden via the meta-row toggle (``hiddenProtocols``) drops its
- *   row and rebases the displayed total to the sum of the *visible* protocols,
- *   identically for both protocols (MA-F4, Invariant IV parity).
- * - The 24-hour sparkline is an explicit **placeholder** (a deterministic
- *   illustrative curve carrying ``data-placeholder="true"``), pending the
- *   ``ingestor_activity`` time-series endpoint (SPEC MA-F5 / follow-up F2). It
- *   never claims to be live history.
+ *   row and rebases the displayed total to the sum of the *visible* protocols
+ *   (MA-F4, Invariant IV parity).
+ * - The sparkline is drawn from the real 24-hour ``total`` series when present
+ *   (SPEC F2-4); when the series is absent or too short it is simply omitted —
+ *   the card never falls back to a fake curve. The sparkline shows the overall
+ *   total-activity trend and is not rebased by the protocol toggles.
+ *
+ * The controller is stateful: {@link MeshActivityCard#render} updates the live
+ * rates and {@link MeshActivityCard#setSeries} updates the sparkline series
+ * independently, each repainting from the last-known other.
  *
  * @module map-activity-card
  */
@@ -55,18 +59,6 @@ const PROTOCOL_ROWS = Object.freeze([
 ]);
 
 /**
- * Normalised daily activity curve (24 samples, 0..1) for the placeholder
- * sparkline. A fixed array keeps the rendered path deterministic — this is
- * illustrative chrome, not data (SPEC MA-F5).
- *
- * @type {ReadonlyArray<number>}
- */
-const PLACEHOLDER_SERIES = Object.freeze([
-  0.34, 0.3, 0.27, 0.25, 0.29, 0.4, 0.55, 0.63, 0.7, 0.67, 0.73, 0.81, 0.86,
-  0.78, 0.74, 0.83, 0.9, 0.85, 0.69, 0.59, 0.52, 0.47, 0.41, 0.37,
-]);
-
-/**
  * Round a number to two decimals for compact, stable SVG path output.
  *
  * @param {number} value Raw coordinate.
@@ -77,24 +69,29 @@ function round2(value) {
 }
 
 /**
- * Build the placeholder sparkline path strings from {@link PLACEHOLDER_SERIES}.
+ * Build the sparkline path strings from a series of per-bucket totals.
  *
- * The paths map the fixed series across a ``0 0 158 26`` viewBox (1 px inset on
- * the left, 2 px top / 24 px bottom band). Deterministic, so unit tests can
- * assert the exact output.
+ * Maps the totals across a ``0 0 158 26`` viewBox (1 px left inset, 2 px top /
+ * 24 px bottom band), scaled to the series maximum. Returns null when there are
+ * fewer than two points (nothing to draw) so the caller omits the sparkline
+ * rather than inventing one (SPEC F2-4).
  *
- * @returns {{line: string, area: string}} The open line path and the closed
- *   area path (line + baseline) for the two ``<path>`` elements.
+ * @param {?Array<number>} totals Per-bucket total packets/hour, oldest first.
+ * @returns {{line: string, area: string}|null} The open line path and closed
+ *   area path, or null when the series is unusable.
  */
-export function placeholderSparklinePaths() {
+export function sparklinePathsFromSeries(totals) {
+  if (!Array.isArray(totals) || totals.length < 2) return null;
   const width = 156;
   const left = 1;
   const top = 2;
   const bottom = 24;
-  const last = PLACEHOLDER_SERIES.length - 1;
-  const points = PLACEHOLDER_SERIES.map((value, index) => {
+  const max = totals.reduce((peak, value) => Math.max(peak, value), 0);
+  const last = totals.length - 1;
+  const points = totals.map((value, index) => {
     const x = round2(left + (index * width) / last);
-    const y = round2(bottom - value * (bottom - top));
+    const norm = max > 0 ? value / max : 0;
+    const y = round2(bottom - norm * (bottom - top));
     return { x, y };
   });
   const line = points
@@ -117,22 +114,25 @@ function coerceRate(value) {
 }
 
 /**
- * Derive the render model from the packet rates and the hidden-protocol set.
+ * Derive the render model from the packet rates, hidden-protocol set, and the
+ * sparkline series.
  *
- * Only ``meshtastic``/``meshcore`` are considered (reticulum is never shown);
- * a protocol that is hidden or carries no finite rate is dropped. The displayed
- * total is the **sum of the visible protocol rates** (so a toggled-off protocol
+ * Only ``meshtastic``/``meshcore`` are considered (reticulum is never shown); a
+ * protocol that is hidden or carries no finite rate is dropped. The displayed
+ * total is the sum of the visible protocol rates (so a toggled-off protocol
  * rebases it, MA-F4), and each row's bar is sized relative to the busiest
  * visible protocol. The card is visible only when at least one protocol row
- * survives and the total is greater than 0 (MA-F3).
+ * survives and the total is greater than 0 (MA-F3). ``spark`` is the sparkline
+ * paths from the total series, or null when absent (F2-4).
  *
  * @param {?{total?: number, meshcore?: number, meshtastic?: number}} packets
  *   Per-scope packets/hour rates from ``/api/stats`` (``stats.packets``).
  * @param {?Set<string>} hiddenProtocols Protocols the user has toggled off.
- * @returns {{visible: boolean, total: number, rows: Array<{label: string, iconSrc: string, rate: number, barPct: number}>}}
+ * @param {?Array<number>} series Per-bucket total packets/hour for the sparkline.
+ * @returns {{visible: boolean, total: number, rows: Array<{label: string, iconSrc: string, rate: number, barPct: number}>, spark: ({line: string, area: string}|null)}}
  *   The render model.
  */
-export function buildMeshActivityModel(packets, hiddenProtocols) {
+export function buildMeshActivityModel(packets, hiddenProtocols, series) {
   const hidden = hiddenProtocols instanceof Set ? hiddenProtocols : new Set();
   const rates = packets && typeof packets === 'object' ? packets : {};
   const visible = [];
@@ -148,17 +148,23 @@ export function buildMeshActivityModel(packets, hiddenProtocols) {
     ...row,
     barPct: maxRate > 0 ? Math.round((row.rate / maxRate) * 100) : 0,
   }));
-  return { visible: rows.length > 0 && total > 0, total, rows };
+  return {
+    visible: rows.length > 0 && total > 0,
+    total,
+    rows,
+    spark: sparklinePathsFromSeries(series),
+  };
 }
 
 /**
  * Render the card interior to an HTML string from a model.
  *
  * Every interpolated value is a static label, a constant icon URL, or a
- * number-coerced rate/percentage, so the markup needs no escaping (mirrors the
- * ``formatActiveNodeStatsHtml`` convention in {@link module:stats}).
+ * number-coerced rate/percentage/coordinate, so the markup needs no escaping
+ * (mirrors the ``formatActiveNodeStatsHtml`` convention in {@link module:stats}).
+ * The sparkline SVG is emitted only when ``model.spark`` is present (F2-4).
  *
- * @param {{total: number, rows: Array<{label: string, iconSrc: string, rate: number, barPct: number}>}} model
+ * @param {{total: number, rows: Array<{label: string, iconSrc: string, rate: number, barPct: number}>, spark: ({line: string, area: string}|null)}} model
  *   Render model from {@link buildMeshActivityModel}.
  * @returns {string} Inner HTML for the card element.
  */
@@ -175,7 +181,13 @@ export function renderMeshActivityCardHtml(model) {
       '</div>'
     )
     .join('');
-  const spark = placeholderSparklinePaths();
+  const sparkHtml = model.spark
+    ? '<svg class="map-activity-card__spark" viewBox="0 0 158 26" width="158" height="26" ' +
+        'aria-hidden="true" focusable="false">' +
+        `<path class="map-activity-card__spark-area" d="${model.spark.area}"></path>` +
+        `<path class="map-activity-card__spark-line" d="${model.spark.line}" fill="none"></path>` +
+      '</svg>'
+    : '';
   return (
     '<div class="map-activity-card__header">' +
       '<span class="map-activity-card__pulse" aria-hidden="true"></span>' +
@@ -185,11 +197,7 @@ export function renderMeshActivityCardHtml(model) {
       `<span class="map-activity-card__total-value">${model.total}</span>` +
       '<span class="map-activity-card__total-unit">packets/h</span>' +
     '</div>' +
-    '<svg class="map-activity-card__spark" data-placeholder="true" viewBox="0 0 158 26" ' +
-      'width="158" height="26" aria-hidden="true" focusable="false">' +
-      `<path class="map-activity-card__spark-area" d="${spark.area}"></path>` +
-      `<path class="map-activity-card__spark-line" d="${spark.line}" fill="none"></path>` +
-    '</svg>' +
+    sparkHtml +
     `<div class="map-activity-card__rows">${rowsHtml}</div>`
   );
 }
@@ -197,15 +205,15 @@ export function renderMeshActivityCardHtml(model) {
 /**
  * Create the Mesh-activity card controller.
  *
- * Builds the root ``.map-activity-card`` element once and returns a
- * {@link render} closure that updates it in place. The caller mounts
- * {@link MeshActivityCard#element} (e.g. inside a Leaflet ``bottomleft``
- * control) and calls {@link MeshActivityCard#render} whenever fresh stats or a
- * protocol-toggle change arrives.
+ * Builds the root ``.map-activity-card`` element once and returns a stateful
+ * controller. {@link MeshActivityCard#render} updates the live rates (from
+ * ``/api/stats``) and {@link MeshActivityCard#setSeries} updates the sparkline
+ * series (from ``/api/stats/activity``); each repaints from the last-known
+ * other, so the two data sources can arrive independently.
  *
  * @param {Document} [doc] DOM document (defaults to the global ``document``).
- * @returns {{element: HTMLElement, render: (data: {packets: ?Object, hiddenProtocols: ?Set<string>}) => boolean}}
- *   The card controller. ``render`` returns whether the card is visible.
+ * @returns {{element: HTMLElement, render: (data: {packets: ?Object, hiddenProtocols: ?Set<string>}) => boolean, setSeries: (series: ?Array<number>) => boolean}}
+ *   The card controller. ``render``/``setSeries`` return whether the card is visible.
  */
 export function createMeshActivityCard(doc = globalThis.document) {
   if (!doc || typeof doc.createElement !== 'function') {
@@ -213,6 +221,10 @@ export function createMeshActivityCard(doc = globalThis.document) {
   }
   const element = doc.createElement('div');
   element.classList.add('map-activity-card');
+
+  let lastPackets = null;
+  let lastHidden = null;
+  let lastSeries = null;
 
   /**
    * Toggle the card's hidden state (class + ``hidden``/``aria-hidden``).
@@ -235,13 +247,12 @@ export function createMeshActivityCard(doc = globalThis.document) {
   setHidden(true);
 
   /**
-   * Update the card from the latest packet rates and hidden-protocol set.
+   * Repaint the card from the last-known rates and series.
    *
-   * @param {{packets: ?Object, hiddenProtocols: ?Set<string>}} [data] Render input.
-   * @returns {boolean} Whether the card is visible after the update.
+   * @returns {boolean} Whether the card is visible after the repaint.
    */
-  function render(data = {}) {
-    const model = buildMeshActivityModel(data.packets, data.hiddenProtocols);
+  function paint() {
+    const model = buildMeshActivityModel(lastPackets, lastHidden, lastSeries);
     if (!model.visible) {
       element.innerHTML = '';
       setHidden(true);
@@ -253,5 +264,28 @@ export function createMeshActivityCard(doc = globalThis.document) {
     return true;
   }
 
-  return { element, render };
+  /**
+   * Update the live packet rates and hidden-protocol set, then repaint.
+   *
+   * @param {{packets: ?Object, hiddenProtocols: ?Set<string>}} [data] Render input.
+   * @returns {boolean} Whether the card is visible after the update.
+   */
+  function render(data = {}) {
+    lastPackets = data.packets;
+    lastHidden = data.hiddenProtocols;
+    return paint();
+  }
+
+  /**
+   * Update the sparkline total series, then repaint.
+   *
+   * @param {?Array<number>} series Per-bucket total packets/hour (oldest first).
+   * @returns {boolean} Whether the card is visible after the update.
+   */
+  function setSeries(series) {
+    lastSeries = series;
+    return paint();
+  }
+
+  return { element, render, setSeries };
 }
