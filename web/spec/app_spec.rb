@@ -6742,7 +6742,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(payload).not_to have_key("packets_per_hour")
       expect(payload["meshcore"]["packets"]).to eq("hour" => 50)
       expect(payload["meshtastic"]["packets"]).to eq("hour" => 30)
-      expect(payload["total"]["packets"]).to eq("hour" => 50) # MAX over every ingestor = 1200/24
+      expect(payload["total"]["packets"]).to eq("hour" => 80) # SUM of per-protocol MAX = (1200+720)/24
       expect(payload["reticulum"]["packets"]).to eq("hour" => 0)
       # The additive field leaves the S1 scope × metric × window tree intact.
       expect(payload["sampled"]).to eq(false)

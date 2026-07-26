@@ -1304,7 +1304,7 @@ RSpec.describe PotatoMesh::App::Queries do
       result = queries.query_packets_per_hour(now: now)
       expect(result["meshcore"]).to eq(50) # MAX(1200, 900) / 24
       expect(result["meshtastic"]).to eq(30) # 720 / 24
-      expect(result["total"]).to eq(50) # MAX over every ingestor = 1200 / 24
+      expect(result["total"]).to eq(80) # SUM of per-protocol MAX = (1200 + 720) / 24
       expect(result["reticulum"]).to eq(0)
     end
 
@@ -1332,8 +1332,8 @@ RSpec.describe PotatoMesh::App::Queries do
       # The reticulum scope is always emitted as zero (forward-looking stub)…
       expect(result["reticulum"]).to eq(0)
       # …but a reticulum ingestor still contributes to the protocol-agnostic
-      # total (MAX across every ingestor).
-      expect(result["total"]).to eq(30) # 720 / 24
+      # total (summed across protocols).
+      expect(result["total"]).to eq(30) # sole protocol: 720 / 24
     end
 
     it "rounds the hourly rate to the nearest integer" do

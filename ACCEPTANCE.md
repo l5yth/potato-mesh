@@ -4041,11 +4041,12 @@ older than the configured window (≥ 24 h), so the table cannot grow unbounded.
 ```
 **Expected:** pass. With two `meshcore` ingestors reporting different 24 h packet
 totals, the meshcore rate = `MAX(total_A, total_B) ÷ 24` — the busiest single
-vantage, so the quieter ingestor and any overlap never inflate it (`total` is the
-`MAX` across **all** ingestors regardless of protocol; a protocol with no active
-ingestor reads `0`; rows older than 24 h do not contribute). `query_packets_per_hour`
-returns these per-protocol rates, which the `GET /api/stats` route folds into each
-scope as `<scope>.packets.hour` (MA-A5).
+vantage, so the quieter ingestor and any overlap never inflate it. `total` is the
+**SUM** of the per-protocol rates (distinct protocols never share the air, so they
+add — e.g. meshcore + meshtastic), a protocol with no active ingestor reads `0`,
+and rows older than 24 h do not contribute. `query_packets_per_hour` returns these
+per-protocol rates, which the `GET /api/stats` route folds into each scope as
+`<scope>.packets.hour` (MA-A5).
 
 ### MA-A5 — `/api/stats` exposes packets as an additive `<scope>.packets.hour` metric — MA5
 ```bash

@@ -332,9 +332,10 @@ do **not** accept `before`.
   `MAX` over that protocol's ingestors of *(the ingestor's `packets` total in the
   last 24 h ÷ 24)* — a single radio hears ≤ what is actually transmitted, so the
   busiest vantage is the best dedup-free estimate of air traffic and never
-  double-counts a frame heard by two radios. `total.packets.hour` is the same MAX
-  over **every** ingestor regardless of protocol; `reticulum.packets.hour` is the
-  always-zero forward-looking stub. Unlike `messages`, it is **not** privacy-gated
+  double-counts a frame heard by two radios. `total.packets.hour` is the **SUM**
+  of the per-protocol rates (distinct protocols ride distinct frequencies, so they
+  add rather than dedup); `reticulum.packets.hour` is the always-zero
+  forward-looking stub. Unlike `messages`, it is **not** privacy-gated
   (packets are a public aggregate, no message content). Additive to the 0.7.x
   `/api/stats` tree — no version bump; the ingestor dogfeeds it for the activity
   announcement (MA6).

@@ -39,10 +39,12 @@ module PotatoMesh
       # traffic and can never double-count a frame heard by two radios (true
       # per-frame dedup is impossible — ignored/errored frames carry no id).
       # For each protocol the rate is
-      # +MAX(ingestor's 24 h packet total) ÷ 24+, rounded; +total+ is the same
-      # MAX taken over **every** ingestor regardless of protocol (so an ingestor
-      # reporting several protocols contributes its combined total). +reticulum+
-      # is a forward-looking always-zero stub (SPEC S6/MA5).
+      # +MAX(ingestor's 24 h packet total) ÷ 24+, rounded. +total+ is the **SUM**
+      # of the per-protocol rates: different protocols ride different
+      # frequencies/channels, so their frames never overlap in the air and add
+      # rather than dedup (a same-protocol frame heard by two radios is still
+      # deduped by the per-protocol MAX). +reticulum+ is a forward-looking
+      # always-zero stub (SPEC S6/MA5).
       #
       # @param now [Integer] reference unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open database handle to reuse.
@@ -63,16 +65,18 @@ module PotatoMesh
         end
 
         per_protocol_max = Hash.new(0)
-        per_ingestor_total = Hash.new(0)
         rows.each do |row|
           protocol = row["p"]
-          total = row["total"].to_i
-          per_protocol_max[protocol] = [per_protocol_max[protocol], total].max if protocol
-          per_ingestor_total[row["ingestor_id"]] += total
+          next unless protocol
+          per_protocol_max[protocol] = [per_protocol_max[protocol], row["total"].to_i].max
         end
 
         {
-          "total" => packets_per_hour_rate(per_ingestor_total.values.max || 0),
+          # +total+ sums the per-protocol MAX vantages: distinct protocols ride
+          # distinct frequencies/channels, so their frames never overlap in the
+          # air and add rather than dedup (a same-protocol frame heard by two
+          # radios is still deduped by the per-protocol MAX above).
+          "total" => packets_per_hour_rate(per_protocol_max.values.sum),
           "meshcore" => packets_per_hour_rate(per_protocol_max["meshcore"]),
           "meshtastic" => packets_per_hour_rate(per_protocol_max["meshtastic"]),
           "reticulum" => 0,
