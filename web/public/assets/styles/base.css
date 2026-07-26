@@ -1969,6 +1969,47 @@ input[type="radio"] {
   }
 }
 
+/* Mesh activity card → compact ticker on phones (design 1d): the full card eats
+   ~a third of a small map, so collapse it to a single-line strip that reads as
+   a caption (pulse dot · total · per-protocol icons + rates). */
+@media (max-width: 640px) {
+  .map-activity-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    padding: 4px 9px;
+    min-width: 0;
+    line-height: 1.4;
+  }
+  .map-activity-card__header,
+  .map-activity-card__total {
+    margin-bottom: 0;
+    gap: 4px;
+  }
+  .map-activity-card__title {
+    display: none; /* the numbers make the label redundant in a strip */
+  }
+  .map-activity-card__total-value {
+    font-size: 15px;
+    line-height: 1.4;
+  }
+  .map-activity-card__spark {
+    display: none; /* the trend line needs vertical room the strip lacks */
+  }
+  .map-activity-card__rows {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .map-activity-card__row {
+    gap: 3px;
+  }
+  .map-activity-card__row-name,
+  .map-activity-card__row-bar {
+    display: none; /* icon + rate is enough in the strip */
+  }
+}
+
 .legend-header {
   display: flex;
   align-items: center;

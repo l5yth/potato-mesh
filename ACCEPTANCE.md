@@ -4228,3 +4228,34 @@ soft to `null` (non-OK / network error / empty). `sparklinePathsFromSeries` maps
 `render(rates)` and `setSeries(series)` each repaint from the last-known other; the
 sparkline appears only once a real series arrives (no `data-placeholder`, no fake
 curve) and is omitted on failure while the live total/rows still render.
+
+### F2-A3 — `/charts` shows a protocol-aware Mesh activity figure — F2-5
+```bash
+( cd web && node --test public/assets/js/app/__tests__/mesh-activity-chart.test.js \
+                       public/assets/js/app/__tests__/node-page.test.js \
+                       public/assets/js/app/__tests__/charts-page.test.js )
+```
+**Expected:** pass. `renderMeshActivityChart` draws a two-line (Meshtastic `#8856a7`,
+MeshCore `#3182bd`) packets/hour figure with an **"Activity (pkt/h)"** y-axis, fed by
+`fetchActivityChartBuckets` (`/api/stats/activity`, 7 d / 2 h; fails soft to `[]`).
+`renderTelemetryCharts` accepts an `insertBefore` map that places the figure
+immediately before the `environment` spec — i.e. **between** the channel-utilization
+and environmental figures — and `initializeChartsPage` wires it there. The `/charts`
+intro no longer names a single protocol (the aggregate is all-protocol).
+
+---
+
+## Bugfix: Neighbor/trace legend toggles highlight when visible
+
+Maps to SPEC decision **NT1**.
+
+### NT-A1 — Neighbor/trace toggles are pressed when their lines are visible — NT1
+```bash
+git grep -nE "aria-pressed', neighborLinesVisible \? 'true'|aria-pressed', traceLinesVisible \? 'true'" \
+  -- web/public/assets/js/app/main.js
+```
+**Expected:** both matches present — the neighbor- and trace-line legend toggles set
+`aria-pressed` to `'true'` when their lines are **visible** (`…Visible ? 'true' : 'false'`),
+so the highlighted state (`button.legend-item[aria-pressed="true"]`, LC2) marks *shown*
+lines, consistent with the role chips and the meta-row protocol toggles. Previously
+reversed (pressed when hidden).

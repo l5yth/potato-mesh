@@ -1166,3 +1166,18 @@ contradicted.
 | **F2-4** | **Card real sparkline.** The MA-F5 placeholder is replaced by the real 24 h series from `/api/stats/activity`, fetched on a slower cadence with its own short cache (the trend moves slowly — not every refresh). On fetch failure the sparkline is omitted but the live total/rows (from `/api/stats`) still render — the card never regresses to a fake curve. | interview |
 | **F2-5** | **Charts page — protocol-aware, all-protocol.** A "Mesh activity" figure (packets/h per protocol, 7 d) is added to `/charts` **between** the channel-utilization and environmental figures. The intro no longer names "Meshtastic": the aggregated telemetry (`query_telemetry_buckets`) already carries **all** protocols (MeshCore telemetry included since the telemetry pull shipped) — the prior wording mislabelled all-protocol data. Invariant IV. | interview |
 | **F2-6** | **Engineering bar (D9).** 100 % unit tests (rspec for `query_activity_buckets` + the route; node --test for the card sparkline + charts figure), full RDoc/JSDoc, Apache headers, `rufo`/`black` clean; `CONTRACTS.md` documents the new endpoint; all suites stay green. | CLAUDE.md |
+
+---
+
+## Bugfix: Neighbor/trace legend toggles highlight when visible
+
+The neighbor-line and trace-line legend toggles set `aria-pressed="true"` when their
+lines were **hidden**, so `button.legend-item[aria-pressed="true"]` (the selected/
+highlighted style, LC2) painted them highlighted while the lines were off — reversed
+relative to the role chips, which highlight when a role is **visible**. Fixed in
+`web/public/assets/js/app/main.js` (`updateNeighborLinesToggleState` /
+`updateTraceLinesToggleState`). Presentation-only; no data/API change.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **NT1** | The neighbor/trace line toggles set `aria-pressed="true"` when their lines are **visible** (highlighted = shown), consistent with the role chips (LC2) and the meta-row protocol toggles; previously reversed (pressed when hidden). Presentation-only, no data/API change. | review |

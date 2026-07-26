@@ -15,6 +15,7 @@
  */
 
 import { renderTelemetryCharts } from './node-page.js';
+import { fetchActivityChartBuckets, renderMeshActivityChart } from './mesh-activity-chart.js';
 
 const TELEMETRY_BUCKET_SECONDS = 60 * 60;
 const HOUR_MS = 60 * 60 * 1000;
@@ -217,9 +218,16 @@ export async function initializeChartsPage(options = {}) {
       container.innerHTML = renderStatus('Telemetry snapshots are unavailable.');
       return true;
     }
+    const nowMs = Date.now();
+    // Mesh activity figure (SPEC F2-5), injected between the channel-utilization
+    // and environmental telemetry figures; drawn from /api/stats/activity.
+    const activityFigure = renderMeshActivityChart(
+      await fetchActivityChartBuckets({ fetchImpl }),
+      nowMs
+    );
     const node = { rawSources: { telemetry: { snapshots } } };
     const chartsHtml = renderCharts(node, {
-      nowMs: Date.now(),
+      nowMs,
       chartOptions: {
         windowMs,
         timeRangeLabel: 'Last 7 days',
@@ -227,6 +235,7 @@ export async function initializeChartsPage(options = {}) {
         xAxisTickFormatter: formatDayOfMonthLabel,
         lineReducer: points => buildMovingAverageSeries(points, HOUR_MS),
       },
+      insertBefore: activityFigure ? { environment: activityFigure } : {},
     });
     if (!chartsHtml) {
       container.innerHTML = renderStatus('Telemetry snapshots are unavailable.');

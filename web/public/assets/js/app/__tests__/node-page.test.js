@@ -472,6 +472,28 @@ test('renderTelemetryCharts renders condensed scatter charts when telemetry exis
   assert.equal(html.includes('node-detail__chart-point'), true);
 });
 
+test('renderTelemetryCharts injects insertBefore figures before their target spec', () => {
+  const nowMs = CHART_NOW_MS;
+  const nowSeconds = CHART_NOW_SECONDS;
+  const node = makeAggregatedNode([
+    { rx_time: nowSeconds - 60, telemetry_type: 'device', battery_level: 80, voltage: 4.1 },
+    { rx_time: nowSeconds - 3_600, telemetry_type: 'environment', temperature: 18.4, relative_humidity: 52 },
+  ]);
+  const html = renderTelemetryCharts(node, {
+    nowMs,
+    insertBefore: {
+      environment: '<figure class="injected-activity"></figure>',
+      'no-such-spec': '<figure class="leftover-figure"></figure>',
+    },
+  });
+  const injectedIdx = html.indexOf('injected-activity');
+  const envIdx = html.indexOf('Environmental telemetry');
+  assert.ok(injectedIdx > -1 && envIdx > -1);
+  assert.ok(injectedIdx < envIdx, 'injected figure precedes the environmental figure');
+  // A figure whose target spec did not render is appended, never dropped.
+  assert.ok(html.includes('leftover-figure'));
+});
+
 test('renderTelemetryCharts expands upper bounds when overflow metrics exceed defaults', () => {
   const nowMs = CHART_NOW_MS;
   const nowSeconds = CHART_NOW_SECONDS;

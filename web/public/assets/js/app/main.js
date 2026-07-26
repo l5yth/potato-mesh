@@ -1739,9 +1739,10 @@ export function initializeApp(config) {
     // The toggle doubles as the legend key for the solid neighbor-line style
     // (SPEC UX7, audit D-014).
     neighborLinesToggleButton.innerHTML = `${legendLineSampleSvg('neighbor')} ${label}`;
-    // aria-pressed reflects whether the user has *activated* the toggle (i.e. lines are
-    // currently hidden). When lines are visible (default), the button is unpressed.
-    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'false' : 'true');
+    // aria-pressed marks the *selected* (highlighted) state, consistent with the
+    // role chips (button.legend-item[aria-pressed="true"]): the toggle is pressed
+    // when its lines are visible, unpressed when hidden. (Previously reversed.)
+    neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
     neighborLinesToggleButton.setAttribute('aria-label', label);
   }
 
@@ -1775,8 +1776,10 @@ export function initializeApp(config) {
     // The toggle doubles as the legend key for the dashed traceroute style
     // (SPEC UX7, audit D-014).
     traceLinesToggleButton.innerHTML = `${legendLineSampleSvg('trace')} ${label}`;
-    // aria-pressed reflects whether the user has *activated* the toggle (lines hidden).
-    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'false' : 'true');
+    // aria-pressed marks the *selected* (highlighted) state, consistent with the
+    // role chips: pressed when its lines are visible, unpressed when hidden.
+    // (Previously reversed.)
+    traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
   }
 
