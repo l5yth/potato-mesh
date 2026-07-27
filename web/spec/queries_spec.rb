@@ -358,6 +358,37 @@ RSpec.describe PotatoMesh::App::Queries do
   end
 
   # ---------------------------------------------------------------------------
+  # digit_only_hex_node_ref (SPEC NL2 / ACCEPTANCE NL-A2)
+  # ---------------------------------------------------------------------------
+  describe "#digit_only_hex_node_ref" do
+    it "reinterprets a bang-less canonical 8-digit ref as a hex id" do
+      expect(queries.digit_only_hex_node_ref("27336717")).to eq("!27336717")
+    end
+
+    it "trims surrounding whitespace before matching" do
+      expect(queries.digit_only_hex_node_ref(" 27336717 ")).to eq("!27336717")
+    end
+
+    it "rejects refs that are not exactly eight digits" do
+      # Shorter/longer digit runs are genuine num lookups, never hex ids.
+      expect(queries.digit_only_hex_node_ref("123")).to be_nil
+      expect(queries.digit_only_hex_node_ref("123456789")).to be_nil
+    end
+
+    it "rejects refs already carrying a bang or hex letters" do
+      # A bang or a hex letter already selects the hex interpretation
+      # upstream, so no reinterpretation is needed.
+      expect(queries.digit_only_hex_node_ref("!27336717")).to be_nil
+      expect(queries.digit_only_hex_node_ref("7e590852")).to be_nil
+    end
+
+    it "rejects non-string references" do
+      expect(queries.digit_only_hex_node_ref(27_336_717)).to be_nil
+      expect(queries.digit_only_hex_node_ref(nil)).to be_nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # sanitize_zero_invalid_metric
   # ---------------------------------------------------------------------------
   describe "#sanitize_zero_invalid_metric" do

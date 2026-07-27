@@ -6250,6 +6250,59 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "GET /api/nodes/:id digit-only hex ids (ACCEPTANCE NL-A2)" do
+    # Live regression (2026-07-27): the matrix bridge requested
+    # /api/nodes/27336717 for the MeshCore node !27336717 — an 8-hex id made
+    # entirely of decimal digits — and the digits-mean-num precedence
+    # (identity.rb) resolved it as Meshtastic num 27336717, matched nothing,
+    # and 404'd a node the list endpoint was serving.  A bang-less digit-only
+    # ref that is also a canonical 8-hex id must fall back to the hex-id
+    # interpretation when the num interpretation matches nothing, while a
+    # genuine num match keeps its precedence.
+    it "falls back to the hex-id interpretation when the num lookup misses" do
+      clear_database
+      now = Time.now.to_i
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?)",
+          ["!27336717", "🦅", "Birdperson", "COMPANION", now - 60, now - 60, "meshcore"],
+        )
+      end
+
+      get "/api/nodes/27336717"
+      expect(last_response).to be_ok
+      row = JSON.parse(last_response.body)
+      expect(row["node_id"]).to eq("!27336717")
+    end
+
+    it "keeps num precedence when the digits match a real node num" do
+      clear_database
+      now = Time.now.to_i
+      with_db do |db|
+        db.execute(
+          "INSERT INTO nodes(node_id, num, short_name, long_name, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?,?)",
+          ["!01a11c8d", 27_336_717, "MT", "Meshtastic num match", "CLIENT", now - 30, now - 30, "meshtastic"],
+        )
+        db.execute(
+          "INSERT INTO nodes(node_id, short_name, long_name, role, last_heard, first_heard, protocol) VALUES(?,?,?,?,?,?,?)",
+          ["!27336717", "🦅", "Birdperson", "COMPANION", now - 60, now - 60, "meshcore"],
+        )
+      end
+
+      get "/api/nodes/27336717"
+      expect(last_response).to be_ok
+      row = JSON.parse(last_response.body)
+      expect(row["node_id"]).to eq("!01a11c8d")
+    end
+
+    it "does not reinterpret digit refs that are not canonical 8-hex ids" do
+      clear_database
+
+      get "/api/nodes/123"
+      expect(last_response.status).to eq(404)
+    end
+  end
+
   describe "GET /api/nodes" do
     # Regression-style coverage for SPEC BP1-BP6: more than MAX_QUERY_LIMIT
     # nodes inside the seven-day window must all remain reachable by paging

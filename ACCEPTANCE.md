@@ -4319,3 +4319,102 @@ reconnect timing is unchanged.
 POST body carries `lora_freq`/`modem_preset` (was nil on every `/api/positions` row),
 matching MeshCore message/node POSTs; when the ingestor has not captured them the fields
 are omitted (never nil-stamped), so the existing position-shape test still passes.
+
+---
+
+## Bugfix: Matrix bridge tolerates compacted `/api/messages` rows
+
+Live outage (2026-07-26): the bridge logged `Error fetching PotatoMesh
+messages: … missing field channel_name` on every poll and forwarded nothing.
+`GET /api/messages` compacts NULL/empty columns *out* of each row
+(`compact_api_row`), and `CONTRACTS.md` marks only `id`/`rx_time`/`rx_iso` as
+required — everything else is conditionally present: `channel_name` explicitly
+"only when not encrypted and known", `text` is `string|nil`, and any nullable
+column (`to_id`, `lora_freq`, `modem_preset`, …) simply vanishes from the
+response under compaction — so a row without them is contract-conformant. The bridge's `PotatoMessage` modeled those fields as
+**required**, and one conformant row (a MeshCore message on an unnamed channel
+slot) made serde fail the ENTIRE batch: an implementation defect in the bridge
+against **D8** (the `CONTRACTS.md` shapes are the contract) and **§4.3/D10**
+(the bridge is a consumer of the public API). No SPEC amendment — the contract
+already permitted the row; the bridge's model was stricter than the contract.
+
+### MB-A1 — one compacted row cannot poison the message fetch — D8/D10
+```bash
+( cd matrix && cargo test deserialize_batch_with_row_missing_channel_name \
+            && cargo test deserialize_maximally_compacted_row \
+            && cargo test poll_once_bridges_batch_containing_row_without_channel_name \
+            && cargo test poll_once_advances_watermark_past_unforwardable_rows )
+```
+**Expected:** all pass. `PotatoMessage` keeps only the contract-required
+`id`/`rx_time`/`rx_iso` as required; every conditionally-present field
+(`from_id`, `to_id`, `channel`, `text`, `lora_freq`, `modem_preset`,
+`channel_name`, `node_id`, …) is `Option` with `#[serde(default)]`, so the
+production row (replayed verbatim in the first test) and a maximally-compacted
+reaction row both parse. A batch containing such rows bridges every
+forwardable message: a missing `channel_name` renders empty channel brackets
+`[]` in the prefix (the web frontend's empty-bracket convention), a missing
+`modem_preset` renders the existing `??` slot, and a missing `lora_freq`
+renders the existing `0` sentinel. Rows the bridge can never forward — no
+`text` (e.g. emoji reactions) or no `node_id` (unresolved sender) — are
+skipped with the watermark advanced, exactly like non-text ports, so they are
+neither retried forever nor able to stall the batch.
+
+### MB-R1 — Regression: prior acceptance still holds
+```bash
+( cd matrix && cargo test --all --all-features && cargo fmt --all -- --check \
+            && cargo clippy --all-targets --all-features -- -D warnings \
+            && RUSTDOCFLAGS='-D warnings' cargo doc --no-deps )
+```
+**Expected:** all green. At risk and explicitly required to stay green: the
+watermark/poison-tracker suite (`poll_once_*` — the skip path reuses their
+advance-and-persist semantics), the preset/tag rendering suite
+(`handle_message_*` — prefix layout unchanged for fully-populated rows), and
+the fetch/deserialize suite in `potatomesh.rs`.
+
+---
+
+## Bugfix: Canonical node-id lookups (bridge bang-stripping, digit-only refs)
+
+Maps to SPEC decisions **NL1/NL2**. Live failure (2026-07-27): the bridge
+logged `Error handling message 506429242193513: HTTP status client error (404
+Not Found) for url (https://potatomesh.net/api/nodes/27336717)` five polls in
+a row, then dropped the message via the poison tracker — while `/api/nodes`
+listed the node and `/api/nodes/!27336717` returned 200. The bridge strips
+the canonical `!` (D8) and a bare all-decimal-digit ref is resolved by
+`canonical_node_parts` as a Meshtastic node num before the hex interpretation
+is ever tried.
+
+### NL-A1 — bridge node lookups use the canonical `%21`-encoded id — NL1/D8
+```bash
+( cd matrix && cargo test get_node_requests_canonical_bang_id )
+```
+**Expected:** pass. `PotatoClient::node_url` builds `/api/nodes/%21<hex>`;
+the test mounts ONLY the percent-encoded canonical path (for the live
+offender `!27336717`), so a bare-hex request matches no mock and fails the
+lookup. Verified against production before the fix:
+`GET /api/nodes/27336717` → 404, `GET /api/nodes/%2127336717` → 200.
+
+### NL-A2 — digit-only refs fall back to the hex id on a num miss — NL2
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "digit-only hex ids" \
+         && bundle exec rspec spec/queries_spec.rb -e digit_only_hex_node_ref )
+```
+**Expected:** pass. `GET /api/nodes/27336717` returns the `!27336717` row
+when no node matches num 27336717 (the outage case); with a genuine num-27336717
+node present the num interpretation keeps precedence and wins; refs that are
+not exactly eight digits (`123`, `123456789`) or already unambiguous
+(`!27336717`, `7e590852`) are never reinterpreted, so every previously
+resolving ref resolves identically.
+
+### NL-R1 — Regression: prior acceptance still holds
+```bash
+( cd matrix && cargo test --all --all-features && cargo fmt --all -- --check \
+            && cargo clippy --all-targets --all-features -- -D warnings \
+            && RUSTDOCFLAGS='-D warnings' cargo doc --no-deps )
+( cd web && bundle exec rspec ) && ( cd web && bundle exec rufo --check . )
+```
+**Expected:** all green. At risk and explicitly required to stay green: the
+bridge poll/handle suites (every node mock now serves the `%21` path), the
+MB-A1 compacted-row suite, and the per-id node route specs (synthetic flag,
+stale/fresh, since-filter, opt-out) — the fallback fires only on the
+empty-result path, so none of their outcomes may change.

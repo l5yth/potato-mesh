@@ -130,6 +130,28 @@ module PotatoMesh
         ["(#{clauses.join(" OR ")})", params]
       end
 
+      # Reinterpret a bang-less, digit-only node reference as a canonical hex
+      # id.  The reference parser resolves digit-only strings as Meshtastic
+      # node nums first (see +canonical_node_parts+), which makes an 8-hex id
+      # composed entirely of decimal digits (e.g. "27336717" for !27336717 —
+      # ~2.3% of the id space) unreachable without its "!" prefix.  The per-id
+      # nodes route uses this fallback only after the num interpretation
+      # matched nothing, so genuine num lookups keep their precedence
+      # (SPEC NL2, ACCEPTANCE NL-A2).
+      #
+      # @param node_ref [String, nil] raw node reference from the request.
+      # @return [String, nil] the "!"-prefixed canonical id when the reference
+      #   is a bang-less canonical 8-hex string made of decimal digits,
+      #   otherwise +nil+.
+      def digit_only_hex_node_ref(node_ref)
+        return nil unless node_ref.is_a?(String)
+
+        trimmed = node_ref.strip
+        return nil unless trimmed.match?(/\A[0-9]{8}\z/)
+
+        "!#{trimmed}"
+      end
+
       # Fetch node state optionally scoped by identifier and timestamp.
       #
       # @param limit [Integer] maximum number of rows to return.
