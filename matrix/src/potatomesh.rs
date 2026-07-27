@@ -19,30 +19,64 @@ use tokio::sync::RwLock;
 
 use crate::config::PotatomeshConfig;
 
+/// One row of `GET /api/messages`.
+///
+/// Only `id`, `rx_time`, and `rx_iso` are required by the API contract
+/// (`data/mesh_ingestor/CONTRACTS.md`). Every other column is conditionally
+/// present: the web app compacts NULL/empty values *out* of each row
+/// (`compact_api_row`), so a conformant row may omit any of them entirely —
+/// e.g. `channel_name` is emitted "only when not encrypted and known", and an
+/// emoji-reaction row carries no `text`. Modeling such fields as required
+/// made serde reject the whole batch on one compacted row (ACCEPTANCE MB-A1),
+/// which is why everything conditional is an `Option` with a serde default.
 #[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct PotatoMessage {
+    /// Stable message id (contract-required, dedup key).
     pub id: u64,
+    /// Receive time in unix seconds (contract-required).
     pub rx_time: u64,
+    /// Receive time as ISO-8601 (contract-required).
     pub rx_iso: String,
-    pub from_id: String,
-    pub to_id: String,
-    pub channel: u8,
+    /// Sender id; absent when the sender never resolved.
+    #[serde(default)]
+    pub from_id: Option<String>,
+    /// Destination id; absent on the rare senderless/DM fallback rows.
+    #[serde(default)]
+    pub to_id: Option<String>,
+    /// Local channel slot index; absent e.g. on direct messages.
+    #[serde(default)]
+    pub channel: Option<u8>,
+    /// Meshtastic port name; absent for encrypted or non-app payloads.
     #[serde(default)]
     pub portnum: Option<String>,
-    pub text: String,
+    /// Message text; absent on reaction-only rows (`reply_id`/`emoji`).
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Receive RSSI in dBm when the ingestor reported one.
     #[serde(default)]
     pub rssi: Option<i16>,
+    /// Remaining hop budget when the ingestor reported one.
     #[serde(default)]
     pub hop_limit: Option<u8>,
-    pub lora_freq: u32,
-    pub modem_preset: String,
-    pub channel_name: String,
+    /// LoRa frequency in MHz; absent when the ingestor did not report it.
+    #[serde(default)]
+    pub lora_freq: Option<u32>,
+    /// Modem preset label; absent when the ingestor did not report it.
+    #[serde(default)]
+    pub modem_preset: Option<String>,
+    /// Resolved channel name; only present when not encrypted and known.
+    #[serde(default)]
+    pub channel_name: Option<String>,
+    /// Receive SNR in dB when the ingestor reported one.
     #[serde(default)]
     pub snr: Option<f32>,
+    /// Id of the message this row reacts/replies to, when any.
     #[serde(default)]
     pub reply_id: Option<u64>,
-    pub node_id: String,
+    /// Canonical sender node id; absent when the sender never resolved.
+    #[serde(default)]
+    pub node_id: Option<String>,
     /// Mesh backend that produced this message, e.g. "meshtastic" or
     /// "meshcore". Optional because historical payloads predate the field.
     #[serde(default)]
@@ -110,8 +144,12 @@ impl PotatoClient {
     }
 
     fn node_url(&self, hex_id: &str) -> String {
-        // e.g. https://potatomesh.net/api/nodes/67fc83cb
-        format!("{}/nodes/{}", self.api_base(), hex_id)
+        // Request the CANONICAL bang-prefixed id, percent-encoded as "%21".
+        // A bare all-decimal hex id (e.g. "27336717") is resolved by the web
+        // API as a Meshtastic node *num* and 404s (ACCEPTANCE NL-A1); the
+        // bang disambiguates per the canonical `!%08x` form (SPEC D8).
+        // e.g. https://potatomesh.net/api/nodes/%2167fc83cb
+        format!("{}/nodes/%21{}", self.api_base(), hex_id)
     }
 
     /// Basic liveness check against the PotatoMesh API.
@@ -205,10 +243,10 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         let m = &msgs[0];
         assert_eq!(m.id, 2947676906);
-        assert_eq!(m.from_id, "!da6556d4");
-        assert_eq!(m.node_id, "!06871773");
+        assert_eq!(m.from_id.as_deref(), Some("!da6556d4"));
+        assert_eq!(m.node_id.as_deref(), Some("!06871773"));
         assert_eq!(m.portnum.as_deref(), Some("TEXT_MESSAGE_APP"));
-        assert_eq!(m.lora_freq, 868);
+        assert_eq!(m.lora_freq, Some(868));
         assert!((m.snr.unwrap() - (-9.0)).abs() < f32::EPSILON);
     }
 
@@ -267,6 +305,87 @@ mod tests {
         let msgs: Vec<PotatoMessage> = serde_json::from_str(json).expect("valid message json");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].protocol.as_deref(), Some("meshcore"));
+    }
+
+    /// Regression (live outage 2026-07-26, ACCEPTANCE MB-A1): the web API
+    /// compacts NULL/empty columns *out* of each row (`compact_api_row`), and
+    /// `CONTRACTS.md` declares `channel_name` present "only when not encrypted
+    /// and known" — so a row without the key is contract-conformant. The
+    /// bridge modeled the field as required, and serde failed the ENTIRE
+    /// batch on the one such row (`missing field \`channel_name\``), leaving
+    /// the bridge unable to fetch any messages at all. The second row below is
+    /// the offending production row verbatim.
+    #[test]
+    fn deserialize_batch_with_row_missing_channel_name() {
+        let json = r#"
+        [
+          {
+            "id": 2947676906,
+            "rx_time": 1764241436,
+            "rx_iso": "2025-11-27T11:03:56Z",
+            "from_id": "!da6556d4",
+            "to_id": "^all",
+            "channel": 1,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "Ping",
+            "rssi": -111,
+            "hop_limit": 1,
+            "lora_freq": 868,
+            "modem_preset": "MediumFast",
+            "channel_name": "TEST",
+            "snr": -9.0,
+            "node_id": "!06871773"
+          },
+          {
+            "id": 2810844287777950,
+            "rx_time": 1785090651,
+            "rx_iso": "2026-07-26T18:30:51Z",
+            "from_id": "!88e00b48",
+            "to_id": "^all",
+            "channel": 24,
+            "portnum": "TEXT_MESSAGE_APP",
+            "text": "lilygo: moin moin",
+            "lora_freq": 869,
+            "modem_preset": "SF8/BW62/CR5",
+            "snr": -5.25,
+            "ingestor": "!930d4a21",
+            "protocol": "meshcore",
+            "node_id": "!88e00b48"
+          }
+        ]
+        "#;
+
+        let msgs: Vec<PotatoMessage> =
+            serde_json::from_str(json).expect("row without channel_name must parse");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].id, 2947676906);
+        assert_eq!(msgs[1].id, 2810844287777950);
+    }
+
+    /// Regression companion to `deserialize_batch_with_row_missing_channel_name`
+    /// (ACCEPTANCE MB-A1): `compact_api_row` may strip EVERY conditional field,
+    /// leaving only the contract-required `id` / `rx_time` / `rx_iso` (e.g. an
+    /// emoji-reaction row whose `text` is empty and whose sender never
+    /// resolved). Such a row must parse rather than poison the batch.
+    #[test]
+    fn deserialize_maximally_compacted_row() {
+        let json = r#"
+        [
+          {
+            "id": 7,
+            "rx_time": 1785090000,
+            "rx_iso": "2026-07-26T18:20:00Z",
+            "reply_id": 42,
+            "emoji": "1"
+          }
+        ]
+        "#;
+
+        let msgs: Vec<PotatoMessage> =
+            serde_json::from_str(json).expect("maximally compacted row must parse");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].id, 7);
+        assert_eq!(msgs[0].rx_time, 1785090000);
     }
 
     #[test]
@@ -358,8 +477,8 @@ mod tests {
         };
         let client = PotatoClient::new(http_client, config);
         assert_eq!(
-            client.node_url("!1234"),
-            "http://localhost:8080/api/nodes/!1234"
+            client.node_url("1234"),
+            "http://localhost:8080/api/nodes/%211234"
         );
     }
 
@@ -504,6 +623,39 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
+    /// Regression (live 2026-07-27, ACCEPTANCE NL-A1): node lookups must
+    /// request the CANONICAL bang-prefixed id (percent-encoded `%21`), never
+    /// the bare hex. The web API resolves a bare all-decimal-digit ref (e.g.
+    /// `27336717`, a valid 8-hex id) as a Meshtastic node *num* and 404s,
+    /// which cost the bridge five failed polls and a dropped message. Only
+    /// the canonical path is mounted here — a bare-hex request hits no mock
+    /// and fails the lookup.
+    #[tokio::test]
+    async fn get_node_requests_canonical_bang_id() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/nodes/%2127336717")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"node_id":"!27336717","long_name":"🦅 Birdperson/portable/pocket","short_name":"🦅"}"#,
+            )
+            .create();
+
+        let http_client = reqwest::Client::new();
+        let config = PotatomeshConfig {
+            base_url: server.url(),
+            poll_interval_secs: 60,
+        };
+        let client = PotatoClient::new(http_client, config);
+        let result = client.get_node("!27336717").await;
+
+        mock.assert();
+        let node = result.expect("canonical bang-id lookup must succeed");
+        assert_eq!(node.node_id, "!27336717");
+    }
+
     #[tokio::test]
     async fn test_get_node_cache_hit() {
         let http_client = reqwest::Client::new();
@@ -540,7 +692,7 @@ mod tests {
     async fn test_get_node_cache_miss() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("GET", "/api/nodes/1234")
+            .mock("GET", "/api/nodes/%211234")
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -577,7 +729,7 @@ mod tests {
     async fn test_get_node_error() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("GET", "/api/nodes/1234")
+            .mock("GET", "/api/nodes/%211234")
             .with_status(500)
             .create();
 

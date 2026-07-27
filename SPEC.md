@@ -1243,3 +1243,25 @@ positions already carry radio metadata; this brings MeshCore to parity.
 | **PC3** | **Reconnect clock decoupled from the counter (`_mark_packet_activity`).** `_mark_packet_seen` previously did two jobs — advance `_last_packet_monotonic` (the inactivity-reconnect clock, `daemon._check_inactivity_reconnect`) *and* count. A new `handlers/_state._mark_packet_activity` does the clock update alone; `_mark_packet_seen` = `_mark_packet_activity` + `activity.record_packet`. Every MeshCore seam that stops counting still calls `_mark_packet_activity`, so its **reconnect timing is unchanged** — only the counter is deduplicated. Companion-link reads (`SELF_INFO`, `CONTACTS`, host self-telemetry) are clock-only too: they are not over-air traffic. *One deliberate, benign effect:* non-`ADVERT` RX-log frames now advance the clock as well (the old early `return` skipped both the count **and** the clock), so inactivity-reconnect fires marginally *less* eagerly — overheard RF traffic is proof the link is alive, so this is strictly more correct, not a regression. | code |
 | **PC4** | **Accepted caveat: firmware without RX logging.** Because RX counting now flows solely through `RX_LOG_DATA`, a MeshCore build that does not push RX-log frames counts ~0 RX (TX still counts). Companion firmware ≥ 1.16 pushes RX-log frames unconditionally while a client is connected (**RF3**), which is the supported target, so this is the deliberate, documented cost of an accurate per-frame count over a partial-but-firmware-robust estimate. | interview + code |
 | **PC5** | **MeshCore position POSTs carry captured radio metadata.** `_store_meshcore_position` applies `_apply_radio_metadata` before posting, adding `lora_freq`/`modem_preset` from the values captured at `SELF_INFO` (absent ⇒ omitted, never nil-stamped), matching MeshCore message/node POSTs and the Meshtastic position path. An audit of every `_queue_post_json` builder confirmed positions were the **only** omission; no web-side fallback is added (the ingestor is the source of truth). | interview + code |
+
+---
+
+## Bugfix: Canonical node-id lookups (bridge bang-stripping, digit-only refs)
+
+Live failure (2026-07-27): the Matrix bridge requested node lookups with the
+canonical id's `!` stripped, and `GET /api/nodes/:id` resolves a bang-less
+digit-only ref exclusively as a Meshtastic node **num** — so a message from
+`!27336717` (an 8-hex id composed entirely of decimal digits, ~2.3% of the id
+space) failed its node lookup five polls in a row and was dropped by the
+poison tracker, while `/api/nodes` listed the node and `/api/nodes/!27336717`
+returned 200. **Conflict check:** **extends** D8 (the `!%08x` id is canonical
+system-wide — the bridge must not transform it on the wire) and D8's
+backward-compatible evolution rule (the route fallback is additive: every
+currently-resolving ref resolves identically); consistent with all four
+invariants (read-side only, no new egress, protocol-neutral — the ambiguity
+hits Meshtastic and MeshCore ids alike).
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **NL1** | **The bridge requests nodes by the full canonical id** — `/api/nodes/%21<hex>` (the URL-encoded `!%08x` form), never the bare hex. Root-cause fix on the consumer side per D8; effective against current production servers without any web deploy. | interview |
+| **NL2** | **`GET /api/nodes/:id` gains a hex-id fallback for digit-only refs.** A bang-less ref matching `\A[0-9]{8}\z` keeps its existing num-first resolution; only when the num interpretation matches nothing is it retried once as the canonical `!<8-digit-hex>` id. Deterministic precedence (a genuine num match always wins), additive (no currently-resolving ref changes meaning), and scoped to the per-id nodes route only — bulk/query-param refs are untouched. Hardens the API for any bang-stripping client beyond the bridge. | interview |

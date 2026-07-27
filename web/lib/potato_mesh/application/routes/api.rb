@@ -195,6 +195,13 @@ module PotatoMesh
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = coerce_query_limit(params["limit"])
             rows = query_nodes(limit, node_ref: node_ref, since: params["since"])
+            # A bang-less digit-only ref resolves as a Meshtastic num first;
+            # when that interpretation matches nothing, retry it once as the
+            # canonical 8-hex id so bang-stripping clients can still reach ids
+            # composed entirely of decimal digits (SPEC NL2, ACCEPTANCE NL-A2).
+            if rows.empty? && (hex_ref = digit_only_hex_node_ref(node_ref))
+              rows = query_nodes(limit, node_ref: hex_ref, since: params["since"])
+            end
             halt 404, { error: "not found" }.to_json if rows.empty?
             json_body = rows.first.to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
