@@ -98,7 +98,9 @@ def _process_self_info(
         modem_preset=modem_preset,
     )
 
-    handlers._mark_packet_seen()
+    # Companion-link read, not an over-air frame: advance the reconnect clock
+    # but do not count it as air traffic (SPEC MA1, Model A).
+    handlers._mark_packet_activity()
     config._debug_log(
         "MeshCore self-info received",
         context="meshcore.self_info",
@@ -138,7 +140,8 @@ def _process_contacts(
                 handlers.host_node_id(),
                 rx_time=last_advert,
             )
-    handlers._mark_packet_seen()
+    # Companion-link roster fetch, not over-air frames: clock only (Model A).
+    handlers._mark_packet_activity()
 
 
 def _process_contact_update(
@@ -172,7 +175,9 @@ def _process_contact_update(
             handlers.host_node_id(),
             rx_time=last_advert,
         )
-    handlers._mark_packet_seen()
+    # Contact update follows an advert already counted at RX_LOG_DATA: clock
+    # only, so the same reception is not counted twice (Model A).
+    handlers._mark_packet_activity()
     config._debug_log(
         "MeshCore contact updated",
         context="meshcore.contact",
@@ -232,7 +237,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
         if iface.is_known_contact(pub_key):
             return
         _handlers.upsert_node(node_id, _advert_to_node_dict(pub_key))
-        _handlers._mark_packet_seen()
+        # The advert frame is counted once at its RX_LOG_DATA seam; here we only
+        # advance the reconnect clock so the bare push is not double-counted.
+        _handlers._mark_packet_activity()
         config._debug_log(
             "MeshCore advert from non-roster node",
             context="meshcore.advert",
@@ -308,7 +315,9 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 "channel": channel_idx,
             },
         }
-        _handlers._mark_packet_seen()
+        # Decoded channel message: its on-air frame is already counted at the
+        # RX_LOG_DATA seam (GRP_TXT), so advance the clock only (Model A).
+        _handlers._mark_packet_activity()
         _handlers.store_packet_dict(packet)
         config._debug_log(
             "MeshCore channel message",
@@ -348,11 +357,23 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 "channel": 0,
             },
         }
-        _handlers._mark_packet_seen()
+        # Decoded direct message: its on-air frame is already counted at the
+        # RX_LOG_DATA seam (TEXT_MSG), so advance the clock only (Model A).
+        _handlers._mark_packet_activity()
         _handlers.store_packet_dict(packet)
 
     async def on_rx_log_data(evt) -> None:
         payload = evt.payload or {}
+        # Count every RX-log frame here, once, before the ADVERT/non-ADVERT
+        # split (SPEC MA1, Model A). The firmware emits one RX_LOG_DATA frame
+        # per received over-air frame — the complete per-frame ground truth of
+        # "what is in the air" — while the decoded high-level events
+        # (CHANNEL_MSG_RECV, CONTACT_MSG_RECV, ADVERTISEMENT, telemetry
+        # responses) are duplicates of these same frames and only advance the
+        # reconnect clock. Counting precedes the DEBUG-capture drop and the
+        # malformed-advert skip, so no received frame — ignored, errored, or
+        # unimplemented — is under-reported.
+        _handlers._mark_packet_seen()
         if payload.get("payload_typename") != "ADVERT":
             # Non-ADVERT RF frames keep their DEBUG-only observability, routed
             # explicitly now that RX_LOG_DATA is a handled event and no longer
@@ -389,7 +410,6 @@ def _make_event_handlers(iface: _MeshcoreInterface, target: str | None) -> dict:
                 _rx_advert_position_time(payload),
                 _handlers.host_node_id(),
             )
-        _handlers._mark_packet_seen()
         config._debug_log(
             "MeshCore RX-log advert",
             context="meshcore.rx_advert",

@@ -181,17 +181,39 @@ def last_packet_monotonic() -> float | None:
     return _last_packet_monotonic
 
 
-def _mark_packet_seen() -> None:
-    """Record that a packet has been processed.
+def _mark_packet_activity() -> None:
+    """Record receive activity for the inactivity-reconnect clock only.
 
-    Updates the monotonic activity clock (used for inactivity-reconnect) and
-    increments the merged mesh-activity counter (SPEC MA1) so that *every*
-    received frame — including one a downstream handler later ignores or fails
-    to store — is counted here, before any dispatch or drop decision.
+    Advances the monotonic activity clock (read by
+    :func:`~data.mesh_ingestor.daemon._check_inactivity_reconnect`) **without**
+    touching the merged mesh-activity counter. This is the seam for events that
+    prove the link is alive but must **not** be counted as air traffic: MeshCore
+    companion-link reads (``SELF_INFO``, ``CONTACTS``, host self-telemetry) and
+    the decoded high-level RX events (``CHANNEL_MSG_RECV``, ``CONTACT_MSG_RECV``,
+    ``ADVERTISEMENT``, remote telemetry responses) whose underlying RF frame is
+    already counted once at the ``RX_LOG_DATA`` seam (SPEC MA1, Model A). Keeping
+    the clock update here preserves reconnect timing unchanged while the counter
+    is deduplicated to one increment per over-air frame.
     """
 
     global _last_packet_monotonic
     _last_packet_monotonic = time.monotonic()
+
+
+def _mark_packet_seen() -> None:
+    """Record that a packet has been processed and count it (SPEC MA1).
+
+    Advances the inactivity-reconnect clock (via :func:`_mark_packet_activity`)
+    **and** increments the merged mesh-activity counter, so *every* frame routed
+    through this seam is counted before any dispatch or drop decision. It is the
+    counting seam for the Meshtastic ``on_receive`` path (one call per received
+    frame) and, for MeshCore, the single ``RX_LOG_DATA`` seam — the complete
+    per-frame ground truth of received RF traffic (Model A). Frames that reach
+    the counter only via a decoded high-level event use :func:`_mark_packet_activity`
+    instead, so a frame is never counted twice.
+    """
+
+    _mark_packet_activity()
     activity.record_packet()
 
 
@@ -202,6 +224,7 @@ __all__ = [
     "_host_telemetry_suppressed",
     "_mark_host_nodeinfo_seen",
     "_mark_host_telemetry_seen",
+    "_mark_packet_activity",
     "_mark_packet_seen",
     "host_node_id",
     "last_packet_monotonic",
