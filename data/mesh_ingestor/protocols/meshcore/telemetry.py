@@ -256,7 +256,12 @@ def _queue_meshcore_telemetry(
             "telemetry": {**section, "time": rx_time},
         },
     }
-    handlers._mark_packet_seen()
+    # A remote telemetry/status response is an over-air frame already counted at
+    # its RX_LOG_DATA seam (RESPONSE); a host self-telemetry read is a
+    # companion-link read, not air traffic. Either way, advance the reconnect
+    # clock only — never the packet counter — so telemetry is not double-counted
+    # (SPEC MA1, Model A).
+    handlers._mark_packet_activity()
     handlers.store_packet_dict(packet)
     config._debug_log(
         "MeshCore telemetry queued",

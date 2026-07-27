@@ -1123,6 +1123,36 @@ def test_store_meshcore_position_queues_to_api_positions(monkeypatch):
     assert payload["id"] >= 0
 
 
+def test_store_meshcore_position_includes_radio_metadata(monkeypatch):
+    """MeshCore position POSTs must carry the captured LoRa radio metadata.
+
+    Regression for the ``/api/positions`` radio-metadata gap: the MeshCore
+    position builder posts directly (bypassing the generic position handler),
+    so without an explicit :func:`_apply_radio_metadata` call every position
+    row lands with ``lora_freq``/``modem_preset`` nil even though the ingestor
+    captured them at ``SELF_INFO`` — unlike MeshCore message and node POSTs,
+    which are already enriched.
+    """
+    import data.mesh_ingestor.config as config
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(config, "LORA_FREQ", 869.618, raising=False)
+    monkeypatch.setattr(config, "MODEM_PRESET", "SF8/BW62/CR8", raising=False)
+    posted: list = []
+    monkeypatch.setattr(
+        _mod._queue,
+        "_queue_post_json",
+        lambda route, payload, **_k: posted.append((route, payload)),
+    )
+
+    _store_meshcore_position("!aabbccdd", 51.5, -0.1, 1700001234, "!ingestor1")
+
+    assert len(posted) == 1
+    _route, payload = posted[0]
+    assert payload.get("lora_freq") == 869.618
+    assert payload.get("modem_preset") == "SF8/BW62/CR8"
+
+
 def test_store_meshcore_position_id_is_stable_for_same_node_and_time(monkeypatch):
     """The pseudo-ID must be identical for repeated calls with the same arguments."""
     import data.mesh_ingestor.protocols.meshcore as _mod
@@ -1486,6 +1516,7 @@ def _make_stub_handlers_module():
         register_host_node_id=lambda *_a, **_k: None,
         host_node_id=lambda: None,
         _mark_packet_seen=lambda: None,
+        _mark_packet_activity=lambda: None,
         store_packet_dict=lambda *_a, **_k: None,
     )
     return mod
@@ -1704,13 +1735,18 @@ def test_queue_meshcore_telemetry_packet_shape(monkeypatch):
     """Queued packets carry the canonical shape, protocol stamp, and stable id."""
     mc_tel, iface, stub, captured = _telemetry_env(monkeypatch)
     seen = []
-    stub._mark_packet_seen = lambda: seen.append(True)
+    counted = []
+    stub._mark_packet_activity = lambda: seen.append(True)
+    stub._mark_packet_seen = lambda: counted.append(True)
 
     queued = mc_tel._queue_meshcore_telemetry(
         stub, "!11223344", {"deviceMetrics": {"voltage": 4.05}}, "battery"
     )
     assert queued is True
+    # Model A: telemetry advances the clock only — the on-air response is
+    # counted at its RX_LOG_DATA seam, so the counter is untouched here.
     assert seen == [True]
+    assert counted == []
     packet = captured[0]
     assert packet["protocol"] == "meshcore"
     assert packet["from_id"] == "!11223344"
@@ -2819,6 +2855,30 @@ def test_on_rx_log_data_non_advert_routes_to_debug_capture(monkeypatch):
     assert source.endswith(":RX_LOG_DATA")
 
 
+def test_on_rx_log_data_non_advert_counts_frame(monkeypatch):
+    """Every non-ADVERT RX-log frame counts toward the merged activity total.
+
+    SPEC MA1 / Model A: the RX-log stream is MeshCore's complete per-frame
+    ground truth of received RF traffic, so a frame type that is only
+    DEBUG-captured and never stored (e.g. ``GRP_TXT``, ``REQ``, ``ACK``) must
+    still increment the packet counter — counting precedes the DEBUG-capture
+    drop.  This exercises the *real* handlers module (not the stub) so the
+    genuine :mod:`data.mesh_ingestor.activity` counter moves.
+    """
+    import asyncio
+
+    import data.mesh_ingestor.activity as activity
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    monkeypatch.setattr(_mod.config, "_debug_log", lambda *_a, **_k: None)
+    monkeypatch.setattr(_mod, "_record_meshcore_message", lambda *_a, **_k: None)
+
+    hmap = _make_event_handlers(_MeshcoreInterface(target=None), "/dev/ttyUSB0")
+    activity.take_packet_count()  # drain any activity from earlier tests
+    asyncio.run(hmap["RX_LOG_DATA"](_FakeEvt({"payload_typename": "GRP_TXT"})))
+    assert activity.take_packet_count() == 1
+
+
 def test_on_rx_log_data_malformed_advert_tolerated(monkeypatch):
     """A short/absent adv_key is skipped without raising (RF3)."""
     import asyncio
@@ -3777,15 +3837,23 @@ def test_process_contacts_skips_short_keys():
     assert upserted == []
 
 
-def test_process_contacts_marks_packet_seen():
-    """_process_contacts must always call _mark_packet_seen."""
-    seen: list = []
+def test_process_contacts_marks_packet_activity():
+    """_process_contacts advances the reconnect clock but does not count.
+
+    A bulk ``CONTACTS`` roster fetch is a companion-link read, not over-air
+    traffic, so under Model A it calls :func:`_mark_packet_activity` (clock
+    only) and never :func:`_mark_packet_seen` (which would count it).
+    """
+    activity_seen: list = []
+    counted: list = []
     stub = _make_stub_handlers_module()
-    stub._mark_packet_seen = lambda: seen.append(True)
+    stub._mark_packet_activity = lambda: activity_seen.append(True)
+    stub._mark_packet_seen = lambda: counted.append(True)
 
     _process_contacts({}, _MeshcoreInterface(target=None), stub)
 
-    assert seen == [True]
+    assert activity_seen == [True]
+    assert counted == []
 
 
 def test_process_contacts_queues_position_for_contacts_with_latlon(monkeypatch):

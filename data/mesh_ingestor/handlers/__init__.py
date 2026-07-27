@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from .. import queue as _queue
 from ._state import (
+    _mark_packet_activity,
     _mark_packet_seen,
     host_node_id,
     last_packet_monotonic,
@@ -86,6 +87,7 @@ __all__ = [
     "_is_encrypted_flag",
     "_is_likely_reaction",
     "_is_reaction_placeholder_text",
+    "_mark_packet_activity",
     "_mark_packet_seen",
     "_normalize_trace_hops",
     "_portnum_candidates",

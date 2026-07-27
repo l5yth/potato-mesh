@@ -20,6 +20,7 @@ import hashlib
 import time
 
 from ... import queue as _queue
+from ...handlers.radio import _apply_radio_metadata
 from ...serialization import (
     _iso,
     _node_num_from_id,
@@ -95,4 +96,10 @@ def _store_meshcore_position(
         # ingestor heartbeat having been registered first.  See CONTRACTS.md.
         "protocol": "meshcore",
     }
-    _queue._queue_post_json("/api/positions", payload)
+    # This builder posts directly instead of routing through the generic
+    # position handler, so enrich it with the captured LoRa radio metadata
+    # (lora_freq / modem_preset) here — otherwise every MeshCore position row
+    # lands with nil radio config, unlike MeshCore messages and node upserts,
+    # which are already enriched.  The fields are added only when the ingestor
+    # has captured them from SELF_INFO (absent ⇒ omitted, never nil-stamped).
+    _queue._queue_post_json("/api/positions", _apply_radio_metadata(payload))

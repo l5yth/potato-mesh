@@ -1203,3 +1203,43 @@ divergences it found. Presentation + read-side only; no API/DB change.
 | **MR6** | **Card is a labelled `group`.** The card root carries `role="group"` so its `aria-label` is announced (a bare div's is not); children stay readable, unlike `role="img"`. | review |
 | **MR7** | **`/charts` intro is protocol-neutral.** The all-protocol "Network telemetry trends" heading no longer carries the single Meshtastic badge (`charts.erb`), matching the de-scoped copy (F2-5). | review |
 | **MR8** | **Utilization second-axis (design 1c) explicitly out of scope.** The packets/h right-hand axis overlay on the channel-utilization chart was **not** built — the standalone "Mesh activity" figure (F2-5) is the shipped scope; recorded so the design is not re-litigated. | review |
+
+---
+
+## Bugfix: MeshCore RX packet undercount & position radio metadata
+
+Two MeshCore ingestor defects where the ingestor under-reports data it already
+holds. **(a)** The packet counter drastically under-counts MeshCore RF traffic:
+`on_rx_log_data` (`protocols/meshcore/handlers.py`) counted only `ADVERT`
+RX-log frames and dropped every other received frame (`REQ`, `RESPONSE`,
+`GRP_TXT`, `TEXT_MSG`, `ANON_REQ`, `PATH`, `ACK`, …) to the `DEBUG`-only capture
+via an early `return` that never reached the counting seam — violating **MA1**
+("count *every* received frame, including ignored / errored / unimplemented").
+Field evidence: 31 171 uncounted non-`ADVERT` RX-log frames over ~3 days on one
+node. **(b)** MeshCore position POSTs omit `lora_freq`/`modem_preset`: the
+protocol-specific builder (`protocols/meshcore/position.py`) posts directly and
+never called `_apply_radio_metadata`, so every `/api/positions` row landed with
+nil radio config (empirically 0 of 3 278) even though the ingestor had captured
+those values at `SELF_INFO` — unlike MeshCore message and node POSTs, which are
+enriched.
+
+**Conflict check.** *MA1 (count everything at the earliest seam)* — **fixes**:
+(a) restores the invariant for the MeshCore RX-log family that was silently
+dropped; the corrected mechanism (**PC2**) refines MA1's "every MeshCore
+handler" phrasing to the RX-log seam without changing the goal. *RF3 (only
+`ADVERT` RX-log frames upsert nodes)* — **preserved**: non-`ADVERT` frames still
+never upsert and stay in the `DEBUG`-only capture (PC2 only adds *counting*, not
+storing). *MA4 (MAX-per-protocol aggregation)* — **untouched**: only the
+per-ingestor RX count changes. *Invariants I/II (apex/privacy)* —
+**consistent**: no broker/egress, no new on-disk retention; radio metadata is
+already carried on other MeshCore records. *Invariant IV (parity)* —
+**consistent**: Meshtastic already counts every frame at `on_receive` and its
+positions already carry radio metadata; this brings MeshCore to parity.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **PC1** | **Root cause = an early `return` before the counting seam (implementation defect, MA1 right).** Non-`ADVERT` `RX_LOG_DATA` frames were routed to `_record_meshcore_message` and returned *before* any `_mark_packet_seen`, so they were never counted. MA1's own "a build-phase check confirms each protocol's RX entry funnels through the seam" did not catch this family. | interview + code |
+| **PC2** | **Model A — count at the `RX_LOG_DATA` seam; decoded events are clock-only.** The MeshCore firmware emits exactly one `RX_LOG_DATA` frame per received over-air frame (the complete per-frame ground truth of "what is in the air"), while the decoded high-level events (`CHANNEL_MSG_RECV`, `CONTACT_MSG_RECV`, bare `ADVERTISEMENT`, `NEW_CONTACT`/`NEXT_CONTACT`, remote telemetry/status responses) are duplicates of those same frames (the `decrypt_channels` RX-log join, **RF2**, confirms both events fire for one frame). So MeshCore counts **every** frame **once** at `on_rx_log_data` — before the `ADVERT`/non-`ADVERT` split, the malformed-advert skip, and the DEBUG-capture drop — and the decoded seams advance the reconnect clock only. This eliminates both the undercount (all frame types now count) and any double-count (decoded duplicates do not re-count). | interview (Model A) |
+| **PC3** | **Reconnect clock decoupled from the counter (`_mark_packet_activity`).** `_mark_packet_seen` previously did two jobs — advance `_last_packet_monotonic` (the inactivity-reconnect clock, `daemon._check_inactivity_reconnect`) *and* count. A new `handlers/_state._mark_packet_activity` does the clock update alone; `_mark_packet_seen` = `_mark_packet_activity` + `activity.record_packet`. Every MeshCore seam that stops counting still calls `_mark_packet_activity`, so its **reconnect timing is unchanged** — only the counter is deduplicated. Companion-link reads (`SELF_INFO`, `CONTACTS`, host self-telemetry) are clock-only too: they are not over-air traffic. *One deliberate, benign effect:* non-`ADVERT` RX-log frames now advance the clock as well (the old early `return` skipped both the count **and** the clock), so inactivity-reconnect fires marginally *less* eagerly — overheard RF traffic is proof the link is alive, so this is strictly more correct, not a regression. | code |
+| **PC4** | **Accepted caveat: firmware without RX logging.** Because RX counting now flows solely through `RX_LOG_DATA`, a MeshCore build that does not push RX-log frames counts ~0 RX (TX still counts). Companion firmware ≥ 1.16 pushes RX-log frames unconditionally while a client is connected (**RF3**), which is the supported target, so this is the deliberate, documented cost of an accurate per-frame count over a partial-but-firmware-robust estimate. | interview + code |
+| **PC5** | **MeshCore position POSTs carry captured radio metadata.** `_store_meshcore_position` applies `_apply_radio_metadata` before posting, adding `lora_freq`/`modem_preset` from the values captured at `SELF_INFO` (absent ⇒ omitted, never nil-stamped), matching MeshCore message/node POSTs and the Meshtastic position path. An audit of every `_queue_post_json` builder confirmed positions were the **only** omission; no web-side fallback is added (the ingestor is the source of truth). | interview + code |

@@ -115,6 +115,24 @@ class TestReceiveSeam:
         _state._mark_packet_seen()
         assert activity.take_packet_count() == 1
 
+    def test_mark_packet_activity_advances_clock_without_counting(self):
+        """``_mark_packet_activity`` feeds the reconnect clock only (Model A).
+
+        It advances the monotonic activity clock — so inactivity-reconnect sees
+        the link is alive — but leaves the merged counter untouched. This is the
+        seam for frames counted elsewhere (MeshCore's ``RX_LOG_DATA`` seam) and
+        companion-link reads that are not over-air traffic, so counting is never
+        duplicated.
+        """
+        _state._mark_packet_activity()
+        assert activity.take_packet_count() == 0
+        assert isinstance(_state.last_packet_monotonic(), float)
+
+    def test_mark_packet_seen_also_advances_the_clock(self):
+        """``_mark_packet_seen`` advances the reconnect clock as well (MA1)."""
+        _state._mark_packet_seen()
+        assert isinstance(_state.last_packet_monotonic(), float)
+
     def test_on_receive_counts_stored_ignored_and_errored(self, monkeypatch):
         """Every ``on_receive`` outcome is counted at the seam (MA1).
 

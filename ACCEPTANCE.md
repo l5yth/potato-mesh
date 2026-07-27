@@ -4289,3 +4289,33 @@ git grep -n 'meshtastic.svg' -- web/views/charts.erb
 is re-declared inside it (so an idle card cannot paint an empty pill over the map,
 restoring MA-F3 on phones — the `awk` prints its confirmation line); and the last command
 prints **nothing** — the `/charts` intro heading no longer references `meshtastic.svg`.
+
+## Bugfix: MeshCore RX packet undercount & position radio metadata
+
+Regression coverage for the two MeshCore ingestor under-reporting defects: the
+`RX_LOG_DATA` counting gap (PC1–PC4) and the position radio-metadata omission
+(PC5).
+
+### PC-A1 — Every MeshCore RX-log frame is counted, once, at the RX-log seam — PC1/PC2/PC3
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "on_rx_log_data or process_contacts_marks_packet_activity or queue_meshcore_telemetry_packet_shape" )
+( . .venv/bin/activate && pytest -q tests/test_activity_unit.py -k "mark_packet_activity or mark_packet_seen" )
+```
+**Expected:** pass. A non-`ADVERT` `RX_LOG_DATA` frame (e.g. `GRP_TXT`) now increments
+the merged counter (`test_on_rx_log_data_non_advert_counts_frame`) **and** still routes to
+the `DEBUG`-only capture without upserting (`..._routes_to_debug_capture`, RF3 preserved) —
+counting precedes the drop, so the ~4× MeshCore undercount is closed. The decoded
+high-level seams do **not** re-count: `_process_contacts` and `_queue_meshcore_telemetry`
+call `_mark_packet_activity` (clock only), never `_mark_packet_seen`, so a frame already
+counted at its `RX_LOG_DATA` seam is not double-counted. `_mark_packet_activity` advances
+the inactivity-reconnect clock without counting, while `_mark_packet_seen` does both — so
+reconnect timing is unchanged.
+
+### PC-A2 — MeshCore position POSTs carry captured LoRa radio metadata — PC5
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "store_meshcore_position_includes_radio_metadata or store_meshcore_position_queues" )
+```
+**Expected:** pass. With `config.LORA_FREQ`/`MODEM_PRESET` captured, a MeshCore position
+POST body carries `lora_freq`/`modem_preset` (was nil on every `/api/positions` row),
+matching MeshCore message/node POSTs; when the ingestor has not captured them the fields
+are omitted (never nil-stamped), so the existing position-shape test still passes.
