@@ -2078,9 +2078,14 @@ export function initializeApp(config) {
   // on-demand load is cache-busted (AV3).
   let nodeDetailOverlayManager = null;
   let nodeDetailOverlayManagerPromise = null;
+  // Indirection so a test can drive the import-failure retry path; production
+  // always dynamic-imports the real module.
+  let importNodeDetailOverlayModule = () => import('./node-detail-overlay.js');
   /**
    * Resolve the (memoized) node-detail overlay manager, dynamically importing its
-   * module on first use.
+   * module on first use. A **failed** import is not cached — a transient
+   * chunk-load failure must not leave node links permanently inert — so the next
+   * open re-imports instead of re-hitting the rejected promise.
    *
    * @returns {Promise<Object|null>} the overlay manager, or ``null`` when the
    *   overlay DOM is unavailable.
@@ -2088,13 +2093,19 @@ export function initializeApp(config) {
   function loadNodeDetailOverlayManager() {
     if (nodeDetailOverlayManager) return Promise.resolve(nodeDetailOverlayManager);
     if (!nodeDetailOverlayManagerPromise) {
-      nodeDetailOverlayManagerPromise = import('./node-detail-overlay.js')
+      nodeDetailOverlayManagerPromise = importNodeDetailOverlayModule()
         .then(({ createNodeDetailOverlayManager }) => {
           nodeDetailOverlayManager = createNodeDetailOverlayManager({
             document,
             privateMode: isPrivateMode,
           });
           return nodeDetailOverlayManager;
+        })
+        .catch(err => {
+          // Drop the rejected promise so a later open retries the import rather
+          // than permanently failing (the click already preventDefaulted).
+          nodeDetailOverlayManagerPromise = null;
+          throw err;
         });
     }
     return nodeDetailOverlayManagerPromise;
@@ -2105,8 +2116,10 @@ export function initializeApp(config) {
     if (
       longNameLink &&
       // The overlay root lives in the shared layout; when it is absent the
-      // manager would be null, so fall through to normal link handling (mirrors
-      // the pre-lazy `nodeDetailOverlayManager &&` guard).
+      // manager would be null, so fall through to normal link handling. (The
+      // shipped layout always renders the root plus its dialog/close/content
+      // children; the pathological root-present-but-children-missing case is not
+      // reachable here — it resolves the manager to null below and no-ops.)
       document.getElementById('nodeDetailOverlay') &&
       shouldHandleNodeLongLink(longNameLink) &&
       !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
@@ -3791,6 +3804,11 @@ export function initializeApp(config) {
    *
    * @type {ReadonlyArray<Object>}
    */
+  // Shared refine references so a coalesced flush dedups them by identity: the
+  // three node-derived collections share the same rebuildNodeDerivedState
+  // function object (so the pending-refine Set collapses them to one call), and
+  // neighbors/traces share a single no-op.
+  const noopRefine = () => {};
   const COLLECTION_BACKFILLS = [
     {
       name: 'nodes',
@@ -3798,7 +3816,7 @@ export function initializeApp(config) {
       idOf: row => row && row.node_id,
       cursorOf: row => row && row.last_heard,
       merge: batch => { allNodes = mergeById(allNodes, batch, 'node_id'); },
-      refine: () => rebuildNodeDerivedState(),
+      refine: rebuildNodeDerivedState,
     },
     {
       name: 'positions',
@@ -3808,7 +3826,7 @@ export function initializeApp(config) {
       merge: batch => {
         allPositionEntries = trimToWindow(mergeById(allPositionEntries, batch, 'id'), recentBackfillFloor());
       },
-      refine: () => rebuildNodeDerivedState(),
+      refine: rebuildNodeDerivedState,
     },
     {
       name: 'telemetry',
@@ -3818,7 +3836,7 @@ export function initializeApp(config) {
       merge: batch => {
         allTelemetryEntries = trimToWindow(mergeById(allTelemetryEntries, batch, 'id'), recentBackfillFloor());
       },
-      refine: () => rebuildNodeDerivedState(),
+      refine: rebuildNodeDerivedState,
     },
     {
       name: 'neighbors',
@@ -3836,7 +3854,7 @@ export function initializeApp(config) {
       // Neighbors stay RAW (like traces) so the Log keeps every per-pair snapshot
       // and the map / overlay consumers dedupe internally; re-aggregating here
       // would erode history exactly as the refresh path used to (bugfix A1).
-      refine: () => {},
+      refine: noopRefine,
     },
     {
       name: 'traces',
@@ -3849,7 +3867,7 @@ export function initializeApp(config) {
       merge: batch => {
         allTraces = trimToWindow(mergeById(allTraces, batch, 'id'), longBackfillFloor());
       },
-      refine: () => {},
+      refine: noopRefine,
     },
   ];
 
@@ -5569,6 +5587,16 @@ export function initializeApp(config) {
        * use only) — the same loader the ``.node-long-link`` click path uses.
        */
       loadNodeDetailOverlayManager,
+      /**
+       * Override the overlay-module importer (test use only) so the import-failure
+       * retry path can be exercised.
+       *
+       * @param {() => Promise<Object>} importer Replacement dynamic importer.
+       * @returns {void}
+       */
+      _setNodeDetailOverlayImporter(importer) {
+        importNodeDetailOverlayModule = importer;
+      },
       /** The persistent data cache instance (test use only). */
       dataCache,
       /** Seed in-memory state from the persistent cache (test use only). */

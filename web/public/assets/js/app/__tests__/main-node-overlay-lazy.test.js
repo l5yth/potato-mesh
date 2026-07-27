@@ -142,3 +142,32 @@ test('a .node-long-link click lazy-opens the overlay (frontend perf)', async () 
     env.cleanup();
   }
 });
+
+test('a failed overlay import is not cached — the next open retries (frontend perf)', async () => {
+  const env = createDomEnvironment({ includeBody: true });
+  registerOverlay(env);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => jsonResponse([]);
+  try {
+    const { _testUtils } = initializeApp(BASE_CONFIG);
+    await _testUtils.initialLoad;
+
+    // A transient chunk-load failure on the first open must not permanently
+    // disable node links: the rejected import is dropped, not memoised.
+    let attempts = 0;
+    _testUtils._setNodeDetailOverlayImporter(() => {
+      attempts += 1;
+      return attempts === 1
+        ? Promise.reject(new Error('chunk load failed'))
+        : import('../node-detail-overlay.js');
+    });
+
+    await assert.rejects(_testUtils.loadNodeDetailOverlayManager(), /chunk load failed/);
+    const manager = await _testUtils.loadNodeDetailOverlayManager();
+    assert.ok(manager, 'a later open retries the import and resolves the manager');
+    assert.equal(attempts, 2, 'the failed import was retried, not served from a cached rejection');
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.cleanup();
+  }
+});

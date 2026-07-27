@@ -143,12 +143,15 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
         FileUtils.mkdir_p(File.join(dir, "app", "sub"))
         FileUtils.mkdir_p(File.join(dir, "app", "__tests__"))
         File.write(File.join(dir, "background.js"), "// classic top-level script")
-        # index → main (static), main → ../background (escapes app/) + export-from
-        # config + dynamic import of sub/lazy; other-page is unreachable from index.
+        # index → main (static). main statically imports ../background (a classic
+        # top-level script, one dir up), re-exports ./config, imports a specifier
+        # that escapes the served tree (dropped), and dynamic-imports ./sub/lazy
+        # (excluded — lazy). other-page is unreachable from index.
         File.write(File.join(dir, "app", "index.js"), "import { boot } from './main.js';\n")
         File.write(
           File.join(dir, "app", "main.js"),
-          "import '../background.js';\nexport { cfg } from './config.js';\nimport('./sub/lazy.js');\n",
+          "import '../background.js';\nexport { cfg } from './config.js';\n" \
+          "import '../../../escapes-tree.js';\nimport('./sub/lazy.js');\n",
         )
         File.write(File.join(dir, "app", "config.js"), "// leaf module")
         File.write(File.join(dir, "app", "sub", "lazy.js"), "// lazily imported leaf")
@@ -223,6 +226,13 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
       it "excludes modules not reachable from the entry (other pages' graphs)" do
         closure = described_class.import_closure(@root, ["/assets/js/app/index.js"])
         expect(closure).not_to include("/assets/js/app/other-page.js")
+      end
+
+      it "skips a relative import that escapes the served tree" do
+        # main.js imports '../../../escapes-tree.js', which resolves outside
+        # /assets/js; resolve_relative_module returns nil so it is never queued.
+        closure = described_class.import_closure(@root, ["/assets/js/app/index.js"])
+        expect(closure).not_to include(a_string_including("escapes-tree"))
       end
 
       it "never follows an import into a __tests__ module" do
