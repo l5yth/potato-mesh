@@ -159,20 +159,30 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
     end
 
     describe ".import_specifiers" do
-      it "captures static, re-export, dynamic, and bare side-effect relative specifiers" do
+      it "captures static, re-export, and bare side-effect relative specifiers" do
         source = <<~JS
           import a from './static.js';
           export { b } from './reexport.js';
-          const c = import('./dynamic.js');
           import './side-effect.js';
           import x from 'leaflet';
         JS
         expect(described_class.import_specifiers(source)).to contain_exactly(
-          "./static.js", "./reexport.js", "./dynamic.js", "./side-effect.js"
+          "./static.js", "./reexport.js", "./side-effect.js"
         )
         # A bare specifier (a global dependency, e.g. Leaflet) is not relative and
         # is therefore excluded.
         expect(described_class.import_specifiers(source)).not_to include("leaflet")
+      end
+
+      it "excludes dynamic import() specifiers (lazy, not part of the boot graph)" do
+        source = <<~JS
+          import a from './static.js';
+          const c = import('./dynamic.js');
+          if (x) { import("./conditional.js"); }
+        JS
+        expect(described_class.import_specifiers(source)).to eq(["./static.js"])
+        expect(described_class.import_specifiers(source)).not_to include("./dynamic.js")
+        expect(described_class.import_specifiers(source)).not_to include("./conditional.js")
       end
 
       it "de-duplicates repeated specifiers" do
@@ -193,15 +203,21 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
     end
 
     describe ".import_closure" do
-      it "returns the transitive closure reachable from the entry, cycle-safe" do
+      it "returns the transitive static closure reachable from the entry, cycle-safe" do
         closure = described_class.import_closure(@root, ["/assets/js/app/index.js"])
         expect(closure).to contain_exactly(
           "/assets/js/app/index.js",
           "/assets/js/app/main.js",
           "/assets/js/app/config.js",
-          "/assets/js/app/sub/lazy.js",
           "/assets/js/background.js",
         )
+      end
+
+      it "excludes a dynamically-imported module (lazy, loaded on demand — not preloaded)" do
+        # main.js does `import('./sub/lazy.js')`, so the lazy module is not part of
+        # the synchronous boot graph and must stay out of the preload closure.
+        closure = described_class.import_closure(@root, ["/assets/js/app/index.js"])
+        expect(closure).not_to include("/assets/js/app/sub/lazy.js")
       end
 
       it "excludes modules not reachable from the entry (other pages' graphs)" do
@@ -230,8 +246,9 @@ RSpec.describe PotatoMesh::App::AssetImportMap do
       it "emits version-stamped modulepreload links for the entry's app-module closure only" do
         html = described_class.preload_html_for(@root, "1.2.3", ["/assets/js/app/index.js"])
         expect(html).to include(%(<link rel="modulepreload" href="/assets/js/app/index.js?v=1.2.3">))
-        expect(html).to include(%(<link rel="modulepreload" href="/assets/js/app/main.js?v=1.2.3">))
-        expect(html).to include(%(<link rel="modulepreload" href="/assets/js/app/sub/lazy.js?v=1.2.3">))
+        expect(html).to include(%(<link rel="modulepreload" href="/assets/js/app/config.js?v=1.2.3">))
+        # A dynamically-imported (lazy) module is not preloaded.
+        expect(html).not_to include("sub/lazy.js")
         # An unreachable page module is not preloaded (the fix).
         expect(html).not_to include("other-page.js")
         # A classic top-level script pulled in transitively is still not emitted

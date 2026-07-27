@@ -4425,18 +4425,26 @@ empty-result path, so none of their outcomes may change.
 
 Since the module-graph preload (#815/#832) and the bulk-collection backfill (#835),
 amplified by the design/UX work (#855/#859/#860), the dashboard's cold-load cost
-grew: **(RC-A)** the layout preloaded *every* served JS module on every page even
-though a page only runs the graph reachable from its own entries — so each view
-eagerly downloaded the other pages' entry graphs (e.g. the dashboard preloaded the
-`/charts` and `/federation` entry modules it never runs), and **(RC-B)** the
-one-shot backfill repainted the entire node table + map once per streamed page
-(dozens of `/api/positions` pages on a busy instance), on the main thread with no
-coalescing. The fix scopes the modulepreload set to the current view's module
-graph (the AV3 import map still versions the whole graph) and coalesces the
-backfill's per-page repaints into a bounded idle repaint. Frontend/template only —
-no API/DB change; the C4/C7 window floors, `MAX_QUERY_LIMIT`, privacy, and the
-FC persistent cache are untouched, and the full 7-/28-day history still backfills
-(only *when* it repaints changes, not *which* rows are reachable).
+grew. Two root causes plus three first-paint levers are addressed, all
+frontend/template only — no API/DB change; the C4/C7 window floors,
+`MAX_QUERY_LIMIT`, privacy, and the FC persistent cache are untouched, and the full
+7-/28-day history still backfills (only *when* it repaints changes, not *which*
+rows are reachable):
+
+- **(RC-A)** the layout preloaded *every* served JS module on every page even
+  though a page only runs the graph reachable from its own entries → scope the
+  modulepreload set to the current view's **static** import closure (the AV3 import
+  map still versions the whole graph).
+- **(RC-B)** the one-shot backfill repainted the entire node table + map once per
+  streamed page (dozens of `/api/positions` pages on a busy instance), on the main
+  thread → coalesce the per-page repaints onto a bounded idle callback.
+- **(FP-A3)** the render-blocking Leaflet CDN `<script>` blocked first paint on the
+  unpkg round-trip → `defer` it.
+- **(FP-A4)** the dashboard's node overlay statically pulled the ~125 KB node-detail
+  renderer into the boot graph → dynamic-`import()` it on first open.
+- **(FP-A5)** `/charts`, `/federation`, and node-detail pages ran the whole
+  dashboard data pipeline (fetch + backfill + SSE) on top of their own module →
+  skip that pipeline on those views.
 
 ### FP-A1 — The dashboard preloads only its own module graph (RC-A)
 ```bash
@@ -4444,12 +4452,13 @@ FC persistent cache are untouched, and the full 7-/28-day history still backfill
 ( cd web && bundle exec rspec spec/asset_import_map_spec.rb )
 ```
 **Expected:** pass. `GET /` emits `<link rel="modulepreload">` for the dashboard's
-own graph (e.g. `main.js`) but **not** for page-specific entries the dashboard
-never executes (`charts-page.js`, `federation-page.js`, `node-page.js`). The
-`<script type="importmap">` still version-stamps the **whole** served graph (AV3),
-so navigating to those pages still receives cache-busted modules.
-`AssetImportMap.import_closure` walks each entry's static `import`/`export … from`
-graph; a module absent from a preload set still loads on demand (AV3 degradation).
+own graph (e.g. `main.js`) but **not** for other pages' entry modules
+(`charts-page.js`, `federation-page.js`). The `<script type="importmap">` still
+version-stamps the **whole** served graph (AV3), so navigating to those pages still
+receives cache-busted modules. `AssetImportMap.import_closure` walks each entry's
+**static** `import` / `export … from` graph (dynamic `import()` is excluded — it is
+lazy, so it must not be eagerly preloaded); a module absent from a preload set still
+loads on demand (AV3 degradation).
 
 ### FP-A2 — The bulk-collection backfill coalesces its repaints (RC-B)
 ```bash
@@ -4463,6 +4472,38 @@ repaint is coalesced onto an idle callback. The existing #832 backfill behaviour
 (every collection pages backward past the newest 1000-row page; a short page fires
 no request; a failed page is swallowed) is unchanged.
 
+### FP-A3 — Leaflet is deferred so it does not block first paint
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "loads the CDN Leaflet script deferred" )
+```
+**Expected:** pass. The Leaflet CDN `<script>` in the layout head carries `defer`,
+so it no longer blocks first paint on the unpkg round-trip. The map init runs on
+`DOMContentLoaded` (after deferred scripts execute in document order), so
+`window.L` is ready in time; a missing `L` still degrades to the "map unavailable"
+placeholder (unchanged).
+
+### FP-A4 — The node-detail overlay subtree is lazy-loaded, not in the boot preload
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "keeps the lazily-loaded node-detail overlay subtree out" )
+( cd web && node --test public/assets/js/app/__tests__/main-node-overlay-lazy.test.js )
+```
+**Expected:** pass. The dashboard boot preload contains **no** `modulepreload` for
+`node-page.js` / `node-detail-overlay.js` (the ~125 KB node-detail renderer + charts
+subtree); `main.js` dynamic-`import()`s it on first `.node-long-link` open and
+memoises it (a concurrent open reuses the single in-flight import). The module stays
+in the import map for the on-demand load (AV3). The overlay's own behaviour
+(`node-detail-overlay.test.js`) is unchanged.
+
+### FP-A5 — Self-rendering pages skip the shared dashboard data pipeline
+```bash
+( cd web && node --test public/assets/js/app/__tests__/main-view-gating.test.js )
+```
+**Expected:** pass. On a `view-charts`, `view-federation`, or `view-node_detail`
+body, `initializeApp` wires the shared header (mobile menu, instance selector, node
+overlay) but issues **no** `/api/*` fetch, backfill, or SSE — that data pipeline
+(which previously fired the whole bulk-collection backfill on every node-detail
+view) is skipped. The dashboard view still fetches and loads its data.
+
 ### FP-R1 — Regression: prior acceptance still holds
 ```bash
 ( cd web && npm test ) && ( cd web && bundle exec rspec )
@@ -4472,4 +4513,7 @@ remain green: **PL-A1/PL-A2** (progressive chat load — same coalescing family)
 the **#832** collection-backfill guards (`main-collection-backfill.test.js`), the
 asset cache-busting specs (**AV1–AV5**, `asset_import_map_spec.rb` /
 `asset_versioning_spec.rb` — the import map is unchanged), and **B1** (all suites).
-No API/event contract changes, so **C2** and the Python suite are unaffected.
+The map still initialises on the dashboard/map views (Leaflet defer), node overlays
+still open (now lazily), and `/charts`, `/federation`, node-detail pages still
+render via their own modules. No API/event contract changes, so **C2** and the
+Python suite are unaffected.

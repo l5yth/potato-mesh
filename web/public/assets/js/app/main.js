@@ -65,7 +65,9 @@ import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focu
 import { createMapCenterResetHandler } from './map-center-reset.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
-import { createNodeDetailOverlayManager } from './node-detail-overlay.js';
+// createNodeDetailOverlayManager is dynamic-`import()`ed on first overlay open
+// (see loadNodeDetailOverlayManager) to keep its heavy node-detail renderer
+// subtree out of the dashboard boot graph (frontend perf).
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatLoraFrequencyMHz, formatModemDisplay, formatPresetDisplay } from './node-modem-metadata.js';
 import {
@@ -2068,16 +2070,44 @@ export function initializeApp(config) {
     setLegendVisibility(false);
   }
 
-  const nodeDetailOverlayManager = createNodeDetailOverlayManager({
-    document,
-    privateMode: isPrivateMode,
-  });
+  // Lazily import + create the node-detail overlay manager on first open, then
+  // cache it. The overlay reuses the heavy node-detail renderer (node-page +
+  // charts, ~125 KB) which the dashboard only needs when a user opens a node, so
+  // keeping it behind a dynamic import removes that subtree from the synchronous
+  // boot graph (frontend perf). The import map still versions the module, so the
+  // on-demand load is cache-busted (AV3).
+  let nodeDetailOverlayManager = null;
+  let nodeDetailOverlayManagerPromise = null;
+  /**
+   * Resolve the (memoized) node-detail overlay manager, dynamically importing its
+   * module on first use.
+   *
+   * @returns {Promise<Object|null>} the overlay manager, or ``null`` when the
+   *   overlay DOM is unavailable.
+   */
+  function loadNodeDetailOverlayManager() {
+    if (nodeDetailOverlayManager) return Promise.resolve(nodeDetailOverlayManager);
+    if (!nodeDetailOverlayManagerPromise) {
+      nodeDetailOverlayManagerPromise = import('./node-detail-overlay.js')
+        .then(({ createNodeDetailOverlayManager }) => {
+          nodeDetailOverlayManager = createNodeDetailOverlayManager({
+            document,
+            privateMode: isPrivateMode,
+          });
+          return nodeDetailOverlayManager;
+        });
+    }
+    return nodeDetailOverlayManagerPromise;
+  }
 
   document.addEventListener('click', event => {
     const longNameLink = event.target.closest('.node-long-link');
     if (
       longNameLink &&
-      nodeDetailOverlayManager &&
+      // The overlay root lives in the shared layout; when it is absent the
+      // manager would be null, so fall through to normal link handling (mirrors
+      // the pre-lazy `nodeDetailOverlayManager &&` guard).
+      document.getElementById('nodeDetailOverlay') &&
       shouldHandleNodeLongLink(longNameLink) &&
       !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
     ) {
@@ -2087,7 +2117,8 @@ export function initializeApp(config) {
         event.stopPropagation();
         overlayStack.closeAll();
         const label = typeof longNameLink.textContent === 'string' ? longNameLink.textContent.trim() : '';
-        nodeDetailOverlayManager.open({ nodeId: identifier }, { trigger: longNameLink, label })
+        loadNodeDetailOverlayManager()
+          .then(manager => (manager ? manager.open({ nodeId: identifier }, { trigger: longNameLink, label }) : undefined))
           .catch(err => console.error('Failed to open node detail overlay', err));
         return;
       }
@@ -5224,15 +5255,34 @@ export function initializeApp(config) {
     }
   }
 
-  // Kick off the first data load immediately then start the silent background
-  // auto-refresh timer. Paint from the persistent cache first (instant first
-  // paint, SPEC FC2), then refresh fetches only the delta; a disabled/empty
-  // cache makes seedFromCache a no-op so this is the normal cold load.
-  const initialLoadPromise = seedFromCache()
-    .catch(() => false)
-    .then(() => refresh());
-  void initialLoadPromise;
-  restartAutoRefresh();
+  // The layout loads this shared app on every page for the header UI wired above
+  // (mobile menu, instance selector, node-detail overlay). Pages that render via
+  // their own module — /charts, /federation, and a node-detail page — have no
+  // dashboard data surface and fetch their own data, so skip the whole data
+  // pipeline there: the fetch + backfill + auto-refresh/SSE would pull and
+  // backfill rows nothing on the page displays, and previously fired the entire
+  // bulk-collection backfill on every node-detail view (frontend perf).
+  const runsOwnPageModule = Boolean(
+    bodyClassList &&
+      (bodyClassList.contains("view-charts") ||
+        bodyClassList.contains("view-federation") ||
+        bodyClassList.contains("view-node_detail")),
+  );
+  let initialLoadPromise;
+  if (runsOwnPageModule) {
+    // Header UI is already wired above; there is nothing to fetch or refresh.
+    initialLoadPromise = Promise.resolve();
+  } else {
+    // Kick off the first data load immediately then start the silent background
+    // auto-refresh timer. Paint from the persistent cache first (instant first
+    // paint, SPEC FC2), then refresh fetches only the delta; a disabled/empty
+    // cache makes seedFromCache a no-op so this is the normal cold load.
+    initialLoadPromise = seedFromCache()
+      .catch(() => false)
+      .then(() => refresh());
+    void initialLoadPromise;
+    restartAutoRefresh();
+  }
 
   // --- Auto-refresh play/pause toggle ---
   // Live vs. paused is visible text, not a glyph-only secret (SPEC UX6):
@@ -5514,6 +5564,11 @@ export function initializeApp(config) {
       resetRenderCount: () => {
         renderFilteredOutputsCount = 0;
       },
+      /**
+       * Resolve the lazily-imported, memoized node-detail overlay manager (test
+       * use only) — the same loader the ``.node-long-link`` click path uses.
+       */
+      loadNodeDetailOverlayManager,
       /** The persistent data cache instance (test use only). */
       dataCache,
       /** Seed in-memory state from the persistent cache (test use only). */

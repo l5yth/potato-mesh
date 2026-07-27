@@ -91,24 +91,27 @@ module PotatoMesh
           .join("\n")
       end
 
-      # Regexes matching each way an ES module names another module: a static
-      # +import … from '…'+ / +export … from '…'+ re-export, a dynamic
-      # +import('…')+, and a bare side-effect +import '…'+. Only the quoted
-      # specifier is captured; a heuristic scan is safe here because a false
-      # positive merely preloads an extra module and a false negative merely
-      # loads one on demand — neither can break a working import (SPEC AV3).
+      # Regexes matching each **static** way an ES module names another module:
+      # an +import … from '…'+ / +export … from '…'+ re-export, and a bare
+      # side-effect +import '…'+. Dynamic +import('…')+ is deliberately **not**
+      # matched — a dynamically-imported module is loaded lazily on demand, so it
+      # is not part of the synchronous boot graph and must not be eagerly
+      # preloaded (that would fetch bytes the first paint does not need). Only the
+      # quoted specifier is captured; a heuristic scan is safe here because a false
+      # positive merely preloads an extra module and a false negative merely loads
+      # one on demand — neither can break a working import (SPEC AV3).
       IMPORT_SPECIFIER_PATTERNS = [
         /(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]/m,
-        /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/m,
-        /\bimport\s*['"]([^'"]+)['"]/m,
+        /(?<![.(])\bimport\s*['"]([^'"]+)['"]/m,
       ].freeze
 
-      # Extract the **relative** module specifiers (``./x.js`` / ``../y.js``)
-      # that a module's source imports or re-exports. Bare specifiers (none in
-      # this codebase — Leaflet is a global) are ignored.
+      # Extract the **relative static** module specifiers (``./x.js`` /
+      # ``../y.js``) a module imports or re-exports synchronously. Dynamic
+      # +import('…')+ specifiers are excluded (lazy, loaded on demand), and bare
+      # specifiers (a global dependency such as Leaflet) are ignored.
       #
       # @param source [String] the module's JavaScript source.
-      # @return [Array<String>] unique relative import specifiers.
+      # @return [Array<String>] unique relative static import specifiers.
       def import_specifiers(source)
         IMPORT_SPECIFIER_PATTERNS.flat_map { |re| source.scan(re) }
           .flatten

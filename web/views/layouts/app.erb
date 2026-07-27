@@ -108,10 +108,16 @@
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
     crossorigin=""
   />
+  <%# `defer` so this external script does not block first paint on the unpkg
+      round-trip. Deferred scripts run in document order after parsing but before
+      DOMContentLoaded, and the map init runs on DOMContentLoaded, so `window.L`
+      is ready by the time the app initialises (a missing L still degrades to the
+      "map unavailable" placeholder). %>
   <script
     src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
     crossorigin=""
+    defer
   ></script>
 </head>
 <% body_classes = ["dark"]

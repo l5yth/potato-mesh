@@ -1392,6 +1392,31 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.body).to include('"/assets/js/app/charts-page.js":"/assets/js/app/charts-page.js?v=')
     end
 
+    it "keeps the lazily-loaded node-detail overlay subtree out of the boot preload" do
+      # Frontend perf: the click-to-open node overlay reuses the heavy node-detail
+      # renderer (node-page.js → node-page-charts). It is dynamic-`import()`ed on
+      # first open, so it must NOT be in the dashboard's synchronous boot preload
+      # (it still loads on demand, and the import map still versions it).
+      get "/"
+
+      expect(last_response.body).not_to include('rel="modulepreload" href="/assets/js/app/node-page.js?v=')
+      expect(last_response.body).not_to include('rel="modulepreload" href="/assets/js/app/node-detail-overlay.js?v=')
+      # Still versioned in the import map for the on-demand load (AV3).
+      expect(last_response.body).to include('"/assets/js/app/node-page.js":"/assets/js/app/node-page.js?v=')
+    end
+
+    it "loads the CDN Leaflet script deferred so it does not block first paint" do
+      # Frontend perf regression: Leaflet was a synchronous external <script> in
+      # <head>, so first paint blocked on the round-trip to unpkg. It must be
+      # `defer` — the map init runs on DOMContentLoaded, after deferred scripts,
+      # so Leaflet is still ready in time.
+      get "/"
+
+      leaflet_tag = last_response.body[%r{<script[^>]*leaflet[^>]*>}i]
+      expect(leaflet_tag).not_to be_nil
+      expect(leaflet_tag).to include("defer")
+    end
+
     it "does not render the Refresh button or last-updated field" do
       get "/"
 
