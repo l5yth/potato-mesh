@@ -2833,10 +2833,35 @@ button.legend-item[aria-pressed="true"] {
 }
 
 /* Row affordance (UX9, D-017): rows respond to hover and read as clickable;
-   the waiting and disclosure rows opt out. */
-#nodes tbody tr:not(.node-extra):not(.nodes-empty-row):hover > td {
+   the waiting, disclosure, and "show all" control rows opt out (the last has
+   its own button affordance, so a full-row pointer would be a dead zone). */
+#nodes tbody tr:not(.node-extra):not(.nodes-empty-row):not(.nodes-show-all-row):hover > td {
   background: var(--hover-bg);
   cursor: pointer;
+}
+
+/* "Show all nodes" control (render scale): the node table renders only the
+   top-N rows; this full-width control reveals the rest. The button fills the
+   cell so the whole row is the target (no dead zone) and reads as a control
+   rather than a raw UA button, matching the disclosure toggle's tokens. */
+.nodes-show-all-cell {
+  padding: 8px;
+  text-align: center;
+}
+
+.nodes-show-all {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nodes-show-all:hover {
+  background: var(--hover-bg);
 }
 
 /* Numeric columns (UX9, D-023): right-aligned tabular mono so vertical

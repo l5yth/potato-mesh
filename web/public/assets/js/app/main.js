@@ -4115,6 +4115,10 @@ export function initializeApp(config) {
     // Render only the top N nodes by the active sort; a busy instance's full set
     // (each node also emits a hidden UX9 disclosure row) balloons the DOM, so the
     // remaining rows are reachable via the appended "show all" control (perf).
+    // Re-arm the cap once the (filtered) set is small enough not to need it, so
+    // an earlier "show all" does not stay latched after the user filters down and
+    // clears the filter (review #869-3).
+    if (nodes.length <= NODE_TABLE_RENDER_CAP) nodeTableExpanded = false;
     const { renderNodes, capped } = capNodesForRender(nodes, NODE_TABLE_RENDER_CAP, nodeTableExpanded);
     lastRenderedNodeCount = renderNodes.length;
     let rowIndex = 0;
