@@ -275,6 +275,20 @@ class MockElement {
     visit(this);
     return matches;
   }
+
+  /**
+   * ``querySelector`` companion to {@link querySelectorAll} — returns the first
+   * class match, or ``null``. Elements populated from an ``innerHTML`` string
+   * have no parsed children, so their inner cells resolve to ``null`` here (the
+   * production callers guard a missing cell).
+   *
+   * @param {string} selector CSS class selector.
+   * @returns {MockElement|null} First matching node, or null.
+   */
+  querySelector(selector) {
+    const matches = this.querySelectorAll(selector);
+    return matches.length > 0 ? matches[0] : null;
+  }
 }
 
 /**

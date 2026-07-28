@@ -170,11 +170,13 @@ import {
 import { renderShortHtml } from './main/short-html-renderer.js';
 import {
   NODE_LIMIT,
+  NODE_TABLE_RENDER_CAP,
   SNAPSHOT_LIMIT,
   TRACE_LIMIT,
   TRACE_MAX_AGE_SECONDS,
   BOOT_CACHE_FLAG,
 } from './main/constants.js';
+import { capNodesForRender, buildShowAllRow, SHOW_ALL_BUTTON_CLASS } from './main/nodes-table-cap.js';
 import {
   fetchNeighbors,
   fetchNodes,
@@ -434,6 +436,14 @@ export function initializeApp(config) {
    * repaints rather than one repaint per page (issue: frontend perf regression).
    */
   let renderFilteredOutputsCount = 0;
+  /**
+   * True once the user clicked "show all" to lift the node-table render cap
+   * ({@link NODE_TABLE_RENDER_CAP}); persists for the session so subsequent
+   * refreshes keep showing every row.
+   */
+  let nodeTableExpanded = false;
+  /** Number of node rows the last {@link renderTable} actually rendered (test hook). */
+  let lastRenderedNodeCount = 0;
 
   // Persistent read-side cache (SPEC FC1–FC7). The IndexedDB backend is null
   // when storage is unavailable, and PRIVATE mode disables + wipes the cache —
@@ -2112,6 +2122,12 @@ export function initializeApp(config) {
   }
 
   document.addEventListener('click', event => {
+    // "Show all nodes" control lifts the node-table render cap (frontend perf).
+    if (event.target.closest(`.${SHOW_ALL_BUTTON_CLASS}`)) {
+      event.preventDefault();
+      expandNodeTable();
+      return;
+    }
     const longNameLink = event.target.closest('.node-long-link');
     if (
       longNameLink &&
@@ -4070,6 +4086,19 @@ export function initializeApp(config) {
   }
 
   /**
+   * Lift the node-table render cap and re-render the full (filtered/sorted) set.
+   * Wired to the "show all" control appended by {@link renderTable}; only the
+   * table is re-rendered (the map/chat are unaffected by the row cap).
+   *
+   * @returns {void}
+   */
+  function expandNodeTable() {
+    if (nodeTableExpanded) return;
+    nodeTableExpanded = true;
+    renderTable(getFilteredSortedNodes(), Date.now() / 1000);
+  }
+
+  /**
    * Render the nodes table with sorted and filtered data.
    *
    * @param {Array<Object>} nodes Node payloads.
@@ -4083,8 +4112,17 @@ export function initializeApp(config) {
       return;
     }
     const frag = document.createDocumentFragment();
+    // Render only the top N nodes by the active sort; a busy instance's full set
+    // (each node also emits a hidden UX9 disclosure row) balloons the DOM, so the
+    // remaining rows are reachable via the appended "show all" control (perf).
+    // Re-arm the cap once the (filtered) set is small enough not to need it, so
+    // an earlier "show all" does not stay latched after the user filters down and
+    // clears the filter (review #869-3).
+    if (nodes.length <= NODE_TABLE_RENDER_CAP) nodeTableExpanded = false;
+    const { renderNodes, capped } = capNodesForRender(nodes, NODE_TABLE_RENDER_CAP, nodeTableExpanded);
+    lastRenderedNodeCount = renderNodes.length;
     let rowIndex = 0;
-    for (const n of nodes) {
+    for (const n of renderNodes) {
       const tr = document.createElement('tr');
       // Zebra striping is stamped per node row because the hidden disclosure
       // rows (SPEC UX9) would otherwise consume every even nth-child slot.
@@ -4203,6 +4241,10 @@ export function initializeApp(config) {
       extraTr.hidden = true;
       extraTr.innerHTML = extraParts.innerHtml;
       frag.appendChild(extraTr);
+    }
+    if (capped) {
+      // Reveal-the-rest control; its click is handled by the delegated listener.
+      frag.appendChild(buildShowAllRow(document, nodes.length, NODES_TABLE_TOTAL_COLUMNS));
     }
     tb.replaceChildren(frag);
     // Keep the waiting row honest (SPEC UX4): present while the node set is
@@ -5572,6 +5614,10 @@ export function initializeApp(config) {
       getLoadedNeighborCount: () => allNeighbors.length,
       /** Number of trace entries currently loaded (test use only). */
       getLoadedTraceCount: () => allTraces.length,
+      /** Number of node rows the last renderTable actually rendered (test use only). */
+      getRenderedNodeCount: () => lastRenderedNodeCount,
+      /** Whether the node-table render cap has been lifted (test use only). */
+      isNodeTableExpanded: () => nodeTableExpanded,
       /**
        * Cumulative count of full {@link renderFilteredOutputs} repaints (test
        * use only) — the backfill de-jank guard resets this after first paint and
