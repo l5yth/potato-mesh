@@ -91,6 +91,105 @@ module PotatoMesh
           .join("\n")
       end
 
+      # Regexes matching each **static** way an ES module names another module:
+      # an +import … from '…'+ / +export … from '…'+ re-export, and a bare
+      # side-effect +import '…'+. Dynamic +import('…')+ is deliberately **not**
+      # matched — a dynamically-imported module is loaded lazily on demand, so it
+      # is not part of the synchronous boot graph and must not be eagerly
+      # preloaded (that would fetch bytes the first paint does not need). Only the
+      # quoted specifier is captured; a heuristic scan is safe here because a false
+      # positive merely preloads an extra module and a false negative merely loads
+      # one on demand — neither can break a working import (SPEC AV3).
+      IMPORT_SPECIFIER_PATTERNS = [
+        /(?:import|export)\b[^'"]*?\bfrom\s*['"]([^'"]+)['"]/m,
+        /(?<![.(])\bimport\s*['"]([^'"]+)['"]/m,
+      ].freeze
+
+      # Extract the **relative static** module specifiers (``./x.js`` /
+      # ``../y.js``) a module imports or re-exports synchronously. Dynamic
+      # +import('…')+ specifiers are excluded (lazy, loaded on demand), and bare
+      # specifiers (a global dependency such as Leaflet) are ignored.
+      #
+      # @param source [String] the module's JavaScript source.
+      # @return [Array<String>] unique relative static import specifiers.
+      def import_specifiers(source)
+        IMPORT_SPECIFIER_PATTERNS.flat_map { |re| source.scan(re) }
+          .flatten
+          .select { |spec| spec.start_with?("./") || spec.start_with?("../") }
+          .uniq
+      end
+
+      # Resolve a relative import specifier against the importing module's
+      # +/assets/js/...+ path, returning the imported module's +/assets/js/...+
+      # path (or +nil+ when it escapes the served tree).
+      #
+      # @param from_path [String] importer path, e.g. ``/assets/js/app/index.js``.
+      # @param spec [String] relative specifier, e.g. ``./main.js`` or ``../x.js``.
+      # @return [String, nil] the resolved ``/assets/js/...`` path, or +nil+.
+      def resolve_relative_module(from_path, spec)
+        resolved = File.expand_path(spec, File.dirname(from_path))
+        resolved.start_with?("/assets/js/") ? resolved : nil
+      end
+
+      # Compute the transitive closure of ES modules reachable from +entry_paths+
+      # by following each module's static/dynamic +import+ and +export … from+
+      # specifiers (breadth-first, cycle-safe). Only files that exist under
+      # +js_root+ (excluding +__tests__+) are included, so a stale or missing
+      # import is silently skipped rather than emitted.
+      #
+      # This scopes the module preload to the graph a given page actually loads,
+      # instead of the whole served tree — a landing page no longer downloads the
+      # node-detail / charts / federation page graphs it never executes.
+      #
+      # @param js_root [String] absolute path to the served +/assets/js+ dir.
+      # @param entry_paths [Array<String>] entry ``/assets/js/...`` module paths.
+      # @return [Array<String>] sorted ``/assets/js/...`` paths in the closure.
+      def import_closure(js_root, entry_paths)
+        return [] unless Dir.exist?(js_root)
+
+        visited = {}
+        queue = Array(entry_paths).dup
+        until queue.empty?
+          path = queue.shift
+          next unless path.is_a?(String) && path.start_with?("/assets/js/")
+          next if visited.key?(path)
+
+          abs = File.join(js_root, path.delete_prefix("/assets/js/"))
+          next if abs.include?("/__tests__/") || !File.file?(abs)
+
+          visited[path] = true
+          import_specifiers(File.read(abs)).each do |spec|
+            resolved = resolve_relative_module(path, spec)
+            queue << resolved if resolved
+          end
+        end
+        visited.keys.sort
+      end
+
+      # Render the +<link rel="modulepreload">+ tags for exactly the module graph
+      # reachable from +entry_paths+ (the current view's entries), rather than the
+      # whole served tree. Only +/assets/js/app/**+ modules are emitted (the
+      # classic top-level scripts are loaded as ordinary +<script>+ tags, so
+      # preloading them as modules would double-load — same rule as {preload_paths}).
+      # Memoized per +[js_root, version, sorted entries]+.
+      #
+      # A page-specific module absent from this scoped set still loads on demand
+      # (SPEC AV3), and the import map ({json}) still versions the whole graph, so
+      # a later navigation to another page receives cache-busted modules.
+      #
+      # @param js_root [String] absolute path to the served +/assets/js+ dir.
+      # @param version [String] cache-busting token (the application version).
+      # @param entry_paths [Array<String>] entry ``/assets/js/...`` module paths.
+      # @return [String] newline-joined +<link rel="modulepreload">+ tags.
+      def preload_html_for(js_root, version, entry_paths)
+        cache = (@scoped_preload_cache ||= {})
+        key = [js_root, version, Array(entry_paths).uniq.sort]
+        cache[key] ||= import_closure(js_root, entry_paths)
+          .select { |path| path.start_with?("/assets/js/app/") }
+          .map { |path| %(<link rel="modulepreload" href="#{path}?v=#{version}">) }
+          .join("\n")
+      end
+
       # List the absolute asset paths (``/assets/js/...``) of every served
       # module, excluding test files, in a stable sorted order.
       #
@@ -134,15 +233,41 @@ module PotatoMesh
         PotatoMesh::App::AssetImportMap.json(asset_js_root, app_constant(:APP_VERSION))
       end
 
-      # Render the +<link rel="modulepreload">+ tags that preload the whole
-      # served ES-module graph in parallel (so the browser does not walk the
-      # import waterfall before the app can fetch its first data). Emitted in the
-      # layout head **after** the import map (which must precede any module
+      # Render the +<link rel="modulepreload">+ tags that preload — in parallel,
+      # so the browser does not walk the import waterfall before the app can
+      # fetch its first data — the ES-module graph the **current view** actually
+      # loads. Scoping to the view's own graph keeps a page from downloading the
+      # JS of the other pages (frontend perf); the import map still versions the
+      # whole graph (AV3), so a later navigation is still cache-busted. Emitted in
+      # the layout head **after** the import map (which must precede any module
       # resolution) and before the module entry point.
       #
+      # @param entry_paths [Array<String>] the view's entry ``/assets/js/...``
+      #   module paths (see {#asset_preload_entry_modules}).
       # @return [String] newline-joined modulepreload link tags.
-      def asset_modulepreload_tags
-        PotatoMesh::App::AssetImportMap.preload_html(asset_js_root, app_constant(:APP_VERSION))
+      def asset_modulepreload_tags(entry_paths)
+        PotatoMesh::App::AssetImportMap.preload_html_for(
+          asset_js_root, app_constant(:APP_VERSION), entry_paths
+        )
+      end
+
+      # The entry ES modules a given view loads, whose transitive closure is the
+      # module preload set. Every view boots +index.js+ (the shared layout entry)
+      # and the cold-load +boot-prefetch.js+; the charts / federation / node-detail
+      # views additionally boot their own page entry module (their views +import+
+      # it inline). Anything else falls back to the shared base only.
+      #
+      # @param view_mode [#to_s, nil] the current view mode (e.g. ``:dashboard``,
+      #   ``:charts``, ``:node_detail``).
+      # @return [Array<String>] entry ``/assets/js/...`` module paths.
+      def asset_preload_entry_modules(view_mode)
+        entries = ["/assets/js/app/index.js", "/assets/js/app/main/boot-prefetch.js"]
+        case view_mode.to_s
+        when "charts" then entries << "/assets/js/app/charts-page.js"
+        when "federation" then entries << "/assets/js/app/federation-page.js"
+        when "node_detail" then entries << "/assets/js/app/node-page.js"
+        end
+        entries
       end
 
       # Absolute path to the served JavaScript asset directory.

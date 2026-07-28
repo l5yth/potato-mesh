@@ -65,7 +65,9 @@ import { createMapFocusHandler, DEFAULT_NODE_FOCUS_ZOOM } from './nodes-map-focu
 import { createMapCenterResetHandler } from './map-center-reset.js';
 import { enhanceCoordinateCell } from './nodes-coordinate-links.js';
 import { createShortInfoOverlayStack } from './short-info-overlay-manager.js';
-import { createNodeDetailOverlayManager } from './node-detail-overlay.js';
+// createNodeDetailOverlayManager is dynamic-`import()`ed on first overlay open
+// (see loadNodeDetailOverlayManager) to keep its heavy node-detail renderer
+// subtree out of the dashboard boot graph (frontend perf).
 import { refreshNodeInformation } from './node-details.js';
 import { extractModemMetadata, formatLoraFrequencyMHz, formatModemDisplay, formatPresetDisplay } from './node-modem-metadata.js';
 import {
@@ -424,6 +426,14 @@ export function initializeApp(config) {
   let collectionsBackfilled = false;
   /** Settles when the one-shot bulk-collection backfill finishes (test hook). */
   let collectionBackfillPromise = Promise.resolve();
+  /**
+   * Count of full {@link renderFilteredOutputs} repaints. Instrumentation for the
+   * backfill de-jank regression guard: a cold-load backfill streams many pages
+   * (dozens for positions on a busy instance), and each full table + map repaint
+   * is main-thread work, so the pages must be coalesced into a bounded number of
+   * repaints rather than one repaint per page (issue: frontend perf regression).
+   */
+  let renderFilteredOutputsCount = 0;
 
   // Persistent read-side cache (SPEC FC1–FC7). The IndexedDB backend is null
   // when storage is unavailable, and PRIVATE mode disables + wipes the cache —
@@ -2060,16 +2070,57 @@ export function initializeApp(config) {
     setLegendVisibility(false);
   }
 
-  const nodeDetailOverlayManager = createNodeDetailOverlayManager({
-    document,
-    privateMode: isPrivateMode,
-  });
+  // Lazily import + create the node-detail overlay manager on first open, then
+  // cache it. The overlay reuses the heavy node-detail renderer (node-page +
+  // charts, ~125 KB) which the dashboard only needs when a user opens a node, so
+  // keeping it behind a dynamic import removes that subtree from the synchronous
+  // boot graph (frontend perf). The import map still versions the module, so the
+  // on-demand load is cache-busted (AV3).
+  let nodeDetailOverlayManager = null;
+  let nodeDetailOverlayManagerPromise = null;
+  // Indirection so a test can drive the import-failure retry path; production
+  // always dynamic-imports the real module.
+  let importNodeDetailOverlayModule = () => import('./node-detail-overlay.js');
+  /**
+   * Resolve the (memoized) node-detail overlay manager, dynamically importing its
+   * module on first use. A **failed** import is not cached — a transient
+   * chunk-load failure must not leave node links permanently inert — so the next
+   * open re-imports instead of re-hitting the rejected promise.
+   *
+   * @returns {Promise<Object|null>} the overlay manager, or ``null`` when the
+   *   overlay DOM is unavailable.
+   */
+  function loadNodeDetailOverlayManager() {
+    if (nodeDetailOverlayManager) return Promise.resolve(nodeDetailOverlayManager);
+    if (!nodeDetailOverlayManagerPromise) {
+      nodeDetailOverlayManagerPromise = importNodeDetailOverlayModule()
+        .then(({ createNodeDetailOverlayManager }) => {
+          nodeDetailOverlayManager = createNodeDetailOverlayManager({
+            document,
+            privateMode: isPrivateMode,
+          });
+          return nodeDetailOverlayManager;
+        })
+        .catch(err => {
+          // Drop the rejected promise so a later open retries the import rather
+          // than permanently failing (the click already preventDefaulted).
+          nodeDetailOverlayManagerPromise = null;
+          throw err;
+        });
+    }
+    return nodeDetailOverlayManagerPromise;
+  }
 
   document.addEventListener('click', event => {
     const longNameLink = event.target.closest('.node-long-link');
     if (
       longNameLink &&
-      nodeDetailOverlayManager &&
+      // The overlay root lives in the shared layout; when it is absent the
+      // manager would be null, so fall through to normal link handling. (The
+      // shipped layout always renders the root plus its dialog/close/content
+      // children; the pathological root-present-but-children-missing case is not
+      // reachable here — it resolves the manager to null below and no-ops.)
+      document.getElementById('nodeDetailOverlay') &&
       shouldHandleNodeLongLink(longNameLink) &&
       !(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
     ) {
@@ -2079,7 +2130,8 @@ export function initializeApp(config) {
         event.stopPropagation();
         overlayStack.closeAll();
         const label = typeof longNameLink.textContent === 'string' ? longNameLink.textContent.trim() : '';
-        nodeDetailOverlayManager.open({ nodeId: identifier }, { trigger: longNameLink, label })
+        loadNodeDetailOverlayManager()
+          .then(manager => (manager ? manager.open({ nodeId: identifier }, { trigger: longNameLink, label }) : undefined))
           .catch(err => console.error('Failed to open node detail overlay', err));
         return;
       }
@@ -3752,6 +3804,11 @@ export function initializeApp(config) {
    *
    * @type {ReadonlyArray<Object>}
    */
+  // Shared refine references so a coalesced flush dedups them by identity: the
+  // three node-derived collections share the same rebuildNodeDerivedState
+  // function object (so the pending-refine Set collapses them to one call), and
+  // neighbors/traces share a single no-op.
+  const noopRefine = () => {};
   const COLLECTION_BACKFILLS = [
     {
       name: 'nodes',
@@ -3759,7 +3816,7 @@ export function initializeApp(config) {
       idOf: row => row && row.node_id,
       cursorOf: row => row && row.last_heard,
       merge: batch => { allNodes = mergeById(allNodes, batch, 'node_id'); },
-      refine: () => rebuildNodeDerivedState(),
+      refine: rebuildNodeDerivedState,
     },
     {
       name: 'positions',
@@ -3769,7 +3826,7 @@ export function initializeApp(config) {
       merge: batch => {
         allPositionEntries = trimToWindow(mergeById(allPositionEntries, batch, 'id'), recentBackfillFloor());
       },
-      refine: () => rebuildNodeDerivedState(),
+      refine: rebuildNodeDerivedState,
     },
     {
       name: 'telemetry',
@@ -3779,7 +3836,7 @@ export function initializeApp(config) {
       merge: batch => {
         allTelemetryEntries = trimToWindow(mergeById(allTelemetryEntries, batch, 'id'), recentBackfillFloor());
       },
-      refine: () => rebuildNodeDerivedState(),
+      refine: rebuildNodeDerivedState,
     },
     {
       name: 'neighbors',
@@ -3797,7 +3854,7 @@ export function initializeApp(config) {
       // Neighbors stay RAW (like traces) so the Log keeps every per-pair snapshot
       // and the map / overlay consumers dedupe internally; re-aggregating here
       // would erode history exactly as the refresh path used to (bugfix A1).
-      refine: () => {},
+      refine: noopRefine,
     },
     {
       name: 'traces',
@@ -3810,18 +3867,104 @@ export function initializeApp(config) {
       merge: batch => {
         allTraces = trimToWindow(mergeById(allTraces, batch, 'id'), longBackfillFloor());
       },
-      refine: () => {},
+      refine: noopRefine,
     },
   ];
 
+  // --- Backfill repaint coalescing (frontend perf regression) ---
+  // The one-shot backfill streams many pages (dozens of `/api/positions` on a
+  // busy instance). Each page's re-derive (`rebuildNodeDerivedState` re-aggregates
+  // the whole growing accumulator) + full table/map repaint is main-thread work,
+  // so repainting once per page janks the cold load and competes with user
+  // interaction and the live-refresh flash. Instead, each page's merge stays
+  // immediate (so state is always current) but the re-derive + repaint are
+  // coalesced onto an idle callback: a burst of pages folds into a single
+  // repaint, and the repaint runs in idle time rather than blocking input. The
+  // same rows render — only *when* and *how often* the repaint fires changes.
+  /** Distinct pending refine callbacks (deduped by identity across specs). */
+  const pendingBackfillRefines = new Set();
+  /** True when merged-but-not-yet-repainted backfill rows are waiting. */
+  let backfillRepaintDirty = false;
+  /** Scheduled idle-callback handle, or ``null`` when none is pending. */
+  let backfillRepaintHandle = null;
+
   /**
-   * Merge one streamed backward page into the module state, re-derive what it
-   * feeds, and repaint — progressively, one page at a time, mirroring the chat
-   * history backfill (issue #802). The merge + re-render is synchronous (no
-   * ``await``) so it cannot interleave with a concurrent refresh or another
-   * collection's commit. Each page is network-spaced, so the per-page render is
-   * not a hot loop; the stats fetch is skipped (the authoritative count is
-   * server-computed and unchanged by how many rows the client has paged in).
+   * Schedule work for the next idle slot, degrading to ``setTimeout`` where
+   * ``requestIdleCallback`` is unavailable (e.g. Safari, unit-test envs). The
+   * short timeout bounds how long a repaint can be deferred under sustained load.
+   *
+   * @param {Function} callback Work to run when the main thread is idle.
+   * @returns {*} A handle understood by {@link cancelIdleWork}.
+   */
+  function requestIdleWork(callback) {
+    return typeof requestIdleCallback === 'function'
+      ? requestIdleCallback(callback, { timeout: 250 })
+      : setTimeout(callback, 16);
+  }
+
+  /**
+   * Cancel a handle returned by {@link requestIdleWork}, matching the scheduler
+   * that produced it.
+   *
+   * @param {*} handle The scheduled handle.
+   * @returns {void}
+   */
+  function cancelIdleWork(handle) {
+    if (typeof requestIdleCallback === 'function' && typeof cancelIdleCallback === 'function') {
+      cancelIdleCallback(handle);
+    } else {
+      clearTimeout(handle);
+    }
+  }
+
+  /**
+   * Run the coalesced backfill re-derive(s) and a single repaint, then clear the
+   * pending state. Idempotent: a no-op when nothing is pending, so calling it
+   * again after a flush (or after the trailing idle callback) is harmless.
+   *
+   * @returns {void}
+   */
+  function flushBackfillRepaint() {
+    if (backfillRepaintHandle !== null) {
+      cancelIdleWork(backfillRepaintHandle);
+      backfillRepaintHandle = null;
+    }
+    if (pendingBackfillRefines.size > 0) {
+      // Each distinct refine runs at most once per flush — the three
+      // node-derived collections share `rebuildNodeDerivedState`, so identity
+      // dedup collapses them into a single re-aggregation over the merged state.
+      for (const refine of pendingBackfillRefines) refine();
+      pendingBackfillRefines.clear();
+    }
+    if (backfillRepaintDirty) {
+      backfillRepaintDirty = false;
+      renderFilteredOutputs();
+    }
+  }
+
+  /**
+   * Ensure exactly one idle repaint is scheduled; further pages that arrive
+   * before it fires are folded into the same repaint (the guard makes repeated
+   * calls a no-op until the pending callback runs).
+   *
+   * @returns {void}
+   */
+  function scheduleBackfillRepaint() {
+    if (backfillRepaintHandle !== null) return;
+    backfillRepaintHandle = requestIdleWork(() => {
+      backfillRepaintHandle = null;
+      flushBackfillRepaint();
+    });
+  }
+
+  /**
+   * Merge one streamed backward page into the module state immediately, then
+   * queue a coalesced re-derive + repaint (see the coalescing note above). The
+   * merge is synchronous so it cannot interleave with a concurrent refresh or
+   * another collection's commit and so ``getLoaded*Count`` always reflects every
+   * paged-in row; the repaint is deferred to idle time. The stats fetch is
+   * skipped (the authoritative count is server-computed and unchanged by how many
+   * rows the client has paged in).
    *
    * @param {Object} spec One {@link COLLECTION_BACKFILLS} entry.
    * @param {Array<Object>} batch Freshly-seen rows for this page (the pager only
@@ -3830,8 +3973,9 @@ export function initializeApp(config) {
    */
   function commitBackfillPage(spec, batch) {
     spec.merge(batch);
-    spec.refine();
-    renderFilteredOutputs();
+    pendingBackfillRefines.add(spec.refine);
+    backfillRepaintDirty = true;
+    scheduleBackfillRepaint();
   }
 
   /**
@@ -3865,16 +4009,22 @@ export function initializeApp(config) {
    * One-shot background backfill of every bulk collection (issue #832). After
    * the first paint has rendered each collection's newest page, page the five
    * collections backward through their visibility windows concurrently, each
-   * committing+repainting its pages as they arrive. Each {@link backfillCollection}
-   * self-gates on its frontier, so a collection with none (a short newest page, or
-   * a warm-cache load) returns without a request and the fan-out is a clean no-op
-   * when there is nothing to page — no pointless request, no empty long-load.
-   * Invoked once (guarded by ``collectionsBackfilled`` in {@link refresh}).
+   * merging its pages as they arrive and coalescing the repaints onto idle time
+   * (see {@link commitBackfillPage}). Each {@link backfillCollection} self-gates on
+   * its frontier, so a collection with none (a short newest page, or a warm-cache
+   * load) returns without a request and the fan-out is a clean no-op when there is
+   * nothing to page — no pointless request, no empty long-load. Once every window
+   * is exhausted, a final {@link flushBackfillRepaint} paints the complete state
+   * immediately rather than waiting on the trailing idle callback. Invoked once
+   * (guarded by ``collectionsBackfilled`` in {@link refresh}).
    *
    * @returns {Promise<void>} Resolves when every collection's window is exhausted.
    */
   async function backfillAllCollections() {
     await Promise.all(COLLECTION_BACKFILLS.map(spec => backfillCollection(spec)));
+    // The whole window is now merged; render the final coalesced state at once
+    // instead of waiting for the pending idle repaint.
+    flushBackfillRepaint();
   }
 
   /**
@@ -4815,6 +4965,9 @@ export function initializeApp(config) {
    * @returns {void}
    */
   function renderFilteredOutputs(filterQuery = filterInput ? filterInput.value : '') {
+    // Instrumentation for the backfill de-jank guard (see
+    // {@link renderFilteredOutputsCount}); a plain increment, no behaviour change.
+    renderFilteredOutputsCount += 1;
     // Text and role filters apply only to the node table and map; the chat log
     // always receives the full node collection so reply-thread lookups succeed
     // even for nodes that are currently hidden by the active filter.
@@ -5120,15 +5273,34 @@ export function initializeApp(config) {
     }
   }
 
-  // Kick off the first data load immediately then start the silent background
-  // auto-refresh timer. Paint from the persistent cache first (instant first
-  // paint, SPEC FC2), then refresh fetches only the delta; a disabled/empty
-  // cache makes seedFromCache a no-op so this is the normal cold load.
-  const initialLoadPromise = seedFromCache()
-    .catch(() => false)
-    .then(() => refresh());
-  void initialLoadPromise;
-  restartAutoRefresh();
+  // The layout loads this shared app on every page for the header UI wired above
+  // (mobile menu, instance selector, node-detail overlay). Pages that render via
+  // their own module — /charts, /federation, and a node-detail page — have no
+  // dashboard data surface and fetch their own data, so skip the whole data
+  // pipeline there: the fetch + backfill + auto-refresh/SSE would pull and
+  // backfill rows nothing on the page displays, and previously fired the entire
+  // bulk-collection backfill on every node-detail view (frontend perf).
+  const runsOwnPageModule = Boolean(
+    bodyClassList &&
+      (bodyClassList.contains("view-charts") ||
+        bodyClassList.contains("view-federation") ||
+        bodyClassList.contains("view-node_detail")),
+  );
+  let initialLoadPromise;
+  if (runsOwnPageModule) {
+    // Header UI is already wired above; there is nothing to fetch or refresh.
+    initialLoadPromise = Promise.resolve();
+  } else {
+    // Kick off the first data load immediately then start the silent background
+    // auto-refresh timer. Paint from the persistent cache first (instant first
+    // paint, SPEC FC2), then refresh fetches only the delta; a disabled/empty
+    // cache makes seedFromCache a no-op so this is the normal cold load.
+    initialLoadPromise = seedFromCache()
+      .catch(() => false)
+      .then(() => refresh());
+    void initialLoadPromise;
+    restartAutoRefresh();
+  }
 
   // --- Auto-refresh play/pause toggle ---
   // Live vs. paused is visible text, not a glyph-only secret (SPEC UX6):
@@ -5400,6 +5572,31 @@ export function initializeApp(config) {
       getLoadedNeighborCount: () => allNeighbors.length,
       /** Number of trace entries currently loaded (test use only). */
       getLoadedTraceCount: () => allTraces.length,
+      /**
+       * Cumulative count of full {@link renderFilteredOutputs} repaints (test
+       * use only) — the backfill de-jank guard resets this after first paint and
+       * asserts the streamed backfill coalesces into a bounded repaint count.
+       */
+      getRenderCount: () => renderFilteredOutputsCount,
+      /** Reset the repaint counter (test use only). */
+      resetRenderCount: () => {
+        renderFilteredOutputsCount = 0;
+      },
+      /**
+       * Resolve the lazily-imported, memoized node-detail overlay manager (test
+       * use only) — the same loader the ``.node-long-link`` click path uses.
+       */
+      loadNodeDetailOverlayManager,
+      /**
+       * Override the overlay-module importer (test use only) so the import-failure
+       * retry path can be exercised.
+       *
+       * @param {() => Promise<Object>} importer Replacement dynamic importer.
+       * @returns {void}
+       */
+      _setNodeDetailOverlayImporter(importer) {
+        importNodeDetailOverlayModule = importer;
+      },
       /** The persistent data cache instance (test use only). */
       dataCache,
       /** Seed in-memory state from the persistent cache (test use only). */
@@ -5410,8 +5607,15 @@ export function initializeApp(config) {
       flushCacheWrites: () => pendingCacheWrite,
       /** Promise resolving once the one-shot chat-history backfill finishes (test hook). */
       flushBackfill: () => backfillPromise,
-      /** Promise resolving once the one-shot bulk-collection backfill finishes (test hook). */
-      flushCollectionBackfills: () => collectionBackfillPromise,
+      /**
+       * Await the one-shot bulk-collection backfill, then flush any pending
+       * coalesced repaint so the rendered state is settled and deterministic for
+       * tests (test hook).
+       */
+      flushCollectionBackfills: async () => {
+        await collectionBackfillPromise;
+        flushBackfillRepaint();
+      },
       /** Empty the persistent cache — the "clear cached data" control (FC4). */
       clearDataCache,
       /** Project an original lat/lon + pixel offset into a display LatLng. */

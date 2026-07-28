@@ -166,6 +166,143 @@ test('every bulk collection pages backward past the first 1000-row page (#832)',
   }
 });
 
+test('the streamed backfill coalesces its pages into a bounded repaint count (frontend perf regression)', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  // One collection (nodes) walks three backward pages; the others are short so
+  // only the node backfill streams. Before the de-jank fix, commitBackfillPage
+  // repaints the whole table + map once per page, so a busy instance (dozens of
+  // position pages) janks the main thread throughout the cold load. The fix
+  // coalesces the streamed pages into a single idle repaint.
+  const newestNodes = Array.from({ length: NODE_LIMIT }, (_, i) => ({
+    node_id: nid(0x10000 + i), last_heard: now - i, short_name: `N${i}`, role: 'CLIENT',
+  }));
+  const olderPage1 = Array.from({ length: NODE_LIMIT }, (_, i) => ({
+    node_id: nid(0x80000 + i), last_heard: now - NODE_LIMIT - i, short_name: `O${i}`, role: 'CLIENT',
+  }));
+  const olderPage2 = Array.from({ length: NODE_LIMIT }, (_, i) => ({
+    node_id: nid(0xa0000 + i), last_heard: now - 2 * NODE_LIMIT - i, short_name: `P${i}`, role: 'CLIENT',
+  }));
+  const olderPage3 = [{ node_id: '!ffff0001', last_heard: now - 3 * NODE_LIMIT - 5, short_name: 'LAST', role: 'CLIENT' }];
+
+  let nodeBeforeCount = 0;
+  function stubFetch(url) {
+    if (url.startsWith('/api/nodes/')) return jsonResponse(null);
+    if (url.startsWith('/api/nodes')) {
+      if (url.includes('before=')) {
+        nodeBeforeCount += 1;
+        if (nodeBeforeCount === 1) return jsonResponse(olderPage1); // full → keep paging
+        if (nodeBeforeCount === 2) return jsonResponse(olderPage2); // full → keep paging
+        return jsonResponse(olderPage3); // short → stop
+      }
+      return jsonResponse(newestNodes);
+    }
+    if (url.startsWith('/api/messages')) return jsonResponse([]);
+    return jsonResponse([]); // positions / telemetry / neighbors / traces / stats short
+  }
+
+  const env = createDomEnvironment({ includeBody: true });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = url => stubFetch(url);
+  try {
+    const { _testUtils } = initializeApp(BASE_CONFIG);
+    await _testUtils.initialLoad;
+    // Count only the repaints the background backfill triggers, not the first
+    // paint from the initial refresh.
+    _testUtils.resetRenderCount();
+    await _testUtils.flushCollectionBackfills();
+    await settle();
+
+    // Sanity: the node backfill really streamed three pages (so an
+    // un-coalesced path would repaint three times).
+    assert.equal(nodeBeforeCount, 3, 'the node backfill must page backward three times');
+    // The three streamed pages must fold into at most one coalesced repaint —
+    // not one full table + map repaint per page.
+    const renders = _testUtils.getRenderCount();
+    assert.ok(
+      renders <= 1,
+      `backfill repaints must be coalesced; rendered ${renders}× for ${nodeBeforeCount} streamed pages`,
+    );
+    // ...and the coalesced repaint still reflects the whole paged-in window.
+    assert.equal(
+      _testUtils.getLoadedNodeCount(), NODE_LIMIT * 3 + 1,
+      'every backfilled page must still be merged into the rendered state',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    env.cleanup();
+  }
+});
+
+test('the backfill schedules its coalesced repaint via requestIdleCallback when available', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const newestNodes = Array.from({ length: NODE_LIMIT }, (_, i) => ({
+    node_id: nid(0x10000 + i), last_heard: now - i, short_name: `N${i}`, role: 'CLIENT',
+  }));
+  const olderPage1 = Array.from({ length: NODE_LIMIT }, (_, i) => ({
+    node_id: nid(0x80000 + i), last_heard: now - NODE_LIMIT - i, short_name: `O${i}`, role: 'CLIENT',
+  }));
+  const olderPage2 = [{ node_id: '!ffff0001', last_heard: now - 2 * NODE_LIMIT - 5, short_name: 'LAST', role: 'CLIENT' }];
+  let nodeBeforeCount = 0;
+  function stubFetch(url) {
+    if (url.startsWith('/api/nodes/')) return jsonResponse(null);
+    if (url.startsWith('/api/nodes')) {
+      if (url.includes('before=')) {
+        nodeBeforeCount += 1;
+        return jsonResponse(nodeBeforeCount === 1 ? olderPage1 : olderPage2);
+      }
+      return jsonResponse(newestNodes);
+    }
+    if (url.startsWith('/api/messages')) return jsonResponse([]);
+    return jsonResponse([]);
+  }
+
+  // Install a spy requestIdleCallback / cancelIdleCallback pair so the scheduler
+  // takes its idle-callback branch (the browser path) instead of the setTimeout
+  // fallback. The queued callbacks are run explicitly on flush.
+  const idleQueue = new Map();
+  let idleSeq = 0;
+  const scheduled = [];
+  const cancelled = [];
+  const hadRIC = 'requestIdleCallback' in globalThis;
+  const hadCIC = 'cancelIdleCallback' in globalThis;
+  const originalRIC = globalThis.requestIdleCallback;
+  const originalCIC = globalThis.cancelIdleCallback;
+  globalThis.requestIdleCallback = cb => {
+    const id = ++idleSeq;
+    idleQueue.set(id, cb);
+    scheduled.push(id);
+    return id;
+  };
+  globalThis.cancelIdleCallback = id => {
+    cancelled.push(id);
+    idleQueue.delete(id);
+  };
+
+  const env = createDomEnvironment({ includeBody: true });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = url => stubFetch(url);
+  try {
+    const { _testUtils } = initializeApp(BASE_CONFIG);
+    await _testUtils.initialLoad;
+    _testUtils.resetRenderCount();
+    await _testUtils.flushCollectionBackfills();
+    await settle();
+
+    // The idle scheduler was used (browser branch), and the pending idle handle
+    // was cancelled by the final flush (cancel branch).
+    assert.ok(scheduled.length >= 1, 'the coalesced repaint must be scheduled via requestIdleCallback');
+    assert.ok(cancelled.length >= 1, 'the final flush must cancel the pending idle callback');
+    // Still coalesced to a single repaint, and every page merged in.
+    assert.ok(_testUtils.getRenderCount() <= 1, `expected a coalesced repaint, got ${_testUtils.getRenderCount()}`);
+    assert.equal(_testUtils.getLoadedNodeCount(), NODE_LIMIT * 2 + 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (hadRIC) globalThis.requestIdleCallback = originalRIC; else delete globalThis.requestIdleCallback;
+    if (hadCIC) globalThis.cancelIdleCallback = originalCIC; else delete globalThis.cancelIdleCallback;
+    env.cleanup();
+  }
+});
+
 test('a short newest page records no frontier and fires no backward request (#832)', async () => {
   const now = Math.floor(Date.now() / 1000);
   // Every newest page is *short* (< the per-collection cap) ⇒ the window is

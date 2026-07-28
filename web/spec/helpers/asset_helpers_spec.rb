@@ -50,4 +50,51 @@ RSpec.describe PotatoMesh::App::Helpers do
       expect(helper.asset_url("/assets/js/theme.js")).to end_with("?v=1.2.3")
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # asset_preload_entry_modules — scopes the module preload to the view's graph
+  # (frontend perf regression).
+  # ---------------------------------------------------------------------------
+  describe "#asset_preload_entry_modules" do
+    let(:base) { ["/assets/js/app/index.js", "/assets/js/app/main/boot-prefetch.js"] }
+
+    it "preloads only the shared layout entry + cold-load prefetch on the dashboard-family views" do
+      %i[dashboard map chat nodes].each do |view|
+        expect(helper.asset_preload_entry_modules(view)).to eq(base)
+      end
+    end
+
+    it "adds the /charts page entry only on the charts view" do
+      expect(helper.asset_preload_entry_modules(:charts)).to eq(base + ["/assets/js/app/charts-page.js"])
+    end
+
+    it "adds the /federation page entry only on the federation view" do
+      expect(helper.asset_preload_entry_modules(:federation)).to eq(base + ["/assets/js/app/federation-page.js"])
+    end
+
+    it "adds the node-detail page entry only on the node_detail view" do
+      expect(helper.asset_preload_entry_modules(:node_detail)).to eq(base + ["/assets/js/app/node-page.js"])
+    end
+
+    it "falls back to the shared base for a nil or unrecognised view" do
+      expect(helper.asset_preload_entry_modules(nil)).to eq(base)
+      expect(helper.asset_preload_entry_modules(:something_else)).to eq(base)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # asset_modulepreload_tags — delegates to the scoped preload builder.
+  # ---------------------------------------------------------------------------
+  describe "#asset_modulepreload_tags" do
+    it "renders the scoped preload for the js root, version, and given entries" do
+      allow(helper).to receive(:app_constant).with(:APP_VERSION).and_return("9.9.9")
+      allow(helper).to receive(:asset_js_root).and_return("/srv/assets/js")
+      entries = ["/assets/js/app/index.js"]
+
+      expect(PotatoMesh::App::AssetImportMap).to receive(:preload_html_for)
+                                                   .with("/srv/assets/js", "9.9.9", entries).and_return("<link rel=\"modulepreload\">")
+
+      expect(helper.asset_modulepreload_tags(entries)).to eq("<link rel=\"modulepreload\">")
+    end
+  end
 end

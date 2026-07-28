@@ -1372,6 +1372,51 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response).to be_ok
     end
 
+    it "modulepreloads the dashboard's own module graph but not other pages' entries" do
+      # Frontend perf regression: the layout preloaded *every* served module on
+      # every page, so a page eagerly downloaded the entry graphs of the other
+      # pages it never runs. The preload set must be scoped to the current view's
+      # own module graph; the import map (AV3) still versions the whole graph, so
+      # cache-busting is unaffected.
+      get "/"
+
+      expect(last_response).to be_ok
+      # The dashboard's own graph (index.js → main.js → …) is still preloaded.
+      expect(last_response.body).to include('rel="modulepreload" href="/assets/js/app/main.js?v=')
+      # Other pages' entry modules — not reachable from the dashboard graph — must
+      # NOT be preloaded on the dashboard (the /charts and /federation entries).
+      expect(last_response.body).not_to include('rel="modulepreload" href="/assets/js/app/charts-page.js?v=')
+      expect(last_response.body).not_to include('rel="modulepreload" href="/assets/js/app/federation-page.js?v=')
+      # AV3 unchanged: the import map still version-stamps the *whole* graph, so a
+      # later navigation to those pages still gets cache-busted modules.
+      expect(last_response.body).to include('"/assets/js/app/charts-page.js":"/assets/js/app/charts-page.js?v=')
+    end
+
+    it "keeps the lazily-loaded node-detail overlay subtree out of the boot preload" do
+      # Frontend perf: the click-to-open node overlay reuses the heavy node-detail
+      # renderer (node-page.js → node-page-charts). It is dynamic-`import()`ed on
+      # first open, so it must NOT be in the dashboard's synchronous boot preload
+      # (it still loads on demand, and the import map still versions it).
+      get "/"
+
+      expect(last_response.body).not_to include('rel="modulepreload" href="/assets/js/app/node-page.js?v=')
+      expect(last_response.body).not_to include('rel="modulepreload" href="/assets/js/app/node-detail-overlay.js?v=')
+      # Still versioned in the import map for the on-demand load (AV3).
+      expect(last_response.body).to include('"/assets/js/app/node-page.js":"/assets/js/app/node-page.js?v=')
+    end
+
+    it "loads the CDN Leaflet script deferred so it does not block first paint" do
+      # Frontend perf regression: Leaflet was a synchronous external <script> in
+      # <head>, so first paint blocked on the round-trip to unpkg. It must be
+      # `defer` — the map init runs on DOMContentLoaded, after deferred scripts,
+      # so Leaflet is still ready in time.
+      get "/"
+
+      leaflet_tag = last_response.body[%r{<script[^>]*leaflet[^>]*>}i]
+      expect(leaflet_tag).not_to be_nil
+      expect(leaflet_tag).to include("defer")
+    end
+
     it "does not render the Refresh button or last-updated field" do
       get "/"
 
