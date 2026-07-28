@@ -26,6 +26,15 @@ import { SNAPSHOT_WINDOW } from '../snapshot-aggregator.js';
 /** Maximum number of node rows requested from the API. */
 export const NODE_LIMIT = 1000;
 
+/**
+ * Cap on how many node rows the table renders at once. A large instance has
+ * thousands of nodes and each row carries a hidden UX9 disclosure row, so
+ * rendering the whole set balloons the DOM (layout/INP cost). The table renders
+ * the top N by the active sort and offers a "show all" control to expand on
+ * demand (frontend perf: render scale).
+ */
+export const NODE_TABLE_RENDER_CAP = 250;
+
 /** Maximum number of trace rows requested from the API. */
 export const TRACE_LIMIT = 200;
 
