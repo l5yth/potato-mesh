@@ -59,6 +59,7 @@ require_relative "application/meshtastic/payload_decoder"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/api_cache"
+require_relative "application/asset_cache_control"
 require_relative "application/pubsub"
 require_relative "application/pages"
 require_relative "application/instances"
@@ -216,6 +217,10 @@ module PotatoMesh
       set :logger, app_logger
       use Rack::CommonLogger, app_logger
       use Rack::Deflater
+      # Immutable long-cache for version-busted static assets (returning-visitor
+      # caching); the nginx disk-serve path sets the same header first when
+      # enabled, so this never overwrites an existing one.
+      use PotatoMesh::App::AssetCacheControl
       use ::Prometheus::Middleware::Collector
       use ::Prometheus::Middleware::Exporter
 

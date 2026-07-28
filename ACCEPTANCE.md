@@ -4565,3 +4565,45 @@ a fresh ingestor image build satisfies the RF5 handler at the enum level.
 member is present, as with the pinned library) and **RF-A1..A6 / RF-R1** (all
 MeshCore RF-metrics behavior). The runner change is subscribe-time only — no
 event/POST contract changes — so **C2** and the Ruby/JS suites are unaffected.
+
+---
+
+## Perf: static-asset caching & stats cache TTL
+
+Two delivery-side perf improvements from the `dweb` profiling. Neither changes an
+API/event contract. The `/api/stats` GVL-freeze root cause is tracked separately
+in **issue #866** (query pushdown); the items here are the safe, independent parts.
+
+### CA-A1 — Version-busted assets carry an immutable one-year Cache-Control
+```bash
+( cd web && bundle exec rspec spec/asset_cache_control_spec.rb spec/app_spec.rb -e "static asset caching" )
+```
+**Expected:** pass. `PotatoMesh::App::AssetCacheControl` (wired via `use` after
+`Rack::Deflater`) stamps `Cache-Control: public, max-age=31536000, immutable` on a
+`GET`/`HEAD` for a `/assets/**` URL carrying a non-empty `?v=` cache-buster (JS/CSS
+emitted by `asset_url`), so returning/staying visitors serve them from cache
+instead of revalidating every asset. **Unversioned** assets (images/favicons/SVG —
+SPEC AV4) are left untouched (keep `Last-Modified`/`ETag` revalidation), and an
+existing `Cache-Control` (e.g. one nginx set when serving `/assets/` from disk) is
+never overwritten.
+
+### CA-A2 — `/api/stats` cache TTL is configurable (bounds recompute frequency)
+```bash
+( cd web && bundle exec rspec spec/config_spec.rb -e "stats_cache_ttl_seconds" )
+```
+**Expected:** pass. `PotatoMesh::Config.stats_cache_ttl_seconds` defaults to **60 s**
+(was a hardcoded 15 s) and reads `STATS_CACHE_TTL_SECONDS`; `GET /api/stats` uses it.
+This bounds how often the CPU-bound aggregation can run. *Documented limit:* ingest
+POSTs still invalidate `api:stats:`, so on write-heavy instances write frequency —
+not this TTL — governs recompute frequency; decoupling stats from write-invalidation
+and stale-while-revalidate land with the query fix (**#866**), where the recompute
+is cheap enough that neither reintroduces the freeze.
+
+### CA-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec )
+```
+**Expected:** all green. The `/api/stats` shape/counts (**S-A1**–**S-A6**), the
+asset-versioning specs (**AV1**–**AV5**, unchanged), and **B1** stay green; the TTL
+change is value-only (cache invalidation on write is unchanged) and the middleware
+only adds a response header for versioned assets.

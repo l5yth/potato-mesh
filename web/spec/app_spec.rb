@@ -1366,6 +1366,24 @@ RSpec.describe "Potato Mesh Sinatra app" do
     end
   end
 
+  describe "static asset caching (frontend perf)" do
+    it "serves a version-busted asset with an immutable one-year Cache-Control" do
+      # Returning/staying visitors serve versioned JS/CSS from cache instead of
+      # revalidating every asset each navigation (the AssetCacheControl middleware).
+      get "/assets/js/app/main.js?v=testver"
+
+      expect(last_response).to be_ok
+      expect(last_response.headers["Cache-Control"]).to eq("public, max-age=31536000, immutable")
+    end
+
+    it "does not immutable-cache an unversioned asset (AV4 keeps revalidation)" do
+      get "/assets/img/meshcore.svg"
+
+      expect(last_response).to be_ok
+      expect(last_response.headers["Cache-Control"].to_s).not_to include("immutable")
+    end
+  end
+
   describe "GET /" do
     it "responds successfully" do
       get "/"
