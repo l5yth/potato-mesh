@@ -59,6 +59,7 @@ require_relative "application/meshtastic/payload_decoder"
 require_relative "application/data_processing"
 require_relative "application/filesystem"
 require_relative "application/api_cache"
+require_relative "application/asset_cache_control"
 require_relative "application/pubsub"
 require_relative "application/pages"
 require_relative "application/instances"
@@ -216,6 +217,15 @@ module PotatoMesh
       set :logger, app_logger
       use Rack::CommonLogger, app_logger
       use Rack::Deflater
+      # Long-cache for version-busted static JS/CSS (returning-visitor caching);
+      # the nginx disk-serve path sets the same header first when enabled, so this
+      # never overwrites an existing one. The immutable (year-long) pin is used
+      # only when the version buster is unique per build — i.e. git-derived
+      # (APP_VERSION differs from the constant fallback) — so a Docker image built
+      # without .git (constant fallback) instead gets a bounded, revalidatable
+      # lifetime and cannot pin stale JS between commits.
+      use PotatoMesh::App::AssetCacheControl,
+          immutable: (APP_VERSION != PotatoMesh::Config.version_fallback)
       use ::Prometheus::Middleware::Collector
       use ::Prometheus::Middleware::Exporter
 

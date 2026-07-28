@@ -114,7 +114,9 @@ module PotatoMesh
           app.get "/api/stats" do
             content_type :json
             priv = private_mode? ? 1 : 0
-            cached = PotatoMesh::App::ApiCache.fetch("api:stats:#{priv}", ttl_seconds: 15) do
+            cached = PotatoMesh::App::ApiCache.fetch(
+              "api:stats:#{priv}", ttl_seconds: PotatoMesh::Config.stats_cache_ttl_seconds,
+            ) do
               # Scope → metric → window tree (SPEC S1). The MA4 packets/hour
               # moving average is folded in as an additive +packets+ metric under
               # each scope (+<scope>.packets.hour+, SPEC MA5) — a single +hour+

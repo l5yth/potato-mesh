@@ -914,6 +914,26 @@ RSpec.describe PotatoMesh::Config do
     end
   end
 
+  describe ".stats_cache_ttl_seconds" do
+    it "defaults to 60 seconds" do
+      within_env("STATS_CACHE_TTL_SECONDS" => nil) do
+        expect(described_class.stats_cache_ttl_seconds).to eq(60)
+      end
+    end
+
+    it "reads a positive override from STATS_CACHE_TTL_SECONDS" do
+      within_env("STATS_CACHE_TTL_SECONDS" => "120") do
+        expect(described_class.stats_cache_ttl_seconds).to eq(120)
+      end
+    end
+
+    it "falls back to the default when the override is non-positive" do
+      within_env("STATS_CACHE_TTL_SECONDS" => "0") do
+        expect(described_class.stats_cache_ttl_seconds).to eq(60)
+      end
+    end
+  end
+
   def within_env(values)
     original = {}
     values.each do |key, value|
