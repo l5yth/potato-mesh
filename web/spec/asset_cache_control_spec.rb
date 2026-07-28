@@ -29,8 +29,8 @@ RSpec.describe PotatoMesh::App::AssetCacheControl do
     { "REQUEST_METHOD" => method, "PATH_INFO" => path, "QUERY_STRING" => query }
   end
 
-  def call(app, env)
-    described_class.new(app).call(env)
+  def call(app, env, immutable: true)
+    described_class.new(app, immutable: immutable).call(env)
   end
 
   it "stamps an immutable one-year Cache-Control on a version-busted asset GET" do
@@ -47,6 +47,27 @@ RSpec.describe PotatoMesh::App::AssetCacheControl do
 
   it "leaves unversioned assets untouched so they keep revalidation (AV4)" do
     _, headers, = call(downstream, env_for(path: "/assets/img/meshcore.svg", query: ""))
+    expect(headers).not_to have_key("cache-control")
+  end
+
+  it "uses a bounded, revalidatable lifetime when the version is not unique per build" do
+    # A deployment on the constant fallback version (e.g. a Docker image without
+    # .git) must not pin assets immutable — the ?v= buster does not change between
+    # commits, so it gets a short revalidatable window instead.
+    _, headers, = call(downstream, env_for, immutable: false)
+    expect(headers["cache-control"]).to eq("public, max-age=300")
+    expect(headers["cache-control"]).to eq(described_class::REVALIDATABLE_CACHE_CONTROL)
+  end
+
+  it "long-caches versioned CSS and .mjs, not only .js" do
+    _, css, = call(downstream, env_for(path: "/assets/styles/base.css"))
+    expect(css["cache-control"]).to eq(described_class::IMMUTABLE_CACHE_CONTROL)
+    _, mjs, = call(downstream, env_for(path: "/assets/js/app/x.mjs"))
+    expect(mjs["cache-control"]).to eq(described_class::IMMUTABLE_CACHE_CONTROL)
+  end
+
+  it "never long-caches a non-JS/CSS asset even when it carries ?v= (AV4, scope guard)" do
+    _, headers, = call(downstream, env_for(path: "/assets/img/meshcore.svg", query: "v=1"))
     expect(headers).not_to have_key("cache-control")
   end
 

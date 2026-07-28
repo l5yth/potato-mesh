@@ -18,31 +18,54 @@ require "rack"
 
 module PotatoMesh
   module App
-    # Rack middleware that stamps a long-lived, immutable +Cache-Control+ header on
-    # version-busted static assets so returning/staying visitors serve them from
-    # the browser cache instead of revalidating every asset on every navigation.
+    # Rack middleware that stamps a long-lived +Cache-Control+ header on
+    # version-busted static **JS/CSS** so returning/staying visitors serve them
+    # from the browser cache instead of revalidating every asset on every
+    # navigation.
     #
-    # Only assets whose URL carries the +?v=<release>+ cache-buster (the JS and
-    # CSS the templates emit via +asset_url+, SPEC AV2/AV4) are marked immutable —
-    # their URL changes on every release, so a year-long cache can never serve a
-    # stale build. **Unversioned** assets (images, favicons, SVG icons — AV4) are
-    # left untouched so they keep their +Last-Modified+/+ETag+ revalidation; a
-    # stale logo is cosmetic, not behavioral.
+    # Only +/assets/**+ **JS/CSS** whose URL carries the +?v=<version>+ cache-buster
+    # (the assets templates emit via +asset_url+, SPEC AV2/AV4) are stamped;
+    # unversioned assets and non-JS/CSS types (images, favicons, SVG icons — AV4)
+    # are left untouched so they keep +Last-Modified+/+ETag+ revalidation.
     #
-    # This is the app-side counterpart to serving +/assets/+ from nginx with an
-    # immutable header; when nginx serves them from disk it sets the header first
-    # and these requests never reach Ruby, so the two are complementary, not
-    # conflicting (an existing +Cache-Control+ is never overwritten).
+    # The header is +immutable+ (a year, never revalidated) **only when the running
+    # version is unique per build** — i.e. git-derived (+APP_VERSION+ differs from
+    # +Config.version_fallback+). When the app runs on the constant fallback
+    # version (e.g. a Docker image built without +.git+), the +?v=+ buster does not
+    # change between commits, so a year-long +immutable+ pin could serve stale JS
+    # unrecoverably; those deployments instead get a short, **revalidatable**
+    # +max-age+ that still spares the per-navigation 304 waterfall while bounding
+    # staleness (the full-immutable Docker win is the bake-git-version follow-up).
+    # The mode is chosen at boot via the +immutable:+ flag.
+    #
+    # Complementary to serving +/assets/+ immutable from nginx off disk (those
+    # requests never reach Ruby); an existing +Cache-Control+ is never overwritten.
     class AssetCacheControl
-      # One year in seconds — the immutable cache lifetime for versioned assets.
+      # One year in seconds — the immutable cache lifetime for uniquely-versioned
+      # (git-derived) assets.
       IMMUTABLE_MAX_AGE_SECONDS = 31_536_000
 
-      # The header value applied to versioned assets.
+      # Bounded lifetime (seconds) used when the version buster is not unique per
+      # build, so a stale asset self-heals within the window instead of being
+      # pinned for a year.
+      REVALIDATABLE_MAX_AGE_SECONDS = 300
+
+      # Header for uniquely-versioned (git-derived) deployments.
       IMMUTABLE_CACHE_CONTROL = "public, max-age=#{IMMUTABLE_MAX_AGE_SECONDS}, immutable"
 
+      # Header for constant-fallback-version deployments (bounded, revalidatable).
+      REVALIDATABLE_CACHE_CONTROL = "public, max-age=#{REVALIDATABLE_MAX_AGE_SECONDS}"
+
+      # Extensions eligible for long caching — JS + CSS only (SPEC AV4).
+      CACHEABLE_EXTENSIONS = %w[.js .mjs .css].freeze
+
       # @param app [#call] the downstream Rack application.
-      def initialize(app)
+      # @param immutable [Boolean] when true the running version is unique per
+      #   build (git-derived), so versioned assets may be pinned +immutable+; when
+      #   false a bounded, revalidatable lifetime is used instead.
+      def initialize(app, immutable: true)
         @app = app
+        @cache_control = immutable ? IMMUTABLE_CACHE_CONTROL : REVALIDATABLE_CACHE_CONTROL
       end
 
       # Rack entry point: delegate downstream, then add the immutable header when
@@ -55,21 +78,26 @@ module PotatoMesh
       def call(env)
         status, headers, body = @app.call(env)
         if versioned_asset_request?(env) && cacheable_status?(status) && cache_control_absent?(headers)
-          headers["cache-control"] = IMMUTABLE_CACHE_CONTROL
+          headers["cache-control"] = @cache_control
         end
         [status, headers, body]
       end
 
       private
 
-      # True when the request is a readable (+GET+/+HEAD+) hit for a +/assets/+
-      # path carrying a non-empty +?v=+ cache-buster.
+      # True when the request is a readable (+GET+/+HEAD+) hit for a versioned
+      # (+?v=+) +/assets/**+ **JS or CSS** file. Non-JS/CSS types (images,
+      # favicons, SVG) are excluded so they keep revalidation (SPEC AV4), even if
+      # a caller appends a +?v=+.
       #
       # @param env [Hash] the Rack environment.
       # @return [Boolean]
       def versioned_asset_request?(env)
         return false unless %w[GET HEAD].include?(env["REQUEST_METHOD"])
-        return false unless env["PATH_INFO"].to_s.start_with?("/assets/")
+
+        path = env["PATH_INFO"].to_s
+        return false unless path.start_with?("/assets/")
+        return false unless CACHEABLE_EXTENSIONS.include?(File.extname(path).downcase)
 
         version = Rack::Utils.parse_query(env["QUERY_STRING"].to_s)["v"]
         version.is_a?(String) && !version.empty?

@@ -4574,18 +4574,27 @@ Two delivery-side perf improvements from the `dweb` profiling. Neither changes a
 API/event contract. The `/api/stats` GVL-freeze root cause is tracked separately
 in **issue #866** (query pushdown); the items here are the safe, independent parts.
 
-### CA-A1 — Version-busted assets carry an immutable one-year Cache-Control
+### CA-A1 — Version-busted JS/CSS carry a long-lived Cache-Control
 ```bash
-( cd web && bundle exec rspec spec/asset_cache_control_spec.rb spec/app_spec.rb -e "static asset caching" )
+( cd web && bundle exec rspec spec/asset_cache_control_spec.rb )
+( cd web && bundle exec rspec spec/app_spec.rb -e "static asset caching" )
 ```
-**Expected:** pass. `PotatoMesh::App::AssetCacheControl` (wired via `use` after
-`Rack::Deflater`) stamps `Cache-Control: public, max-age=31536000, immutable` on a
-`GET`/`HEAD` for a `/assets/**` URL carrying a non-empty `?v=` cache-buster (JS/CSS
-emitted by `asset_url`), so returning/staying visitors serve them from cache
-instead of revalidating every asset. **Unversioned** assets (images/favicons/SVG —
-SPEC AV4) are left untouched (keep `Last-Modified`/`ETag` revalidation), and an
-existing `Cache-Control` (e.g. one nginx set when serving `/assets/` from disk) is
-never overwritten.
+**Expected:** both pass. `PotatoMesh::App::AssetCacheControl` (wired via `use` after
+`Rack::Deflater`) stamps a long-lived `Cache-Control` on a `GET`/`HEAD` for a
+`/assets/**` **JS/CSS** URL (`.js`/`.mjs`/`.css`) carrying a non-empty `?v=`
+cache-buster (emitted by `asset_url`), so returning/staying visitors serve them
+from cache instead of revalidating every asset. The value is
+`public, max-age=31536000, immutable` **only when the running version is unique
+per build** — i.e. git-derived (`APP_VERSION != Config.version_fallback`); a
+deployment on the constant fallback version (e.g. a Docker image built without
+`.git`) gets `public, max-age=300` instead (bounded/revalidatable, so the
+unchanged `?v=` can never pin stale JS for a year). **Non-JS/CSS** assets
+(images/favicons/SVG — SPEC AV4) are left untouched even when they carry `?v=`
+(keep `Last-Modified`/`ETag` revalidation), and an existing `Cache-Control` (e.g.
+one nginx set when serving `/assets/` from disk) is never overwritten. *Note:* the
+first command runs the full middleware unit spec (its examples are not named
+"static asset caching", so it must run un-filtered); the second runs the
+integration examples.
 
 ### CA-A2 — `/api/stats` cache TTL is configurable (bounds recompute frequency)
 ```bash
