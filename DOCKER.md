@@ -61,6 +61,8 @@ Additional environment variables are optional:
 | `FEDERATION` | `1` | Controls whether the instance announces itself and crawls peers (`1`) or stays isolated (`0`). |
 | `PRIVATE` | `0` | Restricts public visibility and disables chat/message endpoints when set to `1`. |
 | `CONNECTION` | `/dev/ttyACM0` | Serial device, TCP endpoint, or Bluetooth target used by the ingestor to reach the radio. |
+| `MIN_THREADS` | `16` | Minimum Puma worker threads kept warm on the web service. |
+| `MAX_THREADS` | `96` | Maximum Puma worker threads on the web service. Each active `/api/events` (SSE) stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
 
 The ingestor posts to the URL configured via `INSTANCE_DOMAIN` (defaulting to
 `http://web:41447` in the provided compose file). Use `CHANNEL_INDEX` to select
@@ -115,6 +117,84 @@ COMPOSE_PROFILES=bridge docker compose up -d
 docker compose pull
 docker compose up -d
 ```
+
+## Running behind a reverse proxy (TLS + static assets)
+
+The web container serves plain HTTP on port `41447`. For any public deployment,
+terminate TLS in a reverse proxy in front of it. A ready-to-adapt nginx example
+lives at [`deploy/nginx.example.conf`](deploy/nginx.example.conf); the notes
+below explain the parts that matter.
+
+**Forwarded headers (required).** The app derives its public scheme and host —
+used for `INSTANCE_DOMAIN`, page metadata, the sitemap, and federation links —
+from `X-Forwarded-Proto` and the `Host` header. Forward both, or generated URLs
+resolve to the wrong scheme/host:
+
+```nginx
+proxy_set_header Host              $host;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+```
+
+**Static-asset caching.** Every JS module and `base.css` is served with a
+`?v=<APP_VERSION>` query, and the layout emits one `<script type="importmap">`
+that rewrites the whole module graph to those versioned URLs (SPEC `AV2`–`AV4`).
+Versioned JS/CSS are therefore safe to cache **immutably** for a year; images,
+icons, and fonts are *not* versioned and keep a short TTL with revalidation (a
+stale logo is cosmetic — `AV4`). Two ways to realize this:
+
+1. **Any deployment (portable):** have the app emit the headers itself. The
+   container bakes assets into the image at `/app/public` with no volume, so a
+   host proxy cannot read them from disk — this is the only option for the
+   Compose/GHCR stack. Tracked in
+   [#870](https://github.com/l5yth/potato-mesh/issues/870).
+2. **Bare-metal (repo checkout):** serve `/assets/` straight from nginx off disk
+   (the `location /assets/` block in the example). This also keeps the ~50
+   per-page ES-module requests off the single Ruby process. For containers, only
+   do this if you bind-mount `web/public` into an nginx sidecar.
+
+Three things that bite in practice — all handled in the example file:
+
+- **Filesystem permissions:** the proxy worker user (`http`, `www-data`, …) must
+  be able to traverse to and read `web/public`. Check with
+  `namei -l <path>/web/public/assets/styles/base.css` — every parent directory
+  needs `o+x`, or disk-served assets return `403`.
+- **Upstream keepalive** needs both `proxy_http_version 1.1` and
+  `proxy_set_header Connection ""`.
+- **TLS session resumption:** Certbot's `options-ssl-nginx.conf` sets
+  `ssl_session_tickets off` (forward secrecy) and ships its own
+  `ssl_session_cache`. Adding `ssl_session_tickets on;` in the same server block
+  is a fatal *duplicate-directive* error; even placed correctly it trades away
+  forward secrecy unless you rotate ticket keys. Leaving it off costs ~1 RTT on
+  cold TLS 1.3 connections — usually the right call.
+
+Verify after `nginx -t && systemctl reload nginx`:
+
+```bash
+curl -sD- -H 'Accept-Encoding: gzip' https://<host>/assets/js/app/main.js?v=<ver> -o /dev/null \
+  | grep -i 'cache-control\|content-encoding'
+# expect: cache-control: public, max-age=31536000, immutable   and   content-encoding: gzip
+```
+
+## Performance & scaling
+
+The web app runs as a **single Puma process** with a bounded thread pool
+(`MIN_THREADS:MAX_THREADS`, default `16:96`). CRuby serialises Ruby execution on
+one global lock, so a single expensive request can delay others — keep hot read
+paths cheap and let the reverse proxy absorb static traffic.
+
+- **Thread pool.** Each live-update SSE stream (`GET /api/events`) pins one
+  thread for its lifetime, so size `MAX_THREADS` above your expected concurrent
+  SSE clients plus API/ingest headroom (that is why the floor is 16, not Puma's
+  MRI default of 5). Override with `MIN_THREADS` / `MAX_THREADS`.
+- **Static assets.** Serve `/assets/` from the reverse proxy (or via app-level
+  immutable headers) so the module fan-out and revalidations never touch Ruby —
+  see the section above.
+- **Cluster (multi-process) mode is not supported out of the box.** Live updates
+  use an in-process pub/sub, so events would not fan out across workers; the
+  per-process response cache and the background retention/federation threads
+  would also need per-worker handling. To scale on one host today: front it with
+  the reverse proxy, serve assets from disk, and keep queries cheap.
 
 ## Troubleshooting
 

@@ -123,6 +123,8 @@ The web app can be configured with environment variables (defaults shown):
 | `LIVE_SAFETY_POLL_SECONDS` | `300` | Slow fallback poll cadence (seconds) the dashboard uses while live SSE updates are active. |
 | `SSE_HEARTBEAT_SECONDS` | `15` | Heartbeat interval (seconds) for the live-update SSE stream so dead connections are detected and proxies do not buffer it. |
 | `SSE_MAX_LIFETIME_SECONDS` | `600` | Maximum lifetime (seconds) of a single SSE connection before the server closes it, prompting the client to reconnect and resync. |
+| `MIN_THREADS` | `16` | Minimum Puma worker threads kept warm. |
+| `MAX_THREADS` | `96` | Maximum Puma worker threads. Each active `/api/events` SSE stream pins one thread, so keep this above your peak concurrent SSE clients plus API/ingest headroom. |
 | `OG_IMAGE_URL` | _unset_ | Optional absolute URL for the social preview image. Must use an `http://` or `https://` scheme; values with other schemes are ignored. Most social platforms (Facebook, LinkedIn, Slack, iMessage) require **HTTPS** to render the card. When set, replaces the runtime-generated `/og-image.png` so deployments without Chromium (or with size-conscious images) can point at a CDN. |
 | `OG_IMAGE_TTL_SECONDS` | `3600` | Cache lifetime for the runtime-generated dashboard screenshot served at `/og-image.png`. |
 | `FERRUM_BROWSER_PATH` | `/usr/bin/chromium` (Docker) | Path to the headless Chromium binary used by the Open Graph preview generator. |
