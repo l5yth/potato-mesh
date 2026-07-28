@@ -1367,13 +1367,21 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "static asset caching (frontend perf)" do
-    it "serves a version-busted asset with an immutable one-year Cache-Control" do
+    it "serves a version-busted asset with a long-lived Cache-Control" do
       # Returning/staying visitors serve versioned JS/CSS from cache instead of
       # revalidating every asset each navigation (the AssetCacheControl middleware).
+      # The value is `immutable` only when the running version is unique per build
+      # (git-derived); a fallback-version build — e.g. CI's shallow checkout with no
+      # tags, or a Docker image without .git — correctly gets the bounded,
+      # revalidatable form instead (the same condition the app wires at boot).
       get "/assets/js/app/main.js?v=testver"
 
       expect(last_response).to be_ok
-      expect(last_response.headers["Cache-Control"]).to eq("public, max-age=31536000, immutable")
+      git_versioned = APP_VERSION.to_s != PotatoMesh::Config.version_fallback
+      expected = git_versioned ?
+        PotatoMesh::App::AssetCacheControl::IMMUTABLE_CACHE_CONTROL :
+        PotatoMesh::App::AssetCacheControl::REVALIDATABLE_CACHE_CONTROL
+      expect(last_response.headers["Cache-Control"]).to eq(expected)
     end
 
     it "does not immutable-cache an unversioned asset (AV4 keeps revalidation)" do
