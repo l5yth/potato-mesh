@@ -4517,3 +4517,51 @@ The map still initialises on the dashboard/map views (Leaflet defer), node overl
 still open (now lazily), and `/charts`, `/federation`, node-detail pages still
 render via their own modules. No API/event contract changes, so **C2** and the
 Python suite are unaffected.
+
+---
+
+## Bugfix: MeshCore ingestor crash-loop on a stale `meshcore` (KeyError `CONTACT_DELETED`)
+
+The SPEC RF5 `CONTACT_DELETED` no-op handler is always registered in the MeshCore
+handler map, but `meshcore`'s `EventType` enum only gained that member in 2.3.7,
+while `data/requirements.txt` still pinned the floor at `meshcore>=2.3.5`. On any
+deployment that resolved a pre-2.3.7 wheel, the runner's
+`EventType["CONTACT_DELETED"]` subscribe lookup
+(`data/mesh_ingestor/protocols/meshcore/runner.py`) raised
+`KeyError('CONTACT_DELETED')`, which propagated out of `_run_meshcore`, so **every**
+connection attempt failed with `Failed to create mesh interface` — a permanent 5 s
+reconnect loop that ingested nothing. Fixed on two independent axes: the floor is
+bumped to `meshcore>=2.3.8` (the latest release, which defines the member), and the
+runner now subscribes only to event names present in `EventType.__members__`,
+skipping (with a warning) any handler whose event the installed library does not
+define — so this class of version-skew crash cannot recur for a future event name
+added ahead of the pinned floor.
+
+### EC-A1 — the runner skips handler event-names absent from the installed library — RF5
+```bash
+( . .venv/bin/activate && pytest -q tests/test_provider_unit.py -k "skips_event_names_absent" )
+```
+**Expected:** pass. With a fake `meshcore` whose `EventType` omits `CONTACT_DELETED`
+(a pre-2.3.7 library), `_run_meshcore` connects successfully: no `KeyError`
+propagates (`error_holder[0] is None`, `iface.isConnected`), the known sibling
+events (`ADVERTISEMENT`, `RX_LOG_DATA`) stay subscribed, `CONTACT_DELETED` is **not**
+subscribed, and the skip is debug-logged as a warning naming the event.
+
+### EC-A2 — the `meshcore` floor provides `EventType.CONTACT_DELETED`
+```bash
+grep -nE 'meshcore>=2\.3\.8' data/requirements.txt
+```
+**Expected:** pass. `data/requirements.txt` pins `meshcore>=2.3.8`; version 2.3.7
+introduced `EventType.CONTACT_DELETED = "contact_deleted"` (2.3.5/2.3.6 lack it), so
+a fresh ingestor image build satisfies the RF5 handler at the enum level.
+
+### EC-R1 — Regression: prior acceptance still holds
+```bash
+( . .venv/bin/activate && pytest -q tests/ )
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** every prior check still passes. Explicitly required to remain green:
+**RF-A5** (`CONTACT_DELETED` is subscribed and is a debug no-op — unchanged when the
+member is present, as with the pinned library) and **RF-A1..A6 / RF-R1** (all
+MeshCore RF-metrics behavior). The runner change is subscribe-time only — no
+event/POST contract changes — so **C2** and the Ruby/JS suites are unaffected.

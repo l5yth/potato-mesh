@@ -143,10 +143,33 @@ async def _run_meshcore(
         mc.decrypt_channels = True
 
         handlers_map = _make_event_handlers(iface, target)
+        # Subscribe only to events the *installed* meshcore library actually
+        # defines.  A handler name absent from ``EventType.__members__`` — e.g.
+        # ``CONTACT_DELETED`` on a library predating the 2.3.7 release that
+        # added it (SPEC RF5 handler vs. a stale ``meshcore`` floor) — is
+        # skipped with a warning instead of raising ``KeyError`` and taking the
+        # whole interface down.  ``EventType[name]`` used to crash-loop the
+        # daemon here; consulting ``__members__`` keeps a single unknown event
+        # name (this one, or any future one added ahead of the pinned library)
+        # from blocking every connection.  A skipped handler simply never
+        # fires, which for the deliberate no-op handlers loses nothing.
+        known_event_types = EventType.__members__
+        handled_types = set()
         for event_name, callback in handlers_map.items():
-            mc.subscribe(EventType[event_name], callback)
+            event_type = known_event_types.get(event_name)
+            if event_type is None:
+                config._debug_log(
+                    "Skipping handler for event type unknown to this meshcore build",
+                    context="meshcore.subscribe",
+                    severity="warning",
+                    always=True,
+                    event=event_name,
+                )
+                continue
+            mc.subscribe(event_type, callback)
+            handled_types.add(event_type)
 
-        _handled_types = frozenset(EventType[n] for n in handlers_map)
+        _handled_types = frozenset(handled_types)
         # Bookkeeping events that require no action and should not be logged.
         _silent_types = frozenset(
             {

@@ -4323,6 +4323,7 @@ def _make_fake_meshcore_mod(
     autoadd_config: int | None = 0x1F,
     autoadd_get_raises: bool = False,
     autoadd_set_error: bool = False,
+    omit_event_names: tuple = (),
 ):
     """Build a minimal fake ``meshcore`` module for testing :func:`_run_meshcore`.
 
@@ -4339,37 +4340,48 @@ def _make_fake_meshcore_mod(
             ``mc.ensure_contacts()`` (after the ``fail_ensure_contacts`` check)
             so tests can populate ``iface._contacts`` mid-startup.  Used to
             assert the startup ordering required by issue #788.
+        autoadd_config: Initial ``autoadd_config`` byte reported by
+            ``get_autoadd_config`` (``None`` simulates a pre-1.16 ERROR reply).
+        autoadd_get_raises: When ``True``, ``get_autoadd_config`` raises a
+            :class:`TimeoutError`.
+        autoadd_set_error: When ``True``, ``set_autoadd_config`` replies ERROR.
+        omit_event_names: Event names to drop from the fake ``EventType`` enum,
+            simulating a ``meshcore`` build predating the release that added
+            them (e.g. ``("CONTACT_DELETED",)`` for a pre-2.3.7 library).  The
+            runner must skip handlers whose event name is absent rather than
+            raising ``KeyError``.
     """
     import enum
 
+    _event_names = [
+        "CHANNEL_INFO",
+        "SELF_INFO",
+        "CONTACTS",
+        "NEW_CONTACT",
+        "NEXT_CONTACT",
+        "CHANNEL_MSG_RECV",
+        "CONTACT_MSG_RECV",
+        "ADVERTISEMENT",
+        "CONTACT_DELETED",
+        "RX_LOG_DATA",
+        "DISCONNECTED",
+        # Telemetry surfaces subscribed since TI-A3.
+        "TELEMETRY_RESPONSE",
+        "STATUS_RESPONSE",
+        "BATTERY",
+        "CONNECTED",
+        "ACK",
+        "OK",
+        "ERROR",
+        "NO_MORE_MSGS",
+        "MESSAGES_WAITING",
+        "MSG_SENT",
+        "CURRENT_TIME",
+        "UNKNOWN_EVT",
+    ]
     EventType = enum.Enum(
         "EventType",
-        [
-            "CHANNEL_INFO",
-            "SELF_INFO",
-            "CONTACTS",
-            "NEW_CONTACT",
-            "NEXT_CONTACT",
-            "CHANNEL_MSG_RECV",
-            "CONTACT_MSG_RECV",
-            "ADVERTISEMENT",
-            "CONTACT_DELETED",
-            "RX_LOG_DATA",
-            "DISCONNECTED",
-            # Telemetry surfaces subscribed since TI-A3.
-            "TELEMETRY_RESPONSE",
-            "STATUS_RESPONSE",
-            "BATTERY",
-            "CONNECTED",
-            "ACK",
-            "OK",
-            "ERROR",
-            "NO_MORE_MSGS",
-            "MESSAGES_WAITING",
-            "MSG_SENT",
-            "CURRENT_TIME",
-            "UNKNOWN_EVT",
-        ],
+        [n for n in _event_names if n not in omit_event_names],
     )
 
     class _FakeCommands:
@@ -4970,6 +4982,54 @@ def test_run_meshcore_enables_auto_update_and_subscribes_advert(monkeypatch):
     assert fake_mod.EventType.ADVERTISEMENT in iface._mc.subscribed_events
     assert fake_mod.EventType.CONTACT_DELETED in iface._mc.subscribed_events
     assert fake_mod.EventType.RX_LOG_DATA in iface._mc.subscribed_events
+
+
+def test_run_meshcore_skips_event_names_absent_from_library(monkeypatch):
+    """A handler whose event name is unknown to the installed library is skipped.
+
+    Regression for the meshcore-2.3.5 crash-loop: the SPEC RF5
+    ``CONTACT_DELETED`` handler is always present in the handler map, but the
+    ``EventType`` enum only gained that member in meshcore 2.3.7.  Against an
+    older library ``EventType["CONTACT_DELETED"]`` raised
+    ``KeyError('CONTACT_DELETED')`` at subscribe time, which propagated out of
+    :func:`_run_meshcore` and made *every* connection attempt fail with
+    ``Failed to create mesh interface`` — a permanent reconnect loop.  The
+    runner must instead skip any handler whose event name is absent from
+    ``EventType.__members__`` (subscribing only to known events) so a stale
+    library — or any future event name added ahead of the pinned floor — cannot
+    take down the whole interface.  The skipped no-op handler loses nothing.
+    """
+    import asyncio
+    import data.mesh_ingestor.protocols.meshcore as _mod
+
+    logs: list = []
+    monkeypatch.setattr(
+        _mod.config, "_debug_log", lambda msg, **kw: logs.append((msg, kw))
+    )
+    # Simulate a library predating EventType.CONTACT_DELETED (pre-2.3.7).
+    fake_mod = _make_fake_meshcore_mod(omit_event_names=("CONTACT_DELETED",))
+    _patch_meshcore_mod(monkeypatch, _mod, fake_mod)
+    assert "CONTACT_DELETED" not in fake_mod.EventType.__members__
+
+    iface = _MeshcoreInterface(target=None)
+    _connected, error_holder = asyncio.run(
+        _run_until_connected(iface, "/dev/ttyUSB0", fake_mod, _mod)
+    )
+
+    # The absent event name must not crash the connection.
+    assert error_holder[0] is None
+    assert iface.isConnected is True
+    # Known sibling events are still subscribed; only the unknown one is skipped.
+    assert fake_mod.EventType.ADVERTISEMENT in iface._mc.subscribed_events
+    assert fake_mod.EventType.RX_LOG_DATA in iface._mc.subscribed_events
+    assert not any(
+        getattr(evt, "name", None) == "CONTACT_DELETED"
+        for evt in iface._mc.subscribed_events
+    )
+    # The skip is surfaced as a warning naming the absent event.
+    skip_logs = [kw for _msg, kw in logs if kw.get("event") == "CONTACT_DELETED"]
+    assert skip_logs, "expected a debug log recording the skipped event"
+    assert skip_logs[0].get("severity") == "warning"
 
 
 def _run_meshcore_with_autoadd(monkeypatch, **factory_kwargs):
