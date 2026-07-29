@@ -17,30 +17,101 @@
 module PotatoMesh
   module App
     module Identity
-      # Resolve the current application version string using git metadata when available.
+      # Resolve the current application version string. Always +"v"+-prefixed
+      # (e.g. +"v0.7.4"+) so every build shape — git, baked-Docker, or constant
+      # fallback — advertises the same form across +/version+, the footer, the
+      # federation self-record, and the User-Agent.
       #
-      # @return [String] semantic version compatible identifier.
+      # @return [String] semantic version compatible identifier, +"v"+-prefixed.
       def determine_app_version
+        resolve_app_version.fetch(:version)
+      end
+
+      # Whether {APP_VERSION} is a unique-per-build identifier — baked into the
+      # image via +ENV["APP_VERSION"]+ or produced by a successful +git describe+
+      # — as opposed to the constant {PotatoMesh::Config.version_fallback}. Only a
+      # pinned build is safe to serve +immutable+, because only then does the
+      # +?v=+ asset cache-buster change whenever the assets do (SPEC AV1/AV6,
+      # ACCEPTANCE CA-A1). A fallback build is served revalidatable instead.
+      #
+      # @return [Boolean] +true+ for a baked/git version, +false+ for the fallback.
+      def app_version_pinned?
+        resolve_app_version.fetch(:pinned)
+      end
+
+      # Resolve the running version **and** its immutable-safety in one pass, in
+      # precedence order:
+      # 1. A non-blank +ENV["APP_VERSION"]+ — the git version baked into a Docker
+      #    image at build time (+web/Dockerfile+ +ARG+/+ENV+, computed by
+      #    +.github/workflows/docker.yml+ via +git describe+). The image ships
+      #    without +.git+, so this is the only way the in-image cache-buster stays
+      #    unique per build (SPEC AV6) — hence +pinned: true+.
+      # 2. +git describe+ against the enclosing repository (+pinned: true+).
+      # 3. {PotatoMesh::Config.version_fallback} as a last resort (+pinned: false+).
+      #
+      # @return [Hash{Symbol=>Object}] +{ version: String, pinned: Boolean }+; the
+      #   version is always +"v"+-prefixed (see {normalize_version}).
+      def resolve_app_version
+        baked = ENV["APP_VERSION"].to_s.strip
+        return { version: normalize_version(baked), pinned: true } unless baked.empty?
+
         repo_root = locate_git_repo_root(File.expand_path("../../..", __dir__))
-        return PotatoMesh::Config.version_fallback unless repo_root
+        return fallback_app_version unless repo_root
 
         stdout, status = Open3.capture2("git", "-C", repo_root, "describe", "--tags", "--long", "--abbrev=7")
-        return PotatoMesh::Config.version_fallback unless status.success?
+        return fallback_app_version unless status.success?
 
         raw = stdout.strip
-        return PotatoMesh::Config.version_fallback if raw.empty?
+        return fallback_app_version if raw.empty?
 
+        { version: normalize_version(raw), pinned: true }
+      rescue StandardError
+        fallback_app_version
+      end
+
+      # The constant-fallback resolution: {PotatoMesh::Config.version_fallback}
+      # (bare semver kept in lockstep with the polyglot manifests, e.g. +"0.7.4"+)
+      # normalized to +"v0.7.4"+ and marked **not pinned**, so the asset
+      # middleware serves it revalidatable rather than +immutable+.
+      #
+      # @return [Hash{Symbol=>Object}] +{ version: String, pinned: false }+.
+      def fallback_app_version
+        { version: normalize_version(PotatoMesh::Config.version_fallback), pinned: false }
+      end
+
+      # Normalize a raw version source into the canonical PotatoMesh string:
+      # collapse any +git describe+ tail (see {normalize_git_description}), then
+      # ensure exactly one leading +"v"+ (mirroring the display rule in
+      # +display_version+). So +"0.7.4"+ and +"v0.7.4-0-g<hash>"+ both render
+      # +"v0.7.4"+, and an already-+"v"+-prefixed value is left unchanged.
+      #
+      # @param raw [String] a git-describe string, baked value, or bare version.
+      # @return [String] the canonical, +"v"+-prefixed version string.
+      def normalize_version(raw)
+        described = normalize_git_description(raw)
+        described.start_with?("v") ? described : "v#{described}"
+      end
+
+      # Normalize a ``git describe --tags --long`` string into the canonical
+      # PotatoMesh version. ``<tag>-0-g<hash>`` (a build sitting exactly on a tag)
+      # collapses to ``<tag>``; ``<tag>-<n>-g<hash>`` (``n`` commits past the tag)
+      # becomes ``<tag>+<n>-<hash>``. Any string that does not match that grammar
+      # — an already-normalized version, or an operator-supplied label — is
+      # returned unchanged. Sharing this with the git branch guarantees a baked
+      # +ENV["APP_VERSION"]+ renders identically whether CI passes the raw
+      # ``git describe`` output or a pre-normalized version.
+      #
+      # @param raw [String] a git-describe string or pre-formatted version.
+      # @return [String] the canonical version string (before +"v"+ prefixing).
+      def normalize_git_description(raw)
         match = /\A(?<tag>.+)-(?<count>\d+)-g(?<hash>[0-9a-f]+)\z/.match(raw)
         return raw unless match
 
         tag = match[:tag]
         count = match[:count].to_i
-        hash = match[:hash]
         return tag if count.zero?
 
-        "#{tag}+#{count}-#{hash}"
-      rescue StandardError
-        PotatoMesh::Config.version_fallback
+        "#{tag}+#{count}-#{match[:hash]}"
       end
 
       # Discover the root directory of the git repository containing the
@@ -135,7 +206,8 @@ module PotatoMesh
         end
       end
 
-      private :migrate_legacy_keyfile_for_identity!, :locate_git_repo_root
+      private :migrate_legacy_keyfile_for_identity!, :locate_git_repo_root,
+              :fallback_app_version, :normalize_version, :normalize_git_description
 
       # Return the directory used to store well-known documents.
       #
