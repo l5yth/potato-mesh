@@ -108,6 +108,19 @@ USER potatomesh
 # Expose port
 EXPOSE 41447
 
+# Baked application version (SPEC AV1). The image ships without `.git`
+# (`.dockerignore` excludes it), so `determine_app_version`'s in-image `git
+# describe` would fall back to the constant `Config.version_fallback` and the
+# `?v=` asset cache-buster would be identical across every build between version
+# bumps. CI (`.github/workflows/docker.yml`) computes `git describe` from its
+# full checkout and passes it as `--build-arg APP_VERSION=…`; the app prefers
+# this ENV, making the buster unique per build so `AssetCacheControl` can serve
+# versioned JS/CSS `immutable`. Declared late so changing it only rebuilds the
+# final cheap layers. Empty by default: a plain `docker build` with no build-arg
+# keeps today's git-lookup / fallback behavior unchanged.
+ARG APP_VERSION=""
+ENV APP_VERSION=${APP_VERSION}
+
 # Default environment variables (can be overridden by host)
 ENV RACK_ENV=production \
     APP_ENV=production \

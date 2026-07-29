@@ -4618,6 +4618,20 @@ not this TTL — governs recompute frequency; decoupling stats from write-invali
 and stale-while-revalidate land with the query fix (**#866**), where the recompute
 is cheap enough that neither reintroduces the freeze.
 
+### CA-A3 — A baked `APP_VERSION` (Docker image) wins over in-image git/fallback
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "#determine_app_version" )
+```
+**Expected:** pass. `determine_app_version` prefers a non-blank `ENV["APP_VERSION"]`
+(the git version baked into the image by `web/Dockerfile`'s `ARG APP_VERSION` →
+`ENV APP_VERSION`, computed by `.github/workflows/docker.yml` via
+`git describe --tags --long --abbrev=7`) over the in-image `git describe` /
+`Config.version_fallback` path; a blank/unset value keeps today's git-then-fallback
+behavior. This closes the **SPEC AV1** limitation *for Docker*: the image's `?v=`
+buster becomes unique per build, so the **CA-A1** git-gate resolves to
+`public, max-age=31536000, immutable` inside the image instead of the bounded
+`max-age=300` fallback — the full year-long caching win with no stale-JS risk.
+
 ### CA-R1 — Regression: prior acceptance still holds
 ```bash
 ( cd web && bundle exec rspec )

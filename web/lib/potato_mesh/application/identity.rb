@@ -17,10 +17,22 @@
 module PotatoMesh
   module App
     module Identity
-      # Resolve the current application version string using git metadata when available.
+      # Resolve the current application version string.
+      #
+      # Precedence:
+      # 1. A non-blank +ENV["APP_VERSION"]+ — the git version baked into a Docker
+      #    image at build time (+web/Dockerfile+ +ARG+/+ENV+, computed by
+      #    +.github/workflows/docker.yml+ via +git describe+). The image ships
+      #    without +.git+, so this is the only way the in-image cache-buster stays
+      #    unique per build (SPEC AV1); it lets {AssetCacheControl} pin +immutable+.
+      # 2. +git describe+ against the enclosing repository, for non-container runs.
+      # 3. {PotatoMesh::Config.version_fallback} as a last resort.
       #
       # @return [String] semantic version compatible identifier.
       def determine_app_version
+        baked = ENV["APP_VERSION"].to_s.strip
+        return normalize_git_description(baked) unless baked.empty?
+
         repo_root = locate_git_repo_root(File.expand_path("../../..", __dir__))
         return PotatoMesh::Config.version_fallback unless repo_root
 
@@ -30,17 +42,31 @@ module PotatoMesh
         raw = stdout.strip
         return PotatoMesh::Config.version_fallback if raw.empty?
 
+        normalize_git_description(raw)
+      rescue StandardError
+        PotatoMesh::Config.version_fallback
+      end
+
+      # Normalize a ``git describe --tags --long`` string into the canonical
+      # PotatoMesh version. ``<tag>-0-g<hash>`` (a build sitting exactly on a tag)
+      # collapses to ``<tag>``; ``<tag>-<n>-g<hash>`` (``n`` commits past the tag)
+      # becomes ``<tag>+<n>-<hash>``. Any string that does not match that grammar
+      # — an already-normalized version, or an operator-supplied label — is
+      # returned unchanged. Sharing this with the git branch guarantees a baked
+      # +ENV["APP_VERSION"]+ renders identically whether CI passes the raw
+      # ``git describe`` output or a pre-normalized version.
+      #
+      # @param raw [String] a git-describe string or pre-formatted version.
+      # @return [String] the canonical version string.
+      def normalize_git_description(raw)
         match = /\A(?<tag>.+)-(?<count>\d+)-g(?<hash>[0-9a-f]+)\z/.match(raw)
         return raw unless match
 
         tag = match[:tag]
         count = match[:count].to_i
-        hash = match[:hash]
         return tag if count.zero?
 
-        "#{tag}+#{count}-#{hash}"
-      rescue StandardError
-        PotatoMesh::Config.version_fallback
+        "#{tag}+#{count}-#{match[:hash]}"
       end
 
       # Discover the root directory of the git repository containing the
@@ -135,7 +161,7 @@ module PotatoMesh
         end
       end
 
-      private :migrate_legacy_keyfile_for_identity!, :locate_git_repo_root
+      private :migrate_legacy_keyfile_for_identity!, :locate_git_repo_root, :normalize_git_description
 
       # Return the directory used to store well-known documents.
       #

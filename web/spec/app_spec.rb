@@ -741,6 +741,18 @@ RSpec.describe "Potato Mesh Sinatra app" do
     describe "#determine_app_version" do
       let(:repo_root) { File.expand_path("..", __dir__) }
 
+      # The resolver now consults ENV["APP_VERSION"] (the version baked into the
+      # Docker image, #871). Neutralize any ambient value so the git/fallback
+      # examples stay deterministic — otherwise a run inside the web image (which
+      # ships `spec/` *and* sets `ENV APP_VERSION`) would short-circuit them. The
+      # baked-version examples set ENV["APP_VERSION"] themselves; this restores it.
+      around do |example|
+        saved = ENV.delete("APP_VERSION")
+        example.run
+      ensure
+        saved.nil? ? ENV.delete("APP_VERSION") : (ENV["APP_VERSION"] = saved)
+      end
+
       it "returns the fallback when the git directory is missing" do
         allow(application_class).to receive(:locate_git_repo_root).and_return(nil)
 
@@ -792,6 +804,36 @@ RSpec.describe "Potato Mesh Sinatra app" do
         allow(Open3).to receive(:capture2).and_raise(StandardError, "boom")
 
         expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+      end
+
+      it "prefers an explicit ENV['APP_VERSION'] (baked image version) over git describe (#871)" do
+        # A Docker image bakes its git version into ENV['APP_VERSION'] (SPEC AV1/
+        # AV6): it must win over the in-image git lookup so the ?v= buster is
+        # unique per build and AssetCacheControl can safely use `immutable`.
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["v1.2.3-5-gabcdef1", status])
+        ENV["APP_VERSION"] = "v0.7.4+9-baked12"
+
+        expect(application_class.determine_app_version).to eq("v0.7.4+9-baked12")
+      end
+
+      it "normalizes a raw 'git describe' baked into ENV['APP_VERSION'] to the canonical version" do
+        # CI passes `git describe --tags --long --abbrev=7` verbatim as the build
+        # arg; the baked version must render identically to a bare-metal checkout
+        # at the same commit (here: exactly on the tag -> the tag alone).
+        ENV["APP_VERSION"] = "v0.7.4-0-gabc1234"
+
+        expect(application_class.determine_app_version).to eq("v0.7.4")
+      end
+
+      it "ignores a blank ENV['APP_VERSION'] and falls back to git/version" do
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["v1.2.3-0-gabcdef1", status])
+        ENV["APP_VERSION"] = "   "
+
+        expect(application_class.determine_app_version).to eq("v1.2.3")
       end
     end
 
