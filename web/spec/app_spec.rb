@@ -109,6 +109,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       db.execute("DELETE FROM telemetry")
       db.execute("DELETE FROM ingestors")
       db.execute("DELETE FROM ingestor_activity")
+      db.execute("DELETE FROM waypoints")
     end
     ensure_self_instance_record!
   end
@@ -4131,6 +4132,175 @@ RSpec.describe "Potato Mesh Sinatra app" do
       end
     end
 
+    describe "POST /api/waypoints" do
+      it "requires a bearer token (C1)" do
+        post "/api/waypoints", [].to_json, { "CONTENT_TYPE" => "application/json" }
+        expect(last_response.status).to eq(403)
+      end
+
+      it "returns 400 when the payload is not valid JSON" do
+        post "/api/waypoints", "{", auth_headers
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "invalid JSON")
+      end
+
+      it "returns 400 when the payload is neither an Array nor a Hash (IC-A4)" do
+        post "/api/waypoints", '"pin"', auth_headers
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "invalid payload")
+      end
+
+      it "returns 400 when more than 1000 waypoints are provided" do
+        payload = Array.new(1001) { |i| { "id" => i + 1, "rx_time" => reference_time.to_i - i } }
+
+        post "/api/waypoints", payload.to_json, auth_headers
+
+        expect(last_response.status).to eq(400)
+        expect(JSON.parse(last_response.body)).to eq("error" => "too many waypoints")
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM waypoints")
+          expect(count).to eq(0)
+        end
+      end
+
+      it "stores waypoint packets, canonicalises ids, and advances the author node (W1/W5)" do
+        rx_time = reference_time.to_i - 120
+        expire = reference_time.to_i + 3600
+        payload = {
+          "id" => 41_206,
+          "node_id" => "!3769b133",
+          "node_num" => 0x3769b133,
+          "rx_time" => rx_time,
+          "rx_iso" => Time.at(rx_time).utc.iso8601,
+          "name" => "Tempelhofer Feld",
+          "description" => "There is no other place in Berlin to see further. : )",
+          "icon" => 0x2708,
+          "latitude" => 52.4751642,
+          "longitude" => 13.4029586,
+          "expire" => expire,
+          "locked_to" => 0x3769b133,
+          "snr" => -8.5,
+          "rssi" => -90,
+          "hop_limit" => 3,
+          "payload_b64" => "AQI=",
+          "ingestor" => "!feedf00d",
+        }
+
+        post "/api/waypoints", payload.to_json, auth_headers
+
+        expect(last_response.status).to eq(201)
+        expect(JSON.parse(last_response.body)).to eq("status" => "ok")
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT * FROM waypoints WHERE id = ?", [41_206])
+          expect(row["node_id"]).to eq("!3769b133")
+          expect(row["node_num"]).to eq(0x3769b133)
+          expect(row["rx_time"]).to eq(rx_time)
+          expect(row["name"]).to eq("Tempelhofer Feld")
+          expect(row["description"]).to include("no other place")
+          expect(row["icon"]).to eq(0x2708)
+          expect_same_value(row["latitude"], 52.4751642)
+          expect_same_value(row["longitude"], 13.4029586)
+          expect(row["expire"]).to eq(expire)
+          expect(row["locked_to"]).to eq("!3769b133")
+          expect_same_value(row["snr"], -8.5)
+          expect(row["rssi"]).to eq(-90)
+          expect(row["hop_limit"]).to eq(3)
+          expect(row["payload_b64"]).to eq("AQI=")
+          expect(row["protocol"]).to eq("meshtastic")
+
+          node_row = db.get_first_row("SELECT last_heard FROM nodes WHERE node_id = ?", ["!3769b133"])
+          expect(node_row["last_heard"]).to eq(rx_time)
+        end
+      end
+
+      it "upserts a re-broadcast of the same waypoint id as the full new state (W5)" do
+        rx_time = reference_time.to_i - 300
+        first = {
+          "id" => 41_207,
+          "node_id" => "!3769b133",
+          "rx_time" => rx_time,
+          "name" => "Abgedreht Bar",
+          "description" => "Was wollen wir trinken",
+          "latitude" => 52.5158247,
+          "longitude" => 13.4520138,
+          "expire" => reference_time.to_i + 600,
+          "locked_to" => 0x3769b133,
+          "snr" => -4.0,
+        }
+        second = first.merge(
+          "rx_time" => rx_time + 60,
+          "name" => "Abgedreht",
+          "description" => nil,
+          "expire" => nil,
+          "locked_to" => 0,
+          "snr" => nil,
+        )
+
+        post "/api/waypoints", [first].to_json, auth_headers
+        expect(last_response.status).to eq(201)
+        post "/api/waypoints", [second].to_json, auth_headers
+        expect(last_response.status).to eq(201)
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          rows = db.execute("SELECT * FROM waypoints WHERE id = ?", [41_207])
+          expect(rows.length).to eq(1)
+          row = rows.first
+          expect(row["rx_time"]).to eq(rx_time + 60)
+          expect(row["name"]).to eq("Abgedreht")
+          # The newest broadcast is the full new state: cleared fields clear.
+          expect(row["description"]).to be_nil
+          expect(row["expire"]).to be_nil
+          expect(row["locked_to"]).to be_nil
+          # Radio metadata keeps the last known value when the update omits it.
+          expect_same_value(row["snr"], -4.0)
+        end
+      end
+
+      it "ignores an out-of-order stale re-broadcast (cross-ingestor guard, C5)" do
+        rx_time = reference_time.to_i - 120
+        fresh = {
+          "id" => 41_208,
+          "node_id" => "!3769b133",
+          "rx_time" => rx_time,
+          "name" => "Fresh Name",
+          "latitude" => 52.48,
+          "longitude" => 13.47,
+        }
+        stale = fresh.merge("rx_time" => rx_time - 90, "name" => "Stale Name")
+
+        post "/api/waypoints", fresh.to_json, auth_headers
+        expect(last_response.status).to eq(201)
+        post "/api/waypoints", stale.to_json, auth_headers
+        expect(last_response.status).to eq(201)
+
+        with_db(readonly: true) do |db|
+          db.results_as_hash = true
+          row = db.get_first_row("SELECT * FROM waypoints WHERE id = ?", [41_208])
+          expect(row["name"]).to eq("Fresh Name")
+          expect(row["rx_time"]).to eq(rx_time)
+        end
+      end
+
+      it "keeps same-id waypoints from different protocols as distinct rows (W2)" do
+        rx_time = reference_time.to_i - 60
+        base = { "id" => 7, "node_id" => "!11223344", "rx_time" => rx_time, "name" => "Shared id", "latitude" => 52.5, "longitude" => 13.4 }
+
+        post "/api/waypoints", base.to_json, auth_headers
+        expect(last_response.status).to eq(201)
+        post "/api/waypoints", base.merge("protocol" => "meshcore", "name" => "Core pin").to_json, auth_headers
+        expect(last_response.status).to eq(201)
+
+        with_db(readonly: true) do |db|
+          count = db.get_first_value("SELECT COUNT(*) FROM waypoints WHERE id = 7")
+          expect(count).to eq(2)
+        end
+      end
+    end
+
     describe "POST /api/neighbors" do
       it "stores neighbor tuples and updates node metadata" do
         rx_time = reference_time.to_i - 120
@@ -6824,7 +6994,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
   end
 
   describe "POST payload validation" do
-    %w[messages positions telemetry neighbors traces].each do |endpoint|
+    %w[messages positions telemetry neighbors traces waypoints].each do |endpoint|
       it "rejects a non-array/non-object payload on /api/#{endpoint} with 400" do
         post "/api/#{endpoint}", '"garbage"', auth_headers
         expect(last_response.status).to eq(400)
@@ -7443,6 +7613,32 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.status).to eq(404)
     end
 
+    it "returns 404 for GET /api/waypoints (message-grade privacy, W3)" do
+      get "/api/waypoints"
+      expect(last_response.status).to eq(404)
+    end
+
+    it "returns 404 for HEAD /api/waypoints" do
+      head "/api/waypoints"
+      expect(last_response.status).to eq(404)
+    end
+
+    it "returns 404 for the per-author GET /api/waypoints/:id (W11 under W3)" do
+      get "/api/waypoints/!3769b133"
+      expect(last_response.status).to eq(404)
+    end
+
+    it "still accepts POST /api/waypoints but publishes no waypoints event (W3)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
+      # Unlike messages, waypoint ingest stays open under PRIVATE: data may be
+      # collected, never exposed (SPEC W3). The change event is suppressed so
+      # the SSE stream cannot leak activity the read API hides.
+      post "/api/waypoints", [].to_json, auth_headers
+      expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("waypoints", private_mode: true)
+      expect(PotatoMesh::App::PubSub.publish("waypoints", private_mode: true)).to eq(0)
+    end
+
     it "excludes hidden clients from the nodes API" do
       now = reference_time.to_i
       with_db do |db|
@@ -7542,6 +7738,123 @@ RSpec.describe "Potato Mesh Sinatra app" do
       # The boot prefetch reads data-pm-chat; in private mode it must be false so
       # the early prefetch never requests /api/messages (mirrors the 404, PS6).
       expect(last_response.body).to include('data-pm-chat="false"')
+    end
+  end
+
+  describe "GET /api/waypoints" do
+    # Seed one fresh waypoint through the ingest route so the read path is
+    # exercised end-to-end (auth → insert → query → JSON).
+    def seed_waypoint(id, overrides = {})
+      payload = {
+        "id" => id,
+        "node_id" => "!3769b133",
+        "rx_time" => reference_time.to_i - 60,
+        "name" => "Pin #{id}",
+        "latitude" => 52.5,
+        "longitude" => 13.4,
+      }.merge(overrides)
+      post "/api/waypoints", payload.to_json, auth_headers
+      expect(last_response.status).to eq(201)
+      payload
+    end
+
+    it "returns stored waypoints as snake_case rows (W4)" do
+      clear_database
+      expire = reference_time.to_i + 3600
+      seed_waypoint(41_206, "description" => "See further", "icon" => 0x2708, "expire" => expire, "locked_to" => 0x3769b133)
+
+      get "/api/waypoints"
+
+      expect(last_response).to be_ok
+      rows = JSON.parse(last_response.body)
+      expect(rows.length).to eq(1)
+      row = rows.first
+      expect(row["id"]).to eq(41_206)
+      expect(row["node_id"]).to eq("!3769b133")
+      expect(row["name"]).to eq("Pin 41206")
+      expect(row["description"]).to eq("See further")
+      expect(row["icon"]).to eq(0x2708)
+      expect(row["expire"]).to eq(expire)
+      expect(row["locked_to"]).to eq("!3769b133")
+      expect(row["protocol"]).to eq("meshtastic")
+    end
+
+    it "excludes expired waypoints from the read surface (W5)" do
+      clear_database
+      seed_waypoint(1, "expire" => reference_time.to_i - 10)
+      seed_waypoint(2, "expire" => reference_time.to_i + 3600)
+      seed_waypoint(3)
+
+      get "/api/waypoints"
+
+      ids = JSON.parse(last_response.body).map { |r| r["id"] }
+      expect(ids).to contain_exactly(2, 3)
+    end
+
+    it "supports the since/before cursors and bypasses the response cache (BP1/BP7)" do
+      clear_database
+      base = reference_time.to_i - 600
+      seed_waypoint(10, "rx_time" => base)
+      seed_waypoint(11, "rx_time" => base + 100)
+      seed_waypoint(12, "rx_time" => base + 200)
+
+      get "/api/waypoints?since=#{base + 50}"
+      expect(JSON.parse(last_response.body).map { |r| r["id"] }).to contain_exactly(11, 12)
+
+      # Inclusive upper bound: the boundary row itself is returned.
+      get "/api/waypoints?before=#{base + 100}"
+      expect(JSON.parse(last_response.body).map { |r| r["id"] }).to contain_exactly(10, 11)
+    end
+
+    it "filters by protocol via the KNOWN_PROTOCOLS gate (W2)" do
+      clear_database
+      seed_waypoint(20)
+      seed_waypoint(21, "protocol" => "meshcore")
+
+      get "/api/waypoints?protocol=meshcore"
+      expect(JSON.parse(last_response.body).map { |r| r["id"] }).to contain_exactly(21)
+
+      # Unknown protocol values are discarded, not applied.
+      get "/api/waypoints?protocol=bogus"
+      expect(JSON.parse(last_response.body).map { |r| r["id"] }).to contain_exactly(20, 21)
+    end
+
+    it "serves the default feed from the response cache with a weak etag" do
+      clear_database
+      seed_waypoint(30)
+
+      get "/api/waypoints"
+      first_body = last_response.body
+      expect(last_response.headers["ETag"]).to start_with("W/")
+
+      get "/api/waypoints"
+      expect(last_response.body).to eq(first_body)
+    end
+
+    it "exposes every in-window row through before pagination (BP1)" do
+      clear_database
+      base = reference_time.to_i - 3600
+      1.upto(5) { |i| seed_waypoint(100 + i, "rx_time" => base + i * 60) }
+
+      recovered = walk_before("/api/waypoints", id_key: "id", sort_key: "rx_time")
+      expect(recovered).to include(*(101..105).to_a)
+    end
+
+    it "serves the per-author lookup on GET /api/waypoints/:id (W11)" do
+      clear_database
+      seed_waypoint(60)
+      seed_waypoint(61, "node_id" => "!11223344")
+
+      get "/api/waypoints/!3769b133"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["id"] }
+      expect(ids).to contain_exactly(60)
+      expect(last_response.headers["ETag"]).to start_with("W/")
+
+      # A blank id segment routes to the bulk collection, not the per-id route;
+      # an unknown author yields an empty list rather than an error.
+      get "/api/waypoints/!deadbeef"
+      expect(JSON.parse(last_response.body)).to eq([])
     end
   end
 

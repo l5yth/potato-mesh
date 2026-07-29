@@ -50,6 +50,15 @@ module PotatoMesh
             halt 404 if private_mode?
           end
 
+          # Waypoints carry user-authored text (name/description), so their
+          # read surface is gated at message grade (SPEC W3): private
+          # instances 404 the collection exactly like /api/messages (A2a).
+          # Unlike messages, ingest POSTs stay open — data may be collected,
+          # never exposed (W3) — so only GET/HEAD reads are gated here.
+          app.before "/api/waypoints*" do
+            halt 404 if private_mode? && (request.get? || request.head?)
+          end
+
           app.get "/version" do
             content_type :json
             last_update = latest_node_update_timestamp
@@ -313,6 +322,49 @@ module PotatoMesh
             halt 400, { error: "missing node id" }.to_json unless node_ref
             limit = coerce_query_limit(params["limit"])
             json_body = query_positions(limit, node_ref: node_ref, since: params["since"], protocol: sanitize_protocol(params["protocol"])).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            api_cache_control
+            json_body
+          end
+
+          app.get "/api/waypoints" do
+            content_type :json
+            limit = coerce_query_limit(params["limit"])
+            since = params["since"]
+            protocol = sanitize_protocol(params["protocol"])
+            since_val = coerce_integer(since) || 0
+            # Backward-pagination cursor (SPEC BP1); bypasses the cache like +since+.
+            before = coerce_positive_or_nil(params["before"])
+
+            if since_val > 0 || before
+              json_body = query_waypoints(limit, since: since, before: before, protocol: protocol).to_json
+              etag Digest::MD5.hexdigest(json_body), kind: :weak
+              api_cache_control
+              json_body
+            else
+              cached = PotatoMesh::App::ApiCache.fetch("api:waypoints:#{limit}:#{protocol}", ttl_seconds: 15) do
+                query_waypoints(limit, since: since, protocol: protocol).to_json
+              end
+              etag cached[:etag], kind: :weak
+              api_cache_control
+              cached[:value]
+            end
+          end
+
+          # Per-author waypoint lookup for the node page's Waypoints section
+          # (SPEC W11): the fields the minimal detail card omits render there.
+          # The PRIVATE GET/HEAD 404 filter above covers this path too (W3).
+          app.get "/api/waypoints/:id" do
+            content_type :json
+            node_ref = string_or_nil(params["id"])
+            halt 400, { error: "missing node id" }.to_json unless node_ref
+            limit = coerce_query_limit(params["limit"])
+            json_body = query_waypoints(
+              limit,
+              node_ref: node_ref,
+              since: params["since"],
+              protocol: sanitize_protocol(params["protocol"]),
+            ).to_json
             etag Digest::MD5.hexdigest(json_body), kind: :weak
             api_cache_control
             json_body

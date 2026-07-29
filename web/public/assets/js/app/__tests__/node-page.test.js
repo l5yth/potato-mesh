@@ -68,6 +68,8 @@ const {
   resolveRenderShortHtml,
   fetchMessages,
   fetchTracesForNode,
+  fetchWaypointsForNode,
+  renderWaypointsSection,
 } = __testUtils;
 
 /**
@@ -1556,4 +1558,95 @@ test('fetchNodeDetailsIntoIndex caps in-flight requests at NEIGHBOR_ROLE_FETCH_C
   release.splice(0).forEach(fn => fn());
   await work;
   assert.equal(peak, 4);
+});
+
+// ---------------------------------------------------------------------------
+// Waypoints section (SPEC W11) — the fields the minimal 1d-C card omits.
+// ---------------------------------------------------------------------------
+
+test('fetchWaypointsForNode requests the per-author route and parses rows', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return { status: 200, ok: true, json: async () => [{ id: 41206, name: 'Pin' }] };
+  };
+  const waypoints = await fetchWaypointsForNode('!3769b133', { fetchImpl });
+  assert.equal(waypoints.length, 1);
+  assert.match(calls[0].url, /^\/api\/waypoints\/!3769b133\?limit=\d+$/);
+  assert.equal(calls[0].options.cache, 'default');
+});
+
+test('fetchWaypointsForNode short-circuits in private mode and without an id (W3)', async () => {
+  let called = 0;
+  const fetchImpl = async () => { called += 1; return { status: 200, ok: true, json: async () => [] }; };
+  assert.deepEqual(await fetchWaypointsForNode('!x', { fetchImpl, privateMode: true }), []);
+  assert.deepEqual(await fetchWaypointsForNode(null, { fetchImpl }), []);
+  assert.equal(called, 0, 'no request leaves the client in either case');
+});
+
+test('fetchWaypointsForNode maps 404 to empty and throws on other errors', async () => {
+  const notFound = async () => ({ status: 404, ok: false, json: async () => ({}) });
+  assert.deepEqual(await fetchWaypointsForNode('!x', { fetchImpl: notFound }), []);
+  const boom = async () => ({ status: 500, ok: false, json: async () => ({}) });
+  await assert.rejects(() => fetchWaypointsForNode('!x', { fetchImpl: boom }), /HTTP 500/);
+  const junk = async () => ({ status: 200, ok: true, json: async () => 'nope' });
+  assert.deepEqual(await fetchWaypointsForNode('!x', { fetchImpl: junk }), []);
+});
+
+test('renderWaypointsSection lists every card-omitted field per waypoint (W11)', () => {
+  const NOW_S = 1_700_000_000;
+  const html = renderWaypointsSection(
+    [{
+      id: 41206,
+      icon: 0x2708,
+      name: 'Tempelhofer Feld',
+      latitude: 52.4751642,
+      longitude: 13.4029586,
+      expire: NOW_S + 4 * 86400 + 6 * 3600,
+      locked_to: '!3769b133',
+      rx_time: NOW_S - 724,
+    }],
+    short => `<span class="short-name">${short}</span>`,
+    { nowSeconds: NOW_S },
+  );
+  assert.match(html, /<h3>Waypoints<\/h3>/);
+  assert.match(html, /✈ Tempelhofer Feld/);
+  assert.match(html, /wpt 41206/);
+  assert.match(html, /52\.47516, 13\.40296/);
+  assert.match(html, /Expires: in 4d 6h/);
+  assert.match(html, /Locked to <span class="short-name">B133<\/span>/);
+  assert.match(html, /Heard: <span [^>]*data-ts/);
+});
+
+test('renderWaypointsSection renders nothing for empty or unusable input', () => {
+  assert.equal(renderWaypointsSection([], () => ''), '');
+  assert.equal(renderWaypointsSection(null, () => ''), '');
+  assert.equal(renderWaypointsSection([{ name: 'no id' }, null], () => ''), '');
+});
+
+test('renderWaypointsSection falls back to the mono id when no badge resolves', () => {
+  const NOW_S = 1_700_000_000;
+  const html = renderWaypointsSection(
+    [{ id: 7, locked_to: '!aabbccdd', rx_time: NOW_S - 5 }],
+    () => '',
+    { nowSeconds: NOW_S },
+  );
+  assert.match(html, /Locked to <span class="mono">!aabbccdd<\/span>/);
+  // Absent name/coords degrade honestly: the fallback title + no coord line.
+  assert.match(html, /📌 Waypoint/);
+  assert.doesNotMatch(html, /\d\.\d{5}/);
+});
+
+test('renderWaypointsSection omits absent lock/heard fields and survives a non-function renderer', () => {
+  const NOW_S = 1_700_000_000;
+  // No locked_to and no rx_time: neither the lock nor the heard part renders.
+  const bare = renderWaypointsSection([{ id: 11, name: 'Bare' }], () => '', { nowSeconds: NOW_S });
+  assert.doesNotMatch(bare, /Locked to|Heard:/);
+  // A non-function renderer degrades to the mono-id lock fallback.
+  const monoLock = renderWaypointsSection(
+    [{ id: 12, locked_to: '!aabbccdd', rx_time: NOW_S - 5 }],
+    null,
+    { nowSeconds: NOW_S },
+  );
+  assert.match(monoLock, /Locked to <span class="mono">!aabbccdd<\/span>/);
 });

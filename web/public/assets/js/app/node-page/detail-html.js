@@ -29,6 +29,7 @@ import { renderSingleNodeTable } from './single-node-table.js';
 import { renderTelemetryCharts } from './telemetry-charts.js';
 import { renderMessages } from './messages.js';
 import { renderTraceroutes } from './traces.js';
+import { renderWaypointsSection } from './waypoints.js';
 
 /**
  * Render the node detail layout to an HTML fragment.
@@ -38,6 +39,7 @@ import { renderTraceroutes } from './traces.js';
  *   neighbors?: Array<Object>,
  *   messages?: Array<Object>,
  *   traces?: Array<Object>,
+ *   waypoints?: Array<Object>,
  *   renderShortHtml: Function,
  *   roleIndex?: Object|null,
  *   chartNowMs?: number,
@@ -49,6 +51,7 @@ export function renderNodeDetailHtml(node, {
   neighbors = [],
   messages = [],
   traces = [],
+  waypoints = [],
   renderShortHtml,
   roleIndex = null,
   chartNowMs = Date.now(),
@@ -69,6 +72,10 @@ export function renderNodeDetailHtml(node, {
   const chartsHtml = renderTelemetryCharts(node, { nowMs: chartNowMs });
   const neighborsHtml = renderNeighborGroups(node, neighbors, renderShortHtml, { roleIndex });
   const tracesHtml = renderTraceroutes(traces, renderShortHtml, { roleIndex, node });
+  // The waypoint fields the minimal card omits render here (SPEC W11).
+  const waypointsHtml = renderWaypointsSection(waypoints, renderShortHtml, {
+    nowSeconds: Math.floor(chartNowMs / 1000),
+  });
   const messagesHtml = renderMessages(messages, renderShortHtml, node, nodesById);
 
   const sections = [];
@@ -77,6 +84,9 @@ export function renderNodeDetailHtml(node, {
   }
   if (tracesHtml) {
     sections.push(tracesHtml);
+  }
+  if (waypointsHtml) {
+    sections.push(waypointsHtml);
   }
   if (Array.isArray(messages) && messages.length > 0 && messagesHtml) {
     sections.push(`<section class="node-detail__section"><h3>Messages</h3>${messagesHtml}</section>`);

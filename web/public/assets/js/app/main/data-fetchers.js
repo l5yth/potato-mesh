@@ -333,6 +333,35 @@ export async function fetchTelemetry(limit = NODE_LIMIT, since = 0, { responsePr
 }
 
 /**
+ * Fetch waypoints (community POIs, SPEC W1/W8) from the JSON API.
+ *
+ * Waypoints are unique per waypoint id (the server upserts re-broadcasts), so
+ * unlike the per-packet collections no snapshot expansion is applied — the
+ * requested limit is used directly, capped at the API's row cap. Under
+ * `PRIVATE=1` the route 404s (message-grade privacy, W3); callers gate the
+ * fetch on the private flag so this function never fires there.
+ *
+ * @param {number} [limit=NODE_LIMIT] Maximum number of rows.
+ * @param {number} [since=0] Unix timestamp; only rows newer than this are returned.
+ * @param {{ responsePromise?: Promise<Response>, before?: number }} [options]
+ *   Optional pre-issued boot-prefetch response to consume instead of issuing a
+ *   fresh request, and an inclusive upper-bound ``rx_time`` cursor for backward
+ *   pagination (SPEC BP1).
+ * @returns {Promise<Array<Object>>} Parsed waypoint payloads.
+ */
+export async function fetchWaypoints(limit = NODE_LIMIT, since = 0, { responsePromise, before = 0 } = {}) {
+  const effectiveLimit = Number.isFinite(limit) && limit > 0
+    ? Math.min(Math.floor(limit), NODE_LIMIT)
+    : NODE_LIMIT;
+  let url = `/api/waypoints?limit=${effectiveLimit}`;
+  if (since > 0) url += `&since=${since}`;
+  if (before > 0) url += `&before=${before}`;
+  const r = await resolveResponse(responsePromise, url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+/**
  * Fetch position packets from the JSON API.
  *
  * @param {number} [limit=NODE_LIMIT] Maximum number of rows.

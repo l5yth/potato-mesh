@@ -22,7 +22,7 @@
 
 import { escapeHtml } from '../utils.js';
 import { refreshNodeInformation } from '../node-details.js';
-import { fetchMessages, fetchNodesById, fetchTracesForNode } from '../node-page-data.js';
+import { fetchMessages, fetchNodesById, fetchTracesForNode, fetchWaypointsForNode } from '../node-page-data.js';
 import { numberOrNull, stringOrNull } from '../value-helpers.js';
 import { buildNeighborRoleIndex } from './role-index.js';
 import { buildTraceRoleIndex } from './traces.js';
@@ -127,12 +127,16 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
   // the page's own node — without it, mention badges silently degrade to
   // plain ``@[Name]`` text and leading-mention replies don't surface as
   // ``[in reply to ...]`` prefixes.
-  const [messages, traces, nodesById] = await Promise.all([
+  const [messages, traces, waypoints, nodesById] = await Promise.all([
     fetchMessages(messageIdentifier, {
       fetchImpl: options.fetchImpl,
       privateMode: options.privateMode === true,
     }),
     fetchTracesForNode(messageIdentifier, { fetchImpl: options.fetchImpl }),
+    fetchWaypointsForNode(messageIdentifier, {
+      fetchImpl: options.fetchImpl,
+      privateMode: options.privateMode === true,
+    }),
     fetchNodesById({ fetchImpl: options.fetchImpl }),
   ]);
   const roleIndex = await buildTraceRoleIndex(traces, neighborRoleIndex, { fetchImpl: options.fetchImpl });
@@ -140,6 +144,7 @@ export async function fetchNodeDetailHtml(referenceData, options = {}) {
     neighbors: node.neighbors,
     messages,
     traces,
+    waypoints,
     renderShortHtml,
     roleIndex,
     nodesById,

@@ -22,10 +22,14 @@ RSpec.describe PotatoMesh::App::PubSub do
   after { PotatoMesh::App::PubSub.reset! }
 
   describe "COLLECTIONS" do
-    it "lists exactly the six dashboard ingest collections" do
+    it "lists exactly the seven dashboard ingest collections (waypoints joined, SPEC W8)" do
       expect(described_class::COLLECTIONS).to eq(
-        %w[nodes messages positions telemetry neighbors traces],
+        %w[nodes messages positions telemetry neighbors traces waypoints],
       )
+    end
+
+    it "suppresses exactly the message-grade collections in private mode (PS6/W3)" do
+      expect(described_class::PRIVATE_SUPPRESSED_COLLECTIONS).to eq(%w[messages waypoints])
     end
   end
 
@@ -107,6 +111,18 @@ RSpec.describe PotatoMesh::App::PubSub do
       subscriber = described_class.subscribe
       expect(described_class.publish("messages", private_mode: true)).to eq(0)
       expect(subscriber.pending_count).to eq(0)
+    end
+
+    it "suppresses waypoints events in private mode (SPEC W3 message-grade privacy)" do
+      subscriber = described_class.subscribe
+      expect(described_class.publish("waypoints", private_mode: true)).to eq(0)
+      expect(subscriber.pending_count).to eq(0)
+    end
+
+    it "delivers waypoints events when not private (seventh collection, SPEC W8)" do
+      subscriber = described_class.subscribe
+      expect(described_class.publish("waypoints")).to eq(1)
+      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "waypoints", hint: nil }])
     end
 
     it "still delivers non-message collections in private mode" do
@@ -291,6 +307,7 @@ RSpec.describe PotatoMesh::App::PubSub do
         "telemetry" => ["/api/telemetry", "[]"],
         "neighbors" => ["/api/neighbors", "[]"],
         "traces" => ["/api/traces", "[]"],
+        "waypoints" => ["/api/waypoints", "[]"],
       }
     end
 
@@ -345,6 +362,18 @@ RSpec.describe PotatoMesh::App::PubSub do
       post "/api/traces", "[]", auth
       expect(last_response.status).to eq(201)
       expect(PotatoMesh::App::PubSub).not_to have_received(:publish).with("nodes", private_mode: false)
+    end
+
+    # Waypoints are on the FLASHING side of the live-update boundary (SPEC W8
+    # as re-rolled): a waypoint ingest advances the author's last_heard, so the
+    # route also publishes "nodes" — mirroring positions/messages — and the
+    # dashboard fades the pin and flashes the author with a fresh "last seen".
+    it "publishes nodes on a waypoints ingest (author flash, W8 re-roll)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
+      post "/api/waypoints", "[]", auth
+      expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("waypoints", private_mode: false)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("nodes", private_mode: false)
     end
 
     it "publishes on every ingest route" do

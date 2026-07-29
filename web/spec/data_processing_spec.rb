@@ -874,6 +874,183 @@ RSpec.describe PotatoMesh::App::DataProcessing do
   end
 
   # ---------------------------------------------------------------------------
+  # insert_waypoint — SPEC W1/W5: POI upsert, expiry, sentinel handling
+  # ---------------------------------------------------------------------------
+  describe "#insert_waypoint" do
+    include_context "with isolated db"
+
+    def read_waypoint(db, id)
+      db.execute("SELECT * FROM waypoints WHERE id = ?", [id]).first
+    end
+
+    it "ignores a non-Hash payload without raising" do
+      db = open_db
+      expect { dp.insert_waypoint(db, "junk") }.not_to raise_error
+      expect(db.get_first_value("SELECT COUNT(*) FROM waypoints")).to eq(0)
+      db.close
+    end
+
+    it "ignores a payload without a waypoint id" do
+      db = open_db
+      dp.insert_waypoint(db, { "name" => "No id", "rx_time" => now })
+      expect(db.get_first_value("SELECT COUNT(*) FROM waypoints")).to eq(0)
+      db.close
+    end
+
+    it "stores a full waypoint and registers the author node" do
+      db = open_db
+      dp.insert_waypoint(db, {
+        "id" => 41_206,
+        "node_num" => 0x3769b133,
+        "rx_time" => now - 60,
+        "rx_iso" => Time.at(now - 60).utc.iso8601,
+        "name" => "Tempelhofer Feld",
+        "description" => "See further",
+        "icon" => 0x2708,
+        "latitude" => 52.4751642,
+        "longitude" => 13.4029586,
+        "expire" => now + 3600,
+        "locked_to" => 0x3769b133,
+        "snr" => -8.5,
+        "rssi" => -90,
+        "hop_limit" => 3,
+        "payload_b64" => "AQI=",
+        "ingestor" => "!feedf00d",
+      })
+      row = read_waypoint(db, 41_206)
+      node = db.execute("SELECT node_id, last_heard FROM nodes WHERE node_id = ?", ["!3769b133"]).first
+      db.close
+      expect(row["node_id"]).to eq("!3769b133")
+      expect(row["node_num"]).to eq(0x3769b133)
+      expect(row["name"]).to eq("Tempelhofer Feld")
+      expect(row["icon"]).to eq(0x2708)
+      expect(row["expire"]).to eq(now + 3600)
+      expect(row["locked_to"]).to eq("!3769b133")
+      expect(row["protocol"]).to eq("meshtastic")
+      expect(node).not_to be_nil
+      expect(node["last_heard"]).to eq(now - 60)
+    end
+
+    it "clamps a future rx_time to now and derives rx_iso" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 2, "node_id" => "!aabbccdd", "rx_time" => now + 9999, "name" => "Soon" })
+      row = read_waypoint(db, 2)
+      db.close
+      expect(row["rx_time"]).to be_between(now, now + 5)
+      expect(row["rx_iso"]).not_to be_nil
+    end
+
+    it "defaults a missing rx_time to now" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 3, "node_id" => "!aabbccdd", "name" => "Clockless" })
+      row = read_waypoint(db, 3)
+      db.close
+      expect(row["rx_time"]).to be_between(now - 5, now + 5)
+    end
+
+    it "derives coordinates from the protobuf integer fields" do
+      db = open_db
+      dp.insert_waypoint(db, {
+        "id" => 4,
+        "node_id" => "!aabbccdd",
+        "rx_time" => now,
+        "latitude_i" => (52.5 * 1e7).to_i,
+        "longitude_i" => (13.4 * 1e7).to_i,
+      })
+      row = read_waypoint(db, 4)
+      db.close
+      expect(row["latitude"]).to be_within(1e-6).of(52.5)
+      expect(row["longitude"]).to be_within(1e-6).of(13.4)
+    end
+
+    it "collapses the paired (0, 0) no-fix sentinel to NULL (issue #782)" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 5, "node_id" => "!aabbccdd", "rx_time" => now, "latitude" => 0.0, "longitude" => 0.0 })
+      row = read_waypoint(db, 5)
+      db.close
+      expect(row["latitude"]).to be_nil
+      expect(row["longitude"]).to be_nil
+    end
+
+    it "stores expire = 0 as NULL (never expires, W5)" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 6, "node_id" => "!aabbccdd", "rx_time" => now, "expire" => 0 })
+      row = read_waypoint(db, 6)
+      db.close
+      expect(row["expire"]).to be_nil
+    end
+
+    it "upserts a newer re-broadcast as the full new state (W5)" do
+      db = open_db
+      dp.insert_waypoint(db, {
+        "id" => 7, "node_id" => "!aabbccdd", "rx_time" => now - 120,
+        "name" => "Old name", "description" => "Old body", "expire" => now + 60, "snr" => -4.0,
+      })
+      dp.insert_waypoint(db, {
+        "id" => 7, "node_id" => "!aabbccdd", "rx_time" => now - 60,
+        "name" => "New name",
+      })
+      row = read_waypoint(db, 7)
+      db.close
+      expect(row["name"]).to eq("New name")
+      expect(row["description"]).to be_nil
+      expect(row["expire"]).to be_nil
+      expect(row["rx_time"]).to eq(now - 60)
+      # Radio metadata COALESCEs: an update without snr keeps the last reading.
+      expect(row["snr"]).to eq(-4.0)
+    end
+
+    it "drops an out-of-order stale re-broadcast (C5 guard)" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 8, "node_id" => "!aabbccdd", "rx_time" => now - 30, "name" => "Fresh" })
+      dp.insert_waypoint(db, { "id" => 8, "node_id" => "!aabbccdd", "rx_time" => now - 300, "name" => "Stale" })
+      row = read_waypoint(db, 8)
+      db.close
+      expect(row["name"]).to eq("Fresh")
+      expect(row["rx_time"]).to eq(now - 30)
+    end
+
+    it "falls back to a lowercased bang id when the reference is not canonicalisable" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 9, "node_id" => "!ZZZZ", "rx_time" => now, "name" => "Odd id" })
+      row = read_waypoint(db, 9)
+      db.close
+      expect(row["node_id"]).to eq("!zzzz")
+    end
+
+    it "derives a canonical id from a negative node_num via the fallback path" do
+      db = open_db
+      dp.insert_waypoint(db, { "id" => 10, "node_num" => -5, "rx_time" => now, "name" => "Wrapped" })
+      row = read_waypoint(db, 10)
+      db.close
+      expect(row["node_id"]).to eq("!fffffffb")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # canonical_locked_to — SPEC W1: locked_to → canonical id mapping
+  # ---------------------------------------------------------------------------
+  describe "#canonical_locked_to" do
+    it "maps a node num to the canonical id" do
+      expect(dp.canonical_locked_to(0x3769b133)).to eq("!3769b133")
+    end
+
+    it "normalises an already-canonical id string" do
+      expect(dp.canonical_locked_to("!3769B133")).to eq("!3769b133")
+    end
+
+    it "treats 0 as unlocked" do
+      expect(dp.canonical_locked_to(0)).to be_nil
+      expect(dp.canonical_locked_to("0")).to be_nil
+    end
+
+    it "returns nil for nil and garbage references" do
+      expect(dp.canonical_locked_to(nil)).to be_nil
+      expect(dp.canonical_locked_to("not a node")).to be_nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # upsert_node — Bug 2: role must not be reset by no-user packets
   # ---------------------------------------------------------------------------
   describe "#upsert_node — role preservation" do

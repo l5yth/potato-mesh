@@ -54,7 +54,7 @@ function makeFakeFactory() {
 // parseChangeEvent
 // ---------------------------------------------------------------------------
 
-test('LIVE_COLLECTIONS lists the six dashboard collections', () => {
+test('LIVE_COLLECTIONS lists the seven dashboard collections (waypoints joined, SPEC W8)', () => {
   assert.deepEqual([...LIVE_COLLECTIONS], [
     'nodes',
     'messages',
@@ -62,7 +62,15 @@ test('LIVE_COLLECTIONS lists the six dashboard collections', () => {
     'telemetry',
     'neighbors',
     'traces',
+    'waypoints',
   ]);
+});
+
+test('parseChangeEvent accepts a waypoints change (seventh collection, SPEC W8)', () => {
+  assert.deepEqual(parseChangeEvent('{"collection":"waypoints","hint":1700000123}'), {
+    collection: 'waypoints',
+    hint: 1700000123,
+  });
 });
 
 test('parseChangeEvent returns collection with a null hint when absent', () => {

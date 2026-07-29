@@ -27,7 +27,7 @@
 
 import { escapeHtml } from './utils.js';
 import { numberOrNull, stringOrNull } from './value-helpers.js';
-import { fetchMessages, fetchTracesForNode } from './node-page-data.js';
+import { fetchMessages, fetchTracesForNode, fetchWaypointsForNode } from './node-page-data.js';
 import {
   classifySnapshot,
   formatBattery,
@@ -72,6 +72,7 @@ import {
   renderTraceroutes,
 } from './node-page/traces.js';
 import { renderNodeDetailHtml } from './node-page/detail-html.js';
+import { renderWaypointsSection } from './node-page/waypoints.js';
 import {
   fetchNodeDetailHtml,
   getNodeDetailRelativeTimeTicker,
@@ -132,11 +133,13 @@ export const __testUtils = {
   renderTracePath,
   extractTracePath,
   normalizeTraceNodeRef,
+  renderWaypointsSection,
   renderNodeDetailHtml,
   parseReferencePayload,
   resolveRenderShortHtml,
   fetchMessages,
   fetchTracesForNode,
+  fetchWaypointsForNode,
   fetchNodeDetailHtml,
   normalizeNodeReference,
 };

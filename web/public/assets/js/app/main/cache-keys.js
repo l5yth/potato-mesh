@@ -25,6 +25,9 @@
  *
  *  - ``nodes`` key on the canonical node id (``node_id``);
  *  - ``neighbors`` on the composite ``node_id|neighbor_id`` (a directed edge);
+ *  - ``waypoints`` on the composite ``protocol|id`` (the server upserts on
+ *    ``(id, protocol)``, so same-id waypoints from different protocols are
+ *    distinct rows — SPEC W5);
  *  - every other collection on the record ``id``.
  *
  * Both snake_case and camelCase field spellings are accepted.
@@ -39,6 +42,10 @@ export function cacheKeyFor(collection, record) {
     const nodeId = record.node_id ?? record.nodeId;
     const neighborId = record.neighbor_id ?? record.neighborId;
     return nodeId != null && neighborId != null ? `${nodeId}|${neighborId}` : null;
+  }
+  if (collection === 'waypoints') {
+    const id = record.id;
+    return id != null ? `${record.protocol ?? ''}|${id}` : null;
   }
   if (collection === 'nodes') {
     const id = record.node_id ?? record.nodeId;

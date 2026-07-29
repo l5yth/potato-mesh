@@ -45,3 +45,12 @@ test('non-object records have no key', () => {
   assert.equal(cacheKeyFor('messages', undefined), null);
   assert.equal(cacheKeyFor('messages', 'x'), null);
 });
+
+test('waypoints key on the composite protocol|id (server upsert key, SPEC W5)', () => {
+  assert.equal(cacheKeyFor('waypoints', { id: 41206, protocol: 'meshtastic' }), 'meshtastic|41206');
+  // Same id under another protocol is a distinct row, so a distinct key.
+  assert.equal(cacheKeyFor('waypoints', { id: 41206, protocol: 'meshcore' }), 'meshcore|41206');
+  // A missing protocol still yields a stable key; a missing id yields none.
+  assert.equal(cacheKeyFor('waypoints', { id: 7 }), '|7');
+  assert.equal(cacheKeyFor('waypoints', { protocol: 'meshtastic' }), null);
+});

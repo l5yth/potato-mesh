@@ -734,6 +734,12 @@ th {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
+/* Waypoint detail-card meta line (SPEC W6, design 1d-C): the muted
+   "<expiry> · by" prefix ahead of the author badge on the minimal card. */
+.waypoint-card-meta {
+  color: var(--muted, #9aa7b4);
+}
+
 .row {
   display: flex;
   gap: var(--pad);

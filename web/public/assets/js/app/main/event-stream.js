@@ -45,6 +45,7 @@ export const LIVE_COLLECTIONS = Object.freeze([
   'telemetry',
   'neighbors',
   'traces',
+  'waypoints',
 ]);
 
 /**

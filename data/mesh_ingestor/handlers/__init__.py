@@ -73,6 +73,7 @@ from .telemetry import (
     store_router_heartbeat_packet,
     store_telemetry_packet,
 )
+from .waypoint import store_waypoint_packet
 
 # Re-export the queue alias for any callers that reference handlers._queue_post_json
 _queue_post_json = _queue._queue_post_json
@@ -106,5 +107,6 @@ __all__ = [
     "store_router_heartbeat_packet",
     "store_telemetry_packet",
     "store_traceroute_packet",
+    "store_waypoint_packet",
     "upsert_node",
 ]

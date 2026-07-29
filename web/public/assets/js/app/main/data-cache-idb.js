@@ -36,8 +36,12 @@ const META_STORE = 'meta';
 const ALL_STORES = Object.freeze([...CACHE_COLLECTIONS, META_STORE]);
 /** Default IndexedDB database name. */
 const DEFAULT_DB_NAME = 'potato-mesh-cache';
-/** Structural IndexedDB version (data invalidation is handled by the cache's marker). */
-const DB_VERSION = 1;
+/**
+ * Structural IndexedDB version (data invalidation is handled by the cache's
+ * marker). v2 added the `waypoints` object store (SPEC W8); the upgrade handler
+ * only creates missing stores, so existing cached data survives the bump.
+ */
+const DB_VERSION = 2;
 
 /**
  * Wrap an IndexedDB request in a promise.

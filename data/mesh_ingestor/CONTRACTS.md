@@ -209,6 +209,37 @@ Single trace payload:
 - Meta: `ingestor`, `lora_freq`, `modem_preset`
 - `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
 
+#### `POST /api/waypoints`
+
+Single waypoint payload (Meshtastic `WAYPOINT_APP` broadcasts — community
+points of interest; SPEC W1/W2). The collection is **protocol-neutral**: any
+protocol may emit waypoints via this shape, Meshtastic is simply today's only
+emitter.
+
+- Required: `id` (int — the sender-assigned waypoint id, **not** a packet id), `rx_time` (int), `rx_iso` (string)
+- Author: `node_id` (canonical string), `node_num` (int|nil), `from_id` (string/int)
+- Content: `name` (string|nil), `description` (string|nil), `icon` (int|nil — unicode codepoint rendered as the marker glyph)
+- Position: `latitude`, `longitude` (floats|nil; the protobuf `latitude_i`/`longitude_i` 1e-7 integer forms are also accepted). The paired `(0, 0)` no-fix sentinel is collapsed to NULL on both axes (issue #782 rules).
+- Lifecycle: `expire` (int unix|nil — `0`/absent means **never expires** and is stored as NULL), `locked_to` (canonical string or int node num|nil — `0` means unlocked; stored as the canonical `!%08x` id)
+- RF/meta: `snr` (float|nil), `rssi` (int|nil), `hop_limit` (int|nil), `payload_b64` (string|nil), `ingestor`
+- `protocol` (optional string; `"meshtastic"` or `"meshcore"`) — explicit per-record protocol stamp; same semantics as on `POST /api/messages`.
+
+**Upsert semantics (SPEC W5).** Rows are keyed on `(id, protocol)`: a
+re-broadcast of the same waypoint id **replaces the content fields outright**
+(`name`, `description`, `icon`, coordinates, `expire`, `locked_to`) — the
+newest broadcast is the full new state, so a cleared description or moved pin
+propagates — while RF metadata COALESCEs (an update omitting `snr` keeps the
+last reading). An out-of-order re-broadcast whose `rx_time` is older than the
+stored row is ignored entirely, so two ingestors relaying one waypoint can
+never regress a newer edit (the C5 cross-ingestor dedup applied to POIs).
+
+**Privacy (SPEC W3).** Waypoint `name`/`description` are user-authored
+content, so the read surface is gated at **message grade**: under `PRIVATE=1`
+`GET /api/waypoints` returns 404 and no `waypoints` SSE change events are
+emitted. Unlike `/api/messages`, the ingest `POST` stays open in private mode
+(data may be collected, never exposed). Waypoints whose author node carries
+the opt-out marker are excluded from every read surface.
+
 #### `POST /api/ingestors`
 
 Heartbeat payload:
@@ -228,7 +259,7 @@ Heartbeat payload:
 
 ### GET endpoint filtering
 
-All collection GET endpoints (`/api/nodes`, `/api/messages`, `/api/positions`, `/api/telemetry`, `/api/traces`, `/api/neighbors`, `/api/ingestors`) accept an optional `?protocol=<value>` query parameter. When present, only records whose `protocol` column matches the given value are returned. The `protocol` field is included in all GET responses.
+All collection GET endpoints (`/api/nodes`, `/api/messages`, `/api/positions`, `/api/telemetry`, `/api/traces`, `/api/neighbors`, `/api/ingestors`, `/api/waypoints`) accept an optional `?protocol=<value>` query parameter. When present, only records whose `protocol` column matches the given value are returned. The `protocol` field is included in all GET responses.
 
 ### GET endpoint time windows
 
@@ -241,6 +272,7 @@ Every read endpoint enforces a server-side rolling-window floor on the data it r
 | `GET /api/positions` | 7 days | filtered by `COALESCE(rx_time, position_time)` |
 | `GET /api/telemetry` | 7 days | filtered by `COALESCE(rx_time, telemetry_time)` |
 | `GET /api/instances` | 7 days | filtered by `instances.last_update_time` |
+| `GET /api/waypoints` | 7 days | filtered by `waypoints.rx_time`; rows past their `expire` timestamp are additionally excluded from the moment of expiry (SPEC W5). **404 under `PRIVATE=1`** (message-grade privacy, SPEC W3). The per-author `GET /api/waypoints/:id` (SPEC W11 — feeds the node page's Waypoints section) uses the standard per-id **28-day** window and the same expiry/privacy gates. |
 | `GET /api/neighbors` | **28 days** | sparse data; widened to keep slow scrapes visible |
 | `GET /api/traces` | **28 days** | sparse data; same rationale |
 | `GET /api/ingestors` | **28 days** | sparse heartbeats; same rationale |
@@ -254,8 +286,9 @@ The constants live in `web/lib/potato_mesh/config.rb` (`week_seconds`, `four_wee
 
 ### GET endpoint backward pagination (`?before=`)
 
-The six bulk collection endpoints — `GET /api/nodes`, `/api/positions`,
-`/api/telemetry`, `/api/neighbors`, `/api/traces`, and `/api/ingestors` — plus the
+The seven bulk collection endpoints — `GET /api/nodes`, `/api/positions`,
+`/api/telemetry`, `/api/neighbors`, `/api/traces`, `/api/ingestors`, and
+`/api/waypoints` — plus the
 pre-existing `GET /api/messages` cursor accept an optional `?before=<unix_seconds>`
 **inclusive upper-bound cursor** for backward pagination. It is the companion to
 `?since=`: where `since` raises the lower bound of the window, `before` lowers the
@@ -271,6 +304,7 @@ already orders by, newest first:
 | `GET /api/neighbors` | `rx_time` |
 | `GET /api/traces` | `rx_time` |
 | `GET /api/ingestors` | `last_seen_time` |
+| `GET /api/waypoints` | `rx_time` |
 
 To page backward through more than one `limit`-sized response (the per-request cap
 is `MAX_QUERY_LIMIT` = 1000), walk newest → oldest: fetch a page, then re-request
@@ -316,8 +350,9 @@ do **not** accept `before`.
   ingestor exists yet) and is always all-zero.
 - **Metrics.** `nodes` counts `nodes` by `last_heard`; `messages` counts `messages`
   by `rx_time`; `telemetry` is the umbrella over `positions` + `telemetry` +
-  `neighbors` + `traces` (every non-message packet record) by `rx_time`; `packets`
-  is the additive MA4/MA5 packets/hour rate (below).
+  `neighbors` + `traces` + `waypoints` (every non-message packet record — the
+  waypoints table joined the umbrella per SPEC W9, amending S3) by `rx_time`;
+  `packets` is the additive MA4/MA5 packets/hour rate (below).
 - **Windows.** The `nodes`/`messages`/`telemetry` metrics map to
   `{ "hour", "day", "week", "month" }` integer counts at the fixed cutoffs
   (1 h / 24 h / `week_seconds` / `four_weeks_seconds`); `month` cannot exceed the

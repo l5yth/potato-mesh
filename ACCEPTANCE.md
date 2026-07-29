@@ -574,6 +574,8 @@ consistent with the existing list endpoints.
 `nodes` by `last_heard`. Window cutoffs are unchanged — `hour` 3600s, `day`
 86 400s, `week` `week_seconds`, `month` `four_weeks_seconds` — so a row older than
 `four_weeks_seconds` is excluded from `month` (28-day floor, preserves C4).
+**Amended by W9 (see WP-A8):** with the waypoints feature the umbrella
+additionally counts `waypoints` rows — the check re-baselines to five tables.
 
 ### S-A4 — Privacy: messages zeroed in private mode — S5
 *Run the server with `PRIVATE=1`.*
@@ -1061,7 +1063,9 @@ lifetime/TTL helper) with co-located `__tests__`.
 canonical record id (`neighbors` by the composite `(node_id, neighbor_id)` key),
 backed by IndexedDB; values written in one session are retrievable from a fresh
 store instance over the same backing database (the reload/revisit path). Reads of
-an absent id return a miss.
+an absent id return a miss. **Extended by W8 (see WP-A5):** the store also
+round-trips `waypoints`, keyed by the composite `protocol|id` (the server's
+upsert key), at the 7 d / 7 d tier.
 
 ### FC-A2 — Seed-from-cache, fetch only the delta — FC2
 ```bash
@@ -1086,7 +1090,9 @@ or equal) eviction window. A node last updated 26 h ago is **stale yet not
 evicted** (still served); a node 8 d old is evicted; **no entry younger than 7
 days is ever evicted**; a trace 20 d old is retained, a trace 29 d old is
 evicted. No staleness/eviction window exceeds the server's visibility floor
-(7-day bulk; 28-day per-id/trace), preserving C4.
+(7-day bulk; 28-day per-id/trace), preserving C4. **Extended by W8 (see
+WP-A5):** `waypoints` joins the 7 d stale / 7 d evict tier, keyed on
+`rx_time`.
 
 ### FC-A4 — Privacy: PRIVATE disables + wipes the cache; clear control empties it — FC4
 ```bash
@@ -1508,7 +1514,8 @@ event for collection *X* the SSE client invokes the **existing** delta fetch for
 *X* with `since=<cached high-water>` and merges by id through the FC2 cache — it
 issues no broadcast re-fetch of unrelated collections and adds no new privacy or
 window logic of its own. Protocol-neutral: the event names the collection, never
-the protocol (Invariant IV).
+the protocol (Invariant IV). **Extended by W8 (see WP-A5):** `waypoints` joins
+the collection set as the seventh member.
 
 ### PS-A4 — Publish-on-change at all six ingest routes, coalesced — PS4
 ```bash
@@ -1520,7 +1527,8 @@ collection's change event after a successful write, co-located with the existing
 `ApiCache.invalidate_prefix` calls in `routes/ingest.rb`. A burst of writes to one
 collection within the debounce window is **coalesced** into a bounded number of
 emitted events (not one event per row), so a message flood cannot stampede
-subscribers.
+subscribers. **Extended by W8 (see WP-A5):** `POST /api/waypoints` publishes
+identically as the seventh ingest route.
 
 ### PS-A5 — Push replaces the 60 s poll; reconnect-resync + slow safety poll — PS5
 ```bash
@@ -1987,7 +1995,9 @@ telemetry, trace, and encrypted message. The generic "updated node info
 heard** (a position/telemetry/neighbour/trace/message suppresses a redundant
 advert line). **Amends the prior LV-A7**, which required a plaintext message entry
 in the Log -- the oversight corrected here. Hidden-protocol and PRIVATE gates
-already applied to the chat are unchanged.
+already applied to the chat are unchanged. **Extended by W7 (see WP-A7):** a
+`📌 Broadcasted waypoint` entry class joins the list; the waypoint description
+(user-authored body text) never appears in the Log.
 
 ### LV-A8 -- channel-tab dropdown selector -- LV8
 ```bash
@@ -4649,7 +4659,10 @@ idx_<table>_rx_time`, and every projection bounds its raw indexed time column
 (`node_activity_counts` on `last_heard >= ?`; `message_activity_counts` and all four
 umbrella branches on `rx_time >= ?`). Before the fix the umbrella emitted
 `MATERIALIZE visible` + one full `SCAN <table>` per source + 12× `SCAN visible` and
-used no index — this guard failed for exactly that reason.
+used no index — this guard failed for exactly that reason. **Amended by W9 (see
+WP-A8):** the umbrella's fifth source, `waypoints`, joins the same pushdown —
+the plan spec asserts `idx_waypoints_rx_time` is seeked and counts five
+`rx_time >= ?` bounds.
 
 ### SP-A2 — counts stay byte-identical (losslessness, S2/S3/S4)
 ```bash
@@ -4657,9 +4670,10 @@ used no index — this guard failed for exactly that reason.
 ```
 **Expected:** pass. `query_active_node_stats` returns the same scope × metric ×
 window counts as before the pushdown — `total` unfiltered with protocol subsets
-(S2), the four-table telemetry umbrella (S3), and unchanged window cutoffs with the
-28-day `month` floor (S4). The pushed-down `month` bound removes only rows that
-already scored 0 in every window, so no count changes.
+(S2), the telemetry umbrella (S3 — four tables when this fix landed, **five
+after the W9 waypoints amendment**, see WP-A8), and unchanged window cutoffs
+with the 28-day `month` floor (S4). The pushed-down `month` bound removes only
+rows that already scored 0 in every window, so no count changes.
 
 ### SP-R1 — Regression: prior acceptance still holds
 ```bash
@@ -4672,3 +4686,190 @@ already scored 0 in every window, so no count changes.
 federation stats compatibility) — the fix changes only *how* the counts are
 computed, not the payload. No POST/event contract change, so **C2** and the Python
 suite are unaffected.
+
+---
+
+## Feature: Meshtastic waypoints (first-class POI layer, issue #848)
+
+Maps to SPEC decisions **W1–W10**; **W9 amends S3** (S-A3 is re-baselined by
+WP-A8) and **W7 amends LV7** (LV-A7 gains one entry class). Context: Meshtastic
+`WAYPOINT_APP` broadcasts were previously dropped unhandled by the ingestor;
+they become a protocol-stamped `waypoints` collection (radio → ingestor →
+authenticated `POST` → SQLite → additive `GET /api/waypoints` → map layer +
+Log tab + legend toggle per the confirmed design variants 1c-A/1d-A/1e-A),
+gated at **message-grade privacy**.
+
+### WP-A1 — Ingestor captures WAYPOINT_APP; canonical contract documented — W1/W2
+```bash
+( . .venv/bin/activate && pytest -q tests/test_waypoint_unit.py )
+git grep -n "waypoints" -- data/mesh_ingestor/CONTRACTS.md
+```
+**Expected:** pytest passes: the waypoint handler decodes a `WAYPOINT_APP`
+packet into the documented event — waypoint `id`, `name`, `description`,
+`icon` codepoint, `latitude`/`longitude` (from the protobuf `*_i` integer
+fields), `expire` (unix; 0/absent = never), `locked_to`/author as canonical
+`!%08x` ids (C3), `rx_time`, `protocol: "meshtastic"` — queues
+`POST /api/waypoints`, and tolerates malformed payloads without crashing the
+daemon. The grep shows `CONTRACTS.md` documents the `POST`/`GET
+/api/waypoints` shapes as protocol-neutral (any protocol may emit; Meshtastic
+is today's only emitter).
+
+### WP-A2 — POST /api/waypoints: auth, validation, 201, cross-ingestor upsert — W4/W5
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "/api/waypoints" )
+```
+**Expected:** pass. No/wrong bearer token → **403** (C1's established
+`require_token!` contract); a non-Array/non-Hash body → **400**
+`{"error":"invalid payload"}` (IC-A4); a valid snake_case payload → **201**
+(IC-A3) and the row is stored. Re-POSTing the same waypoint
+`id` (same or different ingestor) **upserts**: one row whose
+name/description/icon/coords/`expire`/`locked_to` are updated and whose
+`rx_time` advances (C5/W5) — never a duplicate.
+
+### WP-A3 — GET /api/waypoints: floors, cursor, protocol filter, expiry exclusion — W4/W5
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "waypoint" )
+```
+**Expected:** pass. Rows are snake_case with canonical ids; the 7-day rolling
+window floor on `rx_time` cannot be widened by `since` (C4); `?before=<unix>`
+is an inclusive upper bound that only narrows (BP1-style keyset paging;
+non-positive/non-integer values ignored as absent); `?protocol=` filters via
+the unchanged `KNOWN_PROTOCOLS` gate (A4a); a waypoint whose `expire` is in
+the past is **excluded** from results from that moment; `expire`-never rows
+are served until the 7-day window on `rx_time` drops them (no physical
+delete-at-expiry).
+
+### WP-A4 — Message-grade privacy: PRIVATE 404s, no events, opt-out excluded — W3
+*Run the server with `PRIVATE=1`.*
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:41447/api/waypoints
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "waypoint" \
+         && bundle exec rspec spec/queries_spec.rb -e "waypoint opt-out" )
+```
+**Expected:** the curl prints **404** (mirrors A2a for `/api/messages`). The
+pubsub spec proves no `waypoints` change event is published or delivered under
+`PRIVATE=1` (PS6 pattern). The queries spec proves a waypoint authored by an
+opted-out node (`NODE_OPT_OUT_MARKER`) never appears on any read surface (S5
+filter pattern). Public mode is unaffected.
+
+### WP-A5 — Seventh SSE collection; cache tier 7 d / 7 d; waypoints flash — W8 (re-rolled)
+```bash
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "publishes on every ingest route" \
+         && bundle exec rspec spec/pubsub_spec.rb -e "publishes nodes on a waypoints ingest" )
+( cd web && node --test public/assets/js/app/main/__tests__/data-cache.test.js \
+                        public/assets/js/app/main/__tests__/event-stream.test.js \
+                        public/assets/js/app/__tests__/main-waypoints.test.js )
+```
+**Expected:** pass. `POST /api/waypoints` publishes a thin, coalesced
+`waypoints` event co-located with its cache invalidation (PS4 + LV6 settle
+window) **and a companion `nodes` event** (the ingest advances the author's
+`last_heard`; W8 as re-rolled — the earlier silent-side wording is
+superseded); the SSE client reacts to a `waypoints` ping with the existing
+since-delta fetch and merge-by-id (PS3 pattern — no new privacy or window
+logic); the persistent cache round-trips the `waypoints` collection keyed by
+the composite `protocol|id` (mirroring the server's `(id, protocol)` upsert
+key, like FC-A1's composite neighbors key) at the message-grade tier (stale
+**7 d** / evict **7 d**, FC3). A waypoint delta **fades its own pin** via the
+standard `.live-flash` element fade, and the author's row/marker flash rides
+the companion `nodes` publish (asserted in `main-waypoints.test.js`).
+
+### WP-A6 — Map layer: teardrop pin, expiry dimming, minimal card, legend toggle — W6 (re-rolled: 1c-B/1d-C/1e-A)
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/waypoint-layer.test.js \
+                        public/assets/js/app/__tests__/main-waypoints.test.js )
+```
+**Expected:** pass. Markers are 24 px **teardrop pins** (1c-B: the dark
+overlay chrome — `#1c1c1c`, hairline border — as a three-round-one-sharp-
+corner square rotated −45° so the sharp corner is the downward tail; the
+glyph counter-rotates upright; the icon anchor sits on the tail tip so the
+pin points at the coordinate; 📌 fallback for missing/invalid codepoints;
+stacked above node markers); marker opacity follows the expiry ladder
+(remaining < 1 h → 0.4, < 24 h → 0.7, else 1; never → 1). Opening a marker
+renders the 1d-C **minimal card** in the standard overlay chrome — exactly
+`<glyph> <name>`, the description when present, and
+`<expiry> · by <badge>` (expiry ∈ `in <duration>` / `expired` / `never`) —
+with the coordinates, `wpt <id>`, and locked-to reference **absent** (they
+render on the node page, WP-A9). The legend gains a **Waypoints** toggle with
+live count inside the **Meshtastic column** (beneath the neighbor/trace line
+toggles), honours the `aria-pressed` conventions (NT-A1/UX8), hides the layer
+when unpressed, and stays session-only like the line toggles; hiding a
+protocol also hides its waypoints (confirmed coupling). The neighbor/trace
+line toggles read as static `Neighbor lines` / `Trace lines` (no Show/Hide
+prefix; state in `aria-label` + pressed styling — the re-roll's user
+amendment). Both maps (dashboard + `/map`) mount the layer from the shared
+code path.
+
+### WP-A7 — Log entry class; the description never reaches the Log — W7 (LV7 amendment)
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-log-tabs.test.js \
+                        public/assets/js/app/__tests__/main-waypoints.test.js )
+```
+**Expected:** pass. A waypoint broadcast yields exactly one Log entry —
+`📌 Broadcasted waypoint <glyph> <name> — Lat: <lat>, Lon: <lon>, Expires:
+<relative|never>` (asserted against the rendered entry HTML in
+`main-waypoints.test.js`) — and the waypoint **description string appears
+nowhere in `logEntries`**: it is stripped at the model seam in
+`buildChatTabModel` (asserted model-level in `chat-log-tabs.test.js`), exactly
+as decrypted message bodies never enter the Log model, preserving LV-A7's
+bodies-never-in-the-Log principle against any future renderer change.
+Hidden-protocol gating applies as for every entry; under `PRIVATE` the
+collection 404s (WP-A4), so no entries exist.
+
+### WP-A8 — Stats: telemetry umbrella re-baselined to five tables — W9 (S3 amendment)
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "telemetry umbrella" )
+```
+**Expected:** pass. With one in-window row in each of `positions`,
+`telemetry`, `neighbors`, `traces`, **and `waypoints`**, the `telemetry`
+metric counts **all five tables** by `rx_time` in `total`; an additional
+meshcore-stamped waypoint row lands in the `meshcore` scope
+(`meshcore.telemetry.hour == 1`, asserted), proving waypoint rows are
+protocol-stamped and S2's subset property holds. The S4 windows and S5
+opt-out/privacy behavior are unchanged; `messages`/`nodes` metrics are
+untouched. This check **re-baselines S-A3** per the W9 amendment.
+
+### WP-A9 — Node-page Waypoints section + per-author lookup — W11 (re-roll; amends W10)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "W11" \
+         && bundle exec rspec spec/queries_spec.rb -e "28-day per-id waypoint window" )
+( cd web && node --test public/assets/js/app/__tests__/node-page.test.js )
+```
+**Expected:** pass. `GET /api/waypoints/:id` serves the waypoints authored by
+one node (canonical id or num ref) with the standard per-id **28-day** window
+on `rx_time` — a 10-day-old broadcast is visible per-author while the bulk
+feed's 7-day floor still hides it (C4 preserved) — plus the expiry exclusion,
+opt-out, and protocol filters shared with the bulk query; under `PRIVATE=1`
+the path 404s through the same W3 wildcard filter. The node detail page (and
+its dashboard overlay, which reuses the same renderer) shows a **Waypoints**
+section listing each broadcast with the fields the minimal card omits —
+glyph+name, `wpt <id>`, 5-decimal coords, `Expires: in …/expired/never`,
+`🔒 Locked to <badge>` (mono-id fallback when no badge resolves), and a
+live-ticking heard age — and renders nothing (no section) for a node without
+waypoints. The client fetch short-circuits in private mode and maps 404 to an
+absent section.
+
+### WP-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec ) \
+  && ( . .venv/bin/activate && pytest -q tests/ && black --check data tests )
+( cd web && bundle exec rufo --check . )
+```
+**Expected:** every prior check still passes. At risk and explicitly required
+to remain green: **S-A3** (re-baselined by WP-A8 — the umbrella now counts
+five tables); **PS-A3/PS-A4** (their six-collection/six-route enumerations now
+read seven — specs updated, not removed); **FC-A1/FC-A3** (the cache
+round-trips the added collection); **LV-A7** (one added entry class; the
+bodies-never-in-the-Log assertion keeps passing); **A2/A2a** (privacy —
+`/api/waypoints` joins the PRIVATE-404 surface; message behavior unchanged);
+**A4/A4a** (parity — protocol-neutral contract, `KNOWN_PROTOCOLS` unchanged);
+**C2** (its `test_mesh.py` replay suite is unchanged and stays green; the new
+waypoint shapes are validated by `tests/test_waypoint_unit.py` plus the Ruby
+route specs, additively); the legend specs (**UX-A6, NT-A1, LC-A1**) updated
+for the new toggle and the static line-toggle labels (the re-roll amendment —
+`aria-pressed` semantics unchanged); **PD-A1** and the node-page suite (the
+W11 Waypoints section is additive — every existing node-page section renders
+identically); **VF/LV** (waypoints joined the flashing side per the W8
+re-roll: the added `nodes` publish mirrors the established positions/messages
+pattern, so VF-A2's SSE-ping gating and LV-A2's stacked timers must keep
+passing); and **B1–B5** (all suites, coverage floor, API docs, exact Apache
+headers, formatters).

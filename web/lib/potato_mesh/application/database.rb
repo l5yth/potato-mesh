@@ -110,7 +110,7 @@ module PotatoMesh
       def init_db
         FileUtils.mkdir_p(File.dirname(PotatoMesh::Config.db_path))
         db = open_database
-        %w[nodes messages positions telemetry neighbors instances traces ingestors ingestor_activity].each do |schema|
+        %w[nodes messages positions telemetry neighbors instances traces ingestors ingestor_activity waypoints].each do |schema|
           sql_file = File.expand_path("../../../../data/#{schema}.sql", __dir__)
           db.execute_batch(File.read(sql_file))
         end
@@ -547,6 +547,16 @@ module PotatoMesh
         if activity_tables.empty?
           activity_schema = File.expand_path("../../../../data/ingestor_activity.sql", __dir__)
           db.execute_batch(File.read(activity_schema))
+        end
+
+        # Waypoints (SPEC W1) are a standalone additive table; older
+        # installations gain it here with no data backfill (POIs simply start
+        # accumulating from the first WAYPOINT_APP broadcast heard).
+        waypoint_tables =
+          db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='waypoints'").flatten
+        if waypoint_tables.empty?
+          waypoints_schema = File.expand_path("../../../../data/waypoints.sql", __dir__)
+          db.execute_batch(File.read(waypoints_schema))
         end
       rescue SQLite3::SQLException, Errno::ENOENT => e
         warn_log(
