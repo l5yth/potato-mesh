@@ -1460,6 +1460,7 @@ RSpec.describe PotatoMesh::App::Queries do
         db.execute("INSERT INTO telemetry(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!plan0001"])
         db.execute("INSERT INTO neighbors(node_id, neighbor_id, rx_time) VALUES (?,?,?)", ["!plan0001", "!plan0002", now])
         db.execute("INSERT INTO traces(id, rx_time, rx_iso, src, dest) VALUES (?,?,?,?,?)", [1, now, rx_iso, 0x11, 0x22])
+        db.execute("INSERT INTO waypoints(id, rx_time, rx_iso, node_id, name) VALUES (?,?,?,?,?)", [1, now, rx_iso, "!plan0001", "Plan pin"])
       end
     end
 
@@ -1484,7 +1485,8 @@ RSpec.describe PotatoMesh::App::Queries do
     it "seeks each telemetry-umbrella source through its rx_time index" do
       with_recorded_statement(:telemetry_activity_counts) do |sql, params, db|
         plan = db.execute("EXPLAIN QUERY PLAN #{sql}", params).map { |row| row["detail"] }
-        %w[positions telemetry neighbors traces].each do |table|
+        # Five sources since the W9 umbrella amendment added waypoints.
+        %w[positions telemetry neighbors traces waypoints].each do |table|
           expect(plan).to include(a_string_matching(/SEARCH #{table} USING INDEX idx_#{table}_rx_time/)),
             "expected #{table} to be index-seeked; plan was:\n#{plan.join("\n")}"
         end
@@ -1495,8 +1497,9 @@ RSpec.describe PotatoMesh::App::Queries do
       with_recorded_statement(:node_activity_counts) { |sql, _, _| expect(sql).to match(/WHERE last_heard >= \?/) }
       with_recorded_statement(:message_activity_counts) { |sql, _, _| expect(sql).to match(/WHERE rx_time >= \?/) }
       with_recorded_statement(:telemetry_activity_counts) do |sql, _, _|
-        # One raw-column bound per umbrella source (positions/telemetry/neighbors/traces).
-        expect(sql.scan(/rx_time >= \?/).size).to eq(4)
+        # One raw-column bound per umbrella source
+        # (positions/telemetry/neighbors/traces/waypoints — five since W9).
+        expect(sql.scan(/rx_time >= \?/).size).to eq(5)
       end
     end
   end

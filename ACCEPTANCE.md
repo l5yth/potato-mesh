@@ -4659,7 +4659,10 @@ idx_<table>_rx_time`, and every projection bounds its raw indexed time column
 (`node_activity_counts` on `last_heard >= ?`; `message_activity_counts` and all four
 umbrella branches on `rx_time >= ?`). Before the fix the umbrella emitted
 `MATERIALIZE visible` + one full `SCAN <table>` per source + 12× `SCAN visible` and
-used no index — this guard failed for exactly that reason.
+used no index — this guard failed for exactly that reason. **Amended by W9 (see
+WP-A8):** the umbrella's fifth source, `waypoints`, joins the same pushdown —
+the plan spec asserts `idx_waypoints_rx_time` is seeked and counts five
+`rx_time >= ?` bounds.
 
 ### SP-A2 — counts stay byte-identical (losslessness, S2/S3/S4)
 ```bash
@@ -4667,9 +4670,10 @@ used no index — this guard failed for exactly that reason.
 ```
 **Expected:** pass. `query_active_node_stats` returns the same scope × metric ×
 window counts as before the pushdown — `total` unfiltered with protocol subsets
-(S2), the four-table telemetry umbrella (S3), and unchanged window cutoffs with the
-28-day `month` floor (S4). The pushed-down `month` bound removes only rows that
-already scored 0 in every window, so no count changes.
+(S2), the telemetry umbrella (S3 — four tables when this fix landed, **five
+after the W9 waypoints amendment**, see WP-A8), and unchanged window cutoffs
+with the 28-day `month` floor (S4). The pushed-down `month` bound removes only
+rows that already scored 0 in every window, so no count changes.
 
 ### SP-R1 — Regression: prior acceptance still holds
 ```bash
