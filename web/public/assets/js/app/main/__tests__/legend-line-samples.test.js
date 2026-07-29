@@ -23,7 +23,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { legendLineSampleSvg } from '../legend-line-samples.js';
+import { legendLineSampleSvg, legendWaypointSampleHtml } from '../legend-line-samples.js';
 
 test('neighbor sample is a solid 24px line', () => {
   const svg = legendLineSampleSvg('neighbor');
@@ -44,4 +44,19 @@ test('trace sample is dashed 6 2 so it inks the full 22px sample', () => {
 
 test('unknown kinds fall back to the solid sample', () => {
   assert.equal(legendLineSampleSvg('mystery'), legendLineSampleSvg('neighbor'));
+});
+
+test('legendWaypointSampleHtml is a miniature of the on-map teardrop pin (1c-B)', () => {
+  const html = legendWaypointSampleHtml();
+  assert.match(html, /legend-waypoint-sample/);
+  assert.match(html, /aria-hidden="true"/);
+  // The sample mirrors the marker silhouette: dark chrome, three round corners
+  // + one sharp tail corner, rotated with the glyph counter-rotated upright.
+  assert.match(html, /background:#1c1c1c/);
+  assert.match(html, /border-radius:50% 50% 50% 2px/);
+  assert.match(html, /rotate\(-45deg\)/);
+  assert.match(html, /rotate\(45deg\)/);
+  assert.match(html, /✈/);
+  // Regression guard: never the old square-chip radius.
+  assert.doesNotMatch(html, /border-radius:3px/);
 });
