@@ -1294,6 +1294,79 @@ RSpec.describe PotatoMesh::App::Queries do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # Issue #866 regression: the /api/stats windowed counts must let SQLite reach
+  # each source's rx_time / last_heard index instead of materialising an entire
+  # table into the +visible+ CTE and scanning it once per window.  Pushing the
+  # widest ("month") cutoff onto each projection's raw indexed column pre-filters
+  # +visible+ to the 28-day slice -- byte-identical counts (SPEC S4) with an
+  # index-seeked plan.  Before the fix the telemetry umbrella full-scans its four
+  # sources; this guard fails until the pushdown lands and cannot silently
+  # regress afterwards.
+  # ---------------------------------------------------------------------------
+  describe "windowed stats query plan (issue #866)" do
+    # Window cutoffs mirroring query_active_node_stats; "month" is the widest and
+    # is the bound pushed down into every projection.
+    let(:stats_cutoffs) do
+      {
+        "hour" => now - 3600,
+        "day" => now - 86_400,
+        "week" => now - PotatoMesh::Config.week_seconds,
+        "month" => now - PotatoMesh::Config.four_weeks_seconds,
+      }
+    end
+
+    # Seed one row per stats source so EXPLAIN reasons about populated tables.
+    before do
+      with_db do |db|
+        rx_iso = Time.at(now).utc.iso8601
+        db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!plan0001", 0x90000001, now, now, "CLIENT"])
+        db.execute("INSERT INTO messages(id, rx_time, rx_iso, from_id, to_id, channel, text) VALUES (?,?,?,?,?,?,?)", [1, now, rx_iso, "!plan0001", "!ffffffff", 0, "hi"])
+        db.execute("INSERT INTO positions(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!plan0001"])
+        db.execute("INSERT INTO telemetry(id, rx_time, rx_iso, node_id) VALUES (?,?,?,?)", [1, now, rx_iso, "!plan0001"])
+        db.execute("INSERT INTO neighbors(node_id, neighbor_id, rx_time) VALUES (?,?,?)", ["!plan0001", "!plan0002", now])
+        db.execute("INSERT INTO traces(id, rx_time, rx_iso, src, dest) VALUES (?,?,?,?,?)", [1, now, rx_iso, 0x11, 0x22])
+      end
+    end
+
+    # Run a stats builder against a recording handle and yield the executed SQL,
+    # its bind params, and the live db handle (so the caller can EXPLAIN it).
+    # Only +get_first_row+ is exercised by the +*_activity_counts+ builders, so
+    # the recorder implements just that method.
+    def with_recorded_statement(builder)
+      with_db do |db|
+        statements = []
+        recorder = Object.new
+        recorder.define_singleton_method(:get_first_row) do |sql, params = []|
+          statements << [sql, params]
+          db.get_first_row(sql, params)
+        end
+        queries.public_send(builder, recorder, stats_cutoffs)
+        sql, params = statements.last
+        yield sql, params, db
+      end
+    end
+
+    it "seeks each telemetry-umbrella source through its rx_time index" do
+      with_recorded_statement(:telemetry_activity_counts) do |sql, params, db|
+        plan = db.execute("EXPLAIN QUERY PLAN #{sql}", params).map { |row| row["detail"] }
+        %w[positions telemetry neighbors traces].each do |table|
+          expect(plan).to include(a_string_matching(/SEARCH #{table} USING INDEX idx_#{table}_rx_time/)),
+            "expected #{table} to be index-seeked; plan was:\n#{plan.join("\n")}"
+        end
+      end
+    end
+
+    it "bounds every stats projection on its raw indexed time column" do
+      with_recorded_statement(:node_activity_counts) { |sql, _, _| expect(sql).to match(/WHERE last_heard >= \?/) }
+      with_recorded_statement(:message_activity_counts) { |sql, _, _| expect(sql).to match(/WHERE rx_time >= \?/) }
+      with_recorded_statement(:telemetry_activity_counts) do |sql, _, _|
+        # One raw-column bound per umbrella source (positions/telemetry/neighbors/traces).
+        expect(sql.scan(/rx_time >= \?/).size).to eq(4)
+      end
+    end
+  end
+
   describe "#query_packets_per_hour" do
     before do
       with_db { |db| db.execute("DELETE FROM ingestor_activity") }

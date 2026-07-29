@@ -4616,3 +4616,59 @@ is cheap enough that neither reintroduces the freeze.
 asset-versioning specs (**AV1**–**AV5**, unchanged), and **B1** stay green; the TTL
 change is value-only (cache invalidation on write is unchanged) and the middleware
 only adds a response header for versioned assets.
+
+---
+
+## Bugfix: `/api/stats` recompute holds the GVL (telemetry umbrella index pushdown, issue #866)
+
+`GET /api/stats` recomputes its scope × metric × window tree on the request that
+finds the `ApiCache` entry expired (`application/routes/api.rb`, TTL
+`Config.stats_cache_ttl_seconds` — default 60 s; a hardcoded 15 s when this bug was
+filed, made configurable by #868). On a single-process Puma the recompute holds the
+MRI GVL for its whole duration, so any request arriving during it stalls. The
+cost was the `telemetry` umbrella: its four sources (`positions` + `telemetry` +
+`neighbors` + `traces`) are `UNION ALL`-ed
+into the `visible` CTE, which SQLite **materialises** and then scans once per window
+(12×). Because the outer window filter sits on the aliased `t`, the per-table
+`idx_*_rx_time` index cannot apply and the entire table is scanned. Fix: push the
+widest (`month` = now − `four_weeks_seconds`) cutoff onto each projection's **raw**
+indexed column — `node_activity_counts` → `last_heard`, `message_activity_counts`
+and every `telemetry_activity_counts` branch → `rx_time` — so `visible` is
+pre-filtered to the 28-day slice through the index before aliasing. Provably
+lossless by **S4** (month is the widest of {hour, day, week, month}, so any row it
+prunes contributes 0 to every window); counts stay **byte-identical**. Query layer
+only — no route, cache, JSON-shape, privacy, or federation change.
+
+### SP-A1 — the stats projections index-seek instead of materialise-and-full-scan
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "windowed stats query plan" )
+```
+**Expected:** pass. The telemetry-umbrella `EXPLAIN QUERY PLAN` reaches each of
+`positions`, `telemetry`, `neighbors`, and `traces` via `SEARCH … USING INDEX
+idx_<table>_rx_time`, and every projection bounds its raw indexed time column
+(`node_activity_counts` on `last_heard >= ?`; `message_activity_counts` and all four
+umbrella branches on `rx_time >= ?`). Before the fix the umbrella emitted
+`MATERIALIZE visible` + one full `SCAN <table>` per source + 12× `SCAN visible` and
+used no index — this guard failed for exactly that reason.
+
+### SP-A2 — counts stay byte-identical (losslessness, S2/S3/S4)
+```bash
+( cd web && bundle exec rspec spec/queries_spec.rb -e "active_node_stats" -e "telemetry umbrella" )
+```
+**Expected:** pass. `query_active_node_stats` returns the same scope × metric ×
+window counts as before the pushdown — `total` unfiltered with protocol subsets
+(S2), the four-table telemetry umbrella (S3), and unchanged window cutoffs with the
+28-day `month` floor (S4). The pushed-down `month` bound removes only rows that
+already scored 0 in every window, so no count changes.
+
+### SP-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+( . .venv/bin/activate && pytest -q tests/ )
+```
+**Expected:** every prior check still passes. Explicitly required to remain green:
+**S-A1** (`/api/stats` shape + `sampled:false`), **S-A4** (messages zeroed under
+`PRIVATE=1`), **S-A5** (`reticulum` zero stub), and **S-A6 / A3c** (one-way
+federation stats compatibility) — the fix changes only *how* the counts are
+computed, not the payload. No POST/event contract change, so **C2** and the Python
+suite are unaffected.
