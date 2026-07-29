@@ -105,7 +105,15 @@ module PotatoMesh
     DEFAULT_PORT = 41_447
     DEFAULT_BIND_ADDRESS = "0.0.0.0"
 
-    APP_VERSION = determine_app_version
+    # Resolve the version string and its immutable-safety once at boot (a single
+    # `git describe`). APP_VERSION is always "v"-prefixed (e.g. "v0.7.4") across
+    # every build shape; APP_VERSION_PINNED is true only for a unique-per-build
+    # version (baked ENV or git) — the constant fallback stays false so versioned
+    # assets are served revalidatable, never `immutable`, when the `?v=` buster
+    # cannot be guaranteed unique (SPEC AV1/AV6).
+    version_resolution = resolve_app_version
+    APP_VERSION = version_resolution.fetch(:version)
+    APP_VERSION_PINNED = version_resolution.fetch(:pinned)
     INSTANCE_PRIVATE_KEY, INSTANCE_KEY_GENERATED = load_or_generate_instance_private_key
     INSTANCE_PUBLIC_KEY_PEM = INSTANCE_PRIVATE_KEY.public_key.export
     SELF_INSTANCE_ID = Digest::SHA256.hexdigest(INSTANCE_PUBLIC_KEY_PEM)
@@ -220,12 +228,13 @@ module PotatoMesh
       # Long-cache for version-busted static JS/CSS (returning-visitor caching);
       # the nginx disk-serve path sets the same header first when enabled, so this
       # never overwrites an existing one. The immutable (year-long) pin is used
-      # only when the version buster is unique per build — i.e. git-derived
-      # (APP_VERSION differs from the constant fallback) — so a Docker image built
-      # without .git (constant fallback) instead gets a bounded, revalidatable
-      # lifetime and cannot pin stale JS between commits.
+      # only for a pinned build — one whose version is unique per build, i.e.
+      # baked into the image (ENV["APP_VERSION"]) or git-derived. A constant
+      # fallback build (e.g. a Docker image without .git and no baked version)
+      # is not pinned, so it gets a bounded, revalidatable lifetime and cannot
+      # pin stale JS between commits (SPEC AV6).
       use PotatoMesh::App::AssetCacheControl,
-          immutable: (APP_VERSION != PotatoMesh::Config.version_fallback)
+          immutable: APP_VERSION_PINNED
       use ::Prometheus::Middleware::Collector
       use ::Prometheus::Middleware::Exporter
 

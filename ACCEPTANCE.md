@@ -4594,11 +4594,12 @@ in **issue #866** (query pushdown); the items here are the safe, independent par
 `/assets/**` **JS/CSS** URL (`.js`/`.mjs`/`.css`) carrying a non-empty `?v=`
 cache-buster (emitted by `asset_url`), so returning/staying visitors serve them
 from cache instead of revalidating every asset. The value is
-`public, max-age=31536000, immutable` **only when the running version is unique
-per build** — i.e. git-derived (`APP_VERSION != Config.version_fallback`); a
-deployment on the constant fallback version (e.g. a Docker image built without
-`.git`) gets `public, max-age=300` instead (bounded/revalidatable, so the
-unchanged `?v=` can never pin stale JS for a year). **Non-JS/CSS** assets
+`public, max-age=31536000, immutable` **only for a pinned build** — one whose
+version is unique per build (baked `ENV["APP_VERSION"]` or git-derived), signalled
+by `APP_VERSION_PINNED`; a deployment on the constant fallback version (e.g. a
+Docker image built without `.git` and no baked version) is **not** pinned and gets
+`public, max-age=300` instead (bounded/revalidatable, so the unchanged `?v=` can
+never pin stale JS for a year). **Non-JS/CSS** assets
 (images/favicons/SVG — SPEC AV4) are left untouched even when they carry `?v=`
 (keep `Last-Modified`/`ETag` revalidation), and an existing `Cache-Control` (e.g.
 one nginx set when serving `/assets/` from disk) is never overwritten. *Note:* the
@@ -4618,19 +4619,25 @@ not this TTL — governs recompute frequency; decoupling stats from write-invali
 and stale-while-revalidate land with the query fix (**#866**), where the recompute
 is cheap enough that neither reintroduces the freeze.
 
-### CA-A3 — A baked `APP_VERSION` (Docker image) wins over in-image git/fallback
+### CA-A3 — Baked, `v`-prefixed `APP_VERSION` + explicit pinned gate
 ```bash
 ( cd web && bundle exec rspec spec/app_spec.rb -e "#determine_app_version" )
 ```
-**Expected:** pass. `determine_app_version` prefers a non-blank `ENV["APP_VERSION"]`
+**Expected:** pass. `resolve_app_version` prefers a non-blank `ENV["APP_VERSION"]`
 (the git version baked into the image by `web/Dockerfile`'s `ARG APP_VERSION` →
 `ENV APP_VERSION`, computed by `.github/workflows/docker.yml` via
 `git describe --tags --long --abbrev=7`) over the in-image `git describe` /
-`Config.version_fallback` path; a blank/unset value keeps today's git-then-fallback
-behavior. This closes the **SPEC AV1** limitation *for Docker*: the image's `?v=`
-buster becomes unique per build, so the **CA-A1** git-gate resolves to
+`Config.version_fallback` path; a blank/unset value keeps the git-then-fallback
+behavior. The resolved `APP_VERSION` is always **`v`-prefixed** (`0.7.4` → `v0.7.4`)
+so every build shape advertises the same string, and `app_version_pinned?` reports
+`true` for a baked-ENV/git version and `false` for the constant fallback.
+`AssetCacheControl` keys `immutable` on that `APP_VERSION_PINNED` flag — **not** a
+value comparison (which would misfire now that the fallback is also `v`-prefixed).
+This closes the **SPEC AV1** limitation *for Docker*: the image's `?v=` buster
+becomes unique per build, so **CA-A1** resolves to
 `public, max-age=31536000, immutable` inside the image instead of the bounded
 `max-age=300` fallback — the full year-long caching win with no stale-JS risk.
+`Config.version_fallback` stays bare `0.7.4` (polyglot manifest sync unaffected).
 
 ### CA-R1 — Regression: prior acceptance still holds
 ```bash

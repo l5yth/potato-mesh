@@ -28,21 +28,21 @@ module PotatoMesh
     # unversioned assets and non-JS/CSS types (images, favicons, SVG icons — AV4)
     # are left untouched so they keep +Last-Modified+/+ETag+ revalidation.
     #
-    # The header is +immutable+ (a year, never revalidated) **only when the running
-    # version is unique per build** — i.e. git-derived (+APP_VERSION+ differs from
-    # +Config.version_fallback+). When the app runs on the constant fallback
-    # version (e.g. a Docker image built without +.git+), the +?v=+ buster does not
-    # change between commits, so a year-long +immutable+ pin could serve stale JS
-    # unrecoverably; those deployments instead get a short, **revalidatable**
-    # +max-age+ that still spares the per-navigation 304 waterfall while bounding
-    # staleness (the full-immutable Docker win is the bake-git-version follow-up).
-    # The mode is chosen at boot via the +immutable:+ flag.
+    # The header is +immutable+ (a year, never revalidated) **only for a pinned
+    # build** — one whose version is unique per build: baked into the image via
+    # +ENV["APP_VERSION"]+ or git-derived (+APP_VERSION_PINNED+). When the app runs
+    # on the constant fallback version (e.g. a Docker image built without +.git+
+    # and no baked version), the +?v=+ buster does not change between commits, so a
+    # year-long +immutable+ pin could serve stale JS unrecoverably; those
+    # deployments instead get a short, **revalidatable** +max-age+ that still
+    # spares the per-navigation 304 waterfall while bounding staleness. The mode is
+    # chosen at boot via the +immutable:+ flag.
     #
     # Complementary to serving +/assets/+ immutable from nginx off disk (those
     # requests never reach Ruby); an existing +Cache-Control+ is never overwritten.
     class AssetCacheControl
-      # One year in seconds — the immutable cache lifetime for uniquely-versioned
-      # (git-derived) assets.
+      # One year in seconds — the immutable cache lifetime for a pinned build's
+      # uniquely-versioned (baked-ENV or git-derived) assets.
       IMMUTABLE_MAX_AGE_SECONDS = 31_536_000
 
       # Bounded lifetime (seconds) used when the version buster is not unique per

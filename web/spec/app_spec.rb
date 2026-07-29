@@ -756,7 +756,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
       it "returns the fallback when the git directory is missing" do
         allow(application_class).to receive(:locate_git_repo_root).and_return(nil)
 
-        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq("v#{PotatoMesh::Config.version_fallback}")
       end
 
       it "returns the fallback when git describe fails" do
@@ -764,7 +764,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         status = instance_double(Process::Status, success?: false)
         allow(Open3).to receive(:capture2).and_return(["ignored", status])
 
-        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq("v#{PotatoMesh::Config.version_fallback}")
       end
 
       it "returns the fallback when git describe output is empty" do
@@ -772,15 +772,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["\n", status])
 
-        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq("v#{PotatoMesh::Config.version_fallback}")
       end
 
-      it "returns the original describe output when the format is unexpected" do
+      it "returns the (v-prefixed) describe output when the format is unexpected" do
         allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         status = instance_double(Process::Status, success?: true)
         allow(Open3).to receive(:capture2).and_return(["weird-output", status])
 
-        expect(application_class.determine_app_version).to eq("weird-output")
+        expect(application_class.determine_app_version).to eq("vweird-output")
       end
 
       it "normalises the version when no commits are ahead of the tag" do
@@ -803,7 +803,7 @@ RSpec.describe "Potato Mesh Sinatra app" do
         allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
         allow(Open3).to receive(:capture2).and_raise(StandardError, "boom")
 
-        expect(application_class.determine_app_version).to eq(PotatoMesh::Config.version_fallback)
+        expect(application_class.determine_app_version).to eq("v#{PotatoMesh::Config.version_fallback}")
       end
 
       it "prefers an explicit ENV['APP_VERSION'] (baked image version) over git describe (#871)" do
@@ -834,6 +834,33 @@ RSpec.describe "Potato Mesh Sinatra app" do
         ENV["APP_VERSION"] = "   "
 
         expect(application_class.determine_app_version).to eq("v1.2.3")
+      end
+
+      it "v-prefixes a bare baked ENV['APP_VERSION'] so every build shape matches" do
+        ENV["APP_VERSION"] = "0.7.9"
+
+        expect(application_class.determine_app_version).to eq("v0.7.9")
+      end
+
+      it "reports pinned=true for a baked ENV['APP_VERSION'] (immutable-safe)" do
+        ENV["APP_VERSION"] = "v0.7.4-0-gabc1234"
+
+        expect(application_class.app_version_pinned?).to be(true)
+      end
+
+      it "reports pinned=true when git describe succeeds (immutable-safe)" do
+        allow(application_class).to receive(:locate_git_repo_root).and_return(repo_root)
+        status = instance_double(Process::Status, success?: true)
+        allow(Open3).to receive(:capture2).and_return(["v1.2.3-5-gabcdef1", status])
+
+        expect(application_class.app_version_pinned?).to be(true)
+      end
+
+      it "reports pinned=false and a v-prefixed fallback when git is unavailable" do
+        allow(application_class).to receive(:locate_git_repo_root).and_return(nil)
+
+        expect(application_class.app_version_pinned?).to be(false)
+        expect(application_class.determine_app_version).to eq("v#{PotatoMesh::Config.version_fallback}")
       end
     end
 
@@ -1413,15 +1440,15 @@ RSpec.describe "Potato Mesh Sinatra app" do
     it "serves a version-busted asset with a long-lived Cache-Control" do
       # Returning/staying visitors serve versioned JS/CSS from cache instead of
       # revalidating every asset each navigation (the AssetCacheControl middleware).
-      # The value is `immutable` only when the running version is unique per build
-      # (git-derived); a fallback-version build — e.g. CI's shallow checkout with no
-      # tags, or a Docker image without .git — correctly gets the bounded,
-      # revalidatable form instead (the same condition the app wires at boot).
+      # The value is `immutable` only for a pinned build — a version unique per
+      # build (baked-ENV or git-derived); a fallback-version build — e.g. CI's
+      # shallow checkout with no tags, or a Docker image without .git and no baked
+      # version — correctly gets the bounded, revalidatable form instead (the same
+      # condition the app wires at boot via APP_VERSION_PINNED).
       get "/assets/js/app/main.js?v=testver"
 
       expect(last_response).to be_ok
-      git_versioned = APP_VERSION.to_s != PotatoMesh::Config.version_fallback
-      expected = git_versioned ?
+      expected = PotatoMesh::Application::APP_VERSION_PINNED ?
         PotatoMesh::App::AssetCacheControl::IMMUTABLE_CACHE_CONTROL :
         PotatoMesh::App::AssetCacheControl::REVALIDATABLE_CACHE_CONTROL
       expect(last_response.headers["Cache-Control"]).to eq(expected)
