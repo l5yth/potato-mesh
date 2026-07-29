@@ -351,6 +351,25 @@ module PotatoMesh
             end
           end
 
+          # Per-author waypoint lookup for the node page's Waypoints section
+          # (SPEC W11): the fields the minimal detail card omits render there.
+          # The PRIVATE GET/HEAD 404 filter above covers this path too (W3).
+          app.get "/api/waypoints/:id" do
+            content_type :json
+            node_ref = string_or_nil(params["id"])
+            halt 400, { error: "missing node id" }.to_json unless node_ref
+            limit = coerce_query_limit(params["limit"])
+            json_body = query_waypoints(
+              limit,
+              node_ref: node_ref,
+              since: params["since"],
+              protocol: sanitize_protocol(params["protocol"]),
+            ).to_json
+            etag Digest::MD5.hexdigest(json_body), kind: :weak
+            api_cache_control
+            json_body
+          end
+
           app.get "/api/neighbors" do
             content_type :json
             limit = coerce_query_limit(params["limit"])

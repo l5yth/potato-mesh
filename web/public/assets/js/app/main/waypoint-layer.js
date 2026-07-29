@@ -15,16 +15,16 @@
  */
 
 /**
- * Waypoint map layer (SPEC W6 — design variants 1c-A / 1d-A).
+ * Waypoint map layer (SPEC W6 — design variants 1c-B / 1d-C, per re-roll).
  *
- * Renders community POI waypoints as 22 px dark glyph chips — a third marker
- * shape, deliberately distinct from the Meshtastic circle and the MeshCore
- * diamond so a waypoint never reads as a node of some new role — stacked above
- * the node markers. Marker opacity follows the expiry ladder (a waypoint about
- * to lapse reads dimmer, exactly as a stale node does), and rows past their
- * ``expire`` timestamp or without usable coordinates are not rendered at all
- * (W5: expired waypoints leave the read surface; the Log keeps their broadcast
- * history).
+ * Renders community POI waypoints as 24 px teardrop pins — the map convention
+ * for a place, in the dark overlay chrome so a waypoint never reads as a node
+ * of some new role — stacked above the node markers with the pin tip anchored
+ * on the coordinate. Marker opacity follows the expiry ladder (a waypoint
+ * about to lapse reads dimmer, exactly as a stale node does), and rows past
+ * their ``expire`` timestamp or without usable coordinates are not rendered
+ * at all (W5: expired waypoints leave the read surface; the Log keeps their
+ * broadcast history).
  *
  * Everything here is pure and dependency-injected (Leaflet, clock) so the
  * layer is fully unit-testable headlessly.
@@ -33,10 +33,20 @@
  */
 
 import { escapeHtml } from '../utils.js';
-import { timeAgo, timeHum, toFiniteNumber } from './format-utils.js';
+import { timeHum, toFiniteNumber } from './format-utils.js';
 
-/** Chip edge length in CSS pixels (design 1c-A: "22px, r6"). */
-export const WAYPOINT_MARKER_SIZE = 22;
+/** Pin body edge length in CSS pixels (design 1c-B: "24px, r50%/0"). */
+export const WAYPOINT_MARKER_SIZE = 24;
+
+/**
+ * Icon bounding box + anchor for the rotated pin. A 24 px square rotated 45°
+ * spans a ~34 px diagonal, and its sharp corner (the tail) lands ~29 px below
+ * the box top — the anchor sits on that tip so the pin points exactly at the
+ * waypoint's coordinate.
+ */
+export const WAYPOINT_ICON_SIZE = Object.freeze([34, 30]);
+/** Pin-tip anchor within {@link WAYPOINT_ICON_SIZE}. */
+export const WAYPOINT_ICON_ANCHOR = Object.freeze([17, 29]);
 
 /** Markers stack above node markers (whose offset is 0). */
 export const WAYPOINT_Z_INDEX_OFFSET = 500;
@@ -114,33 +124,53 @@ export function visibleWaypoints(waypoints, nowSeconds) {
 }
 
 /**
- * Build the ``L.divIcon`` definition for one waypoint chip (design 1c-A: a
- * dark glyph chip in the overlay chrome — #1c1c1c on a --fg hairline — so it
- * reads as annotation, not as a node).
+ * Build the ``L.divIcon`` definition for one waypoint teardrop pin (design
+ * 1c-B: a 24 px square in the dark overlay chrome — #1c1c1c on a --fg
+ * hairline — with three round corners and one sharp corner, rotated −45° so
+ * the sharp corner becomes the downward tail). The glyph is counter-rotated
+ * so it reads upright inside the rotated body, and the whole pin sits in a
+ * bounding box whose anchor is the tail tip.
  *
  * @param {Object} waypoint Waypoint row.
  * @param {number} nowSeconds Current time, unix seconds (expiry dimming).
- * @returns {{ className: string, html: string, iconSize: [number, number], iconAnchor: [number, number] }}
+ * @returns {{ className: string, html: string, iconSize: number[], iconAnchor: number[] }}
  *   Definition consumable by ``L.divIcon``.
  */
 export function waypointIconDefinition(waypoint, nowSeconds) {
   const size = WAYPOINT_MARKER_SIZE;
   const opacity = waypointExpiryOpacity(waypoint && waypoint.expire, nowSeconds);
   const glyph = escapeHtml(waypointGlyph(waypoint && waypoint.icon));
+  const [boxWidth, boxHeight] = WAYPOINT_ICON_SIZE;
+  const inset = (boxWidth - size) / 2;
   return {
     className: '',
     html:
-      '<span class="waypoint-chip" style="display:flex; align-items:center; justify-content:center; ' +
-      `box-sizing:border-box; width:${size}px; height:${size}px; border-radius:6px; background:#1c1c1c; ` +
+      `<span class="waypoint-pin" style="position:relative; display:block; width:${boxWidth}px; height:${boxHeight}px; opacity:${opacity}">` +
+      `<span style="position:absolute; left:${inset}px; top:0; display:flex; align-items:center; justify-content:center; ` +
+      `box-sizing:border-box; width:${size}px; height:${size}px; border-radius:50% 50% 50% 2px; background:#1c1c1c; ` +
       'border:1px solid rgba(230,235,240,0.55); box-shadow:0 2px 6px rgba(0,0,0,0.6); ' +
-      `font-size:13px; line-height:1; opacity:${opacity}">${glyph}</span>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
+      'transform:rotate(-45deg); transform-origin:center">' +
+      `<span style="display:block; transform:rotate(45deg); font-size:13px; line-height:1">${glyph}</span>` +
+      '</span></span>',
+    iconSize: [...WAYPOINT_ICON_SIZE],
+    iconAnchor: [...WAYPOINT_ICON_ANCHOR],
   };
 }
 
 /**
- * Render the waypoint layer: clear it and add one chip marker per visible
+ * Cache key for a waypoint row — the composite ``protocol|id`` the server
+ * upserts on (SPEC W5); shared by the cache layer and the marker registry.
+ *
+ * @param {?Object} waypoint Waypoint row.
+ * @returns {?string} Composite key, or null without an id.
+ */
+export function waypointKey(waypoint) {
+  if (!waypoint || typeof waypoint !== 'object' || waypoint.id == null) return null;
+  return `${waypoint.protocol ?? ''}|${waypoint.id}`;
+}
+
+/**
+ * Render the waypoint layer: clear it and add one pin marker per visible
  * waypoint, binding the selection callback.
  *
  * @param {{
@@ -148,17 +178,22 @@ export function waypointIconDefinition(waypoint, nowSeconds) {
  *   layer: { clearLayers: Function, addLayer?: Function },
  *   leaflet: { marker: Function, divIcon: Function },
  *   nowSeconds: number,
- *   onSelect?: (waypoint: Object, anchorEl: ?Element) => void
+ *   onSelect?: (waypoint: Object, anchorEl: ?Element) => void,
+ *   markerRegistry?: Map<string, Object>
  * }} options Render inputs: the rows, the target ``L.layerGroup``, the
- *   Leaflet namespace (injectable for tests), the clock, and the click
- *   callback (receives the waypoint and the marker's DOM element).
+ *   Leaflet namespace (injectable for tests), the clock, the click callback
+ *   (receives the waypoint and the marker's DOM element), and an optional
+ *   registry map the caller owns — cleared and repopulated with
+ *   ``waypointKey → marker`` each render so live updates can flash the
+ *   changed pin (SPEC W8 as re-rolled).
  * @returns {number} The number of markers rendered (feeds the legend count).
  */
-export function renderWaypointsLayer({ waypoints, layer, leaflet, nowSeconds, onSelect }) {
+export function renderWaypointsLayer({ waypoints, layer, leaflet, nowSeconds, onSelect, markerRegistry }) {
   if (!layer || !leaflet || typeof leaflet.marker !== 'function' || typeof leaflet.divIcon !== 'function') {
     return 0;
   }
   layer.clearLayers();
+  if (markerRegistry instanceof Map) markerRegistry.clear();
   const rows = visibleWaypoints(waypoints, nowSeconds);
   for (const waypoint of rows) {
     const marker = leaflet.marker([Number(waypoint.latitude), Number(waypoint.longitude)], {
@@ -179,69 +214,65 @@ export function renderWaypointsLayer({ waypoints, layer, leaflet, nowSeconds, on
       });
     }
     marker.addTo(layer);
+    if (markerRegistry instanceof Map) {
+      const key = waypointKey(waypoint);
+      if (key != null) markerRegistry.set(key, marker);
+    }
   }
   return rows.length;
 }
 
 /**
- * Build the detail-card HTML lines for one waypoint (design 1d-A: every
- * payload field in the node overlay's line order — title, id, body, coords,
- * then the label:value rows). The caller joins with ``<br/>`` and renders
+ * Format a waypoint's remaining lifetime for display.
+ *
+ * @param {*} expire Raw ``expire`` unix timestamp (absent/0 ⇒ never).
+ * @param {number} nowSeconds Current time, unix seconds.
+ * @returns {string} ``in <duration>``, ``expired``, or ``never``.
+ */
+export function formatWaypointExpiry(expire, nowSeconds) {
+  const ts = toFiniteNumber(expire);
+  if (ts == null || ts <= 0) return 'never';
+  const remaining = Math.floor(ts - nowSeconds);
+  return remaining > 0 ? `in ${timeHum(remaining)}` : 'expired';
+}
+
+/**
+ * Build the detail-card HTML lines for one waypoint (design 1d-C: minimal —
+ * three lines: title, body, ``<expiry> · by <badge>``). Coordinates, the
+ * waypoint id, and the locked-to reference live on the author's node page
+ * (SPEC W11), not on the card. The caller joins with ``<br/>`` and renders
  * into the short-info overlay chrome.
  *
  * The waypoint ``name``/``description`` are user-authored text and are always
- * HTML-escaped here. Author/locked-to badges are protocol-styled by the app,
- * so they arrive pre-rendered (and pre-escaped) via ``authorBadgeHtml`` /
- * ``lockedBadgeHtml``.
+ * HTML-escaped here. The author badge is protocol-styled by the app, so it
+ * arrives pre-rendered (and pre-escaped) via ``authorBadgeHtml``; when no
+ * badge resolves, the canonical author id is shown instead so the card never
+ * loses attribution.
  *
  * @param {Object} waypoint Waypoint row.
- * @param {{
- *   nowSeconds: number,
- *   authorBadgeHtml?: string,
- *   lockedBadgeHtml?: string
- * }} options Clock plus optional pre-rendered badge HTML.
+ * @param {{ nowSeconds: number, authorBadgeHtml?: string }} options Clock plus
+ *   optional pre-rendered author badge HTML.
  * @returns {Array<string>} HTML lines for the overlay body.
  */
-export function buildWaypointOverlayLines(waypoint, { nowSeconds, authorBadgeHtml = '', lockedBadgeHtml = '' } = {}) {
+export function buildWaypointOverlayLines(waypoint, { nowSeconds, authorBadgeHtml = '' } = {}) {
   if (!waypoint || typeof waypoint !== 'object') return [];
   const lines = [];
   const glyph = escapeHtml(waypointGlyph(waypoint.icon));
   const name = escapeHtml(String(waypoint.name ?? 'Waypoint'));
   lines.push(`<strong>${glyph} ${name}</strong>`);
 
-  const idPart = waypoint.id != null ? `<span class="mono">wpt ${escapeHtml(String(waypoint.id))}</span> ` : '';
-  lines.push(`${idPart}<span class="waypoint-kind-chip">waypoint</span>`);
-
   if (waypoint.description != null && String(waypoint.description).length > 0) {
     lines.push(escapeHtml(String(waypoint.description)));
   }
 
-  const lat = toFiniteNumber(waypoint.latitude);
-  const lon = toFiniteNumber(waypoint.longitude);
-  if (lat != null && lon != null) {
-    lines.push(`<span class="mono">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>`);
-  }
-
-  const expire = toFiniteNumber(waypoint.expire);
-  const expiresValue = expire != null && expire > 0
-    ? `in ${timeHum(Math.max(0, Math.floor(expire - nowSeconds)))}`
-    : 'never';
-  lines.push(`Expires: <span>${escapeHtml(expiresValue)}</span>`);
-
-  if (lockedBadgeHtml) {
-    lines.push(`\u{1F512} Locked to ${lockedBadgeHtml}`);
-  }
-
+  const expiresValue = formatWaypointExpiry(waypoint.expire, nowSeconds);
   const authorId = typeof waypoint.node_id === 'string' && waypoint.node_id ? waypoint.node_id : null;
-  if (authorBadgeHtml || authorId) {
-    const idHtml = authorId ? ` <span class="mono">${escapeHtml(authorId)}</span>` : '';
-    lines.push(`By ${authorBadgeHtml}${idHtml}`.trim());
-  }
-
-  const rxTime = toFiniteNumber(waypoint.rx_time);
-  if (rxTime != null && rxTime > 0) {
-    lines.push(`Heard: ${escapeHtml(timeAgo(rxTime, nowSeconds))}`);
-  }
+  const authorHtml = authorBadgeHtml ||
+    (authorId ? `<span class="mono">${escapeHtml(authorId)}</span>` : '');
+  const meta = authorHtml
+    ? `<span class="waypoint-card-meta">${escapeHtml(expiresValue)} · by</span> ${authorHtml}`
+    : `<span class="waypoint-card-meta">${escapeHtml(expiresValue)}</span>`;
+  lines.push(meta);
 
   return lines;
 }

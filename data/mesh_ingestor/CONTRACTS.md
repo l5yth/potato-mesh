@@ -272,7 +272,7 @@ Every read endpoint enforces a server-side rolling-window floor on the data it r
 | `GET /api/positions` | 7 days | filtered by `COALESCE(rx_time, position_time)` |
 | `GET /api/telemetry` | 7 days | filtered by `COALESCE(rx_time, telemetry_time)` |
 | `GET /api/instances` | 7 days | filtered by `instances.last_update_time` |
-| `GET /api/waypoints` | 7 days | filtered by `waypoints.rx_time`; rows past their `expire` timestamp are additionally excluded from the moment of expiry (SPEC W5). **404 under `PRIVATE=1`** (message-grade privacy, SPEC W3). |
+| `GET /api/waypoints` | 7 days | filtered by `waypoints.rx_time`; rows past their `expire` timestamp are additionally excluded from the moment of expiry (SPEC W5). **404 under `PRIVATE=1`** (message-grade privacy, SPEC W3). The per-author `GET /api/waypoints/:id` (SPEC W11 — feeds the node page's Waypoints section) uses the standard per-id **28-day** window and the same expiry/privacy gates. |
 | `GET /api/neighbors` | **28 days** | sparse data; widened to keep slow scrapes visible |
 | `GET /api/traces` | **28 days** | sparse data; same rationale |
 | `GET /api/ingestors` | **28 days** | sparse heartbeats; same rationale |

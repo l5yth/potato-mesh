@@ -887,6 +887,41 @@ RSpec.describe PotatoMesh::App::Queries do
       ids = queries.query_waypoints(10, now: "not-a-time").map { |r| r["id"] }
       expect(ids).to include(1)
     end
+
+    it "scopes to one author and widens to the 28-day per-id waypoint window (W11)" do
+      # The suite-wide harness stubs four_weeks_seconds down to 7 days; this
+      # example is ABOUT the bulk-vs-per-id floor difference, so restore the
+      # real 28-day value for its duration.
+      allow(PotatoMesh::Config).to receive(:four_weeks_seconds).and_return(28 * 24 * 60 * 60)
+      ten_days_ago = now - (10 * 24 * 60 * 60)
+      with_db do |db|
+        db.execute(
+          "INSERT OR IGNORE INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)",
+          ["!aabbccdd", 0xaabbccdd, now, now, "CLIENT"],
+        )
+        db.execute(
+          "INSERT INTO waypoints(id, rx_time, rx_iso, node_id, node_num, name) VALUES (?,?,?,?,?,?)",
+          [7, ten_days_ago, Time.at(ten_days_ago).utc.iso8601, "!aabbccdd", 0xaabbccdd, "Old but in per-id window"],
+        )
+        db.execute(
+          "INSERT INTO waypoints(id, rx_time, rx_iso, node_id, name) VALUES (?,?,?,?,?)",
+          [8, now, Time.at(now).utc.iso8601, "!11223344", "Someone else"],
+        )
+      end
+      # Author scope: only !aabbccdd rows; the 10-day-old row is INSIDE the
+      # widened 28-day per-id window (it is outside the 7-day bulk floor).
+      ids = queries.query_waypoints(10, node_ref: "!aabbccdd", now: now).map { |r| r["id"] }
+      expect(ids).to include(7)
+      expect(ids).not_to include(8)
+      # The same row stays hidden from the bulk feed (7-day floor, C4).
+      bulk_ids = queries.query_waypoints(10, now: now).map { |r| r["id"] }
+      expect(bulk_ids).not_to include(7)
+      # Numeric refs resolve through the node lookup like other per-id queries.
+      num_ids = queries.query_waypoints(10, node_ref: 0xaabbccdd, now: now).map { |r| r["id"] }
+      expect(num_ids).to include(7)
+      # An unresolvable reference yields an empty result, not an error.
+      expect(queries.query_waypoints(10, node_ref: "definitely-not-a-node", now: now)).to eq([])
+    end
   end
 
   describe "#query_neighbors" do

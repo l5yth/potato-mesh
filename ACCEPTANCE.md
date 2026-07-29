@@ -4748,40 +4748,52 @@ pubsub spec proves no `waypoints` change event is published or delivered under
 opted-out node (`NODE_OPT_OUT_MARKER`) never appears on any read surface (S5
 filter pattern). Public mode is unaffected.
 
-### WP-A5 — Seventh SSE collection; cache tier 7 d / 7 d; no flash — W8
+### WP-A5 — Seventh SSE collection; cache tier 7 d / 7 d; waypoints flash — W8 (re-rolled)
 ```bash
-( cd web && bundle exec rspec spec/pubsub_spec.rb -e "publishes on every ingest route" )
+( cd web && bundle exec rspec spec/pubsub_spec.rb -e "publishes on every ingest route" \
+         && bundle exec rspec spec/pubsub_spec.rb -e "publishes nodes on a waypoints ingest" )
 ( cd web && node --test public/assets/js/app/main/__tests__/data-cache.test.js \
-                        public/assets/js/app/main/__tests__/event-stream.test.js )
+                        public/assets/js/app/main/__tests__/event-stream.test.js \
+                        public/assets/js/app/__tests__/main-waypoints.test.js )
 ```
 **Expected:** pass. `POST /api/waypoints` publishes a thin, coalesced
 `waypoints` event co-located with its cache invalidation (PS4 + LV6 settle
-window); the SSE client reacts to a `waypoints` ping with the existing
+window) **and a companion `nodes` event** (the ingest advances the author's
+`last_heard`; W8 as re-rolled — the earlier silent-side wording is
+superseded); the SSE client reacts to a `waypoints` ping with the existing
 since-delta fetch and merge-by-id (PS3 pattern — no new privacy or window
 logic); the persistent cache round-trips the `waypoints` collection keyed by
 the composite `protocol|id` (mirroring the server's `(id, protocol)` upsert
 key, like FC-A1's composite neighbors key) at the message-grade tier (stale
-**7 d** / evict **7 d**, FC3).
-Waypoint updates render live but trigger **no** flash/wave (the VF3
-"updates silently" boundary, extended).
+**7 d** / evict **7 d**, FC3). A waypoint delta **fades its own pin** via the
+standard `.live-flash` element fade, and the author's row/marker flash rides
+the companion `nodes` publish (asserted in `main-waypoints.test.js`).
 
-### WP-A6 — Map layer: glyph chip, expiry dimming, detail card, legend toggle — W6
+### WP-A6 — Map layer: teardrop pin, expiry dimming, minimal card, legend toggle — W6 (re-rolled: 1c-B/1d-C/1e-A)
 ```bash
 ( cd web && node --test public/assets/js/app/main/__tests__/waypoint-layer.test.js \
                         public/assets/js/app/__tests__/main-waypoints.test.js )
 ```
-**Expected:** pass. Markers are 22 px dark glyph chips (`#1c1c1c` background,
-hairline border, radius 6, the payload's unicode glyph, stacked above node
-markers — a third shape that never reads as a node role); marker opacity
-follows the expiry ladder (remaining < 1 h → 0.4, < 24 h → 0.7, else 1;
-never → 1). Opening a marker renders the 1d-A full-record card:
-glyph + name, `wpt <id>` + kind chip, description, 5-decimal coords, relative
-`Expires:`/`never`, a `Locked to` badge only when locked, `By` badge +
-canonical id, heard age. The legend gains a **Waypoints** toggle with live
-count inside the **Meshtastic column** (beneath the neighbor/trace line
+**Expected:** pass. Markers are 24 px **teardrop pins** (1c-B: the dark
+overlay chrome — `#1c1c1c`, hairline border — as a three-round-one-sharp-
+corner square rotated −45° so the sharp corner is the downward tail; the
+glyph counter-rotates upright; the icon anchor sits on the tail tip so the
+pin points at the coordinate; 📌 fallback for missing/invalid codepoints;
+stacked above node markers); marker opacity follows the expiry ladder
+(remaining < 1 h → 0.4, < 24 h → 0.7, else 1; never → 1). Opening a marker
+renders the 1d-C **minimal card** in the standard overlay chrome — exactly
+`<glyph> <name>`, the description when present, and
+`<expiry> · by <badge>` (expiry ∈ `in <duration>` / `expired` / `never`) —
+with the coordinates, `wpt <id>`, and locked-to reference **absent** (they
+render on the node page, WP-A9). The legend gains a **Waypoints** toggle with
+live count inside the **Meshtastic column** (beneath the neighbor/trace line
 toggles), honours the `aria-pressed` conventions (NT-A1/UX8), hides the layer
-when unpressed, and persists like the other legend filters. Both maps
-(dashboard + `/map`) mount the layer from the shared code path.
+when unpressed, and stays session-only like the line toggles; hiding a
+protocol also hides its waypoints (confirmed coupling). The neighbor/trace
+line toggles read as static `Neighbor lines` / `Trace lines` (no Show/Hide
+prefix; state in `aria-label` + pressed styling — the re-roll's user
+amendment). Both maps (dashboard + `/map`) mount the layer from the shared
+code path.
 
 ### WP-A7 — Log entry class; the description never reaches the Log — W7 (LV7 amendment)
 ```bash
@@ -4812,6 +4824,26 @@ protocol-stamped and S2's subset property holds. The S4 windows and S5
 opt-out/privacy behavior are unchanged; `messages`/`nodes` metrics are
 untouched. This check **re-baselines S-A3** per the W9 amendment.
 
+### WP-A9 — Node-page Waypoints section + per-author lookup — W11 (re-roll; amends W10)
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "W11" \
+         && bundle exec rspec spec/queries_spec.rb -e "28-day per-id waypoint window" )
+( cd web && node --test public/assets/js/app/__tests__/node-page.test.js )
+```
+**Expected:** pass. `GET /api/waypoints/:id` serves the waypoints authored by
+one node (canonical id or num ref) with the standard per-id **28-day** window
+on `rx_time` — a 10-day-old broadcast is visible per-author while the bulk
+feed's 7-day floor still hides it (C4 preserved) — plus the expiry exclusion,
+opt-out, and protocol filters shared with the bulk query; under `PRIVATE=1`
+the path 404s through the same W3 wildcard filter. The node detail page (and
+its dashboard overlay, which reuses the same renderer) shows a **Waypoints**
+section listing each broadcast with the fields the minimal card omits —
+glyph+name, `wpt <id>`, 5-decimal coords, `Expires: in …/expired/never`,
+`🔒 Locked to <badge>` (mono-id fallback when no badge resolves), and a
+live-ticking heard age — and renders nothing (no section) for a node without
+waypoints. The client fetch short-circuits in private mode and maps 404 to an
+absent section.
+
 ### WP-R1 — Regression: prior acceptance still holds
 ```bash
 ( cd web && npm test ) && ( cd web && bundle exec rspec ) \
@@ -4829,5 +4861,11 @@ bodies-never-in-the-Log assertion keeps passing); **A2/A2a** (privacy —
 **C2** (its `test_mesh.py` replay suite is unchanged and stays green; the new
 waypoint shapes are validated by `tests/test_waypoint_unit.py` plus the Ruby
 route specs, additively); the legend specs (**UX-A6, NT-A1, LC-A1**) updated
-for the new toggle; and **B1–B5** (all suites, coverage floor, API docs,
-exact Apache headers, formatters).
+for the new toggle and the static line-toggle labels (the re-roll amendment —
+`aria-pressed` semantics unchanged); **PD-A1** and the node-page suite (the
+W11 Waypoints section is additive — every existing node-page section renders
+identically); **VF/LV** (waypoints joined the flashing side per the W8
+re-roll: the added `nodes` publish mirrors the established positions/messages
+pattern, so VF-A2's SSE-ping gating and LV-A2's stacked timers must keep
+passing); and **B1–B5** (all suites, coverage floor, API docs, exact Apache
+headers, formatters).

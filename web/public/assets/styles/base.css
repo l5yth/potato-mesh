@@ -734,13 +734,9 @@ th {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
-/* Waypoint detail-card kind chip (SPEC W6, design 1d-A): a muted pill next to
-   the "wpt <id>" line marking the overlay as a waypoint, not a node. */
-.waypoint-kind-chip {
-  display: inline-block;
-  border-radius: 999px;
-  padding: 0 6px;
-  background: rgba(255, 255, 255, 0.08);
+/* Waypoint detail-card meta line (SPEC W6, design 1d-C): the muted
+   "<expiry> · by" prefix ahead of the author badge on the minimal card. */
+.waypoint-card-meta {
   color: var(--muted, #9aa7b4);
 }
 

@@ -7623,6 +7623,11 @@ RSpec.describe "Potato Mesh Sinatra app" do
       expect(last_response.status).to eq(404)
     end
 
+    it "returns 404 for the per-author GET /api/waypoints/:id (W11 under W3)" do
+      get "/api/waypoints/!3769b133"
+      expect(last_response.status).to eq(404)
+    end
+
     it "still accepts POST /api/waypoints but publishes no waypoints event (W3)" do
       allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
       # Unlike messages, waypoint ingest stays open under PRIVATE: data may be
@@ -7833,6 +7838,23 @@ RSpec.describe "Potato Mesh Sinatra app" do
 
       recovered = walk_before("/api/waypoints", id_key: "id", sort_key: "rx_time")
       expect(recovered).to include(*(101..105).to_a)
+    end
+
+    it "serves the per-author lookup on GET /api/waypoints/:id (W11)" do
+      clear_database
+      seed_waypoint(60)
+      seed_waypoint(61, "node_id" => "!11223344")
+
+      get "/api/waypoints/!3769b133"
+      expect(last_response).to be_ok
+      ids = JSON.parse(last_response.body).map { |r| r["id"] }
+      expect(ids).to contain_exactly(60)
+      expect(last_response.headers["ETag"]).to start_with("W/")
+
+      # A blank id segment routes to the bulk collection, not the per-id route;
+      # an unknown author yields an empty list rather than an error.
+      get "/api/waypoints/!deadbeef"
+      expect(JSON.parse(last_response.body)).to eq([])
     end
   end
 

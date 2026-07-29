@@ -364,15 +364,16 @@ RSpec.describe PotatoMesh::App::PubSub do
       expect(PotatoMesh::App::PubSub).not_to have_received(:publish).with("nodes", private_mode: false)
     end
 
-    # Waypoints join neighbors/traces on the silent side of the VF3 boundary
-    # (SPEC W8): the route publishes only its own collection, never "nodes",
-    # so a waypoint ingest can never flash the author node.
-    it "does not publish nodes on a waypoints ingest (VF3 boundary extended, W8)" do
+    # Waypoints are on the FLASHING side of the live-update boundary (SPEC W8
+    # as re-rolled): a waypoint ingest advances the author's last_heard, so the
+    # route also publishes "nodes" — mirroring positions/messages — and the
+    # dashboard fades the pin and flashes the author with a fresh "last seen".
+    it "publishes nodes on a waypoints ingest (author flash, W8 re-roll)" do
       allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
       post "/api/waypoints", "[]", auth
       expect(last_response.status).to eq(201)
       expect(PotatoMesh::App::PubSub).to have_received(:publish).with("waypoints", private_mode: false)
-      expect(PotatoMesh::App::PubSub).not_to have_received(:publish).with("nodes", private_mode: false)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("nodes", private_mode: false)
     end
 
     it "publishes on every ingest route" do

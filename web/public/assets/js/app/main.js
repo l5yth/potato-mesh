@@ -209,7 +209,7 @@ import { createBasemapLayer } from './basemap-config.js';
 import { createTileFailurePolicy } from './main/tile-failure-policy.js';
 import { getActiveFullscreenElement, legendClickHandler } from './main/fullscreen-helpers.js';
 import { createEventStream } from './main/event-stream.js';
-import { flashNodeTargets, flashMessageTargets, emitNodeWaves } from './main/flash.js';
+import { flashNodeTargets, flashMessageTargets, flashElement, emitNodeWaves } from './main/flash.js';
 import { captureOpenMarkerOverlays, restoreMarkerOverlays } from './main/marker-overlay-preservation.js';
 import { collectNodeIds, collectMessageIds, entryMessageId } from './main/flash-targets.js';
 import {
@@ -242,6 +242,7 @@ import {
   buildWaypointOverlayLines,
   renderWaypointsLayer,
   waypointGlyph,
+  waypointKey,
 } from './main/waypoint-layer.js';
 
 /**
@@ -938,6 +939,31 @@ export function initializeApp(config) {
   }
 
   /**
+   * Fade each changed waypoint's map pin (SPEC W8 as re-rolled: waypoints are
+   * on the flashing side of the live-update boundary). Called after the map
+   * has rendered so the pin elements exist; targets already-rendered markers
+   * only, mirroring {@link flashChangedNodes}.
+   *
+   * @param {Array<Object>} waypointRows Delta rows from the waypoints fetch.
+   * @returns {void}
+   */
+  function flashChangedWaypoints(waypointRows) {
+    if (!Array.isArray(waypointRows) || waypointRows.length === 0) return;
+    const flashed = [];
+    for (const row of waypointRows) {
+      const key = waypointKey(row);
+      if (key == null) continue;
+      const marker = waypointMarkerByKey.get(key);
+      if (!marker) continue; // expired/hidden pins have no live marker
+      // Pins are divIcon markers (no setStyle), so the fade rides the
+      // `.live-flash` class on the marker's DOM element (LV1/LV2 timers).
+      const element = typeof marker.getElement === 'function' ? marker.getElement() : null;
+      if (element && flashElement(element)) flashed.push(key);
+    }
+    if (flashed.length) lastFlashedWaypointKeys = flashed;
+  }
+
+  /**
    * Flash each changed message's chat row(s) and its channel tab header (SPEC
    * VF3). Called after the chat has rendered (so the rows + tabs exist and the
    * message→tab map is populated). Targets already-rendered DOM only.
@@ -1101,6 +1127,10 @@ export function initializeApp(config) {
   let waypointsToggleButton = null;
   /** Markers rendered by the last waypoint-layer pass (feeds the legend count). */
   let waypointMarkerCount = 0;
+  /** Waypoint key → live marker, rebuilt each render (W8 re-roll flash). */
+  let waypointMarkerByKey = new Map();
+  /** Waypoint keys flashed by the most recent SSE-ping refresh (test hook). */
+  let lastFlashedWaypointKeys = [];
   let markersLayer = null;
   let spiderLinesLayer = null;
   // Dedicated, never-cleared layer hosting transient LV5 wave rings; each wave
@@ -1780,15 +1810,17 @@ export function initializeApp(config) {
    */
   function updateNeighborLinesToggleState() {
     if (!neighborLinesToggleButton) return;
-    const label = neighborLinesVisible ? 'Hide neighbor lines' : 'Show neighbor lines';
     // The toggle doubles as the legend key for the solid neighbor-line style
-    // (SPEC UX7, audit D-014).
-    neighborLinesToggleButton.innerHTML = `${legendLineSampleSvg('neighbor')} ${label}`;
+    // (SPEC UX7, audit D-014). The visible label stays static — the pressed
+    // styling carries the state, so no Show/Hide prefix (waypoints re-roll
+    // amendment, matching the design mock); assistive tech still hears the
+    // state via aria-label + aria-pressed.
+    neighborLinesToggleButton.innerHTML = `${legendLineSampleSvg('neighbor')} Neighbor lines`;
     // aria-pressed marks the *selected* (highlighted) state, consistent with the
     // role chips (button.legend-item[aria-pressed="true"]): the toggle is pressed
     // when its lines are visible, unpressed when hidden. (Previously reversed.)
     neighborLinesToggleButton.setAttribute('aria-pressed', neighborLinesVisible ? 'true' : 'false');
-    neighborLinesToggleButton.setAttribute('aria-label', label);
+    neighborLinesToggleButton.setAttribute('aria-label', neighborLinesVisible ? 'Neighbor lines shown' : 'Neighbor lines hidden');
   }
 
   /**
@@ -1817,15 +1849,15 @@ export function initializeApp(config) {
    */
   function updateTraceLinesToggleState() {
     if (!traceLinesToggleButton) return;
-    const label = traceLinesVisible ? 'Hide trace lines' : 'Show trace lines';
     // The toggle doubles as the legend key for the dashed traceroute style
-    // (SPEC UX7, audit D-014).
-    traceLinesToggleButton.innerHTML = `${legendLineSampleSvg('trace')} ${label}`;
+    // (SPEC UX7, audit D-014). Static label; state lives in the pressed
+    // styling + aria (waypoints re-roll amendment, matching the design mock).
+    traceLinesToggleButton.innerHTML = `${legendLineSampleSvg('trace')} Trace lines`;
     // aria-pressed marks the *selected* (highlighted) state, consistent with the
     // role chips: pressed when its lines are visible, unpressed when hidden.
     // (Previously reversed.)
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
-    traceLinesToggleButton.setAttribute('aria-label', label);
+    traceLinesToggleButton.setAttribute('aria-label', traceLinesVisible ? 'Trace lines shown' : 'Trace lines hidden');
   }
 
   /**
@@ -2786,7 +2818,6 @@ export function initializeApp(config) {
     const lines = buildWaypointOverlayLines(waypoint, {
       nowSeconds: Math.floor(Date.now() / 1000),
       authorBadgeHtml: renderWaypointNodeBadge(waypoint.node_id),
-      lockedBadgeHtml: renderWaypointNodeBadge(waypoint.locked_to),
     });
     if (!lines.length) return;
     overlayStack.render(target, lines.join('<br/>'));
@@ -5030,6 +5061,7 @@ export function initializeApp(config) {
         layer: waypointsLayer,
         leaflet: L,
         nowSeconds: nowSec,
+        markerRegistry: waypointMarkerByKey,
         onSelect: (waypoint, anchorEl) => {
           if (!anchorEl) return;
           if (overlayStack.isOpen(anchorEl)) {
@@ -5502,6 +5534,9 @@ export function initializeApp(config) {
       if (refreshOptions.flash && useSince) {
         flashChangedNodes(collectNodeIds(incomingNodes, incomingPositions, incomingTelemetry));
         flashChangedMessages(collectMessageIds(incomingMessages, incomingEncryptedMessages));
+        // W8 re-roll: a waypoint delta fades its own pin; the author node's
+        // row/marker flash rides the route's companion "nodes" publish.
+        flashChangedWaypoints(incomingWaypoints);
       }
       // Persist the freshly-merged state for the next reload/revisit (SPEC FC2),
       // throttled and fire-and-forget so it never blocks the paint.
@@ -5823,6 +5858,10 @@ export function initializeApp(config) {
       getLoadedNodeCount: () => allNodes.length,
       /** Waypoints currently loaded (SPEC W8 plumbing; test use only). */
       getLoadedWaypoints: () => allWaypoints,
+      /** Waypoint keys faded by the most recent SSE-ping refresh (test hook). */
+      getLastFlashedWaypointKeys: () => lastFlashedWaypointKeys,
+      /** Inject a waypoint marker into the registry (W8 flash test hook). */
+      _setWaypointMarkerForTests: (key, marker) => waypointMarkerByKey.set(key, marker),
       /** Waypoint layer visibility + toggle hooks (SPEC W6; test use only). */
       setWaypointsVisibility,
       isWaypointsVisible: () => waypointsVisible,

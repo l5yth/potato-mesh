@@ -109,6 +109,44 @@ export async function fetchMessages(identifier, { fetchImpl, includeEncrypted = 
   return Array.isArray(payload) ? payload : [];
 }
 
+/** Maximum number of waypoints to request for the node page (SPEC W11). */
+const WAYPOINT_LIMIT = 100;
+
+/**
+ * Fetch the waypoints a node has broadcast, for the node page's Waypoints
+ * section (SPEC W11).
+ *
+ * Private mode short-circuits the request — waypoints are message-grade
+ * private (W3), so the server 404s the route and the section stays absent.
+ * A 404 in public mode simply means no waypoints exist yet.
+ *
+ * @param {string|number} identifier Canonical node identifier or numeric node
+ *   number.
+ * @param {{ fetchImpl?: Function, privateMode?: boolean }} [options] Fetch options.
+ * @returns {Promise<Array<Object>>} Resolved waypoint collection.
+ * @throws {TypeError} When no fetch implementation is available.
+ * @throws {Error} When the server returns a non-2xx, non-404 status.
+ */
+export async function fetchWaypointsForNode(identifier, { fetchImpl, privateMode = false } = {}) {
+  if (identifier == null || privateMode) {
+    return [];
+  }
+  const fetchFn = typeof fetchImpl === 'function' ? fetchImpl : globalThis.fetch;
+  if (typeof fetchFn !== 'function') {
+    throw new TypeError('A fetch implementation is required to load waypoints');
+  }
+  const encodedId = encodeURIComponent(String(identifier));
+  const url = `/api/waypoints/${encodedId}?limit=${WAYPOINT_LIMIT}`;
+  const response = await fetchFn(url, DEFAULT_FETCH_OPTIONS);
+  // 404 covers both "no waypoints" and the PRIVATE gate — the section is absent.
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    throw new Error(`Failed to load waypoints (HTTP ${response.status})`);
+  }
+  const payload = await response.json();
+  return Array.isArray(payload) ? payload : [];
+}
+
 /**
  * Fetch traceroute records for a node reference.
  *

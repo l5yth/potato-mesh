@@ -15,24 +15,29 @@
  */
 
 /**
- * WP-A6 — waypoint map layer (SPEC W6, design 1c-A/1d-A): glyph chip
- * definition, expiry dimming ladder, expired/coordless exclusion, headless
- * layer rendering with click selection, and the detail-card lines.
+ * WP-A6 — waypoint map layer (SPEC W6 as re-rolled, design 1c-B/1d-C):
+ * teardrop-pin definition, expiry dimming ladder, expired/coordless
+ * exclusion, headless layer rendering with click selection and the marker
+ * registry, and the minimal detail-card lines.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  WAYPOINT_ICON_ANCHOR,
+  WAYPOINT_ICON_SIZE,
   WAYPOINT_MARKER_SIZE,
   WAYPOINT_Z_INDEX_OFFSET,
   buildWaypointOverlayLines,
+  formatWaypointExpiry,
   isWaypointExpired,
   renderWaypointsLayer,
   visibleWaypoints,
   waypointExpiryOpacity,
   waypointGlyph,
   waypointIconDefinition,
+  waypointKey,
 } from '../waypoint-layer.js';
 
 const NOW = 1_700_000_000;
@@ -97,14 +102,20 @@ test('visibleWaypoints keeps fresh coordinated rows and drops the rest', () => {
 // waypointIconDefinition
 // ---------------------------------------------------------------------------
 
-test('waypointIconDefinition builds the 22px dark glyph chip (1c-A)', () => {
+test('waypointIconDefinition builds the 24px teardrop pin (1c-B)', () => {
   const def = waypointIconDefinition({ icon: 0x2708, expire: NOW + 3 * 86400 }, NOW);
   assert.equal(def.className, '');
-  assert.deepEqual(def.iconSize, [WAYPOINT_MARKER_SIZE, WAYPOINT_MARKER_SIZE]);
-  assert.deepEqual(def.iconAnchor, [WAYPOINT_MARKER_SIZE / 2, WAYPOINT_MARKER_SIZE / 2]);
-  assert.match(def.html, /waypoint-chip/);
+  assert.deepEqual(def.iconSize, [...WAYPOINT_ICON_SIZE]);
+  // The anchor sits on the pin tip so the tail points at the coordinate.
+  assert.deepEqual(def.iconAnchor, [...WAYPOINT_ICON_ANCHOR]);
+  assert.match(def.html, /waypoint-pin/);
+  assert.match(def.html, new RegExp(`width:${WAYPOINT_MARKER_SIZE}px`));
   assert.match(def.html, /background:#1c1c1c/);
-  assert.match(def.html, /border-radius:6px/);
+  // Teardrop silhouette: three round corners, one sharp tail corner, rotated.
+  assert.match(def.html, /border-radius:50% 50% 50% 2px/);
+  assert.match(def.html, /rotate\(-45deg\)/);
+  // The glyph counter-rotates so it reads upright inside the rotated body.
+  assert.match(def.html, /rotate\(45deg\)/);
   assert.match(def.html, /opacity:1/);
   assert.match(def.html, /✈/);
 });
@@ -218,7 +229,7 @@ test('renderWaypointsLayer is a 0-count no-op without a layer or leaflet', () =>
 // buildWaypointOverlayLines (design 1d-A: full record, node-overlay line order)
 // ---------------------------------------------------------------------------
 
-test('buildWaypointOverlayLines renders every payload field in card order', () => {
+test('buildWaypointOverlayLines renders the minimal 1d-C card (title, body, meta)', () => {
   const lines = buildWaypointOverlayLines(
     {
       id: 41206,
@@ -235,26 +246,42 @@ test('buildWaypointOverlayLines renders every payload field in card order', () =
     {
       nowSeconds: NOW,
       authorBadgeHtml: '<span class="short-name">b133</span>',
-      lockedBadgeHtml: '<span class="short-name">b133</span>',
     },
   );
-  assert.equal(lines.length, 8);
+  // Exactly three lines — coords, wpt id, and locked-to live on the node page (W11).
+  assert.equal(lines.length, 3);
   assert.match(lines[0], /<strong>✈ Tempelhofer Feld<\/strong>/);
-  assert.match(lines[1], /wpt 41206/);
-  assert.match(lines[1], /waypoint-kind-chip/);
-  assert.match(lines[2], /no other place/);
-  assert.match(lines[3], /52\.47516, 13\.40296/);
-  assert.match(lines[4], /Expires: <span>in 4d 6h<\/span>/);
-  assert.match(lines[5], /Locked to <span class="short-name">b133<\/span>/);
-  assert.match(lines[6], /By <span class="short-name">b133<\/span> <span class="mono">!3769b133<\/span>/);
-  assert.match(lines[7], /Heard: 12m 4s/);
+  assert.match(lines[1], /no other place/);
+  assert.match(lines[2], /waypoint-card-meta/);
+  assert.match(lines[2], /in 4d 6h · by<\/span> <span class="short-name">b133<\/span>/);
+  const joined = lines.join('');
+  assert.doesNotMatch(joined, /wpt 41206/);
+  assert.doesNotMatch(joined, /52\.47516/);
+  assert.doesNotMatch(joined, /Locked to/);
 });
 
-test('buildWaypointOverlayLines omits absent fields and reads never-expiring honestly', () => {
-  const lines = buildWaypointOverlayLines({ id: 9, name: 'Bare pin' }, { nowSeconds: NOW });
-  // Title, id chip, and the Expires line only — no description/coords/lock/author/heard.
-  assert.equal(lines.length, 3);
-  assert.match(lines[2], /Expires: <span>never<\/span>/);
+test('buildWaypointOverlayLines omits the body when absent and reads never honestly', () => {
+  const lines = buildWaypointOverlayLines(
+    { id: 9, name: 'Bare pin', node_id: '!3769b133' },
+    { nowSeconds: NOW },
+  );
+  // Title + meta only; without a badge the canonical author id anchors "by".
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /never · by<\/span> <span class="mono">!3769b133<\/span>/);
+});
+
+test('buildWaypointOverlayLines drops the author clause when no author resolves', () => {
+  const lines = buildWaypointOverlayLines({ id: 9, name: 'Orphan pin' }, { nowSeconds: NOW });
+  assert.equal(lines.length, 2);
+  assert.match(lines[1], /waypoint-card-meta">never<\/span>/);
+  assert.doesNotMatch(lines[1], /· by/);
+});
+
+test('formatWaypointExpiry covers the in/expired/never states', () => {
+  assert.equal(formatWaypointExpiry(NOW + 4 * 86400 + 6 * 3600, NOW), 'in 4d 6h');
+  assert.equal(formatWaypointExpiry(NOW - 10, NOW), 'expired');
+  assert.equal(formatWaypointExpiry(null, NOW), 'never');
+  assert.equal(formatWaypointExpiry(0, NOW), 'never');
 });
 
 test('buildWaypointOverlayLines escapes user-authored name and description (W3)', () => {
@@ -267,11 +294,38 @@ test('buildWaypointOverlayLines escapes user-authored name and description (W3)'
   // would pass even if a variant tag leaked through.
   assert.doesNotMatch(lines[0], /<script/i);
   assert.match(lines[0], /&lt;script&gt;/);
-  assert.doesNotMatch(lines[2], /<img/i);
-  assert.match(lines[2], /&lt;img/);
+  assert.doesNotMatch(lines[1], /<img/i);
+  assert.match(lines[1], /&lt;img/);
+});
+
+test('waypointKey composes protocol|id and rejects id-less rows', () => {
+  assert.equal(waypointKey({ id: 41206, protocol: 'meshtastic' }), 'meshtastic|41206');
+  assert.equal(waypointKey({ id: 7 }), '|7');
+  assert.equal(waypointKey({ protocol: 'meshtastic' }), null);
+  assert.equal(waypointKey(null), null);
+});
+
+test('renderWaypointsLayer fills the caller-owned marker registry per render', () => {
+  const { leaflet, layer, markers } = makeFakeLeaflet();
+  const registry = new Map([['stale|1', { old: true }]]);
+  renderWaypointsLayer({
+    waypoints: [{ id: 41206, protocol: 'meshtastic', latitude: 52.5, longitude: 13.4 }],
+    layer,
+    leaflet,
+    nowSeconds: NOW,
+    markerRegistry: registry,
+  });
+  // The registry is cleared and repopulated each render (W8 re-roll flash).
+  assert.equal(registry.size, 1);
+  assert.equal(registry.get('meshtastic|41206'), markers[0]);
 });
 
 test('buildWaypointOverlayLines returns no lines for a non-object', () => {
   assert.deepEqual(buildWaypointOverlayLines(null, { nowSeconds: NOW }), []);
   assert.deepEqual(buildWaypointOverlayLines('junk', { nowSeconds: NOW }), []);
+});
+
+test('the minimal card falls back to the Waypoint title when the name is absent', () => {
+  const lines = buildWaypointOverlayLines({ id: 3 }, { nowSeconds: NOW });
+  assert.match(lines[0], /<strong>📌 Waypoint<\/strong>/);
 });

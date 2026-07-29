@@ -56,8 +56,19 @@ test('the refresh loads waypoints alongside the other collections (W8)', async (
   });
 });
 
-test('a waypoints SSE ping delta-fetches the collection (W8)', async () => {
+test('a waypoints SSE ping delta-fetches the collection and fades its pin (W8 re-roll)', async () => {
   await runLiveApp({ responses: RESPONSES }, async ({ testUtils, calls, FakeEventSource }) => {
+    // Inject a live pin for the delta row (the harness runs without Leaflet,
+    // so the registry is seeded through the test hook).
+    const classes = new Set();
+    const pinElement = {
+      classList: {
+        add: name => classes.add(name),
+        remove: name => classes.delete(name),
+      },
+    };
+    testUtils._setWaypointMarkerForTests('meshtastic|41206', { getElement: () => pinElement });
+
     const before = calls.filter(({ url }) => url.startsWith('/api/waypoints?')).length;
     FakeEventSource.instances[0].dispatch('change', {
       data: JSON.stringify({ collection: 'waypoints' }),
@@ -65,8 +76,25 @@ test('a waypoints SSE ping delta-fetches the collection (W8)', async () => {
     await testUtils.flushLiveRefresh();
     const after = calls.filter(({ url }) => url.startsWith('/api/waypoints?')).length;
     assert.ok(after > before, 'the ping issued a waypoints delta fetch');
-    // Waypoints sit on the silent side of the VF3 boundary: no flash fires.
-    assert.equal(testUtils.getLiveFlashCount(), 0);
+    // W8 as re-rolled: the changed pin fades via the .live-flash class.
+    assert.deepEqual(testUtils.getLastFlashedWaypointKeys(), ['meshtastic|41206']);
+    assert.ok(classes.has('live-flash'), 'the pin element carries the flash class');
+  });
+});
+
+test('the author node flashes through the companion nodes publish (W8 re-roll)', async () => {
+  await runLiveApp({ responses: RESPONSES }, async ({ testUtils, FakeEventSource }) => {
+    // The server publishes "nodes" alongside "waypoints" (ingest.rb); the
+    // client sees both pings and one debounced refresh flashes the author.
+    FakeEventSource.instances[0].dispatch('change', {
+      data: JSON.stringify({ collection: 'waypoints' }),
+    });
+    FakeEventSource.instances[0].dispatch('change', {
+      data: JSON.stringify({ collection: 'nodes' }),
+    });
+    await testUtils.flushLiveRefresh();
+    assert.equal(testUtils.getLiveFlashCount(), 1);
+    assert.deepEqual(testUtils.getLastFlashedNodeIds(), ['!a']);
   });
 });
 
