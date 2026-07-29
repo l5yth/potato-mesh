@@ -371,12 +371,17 @@ module PotatoMesh
       # @return [Hash{String => Hash}] scope => window counts.
       def node_activity_counts(handle, cutoffs)
         private_clause = private_mode? ? " AND (role IS NULL OR role <> 'CLIENT_HIDDEN')" : ""
+        # Bound the raw +last_heard+ column by the widest ("month") cutoff so
+        # +idx_nodes_last_heard+ pre-filters +visible+ before aliasing (issue
+        # #866). Lossless by SPEC S4: "month" is the widest window, so any row
+        # this prunes contributes 0 to every window count. The bound is placed
+        # first in the projection, so its parameter leads +projection_params+.
         projection = "SELECT last_heard AS t, protocol AS p FROM nodes " \
-                     "WHERE #{opt_out_self_filter}#{private_clause}"
+                     "WHERE last_heard >= ? AND #{opt_out_self_filter}#{private_clause}"
         windowed_protocol_counts(
           handle,
           projection_sql: projection,
-          projection_params: opt_out_marker_params,
+          projection_params: [cutoffs.fetch("month")] + opt_out_marker_params,
           cutoffs: cutoffs,
         )
       end
@@ -393,12 +398,15 @@ module PotatoMesh
         return zero_scope_counts if private_mode?
 
         fragments = [opt_out_node_id_filter("from_id"), opt_out_node_id_filter("to_id")]
+        # Bound the raw +rx_time+ column by the widest ("month") cutoff so
+        # +idx_messages_rx_time+ pre-filters +visible+ before aliasing; lossless
+        # by SPEC S4 (see #node_activity_counts). Issue #866.
         projection = "SELECT rx_time AS t, protocol AS p FROM messages " \
-                     "WHERE #{fragments.join(" AND ")}"
+                     "WHERE rx_time >= ? AND #{fragments.join(" AND ")}"
         windowed_protocol_counts(
           handle,
           projection_sql: projection,
-          projection_params: opt_out_marker_params * fragments.length,
+          projection_params: [cutoffs.fetch("month")] + opt_out_marker_params * fragments.length,
           cutoffs: cutoffs,
         )
       end
@@ -418,11 +426,17 @@ module PotatoMesh
           ["neighbors", [opt_out_node_id_filter("node_id"), opt_out_node_id_filter("neighbor_id")]],
           ["traces", [opt_out_node_num_filter("src"), opt_out_node_num_filter("dest")]],
         ]
+        # Bound each branch's raw +rx_time+ by the widest ("month") cutoff so every
+        # source seeks its +idx_<table>_rx_time+ index while building +visible+,
+        # instead of the whole umbrella being materialised and scanned once per
+        # window (issue #866). Lossless by SPEC S4 (see #node_activity_counts); the
+        # per-branch bound leads that branch's params.
+        month_cutoff = cutoffs.fetch("month")
         projections = []
         params = []
         sources.each do |table, fragments|
-          projections << "SELECT rx_time AS t, protocol AS p FROM #{table} WHERE #{fragments.join(" AND ")}"
-          params.concat(opt_out_marker_params * fragments.length)
+          projections << "SELECT rx_time AS t, protocol AS p FROM #{table} WHERE rx_time >= ? AND #{fragments.join(" AND ")}"
+          params.concat([month_cutoff] + opt_out_marker_params * fragments.length)
         end
         windowed_protocol_counts(
           handle,
