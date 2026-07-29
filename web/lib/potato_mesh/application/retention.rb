@@ -52,6 +52,7 @@ module PotatoMesh
         ["traces", "rx_time"],
         ["ingestors", "last_seen_time"],
         ["ingestor_activity", "at"],
+        ["waypoints", "rx_time"],
         ["nodes", "last_heard"],
       ].freeze
 

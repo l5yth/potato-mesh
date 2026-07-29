@@ -413,8 +413,9 @@ module PotatoMesh
 
       # Per-protocol telemetry-activity counts. "Telemetry" is the umbrella over
       # every non-message packet record — positions + telemetry + neighbors +
-      # traces — unioned on +(rx_time, protocol)+, each table honoring the same
-      # opt-out filter its list endpoint applies (SPEC S3).
+      # traces + waypoints — unioned on +(rx_time, protocol)+, each table
+      # honoring the same opt-out filter its list endpoint applies (SPEC S3,
+      # explicitly amended by W9 to include the waypoints table).
       #
       # @param handle [SQLite3::Database] open database handle.
       # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
@@ -425,6 +426,7 @@ module PotatoMesh
           ["telemetry", [opt_out_node_id_filter("node_id")]],
           ["neighbors", [opt_out_node_id_filter("node_id"), opt_out_node_id_filter("neighbor_id")]],
           ["traces", [opt_out_node_num_filter("src"), opt_out_node_num_filter("dest")]],
+          ["waypoints", [opt_out_node_id_filter("node_id")]],
         ]
         # Bound each branch's raw +rx_time+ by the widest ("month") cutoff so every
         # source seeks its +idx_<table>_rx_time+ index while building +visible+,

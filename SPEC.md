@@ -1265,3 +1265,62 @@ hits Meshtastic and MeshCore ids alike).
 | --- | --- | --- |
 | **NL1** | **The bridge requests nodes by the full canonical id** — `/api/nodes/%21<hex>` (the URL-encoded `!%08x` form), never the bare hex. Root-cause fix on the consumer side per D8; effective against current production servers without any web deploy. | interview |
 | **NL2** | **`GET /api/nodes/:id` gains a hex-id fallback for digit-only refs.** A bang-less ref matching `\A[0-9]{8}\z` keeps its existing num-first resolution; only when the num interpretation matches nothing is it retried once as the canonical `!<8-digit-hex>` id. Deterministic precedence (a genuine num match always wins), additive (no currently-resolving ref changes meaning), and scoped to the per-id nodes route only — bulk/query-param refs are untouched. Hardens the API for any bang-stripping client beyond the bridge. | interview |
+
+---
+
+## Feature: Meshtastic waypoints (first-class POI layer, issue #848)
+
+Meshtastic `WAYPOINT_APP` broadcasts — community points of interest with a
+name, description, icon glyph, coordinates, optional expiry, and optional
+lock-to node — are currently dropped unhandled by the ingestor. This feature
+makes them a first-class stored collection: ingested from the radio, POSTed to
+the web app, persisted in SQLite, served by an additive `GET /api/waypoints`,
+and rendered per the confirmed design (claude.ai/design project
+`PotatoMesh Waypoints.dc.html`, screens 1a/1b with variants **1c-A** dark glyph
+chip marker, **1d-A** full-record detail card, **1e-A** legend toggle in the
+Meshtastic column) on both maps, the Log tab, and the map legend. Integrates
+with `data/mesh_ingestor/handlers/` (new waypoint handler + dispatch),
+`events.py`, `CONTRACTS.md`, web `routes/ingest.rb` + `routes/api.rb` + a
+waypoint queries module + schema migration, `application/pubsub.rb`,
+`stats`/`node_queries` (telemetry umbrella), and on the frontend `main.js`
+(map layer + legend), the data-fetcher/cache/merge modules, the chat-log
+renderer, and `base.css`.
+
+**Conflict check against existing decisions.** *Apex I (local LoRa)* —
+**consistent**: waypoints arrive only from radios through the existing
+ingestor → authenticated `POST` path; no broker, no new dependency, no new
+egress (the map layer reuses the SB1 basemap stack unchanged). *Invariant II
+(privacy)* — **extends**: waypoints carry user-authored text and are gated at
+**message grade** (stricter than today's telemetry treatment): `PRIVATE=1`
+404s the routes and suppresses their SSE events, mirroring A2a/PS6; the
+author's opt-out marker excludes their waypoints everywhere. *Invariant III
+(federation)* — **consistent**: no federation-wire change. *Invariant IV
+(parity)* — **extends**: the wire contract and collection are protocol-neutral
+(protocol-stamped rows; any protocol may feed them — the mirror image of
+MeshCore-only adverts, A4e); Meshtastic is simply today's only emitter, and
+the legend toggle sits in the Meshtastic column exactly as the existing
+neighbor/trace line toggles already do (`main.js` `meshtasticCol`). *§3.3 /
+D8 (contract)* — **extends**: additive snake_case routes following every
+established convention (C1 bearer auth, IC-A3 201, IC-A4 payload validation,
+C3 canonical ids, C4 window floors, BP1-style `?before=` cursor from day one);
+no existing shape changes, no version break. *S3 (/api/stats telemetry
+umbrella)* — **explicitly amended by W9** (waypoints join the umbrella).
+*PS3/PS4/PS6 (SSE)* — **extends**: `waypoints` becomes the seventh
+collection. *FC1/FC3 (frontend cache)* — **extends**: new collection at the
+7 d / 7 d message-grade tier. *LV7 (Log tab)* — **explicitly amended by W7**
+(one new entry class; bodies still never reach the Log). *VF3 (flash scope)*
+— **extends**: waypoints join neighbors/traces in the documented
+"updates silently" boundary. No decision is contradicted.
+
+| # | Decision | Source |
+| --- | --- | --- |
+| **W1** | **First-class waypoint collection (the goal).** `WAYPOINT_APP` packets become a stored, protocol-stamped `waypoints` collection: ingested by the Python ingestor, POSTed via `POST /api/waypoints`, persisted in SQLite (system of record, §3.3), served by `GET /api/waypoints`, and rendered as a map layer on the dashboard and `/map` with a detail overlay, Log-tab entries, and a legend toggle — design screens 1a/1b, variants 1c-A / 1d-A / 1e-A. Stored fields: waypoint `id`, `name`, `description`, `icon` (unicode codepoint, rendered as the marker glyph), `latitude`/`longitude`, `expire` (unix, 0/absent = never), `locked_to` (canonical node id or null), author node id/num, `rx_time` + snapshot/radio metadata, `protocol`. | interview |
+| **W2** | **Protocol-neutral contract; Meshtastic is today's only emitter (Invariant IV).** The `waypoints` event shape in `CONTRACTS.md` carries the standard protocol stamp and canonical `!%08x` ids; any future protocol may feed the same collection (parallel: MeshCore-only adverts, A4e). The legend toggle lives in the Meshtastic column (1e-A) because only Meshtastic populates the layer today — the same column that already hosts the neighbor/trace line toggles; nothing in the data model, API, or storage privileges a protocol. | interview |
+| **W3** | **Message-grade privacy (Invariant II).** Waypoint `name`/`description` are user-authored content, so waypoints are gated like messages: under `PRIVATE=1`, `GET /api/waypoints` (and every waypoint read surface) returns **404**, no `waypoints` SSE events are emitted (mirrors A2a + PS6), and the frontend renders no waypoint UI; `POST` ingest still 401s/succeeds per C1 (data may be collected, never exposed). The author's node opt-out marker excludes their waypoints from every read surface via the existing opt-out filters (S5 pattern). FC4 already disables + wipes the browser cache in private mode, covering the client side. | interview |
+| **W4** | **Additive API per established conventions (D8).** `POST /api/waypoints`: bearer auth (C1), `201 Created` (IC-A3), top-level Array/Hash validation (IC-A4), snake_case fields, canonical `!%08x` author/`locked_to` ids (C3). `GET /api/waypoints`: snake_case rows, server-side 7-day rolling-window floor on `rx_time` that callers cannot widen (C4), `MAX_QUERY_LIMIT` cap, `?since=`, BP1-style inclusive `?before=` keyset cursor, and the `?protocol=` filter (gated by `KNOWN_PROTOCOLS`, unchanged). Both routes documented in `CONTRACTS.md`; purely additive — no existing shape changes, no version break (D8 stays backward-compatible). | interview |
+| **W5** | **Upsert by waypoint id; expiry honored; no hard delete.** Rows dedup/upsert on the waypoint `id` + `protocol` across ingestors (C5's cross-ingestor dedup applied to POIs): a re-broadcast updates name/description/icon/coords/`expire`/`locked_to` and advances `rx_time`. A waypoint whose `expire` has passed is **excluded** from `GET /api/waypoints` and the UI from that moment (the design's dimming ladder warns beforehand); `expire` 0/absent = never expires. Never-expiring waypoints age out of the API via the standard 7-day window on last heard (`rx_time`), like every bulk collection. No new retention knob and no physical delete-at-expiry sweep — retention/eviction stays the existing machinery. | interview |
+| **W6** | **Map layer per the confirmed design.** Marker = 22 px dark glyph chip (1c-A: `#1c1c1c` background, hairline `--fg` border, radius 6, payload glyph, rendered above node markers) — a third shape so a waypoint never reads as a node role; marker opacity follows the expiry ladder (remaining < 1 h → 0.4, < 24 h → 0.7, else 1; `never` → 1), mirroring the age-bucket freshness ladder. Clicking opens the full-record detail card (1d-A) in the short-info-overlay chrome: `<glyph> <name>`, `wpt <id>` + kind chip, description, coords (5 decimals), `Expires: <relative|never>`, `🔒 Locked to <badge>` when locked, `By <badge> <canonical id>`, `Heard: <age>`. The legend gains a **Waypoints** toggle with live count in the Meshtastic column (1e-A), following the existing pressed-state/`aria-pressed` conventions (UX8, NT-A1) and persisting like the other legend filters. | interview + design |
+| **W7** | **Log-tab entry class (explicitly amends LV7's enumerated list).** A waypoint broadcast adds one Log entry: `📌 Broadcasted waypoint <glyph> <name> — Lat: <lat>, Lon: <lon>, Expires: <relative|never>`. The waypoint **description never appears in the Log** (name only, per the design) — preserving LV7's "bodies never reach the Log" principle for the user-authored long text. Under `PRIVATE` the collection 404s (W3), so no entries exist; the hidden-protocol gate applies as for other entries. | interview (LV7 amendment) |
+| **W8** | **Live updates & cache (extends PS3/PS4/PS6, FC1/FC3, VF3).** `waypoints` becomes the **seventh** SSE collection: the new POST route publishes a thin coalesced change event (PS4/LV6 settle window), suppressed entirely under `PRIVATE` (W3/PS6). The frontend delta-fetches by `since`/merge-by-id through the existing cache with **message-grade TTLs (stale 7 d / evict 7 d, FC3 tier)**. Waypoint updates render live but do **not** flash/wave — extending VF3's documented "updates silently" boundary (neighbors/traces) to waypoints; a flash treatment is a deferrable follow-up. | interview |
+| **W9** | **Stats: telemetry umbrella gains waypoints (explicitly amends S3).** The `/api/stats` `telemetry` umbrella becomes **positions + telemetry + neighbors + traces + waypoints**, counted by `rx_time` with the S4 windows, the S5 opt-out filters, and the S2 subset property intact (waypoint rows are protocol-stamped). S-A3 is re-baselined to the five-table umbrella. Waypoint frames already count in the ingestor's packets/hour activity metric (MA1 counts every frame) — unchanged. No response-shape change, so no version break. | interview (S3 amendment) |
+| **W10** | **Scope boundary & engineering bar (D9/D10).** Web + ingestor only: the matrix bridge, Flutter app, federation wire, and node-detail page are untouched (read-only consumers may ignore the new collection per D10); MeshCore emits no waypoints; no `/version` or config-surface change. All new code meets D9: 100% unit tests (Python + Ruby + JS), 100% API docs (PDoc/RDoc/JSDoc), the exact Apache header per file type, `black`/`rufo` clean, all suites green; no new dependency or ecosystem (Dependabot/CI unchanged). | interview + CLAUDE.md |

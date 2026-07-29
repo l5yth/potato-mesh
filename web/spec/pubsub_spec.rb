@@ -22,10 +22,14 @@ RSpec.describe PotatoMesh::App::PubSub do
   after { PotatoMesh::App::PubSub.reset! }
 
   describe "COLLECTIONS" do
-    it "lists exactly the six dashboard ingest collections" do
+    it "lists exactly the seven dashboard ingest collections (waypoints joined, SPEC W8)" do
       expect(described_class::COLLECTIONS).to eq(
-        %w[nodes messages positions telemetry neighbors traces],
+        %w[nodes messages positions telemetry neighbors traces waypoints],
       )
+    end
+
+    it "suppresses exactly the message-grade collections in private mode (PS6/W3)" do
+      expect(described_class::PRIVATE_SUPPRESSED_COLLECTIONS).to eq(%w[messages waypoints])
     end
   end
 
@@ -107,6 +111,18 @@ RSpec.describe PotatoMesh::App::PubSub do
       subscriber = described_class.subscribe
       expect(described_class.publish("messages", private_mode: true)).to eq(0)
       expect(subscriber.pending_count).to eq(0)
+    end
+
+    it "suppresses waypoints events in private mode (SPEC W3 message-grade privacy)" do
+      subscriber = described_class.subscribe
+      expect(described_class.publish("waypoints", private_mode: true)).to eq(0)
+      expect(subscriber.pending_count).to eq(0)
+    end
+
+    it "delivers waypoints events when not private (seventh collection, SPEC W8)" do
+      subscriber = described_class.subscribe
+      expect(described_class.publish("waypoints")).to eq(1)
+      expect(subscriber.drain(timeout: 0.1)).to eq([{ collection: "waypoints", hint: nil }])
     end
 
     it "still delivers non-message collections in private mode" do
@@ -291,6 +307,7 @@ RSpec.describe PotatoMesh::App::PubSub do
         "telemetry" => ["/api/telemetry", "[]"],
         "neighbors" => ["/api/neighbors", "[]"],
         "traces" => ["/api/traces", "[]"],
+        "waypoints" => ["/api/waypoints", "[]"],
       }
     end
 
@@ -344,6 +361,17 @@ RSpec.describe PotatoMesh::App::PubSub do
       expect(last_response.status).to eq(201)
       post "/api/traces", "[]", auth
       expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).not_to have_received(:publish).with("nodes", private_mode: false)
+    end
+
+    # Waypoints join neighbors/traces on the silent side of the VF3 boundary
+    # (SPEC W8): the route publishes only its own collection, never "nodes",
+    # so a waypoint ingest can never flash the author node.
+    it "does not publish nodes on a waypoints ingest (VF3 boundary extended, W8)" do
+      allow(PotatoMesh::App::PubSub).to receive(:publish).and_call_original
+      post "/api/waypoints", "[]", auth
+      expect(last_response.status).to eq(201)
+      expect(PotatoMesh::App::PubSub).to have_received(:publish).with("waypoints", private_mode: false)
       expect(PotatoMesh::App::PubSub).not_to have_received(:publish).with("nodes", private_mode: false)
     end
 

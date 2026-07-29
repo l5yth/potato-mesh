@@ -58,6 +58,7 @@ export const CACHE_STALENESS_SECONDS = Object.freeze({
   telemetry: WEEK,
   neighbors: FOUR_WEEKS,
   traces: FOUR_WEEKS,
+  waypoints: WEEK,
 });
 
 /**
@@ -74,6 +75,9 @@ export const CACHE_RETENTION_SECONDS = Object.freeze({
   telemetry: WEEK,
   neighbors: FOUR_WEEKS,
   traces: FOUR_WEEKS,
+  // Message-grade tier (SPEC W8): stale 7 d / evict 7 d, matching the server's
+  // bulk visibility floor on waypoints.rx_time.
+  waypoints: WEEK,
 });
 
 /** Fallback TTL/retention for an unrecognised collection (the 7-day floor). */
@@ -93,6 +97,7 @@ const TIMESTAMP_FIELDS = Object.freeze({
   telemetry: ['rx_time', 'rxTime', 'telemetry_time', 'telemetryTime'],
   neighbors: ['rx_time', 'rxTime'],
   traces: ['rx_time', 'rxTime'],
+  waypoints: ['rx_time', 'rxTime'],
 });
 
 /** Timestamp fields used for an unrecognised collection. */

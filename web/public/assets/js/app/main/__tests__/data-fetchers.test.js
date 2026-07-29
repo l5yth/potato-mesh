@@ -28,6 +28,7 @@ import {
   fetchPositions,
   fetchTelemetry,
   fetchTraces,
+  fetchWaypoints,
   filterRecentTraces,
   resolveSnapshotLimit,
 } from '../data-fetchers.js';
@@ -751,6 +752,66 @@ test('a prefetched non-ok response throws like a failed fetch', async () => {
   try {
     const boot = Promise.resolve(jsonResponse(null, { ok: false, status: 503 }));
     await assert.rejects(() => fetchPositions(NODE_LIMIT, 0, { responsePromise: boot }), /HTTP 503/);
+  } finally {
+    stub.restore();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// fetchWaypoints (SPEC W8 — community POI collection)
+// ---------------------------------------------------------------------------
+
+test('fetchWaypoints requests the waypoints route with the plain limit', async () => {
+  const stub = withFetchStub({ body: [{ id: 41206 }] });
+  try {
+    const rows = await fetchWaypoints(250);
+    assert.deepEqual(rows, [{ id: 41206 }]);
+    assert.equal(stub.calls.length, 1);
+    // No snapshot expansion: waypoints are unique per id (server upsert, W5).
+    assert.equal(stub.calls[0].url, '/api/waypoints?limit=250');
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchWaypoints appends since and before cursors when positive', async () => {
+  const stub = withFetchStub({ body: [] });
+  try {
+    await fetchWaypoints(10, 1700000000, { before: 1700000500 });
+    assert.equal(stub.calls[0].url, '/api/waypoints?limit=10&since=1700000000&before=1700000500');
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchWaypoints clamps invalid limits to NODE_LIMIT', async () => {
+  const stub = withFetchStub({ body: [] });
+  try {
+    await fetchWaypoints(Number.NaN);
+    assert.equal(stub.calls[0].url, `/api/waypoints?limit=${NODE_LIMIT}`);
+    await fetchWaypoints(999999);
+    assert.equal(stub.calls[1].url, `/api/waypoints?limit=${NODE_LIMIT}`);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchWaypoints throws on non-OK (e.g. the PRIVATE 404, W3)', async () => {
+  const stub = withFetchStub({ ok: false, status: 404 });
+  try {
+    await assert.rejects(() => fetchWaypoints(), /HTTP 404/);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('fetchWaypoints consumes a prefetched response when supplied', async () => {
+  const stub = withFetchStub({ body: [{ id: 2 }] });
+  try {
+    const boot = Promise.resolve(jsonResponse([{ id: 1 }]));
+    const rows = await fetchWaypoints(NODE_LIMIT, 0, { responsePromise: boot });
+    assert.deepEqual(rows, [{ id: 1 }]);
+    assert.equal(stub.calls.length, 0, 'prefetch consumed; no network fetch issued');
   } finally {
     stub.restore();
   }

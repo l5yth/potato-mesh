@@ -128,3 +128,16 @@ test('staleness and retention tables encode the agreed windows', () => {
   assert.equal(CACHE_RETENTION_SECONDS.neighbors, 28 * DAY);
   assert.equal(CACHE_STALENESS_SECONDS.messages, 7 * DAY);
 });
+
+test('waypoints use the message-grade 7d/7d tier keyed on rx_time (SPEC W8)', () => {
+  const now = 1_700_000_000;
+  const DAY = 24 * 60 * 60;
+  // Staleness: trusted within 7 days of caching, stale after.
+  assert.equal(isStale('waypoints', { cachedAt: now - 6 * DAY }, now), false);
+  assert.equal(isStale('waypoints', { cachedAt: now - 8 * DAY }, now), true);
+  // Eviction: rows drop once their rx_time leaves the 7-day window.
+  assert.equal(isExpired('waypoints', { value: { rx_time: now - 6 * DAY } }, now), false);
+  assert.equal(isExpired('waypoints', { value: { rx_time: now - 8 * DAY } }, now), true);
+  // The domain timestamp resolves from rx_time (snake or camel).
+  assert.equal(recordTimestampSeconds('waypoints', { rxTime: now - 5 }), now - 5);
+});

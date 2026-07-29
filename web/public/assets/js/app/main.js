@@ -183,6 +183,7 @@ import {
   fetchPositions,
   fetchTelemetry,
   fetchTraces,
+  fetchWaypoints,
   filterRecentTraces,
   resolveSnapshotLimit,
   fetchMessages as fetchMessagesImpl,
@@ -236,7 +237,12 @@ import {
   filterReportedFields,
   rowActivationHref,
 } from './main/nodes-table-ia.js';
-import { legendLineSampleSvg } from './main/legend-line-samples.js';
+import { legendLineSampleSvg, legendWaypointSampleHtml } from './main/legend-line-samples.js';
+import {
+  buildWaypointOverlayLines,
+  renderWaypointsLayer,
+  waypointGlyph,
+} from './main/waypoint-layer.js';
 
 /**
  * Build the node-table row's two timestamp cells ("last seen" and
@@ -376,6 +382,8 @@ export function initializeApp(config) {
   let allTelemetryEntries = [];
   /** @type {Array<Object>} */
   let allPositionEntries = [];
+  /** @type {Array<Object>} Community POI waypoints (SPEC W1/W8). */
+  let allWaypoints = [];
   /** @type {Map<string, Object>} */
   let nodesById = new Map();
   let messagesById = new Map();
@@ -399,6 +407,7 @@ export function initializeApp(config) {
   let lastTelemetryTimestamp = 0;
   let lastNeighborTimestamp = 0;
   let lastTraceTimestamp = 0;
+  let lastWaypointTimestamp = 0;
   /** Whether the very first full fetch has completed. */
   let initialFetchDone = false;
   /** Whether the background chat-history backfill is currently running. */
@@ -421,9 +430,9 @@ export function initializeApp(config) {
    * page) — the one-shot background backfill pages backward from here, exactly
    * like {@link chatLiveFrontier}. 0 means "no backfill" (a short newest page,
    * or a warm-cache load whose data is already seeded). Issue #832 / SPEC BP9a.
-   * @type {{ nodes: number, positions: number, telemetry: number, neighbors: number, traces: number }}
+   * @type {{ nodes: number, positions: number, telemetry: number, neighbors: number, traces: number, waypoints: number }}
    */
-  let collectionLiveFrontiers = { nodes: 0, positions: 0, telemetry: 0, neighbors: 0, traces: 0 };
+  let collectionLiveFrontiers = { nodes: 0, positions: 0, telemetry: 0, neighbors: 0, traces: 0, waypoints: 0 };
   /** One-shot guard: the bulk-collection backfill runs once after the first load. */
   let collectionsBackfilled = false;
   /** Settles when the one-shot bulk-collection backfill finishes (test hook). */
@@ -536,6 +545,7 @@ export function initializeApp(config) {
       cacheWriteCollection('telemetry', allTelemetryEntries),
       cacheWriteCollection('neighbors', allNeighbors),
       cacheWriteCollection('traces', allTraces),
+      cacheWriteCollection('waypoints', allWaypoints),
       cacheWriteCollection('messages', allMessages.map(messageForCache)),
       cacheWriteCollection('encrypted', allEncryptedMessages.map(messageForCache)),
     ]);
@@ -587,12 +597,13 @@ export function initializeApp(config) {
       return false;
     }
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries] = await Promise.all([
+    const [nodeEntries, positionEntries, telemetryEntries, neighborEntries, traceEntries, waypointEntries] = await Promise.all([
       readLiveCacheEntries('nodes', nowSeconds),
       readLiveCacheEntries('positions', nowSeconds),
       readLiveCacheEntries('telemetry', nowSeconds),
       readLiveCacheEntries('neighbors', nowSeconds),
       readLiveCacheEntries('traces', nowSeconds),
+      readLiveCacheEntries('waypoints', nowSeconds),
     ]);
     const messageEntries = CHAT_ENABLED ? await readLiveCacheEntries('messages', nowSeconds) : [];
     const encryptedEntries = CHAT_ENABLED ? await readLiveCacheEntries('encrypted', nowSeconds) : [];
@@ -603,7 +614,8 @@ export function initializeApp(config) {
       positionEntries.length === 0 &&
       telemetryEntries.length === 0 &&
       neighborEntries.length === 0 &&
-      traceEntries.length === 0
+      traceEntries.length === 0 &&
+      waypointEntries.length === 0
     ) {
       return false;
     }
@@ -613,6 +625,7 @@ export function initializeApp(config) {
     allTelemetryEntries = telemetryEntries.map(entry => entry.value);
     allNeighbors = neighborEntries.map(entry => entry.value);
     allTraces = traceEntries.map(entry => entry.value);
+    allWaypoints = waypointEntries.map(entry => entry.value);
     rebuildNodeIndex(allNodes);
     const [seededChat, seededEncrypted] = await Promise.all([
       messageNodeHydrator.hydrate(messageEntries.map(entry => entry.value), nodesById),
@@ -637,6 +650,7 @@ export function initializeApp(config) {
     lastTelemetryTimestamp = maxRecordTimestamp(allTelemetryEntries, ['rx_time', 'telemetry_time']);
     lastNeighborTimestamp = maxRecordTimestamp(allNeighbors, ['rx_time']);
     lastTraceTimestamp = maxRecordTimestamp(allTraces, ['rx_time']);
+    lastWaypointTimestamp = maxRecordTimestamp(allWaypoints, ['rx_time']);
     initialFetchDone = true;
     applyFilter();
     return true;
@@ -1080,6 +1094,13 @@ export function initializeApp(config) {
   let traceLinesVisible = true;
   let neighborLinesToggleButton = null;
   let traceLinesToggleButton = null;
+  /** Leaflet layer group holding the waypoint glyph chips (SPEC W6). */
+  let waypointsLayer = null;
+  /** Whether the waypoint layer is shown (session-only, like the line toggles). */
+  let waypointsVisible = true;
+  let waypointsToggleButton = null;
+  /** Markers rendered by the last waypoint-layer pass (feeds the legend count). */
+  let waypointMarkerCount = 0;
   let markersLayer = null;
   let spiderLinesLayer = null;
   // Dedicated, never-cleared layer hosting transient LV5 wave rings; each wave
@@ -1645,6 +1666,10 @@ export function initializeApp(config) {
     neighborLinesLayer = L.layerGroup().addTo(map);
     flashWavesLayer = L.layerGroup().addTo(map);
     traceLinesLayer = L.layerGroup().addTo(map);
+    // Waypoint chips (SPEC W6). Renders empty in private mode — the collection
+    // is never fetched there (W3) — and its markers carry zIndexOffset 500 so
+    // POIs annotate above the node markers.
+    waypointsLayer = L.layerGroup().addTo(map);
     // Spider lines render between the connection lines and the markers so the
     // dashed white "leader" lines are visible against neighbour/trace overlays
     // but never sit on top of the marker glyphs themselves.
@@ -1801,6 +1826,42 @@ export function initializeApp(config) {
     // (Previously reversed.)
     traceLinesToggleButton.setAttribute('aria-pressed', traceLinesVisible ? 'true' : 'false');
     traceLinesToggleButton.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Synchronise the Waypoints layer toggle with the active state (SPEC W6,
+   * design 1e-A): the miniature chip sample doubles as the legend key, the
+   * live count shows how many waypoints are on the map, and aria-pressed
+   * follows the same "pressed when visible" convention as the line toggles.
+   *
+   * @returns {void}
+   */
+  function updateWaypointsToggleState() {
+    if (!waypointsToggleButton) return;
+    const label = waypointsVisible ? 'Waypoints shown' : 'Waypoints hidden';
+    waypointsToggleButton.innerHTML =
+      `${legendWaypointSampleHtml()} Waypoints <span class="legend-protocol-count">${waypointMarkerCount}</span>`;
+    waypointsToggleButton.setAttribute('aria-pressed', waypointsVisible ? 'true' : 'false');
+    waypointsToggleButton.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Toggle the Leaflet layer that renders waypoint chips (SPEC W6).
+   *
+   * @param {boolean} visible Whether to show the waypoint layer.
+   * @returns {void}
+   */
+  function setWaypointsVisibility(visible) {
+    waypointsVisible = Boolean(visible);
+    if (waypointsLayer && map) {
+      const hasLayer = map.hasLayer(waypointsLayer);
+      if (waypointsVisible && !hasLayer) {
+        waypointsLayer.addTo(map);
+      } else if (!waypointsVisible && hasLayer) {
+        map.removeLayer(waypointsLayer);
+      }
+    }
+    updateWaypointsToggleState();
   }
 
   /**
@@ -2026,6 +2087,20 @@ export function initializeApp(config) {
         setTraceLinesVisibility(!traceLinesVisible);
       }));
       updateTraceLinesToggleState();
+
+      // Waypoints layer toggle (SPEC W6, design 1e-A): sits beneath the two
+      // line toggles inside the Meshtastic column — column membership is the
+      // whole "Meshtastic only" statement, mirroring how the line toggles
+      // already live here. Omitted entirely in private mode: the collection
+      // 404s there (W3), so no waypoint UI renders.
+      if (!isPrivateMode) {
+        waypointsToggleButton = L.DomUtil.create('button', 'legend-item legend-toggle-waypoints', meshtasticCol);
+        waypointsToggleButton.type = 'button';
+        waypointsToggleButton.addEventListener('click', legendClickHandler(() => {
+          setWaypointsVisibility(!waypointsVisible);
+        }));
+        updateWaypointsToggleState();
+      }
 
       updateLegendRoleFiltersUI();
 
@@ -2685,6 +2760,39 @@ export function initializeApp(config) {
   }
 
   /**
+   * Render a node's coloured short-name badge for the waypoint overlay,
+   * resolving the node from the loaded bulk map. Unknown nodes yield an empty
+   * string — the overlay then shows only the canonical id text.
+   *
+   * @param {?string} nodeId Canonical node id.
+   * @returns {string} Badge HTML or ''.
+   */
+  function renderWaypointNodeBadge(nodeId) {
+    if (typeof nodeId !== 'string' || !nodeId || !nodesById.has(nodeId)) return '';
+    const node = nodesById.get(nodeId);
+    return renderShortHtml(node.short_name, node.role, node.long_name, node) || '';
+  }
+
+  /**
+   * Display the waypoint detail card (SPEC W6, design 1d-A) in the shared
+   * short-info overlay chrome.
+   *
+   * @param {HTMLElement} target Anchor element for the overlay.
+   * @param {Object} waypoint Waypoint row.
+   * @returns {void}
+   */
+  function openWaypointOverlay(target, waypoint) {
+    if (!target || !waypoint) return;
+    const lines = buildWaypointOverlayLines(waypoint, {
+      nowSeconds: Math.floor(Date.now() / 1000),
+      authorBadgeHtml: renderWaypointNodeBadge(waypoint.node_id),
+      lockedBadgeHtml: renderWaypointNodeBadge(waypoint.locked_to),
+    });
+    if (!lines.length) return;
+    overlayStack.render(target, lines.join('<br/>'));
+  }
+
+  /**
    * Display an overlay describing a neighbour link.
    *
    * @param {HTMLElement} target Anchor element for the overlay.
@@ -2953,6 +3061,49 @@ export function initializeApp(config) {
   }
 
   /**
+   * Build the parts for a waypoint-broadcast chat entry (SPEC W7, amending
+   * LV7): ``📌 Broadcasted waypoint <glyph> <name> — Lat: …, Lon: …,
+   * Expires: …``. The waypoint description (user-authored body text) is
+   * deliberately never rendered here — bodies stay out of the Log.
+   *
+   * @param {Object} entry Structured chat-log entry.
+   * @param {Object} context Display context from {@link buildDisplayContext}.
+   * @returns {{ className: string, html: string }} Entry parts.
+   */
+  function buildWaypointChatEntryParts(entry, context) {
+    const label = context.longName ? String(context.longName) : (context.nodeId || 'Unknown node');
+    const waypoint = entry?.waypoint && typeof entry.waypoint === 'object' ? entry.waypoint : {};
+    const glyph = waypointGlyph(waypoint.icon);
+    const name = waypoint.name != null && String(waypoint.name).trim().length > 0
+      ? String(waypoint.name).trim()
+      : 'Waypoint';
+    const highlights = [];
+    const lat = toFiniteNumber(waypoint.latitude);
+    const lon = toFiniteNumber(waypoint.longitude);
+    if (lat != null) highlights.push({ label: 'Lat', value: lat.toFixed(5) });
+    if (lon != null) highlights.push({ label: 'Lon', value: lon.toFixed(5) });
+    const expire = toFiniteNumber(waypoint.expire);
+    let expiresValue = 'never';
+    if (expire != null && expire > 0) {
+      const remaining = Math.floor(expire - Date.now() / 1000);
+      // The Log keeps expired broadcasts as history (W7); label them honestly.
+      expiresValue = remaining > 0 ? timeHum(remaining) : 'expired';
+    }
+    highlights.push({ label: 'Expires', value: expiresValue });
+    const highlightSuffix = buildHighlightSuffix(highlights);
+    return buildAnnouncementParts({
+      timestampSeconds: entry?.ts ?? null,
+      shortName: context.shortName,
+      longName: label,
+      role: context.role,
+      metadataSource: context.metadataSource,
+      nodeData: context.nodeData,
+      protocol: context.protocol,
+      messageHtml: `${renderEmojiHtml('📌')} ${renderAnnouncementCopy(`Broadcasted waypoint ${glyph} ${name}`, highlightSuffix)}`
+    });
+  }
+
+  /**
    * Compute the class name and HTML for a mixed-feed (Log tab) chat entry,
    * dispatching on the entry type, without touching the DOM. Returns ``null``
    * for entries that should not render. Used by the memoising render path.
@@ -2975,6 +3126,8 @@ export function initializeApp(config) {
         return buildPositionChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.NEIGHBOR:
         return buildNeighborChatEntryParts(entry, context);
+      case CHAT_LOG_ENTRY_TYPES.WAYPOINT:
+        return buildWaypointChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.TRACE:
         return buildTraceChatEntryParts(entry, context);
       case CHAT_LOG_ENTRY_TYPES.MESSAGE:
@@ -3486,6 +3639,7 @@ export function initializeApp(config) {
     positionEntries = [],
     neighborEntries = [],
     traceEntries = [],
+    waypointEntries = [],
     filterQuery = ''
   }) {
     if (!CHAT_ENABLED || !chatEl) return;
@@ -3504,6 +3658,7 @@ export function initializeApp(config) {
       positions: positionEntries,
       neighbors: neighborEntries,
       traces: traceEntries,
+      waypoints: waypointEntries,
       messages,
       logOnlyMessages: encryptedMessages,
       nowSeconds,
@@ -3884,6 +4039,21 @@ export function initializeApp(config) {
         allTraces = trimToWindow(mergeById(allTraces, batch, 'id'), longBackfillFloor());
       },
       refine: noopRefine,
+    },
+    {
+      name: 'waypoints',
+      fetchPage: (limit, before) => fetchWaypoints(limit, 0, { before }),
+      // Composite server upsert key (id, protocol) — SPEC W5 — so the inclusive
+      // boundary row de-duplicates across pages and protocols never collide.
+      idOf: row => (row ? `${row.protocol}|${row.id}` : undefined),
+      cursorOf: row => row && row.rx_time,
+      merge: batch => {
+        allWaypoints = trimToWindow(
+          mergeByCompositeKey(allWaypoints, batch, ['id', 'protocol']),
+          recentBackfillFloor(),
+        );
+      },
+      refine: () => {},
     },
   ];
 
@@ -4847,6 +5017,30 @@ export function initializeApp(config) {
         },
       });
     }
+    // Waypoint chips (SPEC W6): render above the node markers, honouring the
+    // protocol filter (a hidden protocol drops its waypoints along with its
+    // nodes — the toggle lives in that protocol's legend column, 1e-A) and the
+    // expiry ladder inside the layer module. The count feeds the legend toggle.
+    if (waypointsLayer) {
+      const filteredWaypoints = hiddenProtocols.size > 0
+        ? allWaypoints.filter(waypoint => !hiddenProtocols.has(normalizeFilterProtocol(waypoint && waypoint.protocol)))
+        : allWaypoints;
+      waypointMarkerCount = renderWaypointsLayer({
+        waypoints: filteredWaypoints,
+        layer: waypointsLayer,
+        leaflet: L,
+        nowSeconds: nowSec,
+        onSelect: (waypoint, anchorEl) => {
+          if (!anchorEl) return;
+          if (overlayStack.isOpen(anchorEl)) {
+            overlayStack.close(anchorEl);
+            return;
+          }
+          openWaypointOverlay(anchorEl, waypoint);
+        },
+      });
+      updateWaypointsToggleState();
+    }
     // Re-anchor any overlay preserved above onto its rebuilt marker so it
     // stays open across the re-render instead of being closed by
     // cleanupOrphans (item 7).
@@ -4989,6 +5183,7 @@ export function initializeApp(config) {
       positionEntries: allPositionEntries,
       neighborEntries: allNeighbors,
       traceEntries: allTraces,
+      waypointEntries: allWaypoints,
       filterQuery
     });
   }
@@ -5114,6 +5309,7 @@ export function initializeApp(config) {
       const telSince = useSince ? Math.max(0, lastTelemetryTimestamp - 1) : 0;
       const nbSince = useSince ? Math.max(0, lastNeighborTimestamp - 1) : 0;
       const trSince = useSince ? Math.max(0, lastTraceTimestamp - 1) : 0;
+      const wpSince = useSince ? Math.max(0, lastWaypointTimestamp - 1) : 0;
 
       // Cold-load boot prefetch (initial-load latency fix): the early boot module
       // (main/boot-prefetch.js) may have already issued the first-load (since=0)
@@ -5147,6 +5343,14 @@ export function initializeApp(config) {
         console.warn('trace refresh failed; continuing without traceroutes', err);
         return [];
       }) : Promise.resolve([]);
+      // Waypoints are message-grade private (SPEC W3): the route 404s under
+      // PRIVATE, so the fetch is skipped entirely there rather than erroring.
+      const waypointsPromise = want('waypoints') && !isPrivateMode
+        ? fetchWaypoints(NODE_LIMIT, wpSince, { responsePromise: bootResponse('waypoints') }).catch(err => {
+          console.warn('waypoint refresh failed; continuing without waypoints', err);
+          return [];
+        })
+        : Promise.resolve([]);
       const encryptedMessagesPromise = want('messages') ? fetchMessages(MESSAGE_LIMIT, { encrypted: true, since: msgSince, responsePromise: bootResponse('encryptedMessages') }).catch(err => {
         console.warn('encrypted message refresh failed; continuing without encrypted entries', err);
         return [];
@@ -5160,7 +5364,8 @@ export function initializeApp(config) {
         incomingTraces,
         incomingMessages,
         incomingTelemetry,
-        incomingEncryptedMessages
+        incomingEncryptedMessages,
+        incomingWaypoints
       ] = await Promise.all([
         want('nodes') ? fetchNodes(NODE_LIMIT, nodeSince, { responsePromise: bootResponse('nodes') }) : Promise.resolve([]),
         positionsPromise,
@@ -5173,7 +5378,8 @@ export function initializeApp(config) {
         // every refresh after.
         want('messages') ? fetchMessages(MESSAGE_LIMIT, { since: msgSince, responsePromise: bootResponse('messages') }) : Promise.resolve([]),
         telemetryPromise,
-        encryptedMessagesPromise
+        encryptedMessagesPromise,
+        waypointsPromise
       ]);
 
       // Update high-water marks for incremental fetching.
@@ -5189,6 +5395,7 @@ export function initializeApp(config) {
       const incomingTelTs = maxRecordTimestamp(incomingTelemetry, ['rx_time', 'telemetry_time']);
       const incomingNbTs = maxRecordTimestamp(incomingNeighbors, ['rx_time']);
       const incomingTrTs = maxRecordTimestamp(incomingTraces, ['rx_time']);
+      const incomingWpTs = maxRecordTimestamp(incomingWaypoints, ['rx_time']);
       if (incomingNodeTs > lastNodeTimestamp) lastNodeTimestamp = incomingNodeTs;
       const latestMsgTs = Math.max(incomingMsgTs, incomingEncMsgTs);
       if (latestMsgTs > lastMessageTimestamp) lastMessageTimestamp = latestMsgTs;
@@ -5196,6 +5403,7 @@ export function initializeApp(config) {
       if (incomingTelTs > lastTelemetryTimestamp) lastTelemetryTimestamp = incomingTelTs;
       if (incomingNbTs > lastNeighborTimestamp) lastNeighborTimestamp = incomingNbTs;
       if (incomingTrTs > lastTraceTimestamp) lastTraceTimestamp = incomingTrTs;
+      if (incomingWpTs > lastWaypointTimestamp) lastWaypointTimestamp = incomingWpTs;
 
       // Capture each bulk collection's live frontier (oldest cursor of the
       // newest page) so the one-shot background backfill (issue #832) can page
@@ -5214,6 +5422,7 @@ export function initializeApp(config) {
           telemetry: frontierIfFull(incomingTelemetry, NODE_LIMIT, ['rx_time']),
           neighbors: frontierIfFull(incomingNeighbors, NODE_LIMIT, ['rx_time']),
           traces: frontierIfFull(incomingTraces, TRACE_LIMIT, ['rx_time']),
+          waypoints: frontierIfFull(incomingWaypoints, NODE_LIMIT, ['rx_time']),
         };
       }
 
@@ -5241,6 +5450,12 @@ export function initializeApp(config) {
       allTraces = useSince
         ? trimToWindow(mergeById(allTraces, incomingTraces, 'id'), longWindowFloor)
         : incomingTraces;
+      // Waypoints merge on the composite (id, protocol) — the server's upsert
+      // key (SPEC W5) — so a re-broadcast replaces its row and same-id
+      // waypoints from different protocols stay distinct.
+      allWaypoints = useSince
+        ? trimToWindow(mergeByCompositeKey(allWaypoints, incomingWaypoints, ['id', 'protocol']), recentWindowFloor)
+        : incomingWaypoints;
       // Encrypted blobs only feed the mixed Log tab (itself capped), so a count
       // cap is the right memory bound for them.
       const encryptedMessages = useSince
@@ -5606,6 +5821,21 @@ export function initializeApp(config) {
       getLoadedMessageCount: () => allMessages.length,
       /** Number of node rows currently loaded into the table (test use only). */
       getLoadedNodeCount: () => allNodes.length,
+      /** Waypoints currently loaded (SPEC W8 plumbing; test use only). */
+      getLoadedWaypoints: () => allWaypoints,
+      /** Waypoint layer visibility + toggle hooks (SPEC W6; test use only). */
+      setWaypointsVisibility,
+      isWaypointsVisible: () => waypointsVisible,
+      getWaypointsToggleButton: () => waypointsToggleButton,
+      /** Inject a mock toggle button element for legend-state tests. */
+      _setWaypointsToggleButton: btn => {
+        waypointsToggleButton = btn;
+      },
+      updateWaypointsToggleState,
+      openWaypointOverlay,
+      _setLoadedWaypoints: rows => {
+        allWaypoints = Array.isArray(rows) ? rows : [];
+      },
       /** Number of position entries currently loaded (test use only). */
       getLoadedPositionCount: () => allPositionEntries.length,
       /** Number of telemetry entries currently loaded (test use only). */

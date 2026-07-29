@@ -39,7 +39,7 @@ function recordingFetch() {
   return { fn, calls };
 }
 
-test('coldLoadUrls includes all seven collections with chat enabled', () => {
+test('coldLoadUrls includes all eight collections with chat enabled', () => {
   const urls = coldLoadUrls({ chatEnabled: true });
   assert.deepEqual(urls, {
     nodes: '/api/nodes?limit=1000',
@@ -49,6 +49,8 @@ test('coldLoadUrls includes all seven collections with chat enabled', () => {
     traces: '/api/traces?limit=200',
     messages: '/api/messages?limit=1000',
     encryptedMessages: '/api/messages?limit=1000&encrypted=true',
+    // Waypoints ride the same message-grade privacy gate (SPEC W3/W8).
+    waypoints: '/api/waypoints?limit=1000',
   });
 });
 
@@ -64,9 +66,9 @@ test('coldLoadUrls defaults to chat enabled', () => {
 test('startBootPrefetch fires every cold URL with high priority and returns the map', () => {
   const { fn, calls } = recordingFetch();
   const boot = startBootPrefetch({ storage: null, fetchFn: fn, chatEnabled: true });
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
   assert.ok(calls.every(c => c.init && c.init.priority === 'high'));
-  assert.deepEqual(Object.keys(boot).sort(), ['encryptedMessages', 'neighbors', 'nodes', 'positions', 'telemetry', 'traces'].concat('messages').sort());
+  assert.deepEqual(Object.keys(boot).sort(), ['encryptedMessages', 'neighbors', 'nodes', 'positions', 'telemetry', 'traces', 'waypoints'].concat('messages').sort());
 });
 
 test('startBootPrefetch skips entirely on a warm load (cache-present marker)', () => {
@@ -121,7 +123,7 @@ test('runBootPrefetch defaults to chat enabled when the boot tag is absent', () 
   const doc = { querySelector: () => null };
   const win = { localStorage: null, fetch: fn };
   runBootPrefetch(doc, win);
-  assert.equal(calls.length, 7, 'no tag: prefetch messages too');
+  assert.equal(calls.length, 8, 'no tag: prefetch messages + waypoints too');
 });
 
 test('runBootPrefetch stashes nothing when prefetch is skipped', () => {
@@ -138,7 +140,7 @@ test('maybeBootstrap runs the prefetch only when the boot tag is present', () =>
   const win = { localStorage: null, fetch: fn };
   const boot = maybeBootstrap(docWithTag, win);
   assert.ok(boot, 'runs when the tag is present');
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
   assert.equal(win[BOOT_GLOBAL], boot);
 });
 
@@ -158,7 +160,7 @@ test('startBootPrefetch treats a present-but-unset store as a cold load', () => 
   const { fn, calls } = recordingFetch();
   const boot = startBootPrefetch({ storage: { getItem: () => null }, fetchFn: fn, chatEnabled: true });
   assert.ok(boot);
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
 });
 
 test('runBootPrefetch sources localStorage and fetch from the window', () => {
@@ -166,7 +168,7 @@ test('runBootPrefetch sources localStorage and fetch from the window', () => {
   const doc = { querySelector: () => null };
   const win = { localStorage: { getItem: () => null }, fetch: fn };
   runBootPrefetch(doc, win);
-  assert.equal(calls.length, 7, 'present-but-empty window storage is a cold load');
+  assert.equal(calls.length, 8, 'present-but-empty window storage is a cold load');
 });
 
 test('runBootPrefetch defaults document and window to the globals', () => {
@@ -179,7 +181,7 @@ test('runBootPrefetch defaults document and window to the globals', () => {
   try {
     const boot = runBootPrefetch(); // no args → exercises the doc=document / win=window defaults
     assert.ok(boot);
-    assert.equal(calls.length, 7);
+    assert.equal(calls.length, 8);
   } finally {
     if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
     if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;
@@ -203,7 +205,7 @@ test('maybeBootstrap defaults to the global document/window when called with no 
   try {
     const boot = maybeBootstrap();
     assert.ok(boot, 'uses the global document/window defaults');
-    assert.equal(calls.length, 7);
+    assert.equal(calls.length, 8);
   } finally {
     if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
     if (prevWin === undefined) delete globalThis.window; else globalThis.window = prevWin;

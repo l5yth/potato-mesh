@@ -65,6 +65,10 @@ export function coldLoadUrls({ chatEnabled = true } = {}) {
   if (chatEnabled) {
     urls.messages = `/api/messages?limit=${MESSAGE_LIMIT}`;
     urls.encryptedMessages = `/api/messages?limit=${MESSAGE_LIMIT}&encrypted=true`;
+    // Waypoints share the message-grade privacy gate (SPEC W3): the server
+    // marks data-pm-chat="false" exactly in private mode, where
+    // /api/waypoints 404s too — so the chat flag doubles as the waypoint gate.
+    urls.waypoints = `/api/waypoints?limit=${NODE_LIMIT}`;
   }
   return urls;
 }

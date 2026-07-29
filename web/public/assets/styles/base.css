@@ -734,6 +734,16 @@ th {
   font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
+/* Waypoint detail-card kind chip (SPEC W6, design 1d-A): a muted pill next to
+   the "wpt <id>" line marking the overlay as a waypoint, not a node. */
+.waypoint-kind-chip {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted, #9aa7b4);
+}
+
 .row {
   display: flex;
   gap: var(--pad);

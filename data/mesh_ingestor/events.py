@@ -104,6 +104,44 @@ class PositionEvent(_PositionEventRequired, total=False):
     modem_preset: str
 
 
+class _WaypointEventRequired(TypedDict):
+    """Required fields shared by all :class:`WaypointEvent` payloads."""
+
+    id: int
+    rx_time: int
+    rx_iso: str
+
+
+class WaypointEvent(_WaypointEventRequired, total=False):
+    """Payload for the ``/api/waypoints`` ingest route (SPEC W1/W2).
+
+    Maps to the ``POST /api/waypoints`` contract described in
+    ``CONTRACTS.md``. ``id`` is the sender-assigned waypoint id (not a packet
+    id); rows upsert on it per protocol. ``expire`` is omitted for
+    never-expiring waypoints, and ``locked_to`` carries the canonical
+    ``!%08x`` id of the locking node or is omitted when unlocked.
+    """
+
+    node_id: str
+    node_num: int | None
+    from_id: str | None
+    name: str | None
+    description: str | None
+    icon: int | None
+    latitude: float | None
+    longitude: float | None
+    expire: int | None
+    locked_to: str | None
+    snr: float | None
+    rssi: int | None
+    hop_limit: int | None
+    payload_b64: str | None
+    ingestor: str | None
+    lora_freq: int
+    modem_preset: str
+    protocol: str
+
+
 class _TelemetryEventRequired(TypedDict):
     """Required fields shared by all :class:`TelemetryEvent` payloads."""
 
@@ -239,4 +277,5 @@ __all__ = [
     "PositionEvent",
     "TelemetryEvent",
     "TraceEvent",
+    "WaypointEvent",
 ]

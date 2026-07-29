@@ -38,13 +38,21 @@ module PotatoMesh
     # subscriber). This bounds memory and the emitted event rate without a
     # background thread (+PS4+), and keeps the unit tests deterministic.
     #
-    # Privacy: {publish} drops +"messages"+ events when +private_mode+ is true,
-    # mirroring the +/api/messages+ 404 in private mode (+PS6+, Invariant II).
+    # Privacy: {publish} drops +"messages"+ and +"waypoints"+ events when
+    # +private_mode+ is true, mirroring their read-API 404s in private mode
+    # (+PS6+ and SPEC W3 — waypoints are gated at message grade because they
+    # carry user-authored text; Invariant II).
     module PubSub
       # Collections that may be published. Mirrors the dashboard ingest routes
       # whose writes drive a re-fetch; an unknown collection is ignored by
-      # {publish} so a future caller typo can never crash ingest.
-      COLLECTIONS = %w[nodes messages positions telemetry neighbors traces].freeze
+      # {publish} so a future caller typo can never crash ingest. +waypoints+
+      # joined as the seventh collection (SPEC W8).
+      COLLECTIONS = %w[nodes messages positions telemetry neighbors traces waypoints].freeze
+
+      # Collections whose events are suppressed entirely in private mode:
+      # their read surfaces 404 under +PRIVATE=1+, so emitting a change ping
+      # would leak activity the API hides (+PS6+, SPEC W3, Invariant II).
+      PRIVATE_SUPPRESSED_COLLECTIONS = %w[messages waypoints].freeze
 
       # Upper bound on concurrently registered subscribers. Each open SSE stream
       # occupies one subscriber **and, under the threaded server, one request
@@ -211,18 +219,20 @@ module PotatoMesh
         # Publish a change event for +collection+ to every subscriber.
         #
         # Unknown collections (outside {COLLECTIONS}) are ignored so a caller
-        # typo cannot break ingest. +"messages"+ events are suppressed when
-        # +private_mode+ is true (+PS6+, Invariant II). The subscriber list is
+        # typo cannot break ingest. {PRIVATE_SUPPRESSED_COLLECTIONS} events
+        # (+"messages"+, +"waypoints"+) are suppressed when +private_mode+ is
+        # true (+PS6+ / SPEC W3, Invariant II). The subscriber list is
         # snapshotted under the registry lock and delivered to outside it, so a
         # slow subscriber never blocks publication or the ingest request.
         #
         # @param collection [String] the changed collection name.
         # @param hint [Integer, nil] optional newest +rx_time+ / +last_heard+.
-        # @param private_mode [Boolean] when true, +"messages"+ is dropped.
+        # @param private_mode [Boolean] when true, privacy-gated collections
+        #   ({PRIVATE_SUPPRESSED_COLLECTIONS}) are dropped.
         # @return [Integer] the number of subscribers the event was delivered to.
         def publish(collection, hint: nil, private_mode: false)
           return 0 unless COLLECTIONS.include?(collection)
-          return 0 if private_mode && collection == "messages"
+          return 0 if private_mode && PRIVATE_SUPPRESSED_COLLECTIONS.include?(collection)
 
           targets = @mutex.synchronize { @subscribers.dup }
           targets.each { |subscriber| subscriber.deliver(collection, hint) }

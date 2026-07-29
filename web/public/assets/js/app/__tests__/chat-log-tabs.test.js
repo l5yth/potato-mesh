@@ -878,3 +878,56 @@ test('buildChatTabModel sorts secondary channels by activity then alpha after al
   assert.equal(model.channels[2].label, 'Gamma', 'second most active secondary second');
   assert.equal(model.channels[3].label, 'Beta', 'least active secondary last');
 });
+
+test('buildChatTabModel emits one waypoint Log entry per in-window broadcast (W7)', () => {
+  const model = buildChatTabModel({
+    waypoints: [
+      { id: 41206, node_id: '!3769b133', rx_time: NOW - 10, name: 'Fresh pin' },
+      { id: 41207, node_id: '!3769b133', rx_time: NOW - WINDOW - 5, name: 'Old pin' },
+      // Expired broadcasts stay in the Log as history (only the map drops them).
+      { id: 41208, node_id: '!3769b133', rx_time: NOW - 20, expire: NOW - 1 },
+      null,
+      'junk',
+    ],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+  });
+  const waypointEntries = model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.WAYPOINT);
+  assert.deepEqual(waypointEntries.map(e => e.waypoint.id), [41208, 41206]);
+  assert.equal(waypointEntries[1].nodeId, '!3769b133');
+});
+
+test('the waypoint description never enters the Log model (W7/LV7, model-level)', () => {
+  const model = buildChatTabModel({
+    waypoints: [{
+      id: 1,
+      node_id: '!3769b133',
+      rx_time: NOW - 10,
+      name: 'Named pin',
+      description: 'SECRET-BODY-NEVER-IN-LOG',
+    }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+  });
+  // The body is stripped at the model seam — exactly as decrypted message
+  // bodies never enter logEntries — so no renderer can ever leak it.
+  assert.doesNotMatch(JSON.stringify(model.logEntries), /SECRET-BODY-NEVER-IN-LOG/);
+  const entry = model.logEntries.find(e => e.type === CHAT_LOG_ENTRY_TYPES.WAYPOINT);
+  assert.equal(entry.waypoint.name, 'Named pin', 'the name (Log-visible) survives');
+  assert.ok(!('description' in entry.waypoint));
+});
+
+test('a waypoint broadcast claims the heard and suppresses the redundant advert (W7/LV7)', () => {
+  const model = buildChatTabModel({
+    nodes: [{ node_id: '!3769b133', last_heard: NOW - 10, first_heard: NOW - WINDOW * 10 }],
+    waypoints: [{ id: 1, node_id: '!3769b133', rx_time: NOW - 10, name: 'Claiming pin' }],
+    nowSeconds: NOW,
+    windowSeconds: WINDOW,
+  });
+  const infoEntries = model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.NODE_INFO);
+  assert.equal(infoEntries.length, 0, 'the waypoint claims the heard — no advert line');
+  assert.equal(
+    model.logEntries.filter(e => e.type === CHAT_LOG_ENTRY_TYPES.WAYPOINT).length,
+    1,
+  );
+});

@@ -87,6 +87,7 @@ export const CHAT_LOG_ENTRY_TYPES = Object.freeze({
   POSITION: 'position',
   NEIGHBOR: 'neighbor',
   TRACE: 'trace',
+  WAYPOINT: 'waypoint',
   MESSAGE: 'message',
   MESSAGE_ENCRYPTED: 'message-encrypted'
 });
@@ -137,6 +138,7 @@ function resolveSnapshotList(entry) {
  *   positions?: Array<Object>,
  *   neighbors?: Array<Object>,
  *   traces?: Array<Object>,
+ *   waypoints?: Array<Object>,
  *   messages?: Array<Object>,
  *   logOnlyMessages?: Array<Object>,
  *   nowSeconds: number,
@@ -162,6 +164,7 @@ export function buildChatTabModel({
   positions = [],
   neighbors = [],
   traces = [],
+  waypoints = [],
   messages = [],
   logOnlyMessages = [],
   nowSeconds,
@@ -264,6 +267,23 @@ export function buildChatTabModel({
       logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.NEIGHBOR, neighbor: snapshot, nodeId, nodeNum, neighborId });
       claimHeard(ts, nodeId);
     }
+  }
+
+  // A waypoint broadcast yields one Log entry (SPEC W7, amending LV7). The
+  // Log keeps the broadcast *history*, so expired waypoints still appear here
+  // (only the map layer drops them, W5/W6). The user-authored description is
+  // stripped from the model entry itself — exactly as decrypted message
+  // bodies never enter the Log model — so the body cannot reach the Log even
+  // through a future renderer change (LV7's principle, enforced at the seam).
+  for (const waypoint of waypoints || []) {
+    if (!waypoint || typeof waypoint !== 'object') continue;
+    const ts = resolveTimestampSeconds(waypoint.rx_time ?? waypoint.rxTime, waypoint.rx_iso ?? waypoint.rxIso);
+    if (ts == null || ts < cutoff) continue;
+    const nodeId = normaliseNodeId(waypoint);
+    const nodeNum = normaliseNodeNum(waypoint);
+    const { description: _body, ...loggedWaypoint } = waypoint;
+    logEntries.push({ ts, type: CHAT_LOG_ENTRY_TYPES.WAYPOINT, waypoint: loggedWaypoint, nodeId, nodeNum });
+    claimHeard(ts, nodeId);
   }
 
   for (const trace of traces || []) {

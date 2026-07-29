@@ -57,6 +57,7 @@ export const CACHE_COLLECTIONS = Object.freeze([
   'telemetry',
   'neighbors',
   'traces',
+  'waypoints',
 ]);
 
 /** Backend store name holding the schema/identity marker. */

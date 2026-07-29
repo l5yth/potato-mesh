@@ -40,6 +40,7 @@ from .position import store_position_packet
 from .radio import _apply_radio_metadata, _apply_radio_metadata_to_nodes
 from .telemetry import store_router_heartbeat_packet, store_telemetry_packet
 from .position import store_traceroute_packet
+from .waypoint import store_waypoint_packet
 
 
 def _portnum_candidates(name: str) -> set[int]:
@@ -367,6 +368,20 @@ def store_packet_dict(packet: Mapping) -> None:
 
     if portnum in {"4", "POSITION_APP"}:
         store_position_packet(packet, decoded)
+        return
+
+    # Waypoints (community POIs, SPEC W1) were previously unhandled and fell
+    # through to the message/ignored paths. Route by portnum (string or int)
+    # or by the presence of a decoded ``waypoint`` section, mirroring the
+    # traceroute dispatch above.
+    waypoint_section = decoded.get("waypoint") if isinstance(decoded, Mapping) else None
+    waypoint_port_ints = _portnum_candidates("WAYPOINT_APP")
+    if (
+        portnum == "WAYPOINT_APP"
+        or (portnum_int is not None and portnum_int in waypoint_port_ints)
+        or isinstance(waypoint_section, Mapping)
+    ):
+        store_waypoint_packet(packet, decoded)
         return
 
     neighborinfo_section = (

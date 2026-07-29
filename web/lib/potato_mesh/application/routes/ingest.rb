@@ -464,6 +464,39 @@ module PotatoMesh
             db&.close
           end
 
+          app.post "/api/waypoints" do
+            require_token!
+            content_type :json
+            begin
+              data = JSON.parse(read_json_body)
+            rescue JSON::ParserError
+              halt 400, { error: "invalid JSON" }.to_json
+            end
+            unless data.is_a?(Array) || data.is_a?(Hash)
+              halt 400, { error: "invalid payload" }.to_json
+            end
+            waypoint_payloads = data.is_a?(Array) ? data : [data]
+            halt 400, { error: "too many waypoints" }.to_json if waypoint_payloads.size > 1000
+            db = open_database
+            protocol_cache = {}
+            waypoint_payloads.each do |packet|
+              insert_waypoint(db, packet, protocol_cache: protocol_cache)
+            end
+            # Waypoints join neighbors/traces on the silent side of the VF3
+            # flash boundary (SPEC W8): only their own collection is published —
+            # no "nodes" companion event — so a waypoint ingest never flashes
+            # the author node. The waypoints event itself is suppressed under
+            # PRIVATE by PubSub (SPEC W3, message-grade privacy). Stats are
+            # invalidated because waypoints count into the telemetry umbrella
+            # (SPEC W9).
+            PotatoMesh::App::ApiCache.invalidate_prefix("api:waypoints:", "api:stats:")
+            PotatoMesh::App::PubSub.publish("waypoints", private_mode: private_mode?)
+            status 201
+            { status: "ok" }.to_json
+          ensure
+            db&.close
+          end
+
           app.post "/api/traces" do
             require_token!
             content_type :json

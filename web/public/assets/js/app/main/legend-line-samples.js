@@ -48,3 +48,19 @@ export function legendLineSampleSvg(kind) {
     '</svg>'
   );
 }
+
+/**
+ * Build the miniature waypoint-chip sample decorating the Waypoints layer
+ * toggle (design 1e-A): a 12 px scale model of the on-map dark glyph chip, so
+ * the key and the control are one element — mirroring the line samples above.
+ *
+ * @returns {string} Decorative inline-styled chip markup (aria-hidden).
+ */
+export function legendWaypointSampleHtml() {
+  return (
+    '<span class="legend-waypoint-sample" aria-hidden="true" ' +
+    'style="display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; ' +
+    'flex:0 0 auto; width:12px; height:12px; border:1px solid rgba(230,235,240,0.55); ' +
+    'border-radius:3px; background:#1c1c1c; font-size:7px; line-height:1">✈</span>'
+  );
+}

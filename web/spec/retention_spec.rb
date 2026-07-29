@@ -208,6 +208,36 @@ RSpec.describe PotatoMesh::App::Retention do
       expect(removed["ingestors"]).to eq(1)
     end
 
+    it "prunes waypoint rows past the retention window (W5 uses the existing machinery)" do
+      fresh = now - 100
+      stale = now - PotatoMesh::Config.year_seconds - 86_400
+
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      begin
+        db.execute(
+          "INSERT INTO waypoints(id, rx_time, rx_iso, node_id, name) VALUES (?,?,?,?,?)",
+          [1, fresh, Time.at(fresh).utc.iso8601, "!fffff001", "Fresh pin"],
+        )
+        db.execute(
+          "INSERT INTO waypoints(id, rx_time, rx_iso, node_id, name) VALUES (?,?,?,?,?)",
+          [2, stale, Time.at(stale).utc.iso8601, "!aaaaa001", "Stale pin"],
+        )
+      ensure
+        db&.close
+      end
+
+      removed = harness_class.purge_old_data!(now: now)
+      expect(removed["waypoints"]).to eq(1)
+
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path, readonly: true)
+      begin
+        remaining = db.execute("SELECT id FROM waypoints").flatten
+        expect(remaining).to eq([1])
+      ensure
+        db&.close
+      end
+    end
+
     it "prunes ingestor_activity rows past the retention window" do
       fresh = now - 100
       stale = now - PotatoMesh::Config.year_seconds - 86_400
