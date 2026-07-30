@@ -60,6 +60,16 @@
   <link rel="icon" type="image/png" sizes="256x256" href="/favicon.png" />
   <link rel="icon" type="image/svg+xml" sizes="any" href="/potatomesh-logo.svg" />
   <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+  <%# Warm the cross-origin connections on the LCP critical path so their DNS/TLS
+      handshakes overlap parsing instead of gating the map's first paint: the
+      Leaflet CDN (unpkg — render-blocking CSS + the JS that must run before any
+      tile is requested) and both always-on tile hosts — the CARTO Voyager base
+      layer (painted first) and the HOT overlay that fades in over it (the LCP
+      element is a map tile). `crossorigin` matches the tiles' anonymous CORS and
+      Leaflet's crossorigin attribute so the warmed sockets are actually reused. %>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin />
+  <link rel="preconnect" href="https://a.tile.openstreetmap.fr" crossorigin />
   <% if (defined?(current_view_mode) ? current_view_mode : nil).to_s == "dashboard" %>
   <% # Escape characters that could prematurely close the <script> element
      # (or be misinterpreted as HTML) when meta_name/canonical_base/

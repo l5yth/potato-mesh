@@ -1404,6 +1404,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/favicon.ico"
       expect(last_response).to be_ok
       expect(last_response.headers["Content-Type"]).to eq("image/vnd.microsoft.icon")
+      # Static-served straight off public/ (no Cache-Control); the
+      # AssetCacheControl middleware stamps a bounded one so it is not
+      # revalidated on every page load.
+      expect(last_response.headers["Cache-Control"]).to eq(PotatoMesh::App::AssetCacheControl::ICON_CACHE_CONTROL)
     end
 
     it "falls back to the SVG logo when the favicon is missing" do
@@ -1423,6 +1427,10 @@ RSpec.describe "Potato Mesh Sinatra app" do
       get "/potatomesh-logo.svg"
       expect(last_response).to be_ok
       expect(last_response.headers["Content-Type"]).to eq("image/svg+xml")
+      # The logo is the site icon on every page and is static-served off public/
+      # (no Cache-Control); the middleware stamps a bounded one so it is cached
+      # rather than revalidated each load.
+      expect(last_response.headers["Cache-Control"]).to eq(PotatoMesh::App::AssetCacheControl::ICON_CACHE_CONTROL)
     end
 
     it "returns 404 when the asset is missing" do
@@ -1511,6 +1519,17 @@ RSpec.describe "Potato Mesh Sinatra app" do
       leaflet_tag = last_response.body[%r{<script[^>]*leaflet[^>]*>}i]
       expect(leaflet_tag).not_to be_nil
       expect(leaflet_tag).to include("defer")
+    end
+
+    it "preconnects to the Leaflet and both tile-CDN origins (LCP critical path)" do
+      # The LCP element is a map tile requested only after Leaflet loads + inits;
+      # warming the Leaflet CDN plus both always-on tile hosts (CARTO base +
+      # HOT overlay) early trims that resource-load delay.
+      get "/"
+
+      expect(last_response.body).to include(%(<link rel="preconnect" href="https://unpkg.com" crossorigin />))
+      expect(last_response.body).to include(%(<link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin />))
+      expect(last_response.body).to include(%(<link rel="preconnect" href="https://a.tile.openstreetmap.fr" crossorigin />))
     end
 
     it "does not render the Refresh button or last-updated field" do

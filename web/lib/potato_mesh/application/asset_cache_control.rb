@@ -59,6 +59,23 @@ module PotatoMesh
       # Extensions eligible for long caching — JS + CSS only (SPEC AV4).
       CACHEABLE_EXTENSIONS = %w[.js .mjs .css].freeze
 
+      # Unversioned site icons served from the app root (favicon + logo). They
+      # bypass the +/assets/**+ pipeline entirely — Sinatra's static-file handler
+      # serves them straight off +public/+ (and the fallback routes use
+      # +send_file+), neither of which sets a +Cache-Control+, so the browser
+      # revalidates them on every page load. They carry no +?v=+ buster, so a
+      # bounded lifetime (not +immutable+) is used: a changed icon self-heals
+      # within the window rather than being pinned.
+      ICON_PATHS = %w[/potatomesh-logo.svg /favicon.ico /favicon.png].freeze
+
+      # Bounded lifetime (seconds) for the unversioned site icons — one day, long
+      # enough to spare the per-navigation revalidation, short enough that a
+      # cosmetic icon change recovers on its own.
+      ICON_MAX_AGE_SECONDS = 86_400
+
+      # Header for the unversioned site icons (bounded/revalidatable).
+      ICON_CACHE_CONTROL = "public, max-age=#{ICON_MAX_AGE_SECONDS}"
+
       # @param app [#call] the downstream Rack application.
       # @param immutable [Boolean] when true the running version is unique per
       #   build (git-derived), so versioned assets may be pinned +immutable+; when
@@ -68,22 +85,38 @@ module PotatoMesh
         @cache_control = immutable ? IMMUTABLE_CACHE_CONTROL : REVALIDATABLE_CACHE_CONTROL
       end
 
-      # Rack entry point: delegate downstream, then add the immutable header when
-      # the request is a versioned static asset that does not already carry a
-      # +Cache-Control+.
+      # Rack entry point: delegate downstream, then stamp a +Cache-Control+ when
+      # the request is a cacheable target (a versioned +/assets/**+ JS/CSS file, or
+      # an unversioned site icon) whose successful response does not already carry
+      # one.
       #
       # @param env [Hash] the Rack environment.
       # @return [Array(Integer, Hash, #each)] the (possibly header-augmented) Rack
       #   response triple.
       def call(env)
         status, headers, body = @app.call(env)
-        if versioned_asset_request?(env) && cacheable_status?(status) && cache_control_absent?(headers)
-          headers["cache-control"] = @cache_control
+        cache_control = cache_control_for(env)
+        if cache_control && cacheable_status?(status) && cache_control_absent?(headers)
+          headers["cache-control"] = cache_control
         end
         [status, headers, body]
       end
 
       private
+
+      # The +Cache-Control+ value this request's target should carry, or +nil+
+      # when it is neither a versioned asset nor a site icon. Resolved from the
+      # cheap request/path checks first so the header scan in {call} runs only when
+      # a value would actually apply.
+      #
+      # @param env [Hash] the Rack environment.
+      # @return [String, nil]
+      def cache_control_for(env)
+        return @cache_control if versioned_asset_request?(env)
+        return ICON_CACHE_CONTROL if icon_request?(env)
+
+        nil
+      end
 
       # True when the request is a readable (+GET+/+HEAD+) hit for a versioned
       # (+?v=+) +/assets/**+ **JS or CSS** file. Non-JS/CSS types (images,
@@ -101,6 +134,18 @@ module PotatoMesh
 
         version = Rack::Utils.parse_query(env["QUERY_STRING"].to_s)["v"]
         version.is_a?(String) && !version.empty?
+      end
+
+      # True when the request is a readable (+GET+/+HEAD+) hit for one of the
+      # unversioned site icons ({ICON_PATHS}). These are served outside the
+      # +/assets/**+ pipeline, so nothing else stamps a +Cache-Control+.
+      #
+      # @param env [Hash] the Rack environment.
+      # @return [Boolean]
+      def icon_request?(env)
+        return false unless %w[GET HEAD].include?(env["REQUEST_METHOD"])
+
+        ICON_PATHS.include?(env["PATH_INFO"].to_s)
       end
 
       # Only successful asset responses are cached immutably; an error/redirect
