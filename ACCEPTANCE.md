@@ -4894,3 +4894,61 @@ re-roll: the added `nodes` publish mirrors the established positions/messages
 pattern, so VF-A2's SSE-ping gating and LV-A2's stacked timers must keep
 passing); and **B1–B5** (all suites, coverage floor, API docs, exact Apache
 headers, formatters).
+
+---
+
+## Perf: LCP critical-path refinements (DevTools trace)
+
+Three independent refinements from a Chrome DevTools LCP/Insights trace of the
+dashboard (LCP element = a map tile, ~269 ms). None changes an API/event
+contract; all are presentation/delivery-layer only.
+
+### LR-A1 — Unversioned site icons carry a bounded Cache-Control
+```bash
+( cd web && bundle exec rspec spec/asset_cache_control_spec.rb )
+( cd web && bundle exec rspec spec/app_spec.rb -e "GET /potatomesh-logo.svg" -e "GET /favicon.ico" )
+```
+**Expected:** all pass. The site icons (`/potatomesh-logo.svg`, `/favicon.ico`,
+`/favicon.png`) are served straight off `public/` by Sinatra's static handler,
+which sets **no** `Cache-Control` (DevTools flagged the logo at a 0 ms TTL — a
+revalidation every page load). `PotatoMesh::App::AssetCacheControl` now stamps a
+bounded, revalidatable `public, max-age=86400` (`ICON_CACHE_CONTROL`) on those
+paths when the response carries no `Cache-Control` — **not** `immutable` (they
+have no `?v=` buster, so a changed icon self-heals within a day). An existing
+`Cache-Control` (e.g. the favicon fallback route's own, or one nginx set) is
+never overwritten, and the `/assets/**` versioned-JS/CSS logic (**CA-A1**) is
+untouched.
+
+### LR-A2 — LCP-critical cross-origin origins are preconnected
+```bash
+( cd web && bundle exec rspec spec/app_spec.rb -e "preconnects to the Leaflet" )
+```
+**Expected:** pass. The layout `<head>` emits `<link rel="preconnect">` for
+`https://unpkg.com` (Leaflet CDN — render-blocking CSS + the JS that must run
+before any tile is requested) and **both** always-on tile hosts —
+`https://a.basemaps.cartocdn.com` (the CARTO Voyager base layer, painted first)
+and `https://a.tile.openstreetmap.fr` (the HOT overlay that fades in over it; the
+LCP element is a map tile) — all `crossorigin` to match the tiles' anonymous CORS
+and Leaflet's `crossorigin`, so the warmed sockets are reused. Three hints, within
+the ≤4 preconnect budget. This overlaps the DNS/TLS handshakes with parsing
+instead of gating the tiles' resource-load delay.
+
+### LR-A3 — The chat-tabs re-render does one arrow-visibility reflow, not several
+```bash
+( cd web && node --test public/assets/js/app/__tests__/chat-tabs.test.js )
+```
+**Expected:** pass (behaviour unchanged). `renderChatTabs` no longer reads the
+tab-list geometry (`updateArrows`) right after the subtree rebuild — that layout
+was thrown away when `setActiveTab` un-hides the active panel — so a live refresh
+does a **single** arrow-visibility pass after every structural + scroll write,
+collapsing the DevTools-flagged forced-reflow hotspot from multiple synchronous
+reflows to one. Scroll-restore (bugfix B) and arrow visibility are unchanged.
+
+### LR-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && bundle exec rspec ) && ( cd web && npm test )
+```
+**Expected:** all green. **CA-A1**/**CA-A3** (versioned-asset caching), **FP-A1–
+FP-A5** (frontend load perf), the chat-tabs scroll-restore specs, and **B1–B5**
+stay green; the changes only add response headers for icon paths, two `<head>`
+preconnect hints, and reorder one geometry read in `chat-tabs.js`.

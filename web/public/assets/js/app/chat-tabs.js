@@ -304,9 +304,6 @@ export function renderChatTabs({
     }
   });
 
-  // Initial arrow state after the DOM is in place.
-  updateArrows();
-
   const setActiveTab = (newId, { scrollActiveIntoView = false } = {}) => {
     if (!newId) return;
     let matched = false;
@@ -359,8 +356,15 @@ export function renderChatTabs({
   // render, so the restored position is authoritative.
   if (previousScrollLeft > 0 && typeof tabList.scrollLeft === 'number') {
     tabList.scrollLeft = previousScrollLeft;
-    updateArrows();
   }
+
+  // Single arrow-visibility pass, after every structural + scroll write above.
+  // Reading the tab list geometry here — rather than also right after the subtree
+  // rebuild, before setActiveTab un-hides the active panel — collapses a live
+  // refresh from multiple forced synchronous reflows to one: the earlier read's
+  // layout was thrown away by the un-hide anyway (frontend perf: the chat-tabs
+  // `refresh` forced-reflow hotspot).
+  updateArrows();
 
   for (const entry of tabElements) {
     entry.button.addEventListener('click', () => {

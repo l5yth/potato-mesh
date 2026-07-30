@@ -102,4 +102,45 @@ RSpec.describe PotatoMesh::App::AssetCacheControl do
     expect(status).to eq(200)
     expect(body).to eq(["body"])
   end
+
+  # Unversioned site icons (served off public/ with no Cache-Control) get a
+  # bounded, self-healing lifetime — not immutable (they carry no ?v= buster).
+  describe "unversioned site icons" do
+    it "stamps a bounded Cache-Control on each icon path (GET and HEAD)" do
+      %w[/potatomesh-logo.svg /favicon.ico /favicon.png].each do |path|
+        _, get_headers, = call(downstream, env_for(path: path, query: ""))
+        expect(get_headers["cache-control"]).to eq(described_class::ICON_CACHE_CONTROL)
+
+        _, head_headers, = call(downstream, env_for(method: "HEAD", path: path, query: ""))
+        expect(head_headers["cache-control"]).to eq(described_class::ICON_CACHE_CONTROL)
+      end
+    end
+
+    it "is bounded/revalidatable, never immutable (unversioned)" do
+      expect(described_class::ICON_CACHE_CONTROL).to eq("public, max-age=#{described_class::ICON_MAX_AGE_SECONDS}")
+      expect(described_class::ICON_CACHE_CONTROL).not_to include("immutable")
+    end
+
+    it "respects an existing Cache-Control (e.g. the favicon fallback route's own)" do
+      _, headers, = call(downstream(headers: { "Cache-Control" => "public, max-age=604800" }),
+                         env_for(path: "/favicon.ico", query: ""))
+      expect(headers["Cache-Control"]).to eq("public, max-age=604800")
+      expect(headers).not_to have_key("cache-control")
+    end
+
+    it "ignores non-GET/HEAD methods for icons" do
+      _, headers, = call(downstream, env_for(method: "POST", path: "/potatomesh-logo.svg", query: ""))
+      expect(headers).not_to have_key("cache-control")
+    end
+
+    it "only stamps icons on a successful (200) response" do
+      _, headers, = call(downstream(status: 404), env_for(path: "/potatomesh-logo.svg", query: ""))
+      expect(headers).not_to have_key("cache-control")
+    end
+
+    it "does not treat an arbitrary root SVG as a cacheable icon" do
+      _, headers, = call(downstream, env_for(path: "/other-logo.svg", query: ""))
+      expect(headers).not_to have_key("cache-control")
+    end
+  end
 end
