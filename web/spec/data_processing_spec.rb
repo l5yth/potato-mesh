@@ -1291,7 +1291,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION", "synthetic" => true },
       }, protocol: "meshcore")
       row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!synth111'").first
-      expect(row[0]).to eq(1)
+      expect(row.values.first).to eq(1)
       db.close
     end
 
@@ -1303,7 +1303,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION", "synthetic" => false },
       }, protocol: "meshcore")
       row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!real1111'").first
-      expect(row[0]).to eq(0)
+      expect(row.values.first).to eq(0)
       db.close
     end
 
@@ -1320,7 +1320,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Alice", "shortName" => "  A ", "role" => "COMPANION", "synthetic" => true },
       }, protocol: "meshcore")
       row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!aabbccdd'").first
-      expect(row[0]).to eq(0)
+      expect(row.values.first).to eq(0)
       db.close
     end
 
@@ -1336,7 +1336,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Bob", "shortName" => " B ", "role" => "COMPANION", "synthetic" => false },
       }, protocol: "meshcore")
       row = db.execute("SELECT synthetic FROM nodes WHERE node_id = '!synth222'").first
-      expect(row[0]).to eq(0)
+      expect(row.values.first).to eq(0)
       db.close
     end
 
@@ -1356,7 +1356,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Carol", "shortName" => "  C ", "role" => "COMPANION", "publicKey" => "cc" * 32 },
       }, protocol: "meshcore")
       # Message should now point to the real node.
-      msg_from = db.execute("SELECT from_id FROM messages WHERE id = 42").first[0]
+      msg_from = db.get_first_value("SELECT from_id FROM messages WHERE id = 42")
       expect(msg_from).to eq(real_id)
       # Synthetic node should be gone.
       synth_row = db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first
@@ -1411,7 +1411,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Eve", "shortName" => "  E ", "role" => "COMPANION", "publicKey" => "ee" * 32 },
       }, protocol: "meshcore")
       # Both messages should now reference the real node.
-      from_ids = db.execute("SELECT from_id FROM messages WHERE id IN (51,52) ORDER BY id").map { |r| r[0] }
+      from_ids = db.execute("SELECT from_id FROM messages WHERE id IN (51,52) ORDER BY id").map { |r| r.values.first }
       expect(from_ids).to all(eq(real_id))
       # Both synthetic nodes gone.
       remaining = db.execute("SELECT node_id FROM nodes WHERE node_id IN (?,?)", [synth_a, synth_b]).flatten
@@ -1447,7 +1447,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # Real node still there.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_id]).first).not_to be_nil
       # Pre-existing message redirected.
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 71").first[0]).to eq(real_id)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 71")).to eq(real_id)
       db.close
     end
 
@@ -1461,7 +1461,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       }, protocol: "meshcore")
       row = db.execute("SELECT synthetic FROM nodes WHERE node_id = ?", [synth_id]).first
       expect(row).not_to be_nil
-      expect(row[0]).to eq(1)
+      expect(row.values.first).to eq(1)
       db.close
     end
 
@@ -1516,7 +1516,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # operator can resolve the ambiguity manually.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
       # Message untouched.
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 91").first[0]).to eq(synth_id)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 91")).to eq(synth_id)
       # Both real rows still present.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_a]).first).not_to be_nil
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [real_b]).first).not_to be_nil
@@ -1552,7 +1552,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
         "user" => { "longName" => "Liam", "shortName" => "L", "role" => "COMPANION", "publicKey" => "dd" * 32 },
       }, protocol: "meshcore")
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 92").first[0]).to eq(synth_id)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 92")).to eq(synth_id)
     ensure
       db&.close
     end
@@ -1653,9 +1653,34 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # meshtastic synthetic node must be untouched.
       synth_row = db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first
       expect(synth_row).not_to be_nil
-      msg_from = db.execute("SELECT from_id FROM messages WHERE id = 61").first[0]
+      msg_from = db.get_first_value("SELECT from_id FROM messages WHERE id = 61")
       expect(msg_from).to eq(synth_id)
       db.close
+    end
+
+    it "migrates via positional row reads on an array-row DB handle (production mode)" do
+      # Production write handles are array-row (results_as_hash = false), so the
+      # synthetic-id read maps rows by positional index — exercise that non-Hash arm.
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      real_id = "!realARR1"
+      synth_id = "!synthAR1"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_id, "Peggy", "meshcore", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Peggy", "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [84, now, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      dp.merge_synthetic_nodes(db, real_id, "Peggy")
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 84")).to eq(real_id)
+    ensure
+      db&.close
     end
 
     # Regression: a chat-derived synthetic carries the most recent time the node
@@ -1716,7 +1741,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       dp.merge_synthetic_nodes(db, fresh_real, name)
 
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 91").first[0]).to eq(fresh_real)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 91")).to eq(fresh_real)
       # The stale real row itself is left alone: retention stays the only
       # data-expiry authority.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [stale_real]).first).not_to be_nil
@@ -1762,7 +1787,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       }, protocol: "meshcore")
 
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 93").first[0]).to eq(live)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 93")).to eq(live)
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [retired]).first).not_to be_nil
     ensure
       db&.close
@@ -1861,7 +1886,33 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       )
       dp.merge_into_real_node(db, synth_id, "Niaj")
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 81").first[0]).to eq(real_id)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 81")).to eq(real_id)
+    ensure
+      db&.close
+    end
+
+    it "merges via positional row reads on an array-row DB handle (production mode)" do
+      # Production opens write handles with the default results_as_hash = false
+      # (array rows — see Database#open_database), so exercise the non-Hash arm of
+      # the node_id read that a chat-derived synthetic upsert takes in prod.
+      db = SQLite3::Database.new(PotatoMesh::Config.db_path)
+      real_id = "!realARR0"
+      synth_id = "!synthAR0"
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [real_id, "Olivia", "meshcore", 0, now - 100, now - 100],
+      )
+      db.execute(
+        "INSERT INTO nodes(node_id,long_name,protocol,synthetic,last_heard,first_heard) VALUES (?,?,?,?,?,?)",
+        [synth_id, "Olivia", "meshcore", 1, now, now],
+      )
+      db.execute(
+        "INSERT INTO messages(id,rx_time,rx_iso,from_id,to_id,protocol) VALUES (?,?,?,?,?,?)",
+        [83, now, "2025-01-01T00:00:00Z", synth_id, "^all", "meshcore"],
+      )
+      dp.merge_into_real_node(db, synth_id, "Olivia")
+      expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 83")).to eq(real_id)
     ensure
       db&.close
     end
@@ -1911,7 +1962,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       # Neither real should take the synthetic's messages because we cannot
       # tell which Paul actually sent the chat.
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).not_to be_nil
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 82").first[0]).to eq(synth_id)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 82")).to eq(synth_id)
     ensure
       db&.close
     end
@@ -1987,7 +2038,7 @@ RSpec.describe PotatoMesh::App::DataProcessing do
       dp.merge_into_real_node(db, synth_id, "Ronda")
 
       expect(db.execute("SELECT node_id FROM nodes WHERE node_id = ?", [synth_id]).first).to be_nil
-      expect(db.execute("SELECT from_id FROM messages WHERE id = 92").first[0]).to eq(fresh_real)
+      expect(db.get_first_value("SELECT from_id FROM messages WHERE id = 92")).to eq(fresh_real)
     ensure
       db&.close
     end

@@ -475,7 +475,7 @@ module PotatoMesh
         synthetic_ids = db.execute(
           "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 1 AND protocol = 'meshcore' AND node_id != ?",
           [long_name, real_node_id],
-        ).map { |row| row[0] }
+        ).map { |row| row.is_a?(Hash) ? row["node_id"] : row[0] }
 
         synthetic_ids.each do |synthetic_id|
           db.execute(
@@ -505,8 +505,10 @@ module PotatoMesh
       # @param long_name [String] long name to match against existing real rows.
       # @return [void]
       def merge_into_real_node(db, synthetic_node_id, long_name)
-        # Index by [0] rather than the hash key so this works whether the db
-        # handle was opened with results_as_hash = true or not.
+        # Read the single node_id column shape-robustly (see the +row.is_a?(Hash)+
+        # guard below): a +results_as_hash = true+ handle yields plain Hash rows
+        # with string keys only under sqlite3 2.x, where integer indexing (+row[0]+)
+        # returns nil — sqlite3 1.x uniquely allowed both integer and string keys.
         real_rows = db.execute(
           "SELECT node_id FROM nodes WHERE long_name = ? AND synthetic = 0 AND protocol = 'meshcore' AND node_id != ? LIMIT 2",
           [long_name, synthetic_node_id],
@@ -534,7 +536,7 @@ module PotatoMesh
         row = real_rows.first
         return unless row
 
-        real_node_id = row[0]
+        real_node_id = row.is_a?(Hash) ? row["node_id"] : row[0]
         return unless real_node_id
 
         db.execute(
