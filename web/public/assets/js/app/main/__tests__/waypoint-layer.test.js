@@ -120,6 +120,18 @@ test('waypointIconDefinition builds the 24px teardrop pin (1c-B)', () => {
   assert.match(def.html, /✈/);
 });
 
+test('the whole pin fits inside its icon box so the crown stays clickable (F3)', () => {
+  // A 24px square rotated 45° spans 24*√2 ≈ 33.94px. The box must contain the
+  // full rotated silhouette (34×34, body inset 5px on both axes) so no part of
+  // the visible pin — the crown especially — falls outside the marker's
+  // clickable hit area, and the tail tip stays anchored on the coordinate.
+  assert.deepEqual([...WAYPOINT_ICON_SIZE], [34, 34]);
+  assert.deepEqual([...WAYPOINT_ICON_ANCHOR], [17, 34]);
+  const def = waypointIconDefinition({ icon: 0x2708, expire: 0 }, NOW);
+  assert.match(def.html, /height:34px/); // outer box is square (was 34×30)
+  assert.match(def.html, /left:5px; top:5px/); // body inset both axes (was top:0)
+});
+
 test('waypointIconDefinition escapes a markup-shaped glyph and applies dimming', () => {
   // Codepoint 60 is "<" — it must arrive escaped, never as markup.
   const def = waypointIconDefinition({ icon: 60, expire: NOW + 30 * 60 }, NOW);

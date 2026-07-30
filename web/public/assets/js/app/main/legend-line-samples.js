@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import { FALLBACK_GLYPH } from './waypoint-layer.js';
+
 /**
  * Legend line-style samples (SPEC UX7, audit D-014).
  *
@@ -51,10 +53,11 @@ export function legendLineSampleSvg(kind) {
 
 /**
  * Build the miniature waypoint-pin sample decorating the Waypoints layer
- * toggle (design 1e-A, marker per the 1c-B re-roll): an 11 px scale model of
+ * toggle (design 1e-A, marker per the 1c-B re-roll): a 12 px scale model of
  * the on-map dark **teardrop pin** — three round corners, one sharp tail
- * corner, rotated −45° with the glyph counter-rotated upright — so the key
- * and the control are one element, mirroring the line samples above.
+ * corner, rotated −45° with the glyph (📌, the layer's canonical marker) counter-
+ * rotated upright — so the key and the control are one element, mirroring the
+ * line samples above.
  *
  * @returns {string} Decorative inline-styled pin markup (aria-hidden).
  */
@@ -62,10 +65,10 @@ export function legendWaypointSampleHtml() {
   return (
     '<span class="legend-waypoint-sample" aria-hidden="true" ' +
     'style="display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; ' +
-    'flex:0 0 auto; width:11px; height:11px; margin:0 2px 2px; ' +
+    'flex:0 0 auto; width:12px; height:12px; margin:0 2px 2px; ' +
     'border:1px solid rgba(230,235,240,0.55); border-radius:50% 50% 50% 2px; background:#1c1c1c; ' +
-    'transform:rotate(-45deg); font-size:6px; line-height:1">' +
-    '<span style="display:block; transform:rotate(45deg)">✈</span>' +
+    'transform:rotate(-45deg); font-size:7px; line-height:1">' +
+    `<span style="display:block; transform:rotate(45deg)">${FALLBACK_GLYPH}</span>` +
     '</span>'
   );
 }

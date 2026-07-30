@@ -24,6 +24,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { legendLineSampleSvg, legendWaypointSampleHtml } from '../legend-line-samples.js';
+import { FALLBACK_GLYPH } from '../waypoint-layer.js';
 
 test('neighbor sample is a solid 24px line', () => {
   const svg = legendLineSampleSvg('neighbor');
@@ -56,7 +57,18 @@ test('legendWaypointSampleHtml is a miniature of the on-map teardrop pin (1c-B)'
   assert.match(html, /border-radius:50% 50% 50% 2px/);
   assert.match(html, /rotate\(-45deg\)/);
   assert.match(html, /rotate\(45deg\)/);
-  assert.match(html, /✈/);
+  // F2: the swatch is a 12px box with a 7px glyph (design 1e-A), legible next to
+  // the 12px role dots — not the shipped 11px box / 6px smudge that sat 1px short.
+  assert.match(html, /width:12px/);
+  assert.match(html, /height:12px/);
+  assert.match(html, /font-size:7px/);
+  assert.doesNotMatch(html, /width:11px/);
+  assert.doesNotMatch(html, /height:11px/);
+  assert.doesNotMatch(html, /font-size:6px/);
+  // F2: the swatch carries the layer's canonical marker glyph (📌), imported from
+  // waypoint-layer.js so the key can never drift from the pins' fallback glyph.
+  assert.ok(html.includes(FALLBACK_GLYPH), 'swatch uses the layer canonical glyph');
+  assert.doesNotMatch(html, /✈/);
   // Regression guard: never the old square-chip radius.
   assert.doesNotMatch(html, /border-radius:3px/);
 });

@@ -40,19 +40,26 @@ export const WAYPOINT_MARKER_SIZE = 24;
 
 /**
  * Icon bounding box + anchor for the rotated pin. A 24 px square rotated 45°
- * spans a ~34 px diagonal, and its sharp corner (the tail) lands ~29 px below
- * the box top — the anchor sits on that tip so the pin points exactly at the
- * waypoint's coordinate.
+ * spans a ~33.94 px diagonal, so the box is a **square** that fully contains it
+ * (34×34) with the body inset 5 px on both axes; the sharp corner (the tail)
+ * then lands at the box bottom (~34 px). The anchor sits on that tip so the pin
+ * points exactly at the waypoint's coordinate, and the whole silhouette — crown
+ * included — stays inside the marker's clickable hit area (a 34×30 box left the
+ * crown ~5 px above it, unclickable, since Leaflet does not clip the overflow).
  */
-export const WAYPOINT_ICON_SIZE = Object.freeze([34, 30]);
+export const WAYPOINT_ICON_SIZE = Object.freeze([34, 34]);
 /** Pin-tip anchor within {@link WAYPOINT_ICON_SIZE}. */
-export const WAYPOINT_ICON_ANCHOR = Object.freeze([17, 29]);
+export const WAYPOINT_ICON_ANCHOR = Object.freeze([17, 34]);
 
 /** Markers stack above node markers (whose offset is 0). */
 export const WAYPOINT_Z_INDEX_OFFSET = 500;
 
-/** Fallback glyph when the payload carries no usable icon codepoint. */
-const FALLBACK_GLYPH = '\u{1F4CC}'; // 📌 — the waypoint's Log emoji.
+/**
+ * Canonical fallback marker glyph: used when the payload carries no usable icon
+ * codepoint, and shared with the legend swatch ({@link legendWaypointSampleHtml})
+ * so the key always shows the same glyph the pins fall back to.
+ */
+export const FALLBACK_GLYPH = '\u{1F4CC}'; // 📌 — the waypoint's Log emoji.
 
 /**
  * Resolve the marker glyph from the payload's unicode ``icon`` codepoint.
@@ -146,7 +153,7 @@ export function waypointIconDefinition(waypoint, nowSeconds) {
     className: '',
     html:
       `<span class="waypoint-pin" style="position:relative; display:block; width:${boxWidth}px; height:${boxHeight}px; opacity:${opacity}">` +
-      `<span style="position:absolute; left:${inset}px; top:0; display:flex; align-items:center; justify-content:center; ` +
+      `<span style="position:absolute; left:${inset}px; top:${inset}px; display:flex; align-items:center; justify-content:center; ` +
       `box-sizing:border-box; width:${size}px; height:${size}px; border-radius:50% 50% 50% 2px; background:#1c1c1c; ` +
       'border:1px solid rgba(230,235,240,0.55); box-shadow:0 2px 6px rgba(0,0,0,0.6); ' +
       'transform:rotate(-45deg); transform-origin:center">' +

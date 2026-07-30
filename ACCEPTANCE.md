@@ -4952,3 +4952,56 @@ reflows to one. Scroll-restore (bugfix B) and arrow visibility are unchanged.
 FP-A5** (frontend load perf), the chat-tabs scroll-restore specs, and **B1–B5**
 stay green; the changes only add response headers for icon paths, two `<head>`
 preconnect hints, and reorder one geometry read in `chat-tabs.js`.
+
+---
+
+## Bugfix: Waypoints shipped-review audit (Claude Design turn 2, screen 2a)
+
+Three defects the Claude Design live audit found in the **shipped** waypoints
+feature (`PotatoMesh Waypoints.dc.html`, screen 2a) — the code diverged from the
+confirmed design (**W6**/**W11**). Presentation-layer only; no API/event contract
+changes. (The audit's *open question* — the permanent "Waypoints 0" legend row —
+is deliberately left as-is, consistent with the always-present neighbor/trace
+toggles.)
+
+### WA-A1 — Node-page waypoint list is flush like its sibling sections (F1)
+```bash
+( cd web && node --test public/assets/js/app/__tests__/node-page.test.js )
+( cd web && grep -nE '\.node-detail__waypoint-list\s*\{' public/assets/styles/base.css )
+```
+**Expected:** both pass. `renderWaypointsSection` emits `.node-detail__waypoint-list`
+/ `.node-detail__waypoint`; `base.css` now defines the list with the same reset
+its siblings use (`list-style:none; margin:0; padding:0; display:flex;
+flex-direction:column; gap:6px`), so the section renders **flush** — not with UA
+disc bullets + a 40px indent — on both the node page and the dashboard
+node-detail overlay (shared renderer). Invisible on live instances until the
+first waypoint is served, which is why it shipped.
+
+### WA-A2 — Legend swatch is a legible 12px/7px 📌 (F2)
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/legend-line-samples.test.js )
+```
+**Expected:** pass. `legendWaypointSampleHtml` renders a **12px** box with a **7px**
+glyph (design 1e-A) — legible beside the 12px role dots, not the shipped 11px/6px
+smudge that sat 1px short — and carries the layer's canonical marker glyph **📌**
+(`FALLBACK_GLYPH`), not `✈` (which read as "airfield" and never matched the pins).
+
+### WA-A3 — The whole pin fits its hit box; the crown is clickable (F3)
+```bash
+( cd web && node --test public/assets/js/app/main/__tests__/waypoint-layer.test.js )
+```
+**Expected:** pass. A 24px pin rotated 45° spans ~34px, so `WAYPOINT_ICON_SIZE` is
+**[34, 34]** (was 34×30) with the body inset 5px on both axes (`top:5px`, was
+`top:0`) and `WAYPOINT_ICON_ANCHOR` **[17, 34]** — the full silhouette, crown
+included, sits inside the marker's clickable box while the tail tip stays anchored
+on the coordinate. Fixes clicks near the crown falling outside the hit area
+(Leaflet does not clip, so the pin *looked* fine but part of it was unclickable).
+
+### WA-R1 — Regression: prior acceptance still holds
+```bash
+( cd web && npm test ) && ( cd web && bundle exec rspec )
+```
+**Expected:** all green. **WP-A1–WP-A9** (waypoints feature), the node-page /
+legend / map-layer suites, and **B1–B5** stay green; the changes add one CSS rule,
+resize the legend swatch, and grow the pin's icon box — nothing touches the API,
+storage, SSE, or privacy paths.
