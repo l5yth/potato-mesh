@@ -24,6 +24,12 @@ import {
   __testUtils,
 } from '../node-page.js';
 import { getRoleColor, getRoleKey, translateRoleId } from '../role-helpers.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+// base.css is three levels up from this __tests__ dir (app → js → assets),
+// then styles/ — matching the path basemap-blend.test.js reads.
+const BASE_CSS_PATH = fileURLToPath(new URL('../../../styles/base.css', import.meta.url));
 
 const {
   stringOrNull,
@@ -1616,6 +1622,20 @@ test('renderWaypointsSection lists every card-omitted field per waypoint (W11)',
   assert.match(html, /Expires: in 4d 6h/);
   assert.match(html, /Locked to <span class="short-name">B133<\/span>/);
   assert.match(html, /Heard: <span [^>]*data-ts/);
+});
+
+test('the node-page waypoint list has a flush stylesheet reset (F1)', () => {
+  // renderWaypointsSection emits .node-detail__waypoint-list / .node-detail__waypoint.
+  // Without an explicit reset in base.css the list falls back to UA disc bullets
+  // + a 40px indent while its sibling sections (traces, neighbors, messages) are
+  // flush — the shipped defect. Fires on the node page AND the dashboard
+  // node-detail overlay, which reuses this same renderer.
+  const css = readFileSync(BASE_CSS_PATH, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = css.match(/\.node-detail__waypoint-list\s*\{[^}]*\}/);
+  assert.ok(rule, '.node-detail__waypoint-list must have a rule in base.css');
+  assert.match(rule[0], /list-style:\s*none/);
+  assert.match(rule[0], /padding:\s*0/);
+  assert.match(rule[0], /flex-direction:\s*column/);
 });
 
 test('renderWaypointsSection renders nothing for empty or unusable input', () => {

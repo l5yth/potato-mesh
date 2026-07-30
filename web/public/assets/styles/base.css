@@ -1562,6 +1562,19 @@ body.view-chat .page-shell {
   font-size: 0.95rem;
 }
 
+.node-detail__waypoint-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.node-detail__waypoint {
+  line-height: 1.5;
+}
+
 .node-detail__section h3 {
   margin: 0 0 10px;
   font-size: 1.1rem;
