@@ -150,6 +150,19 @@ only ingestor-initiated RF traffic.  Local companion-link reads (host
 self-telemetry, contact roster, channel queries) are not transmissions and
 continue to work."""
 
+ANNOUNCE = os.environ.get("ANNOUNCE") == "1"
+"""Opt in to the periodic activity announcement (SPEC MA7 a).
+
+The announcement is the ingestor's only *unsolicited* transmission on a shared
+human channel, so it is **off by default**: an operator who deploys an ingestor
+to feed a map does not implicitly agree to also speak on their community's
+default channel, and local conventions on automated traffic differ widely.  Set
+``ANNOUNCE=1`` to enable it.
+
+This is an opt-in on top of :data:`RX_ONLY`, not a replacement for it:
+``RX_ONLY=1`` still forbids *every* ingestor-initiated transmission and wins
+over ``ANNOUNCE=1``."""
+
 MESHCORE_TELEMETRY_POLL_SECONDS = int(
     os.environ.get("MESHCORE_TELEMETRY_POLL_SECONDS", "300").strip() or "300"
 )
