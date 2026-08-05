@@ -582,7 +582,8 @@ def _try_send_self_node(state: _DaemonState) -> None:
 def _process_announcements(state: _DaemonState) -> float | None:
     """Run the periodic activity-announcement cycle when scheduled (SPEC MA6-MA8).
 
-    Delegates the transmit gate (``RX_ONLY``), the per-instance fail-closed
+    Delegates the transmit gates (the ``ANNOUNCE`` opt-in and the ``RX_ONLY``
+    override), the per-instance fail-closed
     privacy check, the >=24h post-start delay, and the 24h cadence to
     :func:`~data.mesh_ingestor.announce.maybe_run_announcements`, which dogfeeds
     each configured instance's own API for the numbers it announces. A no-op

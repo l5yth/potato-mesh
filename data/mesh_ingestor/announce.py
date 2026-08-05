@@ -14,15 +14,16 @@
 
 """Activity announcement: dogfeed the instance API and build the broadcast text.
 
-SPEC decision **MA6** — the ingestor periodically broadcasts a one-line activity
-summary on its protocol's default channel, drawing the numbers **back from the
-target instance's own API** (dogfeeding: one radio may not see the whole mesh).
+SPEC decision **MA6** — when the operator opts in (``ANNOUNCE=1``, MA7 a), the
+ingestor periodically broadcasts a one-line activity summary on its protocol's
+default channel, drawing the numbers **back from the target instance's own API**
+(dogfeeding: one radio may not see the whole mesh).
 
 This module owns the read-only *dogfeed* HTTP client (GET ``/version`` and
 ``/api/stats`` — both public, no auth) and the character-limited message builder.
 The transmit primitive lives on each provider (``send_channel_announcement``,
-MA9); the scheduling and the ``RX_ONLY`` / privacy / 24-hour gates live in the
-daemon (MA7/MA8). Every fetch fails **soft** — any network or
+MA9); the scheduling and the ``ANNOUNCE`` / ``RX_ONLY`` / privacy / 24-hour gates
+live in the daemon (MA7/MA8). Every fetch fails **soft** — any network or
 shape error returns ``None`` so the caller can fail closed.
 """
 
@@ -224,14 +225,19 @@ ANNOUNCE_INTERVAL_SECS = 24 * 60 * 60
 def announcements_enabled() -> bool:
     """Return whether announcements may be transmitted at all (SPEC MA7 a).
 
-    ``True`` only when :data:`~data.mesh_ingestor.config.RX_ONLY` is off — the
-    reused receive-only flag (default off) is the single transmit gate; there is
-    no separate enable switch.
+    Two gates, both of which must permit the send:
+    :data:`~data.mesh_ingestor.config.ANNOUNCE` must be **on** (opt-in, default
+    off — an unsolicited line on a shared human channel is not something an
+    operator should get merely by deploying a map ingestor), and
+    :data:`~data.mesh_ingestor.config.RX_ONLY` must be **off** (the global
+    receive-only flag forbids every ingestor TX and so overrides ``ANNOUNCE``).
 
     Returns:
-        ``True`` when the transmit gate permits an announcement.
+        ``True`` when the transmit gates permit an announcement.
     """
 
+    if not getattr(config, "ANNOUNCE", False):
+        return False
     return not getattr(config, "RX_ONLY", False)
 
 
