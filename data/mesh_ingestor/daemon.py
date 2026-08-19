@@ -662,6 +662,10 @@ def main(*, provider: MeshProtocol | None = None) -> None:
             from .protocols.meshcore import MeshcoreProvider
 
             provider = MeshcoreProvider()
+        elif config.PROTOCOL == "reticulum":
+            from .protocols.reticulum import ReticulumProvider
+
+            provider = ReticulumProvider()
         elif config.TRANSPORT == "udp":
             from .protocols.meshtastic_udp import MeshtasticUdpProvider
 

@@ -67,7 +67,7 @@ CHANNEL_INDEX = int(os.environ.get("CHANNEL_INDEX", str(DEFAULT_CHANNEL_INDEX)))
 
 DEBUG = os.environ.get("DEBUG") == "1"
 
-_KNOWN_PROTOCOLS = ("meshtastic", "meshcore")
+_KNOWN_PROTOCOLS = ("meshtastic", "meshcore", "reticulum")
 
 _raw_protocol = os.environ.get("PROTOCOL", "meshtastic").strip().lower()
 if _raw_protocol not in _KNOWN_PROTOCOLS:
@@ -79,8 +79,15 @@ if _raw_protocol not in _KNOWN_PROTOCOLS:
 PROTOCOL = _raw_protocol
 """Active ingestion protocol, selected via the :envvar:`PROTOCOL` environment variable.
 
-Accepted values are ``meshtastic`` (default) and ``meshcore``.
+Accepted values are ``meshtastic`` (default), ``meshcore``, and ``reticulum``.
 """
+
+RETICULUM_CONFIG_DIR = os.environ.get("RETICULUM_CONFIG_DIR", "").strip() or None
+"""Optional Reticulum config directory for ``PROTOCOL=reticulum``.
+
+Passed as ``configdir`` to :class:`RNS.Reticulum`; ``None`` (the default, and
+the fallback for a blank value) lets RNS use its standard user config at
+``~/.reticulum``."""
 
 _raw_transport = os.environ.get("TRANSPORT", "api").strip().lower()
 if _raw_transport not in ("api", "udp"):
@@ -421,6 +428,7 @@ __all__ = [
     "MESH_UDP_GROUP",
     "MESH_UDP_PORT",
     "INGESTOR_NODE_ID",
+    "RETICULUM_CONFIG_DIR",
     "_RECONNECT_INITIAL_DELAY_SECS",
     "_RECONNECT_MAX_DELAY_SECS",
     "_CLOSE_TIMEOUT_SECS",

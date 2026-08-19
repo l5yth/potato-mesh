@@ -4,6 +4,7 @@ meshcore>=2.3.8
 bleak>=3.0.2
 protobuf>=7.35.1
 cryptography>=49.0.0  # AES-CTR decryption for the passive UDP transport
+rns>=1.4.2  # Reticulum announce listener (PROTOCOL=reticulum)
 
 # Development dependencies (optional)
 black>=26.5.1

@@ -30,8 +30,14 @@ def __getattr__(name: str) -> object:
     demand so that the MeshCore library (once wired in) is not loaded at
     startup when ``PROTOCOL=meshtastic``. ``MeshtasticUdpProvider`` is
     likewise lazy so its ``cryptography``/protobuf imports are not paid for
-    unless ``TRANSPORT=udp`` is actually selected.
+    unless ``TRANSPORT=udp`` is actually selected. ``ReticulumProvider`` is
+    lazy for the same reason: the ``rns`` dependency is only needed when
+    ``PROTOCOL=reticulum`` is active.
     """
+    if name == "ReticulumProvider":
+        from .reticulum import ReticulumProvider
+
+        return ReticulumProvider
     if name == "MeshcoreProvider":
         from .meshcore import MeshcoreProvider
 
@@ -52,4 +58,5 @@ __all__ = [
     "MeshcoreProvider",
     "ClosedBeforeConnectedError",
     "MeshtasticUdpProvider",
+    "ReticulumProvider",
 ]
