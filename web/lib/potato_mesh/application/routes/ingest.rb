@@ -196,8 +196,6 @@ module PotatoMesh
               nodes_count: nodes_count,
               meshcore_nodes_count: meshcore_nodes_count,
               meshtastic_nodes_count: meshtastic_nodes_count,
-              # Carried for v2 signature verification only (no DB column; always 0
-              # until a Reticulum ingestor exists).
               reticulum_nodes_count: reticulum_nodes_count,
             }
 
@@ -336,6 +334,7 @@ module PotatoMesh
               total = 0
               meshcore = 0
               meshtastic = 0
+              reticulum = 0
               remote_nodes.each do |n|
                 next unless n.is_a?(Hash)
                 ts = coerce_integer(n["lastHeard"] || n["last_heard"])
@@ -344,11 +343,13 @@ module PotatoMesh
                 case (n["protocol"] || n["mesh_protocol"]).to_s.downcase
                 when "meshcore" then meshcore += 1
                 when "meshtastic" then meshtastic += 1
+                when "reticulum" then reticulum += 1
                 end
               end
               attributes[:nodes_count] = total
               attributes[:meshcore_nodes_count] = meshcore
               attributes[:meshtastic_nodes_count] = meshtastic
+              attributes[:reticulum_nodes_count] = reticulum
             end
 
             db = open_database

@@ -25,8 +25,8 @@
  * inputs into DOM.
  *
  * Behaviour:
- * - ``reticulum`` is never rendered — only ``meshtastic`` and ``meshcore`` have
- *   rows (MA-F2).
+ * - ``meshtastic``, ``meshcore``, and ``reticulum`` each render a row
+ *   (MA-F2, extended by #888 when the Reticulum ingestor went live).
  * - The card hides entirely when the visible total is 0 or the payload carries
  *   no packet rates (MA-F3).
  * - A protocol hidden via the meta-row toggle (``hiddenProtocols``) drops its
@@ -44,18 +44,20 @@
  * @module map-activity-card
  */
 
-import { MESHTASTIC_ICON_SRC, MESHCORE_ICON_SRC } from './protocol-helpers.js';
+import { MESHTASTIC_ICON_SRC, MESHCORE_ICON_SRC, RETICULUM_ICON_SRC } from './protocol-helpers.js';
 
 /**
- * Protocols rendered as rows, in display order (Meshtastic above MeshCore).
- * ``reticulum`` is deliberately absent — it is a forward-looking zero stub and
- * is never shown (SPEC MA-F2 / S6).
+ * Protocols rendered as rows, in display order (Meshtastic, MeshCore,
+ * Reticulum).  ``reticulum`` went live with the Reticulum ingestor
+ * (#888); it was a deliberately-hidden zero stub before that (SPEC
+ * MA-F2 / S6).
  *
  * @type {ReadonlyArray<{protocol: string, label: string, iconSrc: string}>}
  */
 const PROTOCOL_ROWS = Object.freeze([
   Object.freeze({ protocol: 'meshtastic', label: 'Meshtastic', iconSrc: MESHTASTIC_ICON_SRC }),
   Object.freeze({ protocol: 'meshcore', label: 'MeshCore', iconSrc: MESHCORE_ICON_SRC }),
+  Object.freeze({ protocol: 'reticulum', label: 'Reticulum', iconSrc: RETICULUM_ICON_SRC }),
 ]);
 
 /**
@@ -143,7 +145,7 @@ function visibleSeriesTotals(series, hidden) {
  * Derive the render model from the packet rates, hidden-protocol set, and the
  * sparkline series.
  *
- * Only ``meshtastic``/``meshcore`` are considered (reticulum is never shown); a
+ * Every {@link PROTOCOL_ROWS} protocol is considered; a
  * protocol that is hidden or carries no finite rate is dropped. The displayed
  * total is the sum of the visible protocol rates (so a toggled-off protocol
  * rebases it, MA-F4), and each row's bar is sized relative to the busiest

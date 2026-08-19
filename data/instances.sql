@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS instances (
   nodes_count       INTEGER,
   meshcore_nodes_count   INTEGER,
   meshtastic_nodes_count INTEGER,
+  reticulum_nodes_count  INTEGER,
   contact_link      TEXT,
   signature         TEXT
 );

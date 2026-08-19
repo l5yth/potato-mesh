@@ -318,7 +318,7 @@ module PotatoMesh
 
       # Per-protocol scopes counted alongside the unfiltered +total+, paired with
       # the short column-alias prefix used in the generated SQL.
-      STATS_PROTOCOL_SCOPES = [["meshcore", "mc"], ["meshtastic", "mt"]].freeze
+      STATS_PROTOCOL_SCOPES = [["meshcore", "mc"], ["meshtastic", "mt"], ["reticulum", "rt"]].freeze
 
       # Return exact activity counts for /api/stats as a scope → metric → window
       # tree.
@@ -326,8 +326,7 @@ module PotatoMesh
       # The shape is:
       #
       #   { "total"      => { "nodes" => {...}, "messages" => {...}, "telemetry" => {...} },
-      #     "meshcore"   => { ... }, "meshtastic" => { ... },
-      #     "reticulum"  => { ... all zero (stub) } }
+      #     "meshcore"   => { ... }, "meshtastic" => { ... }, "reticulum" => { ... } }
       #
       # where each metric maps to a +{ "hour", "day", "week", "month" }+ window
       # hash. +total+ counts every visible row regardless of protocol; the
@@ -458,8 +457,8 @@ module PotatoMesh
       #   +p+ (protocol) columns for the visible rows of one metric.
       # @param projection_params [Array] bind parameters for +projection_sql+.
       # @param cutoffs [Hash{String => Integer}] window => lower-bound timestamp.
-      # @return [Hash{String => Hash}] +total+/+meshcore+/+meshtastic+ => window
-      #   counts.
+      # @return [Hash{String => Hash}] +total+ plus one entry per
+      #   {STATS_PROTOCOL_SCOPES} protocol => window counts.
       def windowed_protocol_counts(handle, projection_sql:, projection_params:, cutoffs:)
         selects = []
         window_params = []
@@ -487,7 +486,7 @@ module PotatoMesh
       # Extract one alias prefix's window-count hash from a result row.
       #
       # @param row [Hash] row returned by {windowed_protocol_counts}.
-      # @param prefix [String] column-alias prefix (+total+, +mc+, +mt+).
+      # @param prefix [String] column-alias prefix (+total+, +mc+, +mt+, +rt+).
       # @return [Hash{String => Integer}] window => count.
       def stats_window_hash(row, prefix)
         STATS_WINDOWS.each_with_object({}) do |window, acc|
@@ -496,7 +495,12 @@ module PotatoMesh
       end
 
       # Transpose metric → scope counts into the scope → metric tree returned by
-      # /api/stats and append the always-zero +reticulum+ stub.
+      # /api/stats.
+      #
+      # +reticulum+ was a forward-looking all-zero stub until the Reticulum
+      # ingestor landed (#888); it is now a live {STATS_PROTOCOL_SCOPES}
+      # member counted like the other protocols, so the S6 response shape is
+      # unchanged — only the values went live.
       #
       # @param metrics [Hash{String => Hash}] metric => (scope => window counts).
       # @return [Hash{String => Hash}] scope => (metric => window counts).
@@ -504,13 +508,6 @@ module PotatoMesh
         scopes = {}
         (["total"] + STATS_PROTOCOL_SCOPES.map(&:first)).each do |scope|
           scopes[scope] = metrics.transform_values { |by_scope| by_scope[scope] }
-        end
-        # reticulum is a forward-looking stub: PotatoMesh has no Reticulum
-        # ingestor yet, so every count is zero. Emitting the scope now lets the
-        # response shape absorb the protocol later without another breaking change
-        # (SPEC S6).
-        scopes["reticulum"] = metrics.keys.each_with_object({}) do |metric, acc|
-          acc[metric] = zero_window_counts
         end
         scopes
       end

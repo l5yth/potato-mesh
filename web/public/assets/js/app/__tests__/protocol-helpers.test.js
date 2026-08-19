@@ -137,7 +137,14 @@ test('protocolIconPrefixHtml — "meshcore" yields meshcore icon prefix', () => 
   assert.ok(result.endsWith(' '), 'prefix must end with a trailing space');
 });
 
+test('protocolIconPrefixHtml — "reticulum" yields reticulum icon prefix', () => {
+  const result = protocolIconPrefixHtml('reticulum');
+  assert.ok(result.includes('reticulum.svg'), '"reticulum" should produce the reticulum icon');
+  assert.ok(!result.includes('meshtastic.svg'), '"reticulum" must not produce the meshtastic icon');
+  assert.ok(result.endsWith(' '), 'prefix must end with a trailing space');
+});
+
 test('protocolIconPrefixHtml — unknown protocol yields empty string', () => {
-  assert.equal(protocolIconPrefixHtml('reticulum'), '', 'unknown protocol should produce no prefix');
+  assert.equal(protocolIconPrefixHtml('loramesh'), '', 'unknown protocol should produce no prefix');
   assert.equal(protocolIconPrefixHtml('LoRa'), '', 'unknown protocol should produce no prefix');
 });

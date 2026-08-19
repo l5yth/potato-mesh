@@ -255,9 +255,15 @@ test('normalizeFilterProtocol returns meshtastic for undefined', () => {
   });
 });
 
+test('normalizeFilterProtocol keeps reticulum in its own bucket', () => {
+  withApp((t) => {
+    assert.equal(t.normalizeFilterProtocol('reticulum'), 'reticulum');
+  });
+});
+
 test('normalizeFilterProtocol returns meshtastic for unknown protocol', () => {
   withApp((t) => {
-    assert.equal(t.normalizeFilterProtocol('reticulum'), 'meshtastic');
+    assert.equal(t.normalizeFilterProtocol('loramesh'), 'meshtastic');
   });
 });
 

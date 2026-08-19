@@ -92,6 +92,7 @@ module PotatoMesh
         nodes_count = active_node_count_since(cutoff, db: db)
         mc_count = active_node_count_since_for_protocol(cutoff, "meshcore", db: db)
         mt_count = active_node_count_since_for_protocol(cutoff, "meshtastic", db: db)
+        rt_count = active_node_count_since_for_protocol(cutoff, "reticulum", db: db)
         {
           id: app_constant(:SELF_INSTANCE_ID),
           domain: domain,
@@ -108,9 +109,9 @@ module PotatoMesh
           nodes_count: nodes_count,
           meshcore_nodes_count: mc_count,
           meshtastic_nodes_count: mt_count,
-          # Forward-compat stub (SPEC FS2): always 0 until a Reticulum ingestor
-          # exists, but signed now so the shape need not change again.
-          reticulum_nodes_count: 0,
+          # Live since the Reticulum ingestor landed (#888); previously a
+          # signed FS2 forward-compat 0 stub, so the wire shape is unchanged.
+          reticulum_nodes_count: rt_count,
         }
       ensure
         db&.close

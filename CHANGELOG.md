@@ -16,6 +16,7 @@ on the map toggles, an equal-area diamond MeshCore marker, a condensed nodes
 table, and reported-only disclosure rows.
 
 ### Features
+* Data/Web: Reticulum protocol support — `PROTOCOL=reticulum` selects a passive RNS announce listener that ingests `lxmf.delivery`/`nomadnetwork.node` announces as `protocol="reticulum"` nodes; the web app whitelists the protocol end-to-end (ingest + `?protocol=` filter), serves live `reticulum` stats scopes and activity-series keys, signs a live `reticulum_nodes_count` on the federation wire (the v2 canonical already carried the field, so peer signatures are unaffected), and renders reticulum nodes across the UI (icon, filter chip, mesh-activity row, federation column) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
 * Web: `GET /api/stats/activity` — bucketed packets/hour time-series over `ingestor_activity` (snake_case `window_seconds`/`bucket_seconds`), feeding the map-card sparkline and a protocol-aware `/charts` figure (SPEC F2)
 * Web: `/charts` gains a protocol-aware "Mesh activity" figure (packets/h per protocol, 7 d) between the channel-utilization and environmental charts; the aggregated-telemetry intro is de-scoped from "Meshtastic" to all protocols (SPEC F2-5)
 * Web: mesh-activity map card collapses to a compact caption strip on phones (≤ 640 px) so it no longer covers a small map (design 1d)

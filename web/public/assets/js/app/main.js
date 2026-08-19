@@ -295,8 +295,10 @@ export function initializeApp(config) {
   const autorefreshToggle = document.getElementById('autorefreshToggle');
   const protocolToggleMeshcore = document.getElementById('protocolToggleMeshcore');
   const protocolToggleMeshtastic = document.getElementById('protocolToggleMeshtastic');
+  const protocolToggleReticulum = document.getElementById('protocolToggleReticulum');
   const protocolToggleMeshcoreCount = document.getElementById('protocolToggleMeshcoreCount');
   const protocolToggleMeshtasticCount = document.getElementById('protocolToggleMeshtasticCount');
+  const protocolToggleReticulumCount = document.getElementById('protocolToggleReticulumCount');
   const filterInput = document.getElementById('filterInput');
   const filterClearButton = document.getElementById('filterClear');
   const shortInfoTemplate = document.getElementById('shortInfoOverlayTemplate');
@@ -1956,6 +1958,7 @@ export function initializeApp(config) {
     const toggles = [
       { btn: protocolToggleMeshcore, protocol: 'meshcore', name: 'MeshCore' },
       { btn: protocolToggleMeshtastic, protocol: 'meshtastic', name: 'Meshtastic' },
+      { btn: protocolToggleReticulum, protocol: 'reticulum', name: 'Reticulum' },
     ];
     toggles.forEach(({ btn, protocol, name }) => {
       if (!btn) return;
@@ -5626,7 +5629,8 @@ export function initializeApp(config) {
    * {@link hiddenProtocols} set.
    *
    * @param {HTMLElement|null} btn Button element.
-   * @param {string} protocol Protocol token (``'meshcore'`` or ``'meshtastic'``).
+   * @param {string} protocol Protocol token (``'meshcore'``, ``'meshtastic'``,
+   *   or ``'reticulum'``).
    * @returns {void}
    */
   function setupMetaProtocolToggle(btn, protocol) {
@@ -5644,6 +5648,7 @@ export function initializeApp(config) {
   }
   setupMetaProtocolToggle(protocolToggleMeshcore, 'meshcore');
   setupMetaProtocolToggle(protocolToggleMeshtastic, 'meshtastic');
+  setupMetaProtocolToggle(protocolToggleReticulum, 'reticulum');
 
   /**
    * Keep the page/tab and header titles at their base text.
@@ -5683,9 +5688,9 @@ export function initializeApp(config) {
    * counts (audit follow-up 04). Uses the same 7-day active figure as the
    * legend column counts, so the same protocol shows the same number in both
    * places; the count both labels the otherwise-unnamed icon button and states
-   * the MeshCore/Meshtastic split.
+   * the per-protocol split.
    *
-   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}}} stats
+   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}, reticulum?: {week: number}}} stats
    *   Stats from /api/stats.
    * @returns {void}
    */
@@ -5695,6 +5700,9 @@ export function initializeApp(config) {
     }
     if (protocolToggleMeshtasticCount) {
       protocolToggleMeshtasticCount.textContent = String(stats?.meshtastic?.week ?? 0);
+    }
+    if (protocolToggleReticulumCount) {
+      protocolToggleReticulumCount.textContent = String(stats?.reticulum?.week ?? 0);
     }
   }
 
@@ -5718,22 +5726,54 @@ export function initializeApp(config) {
    * Hides the Charts nav link when meshtastic has no active nodes, and hides
    * legend columns for protocols with zero weekly activity.
    *
-   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}}} stats Stats from /api/stats.
+   * @param {{meshcore?: {week: number}, meshtastic?: {week: number}, reticulum?: {week: number}}} stats Stats from /api/stats.
    * @returns {void}
    */
   function applyProtocolVisibility(stats) {
     const meshcoreWeek = stats?.meshcore?.week ?? 0;
     const meshtasticWeek = stats?.meshtastic?.week ?? 0;
+    const reticulumWeek = stats?.reticulum?.week ?? 0;
 
     // Hide legend columns for protocols with no activity in the past 7 days.
     if (meshcoreColEl) meshcoreColEl.style.display = meshcoreWeek === 0 ? 'none' : '';
     if (meshtasticColEl) meshtasticColEl.style.display = meshtasticWeek === 0 ? 'none' : '';
 
-    // Show protocol toggle buttons only when both protocols have weekly
-    // activity — filtering is pointless when only one protocol is present.
-    const bothActive = meshcoreWeek > 0 && meshtasticWeek > 0;
-    if (protocolToggleMeshcore) protocolToggleMeshcore.hidden = !bothActive;
-    if (protocolToggleMeshtastic) protocolToggleMeshtastic.hidden = !bothActive;
+    // Show a protocol's toggle button only when that protocol has weekly
+    // activity and at least one other protocol does too — filtering is
+    // pointless when only one protocol is present. (Generalises the original
+    // two-protocol "both active" rule to the reticulum era, #888.)
+    const weeks = [meshcoreWeek, meshtasticWeek, reticulumWeek];
+    const activeProtocols = weeks.filter(week => week > 0).length;
+    const toggleHidden = week => !(week > 0 && activeProtocols >= 2);
+    // When a chip is hidden by the visibility rule, its protocol must also
+    // leave the hiddenProtocols set: a user who toggled the protocol off and
+    // then lost the chip (activity dropped below the 2-protocol threshold)
+    // would otherwise have no control left to bring those nodes back. The
+    // strand scenario always leaves at least one protocol active, so an
+    // all-zero payload (an empty instance, or the degraded local fallback
+    // after a stats-fetch failure) is deliberately excluded — a transient
+    // stats blank must not wipe the user's explicit toggle state.
+    let unstranded = false;
+    for (const [btn, protocol, week] of [
+      [protocolToggleMeshcore, 'meshcore', meshcoreWeek],
+      [protocolToggleMeshtastic, 'meshtastic', meshtasticWeek],
+      [protocolToggleReticulum, 'reticulum', reticulumWeek],
+    ]) {
+      const hidden = toggleHidden(week);
+      if (btn) btn.hidden = hidden;
+      if (hidden && activeProtocols > 0 && hiddenProtocols.has(protocol)) {
+        hiddenProtocols.delete(protocol);
+        unstranded = true;
+      }
+    }
+    if (unstranded) {
+      // Re-run the same sync path a chip click uses so the nodes reappear.
+      // Bounded: the dropped protocols are no longer in the set, so the
+      // nested applyFilter's stats callback cannot un-strand again.
+      updateMetaProtocolToggleUI();
+      updateLegendRoleFiltersUI();
+      applyFilter();
+    }
 
     // Charts is meshtastic-only; hide the nav link when no meshtastic activity.
     document.querySelectorAll('a[href="/charts"]').forEach(el => {

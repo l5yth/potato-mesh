@@ -23,7 +23,7 @@ import {
 import { resolveLegendVisibility } from './map-legend-visibility.js';
 import { mergeConfig } from './settings.js';
 import { roleColors } from './role-helpers.js';
-import { meshcoreIconHtml, meshtasticIconHtml } from './protocol-helpers.js';
+import { meshcoreIconHtml, meshtasticIconHtml, reticulumIconHtml } from './protocol-helpers.js';
 import { createBasemapLayer } from './basemap-config.js';
 import { timeAgoSuffixed } from './main/format-utils.js';
 import {
@@ -427,6 +427,12 @@ export async function initializeFederationPage(options = {}) {
       hasValue: hasNumberValue,
       defaultDirection: 'desc'
     },
+    reticulumNodesCount: {
+      getValue: inst => toFiniteNumber(inst.reticulum_nodes_count ?? inst.reticulumNodesCount),
+      compare: compareNumber,
+      hasValue: hasNumberValue,
+      defaultDirection: 'desc'
+    },
     latitude: { getValue: inst => toFiniteNumber(inst.latitude), compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
     longitude: { getValue: inst => toFiniteNumber(inst.longitude), compare: compareNumber, hasValue: hasNumberValue, defaultDirection: 'asc' },
     lastUpdateTime: {
@@ -516,6 +522,8 @@ export async function initializeFederationPage(options = {}) {
       const mcNodesText = mcNodesVal == null ? '<em>—</em>' : `${meshcoreIconHtml()} ${escapeHtml(String(mcNodesVal))}`;
       const mtNodesVal = toFiniteNumber(instance.meshtastic_nodes_count ?? instance.meshtasticNodesCount);
       const mtNodesText = mtNodesVal == null ? '<em>—</em>' : `${meshtasticIconHtml()} ${escapeHtml(String(mtNodesVal))}`;
+      const rtNodesVal = toFiniteNumber(instance.reticulum_nodes_count ?? instance.reticulumNodesCount);
+      const rtNodesText = rtNodesVal == null ? '<em>—</em>' : `${reticulumIconHtml()} ${escapeHtml(String(rtNodesVal))}`;
 
       // Cell order mirrors `_instances_table.erb`'s traveler-first header
       // order (SPEC UX9/UX12): where + settings + alive lead; coordinates
@@ -528,6 +536,7 @@ export async function initializeFederationPage(options = {}) {
         <td class="instances-col instances-col--nodes mono">${nodesCountText}</td>
         <td class="instances-col instances-col--meshcore-nodes mono">${mcNodesText}</td>
         <td class="instances-col instances-col--meshtastic-nodes mono">${mtNodesText}</td>
+        <td class="instances-col instances-col--reticulum-nodes mono">${rtNodesText}</td>
         ${lastUpdateCellHtml(instance, nowSec)}
         <td class="instances-col instances-col--contact">${contactHtml || '<em>—</em>'}</td>
         <td class="instances-col instances-col--version mono">${escapeHtml(instance.version || '')}</td>

@@ -1397,14 +1397,18 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(stats["total"]["telemetry"]["month"]).to eq(1)
     end
 
-    it "emits reticulum as an all-zero stub" do
+    it "counts reticulum nodes under their own live scope" do
       with_db do |db|
         db.execute("INSERT INTO nodes(node_id, num, last_heard, first_heard, role) VALUES (?,?,?,?,?)", ["!any00001", 1, now, now, "CLIENT"])
+        db.execute(
+          "INSERT INTO nodes(node_id, num, last_heard, first_heard, role, protocol) VALUES (?,?,?,?,?,?)",
+          ["!reti0001", 2, now, now, "CLIENT", "reticulum"],
+        )
       end
       stats = queries.query_active_node_stats(now: now)
-      stats["reticulum"].each_value do |windows|
-        windows.each_value { |count| expect(count).to eq(0) }
-      end
+      expect(stats["reticulum"]["nodes"]["day"]).to eq(1)
+      expect(stats["reticulum"]["messages"]["day"]).to eq(0)
+      expect(stats["total"]["nodes"]["day"]).to eq(2)
     end
 
     it "zeroes message counts in private mode but keeps nodes and telemetry" do
@@ -1567,14 +1571,13 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(queries.query_packets_per_hour(now: now)["meshcore"]).to eq(20) # 480 / 24
     end
 
-    it "keeps reticulum a zero stub even when reticulum activity exists" do
+    it "reports a live reticulum rate when reticulum activity exists" do
       seed_activity([["!reti0001", now - 100, 720, "reticulum"]])
       result = queries.query_packets_per_hour(now: now)
-      # The reticulum scope is always emitted as zero (forward-looking stub)…
-      expect(result["reticulum"]).to eq(0)
-      # …but a reticulum ingestor still contributes to the protocol-agnostic
-      # total (summed across protocols).
-      expect(result["total"]).to eq(30) # sole protocol: 720 / 24
+      # Reticulum went live with the Reticulum ingestor (#888): the scope
+      # carries its real rate and contributes to the protocol-summed total.
+      expect(result["reticulum"]).to eq(30) # 720 / 24
+      expect(result["total"]).to eq(30)
     end
 
     it "rounds the hourly rate to the nearest integer" do
@@ -1659,7 +1662,7 @@ RSpec.describe PotatoMesh::App::Queries do
       expect(starts).to eq(starts.sort)
     end
 
-    it "folds reticulum into the total but emits no reticulum series" do
+    it "emits a reticulum series alongside the other protocols" do
       seed_activity_rows(
         [
           ["!coreaaaa", now - 100, 3_600, "meshcore"],
@@ -1668,7 +1671,7 @@ RSpec.describe PotatoMesh::App::Queries do
       )
       bucket = queries.query_activity_buckets(window_seconds: 86_400, bucket_seconds: 3_600, now: now).first
       expect(bucket["meshcore"]).to eq(3600)
-      expect(bucket).not_to have_key("reticulum")
+      expect(bucket["reticulum"]).to eq(1800)
       expect(bucket["total"]).to eq(3600 + 1800)
     end
 

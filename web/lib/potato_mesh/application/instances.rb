@@ -146,9 +146,10 @@ module PotatoMesh
           "nodes_count" => coerce_integer(row["nodes_count"]),
           "meshcore_nodes_count" => coerce_integer(row["meshcore_nodes_count"]),
           "meshtastic_nodes_count" => coerce_integer(row["meshtastic_nodes_count"]),
-          # reticulum count has no column (always 0 today); served signed=0 so a
-          # crawler re-verifying a relayed v2 record rebuilds the same canonical.
-          "reticulum_nodes_count" => 0,
+          # NULL column (rows predating the reticulum count column and peers that announced no count)
+          # serves 0 so a crawler re-verifying a relayed v2 record rebuilds the
+          # same canonical those senders signed.
+          "reticulum_nodes_count" => coerce_integer(row["reticulum_nodes_count"]) || 0,
           "contact_link" => string_or_nil(row["contact_link"]),
           "signature" => signature,
           "signature_version" => PotatoMesh::Config.federation_signature_version,
@@ -182,7 +183,8 @@ module PotatoMesh
         sql = <<~SQL
           SELECT id, domain, pubkey, name, version, channel, frequency,
                  latitude, longitude, last_update_time, is_private, nodes_count,
-                 meshcore_nodes_count, meshtastic_nodes_count, contact_link, signature
+                 meshcore_nodes_count, meshtastic_nodes_count, reticulum_nodes_count,
+                 contact_link, signature
           FROM instances
           WHERE domain IS NOT NULL AND TRIM(domain) != ''
             AND pubkey IS NOT NULL AND TRIM(pubkey) != ''
