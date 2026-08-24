@@ -842,15 +842,17 @@ def test_process_announcements_noop_without_iface():
 
 def test_process_announcements_delegates_when_connected(monkeypatch):
     """Delegates to announce.maybe_run_announcements with the daemon's provider,
-    interface, ingestor start time, and last_announce, and returns its result."""
+    interface, monotonic ingestor start marker, and last_announce, returning its
+    result.  The marker is monotonic, not wall clock, so an NTP step cannot skip
+    the 24 h anti-spam delay."""
     calls = []
 
-    def _fake(provider, iface, *, start_time, last_announce):
-        calls.append((provider, iface, start_time, last_announce))
+    def _fake(provider, iface, *, start_monotonic, last_announce):
+        calls.append((provider, iface, start_monotonic, last_announce))
         return 999.0
 
     monkeypatch.setattr(daemon.announce, "maybe_run_announcements", _fake)
-    monkeypatch.setattr(daemon.ingestors, "ingestor_start_time", lambda: 555)
+    monkeypatch.setattr(daemon.ingestors, "ingestor_start_monotonic", lambda: 555)
     state = _make_state(iface="IFACE", provider="PROV", last_announce=None)
     assert daemon._process_announcements(state) == 999.0
     assert calls == [("PROV", "IFACE", 555, None)]

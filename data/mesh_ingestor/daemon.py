@@ -24,7 +24,7 @@ import time
 
 from pubsub import pub
 
-from . import announce, config, handlers, ingestors, interfaces, queue
+from . import announce, config, handlers, ingestors, interfaces, queue, tx_policy
 from .mesh_protocol import MeshProtocol
 from .utils import _retry_dict_snapshot
 
@@ -582,8 +582,8 @@ def _try_send_self_node(state: _DaemonState) -> None:
 def _process_announcements(state: _DaemonState) -> float | None:
     """Run the periodic activity-announcement cycle when scheduled (SPEC MA6-MA8).
 
-    Delegates the transmit gates (the ``ANNOUNCE`` opt-in and the ``RX_ONLY``
-    override), the per-instance fail-closed
+    Delegates the transmit gates (``TX_ENABLED`` / ``TX_ANNOUNCE``, and the
+    legacy ``RX_ONLY`` veto), the per-instance fail-closed
     privacy check, the >=24h post-start delay, and the 24h cadence to
     :func:`~data.mesh_ingestor.announce.maybe_run_announcements`, which dogfeeds
     each configured instance's own API for the numbers it announces. A no-op
@@ -603,7 +603,7 @@ def _process_announcements(state: _DaemonState) -> float | None:
     return announce.maybe_run_announcements(
         state.provider,
         state.iface,
-        start_time=ingestors.ingestor_start_time(),
+        start_monotonic=ingestors.ingestor_start_monotonic(),
         last_announce=state.last_announce,
     )
 
@@ -657,6 +657,11 @@ def _loop_iteration(state: _DaemonState) -> bool:
 
 def main(*, provider: MeshProtocol | None = None) -> None:
     """Run the mesh ingestion daemon until interrupted."""
+
+    # State the resolved transmit policy before anything can transmit, so what
+    # this ingestor will and will not put on the air is visible in the log from
+    # the first line rather than inferred from silence (SPEC MA7).
+    tx_policy.log_tx_policy()
 
     if provider is None:
         if config.PROTOCOL == "meshcore":

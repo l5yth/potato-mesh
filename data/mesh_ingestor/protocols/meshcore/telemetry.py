@@ -35,7 +35,7 @@ import asyncio
 import time
 from collections.abc import Mapping
 
-from ... import activity, config
+from ... import activity, config, tx_policy
 from .interface import _MeshcoreInterface
 from .messages import _derive_message_id
 
@@ -419,6 +419,11 @@ async def _poll_contact_telemetry(
         handlers: The ``data.mesh_ingestor.handlers`` module.
         state: Mutable poll-loop state (round-robin cursor).
     """
+    # Checked at each transmit site beside its record_tx, as well as at loop
+    # entry: the loop resolves the poll interval once at startup, so a policy
+    # read later must still be honoured by the request that is about to go out.
+    if not tx_policy.transmit_permitted():
+        return
     contact = _next_poll_contact(iface, state)
     if contact is None:
         return
@@ -447,6 +452,11 @@ async def _poll_contact_telemetry(
     if _queue_meshcore_telemetry(
         handlers, node_id, _lpp_to_telemetry_section(lpp), "lpp"
     ):
+        return
+    # The status fallback is a second, independent transmission, so it takes its
+    # own permission check rather than riding the one above: one gate per
+    # transmit site, beside that site's record_tx.
+    if not tx_policy.transmit_permitted():
         return
     try:
         # The status fallback is a second on-air pull — count it too (MA1).
@@ -478,10 +488,11 @@ async def _telemetry_poll_loop(mc, iface: _MeshcoreInterface) -> None:
     ``MESHCORE_SELF_TELEMETRY_SECONDS`` (local, no airtime; ``<= 0`` disables)
     and ``MESHCORE_TELEMETRY_POLL_SECONDS`` (one on-air request per interval;
     ``<= 0`` disables), with each contact additionally capped by the fixed
-    per-node cooldown (:data:`_TELEMETRY_NODE_COOLDOWN_SECONDS`).  ``RX_ONLY``
-    forbids every ingestor-initiated transmission, so it disables the on-air
-    contact polls regardless of the poll interval; the self reads are local
-    companion-link commands and stay active.  The loop wakes once per
+    per-node cooldown (:data:`_TELEMETRY_NODE_COOLDOWN_SECONDS`).  The transmit
+    policy (:func:`~data.mesh_ingestor.tx_policy.transmit_permitted` — off unless
+    ``TX_ENABLED=1``) disables the on-air contact polls regardless of the poll
+    interval; the self reads are local companion-link commands, cost no airtime,
+    and stay active.  The loop wakes once per
     second-granularity deadline rather than busy-polling.
 
     Parameters:
@@ -491,7 +502,9 @@ async def _telemetry_poll_loop(mc, iface: _MeshcoreInterface) -> None:
     from ... import handlers as _handlers
 
     self_interval = config.MESHCORE_SELF_TELEMETRY_SECONDS
-    poll_interval = 0 if config.RX_ONLY else config.MESHCORE_TELEMETRY_POLL_SECONDS
+    poll_interval = (
+        config.MESHCORE_TELEMETRY_POLL_SECONDS if tx_policy.transmit_permitted() else 0
+    )
     if self_interval <= 0 and poll_interval <= 0:
         return
 

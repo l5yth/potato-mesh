@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pubsub import pub
 
-from .. import activity, config, daemon as _daemon, handlers, interfaces
+from .. import activity, config, daemon as _daemon, handlers, interfaces, tx_policy
 from ..utils import _retry_dict_snapshot
 
 
@@ -105,11 +105,19 @@ class MeshtasticProvider:
         method (not a formal :class:`MeshProtocol` member); the daemon resolves
         it via ``getattr`` and skips it when absent.
 
+        Enforces the transmit gates **here**, at the transmit primitive, rather
+        than relying on the caller: this method is a public, duck-typed provider
+        capability, so any second caller (a CLI, an operator script, a future
+        scheduler) must not be able to put traffic on the air by reaching past
+        the daemon's own check.
+
         Parameters:
             iface: Active Meshtastic interface exposing ``sendText``.
             text: Announcement string to transmit.
         """
 
+        if not tx_policy.announcements_permitted():
+            return
         send_text = getattr(iface, "sendText", None)
         if not callable(send_text):
             return
