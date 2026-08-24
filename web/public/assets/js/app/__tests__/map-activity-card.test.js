@@ -86,8 +86,14 @@ test('buildMeshActivityModel rebases the sparkline with the protocol toggles', (
   assert.notEqual(all.spark.line, mtOnly.spark.line);
 });
 
-test('buildMeshActivityModel never renders reticulum', () => {
-  const model = buildMeshActivityModel({ total: 50, meshtastic: 50, reticulum: 999 }, new Set(), null);
+test('buildMeshActivityModel renders a live reticulum row (#888)', () => {
+  const model = buildMeshActivityModel({ total: 80, meshtastic: 50, reticulum: 30 }, new Set(), null);
+  assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic', 'Reticulum']);
+  assert.equal(model.total, 80);
+});
+
+test('buildMeshActivityModel skips unknown protocol keys', () => {
+  const model = buildMeshActivityModel({ total: 50, meshtastic: 50, loramesh: 999 }, new Set(), null);
   assert.deepEqual(model.rows.map(row => row.label), ['Meshtastic']);
 });
 

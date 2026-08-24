@@ -20,6 +20,9 @@ export const MESHTASTIC_ICON_SRC = '/assets/img/meshtastic.svg';
 /** Relative URL of the MeshCore protocol icon asset. */
 export const MESHCORE_ICON_SRC = '/assets/img/meshcore.svg';
 
+/** Relative URL of the Reticulum protocol icon asset. */
+export const RETICULUM_ICON_SRC = '/assets/img/reticulum.svg';
+
 /**
  * Return true when the protocol value is explicitly ``"meshtastic"``.
  *
@@ -79,12 +82,37 @@ export function meshcoreIconHtml() {
 }
 
 /**
+ * Return true when the protocol value represents Reticulum.
+ *
+ * @param {string|null|undefined} protocol Protocol string from the API.
+ * @returns {boolean} Whether the protocol is Reticulum.
+ */
+export function isReticulumProtocol(protocol) {
+  if (protocol == null) return false;
+  return String(protocol).trim() === 'reticulum';
+}
+
+/**
+ * Build an HTML snippet that renders the Reticulum glyph as an inline icon.
+ *
+ * Follows the same sizing and attribute conventions as {@link meshtasticIconHtml}
+ * so all protocol icons stay visually consistent when placed side-by-side.
+ *
+ * @returns {string} HTML string containing an {@code <img>} element.
+ */
+export function reticulumIconHtml() {
+  return `<img src="${RETICULUM_ICON_SRC}" alt="" width="12" height="12"` +
+    ' class="protocol-icon protocol-icon--reticulum" loading="lazy" decoding="async"' +
+    ' aria-hidden="true">';
+}
+
+/**
  * Build an HTML prefix (protocol icon plus a trailing space) for inline UI.
  *
  * Returns the matching icon only when the protocol is positively known:
- * ``"meshtastic"`` → Meshtastic icon, ``"meshcore"`` → MeshCore icon.
- * Absent, null, or unrecognised protocol strings yield an empty string —
- * no default icon is assumed.
+ * ``"meshtastic"`` → Meshtastic icon, ``"meshcore"`` → MeshCore icon,
+ * ``"reticulum"`` → Reticulum icon.  Absent, null, or unrecognised protocol
+ * strings yield an empty string — no default icon is assumed.
  *
  * @param {string|null|undefined} protocol Protocol string from the API.
  * @returns {string} HTML fragment safe to concatenate before visible text.
@@ -95,6 +123,9 @@ export function protocolIconPrefixHtml(protocol) {
   }
   if (isMeshtasticProtocol(protocol)) {
     return `${meshtasticIconHtml()} `;
+  }
+  if (isReticulumProtocol(protocol)) {
+    return `${reticulumIconHtml()} `;
   }
   return '';
 }

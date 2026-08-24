@@ -211,7 +211,10 @@ const fetchImpl = async () => ({
       latitude: 10.12345,
       longitude: -20.98765,
       lastUpdateTime: Math.floor(Date.now() / 1000) - 90,
-      nodesCount: 12
+      nodesCount: 12,
+      meshcore_nodes_count: 5,
+      meshtastic_nodes_count: 3,
+      reticulum_nodes_count: 4
     },
     {
       domain: 'bravo.mesh',
@@ -237,6 +240,20 @@ const fetchImpl = async () => ({
     assert.match(firstRowHtml, /-20\.98765/);
     assert.match(firstRowHtml, />12</);
     assert.match(firstRowHtml, /ago/);
+    // Per-protocol 24h columns render icon + count when the instance reports
+    // them; the reticulum column mirrors the meshcore/meshtastic pair.
+    assert.match(
+      firstRowHtml,
+      /instances-col--meshcore-nodes mono"><img src="[^"]*meshcore\.svg[^>]*> 5</,
+    );
+    assert.match(
+      firstRowHtml,
+      /instances-col--meshtastic-nodes mono"><img src="[^"]*meshtastic\.svg[^>]*> 3</,
+    );
+    assert.match(
+      firstRowHtml,
+      /instances-col--reticulum-nodes mono"><img src="[^"]*reticulum\.svg[^>]*> 4</,
+    );
 
     const secondRowHtml = rows[1].innerHTML;
     assert.match(secondRowHtml, /bravo\.mesh/);
@@ -244,6 +261,9 @@ const fetchImpl = async () => ({
     assert.match(secondRowHtml, /2\.0\.0/);
     assert.match(secondRowHtml, />2</);
     assert.match(secondRowHtml, /d ago/);
+    // An instance without a reticulum count renders the muted dash, exactly
+    // like the other per-protocol columns.
+    assert.match(secondRowHtml, /instances-col--reticulum-nodes mono"><em>—<\/em></);
     assert.deepEqual(mapFitBoundsCalls[0][0], [[10.12345, -20.98765]]);
     assert.equal(circleMarkerCalls[0].options.fillColor, roleColors.CLIENT_HIDDEN);
 

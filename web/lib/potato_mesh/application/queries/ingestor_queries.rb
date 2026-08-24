@@ -43,8 +43,8 @@ module PotatoMesh
       # of the per-protocol rates: different protocols ride different
       # frequencies/channels, so their frames never overlap in the air and add
       # rather than dedup (a same-protocol frame heard by two radios is still
-      # deduped by the per-protocol MAX). +reticulum+ is a forward-looking
-      # always-zero stub (SPEC S6/MA5).
+      # deduped by the per-protocol MAX). +reticulum+ went live with the
+      # Reticulum ingestor (#888); it was a zero stub before that.
       #
       # @param now [Integer] reference unix timestamp in seconds.
       # @param db [SQLite3::Database, nil] optional open database handle to reuse.
@@ -83,7 +83,7 @@ module PotatoMesh
           "total" => rates.values.sum,
           "meshcore" => rates["meshcore"] || 0,
           "meshtastic" => rates["meshtastic"] || 0,
-          "reticulum" => 0,
+          "reticulum" => rates["reticulum"] || 0,
         }
       ensure
         handle&.close unless db
@@ -103,9 +103,9 @@ module PotatoMesh
       # same way as the live {#query_packets_per_hour} (SPEC MA4): per protocol,
       # +MAX+ over that protocol's ingestors of their summed packets in the
       # bucket; +total+ is the +SUM+ across protocols; each is divided by the
-      # bucket's hour-span to a rate. Only +meshcore+/+meshtastic+ are emitted
-      # as keys (reticulum still contributes to +total+ but has no series yet,
-      # mirroring {#query_packets_per_hour}). The window is clamped to the
+      # bucket's hour-span to a rate. Every known protocol
+      # (+meshcore+/+meshtastic+/+reticulum+) is emitted as a key, mirroring
+      # {#query_packets_per_hour}. The window is clamped to the
       # 28-day visibility floor (C4); the route pre-validates the bucket count
       # against +MAX_QUERY_LIMIT+ and this query caps the row count too.
       #
@@ -115,8 +115,8 @@ module PotatoMesh
       # @param now [Integer] reference unix timestamp (exposed for tests).
       # @param db [SQLite3::Database, nil] optional open handle to reuse.
       # @return [Array<Hash>] ascending buckets, each +{ "bucket_start",
-      #   "bucket_end", "total", "meshcore", "meshtastic" }+ with integer
-      #   packets/hour rates.
+      #   "bucket_end", "total", "meshcore", "meshtastic", "reticulum" }+ with
+      #   integer packets/hour rates.
       def query_activity_buckets(window_seconds:, bucket_seconds:, since: 0, now: Time.now.to_i, db: nil)
         window = coerce_integer(window_seconds) || DEFAULT_ACTIVITY_WINDOW_SECONDS
         window = DEFAULT_ACTIVITY_WINDOW_SECONDS if window <= 0
@@ -159,6 +159,7 @@ module PotatoMesh
               "total" => 0,
               "meshcore" => 0,
               "meshtastic" => 0,
+              "reticulum" => 0,
             }
             buckets[bucket_start] = entry
             order << bucket_start

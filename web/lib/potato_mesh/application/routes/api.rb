@@ -20,7 +20,7 @@ module PotatoMesh
       module Api
         # Accepted protocol filter values.  Unknown values are discarded to
         # prevent attacker-controlled strings from polluting the cache keyspace.
-        KNOWN_PROTOCOLS = Set.new(%w[meshcore meshtastic]).freeze
+        KNOWN_PROTOCOLS = Set.new(%w[meshcore meshtastic reticulum]).freeze
 
         # Register read-only API endpoints that expose cached mesh data and
         # instance metadata. Invoked by Sinatra during extension registration.

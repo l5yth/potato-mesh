@@ -27,11 +27,14 @@
 
 /**
  * Compute active-node counts from a local node array, including per-protocol
- * breakdowns for meshcore and meshtastic.
+ * breakdowns for meshcore, meshtastic, and reticulum.
+ *
+ * Unknown/absent protocols count toward the meshtastic bucket so pre-protocol
+ * legacy records stay visible in the header split.
  *
  * @param {Array<Object>} nodes Node payloads.
  * @param {number} nowSeconds Reference timestamp (Unix seconds).
- * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}} Local count snapshot.
+ * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object, reticulum?: Object}} Local count snapshot.
  */
 export function computeLocalActiveNodeStats(nodes, nowSeconds) {
   const safeNodes = Array.isArray(nodes) ? nodes : [];
@@ -45,6 +48,7 @@ export function computeLocalActiveNodeStats(nodes, nowSeconds) {
   const counts = { sampled: true };
   const meshcore = {};
   const meshtastic = {};
+  const reticulum = {};
   for (const window of windows) {
     const active = safeNodes.filter(node => {
       const lastHeard = Number(node?.last_heard);
@@ -52,10 +56,14 @@ export function computeLocalActiveNodeStats(nodes, nowSeconds) {
     });
     counts[window.key] = active.length;
     meshcore[window.key] = active.filter(n => n.protocol === 'meshcore').length;
-    meshtastic[window.key] = active.filter(n => n.protocol !== 'meshcore').length;
+    reticulum[window.key] = active.filter(n => n.protocol === 'reticulum').length;
+    meshtastic[window.key] = active.filter(
+      n => n.protocol !== 'meshcore' && n.protocol !== 'reticulum'
+    ).length;
   }
   counts.meshcore = meshcore;
   counts.meshtastic = meshtastic;
+  counts.reticulum = reticulum;
   return counts;
 }
 
@@ -86,10 +94,11 @@ function normaliseProtocolBucket(bucket) {
  *
  * Returns null when ``total.packets.hour`` is absent or non-finite (e.g. a
  * pre-MA5 instance), so the mesh-activity card can hide rather than render a
- * bogus 0. ``meshcore``/``meshtastic`` are included only when present.
+ * bogus 0. ``meshcore``/``meshtastic``/``reticulum`` are included only when
+ * present.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
- * @returns {{total: number, meshcore?: number, meshtastic?: number}|null} Rates or null.
+ * @returns {{total: number, meshcore?: number, meshtastic?: number, reticulum?: number}|null} Rates or null.
  */
 function normalisePacketsRates(payload) {
   const readHourRate = scope => {
@@ -103,8 +112,10 @@ function normalisePacketsRates(payload) {
   const rates = { total };
   const meshcore = readHourRate('meshcore');
   const meshtastic = readHourRate('meshtastic');
+  const reticulum = readHourRate('reticulum');
   if (meshcore !== null) rates.meshcore = meshcore;
   if (meshtastic !== null) rates.meshtastic = meshtastic;
+  if (reticulum !== null) rates.reticulum = reticulum;
   return rates;
 }
 
@@ -120,7 +131,7 @@ function normalisePacketsRates(payload) {
  * current shape is parsed.
  *
  * @param {*} payload Candidate JSON object from the stats endpoint.
- * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object}|null} Normalized stats or null.
+ * @returns {{hour: number, day: number, week: number, month: number, sampled: boolean, meshcore?: Object, meshtastic?: Object, reticulum?: Object}|null} Normalized stats or null.
  */
 export function normaliseActiveNodeStatsPayload(payload) {
   if (!payload || typeof payload !== 'object') {
@@ -136,8 +147,10 @@ export function normaliseActiveNodeStatsPayload(payload) {
   };
   const meshcore = normaliseProtocolBucket(payload.meshcore?.nodes);
   const meshtastic = normaliseProtocolBucket(payload.meshtastic?.nodes);
+  const reticulum = normaliseProtocolBucket(payload.reticulum?.nodes);
   if (meshcore) result.meshcore = meshcore;
   if (meshtastic) result.meshtastic = meshtastic;
+  if (reticulum) result.reticulum = reticulum;
   const packets = normalisePacketsRates(payload);
   if (packets) result.packets = packets;
   return result;
@@ -266,8 +279,9 @@ let activitySeriesFetchImpl = null;
  * with the meta-row toggles, exactly like the headline number.
  *
  * @param {*} payload Candidate JSON (array of bucket objects).
- * @returns {Array<{meshcore: number, meshtastic: number}>|null} Oldest-first
- *   per-protocol packets/hour, or null when there is nothing usable.
+ * @returns {Array<{meshcore: number, meshtastic: number, reticulum: number}>|null}
+ *   Oldest-first per-protocol packets/hour, or null when there is nothing
+ *   usable.
  */
 export function normaliseActivitySeries(payload) {
   if (!Array.isArray(payload)) {
@@ -280,10 +294,12 @@ export function normaliseActivitySeries(payload) {
     }
     const meshcore = Number(bucket.meshcore);
     const meshtastic = Number(bucket.meshtastic);
-    if (Number.isFinite(meshcore) || Number.isFinite(meshtastic)) {
+    const reticulum = Number(bucket.reticulum);
+    if (Number.isFinite(meshcore) || Number.isFinite(meshtastic) || Number.isFinite(reticulum)) {
       series.push({
         meshcore: Number.isFinite(meshcore) ? Math.max(0, Math.trunc(meshcore)) : 0,
         meshtastic: Number.isFinite(meshtastic) ? Math.max(0, Math.trunc(meshtastic)) : 0,
+        reticulum: Number.isFinite(reticulum) ? Math.max(0, Math.trunc(reticulum)) : 0,
       });
     }
   }

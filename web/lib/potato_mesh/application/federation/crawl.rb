@@ -338,8 +338,10 @@ module PotatoMesh
           if stats_payload.is_a?(Hash)
             mc_day = remote_stats_protocol_day(stats_payload, "meshcore")
             mt_day = remote_stats_protocol_day(stats_payload, "meshtastic")
+            rt_day = remote_stats_protocol_day(stats_payload, "reticulum")
             attributes[:meshcore_nodes_count] = mc_day if mc_day && attributes[:meshcore_nodes_count].nil?
             attributes[:meshtastic_nodes_count] = mt_day if mt_day && attributes[:meshtastic_nodes_count].nil?
+            attributes[:reticulum_nodes_count] = rt_day if rt_day && attributes[:reticulum_nodes_count].nil?
           end
 
           nodes_since_path = "/api/nodes?since=#{recent_cutoff}&limit=1000"

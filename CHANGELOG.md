@@ -3,15 +3,10 @@
 
 # CHANGELOG
 
+### Features
+* Data/Web: Reticulum protocol support — `PROTOCOL=reticulum` selects a passive RNS announce listener that ingests `lxmf.delivery`/`nomadnetwork.node` announces as `protocol="reticulum"` nodes; the web app whitelists the protocol end-to-end (ingest + `?protocol=` filter), serves live `reticulum` stats scopes and activity-series keys, signs a live `reticulum_nodes_count` on the federation wire (the v2 canonical already carried the field, so peer signatures are unaffected), and renders reticulum nodes across the UI (icon, filter chip, mesh-activity row, federation column) (SPEC S6/FS2/MA5/MA-F2/F2-2 as amended)
+
 ## v0.7.5
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.7.5, focused on transmit consent. A PotatoMesh ingestor is now a **listener by default**: every ingestor-initiated mesh transmission is off unless the operator opts in with `TX_ENABLED=1`, and announcements need a second opt-in (`TX_ANNOUNCE=1`) on top.
-
-**Breaking for MeshCore operators.** On-air contact telemetry polling — how other nodes' battery and sensor readings reach your dashboard — is a transmission, so it now requires `TX_ENABLED=1`. Set it after upgrading if you want that data. Companion-link reads over USB/BLE to your own radio are not transmissions and are unaffected.
-
-The `ANNOUNCE` flag introduced in https://github.com/l5yth/potato-mesh/pull/886 never shipped in a release and is superseded by `TX_ANNOUNCE`.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * Make the activity announcement opt-in via ANNOUNCE (default off) by @seybsen in <https://github.com/l5yth/potato-mesh/pull/886>
@@ -28,10 +23,6 @@ Demo: <https://potatomesh.net/>
 * Docs: README gains a **Transmitting on the mesh** section — what each flag turns on, the truth table, the literal announcement text, and what is never gated by @l5yth in <https://github.com/l5yth/potato-mesh/pull/891>
 
 ## v0.7.4
-
-This is a feature release of the radio mesh app-suite `potato-mesh` v0.7.4, headlined by a frontend design & UX audit remediation (SPEC UX1–UX15, 38 findings) and its Claude-Design follow-up, mesh activity reporting with a map card and packets/hour time-series, and Meshtastic waypoints as a first-class POI layer. Rounded out by a run of frontend performance and asset-caching work.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * web: remediate frontend design & UX audit by @l5yth in <https://github.com/l5yth/potato-mesh/pull/855>
@@ -60,10 +51,6 @@ Demo: <https://potatomesh.net/>
 
 ## v0.7.3
 
-This is a feature release of the radio mesh app-suite `potato-mesh` v0.7.3, focused on the basemap (HOT over CARTO, dark-filtered, with provider blending) and on telemetry breadth: MeshCore RF metrics (RSSI/SNR/hops/path), every telemetry family from both protocols, and per-field telemetry merging in the node table.
-
-Demo: <https://potatomesh.net/>
-
 ### Features
 * web: HOT primary basemap (dark-filtered) with per-tile CARTO fallback by @l5yth in <https://github.com/l5yth/potato-mesh/pull/844>
 * Bump all packages to 0.7.3 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/845>
@@ -79,10 +66,6 @@ Demo: <https://potatomesh.net/>
 
 ## v0.7.2
 
-This is a feature release of the radio mesh app-suite `potato-mesh` v0.7.2, introducing the passive UDP transport (Mesh via UDP) so an ingestor no longer monopolizes the radio's single API slot, alongside a security review pass covering dashboard XSS, a private-mode federation gap, and Matrix bridge resilience.
-
-Demo: <https://potatomesh.net/>
-
 ### Features
 * feat(ingestor): passive UDP transport (Mesh via UDP), primary-channel only by @tjpaulsondev in <https://github.com/l5yth/potato-mesh/pull/838>
 
@@ -93,10 +76,6 @@ Demo: <https://potatomesh.net/>
 * fix(docker): armv7 ingestor build toolchain; disable matrix fail-fast by @l5yth in <https://github.com/l5yth/potato-mesh/pull/842>
 
 ## v0.7.1
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.7.1, focused on live-update and load performance in the wake of v0.7.0: the pub/sub thread budget no longer blocks the app, bulk collections backfill progressively, and the initial-load module graph was unwound.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * web: change tiles to carto by @l5yth in <https://github.com/l5yth/potato-mesh/pull/831>
@@ -113,10 +92,6 @@ Demo: <https://potatomesh.net/>
 * chore: bump version 0.7.1 by @l5yth in <https://github.com/l5yth/potato-mesh/pull/833>
 
 ## v0.7.0
-
-This is a major release of the radio mesh app-suite `potato-mesh` v0.7.0. It carries **breaking API changes** — the stats API reshaped and all APIs moved to consistent camelCase — plus federation signature v2, live updates via pub/sub (`GET /api/events`), uniform pagination across bulk collection APIs, local storage caching, and versioned JS/CSS assets. Node opt-out markers and data retention policies also land here.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * web: add node opt-out marker and data retention policies by @l5yth in <https://github.com/l5yth/potato-mesh/pull/793>
@@ -153,10 +128,6 @@ Demo: <https://potatomesh.net/>
 
 ## v0.6.3
 
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.3, dominated by a seven-part modularization of the web app and ingestor (data processing, federation, node page, main JS, protocols, interfaces), plus the reworked map spider-net and SEO improvements.
-
-Demo: <https://potatomesh.net/>
-
 ### Features
 * web: rework map spider-net feature by @l5yth in <https://github.com/l5yth/potato-mesh/pull/769>
 * web: add seo improvements by @l5yth in <https://github.com/l5yth/potato-mesh/pull/771>
@@ -180,10 +151,6 @@ Demo: <https://potatomesh.net/>
 
 ## v0.6.2
 
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.2, focused on Meshcore-related fixes, federation accuracy, and bridge coverage. The Matrix bridge now understands Meshcore traffic, and several duplication and classification issues in the web app and ingestor have been tightened up.
-
-Demo: <https://potatomesh.net/>
-
 ### Features
 * Matrix: enable meshcore by @l5yth in <https://github.com/l5yth/potato-mesh/pull/761>
 * Web: show colocated nodes by @l5yth in <https://github.com/l5yth/potato-mesh/pull/753>
@@ -198,10 +165,6 @@ Demo: <https://potatomesh.net/>
 * Web: fix federation node counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/749>
 
 ## v0.6.1
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.1, focused on Meshcore polish, federation resilience, and ingestor stability in the wake of the v0.6.0 multi-protocol release.
-
-Demo: <https://potatomesh.net/>
 
 ### Features
 * Web: per protocol active node counts by @l5yth in <https://github.com/l5yth/potato-mesh/pull/735>
@@ -219,24 +182,6 @@ Demo: <https://potatomesh.net/>
 * Build(deps): bump rand from 0.9.2 to 0.9.4 in /matrix by @dependabot in <https://github.com/l5yth/potato-mesh/pull/741>
 
 ## v0.6.0
-
-This is a service release of the radio mesh app-suite `potato-mesh` v0.6.0 which introduces new features and overhauls the user interface. The primary notable change is added support for multi-protocol along with an implementation of **Meshcore** in ingestor, web app, and frontend.
-
-Demo: <https://potatomesh.net/>
-
-### Meshcore
-
-To start ingesting Meshcore data to an upgraded potato-mesh web app, simply tell your ingestor to use the `PROTOCOL="meshcore"`.
-
-### About Pages
-
-The other notable feature is the removal of the "darkmode" and "info" buttons in favor of customizable markdown pages that allow for more flexibility with regard to custom content (info about presets, contact information, etc.) - see `/pages/*.md` in the web app ([#723](https://github.com/l5yth/potato-mesh/pull/723)).
-
-### Breaking Variable Changes
-
-The following deprecated environmental variables have been removed in this release finally ([#704](https://github.com/l5yth/potato-mesh/pull/704)):
-* ~~POTATOMESH_INSTANCE~~ - please use `INSTANCE_DOMAIN`
-* ~~MESH_SERIAL~~ and ~~PORT~~ - please use `CONNECTION`
 
 ### Features
 * Web: add markdown static pages by @l5yth in <https://github.com/l5yth/potato-mesh/pull/723>
@@ -266,10 +211,6 @@ The following deprecated environmental variables have been removed in this relea
 * Chore: prepare codebase for breaking release by @l5yth in <https://github.com/l5yth/potato-mesh/pull/718>
 
 ## v0.5.12
-
-This is a service release of the app potato-mesh v0.5.12 which improves performance and stability.
-
-Notably, the frontend went through some graphical tweaks to prepare for an upcoming multi-protocol release (meshcore, reticulum, etc.).
 
 * Enh: surface meshcore role types (#680) by @l5yth in https://github.com/l5yth/potato-mesh/pull/685
 * Chore: refactor codebase before meshcore release by @l5yth in https://github.com/l5yth/potato-mesh/pull/682
